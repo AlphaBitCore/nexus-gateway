@@ -37,11 +37,30 @@
   color: var(--color-text-muted);
 }
 
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .cardTitle {
   margin: 0;
   font-size: var(--g-font-size-md);
   font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+}
+
+.fieldItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
 .fieldRow {
@@ -52,18 +71,27 @@
 }
 
 .fieldLabel {
-  flex: 0 0 180px;
   color: var(--color-text-muted);
   font-weight: var(--g-font-weight-medium);
+  font-size: var(--g-font-size-xs);
 }
 
 .fieldValue {
   color: var(--color-text-primary);
 }
 
+.fieldValueInline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  min-width: 0;
+}
+
 .fieldValueMono {
   font-family: var(--g-font-mono);
   color: var(--color-text-primary);
+  min-width: 0;
+  word-break: break-all;
 }
 
 .fieldHint {
@@ -134,4 +162,16 @@
 .copyButton:hover {
   background: var(--color-surface-2);
   color: var(--color-text-primary);
+}
+
+@media (max-width: 1024px) {
+  .fieldGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .fieldGrid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -12,15 +12,12 @@
 //     to ToolCallSegments.
 //  3. Streaming chunks parse OpenAI-compat `delta.content` /
 //     `delta.tool_calls` plus a plain-text `text` field fallback.
-//  4. Anything unrecognised lands in Extra (binary preview when the
-//     body is not JSON) so audit retains the bytes.
 //
 // **Limitation**: heuristic extraction; no runtime fixtures from grok.com
 // have been captured yet.
 package grokweb
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 
@@ -30,13 +27,6 @@ import (
 )
 
 const adapterID = "grok-web"
-
-var requestKnownKeys = []string{
-	"messages", "prompt", "query", "text", "input", "model",
-	"stream", "session_id", "conversation_id", "temporary",
-	"isReasoning", "returnImageBytes", "deepsearchPreset",
-	"toolOverrides", "fileAttachments",
-}
 
 // Adapter implements grok-web extraction.
 type Adapter struct{}
@@ -53,9 +43,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 	if !looksLikeJSON(body) {
-		return traffic.NormalizedContent{
-			Extra: map[string]string{"binary_preview": preview(body)},
-		}, traffic.ErrUnknownSchema
+		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
@@ -95,9 +83,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	}
 
 	if len(segments) == 0 && len(toolCalls) == 0 {
-		return traffic.NormalizedContent{
-			Extra: traffic.CollectExtra(body, requestKnownKeys),
-		}, traffic.ErrUnknownSchema
+		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 
 	meta := map[string]string{}
@@ -112,7 +98,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -219,20 +204,4 @@ func looksLikeJSON(b []byte) bool {
 		return c == '{' || c == '['
 	}
 	return false
-}
-
-func preview(body []byte) string {
-	if len(body) > 256 {
-		body = body[:256]
-	}
-	clean := bytes.Map(func(r rune) rune {
-		if r < 0x20 && r != '\n' && r != '\t' {
-			return '.'
-		}
-		if r > 0x7e {
-			return '.'
-		}
-		return r
-	}, body)
-	return string(clean)
 }

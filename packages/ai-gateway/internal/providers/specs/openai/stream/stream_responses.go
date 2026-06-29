@@ -88,6 +88,12 @@ type responsesStreamSession struct {
 	// classify subsequent delta events without re-reading the item JSON
 	// on every chunk. Initialized to "" before any output_item.added.
 	currentItemType string
+
+	// sawToolCall records whether any function_call_arguments.delta was seen,
+	// so response.completed can report finish_reason "tool_calls" (matching the
+	// non-stream mapResponsesStatusToFinishReason hadToolCalls path) instead of
+	// collapsing to "stop" — the buffer/cross-format re-encoder relies on it.
+	sawToolCall bool
 }
 
 func (s *responsesStreamSession) Next(ctx context.Context) (provcore.Chunk, error) {
@@ -153,6 +159,7 @@ func (s *responsesStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 			}, nil
 		case "response.function_call_arguments.delta":
 			delta := gjson.GetBytes(ev.Data, "delta").String()
+			s.sawToolCall = true
 			// item_id + output_index identify which function_call item this
 			// delta belongs to. Use output_index as ToolCallDelta.Index.
 			idx := int(gjson.GetBytes(ev.Data, "output_index").Int())
@@ -190,11 +197,29 @@ func (s *responsesStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 		case "response.completed", "response.incomplete":
 			s.done = true
 			usage := specutil.ExtractOpenAIUsage(gjson.GetBytes(ev.Data, "response.usage"))
+			// Map the Responses terminal status to a canonical finish_reason so
+			// a re-encoder (buffer mode) preserves it instead of collapsing to
+			// "stop". completed → stop; incomplete → length / content_filter per
+			// incomplete_details.reason (mirrors mapResponsesStatusToFinishReason).
+			finishReason := "stop"
+			if evType == "response.incomplete" {
+				switch gjson.GetBytes(ev.Data, "response.incomplete_details.reason").String() {
+				case "content_filter":
+					finishReason = "content_filter"
+				default:
+					finishReason = "length"
+				}
+			} else if s.sawToolCall {
+				// completed with function calls → tool_calls, matching the
+				// non-stream mapResponsesStatusToFinishReason hadToolCalls path.
+				finishReason = "tool_calls"
+			}
 			return provcore.Chunk{
-				Done:        true,
-				Usage:       usagePtrOrNil(usage),
-				RawBytes:    formatSSE(evType, ev.Data),
-				NativeEvent: evType,
+				Done:         true,
+				Usage:        usagePtrOrNil(usage),
+				FinishReason: finishReason,
+				RawBytes:     formatSSE(evType, ev.Data),
+				NativeEvent:  evType,
 			}, nil
 		case "response.failed", "response.error":
 			s.done = true

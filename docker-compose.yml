@@ -69,20 +69,22 @@ services:
       retries: 10
 
   nats:
-    image: nats:2-alpine
+    image: nats:2.10-alpine
     container_name: nexus-nats
     environment:
       TZ: UTC
-    # --max_payload 16777216 (16 MiB): a traffic_event carrying a large
-    # prompt/response body exceeds the 1MB NATS default and would fail to
-    # publish — dropped audit rows under concurrency. Matches the AMI nats
-    # max_payload and the Hub ConnectRPC 16MB frame cap.
-    command: ["--jetstream", "--store_dir", "/data", "-m", "8222", "--max_payload", "16777216"]
+    # max_payload (16 MiB) is config-file-only in nats-server — it is NOT a CLI
+    # flag (--max_payload errors out), so jetstream + store_dir + max_payload are
+    # set in nats.conf and loaded with -c. The 16 MiB cap lets a traffic_event
+    # carrying a large prompt/response body publish (1MB default would drop audit
+    # rows under concurrency). Matches the AMI nats max_payload + Hub 16MB frame cap.
+    command: ["-c", "/nats.conf"]
     ports:
       - "4222:4222"
       - "8222:8222"
     volumes:
       - natsdata:/data
+      - ./nats.conf:/nats.conf:ro
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
       interval: 3s

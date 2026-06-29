@@ -46,16 +46,31 @@ export interface RulePackMatch {
   matchedText?: string;
 }
 
+/** One Vectorscan-compat / performance advisory on a rule pattern. */
+export interface LintFinding {
+  severity: 'error' | 'warn';
+  code: string;
+  message: string;
+}
+
+/** Per-rule lint findings (rules with no findings are omitted). */
+export interface RuleLint {
+  ruleId: string;
+  findings: LintFinding[];
+}
+
 export interface RulePackPreviewResult {
   pack?: RulePack | null;
   warnings: string[];
   errors: string[];
+  lint?: RuleLint[];
 }
 
 export interface RulePackImportResult {
   packId: string;
   ruleCount: number;
   warnings: string[];
+  lint?: RuleLint[];
 }
 
 export interface RulePackInstall {
@@ -66,6 +81,15 @@ export interface RulePackInstall {
   boundHookId: string;
   enabled: boolean;
   installedAt: string;
+}
+
+export interface RulePackUpgradeResult {
+  installId: string;
+  packName: string;
+  fromVersion: string;
+  toVersion: string;
+  /** false when the install was already pinned to the latest version (no-op). */
+  upgraded: boolean;
 }
 
 export interface RulePackOverride {
@@ -172,6 +196,10 @@ export const rulePacksApi = {
     return api.patch(`/api/admin/rule-pack-installs/${installId}`, { enabled });
   },
 
+  upgradeInstall(installId: string): Promise<RulePackUpgradeResult> {
+    return api.post(`/api/admin/rule-pack-installs/${installId}/upgrade`, {});
+  },
+
   uninstall(installId: string): Promise<void> {
     return api.delete(`/api/admin/rule-pack-installs/${installId}`);
   },
@@ -183,4 +211,33 @@ export const rulePacksApi = {
   effectiveRules(installId: string): Promise<EffectiveRuleSet> {
     return api.get(`/api/admin/rule-pack-installs/${installId}/effective-rules`);
   },
+
+  // patternPerfTest measures a single regex on the real Vectorscan engine
+  // (proxied to the AI Gateway) so a prefilter-defeating pattern is caught at
+  // authoring time. Used by the rule-pack + hook regex editors.
+  patternPerfTest(pattern: string, flags: string): Promise<PatternPerfResult> {
+    return api.post('/api/admin/rule-packs/pattern-perf-test', { pattern, flags });
+  },
 };
+
+/** One static-lint finding returned alongside the perf measurement. */
+export interface PatternPerfFinding {
+  severity: 'error' | 'warn';
+  code: string;
+  message: string;
+}
+
+/** Result of POST /api/admin/rule-packs/pattern-perf-test. */
+export interface PatternPerfResult {
+  compiles: boolean;
+  findings: PatternPerfFinding[];
+  /** Median µs to scan a 50KB natural-text body. */
+  cleanScanUs: number;
+  /** Median µs to scan a 50KB adversarial (long alnum/base64) body. */
+  adversarialScanUs: number;
+  verdict: 'ok' | 'slow' | 'invalid';
+  suggestions: string[];
+  /** Present (false) only when the gateway was unreachable. */
+  success?: boolean;
+  error?: string;
+}

@@ -156,6 +156,14 @@ func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 			s.usage = u
 			chunk.Usage = u
 		}
+		// stop_reason rides message_delta (not the terminal message_stop).
+		// Map it to the canonical OpenAI finish_reason vocabulary so a
+		// re-encoder (buffer mode) preserves the real value instead of
+		// collapsing to "stop". Left on this non-terminal frame so the
+		// live cross-format Done chunk is unaffected.
+		if sr := gjson.GetBytes(ev.Data, "delta.stop_reason"); sr.Type == gjson.String && sr.Str != "" {
+			chunk.FinishReason = mapStopReasonToFinish(sr.Str)
+		}
 	case "message_stop":
 		// Terminal frame. Stamp the accumulated usage onto the Done chunk so the
 		// canonical egress encoders (OpenAI / Responses) emit the trailing usage
@@ -166,6 +174,24 @@ func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 		s.done = true
 	}
 	return chunk, nil
+}
+
+// mapStopReasonToFinish maps an Anthropic stop_reason to the canonical OpenAI
+// finish_reason vocabulary. Kept local (rather than importing anthropic/codec's
+// MapStopReason) so the stream decoder has no import edge into codec — codec's
+// own test imports this stream package, and the reverse production edge would
+// form a test-time import cycle. Mirrors anthropic/codec.MapStopReason; the two
+// must stay in lockstep.
+func mapStopReasonToFinish(r string) string {
+	switch r {
+	case "end_turn", "stop_sequence":
+		return "stop"
+	case "max_tokens":
+		return "length"
+	case "tool_use":
+		return "tool_calls"
+	}
+	return r
 }
 
 func (s *anthropicStreamSession) Close() error {

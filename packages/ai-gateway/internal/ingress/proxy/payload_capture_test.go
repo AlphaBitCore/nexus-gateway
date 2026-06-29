@@ -85,7 +85,7 @@ func TestHandler_ReadBody_HonorsMaxRequestBytes(t *testing.T) {
 				WireShape:  typology.WireShapeOpenAIChat,
 				BodyFormat: provcore.FormatOpenAI,
 			}
-			body, _, _, err := h.readBody(req, in)
+			body, _, _, _, err := h.readBody(req, in)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("readBody: want err %v, got %v", tc.wantErr, err)

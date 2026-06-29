@@ -17,8 +17,8 @@ import { useApi } from '@/hooks/useApi';
 import { hubApi } from '@/api/services/infrastructure/nodes/hub';
 import type { GlobalOverrideRow } from '@/api/services/infrastructure/nodes/hub';
 import {
-  PageHeader, Card, Stack, Badge, Button, ListPagination, Skeleton, ErrorBanner,
-  DataTable,
+  PageHeader, Stack, Badge, Button, ListPagination, Skeleton, ErrorBanner,
+  DataTable, Tabs, TabsList, TabsTrigger, Tooltip,
 } from '@/components/ui';
 import type { AdminListPageSize, DataTableColumn } from '@/components/ui';
 import { DEFAULT_ADMIN_LIST_PAGE_SIZE } from '@/constants/admin-api';
@@ -113,6 +113,18 @@ export default function InfraOverridesPage() {
       return true;
     });
   }, [overrides, recentOnly, search]);
+  const hasClientFilters = search.trim().length > 0 || recentOnly;
+  const visibleSummary = useMemo(() => {
+    if (!hasClientFilters) return summary;
+    const nodeIds = new Set(filteredRows.map((row) => row.nodeId));
+    return {
+      totalNodes: nodeIds.size,
+      totalOverrides: filteredRows.length,
+      staleCount: filteredRows.filter((row) => row.stale).length,
+      expiringSoonCount: filteredRows.filter((row) => isExpiringSoon(row.expiresAt)).length,
+    };
+  }, [filteredRows, hasClientFilters, summary]);
+  const visibleTotal = hasClientFilters ? filteredRows.length : total;
 
   const handleTypeChange = useCallback((next: TypeFilter) => {
     setSelectedType(next);
@@ -266,6 +278,30 @@ export default function InfraOverridesPage() {
         </span>
       ),
     },
+    {
+      key: 'details',
+      label: t('pages:infrastructure.overrides.colActions'),
+      sortable: false,
+      cellClassName: styles.detailActionCell,
+      cellStyle: { width: 56 },
+      render: (r) => (
+        <Tooltip content={t('pages:infrastructure.overrides.actions.view')} side="left" delayDuration={200}>
+          <button
+            type="button"
+            className={styles.detailActionButton}
+            aria-label={t('pages:infrastructure.overrides.actions.view')}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleView(r);
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+        </Tooltip>
+      ),
+    },
   ];
 
   if (loading && !data) return <Skeleton.ListPageSkeleton />;
@@ -282,82 +318,73 @@ export default function InfraOverridesPage() {
         }
       />
 
+      <Tabs value={selectedType} onValueChange={(next) => handleTypeChange(next as TypeFilter)} className={styles.typeTabs}>
+        <TabsList className={styles.typeTabsList}>
+          {TYPE_FILTERS.map((tp) => (
+            <TabsTrigger key={tp} value={tp}>
+              {tp === 'all' ? t('pages:infrastructure.overrides.filter.all') : tp}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
       {error && <ErrorBanner message={error.message} onRetry={refetch} />}
 
-      <Card padding="md">
+      <div className={styles.tableToolbar}>
+        <div className={styles.searchBox}>
+          <span className={styles.searchIcon} aria-hidden="true" />
+          <input
+            type="search"
+            className={styles.searchInput}
+            placeholder={t('pages:infrastructure.overrides.searchPlaceholder')}
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            aria-label={t('pages:infrastructure.overrides.searchPlaceholder')}
+          />
+        </div>
+        <div className={styles.filterActions}>
+          <button
+            type="button"
+            className={styles.chip}
+            data-active={hasTtl ? 'true' : 'false'}
+            aria-pressed={hasTtl}
+            onClick={toggleHasTtl}
+          >
+            {t('pages:infrastructure.overrides.filter.hasTtl')}
+          </button>
+          <button
+            type="button"
+            className={styles.chip}
+            data-active={stale ? 'true' : 'false'}
+            aria-pressed={stale}
+            onClick={toggleStale}
+          >
+            {t('pages:infrastructure.overrides.filter.stale')}
+          </button>
+          <button
+            type="button"
+            className={styles.chip}
+            data-active={recentOnly ? 'true' : 'false'}
+            aria-pressed={recentOnly}
+            onClick={toggleRecent}
+          >
+            {t('pages:infrastructure.overrides.filter.recent')}
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.tableSection}>
         <div className={styles.summary}>
-          <Badge variant="default">
-            {t('pages:infrastructure.overrides.summary.nodes', { count: summary.totalNodes })}
-          </Badge>
-          <Badge variant="default">
-            {t('pages:infrastructure.overrides.summary.keys', { count: summary.totalOverrides })}
-          </Badge>
-          <Badge variant={summary.staleCount > 0 ? 'warning' : 'default'}>
-            {t('pages:infrastructure.overrides.summary.stale', { count: summary.staleCount })}
-          </Badge>
-          <Badge variant={summary.expiringSoonCount > 0 ? 'danger' : 'default'}>
-            {t('pages:infrastructure.overrides.summary.expiring', { count: summary.expiringSoonCount })}
-          </Badge>
+          <span>{t('pages:infrastructure.overrides.summary.nodes', { count: visibleSummary.totalNodes })}</span>
+          <span>{t('pages:infrastructure.overrides.summary.keys', { count: visibleSummary.totalOverrides })}</span>
+          <span>{t('pages:infrastructure.overrides.summary.stale', { count: visibleSummary.staleCount })}</span>
+          <span>{t('pages:infrastructure.overrides.summary.expiring', { count: visibleSummary.expiringSoonCount })}</span>
         </div>
-      </Card>
-
-      <Card padding="none">
-        <div className={styles.filterBar}>
-          <div className={styles.filterRow}>
-            <span className={styles.filterLabel}>{t('pages:infrastructure.overrides.colType')}</span>
-            {TYPE_FILTERS.map((tp) => (
-              <button
-                key={tp}
-                type="button"
-                className={styles.chip}
-                data-active={selectedType === tp ? 'true' : 'false'}
-                aria-pressed={selectedType === tp}
-                onClick={() => handleTypeChange(tp)}
-              >
-                {tp === 'all' ? t('pages:infrastructure.overrides.filter.all') : tp}
-              </button>
-            ))}
-          </div>
-          <div className={styles.filterRow}>
-            <button
-              type="button"
-              className={styles.chip}
-              data-active={hasTtl ? 'true' : 'false'}
-              aria-pressed={hasTtl}
-              onClick={toggleHasTtl}
-            >
-              {t('pages:infrastructure.overrides.filter.hasTtl')}
-            </button>
-            <button
-              type="button"
-              className={styles.chip}
-              data-active={stale ? 'true' : 'false'}
-              aria-pressed={stale}
-              onClick={toggleStale}
-            >
-              {t('pages:infrastructure.overrides.filter.stale')}
-            </button>
-            <button
-              type="button"
-              className={styles.chip}
-              data-active={recentOnly ? 'true' : 'false'}
-              aria-pressed={recentOnly}
-              onClick={toggleRecent}
-            >
-              {t('pages:infrastructure.overrides.filter.recent')}
-            </button>
-            <input
-              type="search"
-              className={styles.searchInput}
-              placeholder={t('pages:infrastructure.overrides.searchPlaceholder')}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label={t('pages:infrastructure.overrides.searchPlaceholder')}
-            />
-          </div>
-        </div>
-
         <DataTable
+          className={styles.overridesTable}
           columns={columns}
           data={filteredRows}
           onRowClick={handleView}
@@ -367,13 +394,13 @@ export default function InfraOverridesPage() {
           frameless
           pageSize={pageSize}
         />
-      </Card>
+      </div>
 
-      {total > 0 ? (
+      {visibleTotal > 0 ? (
         <ListPagination
-          offset={(page - 1) * pageSize}
+          offset={hasClientFilters ? 0 : (page - 1) * pageSize}
           limit={pageSize}
-          total={total}
+          total={visibleTotal}
           onOffsetChange={(nextOffset) => setPage(Math.floor(nextOffset / pageSize) + 1)}
           onLimitChange={(next) => {
             setPageSize(next);

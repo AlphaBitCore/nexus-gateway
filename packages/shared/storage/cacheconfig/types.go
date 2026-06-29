@@ -28,8 +28,14 @@ type GlobalConfig struct {
 	// pipeline). When false, normaliser rules with effect on upstream bytes
 	// are skipped. NormalizeKey (L0 cache-key computation) is unaffected.
 	NormaliserEnabled bool `json:"normaliser_enabled"`
-	// CacheMasterKillSwitch disables ALL gateway-side cache behavior for ALL
-	// providers regardless of any other knob. Emergency-only switch.
+	// CacheMasterKillSwitch is the emergency switch that disables the gateway's
+	// own response caches — L1 exact-match and L2 semantic — for every provider
+	// regardless of either tier's enable flag. The AI Gateway applies it at the
+	// cache stage (cacheEnabled = (l1||l2) && !CacheMasterKillSwitch). It does
+	// NOT disable provider-side prompt caching (L3 Anthropic markers / Gemini
+	// context cache): that only makes the upstream cache and never serves a
+	// stored gateway response, so it is out of scope for an emergency that
+	// targets stale/poisoned cached answers. Emergency-only.
 	CacheMasterKillSwitch bool `json:"cache_master_kill_switch"`
 }
 

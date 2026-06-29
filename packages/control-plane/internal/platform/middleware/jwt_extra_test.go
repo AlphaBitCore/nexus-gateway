@@ -6,7 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"

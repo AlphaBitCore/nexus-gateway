@@ -327,7 +327,7 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 			// same fact to the UI, which renders a host-matched label in
 			// place of the numeral.
 			if c >= threshold || payload.SelectionEvidence == SelectionEvidenceHost {
-				slog.Info(claimMsg,
+				slog.Debug(claimMsg,
 					"adapter", meta.AdapterType,
 					"direction", meta.Direction,
 					"path", meta.EndpointPath,
@@ -339,12 +339,13 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 				)
 				return payload, nil, true
 			}
-			// Per-Normalize tier-walk diagnostics are Debug to keep Info
-			// volume bounded — at 1k QPS with N tiers walked per call the
-			// Info channel would otherwise carry tens of thousands of
-			// "below threshold" lines per second. The CLAIM line above
-			// (when a tier wins) stays Info because it's the one signal
-			// admins act on.
+			// Every per-Normalize tier-walk line is Debug: this runs once per
+			// claimed direction on a per-request hot path, so at gateway QPS an
+			// Info-level CLAIM line alone emits tens of thousands of structured
+			// records per second — pure noise no admin reads and a dominant CPU
+			// sink (measured ~15% of total gateway CPU). Admins observe spec
+			// distribution through the normalize_total / payload_bytes metrics,
+			// not a per-request log line.
 			slog.Debug("normalize: tier1 below threshold, soft fall-through",
 				"adapter", meta.AdapterType,
 				"direction", meta.Direction,
@@ -419,7 +420,7 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 		if err == nil {
 			c := effConf(payload)
 			if c >= threshold {
-				slog.Info("normalize: tier2 CLAIM (pattern-extract)",
+				slog.Debug("normalize: tier2 CLAIM (pattern-extract)",
 					"adapter", meta.AdapterType,
 					"direction", meta.Direction,
 					"detectedSpec", payload.DetectedSpec,
@@ -456,7 +457,7 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 			// happen — generic-http stamps Confidence=1.0 explicitly —
 			// but guard anyway).
 			if effConf(payload) >= bestConf {
-				slog.Info("normalize: tier3 CLAIM (generic-http catch-all)",
+				slog.Debug("normalize: tier3 CLAIM (generic-http catch-all)",
 					"adapter", meta.AdapterType,
 					"direction", meta.Direction,
 					"contentType", meta.ContentType,

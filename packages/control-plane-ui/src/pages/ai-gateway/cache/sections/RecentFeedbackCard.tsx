@@ -2,7 +2,7 @@
  * Card — Recent admin negative-feedback ("Mark as bad cache hit").
  *
  * Surfaces the in-process ring buffer of L2-semantic-cache feedback entries
- * the Traffic Audit Drawer collects when an admin clicks "👎 Mark as bad
+ * the Traffic Audit Drawer collects when an admin clicks "Mark as bad
  * cache hit". Without this panel admins had no way to audit which hits
  * were flagged or by whom — only the side effect (poison list entry) was
  * visible.

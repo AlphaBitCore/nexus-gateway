@@ -1,7 +1,7 @@
 package enroll
 
 // renew_token_test.go covers POST /api/internal/things/renew-token — the
-// device-token rotation handler (F-0202).
+// device-token rotation handler.
 //
 // Named failure modes / behaviours tested:
 //   - no_thing_in_context (service token) → 401 UNAUTHORIZED
@@ -100,7 +100,7 @@ func TestRenewToken_HappyRotation(t *testing.T) {
 	st, mock := newPgxmockStore(t)
 	defer mock.Close()
 	// The rotation overwrites the stored hash AND re-stamps the expiry: the old
-	// token is invalidated and the new one is bounded (F-0202). Asserting the
+	// token is invalidated and the new one is bounded. Asserting the
 	// expiry arg ($3) equals NOW()+TTL proves the rotation re-stamps expiry.
 	mock.ExpectExec(`UPDATE thing.*deviceTokenHash.*device_token_expires_at = \$3`).
 		WithArgs("agent-1", pgxmock.AnyArg(), wantExpiry).

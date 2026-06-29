@@ -6,7 +6,7 @@
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { api } from '@/api/client';
-import { DataTable, Badge, ErrorBanner, Skeleton, Card } from '@/components/ui';
+import { DataTable, Badge, ErrorBanner, Skeleton } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import { formatDateTime } from '@/lib/format';
 
@@ -78,13 +78,11 @@ export function UserDevicesTab({ userId }: Props) {
   const rows = data?.data ?? [];
 
   return (
-    <Card>
-      <DataTable
-        hideSearch
-        columns={columns}
-        data={rows}
-        emptyMessage={t('pages:userDetail.devices.noDevices')}
-      />
-    </Card>
+    <DataTable
+      hideSearch
+      columns={columns}
+      data={rows}
+      emptyMessage={t('pages:userDetail.devices.noDevices')}
+    />
   );
 }

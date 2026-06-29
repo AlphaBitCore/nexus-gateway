@@ -7,8 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/hub"
@@ -339,7 +338,7 @@ func (u *Updater) pkgInstallDarwin(pkgPath string) error {
 		return fmt.Errorf("update pkg not found: %w", err)
 	}
 	cmd := installerCommand(pkgPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // outlive the daemon bootout
+	cmd.SysProcAttr = installerSysProcAttr() // detach so it outlives the daemon bootout
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch installer: %w", err)
 	}

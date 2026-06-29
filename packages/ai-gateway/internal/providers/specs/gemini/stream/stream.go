@@ -133,6 +133,10 @@ func (s *geminiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 		})
 		if fr := cand.Get("finishReason"); fr.Exists() && fr.String() != "" {
 			s.finishSeen = true
+			// Map Gemini's finishReason enum into the canonical OpenAI
+			// vocabulary so a re-encoder (buffer mode) preserves it instead
+			// of collapsing to "stop".
+			chunk.FinishReason = mapGeminiFinishToCanonical(fr.String())
 		}
 		return true
 	})
@@ -148,6 +152,27 @@ func (s *geminiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 		}
 	}
 	return chunk, nil
+}
+
+// mapGeminiFinishToCanonical maps a Gemini finishReason enum to the canonical
+// OpenAI finish_reason vocabulary. Kept local (rather than importing
+// gemini/codec.MapFinishReason) so the stream decoder carries no import edge
+// into codec. Mirrors gemini/codec.MapFinishReason; the two must stay in lockstep.
+func mapGeminiFinishToCanonical(r string) string {
+	switch r {
+	case "STOP":
+		return "stop"
+	case "MAX_TOKENS":
+		return "length"
+	case "SAFETY", "RECITATION", "LANGUAGE", "PROHIBITED_CONTENT",
+		"SPII", "BLOCKLIST", "IMAGE_SAFETY", "MODEL_ARMOR":
+		return "content_filter"
+	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
+		return "tool_calls"
+	case "OTHER", "":
+		return "stop"
+	}
+	return r
 }
 
 func (s *geminiStreamSession) Close() error {

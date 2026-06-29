@@ -2,7 +2,7 @@ package responseprehook_test
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -11,9 +11,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/responseprehook"
 )
 
-// TestResponsePreHookBuilder_CallerShape_Equivalence (#94 binding,
-// renamed 2026-05-25 per #115/S3 to disambiguate from the true
-// three-pipeline consistency test
+// TestResponsePreHookBuilder_CallerShape_Equivalence is named to
+// disambiguate from the true three-pipeline consistency test
 // `TestThreePipelineConsistency` in
 // `packages/ai-gateway/internal/platform/streaming/cross_pipeline_consistency_test.go`
 // which exercises shared.BufferPipeline + shared.LivePipeline +

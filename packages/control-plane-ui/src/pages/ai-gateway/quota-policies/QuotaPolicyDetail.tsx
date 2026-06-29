@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { quotaPolicyApi, organizationApi } from '@/api/services';
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui';
 import { formatDateTime } from '@/lib/format';
 import iamStyles from '@/pages/iam/_shared/Iam.module.css';
+import styles from './QuotaPolicyDetail.module.css';
 
 export function QuotaPolicyDetail() {
   const { t } = useTranslation();
@@ -74,91 +75,117 @@ export function QuotaPolicyDetail() {
       <PageHeader
         title={policy.name}
         subtitle={policy.description || t('pages:quotaPolicies.detailSubtitle')}
-        action={
-          canUpdate ? (
-            <Button onClick={() => navigate(`/ai-gateway/quota-policies/${policy.id}/edit`)}>
-              {t('common:edit')}
-            </Button>
-          ) : undefined
-        }
       />
-      <Card>
-        <div className={iamStyles.kvGrid}>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.name')}</div>
-            <div className={iamStyles.kvValue}>{policy.name}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.description')}</div>
-            <div className={iamStyles.kvValue}>{policy.description || '\u2014'}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.scope')}</div>
-            <div className={iamStyles.kvValue}>{scopeLabel[policy.scope] ?? policy.scope}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.organization')}</div>
-            <div className={iamStyles.kvValue}>{orgDisplay}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.vkType')}</div>
-            <div className={iamStyles.kvValue}>
-              {policy.vkType ? (vkTypeLabel[policy.vkType] ?? policy.vkType) : t('pages:quotaPolicies.allTypes')}
-            </div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.periodType')}</div>
-            <div className={iamStyles.kvValue}>{periodLabel[policy.periodType] ?? policy.periodType}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.costLimit')}</div>
-            <div className={iamStyles.kvValue}>
-              {policy.costLimitUsd != null ? `$${Number(policy.costLimitUsd).toFixed(2)}` : '\u2014'}
-            </div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.tokenLimit')}</div>
-            <div className={iamStyles.kvValue}>
-              {policy.tokenLimit != null ? String(policy.tokenLimit) : '\u2014'}
-            </div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.enforcementMode')}</div>
-            <div className={iamStyles.kvValue}>
-              {enforcementLabel[policy.enforcementMode] ?? policy.enforcementMode}
-            </div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.priority')}</div>
-            <div className={iamStyles.kvValue}>{policy.priority != null ? String(policy.priority) : '0'}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.enabled')}</div>
-            <div className={iamStyles.kvValue}>{policy.enabled ? t('common:yes') : t('common:no')}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.alertThresholds')}</div>
-            <div className={iamStyles.kvValue}>{thresholds}</div>
-          </div>
-          {policy.createdBy ? (
-            <div>
-              <div className={iamStyles.kvLabel}>{t('pages:iam.createdBy')}</div>
-              <div className={iamStyles.kvValue}>{policy.createdBy}</div>
-            </div>
-          ) : null}
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:iam.created')}</div>
-            <div className={iamStyles.kvValue}>{formatDateTime(policy.createdAt)}</div>
-          </div>
-          <div>
-            <div className={iamStyles.kvLabel}>{t('pages:iam.updated')}</div>
-            <div className={iamStyles.kvValue}>{formatDateTime(policy.updatedAt)}</div>
-          </div>
+      {canUpdate ? (
+        <div className={styles.detailToolbar}>
+          <Button onClick={() => navigate(`/ai-gateway/quota-policies/${policy.id}/edit`)}>
+            {t('common:edit')}
+          </Button>
         </div>
-        <p style={{ marginTop: 'var(--g-space-4)' }}>
-          <Link to="/ai-gateway/quota-policies">{t('pages:quotaPolicies.backToList')}</Link>
-        </p>
-      </Card>
+      ) : null}
+
+      <section className={styles.detailSection}>
+        <h3 className={styles.sectionTitle}>{t('pages:quotaPolicies.basicInfo')}</h3>
+        <Card>
+          <div className={styles.detailGrid}>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.name')}</div>
+              <div className={iamStyles.kvValue}>{policy.name}</div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.description')}</div>
+              <div className={iamStyles.kvValue}>{policy.description || '\u2014'}</div>
+            </div>
+          </div>
+        </Card>
+      </section>
+
+      <section className={styles.detailSection}>
+        <h3 className={styles.sectionTitle}>{t('pages:quotaPolicies.policyType')}</h3>
+        <Card>
+          <div className={styles.detailGrid}>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.scope')}</div>
+              <div className={iamStyles.kvValue}>{scopeLabel[policy.scope] ?? policy.scope}</div>
+              <p className={styles.policyTypeHelp}>{t(`pages:quotaPolicies.${policy.scope === 'organization' ? 'helpOrganization' : policy.scope === 'user' ? 'helpUser' : policy.scope === 'project' ? 'helpProject' : 'helpVk'}`)}</p>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.organization')}</div>
+              <div className={iamStyles.kvValue}>{orgDisplay}</div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.vkType')}</div>
+              <div className={iamStyles.kvValue}>
+                {policy.vkType ? (vkTypeLabel[policy.vkType] ?? policy.vkType) : t('pages:quotaPolicies.allTypes')}
+              </div>
+            </div>
+          </div>
+        </Card>
+      </section>
+
+      <section className={styles.detailSection}>
+        <h3 className={styles.sectionTitle}>{t('pages:quotaPolicies.limitsAndEnforcement')}</h3>
+        <Card>
+          <div className={styles.detailGrid}>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.periodType')}</div>
+              <div className={iamStyles.kvValue}>{periodLabel[policy.periodType] ?? policy.periodType}</div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.enforcementMode')}</div>
+              <div className={iamStyles.kvValue}>
+                {enforcementLabel[policy.enforcementMode] ?? policy.enforcementMode}
+              </div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.costLimit')}</div>
+              <div className={iamStyles.kvValue}>
+                {policy.costLimitUsd != null ? `$${Number(policy.costLimitUsd).toFixed(2)}` : '\u2014'}
+              </div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.tokenLimit')}</div>
+              <div className={iamStyles.kvValue}>
+                {policy.tokenLimit != null ? String(policy.tokenLimit) : '\u2014'}
+              </div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.alertThresholds')}</div>
+              <div className={iamStyles.kvValue}>{thresholds}</div>
+            </div>
+          </div>
+        </Card>
+      </section>
+
+      <section className={styles.detailSection}>
+        <h3 className={styles.sectionTitle}>{t('pages:quotaPolicies.advanced')}</h3>
+        <Card>
+          <div className={styles.detailGrid}>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.priority')}</div>
+              <div className={iamStyles.kvValue}>{policy.priority != null ? String(policy.priority) : '0'}</div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:quotaPolicies.enabled')}</div>
+              <div className={iamStyles.kvValue}>{policy.enabled ? t('common:yes') : t('common:no')}</div>
+            </div>
+            {policy.createdBy ? (
+              <div>
+                <div className={iamStyles.kvLabel}>{t('pages:iam.createdBy')}</div>
+                <div className={iamStyles.kvValue}>{policy.createdBy}</div>
+              </div>
+            ) : null}
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:iam.created')}</div>
+              <div className={iamStyles.kvValue}>{formatDateTime(policy.createdAt)}</div>
+            </div>
+            <div>
+              <div className={iamStyles.kvLabel}>{t('pages:iam.updated')}</div>
+              <div className={iamStyles.kvValue}>{formatDateTime(policy.updatedAt)}</div>
+            </div>
+          </div>
+        </Card>
+      </section>
     </Stack>
   );
 }

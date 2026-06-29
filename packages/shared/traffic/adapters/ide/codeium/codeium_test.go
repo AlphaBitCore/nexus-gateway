@@ -92,29 +92,14 @@ func TestExtractRequest_AuthorTextShape(t *testing.T) {
 	}
 }
 
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{"prompt":"hi","x_codeium_field":{"sensitive":"trace"}}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/chat")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if x, ok := nc.Extra["x_codeium_field"]; !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_codeium_field", nc.Extra)
-	}
-}
-
 // Defensive paths
 
 func TestExtractRequest_BinaryProtobufBody(t *testing.T) {
 	body := []byte{0x00, 0x00, 0x00, 0x00, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f}
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/exa.language_server_pb.LanguageServerService/GetCompletions")
+	_, err := a.ExtractRequest(context.Background(), body, "/exa.language_server_pb.LanguageServerService/GetCompletions")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("Extra=%v missing binary_preview", nc.Extra)
 	}
 }
 
@@ -286,20 +271,6 @@ func TestLooksLikeJSON(t *testing.T) {
 	}
 }
 
-func TestPreview_TruncatesAndStrips(t *testing.T) {
-	body := append([]byte{'a', 0x00, 'b'}, make([]byte, 1024)...)
-	p := preview(body)
-	if len(p) > 256 {
-		t.Errorf("preview=%d > 256", len(p))
-	}
-	for _, c := range p {
-		if c < 0x20 && c != '\n' && c != '\t' {
-			t.Errorf("preview contains control char")
-			break
-		}
-	}
-}
-
 // Additional coverage: branches not exercised by the original suite.
 
 // Exercise the messages[].content as parts-array branch (line 72-79) and the
@@ -430,15 +401,6 @@ func TestLooksLikeJSON_WhitespaceOnly(t *testing.T) {
 func TestLooksLikeJSON_LeadingWhitespace(t *testing.T) {
 	if !looksLikeJSON([]byte("\n\t  {\"a\":1}")) {
 		t.Errorf("leading whitespace + { must be JSON")
-	}
-}
-
-// preview: high-byte > 0x7e replaced with '.' (line 260-262).
-func TestPreview_HighByteReplaced(t *testing.T) {
-	body := []byte{'a', 0xff, 'b'}
-	p := preview(body)
-	if p != "a.b" {
-		t.Errorf("preview=%q want %q", p, "a.b")
 	}
 }
 

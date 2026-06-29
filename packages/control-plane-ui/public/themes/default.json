@@ -6,10 +6,10 @@
   "brand": {
     "productName": "AlphaBitCore",
     "tagline": "Innovate. Invest. Thrive",
-    "logoMark": "/brand/prime-console/logo-mark.svg",
-    "logoFull": "/brand/prime-console/logo-wordmark.svg",
-    "logoTagline": "/brand/prime-console/logo-tagline.svg",
-    "favicon": "/brand/prime-console/logo-mark.svg"
+    "logoMark": "brand/prime-console/logo-mark.svg",
+    "logoFull": "brand/prime-console/logo-wordmark.svg",
+    "logoTagline": "brand/prime-console/logo-tagline.svg",
+    "favicon": "brand/prime-console/logo-mark.svg"
   },
 
   "typography": {

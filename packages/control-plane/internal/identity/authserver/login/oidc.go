@@ -3,8 +3,8 @@ package login
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -72,7 +72,7 @@ func OIDCCallbackHandler(d OIDCDeps) echo.HandlerFunc {
 				"error", idpErr,
 				"error_description", c.QueryParam("error_description"),
 				"authctx_present", authctx != "")
-			u := url.URL{Path: ssoErrorPagePath, RawQuery: url.Values{"code": {idpErr}}.Encode()}
+			u := url.URL{Path: spaPath(c, ssoErrorPagePath), RawQuery: url.Values{"code": {idpErr}}.Encode()}
 			return c.Redirect(http.StatusFound, u.String())
 		}
 
@@ -145,7 +145,7 @@ func OIDCCallbackHandler(d OIDCDeps) echo.HandlerFunc {
 		}
 
 		// Exchange authorization code for tokens.
-		idToken, err := exchangeOIDCCode(ctx, cfg, code)
+		idToken, err := exchangeOIDCCode(ctx, cfg, pending.OIDCRedirectURI, code)
 		if err != nil {
 			return c.JSON(http.StatusUnauthorized, errorResponse{Error: "oidc_exchange_failed"})
 		}
@@ -302,7 +302,7 @@ func clearOIDCStateCookie(c echo.Context) {
 	c.SetCookie(&http.Cookie{
 		Name:     oidcStateCookieName,
 		Value:    "",
-		Path:     oidcStateCookiePath,
+		Path:     spaPath(c, oidcStateCookiePath),
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
@@ -374,12 +374,14 @@ func nameFromIDToken(idToken string) string {
 }
 
 // exchangeOIDCCode exchanges an authorization code for an ID token by
-// calling the IdP's token endpoint.
-func exchangeOIDCCode(ctx context.Context, cfg *store.OIDCConfig, code string) (string, error) {
+// calling the IdP's token endpoint. redirectURI must match what was sent to
+// the IdP's authorize endpoint for this login (derived at SSO-start time and
+// stored in the pending entry — never read from the saved IDP config).
+func exchangeOIDCCode(ctx context.Context, cfg *store.OIDCConfig, redirectURI string, code string) (string, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
-	form.Set("redirect_uri", cfg.RedirectURI)
+	form.Set("redirect_uri", redirectURI)
 	form.Set("client_id", cfg.ClientID)
 	if cfg.ClientSecret != "" {
 		form.Set("client_secret", cfg.ClientSecret)

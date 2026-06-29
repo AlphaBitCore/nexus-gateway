@@ -5,7 +5,7 @@ package assistant
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"

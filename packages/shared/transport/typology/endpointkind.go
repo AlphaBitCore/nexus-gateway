@@ -6,8 +6,7 @@ package typology
 // estimator, traffic_event column, Prometheus label) reads the same
 // strings.
 //
-// Adding a new value is a coordinated change: see the contributor guide
-// in the E87 epic spec for the file list to update.
+// Adding a new value is a coordinated change across every consumer above.
 type EndpointKind string
 
 // EndpointKind constants. The string values are the canonical wire

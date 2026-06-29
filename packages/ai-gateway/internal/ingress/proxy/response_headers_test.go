@@ -314,12 +314,15 @@ func TestAigwHookOutcomeFromResult(t *testing.T) {
 			want: traffic.HookOutcomeInput{Rejected: "prompt-injection", RejectReason: "sql-fragment"},
 		},
 		{
-			name: "reject soft halts",
+			// BlockSoft is no longer a reject outcome (soft-block was merged into
+			// block); a per-hook BlockSoft now passes through to Passed rather
+			// than halting the outcome with a reject attribution.
+			name: "block-soft no longer halts; treated as passed",
 			in: &goHooks.CompliancePipelineResult{HookResults: []goHooks.HookResult{
 				{HookName: "content-safety", Decision: goHooks.BlockSoft, ReasonCode: "toxic"},
 				{HookName: "after", Decision: goHooks.Approve},
 			}},
-			want: traffic.HookOutcomeInput{Rejected: "content-safety", RejectReason: "toxic"},
+			want: traffic.HookOutcomeInput{Passed: []string{"content-safety", "after"}},
 		},
 		{
 			name: "reject falls back to Reason when ReasonCode empty",

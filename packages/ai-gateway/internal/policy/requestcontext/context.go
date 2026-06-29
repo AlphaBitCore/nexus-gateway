@@ -2,6 +2,7 @@ package requestcontext
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -15,11 +16,24 @@ import (
 // nil-receiver-safe so callers can use the type at zero-value sites
 // without nil-checks.
 type RequestContext struct {
-	identity   *vkauth.VKMeta
-	normalized *normcore.NormalizedPayload
-	endpoint   string
-	headers    http.Header
-	rawBody    []byte
+	identity *vkauth.VKMeta
+	endpoint string
+	headers  http.Header
+	rawBody  []byte
+
+	// Lazy canonical seam. The request canonical is a pure derivative of the
+	// raw body; computing it eagerly on every request is the dominant hot-path
+	// allocator when no consumer needs it. It is therefore computed on first
+	// Normalized() call from normalizeFn and memoized. The only consumers are
+	// smart routing and the response cache; both pull it via Normalized(). The
+	// audit path never reads the canonical — normalized is recomputed at view
+	// time from the stored raw body — so it never triggers this compute.
+	// WithNormalized(p) pins an already-computed payload (eager path / tests):
+	// normalizeFn nil + computed true.
+	mu          sync.Mutex
+	normalizeFn func() *normcore.NormalizedPayload
+	normalized  *normcore.NormalizedPayload
+	computed    bool
 }
 
 // Identity returns the authenticated virtual-key metadata for this
@@ -33,12 +47,24 @@ func (rc *RequestContext) Identity() *vkauth.VKMeta {
 }
 
 // Normalized returns the canonical normalized payload for this request,
-// produced by exactly one Registry.Normalize call. Returns nil when the
-// receiver is nil or normalize was not attached (e.g. body was empty, or
-// normalize failed and the handler chose to elide the payload).
+// computing it on first call from the raw body (lazy seam) and memoizing the
+// result. Returns nil when the receiver is nil, no seam was attached (empty
+// body), or normalize failed (the compute fn elides the payload). Safe for
+// concurrent callers. Triggering this is what materializes the canonical — call
+// it only when a consumer genuinely needs the canonical (smart routing, cache).
+// The audit path never reads it: normalized is recomputed at view time from the
+// stored raw body, so there is no audit-side reuse seam.
 func (rc *RequestContext) Normalized() *normcore.NormalizedPayload {
 	if rc == nil {
 		return nil
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if !rc.computed {
+		if rc.normalizeFn != nil {
+			rc.normalized = rc.normalizeFn()
+		}
+		rc.computed = true
 	}
 	return rc.normalized
 }
@@ -57,9 +83,9 @@ func (rc *RequestContext) Endpoint() string {
 // reference supplied to Builder.WithHeaders; callers must not mutate it.
 // Returns nil on a nil receiver.
 //
-// S3 will replace this getter with a typed SafeHeaders boundary that
-// exposes only a whitelisted HeaderName enum; consumers depending on the
-// raw http.Header shape must migrate at the same time.
+// A future typed SafeHeaders boundary may replace this getter, exposing
+// only a whitelisted HeaderName enum; consumers depending on the
+// raw http.Header shape would migrate at the same time.
 func (rc *RequestContext) Headers() http.Header {
 	if rc == nil {
 		return nil
@@ -98,10 +124,21 @@ func (b *Builder) WithIdentity(v *vkauth.VKMeta) *Builder {
 	return b
 }
 
-// WithNormalized attaches the canonical normalized payload produced by
-// Registry.Normalize.
+// WithNormalized pins an already-computed canonical payload (the eager path and
+// tests). Marks the context computed so Normalized() returns p without invoking
+// any lazy seam.
 func (b *Builder) WithNormalized(p *normcore.NormalizedPayload) *Builder {
 	b.rc.normalized = p
+	b.rc.computed = true
+	return b
+}
+
+// WithLazyNormalize installs the lazy compute seam: fn is invoked at most once,
+// on the first Normalized() call, and its result memoized. Use this on the
+// request hot path so the canonical is produced only if a consumer pulls it.
+// fn must be safe to call once; returning nil elides the canonical.
+func (b *Builder) WithLazyNormalize(fn func() *normcore.NormalizedPayload) *Builder {
+	b.rc.normalizeFn = fn
 	return b
 }
 

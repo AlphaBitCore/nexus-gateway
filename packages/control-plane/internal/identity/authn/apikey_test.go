@@ -6,7 +6,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/hmackeyring"
 )
 
-// SEC-W2-01 Layer A: InitHMACKeyring fails closed on a nil keyring — the config
+// InitHMACKeyring fails closed on a nil keyring — the config
 // layer always builds a non-nil keyring or fails boot, so nil here is a wiring
 // bug that must abort rather than hash keys under an empty keyring.
 func TestInitHMACKeyring_NilFailsClosed(t *testing.T) {

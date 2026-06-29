@@ -22,12 +22,13 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		log = slog.Default()
 	}
 	return provcore.AdapterSpec{
-		Format:             provcore.FormatOpenAI,
-		Transport:          NewTransport(log),
-		SchemaCodec:        codec.IdentityCodec(),
-		StreamDecoder:      stream.NewStreamDecoder(log),
-		ErrorNormalizer:    specerrors.ErrorNormalizer{},
-		PassthroughRewrite: rewrites.ApplyReasoningRewrites,
+		Format:                    provcore.FormatOpenAI,
+		Transport:                 NewTransport(log),
+		SchemaCodec:               codec.IdentityCodec(),
+		StreamDecoder:             stream.NewStreamDecoder(log),
+		ErrorNormalizer:           specerrors.ErrorNormalizer{},
+		PassthroughRewrite:        rewrites.ApplyReasoningRewrites,
+		PassthroughRewriteApplies: rewrites.IsReasoningModel,
 		// OpenAI natively serves chat-completions, responses-api, and embeddings.
 		// Any sibling (Moonshot, Groq, Together, ...) needs its own captured-200
 		// evidence before declaring "responses-api" per

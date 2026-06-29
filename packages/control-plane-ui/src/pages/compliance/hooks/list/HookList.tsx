@@ -8,11 +8,13 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useMutation } from '@/hooks/useMutation';
 import { usePermission } from '@/hooks/usePermission';
 import {
-  PageHeader, DataTable, ListFilterToolbar,
+  PageHeader, DataTable,
   AlertDialog, Skeleton, ErrorBanner, Button, Stack, Card,
+  Tabs, TabsList, TabsTrigger,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
   ListEnabledSwitchCell,
-  RowActions, RowActionTextButton, RowDeleteAction,
+  Input,
+  OpenActionIcon, RowActions, RowActionIconButton, RowDeleteAction,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import { HookPipelinePanel } from '../panels/HookPipelinePanel';
@@ -108,10 +110,11 @@ export function ConfigHooksPage() {
   if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
 
   const columns: DataTableColumn<HookConfig>[] = [
-    { key: 'name', label: t('pages:hooks.nameCol', 'Name') },
+    { key: 'name', label: t('pages:hooks.nameCol', 'Name'), sortable: false },
     {
       key: 'category',
       label: t('pages:hooks.categoryCol', 'Category'),
+      sortable: false,
       render: (r) => {
         const c = r.classification?.category;
         return (
@@ -124,6 +127,7 @@ export function ConfigHooksPage() {
     {
       key: 'stage',
       label: t('pages:hooks.stageCol', 'Stage'),
+      sortable: false,
       render: (r) => {
         const label = stageLabel(r, t);
         return (
@@ -136,6 +140,7 @@ export function ConfigHooksPage() {
     {
       key: 'enabled',
       label: t('pages:hooks.statusCol', 'Status'),
+      sortable: false,
       render: (r) => (
         <ListEnabledSwitchCell
           enabled={r.enabled}
@@ -150,9 +155,12 @@ export function ConfigHooksPage() {
     {
       key: 'actions',
       label: t('pages:hooks.actionsCol', 'Actions'),
+      sortable: false,
       render: (r) => (
         <RowActions>
-          <RowActionTextButton label={t('pages:hooks.view', 'View')} onAction={() => navigate(`/compliance/hooks/${r.id}`)} />
+          <RowActionIconButton label={t('pages:hooks.view', 'View')} onAction={() => navigate(`/compliance/hooks/${r.id}`)}>
+            <OpenActionIcon />
+          </RowActionIconButton>
           {canDelete && (
             <RowDeleteAction label={t('common:delete')} onAction={() => setDeleting(r)} />
           )}
@@ -169,33 +177,52 @@ export function ConfigHooksPage() {
 
   return (
     <Stack gap="lg">
-      <PageHeader
-        title={t('pages:hooks.title')}
-        subtitle={t('pages:hooks.subtitle')}
-        action={
-          canCreate ? (
-            <Button onClick={() => navigate('/compliance/hooks/new')}>{t('pages:hooks.createHook')}</Button>
-          ) : undefined
-        }
-      />
+      <div className={styles.hooksHeader}>
+        <PageHeader
+          title={t('pages:hooks.title')}
+          subtitle={t('pages:hooks.subtitle')}
+          subtitleClassName={styles.headerSubtitle}
+          action={
+            canCreate ? (
+              <Button onClick={() => navigate('/compliance/hooks/new')}>{t('pages:hooks.createHook')}</Button>
+            ) : undefined
+          }
+        />
+      </div>
 
-      <div className={styles.toolbarCard}>
-        <div className={styles.segmentedTabRow}>
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as PipelineTab)}>
+        <TabsList>
           {tabs.map(tab => (
-            <button
-              key={tab.key}
-              type="button"
-              data-design-system-escape="segmented-tab"
-              onClick={() => selectTab(tab.key)}
-              className={activeTab === tab.key ? styles.segmentedTabActive : styles.segmentedTab}
-            >
+            <TabsTrigger key={tab.key} value={tab.key}>
               {tab.label}
-            </button>
+            </TabsTrigger>
           ))}
-        </div>
-        <Button variant="ghost" onClick={() => setShowPipeline(!showPipeline)}>
-          {showPipeline ? t('pages:hooks.hidePipeline', 'Hide execution pipeline') : t('pages:hooks.showPipeline', 'Show execution pipeline')}
-        </Button>
+        </TabsList>
+      </Tabs>
+
+      <div className={styles.pipelineCard}>
+        <button
+          type="button"
+          className={styles.pipelineToggle}
+          onClick={() => setShowPipeline(!showPipeline)}
+          aria-expanded={showPipeline}
+        >
+          <span>{showPipeline ? t('pages:hooks.hidePipeline', 'Hide execution pipeline') : t('pages:hooks.showPipeline', 'Show execution pipeline')}</span>
+          <svg
+            className={clsx(styles.pipelineChevron, showPipeline && styles.pipelineChevronOpen)}
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
         {showPipeline && (
           <div className={styles.pipelineWrap}>
             <HookPipelinePanel />
@@ -203,22 +230,45 @@ export function ConfigHooksPage() {
         )}
       </div>
 
-      <ListFilterToolbar
-        searchPlaceholder={t('pages:hooks.searchPlaceholder')}
-        searchValue={search}
-        onSearchChange={onSearchChange}
-        meta={
-          total === 0
-            ? t('pages:hooks.noMatch', 'No hooks match the current filters')
-            : t('pages:hooks.showingMeta', 'Showing {{count}} hook(s) on this page · {{total}} total matching', { count: rows.length, total: total.toLocaleString() })
-        }
-      >
-        <select aria-label={t('pages:hooks.filterByEnabledStatus')} value={enabledFilter} onChange={onEnabledFilterChange} className={styles.filterSelect}>
-          <option value="">{t('pages:hooks.allHooks', 'All hooks')}</option>
-          <option value="enabled">{t('pages:hooks.enabledOnly', 'Enabled only')}</option>
-          <option value="disabled">{t('pages:hooks.disabledOnly', 'Disabled only')}</option>
-        </select>
-      </ListFilterToolbar>
+      <div className={styles.filterToolbar} role="search">
+        <div className={styles.filterRow}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon} aria-hidden="true" />
+            <Input
+              type="text"
+              enterKeyHint="search"
+              autoComplete="off"
+              aria-label={t('pages:hooks.searchPlaceholder')}
+              placeholder={t('pages:hooks.searchPlaceholder')}
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              className={styles.searchInput}
+            />
+            {search.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className={styles.clearSearchButton}
+                aria-label={t('common:clear')}
+                title={t('common:clear')}
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <select aria-label={t('pages:hooks.filterByEnabledStatus')} value={enabledFilter} onChange={onEnabledFilterChange} className={styles.filterSelect}>
+            <option value="">{t('pages:hooks.allHooks', 'All hooks')}</option>
+            <option value="enabled">{t('pages:hooks.enabledOnly', 'Enabled only')}</option>
+            <option value="disabled">{t('pages:hooks.disabledOnly', 'Disabled only')}</option>
+          </select>
+        </div>
+      </div>
+
+      <div className={styles.listMeta}>
+        {total === 0
+          ? t('pages:hooks.noMatch', 'No hooks match the current filters')
+          : t('pages:hooks.showingMeta', 'Showing {{count}} hook(s) on this page · {{total}} total matching', { count: rows.length, total: total.toLocaleString() })}
+      </div>
 
       <Card padding="none">
         <DataTable

@@ -6,7 +6,7 @@ package hooks
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -535,7 +535,7 @@ func TestExtrasRouteVerbsKnownToCatalog(t *testing.T) {
 
 // TestForwardHookTest_AttachesBearer verifies forwardHookTest carries
 // Authorization: Bearer <token> on the CP→ai-gateway /internal/hooks-test
-// call (F-0001).
+// call.
 func TestForwardHookTest_AttachesBearer(t *testing.T) {
 	const tok = "cp-internal-token"
 	var gotAuth string

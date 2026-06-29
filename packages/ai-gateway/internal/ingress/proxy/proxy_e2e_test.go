@@ -9,7 +9,7 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"

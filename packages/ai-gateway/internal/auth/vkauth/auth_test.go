@@ -47,7 +47,7 @@ func TestNewAuthenticator_WithSecret(t *testing.T) {
 	if a == nil {
 		t.Fatal("nil authenticator")
 	}
-	// SEC-W2-01 Layer A: the authenticator stores the HKDF-derived VK-domain
+	// The authenticator stores the HKDF-derived VK-domain
 	// sub-key PER keyring version (current first), not the raw master. A
 	// single-version keyring yields exactly one stored sub-key.
 	wantSub := keyderive.DeriveSubkey([]byte("real-secret"), keyderive.ClassAPIKeyVirtualKey)
@@ -62,7 +62,7 @@ func TestNewAuthenticator_WithSecret(t *testing.T) {
 	}
 }
 
-// TestAuthenticate_TryAllVersions_NoLazy is the SEC-W2-01 Layer A core: a VK
+// TestAuthenticate_TryAllVersions_NoLazy is the try-all-versions core: a VK
 // whose stored hash was sealed under an OLDER keyring version still admits
 // (try-all, current-first). VKs are NOT lazy-migrated (the ai-gw admission path
 // is read-only), so the stored hash is unchanged after admission — the VK is

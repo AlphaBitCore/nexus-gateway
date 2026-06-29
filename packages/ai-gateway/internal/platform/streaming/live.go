@@ -23,11 +23,10 @@ const (
 
 // LiveConfig configures the live streaming compliance pipeline.
 type LiveConfig struct {
-	FirstInspectChars  int  // chars before first checkpoint (default 400)
-	ReinspectStepChars int  // chars between subsequent checkpoints (default 128)
-	MaxBufferSize      int  // max total buffer in bytes (default 8MB)
-	ChannelSize        int  // internal event channel buffer (default 64); mirrors shared/transport/streaming.LiveConfig.ChannelSize (PR #24 / O5)
-	HoldBack           bool // hold assistant deltas until first checkpoint
+	FirstInspectChars  int // chars before first checkpoint (default 400)
+	ReinspectStepChars int // chars between subsequent checkpoints (default 128)
+	MaxBufferSize      int // max total buffer in bytes (default 8MB)
+	ChannelSize        int // internal event channel buffer (default 64); mirrors shared/transport/streaming.LiveConfig.ChannelSize
 
 	// EmitOpenAIDone controls whether the pipeline appends the OpenAI
 	// `data: [DONE]\n\n` terminator after the last upstream event.
@@ -75,12 +74,10 @@ type StreamHookContext struct {
 	ProviderRegion string
 
 	// OnCheckpoint is optional — invoked after each checkpoint with the full
-	// compliance pipeline result (AI Gateway audit path).
+	// compliance pipeline result (AI Gateway audit path). The live path is
+	// audit-only (B1): OnCheckpoint stamps the audit tag but the live pipeline
+	// never blocks or rewrites the wire, so there is no in-stream rewrite hook.
 	OnCheckpoint func(*hookcore.CompliancePipelineResult)
-
-	// OnStreamRewrite is optional — invoked when Modify rewrote the held-back
-	// SSE buffer before the first client-visible flush (written slot count).
-	OnStreamRewrite func(written int)
 }
 
 // StreamHookRunner runs response-stage hooks at streaming checkpoints. A nil
@@ -92,8 +89,8 @@ type StreamHookRunner func(ctx context.Context, input *hookcore.HookInput) *hook
 // Returns nil to skip the chunk.
 type TransformChunk func(data []byte) ([]byte, error)
 
-// PreHookCallback is the type alias for shared/policy/hooks/core.PreHookCallback
-// (#93). Single source of truth across all three ingress services
+// PreHookCallback is the type alias for shared/policy/hooks/core.PreHookCallback.
+// Single source of truth across all three ingress services
 // (agent / compliance-proxy / ai-gateway) for "stamp Normalized before
 // hooks see the input" — when this package is upgraded with new fields
 // or contract refinements, hookcore.PreHookCallback evolves and both
@@ -153,10 +150,10 @@ func (lp *LivePipeline) Process(
 	eventCh := make(chan chunk, lp.config.ChannelSize)
 	var wg sync.WaitGroup
 
-	// #91 — when a PreHook callback is installed, tee upstream into a
+	// When a PreHook callback is installed, tee upstream into a
 	// goroutine-safe accumulator so checkpoint hook input can stamp
 	// Registry-normalized payload. Without this hooks see flat-text
-	// fallback (PayloadFromTextSegments). Mirrors the #90 pattern in
+	// fallback (PayloadFromTextSegments). Mirrors the pattern in
 	// shared/transport/streaming/live.go for cross-service consistency.
 	var rawAcc *sharedstreaming.LockedByteBuffer
 	upstreamForReader := upstream
@@ -172,6 +169,7 @@ func (lp *LivePipeline) Process(
 		defer close(eventCh)
 
 		parser := format.NewParser(upstreamForReader)
+		defer parser.Release()
 		for {
 			if ctx.Err() != nil {
 				return
@@ -212,38 +210,28 @@ func (lp *LivePipeline) Process(
 	// --- Main goroutine: compliance + write ---
 	flusher, canFlush := client.(http.Flusher)
 
-	type pendingEvent struct {
-		eventType string
-		data      string
-	}
 	var (
-		accumulated string // all text so far
-		pendingText string // text since last checkpoint
-		pending     []pendingEvent
+		// accBuf accumulates the canonical text seen so far — the audit-scan
+		// source. strings.Builder amortizes growth (the prior `accumulated +=
+		// delta` reallocated the whole transcript each chunk, O(n²) on the hot
+		// path); .String() is a zero-copy snapshot.
+		accBuf      strings.Builder
 		totalBytes  int
-		released    bool
 		nextInspect = lp.config.FirstInspectChars
 	)
 
-	flushPending := func() {
-		for _, ev := range pending {
-			// best-effort: if the client disconnected the next read will
-			// surface ctx cancellation and tear down the stream.
-			_ = format.WriteTypedEvent(client, ev.eventType, ev.data)
-		}
-		if canFlush {
-			flusher.Flush()
-		}
-		pending = nil
-		pendingText = ""
-		released = true
-	}
-
-	runCheckpoint := func() bool {
+	// runCheckpoint runs ONE audit-only response-stage scan over the content seen
+	// so far. AUDIT-ONLY (B1): the live path carries only non-enforcing traffic — a
+	// block scope routes to buffer and a redact scope to Model A upfront in
+	// stream_shape — so an enforcing decision never reaches here. The checkpoint
+	// fires OnCheckpoint for the audit tag (decision / reason / tags) and the
+	// off-path redacted storage copy, but NEVER blocks or rewrites the already-
+	// delivered wire.
+	runCheckpoint := func() {
 		input := &hookcore.HookInput{
 			RequestID:      hookCtx.RequestID,
 			Stage:          "response",
-			Normalized:     hookcore.PayloadFromTextSegments([]string{accumulated}),
+			Normalized:     hookcore.PayloadFromTextSegments([]string{accBuf.String()}),
 			IngressType:    hookCtx.IngressType,
 			Path:           hookCtx.Path,
 			Method:         hookCtx.Method,
@@ -252,11 +240,9 @@ func (lp *LivePipeline) Process(
 			ProviderRegion: hookCtx.ProviderRegion,
 		}
 
-		// #91 — let caller swap in a Registry-normalized payload so
-		// hooks see structured chat content (model/tool_calls/reasoning)
-		// instead of the flat-text fallback above. Receives the
-		// cumulative raw SSE wire bytes seen so far. Mirrors the same
-		// hook in shared/transport/streaming.LivePipeline at #90.
+		// Let caller swap in a Registry-normalized payload so hooks see structured
+		// chat content (model/tool_calls/reasoning) instead of the flat-text
+		// fallback above. Receives the cumulative raw SSE wire bytes seen so far.
 		if lp.preHook != nil && rawAcc != nil {
 			lp.preHook(rawAcc.Snapshot(), input)
 		}
@@ -264,66 +250,6 @@ func (lp *LivePipeline) Process(
 		res := lp.hookRun(ctx, input)
 		if hookCtx != nil && hookCtx.OnCheckpoint != nil {
 			hookCtx.OnCheckpoint(res)
-		}
-		if res == nil {
-			flushPending()
-			return false
-		}
-
-		switch res.Decision {
-		case hookcore.RejectHard:
-			// best-effort: block-write may fail if the client already gave up;
-			// we cancel ctx below either way.
-			_ = format.WriteError(client, "blocked by compliance policy")
-			if canFlush {
-				flusher.Flush()
-			}
-			cancel()
-			// PR #24 follow-up S1-code: cancel doesn't unblock a slow
-			// upstream.Read; close upstream so the reader goroutine
-			// exits and wg.Wait() can return promptly.
-			sharedstreaming.CloseUpstreamOnExit(upstream)
-			return true // blocked
-
-		case hookcore.BlockSoft:
-			// Flag but continue.
-			flushPending()
-			return false
-
-		case hookcore.Modify:
-			applied := false
-			if len(res.ModifiedContent) > 0 && !released && len(pending) > 0 {
-				repl := joinModifiedAssistantText(res.ModifiedContent)
-				if repl != "" {
-					line, err := format.OpenAIStreamDeltaPayload(repl)
-					if err != nil {
-						lp.logger.Error("stream modify marshal failed", "error", err)
-					} else {
-						// Modify path is OpenAI-shaped (delta envelope), so
-						// emit it as an event-less SSE frame.
-						pending = []pendingEvent{{eventType: "", data: line}}
-						accumulated = repl
-						pendingText = repl
-						applied = true
-						if hookCtx != nil && hookCtx.OnStreamRewrite != nil {
-							hookCtx.OnStreamRewrite(1)
-						}
-					}
-				}
-			}
-			if !applied {
-				lp.logger.Warn("streaming response Modify skipped rewrite",
-					"released", released,
-					"pendingChunks", len(pending),
-					"reason", res.Reason,
-				)
-			}
-			flushPending()
-			return false
-
-		default:
-			flushPending()
-			return false
 		}
 	}
 
@@ -344,7 +270,7 @@ func (lp *LivePipeline) Process(
 				flusher.Flush()
 			}
 			cancel()
-			// PR #24 follow-up S1-code: same wedge as the shared
+			// Same wedge as the shared
 			// LivePipeline — cancel doesn't unblock a slow upstream
 			// blocked inside format.Parser.Next. Best-effort close to
 			// unblock the reader so wg.Wait() can return.
@@ -353,37 +279,31 @@ func (lp *LivePipeline) Process(
 			break
 		}
 
-		accumulated += delta
-		pendingText += delta
-		pending = append(pending, pendingEvent{eventType: ch.eventType, data: ch.data})
+		// AUDIT-ONLY (B1): deliver every chunk in real time — delivery is never
+		// gated on the compliance checkpoint (a block scope routes to buffer and a
+		// redact scope to Model A upfront, so live carries only non-enforcing
+		// traffic). Accumulate the canonical text so the periodic + final
+		// checkpoints scan it for the audit tag and the off-path redacted copy.
+		_ = format.WriteTypedEvent(client, ch.eventType, ch.data)
+		if canFlush {
+			flusher.Flush()
+		}
+		accBuf.WriteString(delta)
 
-		if len(accumulated) >= nextInspect {
-			if runCheckpoint() {
-				blocked = true
-				break
-			}
-			nextInspect = len(accumulated) + lp.config.ReinspectStepChars
-		} else if released || !lp.config.HoldBack {
-			// Already released or no hold-back — write immediately.
-			for _, ev := range pending {
-				// best-effort: same disconnect-tolerance as flushPending above.
-				_ = format.WriteTypedEvent(client, ev.eventType, ev.data)
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-			pending = nil
-			pendingText = ""
+		// Byte-window cadence: an observe-only audit checkpoint roughly every
+		// ReinspectStepChars of new content. It does NOT gate delivery.
+		if accBuf.Len() >= nextInspect {
+			runCheckpoint()
+			nextInspect = accBuf.Len() + lp.config.ReinspectStepChars
 		}
 	}
 
-	// Final checkpoint for any remaining content.
-	if !blocked && len(pendingText) > 0 {
-		if runCheckpoint() {
-			blocked = true
-		}
-	} else if !blocked && len(pending) > 0 {
-		flushPending()
+	// Mandatory final checkpoint — the authoritative audit scan of the FULL
+	// response, always run at EOF (never gated behind a content-length threshold)
+	// so a stream shorter than the first inspect window is still scanned for the
+	// audit tag and the off-path redacted storage copy.
+	if !blocked {
+		runCheckpoint()
 	}
 
 	if !blocked && lp.config.EmitOpenAIDone {
@@ -403,14 +323,4 @@ func (lp *LivePipeline) Process(
 	wg.Wait()
 
 	return blocked
-}
-
-func joinModifiedAssistantText(blocks []hookcore.ContentBlock) string {
-	var b strings.Builder
-	for _, bl := range blocks {
-		if bl.Type == "text" {
-			b.WriteString(bl.Text)
-		}
-	}
-	return b.String()
 }

@@ -189,6 +189,14 @@ func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Reque
 		// table's EndpointType so cost/cache stamp sites downstream
 		// can dispatch the correct cost formula.
 		EndpointType: endpointType,
+		// Default both directions to approve so a path that runs no hook
+		// (bypass, no-hooks-configured, hooks that don't reach the dispatch)
+		// persists its captured body as-is. A matching redact/block hook
+		// upgrades the action at dispatch time; the writer's StorageRawBody
+		// drops the raw copy only under a redact/block action, so the empty
+		// zero value must never reach it (it would drop the body).
+		RequestAction:  hookcore.ActionApprove,
+		ResponseAction: hookcore.ActionApprove,
 	}
 
 	return &proxyState{

@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import {
-  Badge, statusToVariant, FormField, Input, Switch, Button, Stack, Card,
+  Badge, statusToVariant, FormField, Input, Switch, Button, Card,
 } from '@/components/ui';
 import { OrgTreeSelect } from '@/components/ui/OrgTreeSelect';
 import { formatDateTime } from '@/lib/format';
@@ -19,6 +19,7 @@ type Props = Pick<
   | 'user'
   | 'isEditing'
   | 'setIsEditing'
+  | 'startEditing'
   | 'editDisplayName'
   | 'setEditDisplayName'
   | 'editEmail'
@@ -37,6 +38,7 @@ export function UserInfoTab({
   user,
   isEditing,
   setIsEditing,
+  startEditing,
   editDisplayName,
   setEditDisplayName,
   editEmail,
@@ -57,9 +59,10 @@ export function UserInfoTab({
   const isIdPManaged = user.source === 'oidc' || user.source === 'saml' || user.source === 'scim';
 
   return (
-    <Card>
-      {isEditing ? (
-        <Stack gap="md">
+    <>
+      <Card>
+        {isEditing ? (
+          <div className={styles.userInfoFormGrid}>
           <FormField
             label={t('pages:iam.displayName')}
             helpText={isIdPManaged ? t('pages:iam.managedByIdP') : undefined}
@@ -90,6 +93,8 @@ export function UserInfoTab({
             <OrgTreeSelect
               mode="single"
               allowClear={false}
+              inlineSearch
+              className={styles.userInfoOrgSelect}
               value={editOrgId}
               onChange={(v) => setEditOrgId(v as string)}
               placeholder={t('pages:iam.selectOrg')}
@@ -102,17 +107,9 @@ export function UserInfoTab({
           <FormField label={t('pages:iam.canAccessControlPlane')}>
             <Switch checked={editCanAccessCP} onCheckedChange={setEditCanAccessCP} />
           </FormField>
-          <Stack direction="horizontal" gap="sm" justify="end">
-            <Button variant="secondary" onClick={() => setIsEditing(false)}>
-              {t('common:cancel')}
-            </Button>
-            <Button onClick={handleSave} disabled={saveLoading}>
-              {saveLoading ? t('pages:iam.saving') : t('common:save')}
-            </Button>
-          </Stack>
-        </Stack>
-      ) : (
-        <div className={styles.kvGrid}>
+        </div>
+        ) : (
+          <div className={`${styles.kvGrid} ${styles.userInfoGrid}`}>
           <div>
             <div className={styles.kvLabel}>{t('pages:iam.displayName')}</div>
             <div className={styles.kvValue}>{user.displayName}</div>
@@ -165,7 +162,24 @@ export function UserInfoTab({
             </div>
           )}
         </div>
-      )}
-    </Card>
+        )}
+      </Card>
+      <div className={styles.userInfoActions}>
+        {isEditing ? (
+          <>
+            <Button onClick={handleSave} disabled={saveLoading}>
+              {saveLoading ? t('pages:iam.saving') : t('common:save')}
+            </Button>
+            <Button variant="secondary" onClick={() => setIsEditing(false)}>
+              {t('common:cancel')}
+            </Button>
+          </>
+        ) : (
+          <Button onClick={startEditing}>
+            {t('common:edit')}
+          </Button>
+        )}
+      </div>
+    </>
   );
 }

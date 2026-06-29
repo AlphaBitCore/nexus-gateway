@@ -2,13 +2,15 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
+	"github.com/goccy/go-json"
 	"sync"
 	"testing"
 	"time"
 
 	"log/slog"
 
+	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
@@ -136,10 +138,7 @@ func TestRecordToMessage_AllFields(t *testing.T) {
 		t.Errorf("CacheStatus = %q, want %q", msg.CacheStatus, CacheStatusMiss)
 	}
 
-	identity := msg.Identity
-	if identity == nil {
-		t.Fatal("Identity is nil")
-	}
+	identity := jsonbMap(t, msg.Identity)
 	if user, ok := identity["user"].(map[string]any); ok {
 		if user["id"] != "user-1" {
 			t.Errorf("Identity.user.id = %v, want %q", user["id"], "user-1")
@@ -200,10 +199,7 @@ func TestRecordToMessage_ApplicationVKDispatchesToProject(t *testing.T) {
 		t.Errorf("EntityName = %q, want %q", msg.EntityName, "Research")
 	}
 
-	identity := msg.Identity
-	if identity == nil {
-		t.Fatal("Identity is nil")
-	}
+	identity := jsonbMap(t, msg.Identity)
 	if _, hasUser := identity["user"]; hasUser {
 		t.Error("identity.user must be absent for application VK")
 	}
@@ -249,7 +245,7 @@ func TestRecordToMessage_PersonalVKPopulatesUserNotProject(t *testing.T) {
 	if msg.EntityID != "nexus-user-david" {
 		t.Errorf("EntityID = %q, want NexusUser.id", msg.EntityID)
 	}
-	identity := msg.Identity
+	identity := jsonbMap(t, msg.Identity)
 	if _, hasUser := identity["user"]; !hasUser {
 		t.Error("identity.user missing for personal VK")
 	}
@@ -273,10 +269,11 @@ func TestRecordToMessage_StampsPendingWhenNoUser(t *testing.T) {
 	if msg.Identity == nil {
 		t.Fatal("Identity is nil; producer must stamp {status:pending}")
 	}
-	if msg.Identity["status"] != "pending" {
-		t.Errorf("Identity.status = %v, want \"pending\" when no user context", msg.Identity["status"])
+	identity := jsonbMap(t, msg.Identity)
+	if identity["status"] != "pending" {
+		t.Errorf("Identity.status = %v, want \"pending\" when no user context", identity["status"])
 	}
-	if _, hasUser := msg.Identity["user"]; hasUser {
+	if _, hasUser := identity["user"]; hasUser {
 		t.Error("Identity.user should not be populated when UserID is empty")
 	}
 }
@@ -346,7 +343,7 @@ func TestRecordToMessage_HookRewriteFields(t *testing.T) {
 	// Not rewritten → keys must be absent so consumers can distinguish
 	// "no rewrite" from "rewrote zero slots".
 	msg := w.recordToMessage(&Record{RequestID: "r1", Timestamp: time.Now()})
-	details, _ := msg.Details.(map[string]any)
+	details := jsonbMap(t, msg.Details)
 	if _, ok := details["hookRewritten"]; ok {
 		t.Errorf("hookRewritten should be absent when not rewritten, got %v", details["hookRewritten"])
 	}
@@ -356,11 +353,11 @@ func TestRecordToMessage_HookRewriteFields(t *testing.T) {
 
 	// Rewritten → both keys present with expected values.
 	msg = w.recordToMessage(&Record{RequestID: "r2", Timestamp: time.Now(), HookRewritten: true, HookRewriteCount: 3})
-	details, _ = msg.Details.(map[string]any)
+	details = jsonbMap(t, msg.Details)
 	if got, ok := details["hookRewritten"].(bool); !ok || !got {
 		t.Errorf("hookRewritten = %v, want true", details["hookRewritten"])
 	}
-	if got, ok := details["hookRewriteCount"].(int); !ok || got != 3 {
+	if got, ok := details["hookRewriteCount"].(float64); !ok || got != 3 {
 		t.Errorf("hookRewriteCount = %v, want 3", details["hookRewriteCount"])
 	}
 }
@@ -369,7 +366,7 @@ func TestRecordToMessage_ResponseHookRewriteFields(t *testing.T) {
 	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
 
 	msg := w.recordToMessage(&Record{RequestID: "r1", Timestamp: time.Now()})
-	details, _ := msg.Details.(map[string]any)
+	details := jsonbMap(t, msg.Details)
 	if _, ok := details["responseHookRewritten"]; ok {
 		t.Errorf("responseHookRewritten should be absent when not rewritten")
 	}
@@ -380,11 +377,11 @@ func TestRecordToMessage_ResponseHookRewriteFields(t *testing.T) {
 		ResponseHookRewritten:    true,
 		ResponseHookRewriteCount: 2,
 	})
-	details, _ = msg.Details.(map[string]any)
+	details = jsonbMap(t, msg.Details)
 	if got, ok := details["responseHookRewritten"].(bool); !ok || !got {
 		t.Errorf("responseHookRewritten = %v, want true", details["responseHookRewritten"])
 	}
-	if got, ok := details["responseHookRewriteCount"].(int); !ok || got != 2 {
+	if got, ok := details["responseHookRewriteCount"].(float64); !ok || got != 2 {
 		t.Errorf("responseHookRewriteCount = %v, want 2", details["responseHookRewriteCount"])
 	}
 }
@@ -456,7 +453,7 @@ func marshalForConsumer(t *testing.T, msg *mq.TrafficEventMessage) consumerView 
 	return cv
 }
 
-// F-0057: a response-stage block must populate the TYPED response columns
+// A response-stage block must populate the TYPED response columns
 // (response_hook_reason / response_hook_reason_code / response_blocking_rule)
 // and must NOT pollute the request-stage blocking-rule column.
 func TestRecordToMessage_ResponseStageBlock(t *testing.T) {
@@ -512,7 +509,7 @@ func TestRecordToMessage_ResponseStageBlock(t *testing.T) {
 	}
 }
 
-// F-0057: a request-stage block routes to the request columns only; the
+// A request-stage block routes to the request columns only; the
 // response-stage typed columns stay empty.
 func TestRecordToMessage_RequestStageBlock(t *testing.T) {
 	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
@@ -563,7 +560,7 @@ func TestRecordToMessage_RequestStageBlock(t *testing.T) {
 	}
 }
 
-// F-0057: a BLOCK_SOFT response decision (decision="blocked"-equivalent soft
+// A BLOCK_SOFT response decision (decision="blocked"-equivalent soft
 // reject) also carries its rule attribution to the response column, not only
 // to details.
 func TestRecordToMessage_ResponseSoftBlockRoutesToResponseColumn(t *testing.T) {
@@ -619,13 +616,8 @@ func TestIsBlockingDecision(t *testing.T) {
 func TestFlushToMQ(t *testing.T) {
 	prod := &memProducer{}
 	logger := slog.Default()
-	w := &Writer{
-		producer: prod,
-		queue:    "nexus.event.ai-traffic",
-		logger:   logger,
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-	}
+	w := NewWriter(prod, "nexus.event.ai-traffic", nil, logger).Start()
+	defer w.Close()
 
 	for i := range 3 {
 		w.Enqueue(&Record{
@@ -636,14 +628,13 @@ func TestFlushToMQ(t *testing.T) {
 		})
 	}
 
-	w.flush()
-
-	msgs := prod.msgs()
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	// The consumer workers drain recCh and publish each record on their pool
+	// connection (memProducer is a non-batch producer → per-record publishRecord).
+	if got := waitForMsgCount(prod, 3, 2*time.Second); got != 3 {
+		t.Fatalf("expected 3 messages, got %d", got)
 	}
 
-	for _, m := range msgs {
+	for _, m := range prod.msgs() {
 		if m.queue != "nexus.event.ai-traffic" {
 			t.Errorf("queue = %q, want %q", m.queue, "nexus.event.ai-traffic")
 		}
@@ -657,134 +648,109 @@ func TestFlushToMQ(t *testing.T) {
 	}
 }
 
-func TestFlushMQFailure_RetryBuffer(t *testing.T) {
-	prod := &memProducer{failNext: true}
+func TestFlushMQFailure_RetryReQueue(t *testing.T) {
+	prod := &memProducer{failNext: true} // first publish fails, then recovers
 	logger := slog.Default()
-	w := &Writer{
-		producer: prod,
-		queue:    "nexus.event.ai-traffic",
-		logger:   logger,
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-	}
+	w := NewWriter(prod, "nexus.event.ai-traffic", nil, logger).Start()
+	defer w.Close()
 
 	w.Enqueue(&Record{RequestID: "fail-me", Timestamp: time.Now()})
 
-	w.flush()
-
-	// The failed record should be re-enqueued to buf for retry.
-	w.mu.Lock()
-	buffered := len(w.buf)
-	w.mu.Unlock()
-	if buffered != 1 {
-		t.Errorf("expected 1 record re-buffered, got %d", buffered)
-	}
-
-	// Second flush should succeed.
-	w.flush()
-	msgs := prod.msgs()
-	if len(msgs) != 1 {
-		t.Errorf("expected 1 message after retry, got %d", len(msgs))
+	// The first publish fails → the record is re-queued onto recCh (never lost) and a
+	// consumer worker retries it; the second publish succeeds, so the record lands.
+	if got := waitForMsgCount(prod, 1, 2*time.Second); got != 1 {
+		t.Errorf("expected 1 message after transient-failure retry, got %d", got)
 	}
 }
 
 func TestNoOpMode(t *testing.T) {
 	logger := slog.Default()
-	w := &Writer{
-		producer: nil,
-		queue:    "nexus.event.ai-traffic",
-		logger:   logger,
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-	}
+	// Nil producer → records are enqueued, drained by the consumer, and discarded
+	// at publish (publishBatchOn returns early on a nil producer). Must not panic.
+	w := NewWriter(nil, "nexus.event.ai-traffic", nil, logger).Start()
+	defer w.Close()
 
 	w.Enqueue(&Record{RequestID: "noop-1", Timestamp: time.Now()})
-	w.flush()
-	// Should not panic.
 }
 
-// TestDrainBuffer_RecoversFromTransientFailure pins the graceful-shutdown
-// contract: when MQ blips during the final drain, the retry loop must
-// keep trying until the buffer empties so no record is silently dropped
-// on a normal SIGTERM.
-func TestDrainBuffer_RecoversFromTransientFailure(t *testing.T) {
-	prod := &memProducer{failCount: 2}
-	w := &Writer{
-		producer: prod,
-		queue:    "nexus.event.ai-traffic",
-		logger:   slog.Default(),
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-		metrics:  newAuditMetrics(nil),
-	}
+// TestCloseDrain_RecoversFromTransientFailure pins the graceful-shutdown
+// contract: when MQ blips during the final drain, the consumer's re-queue retry
+// must keep trying until the queue empties so no record is silently dropped on a
+// normal SIGTERM.
+func TestCloseDrain_RecoversFromTransientFailure(t *testing.T) {
+	prod := &memProducer{failCount: 2} // first 2 publishes fail, then recover
+	w := NewWriter(prod, "nexus.event.ai-traffic", nil, slog.Default()).Start()
 
 	w.Enqueue(&Record{RequestID: "rec-1", Timestamp: time.Now()})
 
-	w.drainBuffer(time.Now().Add(2*time.Second), 10*time.Millisecond)
-
-	if got := len(prod.msgs()); got != 1 {
-		t.Errorf("after drain: published msgs want 1, got %d", got)
+	// A publish failure re-queues the record onto recCh; the live consumer worker
+	// keeps re-pulling and retrying until the transient outage clears, so the record
+	// eventually lands — no record lost to a transient blip.
+	if got := waitForMsgCount(prod, 1, 2*time.Second); got != 1 {
+		t.Errorf("transient-failure retry should publish the record; got %d", got)
 	}
-	w.mu.Lock()
-	remaining := len(w.buf)
-	w.mu.Unlock()
-	if remaining != 0 {
-		t.Errorf("after drain: buf len want 0, got %d", remaining)
-	}
+	w.Close()
 }
 
-// TestDrainBuffer_DropsAtDeadline pins that a sustained MQ outage does
-// not block shutdown forever and that records still pending at the
-// deadline surface on the dropped metric so monitoring catches them.
-func TestDrainBuffer_DropsAtDeadline(t *testing.T) {
+// TestPublishFailure_OverflowSpillsNotLost pins the sustained-outage no-loss
+// contract under the producer/multi-consumer model: when a publish fails and the
+// bounded queue cannot absorb the re-queued record (full), the record is spilled
+// durably to the NDJSON sink rather than retried forever or silently dropped. With a
+// durable spill wired, alwaysFail traffic surfaces on disk, never on the (failing)
+// producer.
+func TestPublishFailure_OverflowSpillsNotLost(t *testing.T) {
+	dir := t.TempDir()
+	spill, err := sharedndjson.New(dir, "test", 64, 512, nil)
+	if err != nil {
+		t.Fatalf("ndjson.New: %v", err)
+	}
 	prod := &memProducer{alwaysFail: true}
-	w := &Writer{
-		producer: prod,
-		queue:    "nexus.event.ai-traffic",
-		logger:   slog.Default(),
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-		metrics:  newAuditMetrics(nil),
-	}
+	w := NewWriter(prod, "nexus.event.ai-traffic", nil, slog.Default()).WithNDJSONSpill(spill)
+	// A full bounded queue forces handlePublishFailure's non-blocking re-queue to
+	// fail, routing the un-publishable record to the durable spill (the bounded
+	// no-loss fallback for a wedged pipeline).
+	w.recCh = make(chan *Record, 1)
+	w.recCh <- &Record{RequestID: "fill"} // saturate (cap 1)
 
-	for i := range 3 {
-		w.Enqueue(&Record{RequestID: "rec-stuck", Timestamp: time.Now().Add(time.Duration(i))})
+	const n = 3
+	batch := make([]*Record, n)
+	for i := range batch {
+		batch[i] = &Record{RequestID: fmt.Sprintf("rec-stuck-%d", i), Timestamp: time.Now().Add(time.Duration(i))}
 	}
+	w.publishBatchOn(0, batch) // every publish fails → re-queue full → durable spill
 
-	start := time.Now()
-	w.drainBuffer(time.Now().Add(50*time.Millisecond), 5*time.Millisecond)
-	elapsed := time.Since(start)
-
-	// The drain must not exceed the deadline by more than a generous
-	// slack window — the loop sleeps `backoff` between attempts and
-	// each flush call itself takes some time, but the wall clock must
-	// stay bounded.
-	if elapsed > 2*time.Second {
-		t.Errorf("drainBuffer exceeded deadline by too much: elapsed %s", elapsed)
-	}
 	if got := len(prod.msgs()); got != 0 {
 		t.Errorf("alwaysFail producer must not record messages; got %d", got)
+	}
+	// The stuck records landed durably on the spill sink — no silent loss, no
+	// infinite retry.
+	if got := len(readSpool(t, dir, "test")); got != n {
+		t.Errorf("sustained-outage records must spill durably; spooled %d, want %d", got, n)
 	}
 }
 
 func TestBufferOverflow(t *testing.T) {
 	logger := slog.Default()
-	w := &Writer{
-		producer: nil,
-		queue:    "nexus.event.ai-traffic",
-		logger:   logger,
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
+	w := NewWriter(nil, "nexus.event.ai-traffic", nil, logger).WithLossMode(lossModeDrop)
+	if w.lossMode != lossModeDrop {
+		t.Fatalf("lossMode = %q, want drop", w.lossMode)
+	}
+	// Claim startOnce so Enqueue's lazy ensureStarted() does not spin up consumers
+	// that would drain the queue, then saturate the bounded queue to its cap.
+	w.startOnce.Do(func() {})
+	const cap = 8
+	w.recCh = make(chan *Record, cap)
+	for range cap {
+		w.recCh <- &Record{RequestID: "fill", Timestamp: time.Now()}
 	}
 
-	for range maxQueueSize + 10 {
+	// In drop mode, every Enqueue past the cap is a counted bounded drop — the queue
+	// never grows past its capacity.
+	for range cap + 10 {
 		w.Enqueue(&Record{RequestID: "overflow", Timestamp: time.Now()})
 	}
 
-	w.mu.Lock()
-	count := len(w.buf)
-	w.mu.Unlock()
-	if count > maxQueueSize {
-		t.Errorf("buffer size %d exceeds max %d", count, maxQueueSize)
+	if count := len(w.recCh); count > cap {
+		t.Errorf("queue size %d exceeds cap %d", count, cap)
 	}
 }

@@ -267,7 +267,7 @@ func TestGenerateDeviceToken(t *testing.T) {
 
 func TestDeviceTokenExpiry(t *testing.T) {
 	// The expiry must be exactly now + DeviceTokenTTL — the bounded lifetime
-	// that closes F-0202's "device token never expires" gap.
+	// that closes the "device token never expires" gap.
 	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
 	got := DeviceTokenExpiry(now)
 	if want := now.Add(DeviceTokenTTL); !got.Equal(want) {

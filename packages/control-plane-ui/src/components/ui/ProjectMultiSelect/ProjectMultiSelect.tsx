@@ -11,6 +11,7 @@ export interface ProjectMultiSelectProps {
   onChange: (next: string[]) => void;
   emptyLabel?: string;
   disabled?: boolean;
+  className?: string;
 }
 
 /**
@@ -24,6 +25,7 @@ export function ProjectMultiSelect({
   onChange,
   emptyLabel,
   disabled,
+  className,
 }: ProjectMultiSelectProps) {
   const { t } = useTranslation();
 
@@ -61,6 +63,7 @@ export function ProjectMultiSelect({
       emptyLabel={loading ? t('common:loading') : (emptyLabel ?? t('common:selectProjects'))}
       searchable
       searchPlaceholder={t('common:searchProjects')}
+      className={className}
     />
   );
 }

@@ -3,7 +3,7 @@
 package event
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"time"
 
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
@@ -46,6 +46,14 @@ type Event struct {
 	ModelName         string `json:"modelName,omitempty"`
 	ApiKeyClass       string `json:"apiKeyClass,omitempty"`
 	ApiKeyFingerprint string `json:"apiKeyFingerprint,omitempty"`
+
+	// IngressFormat is the domain-matched adapter id (interception_domain.
+	// adapter_id, e.g. "openai" / "anthropic") the captured body is in.
+	// Stored as TEXT in the SQLite queue, uploaded to Hub, and used by the
+	// detail drawer's view-time recompute as the authoritative normalize
+	// adapter. Empty when no domain adapter matched → recompute falls back to
+	// path + content sniff.
+	IngressFormat string `json:"ingressFormat,omitempty"`
 
 	// Response-side usage populated by the agent's MITM relay after the
 	// adapter's DetectResponseUsage (non-streaming) or UsageAccumulator (SSE).
@@ -117,7 +125,7 @@ type Event struct {
 	// RequestRedactionSpans / ResponseRedactionSpans — redaction spans
 	// relocated to their offsets inside the (storage-redacted) normalized
 	// payloads above. Stamped by the shared audit emitter when a hook's
-	// storageAction=redact governed the copies; nil for unredacted rows.
+	// action=redact governed the copies; nil for unredacted rows.
 	// Stored as TEXT alongside the normalized columns and uploaded to Hub
 	// so traffic_event_normalized.*_redaction_spans populate for agent rows.
 	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`

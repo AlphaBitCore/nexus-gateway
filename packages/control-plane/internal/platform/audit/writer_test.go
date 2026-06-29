@@ -3,8 +3,8 @@ package audit
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +45,7 @@ func (p *memProducer) msgs() []memMsg {
 	return cp
 }
 
-// TestLog_PropagatesViaToMQ pins the middle link of the E90 I5 chain: a Via set on
+// TestLog_PropagatesViaToMQ pins the middle link of the via propagation chain: a Via set on
 // the Entry (by EntryFor from the in-process initiator context value) must ride on the published
 // AdminAuditMessage so the Hub consumer can fold it into the hash chain. A human
 // Entry (empty Via) must serialise with via omitted (omitempty) so the wire — and
@@ -283,7 +283,7 @@ func TestLog_FailureWithoutLoggerOrObserver(t *testing.T) {
 	}
 }
 
-// TestLogCritical_SurfacesEnqueueFailure is the F-0069 fail-closed
+// TestLogCritical_SurfacesEnqueueFailure is the fail-closed
 // regression: for a security-relevant mutation, an MQ enqueue failure must
 // be RETURNED to the caller (so the handler can answer 500) — not swallowed
 // like LogObserved. The failure must still be counted via the observer (the

@@ -6,16 +6,92 @@
 //
 // SKELETON. See wfp_windows.go header for build-tag context. The
 // integration tests that drive the actual driver live under the
-// `wfpintegration` tag and run only on hosts with the driver loaded
-// (E59-S6 territory).
+// `wfpintegration` tag and run only on hosts with the driver loaded.
 
 package windows
 
 import (
+	"encoding/binary"
 	"net/netip"
 	"testing"
 	"time"
 )
+
+// encodeAuditEntry builds one 60-byte NexusFlowAuditEntry exactly as the
+// kernel driver packs it (Common.h, #pragma pack(1)). Used to lock the Go
+// parser's stride + field offsets against the C struct.
+func encodeAuditEntry(ts uint64, pid, ppid uint32, family, proto, decision uint8,
+	src netip.AddrPort, dst netip.AddrPort) []byte {
+	b := make([]byte, flowAuditEntrySize)
+	binary.LittleEndian.PutUint64(b[0:], ts)
+	binary.LittleEndian.PutUint32(b[8:], pid)
+	binary.LittleEndian.PutUint32(b[12:], ppid)
+	b[16] = family
+	b[17] = proto
+	b[18] = decision
+	// b[19] reserved
+	copyAddr(b[20:36], src.Addr())
+	binary.LittleEndian.PutUint16(b[36:], src.Port())
+	copyAddr(b[40:56], dst.Addr())
+	binary.LittleEndian.PutUint16(b[56:], dst.Port())
+	return b
+}
+
+// copyAddr writes an IP into a 16-byte field the way the kernel does:
+// IPv4 in the first 4 bytes (rest zero), IPv6 across all 16.
+func copyAddr(dst []byte, a netip.Addr) {
+	if a.Is4() {
+		v := a.As4()
+		copy(dst, v[:])
+		return
+	}
+	v := a.As16()
+	copy(dst, v[:])
+}
+
+func TestParseFlowAuditEntries(t *testing.T) {
+	if flowAuditEntrySize != 60 {
+		t.Fatalf("flowAuditEntrySize = %d, must be 60 to match the kernel "+
+			"NexusFlowAuditEntry (Common.h #pragma pack(1))", flowAuditEntrySize)
+	}
+
+	r0src := netip.MustParseAddrPort("10.0.0.1:11111")
+	r0dst := netip.MustParseAddrPort("93.184.216.34:443")
+	r1src := netip.MustParseAddrPort("192.168.1.5:22222")
+	r1dst := netip.MustParseAddrPort("1.2.3.4:8080")
+
+	buf := append(
+		encodeAuditEntry(0x1122334455667788, 1000, 2000, afInet, protoTCP,
+			uint8(DecisionRedirect), r0src, r0dst),
+		encodeAuditEntry(0x99AABBCCDDEEFF00, 3000, 4000, afInet, protoUDP,
+			uint8(DecisionPermit), r1src, r1dst)...,
+	)
+
+	got := parseFlowAuditEntries(buf)
+	if len(got) != 2 {
+		t.Fatalf("parsed %d records, want 2 (a wrong stride drops the second)", len(got))
+	}
+
+	// Record 0.
+	if got[0].TimestampUs != 0x1122334455667788 || got[0].ProcessID != 1000 ||
+		got[0].ParentPID != 2000 || got[0].Protocol != protoTCP ||
+		got[0].Decision != DecisionRedirect ||
+		got[0].SrcAddr != r0src || got[0].OrigDstAddr != r0dst {
+		t.Errorf("record0 mismatch: %+v", got[0])
+	}
+	// Record 1 — only parses correctly if the stride is exactly 60.
+	if got[1].TimestampUs != 0x99AABBCCDDEEFF00 || got[1].ProcessID != 3000 ||
+		got[1].ParentPID != 4000 || got[1].Protocol != protoUDP ||
+		got[1].Decision != DecisionPermit ||
+		got[1].SrcAddr != r1src || got[1].OrigDstAddr != r1dst {
+		t.Errorf("record1 mismatch (stride bug?): %+v", got[1])
+	}
+
+	// A trailing partial record (fewer than 60 bytes) must be ignored.
+	if n := len(parseFlowAuditEntries(buf[:len(buf)-1])); n != 1 {
+		t.Errorf("partial-tail buffer parsed %d records, want 1", n)
+	}
+}
 
 func TestPolicyRoundTrip(t *testing.T) {
 	p := Policy{
@@ -27,6 +103,7 @@ func TestPolicyRoundTrip(t *testing.T) {
 			netip.MustParsePrefix("192.168.1.0/24"),
 			netip.MustParsePrefix("fe80::/10"),
 		},
+		QUICFallbackImages: []string{"chrome.exe", "msedge.exe"},
 	}
 	buf, err := MarshalPolicy(p)
 	if err != nil {
@@ -58,6 +135,14 @@ func TestPolicyRoundTrip(t *testing.T) {
 			t.Errorf("CIDR[%d]: got %v want %v", i, got.BypassCIDRs[i], p.BypassCIDRs[i])
 		}
 	}
+	if len(got.QUICFallbackImages) != len(p.QUICFallbackImages) {
+		t.Fatalf("QUIC image count: got %d want %d", len(got.QUICFallbackImages), len(p.QUICFallbackImages))
+	}
+	for i := range p.QUICFallbackImages {
+		if got.QUICFallbackImages[i] != p.QUICFallbackImages[i] {
+			t.Errorf("QUICFallbackImages[%d]: got %q want %q", i, got.QUICFallbackImages[i], p.QUICFallbackImages[i])
+		}
+	}
 }
 
 func TestPolicyTooMany(t *testing.T) {
@@ -73,6 +158,39 @@ func TestPolicyTooMany(t *testing.T) {
 	_, err = MarshalPolicy(Policy{BypassCIDRs: cidrs})
 	if err == nil {
 		t.Fatal("expected error for too-many CIDRs")
+	}
+	images := make([]string, maxQuicFallbackCount+1)
+	for i := range images {
+		images[i] = "chrome.exe"
+	}
+	_, err = MarshalPolicy(Policy{QUICFallbackImages: images})
+	if err == nil {
+		t.Fatal("expected error for too-many QUIC-fallback images")
+	}
+}
+
+// TestMarshalPolicyQuicImageNormalization verifies that a mixed-case full
+// path is serialised as the lowercase basename — the form the kernel's
+// ALE_APP_ID basename match expects — and that the v2 header lays the
+// quicFallbackCount at the right offset.
+func TestMarshalPolicyQuicImageNormalization(t *testing.T) {
+	p := Policy{QUICFallbackImages: []string{`C:\Program Files\Google\Chrome\Application\CHROME.EXE`}}
+	buf, err := MarshalPolicy(p)
+	if err != nil {
+		t.Fatalf("MarshalPolicy: %v", err)
+	}
+	if v := binary.LittleEndian.Uint32(buf[0:]); v != protocolVersion {
+		t.Errorf("protocol version on wire: got %d want %d", v, protocolVersion)
+	}
+	if c := binary.LittleEndian.Uint32(buf[20:]); c != 1 {
+		t.Fatalf("quicFallbackCount at offset 20: got %d want 1", c)
+	}
+	got, err := UnmarshalPolicy(buf)
+	if err != nil {
+		t.Fatalf("UnmarshalPolicy: %v", err)
+	}
+	if len(got.QUICFallbackImages) != 1 || got.QUICFallbackImages[0] != "chrome.exe" {
+		t.Errorf("normalized image: got %q want [chrome.exe]", got.QUICFallbackImages)
 	}
 }
 

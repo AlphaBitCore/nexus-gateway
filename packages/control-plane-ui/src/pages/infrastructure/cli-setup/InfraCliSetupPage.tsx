@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PageHeader, Stack, Card, Button } from '@/components/ui';
+import { PageHeader, Stack, Card, Button, Tabs, TabsList, TabsTrigger } from '@/components/ui';
 import { useApi } from '@/hooks/useApi';
 import { serviceUrlsApi, type ServicePublicURLs } from '@/api/services';
 import styles from './InfraCliSetupPage.module.css';
@@ -84,21 +84,18 @@ export default function InfraCliSetupPage() {
       />
 
       {/* ─── Install card — platform-scoped download → install → quickstart ─── */}
+      <Tabs value={platform} onValueChange={(value) => setPlatform(value as Platform)} className={styles.platformTabs}>
+        <TabsList className={styles.platformTabsList}>
+          {PLATFORMS.map((p) => (
+            <TabsTrigger key={p} value={p}>
+              {t(PLATFORM_LABEL_KEYS[p])}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
       <Card>
         <Stack gap="md">
-          <div className={styles.platformRow}>
-            {PLATFORMS.map((p) => (
-              <Button
-                key={p}
-                variant={platform === p ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setPlatform(p)}
-              >
-                {t(PLATFORM_LABEL_KEYS[p])}
-              </Button>
-            ))}
-          </div>
-
           {/* 1. Download */}
           <section>
             <h3 className={styles.sectionHeading}>{t('infrastructure.cliSetup.downloadTitle')}</h3>

@@ -6,11 +6,12 @@ package traffic
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,8 @@ import (
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	metricspkg "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
+	sharednormalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -100,6 +103,7 @@ func newHandlerWithMock(t *testing.T) (*Handler, pgxmock.PgxPoolIface) {
 		compliance: compliancestore.New(mock, ms),
 		audit:      noopAuditWriter(),
 		logger:     silentLogger(),
+		normalize:  normcore.BuildAuditFn(sharednormalize.BuildRegistry(), nil),
 	}
 	return h, mock
 }
@@ -125,6 +129,7 @@ type testSpillStore struct {
 	data        []byte
 	contentType string
 	getErr      error
+	readErr     error // when set, Get returns a reader that fails mid-read
 }
 
 func (s *testSpillStore) Backend() string { return "test" }
@@ -135,8 +140,17 @@ func (s *testSpillStore) Get(_ context.Context, ref sharedaudit.SpillRef) (io.Re
 	if s.getErr != nil {
 		return nil, s.getErr
 	}
+	if s.readErr != nil {
+		return io.NopCloser(errReader{err: s.readErr}), nil
+	}
 	return io.NopCloser(strings.NewReader(string(s.data))), nil
 }
+
+// errReader fails on the first Read — exercises the io.ReadAll error path in
+// rawSpillBody (a spill object that resolves but whose stream is truncated).
+type errReader struct{ err error }
+
+func (r errReader) Read(_ []byte) (int, error)                                   { return 0, r.err }
 func (s *testSpillStore) Delete(_ context.Context, _ sharedaudit.SpillRef) error { return nil }
 func (s *testSpillStore) Sweep(_ context.Context, _ time.Time) (int, error)      { return 0, nil }
 func (s *testSpillStore) Stat(_ context.Context) (spillstore.Stats, error) {
@@ -893,70 +907,86 @@ func TestComplianceTrinity_WithTimeRange_DBError(t *testing.T) {
 	}
 }
 
-// traffic.go — decodeBodyEnvelope + resolveSpillBody + isJSONContentType
+// traffic.go — renderBody + resolveSpillBody + isJSONContentType
+//
+// renderBody decodes a stored inline body column (raw BYTEA) per
+// its inline_*_encoding, then renders a UI value: valid JSON passes through,
+// anything else is wrapped as a JSON string.
 
-func TestDecodeBodyEnvelope_Empty(t *testing.T) {
-	if got := decodeBodyEnvelope(nil); got != nil {
+func TestRenderBody_Empty(t *testing.T) {
+	if got := renderBody(nil, ""); got != nil {
 		t.Errorf("expected nil for empty input, got %v", got)
 	}
-	if got := decodeBodyEnvelope(json.RawMessage{}); got != nil {
+	if got := renderBody(json.RawMessage{}, "text"); got != nil {
 		t.Errorf("expected nil for empty slice, got %v", got)
 	}
 }
 
-func TestDecodeBodyEnvelope_OldFormat_PassThrough(t *testing.T) {
+func TestRenderBody_TextJSON_PassThrough(t *testing.T) {
+	// A "text"-encoded body that is valid JSON renders as JSON (the common case:
+	// a captured chat request body).
 	raw := json.RawMessage(`{"model":"gpt-4","messages":[]}`)
-	got := decodeBodyEnvelope(raw)
+	got := renderBody(raw, "text")
 	if string(got) != string(raw) {
-		t.Errorf("expected passthrough, got %s", got)
+		t.Errorf("expected JSON passthrough, got %s", got)
 	}
 }
 
-func TestDecodeBodyEnvelope_InvalidJSON_PassThrough(t *testing.T) {
-	raw := json.RawMessage(`not-json`)
-	got := decodeBodyEnvelope(raw)
-	if string(got) != string(raw) {
-		t.Errorf("expected passthrough for invalid JSON, got %s", got)
-	}
-}
-
-func TestDecodeBodyEnvelope_AbsentKind_ReturnsNil(t *testing.T) {
-	body := sharedaudit.EmptyBody()
-	raw, _ := json.Marshal(body)
-	got := decodeBodyEnvelope(raw)
-	if got != nil {
-		t.Errorf("expected nil for absent body, got %s", got)
-	}
-}
-
-func TestDecodeBodyEnvelope_InlineRaw_ReturnsContent(t *testing.T) {
-	content := []byte(`{"hello":"world"}`)
-	body := sharedaudit.NewInlineBody(content, int64(len(content)), false, "application/json")
-	raw, _ := json.Marshal(body)
-	got := decodeBodyEnvelope(raw)
-	if string(got) != string(content) {
-		t.Errorf("expected %s, got %s", content, got)
-	}
-}
-
-func TestDecodeBodyEnvelope_InlineNonJSON_WrapsAsString(t *testing.T) {
-	// Non-JSON content (SSE) gets wrapped as a JSON string.
-	sseData := []byte("event: delta\ndata: hello\n\n")
-	body := sharedaudit.NewInlineBody(sseData, int64(len(sseData)), false, "text/event-stream")
-	raw, _ := json.Marshal(body)
-	got := decodeBodyEnvelope(raw)
-	// Should be a JSON string, not nil.
+func TestRenderBody_TextNonJSON_WrapsAsString(t *testing.T) {
+	// A "text"-encoded body that is NOT valid JSON (SSE / plain text) is wrapped
+	// as a JSON string so the drawer receives a printable value.
+	sse := "event: delta\ndata: hello\n\n"
+	got := renderBody(json.RawMessage(sse), "text")
 	var s string
 	if err := json.Unmarshal(got, &s); err != nil {
-		t.Errorf("expected JSON string, got %s (err: %v)", got, err)
+		t.Fatalf("expected JSON string, got %s (err: %v)", got, err)
+	}
+	if s != sse {
+		t.Errorf("string content mismatch: got %q want %q", s, sse)
 	}
 }
 
-func TestDecodeBodyEnvelope_UnknownKind_PassThrough(t *testing.T) {
-	raw := json.RawMessage(`{"kind":"future-kind","data":"x"}`)
-	got := decodeBodyEnvelope(raw)
-	if string(got) != string(raw) {
-		t.Errorf("expected passthrough for unknown kind, got %s", got)
+func TestRenderBody_Base64UTF8Text_DecodesLossless(t *testing.T) {
+	// A "base64"-encoded body whose decoded bytes are valid UTF-8 text renders
+	// losslessly as a JSON string (e.g. an SSE stream that carried a NUL, so it
+	// was stored base64 but is otherwise printable text).
+	original := "data: hi\x00there\n\n"
+	enc := base64.StdEncoding.EncodeToString([]byte(original))
+	got := renderBody(json.RawMessage(enc), "base64")
+	var s string
+	if err := json.Unmarshal(got, &s); err != nil {
+		t.Fatalf("expected JSON string from base64 body, got %s (err: %v)", got, err)
+	}
+	if s != original {
+		t.Errorf("decoded text mismatch: got %q want %q", s, original)
+	}
+}
+
+func TestRenderBody_Base64Binary_RendersValidJSONString(t *testing.T) {
+	// A "base64"-encoded body of non-UTF-8 binary renders as a *valid JSON
+	// string* for the drawer (it must never break the JSON response). The
+	// display is intentionally lossy for non-UTF-8 bytes (json string-encoding
+	// substitutes U+FFFD) — the lossless audit copy lives in the column as
+	// base64 and is read byte-exact by DSAR / cache-preview via
+	// audit.DecodeBodyForColumn, not by this display path.
+	enc := base64.StdEncoding.EncodeToString([]byte{0x00, 0x01, 0xff, 0xfe})
+	got := renderBody(json.RawMessage(enc), "base64")
+	if !json.Valid(got) {
+		t.Fatalf("renderBody produced invalid JSON for binary body: %s", got)
+	}
+	var s string
+	if err := json.Unmarshal(got, &s); err != nil {
+		t.Fatalf("expected a JSON string, got %s (err: %v)", got, err)
+	}
+}
+
+func TestRenderBody_Base64OfJSON_PassThrough(t *testing.T) {
+	// A "base64"-stored body whose decoded bytes are valid JSON renders as JSON.
+	jsonBody := []byte(`{"a":1}`)
+	enc := base64.StdEncoding.EncodeToString(jsonBody)
+	got := renderBody(json.RawMessage(enc), "base64")
+	if string(got) != string(jsonBody) {
+		t.Errorf("expected JSON passthrough after base64 decode, got %s", got)
 	}
 }
 
@@ -1135,17 +1165,17 @@ func TestExportAdminAuditLogs_EmptyResult_Returns200(t *testing.T) {
 
 func TestGetTrafficEventNormalized_NotFound_Returns404(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
-	// QueryRow returns empty result set → pgx.ErrNoRows (via pgxmock no-rows row) → nil, nil → 404.
-	// WithArgs: the store passes `id` as the single arg.
-	mock.ExpectQuery("FROM traffic_event_normalized").
+	// View-time path: the handler first fetches the raw bodies + metadata via
+	// GetTrafficEventForNormalize. An empty result set → pgx.ErrNoRows → Found=false
+	// → 404 (the traffic event does not exist).
+	mock.ExpectQuery("LEFT JOIN traffic_event_payload").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"traffic_event_id",
-			"request_normalized", "response_normalized",
-			"request_status", "response_status",
-			"request_error_reason", "response_error_reason",
-			"request_redaction_spans", "response_redaction_spans",
-			"normalize_version", "created_at",
+			"adapter_type", "model", "path",
+			"inline_request_body", "inline_request_encoding",
+			"inline_response_body", "inline_response_encoding",
+			"request_content_type", "response_content_type",
+			"request_spill_ref", "response_spill_ref",
 		}))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/abc/normalized")
@@ -1713,13 +1743,14 @@ func TestProxyForward_PostMethod_SendsBody(t *testing.T) {
 
 // compliance_reports.go — ComplianceAuditDetail success, ComplianceReport success
 
-// matrixAuditCols matches the 22 columns scanned by GetMatrixAuditEvent.
+// matrixAuditCols matches the 24 columns scanned by GetMatrixAuditEvent.
 var matrixAuditCols = []string{
 	"id", "transactionId", "connectionId", "trafficSource", "ingressType", "bumpStatus",
 	"sourceIp", "targetHost", "method", "path", "statusCode",
 	"hookDecision", "hookReason", "hookReasonCode", "latencyMs", "timestamp",
 	"complianceTags", "entityId", "userAgent", "details",
 	"requestBody", "responseBody",
+	"inline_request_encoding", "inline_response_encoding",
 }
 
 // ptrStr returns a pointer to the given string (for pgxmock *string scan targets).
@@ -1757,6 +1788,7 @@ func TestComplianceAuditDetail_Success_Returns200(t *testing.T) {
 			[]byte(`{}`),          // details (json.RawMessage → []byte)
 			nil,                   // requestBody (*json.RawMessage)
 			nil,                   // responseBody (*json.RawMessage)
+			"", "",                // inline_request_encoding, inline_response_encoding (string)
 		))
 
 	c, rec := echoCtx(http.MethodGet, "/compliance/audit/evt-matrix-1")
@@ -1815,8 +1847,9 @@ func TestComplianceOverviewExport_WithRows_WritesCSVData(t *testing.T) {
 	}
 }
 
-// TestComplianceOverviewExport_NeutralizesCSVFormulaInjection locks SEC-C5-02:
-// attacker-controlled traffic_event fields (targetHost, path) that begin with a
+// TestComplianceOverviewExport_NeutralizesCSVFormulaInjection locks the
+// CSV-formula-injection neutralization: attacker-controlled traffic_event fields
+// (targetHost, path) that begin with a
 // spreadsheet formula trigger (= + - @ TAB CR) must be neutralized before CSV
 // emission so they cannot detonate as formulas in the auditor's spreadsheet.
 func TestComplianceOverviewExport_NeutralizesCSVFormulaInjection(t *testing.T) {
@@ -2059,9 +2092,10 @@ var trafficEventGetCols = []string{
 	// Cost-transparency JOIN columns from Model (per-million prices).
 	"model_input_price_per_m", "model_output_price_per_m",
 	"model_cached_in_read_price_per_m", "model_cached_in_write_price_per_m",
-	// 4 payload columns
+	// 6 payload columns
 	"inline_request_body", "inline_response_body",
 	"request_spill_ref", "response_spill_ref",
+	"inline_request_encoding", "inline_response_encoding",
 }
 
 func newTrafficEventRow() *pgxmock.Rows {
@@ -2148,8 +2182,10 @@ func newTrafficEventRow() *pgxmock.Rows {
 		// Cost-transparency JOIN: model price-per-million columns
 		// (*float64 each). Nil when routed_model_id is absent.
 		nil, nil, nil, nil,
-		// payload group: inline_request_body, inline_response_body (json.RawMessage), request_spill_ref, response_spill_ref (json.RawMessage)
-		nil, nil, nil, nil,
+		// payload group: inline_request_body, inline_response_body (TEXT → []byte),
+		// request_spill_ref, response_spill_ref (json.RawMessage),
+		// inline_request_encoding, inline_response_encoding (string, COALESCE'd to '')
+		nil, nil, nil, nil, "", "",
 	)
 	return rows
 }
@@ -2264,8 +2300,9 @@ func TestGetTrafficEvent_WithSpillStore_ResolvesFailed_StillReturns200(t *testin
 		// Cost-transparency JOIN: model price-per-million (4 *float64).
 		nil, nil, nil, nil,
 		// payload: inline_request_body (nil → triggers spill resolve), inline_response_body,
-		//          request_spill_ref (non-empty JSON), response_spill_ref
-		nil, nil, spillRefJSON, nil,
+		//          request_spill_ref (non-empty JSON), response_spill_ref,
+		//          inline_request_encoding, inline_response_encoding
+		nil, nil, spillRefJSON, nil, "", "",
 	)
 
 	mock.ExpectQuery("FROM traffic_event a").
@@ -2284,23 +2321,25 @@ func TestGetTrafficEvent_WithSpillStore_ResolvesFailed_StillReturns200(t *testin
 
 func TestGetTrafficEventNormalized_Success_Returns200(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
-	// GetTrafficEventNormalized: QueryRow scanning 11 columns.
-	mock.ExpectQuery("FROM traffic_event_normalized").
+	// View-time path: GetTrafficEventForNormalize returns the raw captured
+	// request body + routing metadata; the handler recomputes the normalized
+	// payload on the fly (no stored sidecar read). A real OpenAI chat body in the
+	// "text" column form decodes to the request bytes and normalizes to ai-chat.
+	reqBody := `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi normalized"}]}`
+	mock.ExpectQuery("LEFT JOIN traffic_event_payload").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"traffic_event_id",
-			"request_normalized", "response_normalized",
-			"request_status", "response_status",
-			"request_error_reason", "response_error_reason",
-			"request_redaction_spans", "response_redaction_spans",
-			"normalize_version", "created_at",
+			"adapter_type", "model", "path",
+			"inline_request_body", "inline_request_encoding",
+			"inline_response_body", "inline_response_encoding",
+			"request_content_type", "response_content_type",
+			"request_spill_ref", "response_spill_ref",
 		}).AddRow(
-			"evt-norm-1",
-			json.RawMessage(`{}`), json.RawMessage(`{}`),
-			ptrStr("ok"), ptrStr("ok"),
+			"openai", "gpt-4o-mini", "/v1/chat/completions",
+			[]byte(reqBody), "text",
+			nil, "",
+			"application/json", "",
 			nil, nil,
-			json.RawMessage(`[{"contentAddress":"messages.0.content.0","start":0,"end":10,"action":"redact"}]`), nil,
-			"v1", time.Now(),
 		))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-norm-1/normalized")
@@ -2310,9 +2349,12 @@ func TestGetTrafficEventNormalized_Success_Returns200(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "hi normalized") {
+		t.Errorf("expected recomputed normalized payload to carry the message text, got: %s", rec.Body.String())
+	}
 }
 
-// TestResolveSpillBody_IntegrityCheck is the SEC-M5-01 read-path regression: the
+// TestResolveSpillBody_IntegrityCheck is the read-path regression: the
 // CP must verify fetched spill bytes against the sha256 recorded on the
 // traffic_event and refuse to serve a body whose hash does not match — so a
 // tampered (e.g. cross-node-overwritten) blob is never presented as the genuine

@@ -2,12 +2,38 @@ package compliancestore
 
 import (
 	"context"
-	"encoding/json"
+	stdjson "encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/goccy/go-json"
+
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 )
+
+// renderInlineBody decodes a stored inline body column plus its
+// "text"|"base64" encoding into a value the UI can render directly. The body
+// is stored as raw bytes in the inline BYTEA column, tagged by the encoding
+// discriminator ("text", "base64", ...); this
+// decodes per the encoding, then a body that is valid JSON passes through as
+// JSON and anything else (SSE text, decoded binary) is wrapped as a JSON
+// string so the drawer always receives a printable value. Mirrors the traffic
+// drawer's renderBody. Returns nil for an absent/empty body.
+func renderInlineBody(col []byte, encoding string) json.RawMessage {
+	if len(col) == 0 {
+		return nil
+	}
+	raw := sharedaudit.DecodeBodyForColumn(col, encoding)
+	if len(raw) == 0 {
+		return nil
+	}
+	if stdjson.Valid(raw) {
+		return json.RawMessage(raw)
+	}
+	out, _ := json.Marshal(string(raw))
+	return json.RawMessage(out)
+}
 
 // HookDecisionBreakdown holds per-decision counts.
 type HookDecisionBreakdown struct {
@@ -176,6 +202,7 @@ func (s *Store) GetMatrixAuditEvent(ctx context.Context, id string) (map[string]
 	var ts any
 	var details json.RawMessage
 	var requestBody, responseBody *json.RawMessage
+	var reqEncoding, respEncoding string
 
 	err := s.pool.QueryRow(ctx, `
 		SELECT e.id, e.details->>'transactionId', e.details->>'connectionId',
@@ -183,14 +210,15 @@ func (s *Store) GetMatrixAuditEvent(ctx context.Context, id string) (map[string]
 			e.source_ip, e.target_host, e.method, e.path, e.status_code, e.request_hook_decision, e.request_hook_reason,
 			e.request_hook_reason_code, e.latency_ms, e.timestamp, e.compliance_tags, e.entity_id,
 			e.details->>'userAgent', e.details,
-			p.inline_request_body, p.inline_response_body
+			p.inline_request_body, p.inline_response_body,
+			COALESCE(p.inline_request_encoding, ''), COALESCE(p.inline_response_encoding, '')
 		FROM traffic_event e
 		LEFT JOIN traffic_event_payload p ON p.traffic_event_id = e.id
 		WHERE e.id = $1
 	`, id).Scan(&eid, &txID, &connID, &trafficSrc, &ingressType, &bumpStatus,
 		&srcIP, &target, &method, &path_, &statusCode, &hookDec, &hookReason,
 		&hookRC, &latency, &ts, &complianceTags, &subjectID, new(*string), &details,
-		&requestBody, &responseBody)
+		&requestBody, &responseBody, &reqEncoding, &respEncoding)
 	if err != nil {
 		return nil, err
 	}
@@ -203,11 +231,18 @@ func (s *Store) GetMatrixAuditEvent(ctx context.Context, id string) (map[string]
 		"hookReasonCode": hookRC, "latencyMs": latency, "timestamp": ts,
 		"complianceTags": complianceTags, "entityId": subjectID,
 	}
+	// The inline body columns hold the raw captured body (TEXT) or its base64;
+	// decode per the sibling encoding column and render for the UI (valid JSON
+	// passes through, anything else is wrapped as a JSON string).
 	if requestBody != nil {
-		result["requestBody"] = *requestBody
+		if rendered := renderInlineBody([]byte(*requestBody), reqEncoding); rendered != nil {
+			result["requestBody"] = rendered
+		}
 	}
 	if responseBody != nil {
-		result["responseBody"] = *responseBody
+		if rendered := renderInlineBody([]byte(*responseBody), respEncoding); rendered != nil {
+			result["responseBody"] = rendered
+		}
 	}
 	return result, nil
 }

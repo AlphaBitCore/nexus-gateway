@@ -29,7 +29,6 @@ import (
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
 )
 
 // InitConsumerManager wires the MQ consumer manager (traffic + admin-audit +
@@ -52,11 +51,22 @@ func InitConsumerManager(
 	tew := consumer.NewTrafficEventWriter(
 		pool, mqConsumer,
 		consumer.TrafficEventWriterConfig{
-			BatchSize:     cfg.Consumers.BatchSize,
-			FlushInterval: cfg.Consumers.FlushInterval,
+			BatchSize:      cfg.Consumers.BatchSize,
+			FlushInterval:  cfg.Consumers.FlushInterval,
+			DrainDutyCycle: cfg.Consumers.TrafficDrainDutyCycle,
 		},
 		logger, opsReg,
 	)
+	// If the MQ consumer can report the NEXUS_EVENTS stream fill level, let the
+	// drain override its CPU-yield throttle to full-speed as the backlog nears
+	// MaxBytes — bounded catch-up instead of a sustained-saturation wedge.
+	if s, ok := mqConsumer.(interface {
+		StreamFillFraction(context.Context, string) (float64, bool)
+	}); ok {
+		tew.WithBacklogSampler(func(ctx context.Context) (float64, bool) {
+			return s.StreamFillFraction(ctx, "NEXUS_EVENTS")
+		})
+	}
 	consumers = append(consumers, consumer.NamedConsumer{Name: "traffic-event-writer", Consumer: tew})
 
 	// AdminAuditWriter — nexus.event.admin-audit → AdminAuditLog table
@@ -74,7 +84,7 @@ func InitConsumerManager(
 	// exemptions) → exemption_request table as PENDING rows. Admin reviews
 	// at /compliance/exemptions; approve creates a compliance_exemption_grant
 	// which Hub's catbagent loader pushes back to agent + compliance-proxy
-	// via Cat B "exemptions". See E20 (Cert-Pin Auto-Exemption) epic.
+	// via Cat B "exemptions" (Cert-Pin Auto-Exemption).
 	ec := consumer.NewExemptionConsumer(
 		pool, mqConsumer,
 		consumer.ExemptionConsumerConfig{
@@ -125,12 +135,6 @@ func InitScheduler(
 	// Catches the silent-stall failure class (INSERT fails after consumer pull).
 	sched.Register(defjobs_audit.NewAuditFreshnessCheck(pool, 60*time.Second, 5*time.Minute, opsReg, logger))
 
-	// Normalize backfill — re-runs normalize against raw bytes when the
-	// consumer's insertNormalizedPayloads partially failed and left
-	// traffic_event_normalized rows with NULL request/response_normalized.
-	// 5-min interval matches the consumer-recovery cadence: a one-time
-	// hiccup recovers before the operator opens the Traffic drawer.
-	sched.Register(defjobs_audit.NewNormalizeBackfill(pool, normalize.BuildRegistry(), spill, 5*time.Minute, opsReg, logger))
 	sched.Register(defjobs_drift.NewIdentityEnricher(st, cfg.Scheduler.IdentityEnrichInterval, opsReg, logger))
 	sched.Register(defjobs_expiry.NewAuthCleanup(st.AuthStore(), time.Hour, logger))
 	sched.Register(defjobs_expiry.NewEnrollmentTokenCleanup(st, time.Hour, logger))

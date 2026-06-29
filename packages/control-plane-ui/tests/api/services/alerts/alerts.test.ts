@@ -90,7 +90,7 @@ describe('alertsApi', () => {
     it('listRules builds the query from every filter in declared order', async () => {
       await alertsApi.listRules({ limit: 10, offset: 20, search: 'cost', enabled: false, severity: 'critical', sourceType: 'quota' });
       expect(getSpy).toHaveBeenCalledWith(
-        '/api/admin/alerts/rules?limit=10&offset=20&search=cost&enabled=false&severity=critical&sourceType=quota',
+        '/api/admin/alerts/rules?limit=10&offset=20&search=cost&enabled=false&severity=CRITICAL&sourceType=quota',
       );
     });
 

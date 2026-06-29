@@ -11,13 +11,11 @@ import type { UnifiedExemptionRow } from '@/api/services/compliance/compliance';
 import {
   AlertDialog,
   Badge,
-  Breadcrumb,
   Button,
   Card,
   Dialog,
   ErrorBanner,
   FormField,
-  PageHeader,
   Skeleton,
   Stack,
   Textarea,
@@ -25,6 +23,7 @@ import {
 import { useToast } from '@/context/ToastContext';
 import { useQueryClient } from '@tanstack/react-query';
 import iamStyles from '@/pages/iam/_shared/Iam.module.css';
+import styles from './ComplianceExemptionDetailPage.module.css';
 
 const EM_DASH = '\u2014';
 
@@ -165,51 +164,54 @@ export function ComplianceExemptionDetailPage() {
 
   return (
     <Stack gap="lg">
-      <Breadcrumb
-        items={[
-          { label: t('pages:compliance.exemptions.title', 'Temporary Exemptions'), to: '/compliance/exemptions' },
-          { label: title },
-        ]}
-      />
-      <PageHeader
-        title={title}
-        subtitle={t('pages:compliance.exemptions.detailSubtitle')}
-      />
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/compliance/exemptions" className={styles.backLink} aria-label={t('common:back', 'Back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{title}</h1>
+            <p className={styles.detailSubtitle}>{t('pages:compliance.exemptions.detailSubtitle')}</p>
+          </div>
+          <div className={styles.detailToolbar}>
+            {row.kind === 'pending' ? (
+              <>
+                <Button variant="primary" onClick={() => setApproveOpen(true)}>
+                  {t('pages:compliance.exemptions.approveBtn')}
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setRejectNote('');
+                    setRejectOpen(true);
+                  }}
+                >
+                  {t('pages:compliance.exemptions.rejectBtn')}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="primary" disabled={patchBusy} onClick={() => void handleToggleInactive()}>
+                  {row.inactive
+                    ? t('pages:compliance.exemptions.enableBtn')
+                    : t('pages:compliance.exemptions.disableBtn')}
+                </Button>
+                {row.activatedAt === null ? (
+                  <Button variant="primary" onClick={() => setDeleteOpen(true)}>
+                    {t('common:delete', 'Delete')}
+                  </Button>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      </section>
 
       <Card>
-        <Stack direction="horizontal" gap="sm" style={{ marginBottom: 'var(--g-space-4)', flexWrap: 'wrap' }}>
-          {row.kind === 'pending' ? (
-            <>
-              <Button variant="secondary" onClick={() => setApproveOpen(true)}>
-                {t('pages:compliance.exemptions.approveBtn')}
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  setRejectNote('');
-                  setRejectOpen(true);
-                }}
-              >
-                {t('pages:compliance.exemptions.rejectBtn')}
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="secondary" disabled={patchBusy} onClick={() => void handleToggleInactive()}>
-                {row.inactive
-                  ? t('pages:compliance.exemptions.enableBtn')
-                  : t('pages:compliance.exemptions.disableBtn')}
-              </Button>
-              {row.activatedAt === null ? (
-                <Button variant="danger" onClick={() => setDeleteOpen(true)}>
-                  {t('common:delete', 'Delete')}
-                </Button>
-              ) : null}
-            </>
-          )}
-        </Stack>
-
-        <div className={iamStyles.kvGrid}>
+        <div className={styles.detailGrid}>
           <div>
             <div className={iamStyles.kvLabel}>{t('pages:compliance.exemptions.colId')}</div>
             <div className={iamStyles.kvValue}>
@@ -282,10 +284,6 @@ export function ComplianceExemptionDetailPage() {
             </div>
           ) : null}
         </div>
-
-        <p style={{ marginTop: 'var(--g-space-4)' }}>
-          <Link to="/compliance/exemptions">{t('pages:compliance.exemptions.backToList')}</Link>
-        </p>
       </Card>
 
       <AlertDialog

@@ -230,8 +230,8 @@ function renderAi(
  * so operators can distinguish "captured text" from "binary input" from
  * "response vectors".
  *
- * Response side: embedding vectors are intentionally never stored per
- * SDD §T2.3 — we render a compact badge explaining why the body is
+ * Response side: embedding vectors are intentionally never stored —
+ * we render a compact badge explaining why the body is
  * empty rather than the generic placeholder.
  */
 function renderAiEmbedding(

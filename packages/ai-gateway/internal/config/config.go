@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -163,8 +162,13 @@ type UpstreamConfig struct {
 	IdleConnTimeoutSec int `yaml:"idleConnTimeoutSec"`
 	// MaxIdleConns is the global pool cap.
 	MaxIdleConns int `yaml:"maxIdleConns"`
-	// MaxIdleConnsPerHost is the per-host pool cap.
+	// MaxIdleConnsPerHost is the per-host idle pool cap.
 	MaxIdleConnsPerHost int `yaml:"maxIdleConnsPerHost"`
+	// MaxConnsPerHost caps TOTAL connections per upstream host; 0 inherits the
+	// shared-client default (100) which throttles upstream concurrency — the
+	// default below pins it high (mirrors Bifrost's 5000). Env:
+	// AI_GATEWAY_UPSTREAM_MAX_CONNS_PER_HOST.
+	MaxConnsPerHost int `yaml:"maxConnsPerHost"`
 }
 
 // CORSConfig holds Cross-Origin Resource Sharing settings.
@@ -181,15 +185,17 @@ type CacheConfig struct {
 	Enabled bool          `yaml:"enabled"`
 	TTL     time.Duration `yaml:"ttl"`
 	Prefix  string        `yaml:"prefix"`
-	// Broker controls in-flight dedupe of same-cache-key MISS calls.
-	// When false (default), every MISS opens its own upstream session
-	// even if a same-key call is already running — optimised for low p99
-	// under bursty parallel load. Trade-off: N concurrent same-key MISS
-	// callers fire N upstream calls instead of sharing one, and the MISS
-	// response is NOT written to the response cache (fills via the broker
-	// pump only). Flip to true to restore 1-leader-N-joiners semantics +
-	// cache fill at the cost of serialising same-key concurrency over a
-	// single leaderFn (~upstream TTFB per request).
+	// Broker controls in-flight dedupe of same-cache-key MISS calls. The
+	// broker registry is always constructed (it is the cache's sole fill
+	// path), so this flag no longer affects whether an enabled cache tier
+	// fills — only how concurrent same-key MISSes coalesce.
+	// When false (default), every MISS opens its own upstream session even if
+	// a same-key call is already running — optimised for low p99 under bursty
+	// parallel load (N concurrent same-key MISSes fire N upstream calls) — but
+	// the response is still written to the cache. Flip to true for
+	// 1-leader-N-joiners coalescing (fewer upstream calls) at the cost of
+	// serialising same-key concurrency over a single leaderFn (~upstream TTFB
+	// per request).
 	Broker bool `yaml:"broker"`
 }
 
@@ -234,6 +240,17 @@ type ServerConfig struct {
 	// only correct when Hub and AI Gateway run on the same host. Set
 	// explicitly in non-localhost deployments.
 	AdvertiseHost string `yaml:"advertiseHost"`
+
+	// RequestReadBufKB pre-grows the pooled request-body read scratch to this
+	// many KiB so reading a typical body completes with no bytes.Buffer
+	// doubling+re-copy on the hot path. Tune to the deployment's typical body
+	// size: 64 (default — conservative) suits a mixed/small-prompt fleet; raise
+	// it (e.g. 128) when requests routinely carry ~128K-token contexts. FIXED
+	// pre-grow, independent of the client Content-Length (the read stays bounded
+	// by the maxBytes limit, never by a caller-supplied length, so a hostile
+	// Content-Length cannot drive a large up-front allocation). 0 falls back to
+	// the 64 default. Env: AI_GATEWAY_REQUEST_READ_BUF_KB.
+	RequestReadBufKB int `yaml:"requestReadBufKb"`
 }
 
 // BindAddr returns the host:port the HTTP server listens on. Empty Host yields
@@ -309,9 +326,10 @@ func Load(path string) (*Config, error) {
 func defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port:         8080,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 60 * time.Second,
+			Port:             8080,
+			ReadTimeout:      30 * time.Second,
+			WriteTimeout:     60 * time.Second,
+			RequestReadBufKB: 64,
 		},
 		Database: DatabaseConfig{
 			MaxConns:           25,
@@ -319,9 +337,35 @@ func defaults() *Config {
 			MaxConnLifetimeSec: 300,
 		},
 		Audit: AuditConfig{
-			SpoolDir:        "/var/lib/nexus/audit-spool",
-			SpoolMaxFileMB:  64,
-			SpoolMaxTotalMB: 512,
+			SpoolDir:       "/var/lib/nexus/audit-spool",
+			SpoolMaxFileMB: 256,
+			// 50 GiB. The durable spool IS the no-loss buffer for spill-defer: at
+			// peak the request path appends here instead of back-pressuring, and the
+			// recovery sweeper drains it to Postgres. Disk is cheap relative to
+			// dropping audit (the product promise), so the default is sized to absorb
+			// a large burst, not a token 512 MB that overflows in seconds at 8k RPS.
+			// Tune to the data disk via AI_GATEWAY_AUDIT_SPOOL_MAX_TOTAL_MB.
+			SpoolMaxTotalMB:  51200,
+			MaxQueuedRecords: 10000,
+			// Default spillblock: the request path never back-pressures on audit
+			// while the durable on-disk spool has room — overflow goes to the spool
+			// and the spill-recovery sweeper replays it to PG. Unlike plain spill,
+			// when the spool channel ITSELF saturates spillblock back-pressures the
+			// request goroutine instead of taking spill's last-resort bounded drop,
+			// so it is genuinely zero-loss (durable audit is a product + compliance
+			// promise — never silently drop a record). In the normal regime it is
+			// identical to spill (same RPS, off the request path); it differs only
+			// at the extreme where spill would drop. block (hard synchronous
+			// back-pressure) and spill/drop (lossy) remain selectable via
+			// AI_GATEWAY_AUDIT_LOSS_MODE.
+			LossMode:         "spillblock",
+			Compress:         true,
+			CompressMinBytes: 0, // 0 → shared/audit DefaultInlineCompressionMinBytes (1024)
+			CompressLevel:    0, // 0 → library default (SpeedDefault)
+			// 0 → defaults (2000 ms sweep / 50 ms pace) applied at wiring; negative
+			// interval disables recovery.
+			SpillRecoveryIntervalMs: 0,
+			SpillRecoveryPaceMs:     0,
 		},
 		Upstream: UpstreamConfig{
 			TimeoutSec:             600,
@@ -332,6 +376,7 @@ func defaults() *Config {
 			IdleConnTimeoutSec:     300,
 			MaxIdleConns:           2000,
 			MaxIdleConnsPerHost:    500,
+			MaxConnsPerHost:        5000,
 		},
 		HTTPClients: HTTPClientsConfig{
 			Webhook: HTTPClientPoolConfig{
@@ -379,76 +424,6 @@ func resolveCustodySecrets(cfg *Config) error {
 		}
 	}
 	return nil
-}
-
-func applyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("DATABASE_URL"); v != "" {
-		cfg.Database.URL = v
-	}
-	if v := os.Getenv("AI_GATEWAY_AUDIT_SPOOL_DIR"); v != "" {
-		cfg.Audit.SpoolDir = v
-	}
-	if v := os.Getenv("AI_GATEWAY_PUBLIC_URL"); v != "" {
-		cfg.PublicURL = v
-	}
-	// ADMIN_KEY_HMAC_SECRET / CREDENTIAL_ENCRYPTION_KEY / CREDENTIAL_KEY_MAP are
-	// crown jewels resolved through the SecretCustody loader in Load(),
-	// not read raw here, so they can be KMS-wrapped at rest.
-	if v := os.Getenv("AI_GATEWAY_PORT"); v != "" {
-		// best-effort: a malformed env var leaves the default port in place,
-		// which is the right fallback during local dev.
-		_, _ = fmt.Sscanf(v, "%d", &cfg.Server.Port)
-	}
-	if v := os.Getenv("AI_GATEWAY_HOST"); v != "" {
-		cfg.Server.Host = v
-	}
-	if v := os.Getenv("LOG_LEVEL"); v != "" {
-		cfg.Log.Level = v
-	}
-	if v := os.Getenv("LOG_FORMAT"); v != "" {
-		cfg.Log.Format = v
-	}
-	if v := os.Getenv("NEXUS_HUB_URL"); v != "" {
-		cfg.Registry.NexusHubURL = v
-	}
-	if v := os.Getenv("INTERNAL_SERVICE_TOKEN"); v != "" {
-		cfg.Auth.InternalServiceToken = v
-	}
-	if v := os.Getenv("MQ_DRIVER"); v != "" {
-		cfg.MQ.Driver = v
-	}
-	if v := os.Getenv("NATS_URL"); v != "" {
-		cfg.MQ.NATS.URL = v
-	}
-	switch os.Getenv("AI_GATEWAY_CORS_ENABLED") {
-	case "true", "1":
-		cfg.CORS.Enabled = true
-	case "false", "0":
-		cfg.CORS.Enabled = false
-	}
-	if v := os.Getenv("AI_GATEWAY_CORS_ALLOWED_ORIGINS"); v != "" {
-		cfg.CORS.AllowedOrigins = strings.Split(v, ",")
-	}
-	switch os.Getenv("AI_GATEWAY_CACHE_ENABLED") {
-	case "true", "1":
-		cfg.Cache.Enabled = true
-	case "false", "0":
-		cfg.Cache.Enabled = false
-	}
-	if v := os.Getenv("AI_GATEWAY_CACHE_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.Cache.TTL = d
-		}
-	}
-	if v := os.Getenv("AI_GATEWAY_CACHE_PREFIX"); v != "" {
-		cfg.Cache.Prefix = v
-	}
-	if v := os.Getenv("OTEL_ENDPOINT"); v != "" {
-		cfg.Otel.Endpoint = v
-	}
-	if v := os.Getenv("OTEL_SERVICE_NAME"); v != "" {
-		cfg.Otel.ServiceName = v
-	}
 }
 
 // validate enforces the business-required configuration set for the

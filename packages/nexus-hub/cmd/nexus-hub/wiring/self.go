@@ -2,8 +2,8 @@ package wiring
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"

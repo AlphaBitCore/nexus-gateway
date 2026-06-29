@@ -23,7 +23,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   outline: none;
   background: var(--color-bg);
 }
@@ -34,7 +34,7 @@
 .closeBtn {
   background: transparent;
   border: 0;
-  font-size: 18px;
+  font-size: var(--g-font-size-lg);
   line-height: 1;
   cursor: pointer;
   color: var(--color-text-secondary);
@@ -51,7 +51,7 @@
   gap: var(--g-space-2);
   padding: var(--g-space-2) var(--g-space-3);
   border-bottom: 1px solid var(--color-border-subtle);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   cursor: pointer;
   user-select: none;
 }
@@ -64,11 +64,11 @@
 
 .masterRowCode {
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-secondary);
   background: var(--color-bg-subtle);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--g-radius-xs);
 }
 
 .resourceList {
@@ -81,7 +81,7 @@
   padding: var(--g-space-4);
   text-align: center;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   font-style: italic;
 }
 
@@ -98,7 +98,7 @@
   gap: 4px;
   padding: 6px var(--g-space-3);
   background: var(--color-bg-subtle);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .serviceMasterLabel {
@@ -112,8 +112,8 @@
 }
 
 .serviceName {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   color: var(--color-text);
@@ -121,7 +121,7 @@
 
 .serviceCount {
   font-size: 11px;
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   color: var(--color-text-secondary);
   margin-left: auto;
   padding-right: var(--g-space-2);
@@ -173,8 +173,8 @@
 }
 
 .resourceName {
-  font-weight: 500;
-  font-size: 13px;
+  font-weight: var(--g-font-weight-medium);
+  font-size: var(--g-font-size-xs);
   font-family: var(--g-font-mono);
   color: var(--color-text);
 }
@@ -196,7 +196,7 @@
   align-items: center;
   gap: var(--g-space-2);
   padding: 4px var(--g-space-3) 4px calc(var(--g-space-3) + 20px);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   cursor: pointer;
   user-select: none;
 }

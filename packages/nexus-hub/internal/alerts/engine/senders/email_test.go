@@ -63,8 +63,8 @@ func TestEmailSender_SendsComposedMIME(t *testing.T) {
 	}
 }
 
-// TestEmailSender_StripsCRLFFromTargetLabel verifies F-0246: a TargetLabel
-// carrying embedded CR/LF cannot inject additional RFC822 headers or smuggle
+// TestEmailSender_StripsCRLFFromTargetLabel verifies a TargetLabel carrying
+// embedded CR/LF cannot inject additional RFC822 headers or smuggle
 // body content. The composed message must contain exactly one Subject header
 // and the injected header must not appear.
 func TestEmailSender_StripsCRLFFromTargetLabel(t *testing.T) {
@@ -111,7 +111,7 @@ func TestEmailSender_StripsCRLFFromTargetLabel(t *testing.T) {
 
 // TestEmailSender_RejectsMalformedFromAddress verifies the From/To headers are
 // validated via net/mail so a control-character address is rejected rather than
-// concatenated raw into the header (F-0246).
+// concatenated raw into the header.
 func TestEmailSender_RejectsMalformedFromAddress(t *testing.T) {
 	e := &Email{sender: func(string, smtp.Auth, string, []string, []byte) error { return nil }}
 	ch := alerting.Channel{Type: "email", Config: map[string]any{

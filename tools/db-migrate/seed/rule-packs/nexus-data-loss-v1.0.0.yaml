@@ -1,0 +1,167 @@
+name: nexus/data-loss
+version: v1.0.0
+maintainer: nexus
+description: >-
+  Data-loss-prevention patterns for confidential-document leakage and bulk-data
+  exfiltration through the gateway. Five subcategories: classification markers
+  (CONFIDENTIAL / TRADE SECRET / ATTORNEY-CLIENT / TLP / ITAR-NOFORN), encoded
+  payloads (large base64, data: URIs, long hex, archive magic), bulk dumps (SQL
+  dump headers, multi-tuple INSERT, PII CSV headers, internal DB connection
+  strings), source-code leakage (unified diffs, credentialed repo URLs, internal
+  registries), and internal references (corp hostnames, SharePoint/Confluence
+  URLs, ticket keys in a confidential context). Scope excludes API keys
+  (nexus/secret-leak), personal data (nexus/pii), and harmful content. Every
+  rule emits `detector:data-loss` plus a finer marker:/vector: label and a
+  `severity:<tier>` label so downstream policies can filter by exfil class.
+rules:
+  # --- Classification markers ---
+  - id: dlp-cls-001
+    category: dlp.classification
+    severity: warn
+    pattern: '(?im)^[\t >*#-]{0,6}CONFIDENTIAL\b[ \t]{0,4}(?:[-:][ \t]{0,4}[A-Z][A-Za-z ]{0,30})?[\t .*#-]{0,8}$'
+    description: CONFIDENTIAL document banner line.
+    labels: [detector:data-loss, marker:confidential-banner, severity:internal]
+  - id: dlp-cls-002
+    category: dlp.classification
+    severity: soft
+    pattern: '(?i)\b(?:INTERNAL USE ONLY|COMPANY (?:PROPRIETARY|CONFIDENTIAL)|PROPRIETARY (?:AND|&) CONFIDENTIAL|TRADE SECRET)\b'
+    description: Internal-use / proprietary / trade-secret handling marker.
+    labels: [detector:data-loss, marker:internal-proprietary, severity:confidential]
+  - id: dlp-cls-003
+    category: dlp.classification
+    severity: soft
+    pattern: '(?i)\bATTORNEY[ -](?:CLIENT (?:PRIVILEGED?|COMMUNICATION)|WORK PRODUCT)\b'
+    description: Attorney-client privilege / work-product legal marker.
+    labels: [detector:data-loss, marker:legal-privilege, severity:confidential]
+  - id: dlp-cls-004
+    category: dlp.classification
+    severity: soft
+    pattern: '(?i)\bTLP[:\s]?(?:RED|AMBER(?:\+STRICT)?)\b'
+    description: TLP:RED / TLP:AMBER sharing-restriction marker.
+    labels: [detector:data-loss, marker:tlp, severity:restricted]
+  - id: dlp-cls-005
+    category: dlp.classification
+    severity: hard
+    pattern: '(?i)\b(?:EXPORT[ -]CONTROLLED|ITAR[ -](?:CONTROLLED|RESTRICTED)|NOFORN|EAR99|CUI//[A-Z]{2,6})\b'
+    description: Export-controlled / ITAR / NOFORN / EAR99 / CUI dissemination marker.
+    labels: [detector:data-loss, marker:export-control, severity:restricted]
+  # --- Encoded payloads ---
+  # Bare "long base64/hex run" rules were removed: no literal anchor (Hyperscan
+  # cannot prefilter them -> slow path) and high false-positive on normal traffic
+  # (data-URI images, JWTs, embedding vectors). The literal-anchored variants
+  # below (data: URI, archive magic) detect real encoded-payload exfil precisely
+  # and cheaply.
+  - id: dlp-enc-001
+    category: dlp.encoded
+    severity: soft
+    pattern: '(?i)\bdata:[a-z][a-z0-9.+-]{1,40}/[a-z0-9.+-]{1,40};base64,[A-Za-z0-9+/]{40,}={0,2}'
+    description: 'data: URI carrying an embedded base64 payload.'
+    labels: [detector:data-loss, vector:data-uri, severity:confidential]
+  - id: dlp-enc-002
+    category: dlp.encoded
+    severity: soft
+    pattern: '(?:PK\x03\x04|BZh[1-9]|\bH4sI[A-Za-z0-9+/]{8,})'
+    description: Compressed-archive magic (zip / bzip2 / base64-gzip) in payload.
+    labels: [detector:data-loss, vector:archive-magic, severity:confidential]
+  # --- Bulk dumps ---
+  - id: dlp-dump-001
+    category: dlp.bulk_dump
+    severity: hard
+    pattern: '(?i)(?:--\s{0,4}(?:MySQL|MariaDB|PostgreSQL)[\w ]{0,20}dump\b|\bmysqldump\b|\bpg_dump(?:all)?\b)'
+    description: SQL database dump header / dump-tool invocation.
+    labels: [detector:data-loss, vector:sql-dump, severity:restricted]
+  - id: dlp-dump-002
+    category: dlp.bulk_dump
+    severity: soft
+    pattern: '(?i)\bINSERT\s{1,4}INTO\s{1,4}[\w.`"]{1,64}\s{0,4}(?:\([^()]{1,400}\)\s{0,4})?VALUES\s{0,4}(?:\([^()]{1,120}\)\s{0,4},\s{0,4}){4,8}\([^()]{1,400}\)'
+    description: Multi-tuple bulk INSERT (5+ rows in one statement).
+    labels: [detector:data-loss, vector:bulk-insert, severity:restricted]
+  - id: dlp-dump-003
+    category: dlp.bulk_dump
+    severity: soft
+    pattern: '(?im)^[ \t]{0,4}(?:"?(?:email|e-mail|ssn|social_security|phone|first_name|last_name|full_name|dob|date_of_birth|address|credit_card|card_number)"?[ \t]{0,2},[ \t]{0,2}){2,}"?(?:email|e-mail|ssn|social_security|phone|first_name|last_name|full_name|dob|date_of_birth|address|credit_card|card_number)"?'
+    description: CSV header row with 3+ PII-style column names.
+    labels: [detector:data-loss, vector:pii-csv, severity:restricted]
+  - id: dlp-dump-004
+    category: dlp.bulk_dump
+    severity: soft
+    pattern: '(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|mariadb|mssql|sqlserver)://[^\s/@]{1,80}@(?:[\w.-]{1,60}\.(?:internal|corp|local|lan|intra)|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})'
+    description: Database connection string targeting an internal/private host.
+    labels: [detector:data-loss, vector:db-conn-internal, severity:confidential]
+  # --- Source-code leakage ---
+  - id: dlp-src-001
+    category: dlp.source_code
+    severity: warn
+    pattern: '(?m)^(?:diff --git a/\S{1,200} b/\S{1,200}|@@ -\d{1,7}(?:,\d{1,7})? \+\d{1,7}(?:,\d{1,7})? @@)'
+    description: Unified-diff git header / hunk header (source patch leakage).
+    labels: [detector:data-loss, vector:diff-leak, severity:internal]
+  - id: dlp-src-002
+    category: dlp.source_code
+    severity: soft
+    pattern: '(?i)(?:https?://[\w.%-]{1,40}:[\w.%-]{1,60}@[\w.-]{1,60}/[\w./-]{1,120}(?:\.git)?|\b(?:nexus|artifactory|jfrog|verdaccio|registry|npm|pypi|gems)\.[\w.-]{1,40}\.(?:internal|corp|local|lan)\b)'
+    description: Credential-embedded repo URL or internal package-registry host.
+    labels: [detector:data-loss, vector:private-repo, severity:confidential]
+  # --- Internal references ---
+  - id: dlp-ref-001
+    category: dlp.internal_ref
+    severity: warn
+    pattern: '(?i)\b[a-z0-9][a-z0-9-]{0,40}\.(?:corp|internal|intranet|intra|lan|local)\b'
+    description: Internal corporate hostname suffix.
+    labels: [detector:data-loss, marker:internal-host, severity:internal]
+  - id: dlp-ref-002
+    category: dlp.internal_ref
+    severity: soft
+    pattern: '(?i)\bhttps?://[\w.-]{1,60}(?:\.sharepoint\.com/(?:sites|teams|personal)/|\.atlassian\.net/wiki/spaces/|/confluence/(?:display|spaces|pages)/|/wiki/spaces/)[\w%./~-]{1,160}'
+    description: Tenant SharePoint / Confluence internal document URL.
+    labels: [detector:data-loss, marker:internal-doc-url, severity:internal]
+  - id: dlp-ref-003
+    category: dlp.internal_ref
+    severity: warn
+    pattern: '(?i)\b[a-z][a-z0-9]{1,9}-\d{1,6}\b[^\n]{0,60}(?:confidential|do not (?:share|distribute)|internal only|restricted|embargo)'
+    description: Issue-tracker key in a confidential/restricted context.
+    labels: [detector:data-loss, marker:ticket-confidential, severity:internal]
+  - id: dlp-ref-004
+    category: dlp.internal_ref
+    severity: soft
+    pattern: 'arn:aws:[a-z][a-z0-9-]{1,30}:[a-z0-9-]{0,20}:\d{0,12}:[A-Za-z0-9_./:*-]{1,200}'
+    description: 'AWS ARN naming a cloud resource (literal anchor ''arn:aws:'').'
+    labels: [detector:data-loss, marker:aws-arn, severity:confidential]
+  - id: dlp-ref-005
+    category: dlp.internal_ref
+    severity: soft
+    pattern: '(?i)apiVersion:[ \t]{1,4}v1\b[\s\S]{0,400}kind:[ \t]{1,4}Config\b'
+    description: Kubeconfig file markers (apiVersion v1 plus kind Config) in payload.
+    labels: [detector:data-loss, marker:kubeconfig, severity:restricted]
+  - id: dlp-ref-006
+    category: dlp.internal_ref
+    severity: soft
+    pattern: '(?i)\bAuthorization:[ \t]{1,4}Bearer[ \t]{1,4}[A-Za-z0-9._~+/-]{8,}'
+    description: 'Authorization: Bearer header echoed verbatim in content.'
+    labels: [detector:data-loss, marker:bearer-header, severity:restricted]
+  # --- Source-code & credential-material leakage ---
+  - id: dlp-src-003
+    category: dlp.source_code
+    severity: hard
+    pattern: '-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?(?:PRIVATE KEY|CERTIFICATE)-----'
+    description: PEM private-key or certificate BEGIN marker (key material leakage).
+    labels: [detector:data-loss, vector:pem-key-material, severity:restricted]
+  - id: dlp-src-004
+    category: dlp.source_code
+    severity: warn
+    pattern: '(?i)\b[\w.-]{1,60}\.(?:pem|p12|pfx|jks|keystore|key|crt|cer)\b'
+    description: Certificate / private-key / keystore filename mentioned in content.
+    labels: [detector:data-loss, vector:cert-key-filename, severity:internal]
+  # --- Encoded payloads (document data: URIs) ---
+  - id: dlp-enc-003
+    category: dlp.encoded
+    severity: soft
+    pattern: '(?i)\bdata:application/(?:pdf|zip|x-[a-z0-9.+-]{1,30}|vnd\.[a-z0-9.+-]{1,40}|octet-stream);base64,[A-Za-z0-9+/]{40,}={0,2}'
+    description: 'data: URI embedding a base64 document/archive payload (application/*).'
+    labels: [detector:data-loss, vector:data-uri-document, severity:confidential]
+  # --- Bulk dumps (credentialed connection strings, any host) ---
+  - id: dlp-dump-005
+    category: dlp.bulk_dump
+    severity: soft
+    pattern: '(?i)\b(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis|amqp|mariadb)://[^\s:/@]{1,60}:[^\s:/@]{1,80}@[\w.-]{1,80}'
+    description: Connection string carrying inline username:password credentials.
+    labels: [detector:data-loss, vector:db-conn-creds, severity:confidential]

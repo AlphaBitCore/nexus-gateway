@@ -19,16 +19,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/requestcontext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	openairesponses "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/responses"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
-	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -135,7 +130,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 		rec.RoutedModelID = target.ModelID
 		rec.RoutedModelName = target.ModelCode
 		rec.TargetHost = upstreamHost(target)
-		// #41: stamp upstream URL on the error path too — same source as
+		// Stamp upstream URL on the error path too — same source as
 		// the success path below. ToMessage's firstNonEmptyStr fallback
 		// covers synthetic transport failures that never reached the
 		// network (empty TargetPath → falls back to rec.Path).
@@ -169,7 +164,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 			errBody = envelope.EncodeErrorEnvelopeForIngress(ingress.BodyFormat, upstreamFormat, execResult.ProviderError)
 		}
 
-		// Bug #40: stamp the upstream error body to the audit Record so
+		// Stamp the upstream error body to the audit Record so
 		// it lands in traffic_event.payloads.response_body. Previously
 		// only ErrorReason (extracted message string) was captured —
 		// the full body (with provider stack trace, request ID, etc.)
@@ -195,7 +190,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 	rec.RoutedModelID = target.ModelID
 	rec.RoutedModelName = target.ModelCode
 	rec.TargetHost = upstreamHost(target)
-	// #41: stamp the actual upstream URL the adapter dispatched to
+	// Stamp the actual upstream URL the adapter dispatched to
 	// (e.g. "/v1/messages" for the Anthropic side of an OpenAI →
 	// Anthropic cross-format call). On synthetic transport errors that
 	// never reached the network, ExecutionResult.TargetPath is empty
@@ -298,16 +293,31 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 		}
 		respBody = canonicalBody
 	}
-	// Re-shape the canonical response into the caller's ingress shape
-	// ("B→canonical→A"). result.Body is canonical here (specAdapter.Execute
-	// returns DecodeResponse's CanonicalBody), so the reshape is keyed on the
-	// ingress shape — see egressReshapeNonStream for the full contract.
+	// Response compliance runs on the CANONICAL body (the OpenAI-shape waist),
+	// BEFORE egress reshape: redaction rewrites canonical, then the egress codec
+	// forward-encodes it to the ingress wire shape — always supported, so the
+	// reverse-encode ErrRewriteUnsupported / fail-closed path is gone.
+	redacted, _, blocked := h.runResponseHooksOnCanonical(w, r, rec, ingress, target, respBody, int64(usageInt(result.Usage.TotalTokens)), requestID, logger)
+	if blocked {
+		return
+	}
+	respBody = redacted
+
+	// Re-shape the (possibly redacted) canonical response into the caller's
+	// ingress shape ("B→canonical→A"). respBody is canonical here, so the reshape
+	// is keyed on the ingress shape — see egressReshapeNonStream for the contract.
 	if shaped, rerr := h.egressReshapeNonStream(ingress, target, respBody); rerr != nil {
 		logger.Error("response hub reshape failed", "error", rerr)
 		h.writeError(w, rec, http.StatusBadGateway, "upstream response could not be reshaped for ingress format")
 		return
 	} else {
 		respBody = shaped
+	}
+	// The reshaped wire body is the redacted, client-consistent copy under a
+	// rewrite; hand it to the audit writer as the storage-safe redacted copy so
+	// the persisted shape stays wire-shaped (StorageRawBody picks it under redact).
+	if rec.ResponseHookRewritten {
+		rec.ResponseBodyRedacted = respBody
 	}
 
 	usage := metrics.Usage{
@@ -401,139 +411,14 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 		rec.Metadata = updateEmbeddingDimension(rec.Metadata, respBody)
 	}
 
-	// Response hooks. Response content, model, and finish reason are
-	// derived from the response body via the ingress-aware traffic
-	// adapter. The body has already been reshaped to the ingress wire
-	// format when CanonicalBridge is active (DecodeResponse yields
-	// canonical OpenAI, then ResponseCanonicalToIngress runs above).
-	//
-	// bypassHooks: when the resolved passthrough has BypassHooks active,
-	// skip the response-stage pipeline build + execute. The request-stage
-	// skip stamps rec.HookDecision = "BYPASSED"; stamp the response stage
-	// symmetrically so a SIEM filter on
-	// ResponseHookDecision='BYPASSED' catches these — leaving it empty
-	// makes a bypass indistinguishable from "no response hook configured".
-	bypassResponseHooks := false
-	if resolved := requestcontext.ResolvedFrom(r.Context()); resolved != nil {
-		if pt := resolved.Passthrough(); pt.AnyBypassActive() && pt.BypassHooks {
-			bypassResponseHooks = true
-		}
-	}
-	if bypassResponseHooks {
-		rec.ResponseHookDecision = "BYPASSED"
-	}
-	// Pre-rewrite snapshot: when the storage policy is redact, the audit
-	// record must carry the ORIGINAL bytes (the writer normalizes them and
-	// applies the spans itself — span offsets address the original text;
-	// feeding it already-rewritten bytes would mis-slice). The raw storage
-	// copy under redact comes from rec.ResponseBodyRedacted instead.
-	origRespBody := respBody
-	if !bypassResponseHooks {
-		extractor := h.trafficAdapterFor(ingress.BodyFormat)
-		ingressFormat := string(ingress.BodyFormat)
-		respContent, respModel, respFinish := h.extractResponseForHooks(r.Context(), extractor, ingressFormat, respBody, r.URL.Path, logger)
-		epType := typology.KindFromWireShape(ingress.WireShape)
-		respInput := &hookcore.HookInput{
-			RequestID:      requestID,
-			Stage:          "response",
-			Normalized:     respContent,
-			IngressType:    "AI_GATEWAY",
-			Path:           r.URL.Path,
-			Model:          respModel,
-			FinishReason:   respFinish,
-			TokenCount:     int(usage.TotalTokens),
-			SourceIP:       middleware.ClientIP(r),
-			ProviderRegion: target.Region,
-			EndpointType:   epType,
-			OutputModality: []hookcore.Modality{hookcore.ModalityText},
-		}
-
-		pipeline, pErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
-			"response", "AI_GATEWAY",
-			epType,
-			respInput.OutputModality,
-			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
-		)
-		if pErr != nil {
-			logger.Error("failed to build response hook pipeline", "error", pErr)
-			h.writeError(w, rec, http.StatusInternalServerError, "hook pipeline error")
-			return
-		}
-		if pipeline != nil {
-			pipeline.SetAllowModify(true)
-			pipeline.SetClearSoftOnApprove(true)
-
-			hookResult := pipeline.Execute(r.Context(), respInput)
-
-			rec.ResponseHookDecision = string(hookResult.Decision)
-			rec.ResponseHookReason = hookResult.Reason
-			rec.ResponseHookReasonCode = hookResult.ReasonCode
-			rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, hookResult.Tags)
-			rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "response", hookResult.HookResults)
-			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
-				rec.BlockingRule = br
-			}
-			// Propagate spans + storage policy so the audit writer can
-			// redact (or drop) the persisted response copies — without
-			// this the response-side storageAction is silently inert.
-			rec.ResponseTransformSpans = hookResult.TransformSpans
-			rec.ResponseStorageAction = string(hookResult.StorageAction)
-			rec.ResponseRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
-			rec.ResponseRedetect = hookResult.Redetect
-
-			if h.deps.Metrics != nil {
-				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
-			}
-
-			if hookResult.Decision == hookcore.RejectHard {
-				h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
-				return
-			}
-			if hookResult.Decision == hookcore.BlockSoft {
-				h.writeError(w, rec, 246, hookResult.Reason)
-				return
-			}
-			if hookResult.Decision == hookcore.Modify && len(hookResult.ModifiedContent) > 0 {
-				rewritten, n, rErr := extractor.RewriteResponseBody(r.Context(), respBody, r.URL.Path, contentBlocksToNormalized(hookResult.ModifiedContent))
-				switch {
-				case errors.Is(rErr, traffic.ErrRewriteUnsupported):
-					logger.Warn("hook produced Modify on response but adapter does not support rewrite; returning original body",
-						slog.String("adapter", extractor.ID()),
-						slog.String("path", r.URL.Path),
-					)
-				case rErr != nil:
-					logger.Error("hook response rewrite failed",
-						slog.String("adapter", extractor.ID()),
-						slog.String("path", r.URL.Path),
-						slog.String("error", rErr.Error()),
-					)
-					h.writeError(w, rec, http.StatusInternalServerError, "response rewrite failed")
-					return
-				default:
-					// The rewritten bytes double as the storage-safe raw
-					// copy under storageAction=redact (see storageRawBody).
-					rec.ResponseBodyRedacted = rewritten
-					respBody = rewritten
-					rec.ResponseHookRewriteCount = n
-					rec.ResponseHookRewritten = true
-				}
-			}
-		}
-	}
-
-	// Capture after response hooks so payload mirrors bytes returned to
-	// the client (including any response-stage rewrite). The full body is
-	// handed to the audit Writer, which routes it inline
-	// (≤ MaxInlineBodyBytes) or to the spill backend (>) at flush time.
-	// Network-side bounding for the upstream read happens independently
-	// in provcore.LimitedReadAll using MaxResponseBytes.
-	// Exception: under storageAction=redact the record carries the
-	// pre-rewrite bytes — the writer applies the spans (original offsets)
-	// to the normalized copy and persists only ResponseBodyRedacted raw.
+	// Capture after response hooks so payload mirrors bytes returned to the
+	// client. The full body is handed to the audit Writer, which routes it
+	// inline (≤ MaxInlineBodyBytes) or to the spill backend (>) at flush time.
+	// Network-side bounding for the upstream read happens independently in
+	// provcore.LimitedReadAll using MaxResponseBytes. respBody is the reshaped
+	// wire body (redacted under a rewrite); StorageRawBody persists
+	// ResponseBodyRedacted under redact/block and this captured copy otherwise.
 	respBodyForAudit := respBody
-	if rec.ResponseStorageAction == string(hookcore.StorageRedact) {
-		respBodyForAudit = origRespBody
-	}
 	pcCfgPost := h.payloadCaptureConfig()
 	if len(respBodyForAudit) > 0 && pcCfgPost.StoreResponseBody {
 		rec.ResponseBody = respBodyForAudit

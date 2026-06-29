@@ -16,6 +16,20 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+// onMatchAction resolves the single action (approve | redact | block) from an
+// onMatch block, mapping a legacy inflightAction/storageAction pair when an
+// older config has not been migrated yet. Mirrors the backend ActionFromLegacy.
+export function onMatchAction(obj: Record<string, unknown>): string {
+  const a = typeof obj.action === 'string' ? obj.action : '';
+  if (a === 'approve' || a === 'redact' || a === 'block') return a;
+  const inflight = typeof obj.inflightAction === 'string' ? obj.inflightAction : '';
+  const storage = typeof obj.storageAction === 'string' ? obj.storageAction : '';
+  if (inflight === 'block-hard' || inflight === 'block-soft') return 'block';
+  if (inflight === 'redact') return 'redact';
+  if (inflight === 'approve') return storage === 'redact' || storage === 'drop-content' ? 'redact' : 'approve';
+  return 'block';
+}
+
 function schemaProperty(schema: Record<string, unknown>, key: string): Record<string, unknown> | null {
   const props = schema.properties;
   if (!isPlainObject(props) || !isPlainObject(props[key])) return null;
@@ -91,42 +105,33 @@ export function JsonSchemaHookConfigForm({ schema, value, onChange }: JsonSchema
 
   const renderOnMatch = (key: string, desc: string | undefined) => {
     const obj = isPlainObject(value[key]) ? (value[key] as Record<string, unknown>) : {};
-    const inflight = typeof obj.inflightAction === 'string' && obj.inflightAction !== '' ? obj.inflightAction : 'block-hard';
-    const storage = typeof obj.storageAction === 'string' && obj.storageAction !== '' ? obj.storageAction : 'keep';
+    const action = onMatchAction(obj);
     const replacement = typeof obj.replacement === 'string' ? obj.replacement : '';
-    const showReplacement = inflight === 'redact' || storage === 'redact';
-    const update = (patchKey: 'inflightAction' | 'storageAction' | 'replacement', val: string) => {
-      const next: Record<string, unknown> = { ...obj, [patchKey]: val };
-      // Drop empty replacement so we don't persist an empty string when not used.
-      if (patchKey === 'replacement' && val === '') delete next.replacement;
+    // redact and block both store a sanitized copy, so both expose the mask
+    // template; approve forwards and stores as-is.
+    const showReplacement = action === 'redact' || action === 'block';
+    const update = (patchKey: 'action' | 'replacement', val: string) => {
+      // Always rewrite onMatch to the single-action shape, dropping any legacy
+      // inflightAction / storageAction keys an older config still carried.
+      const next: Record<string, unknown> = { action, replacement };
+      next[patchKey] = val;
+      if (typeof next.replacement !== 'string' || next.replacement === '') delete next.replacement;
       patch(key, next);
     };
     return (
-      <fieldset key={key} className={styles.onMatchSection}>
-        <legend className={styles.onMatchLegend}>
+      <section key={key} className={styles.onMatchSection}>
+        <h3 className={styles.onMatchLegend}>
           {t('pages:hooks.form.onMatchSection')}
-        </legend>
+        </h3>
         <p className={styles.onMatchHelp}>{desc || t('pages:hooks.form.onMatchHelp')}</p>
-        <FormField label={t('pages:hooks.form.inflightAction')} helpText={undefined}>
+        <FormField label={t('pages:hooks.form.action')} helpText={undefined}>
           <Select
-            value={inflight}
-            onValueChange={(v) => update('inflightAction', v)}
+            value={action}
+            onValueChange={(v) => update('action', v)}
             options={[
-              { value: 'approve', label: t('pages:hooks.form.inflightApprove') },
-              { value: 'block-hard', label: t('pages:hooks.form.inflightBlockHard') },
-              { value: 'block-soft', label: t('pages:hooks.form.inflightBlockSoft') },
-              { value: 'redact', label: t('pages:hooks.form.inflightRedact') },
-            ]}
-          />
-        </FormField>
-        <FormField label={t('pages:hooks.form.storageAction')} helpText={undefined}>
-          <Select
-            value={storage}
-            onValueChange={(v) => update('storageAction', v)}
-            options={[
-              { value: 'keep', label: t('pages:hooks.form.storageKeep') },
-              { value: 'redact', label: t('pages:hooks.form.storageRedact') },
-              { value: 'drop-content', label: t('pages:hooks.form.storageDropContent') },
+              { value: 'approve', label: t('pages:hooks.form.actionApprove') },
+              { value: 'redact', label: t('pages:hooks.form.actionRedact') },
+              { value: 'block', label: t('pages:hooks.form.actionBlock') },
             ]}
           />
         </FormField>
@@ -143,7 +148,7 @@ export function JsonSchemaHookConfigForm({ schema, value, onChange }: JsonSchema
             />
           </FormField>
         ) : null}
-      </fieldset>
+      </section>
     );
   };
 

@@ -3,51 +3,309 @@
   gap: 0.35rem;
 }
 
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+}
+
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+}
+
 .title {
   margin: 0;
-  font-size: 1.85rem;
-  line-height: 1.1;
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
 }
 
 .subtitle {
-  margin: 0;
-  max-width: 56rem;
-  color: var(--color-text-secondary);
+  margin: 4px 0 0;
+  max-width: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.pageHeader :global(p) {
+  max-width: none !important;
+  white-space: nowrap;
 }
 
 .row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.row > * {
+  min-width: 0;
+}
+
+.row :global(input) {
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
+.ruleFieldsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.ruleFieldsGrid > * {
+  min-width: 0;
+}
+
+.ruleFieldsGrid :global(input) {
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
+.metaRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.metaRow > * {
+  min-width: 0;
+}
+
+.metaRow :global(input) {
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
 }
 
 .textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--color-bg);
+}
+
+.autoGrowTextarea {
+  min-height: 36px;
+  max-height: 400px;
+  resize: none;
+  overflow-y: auto;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-4);
 }
 
 .actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.75rem;
+  min-height: 64px;
+  margin: 0;
+  padding: var(--g-space-3) 0;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.actions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .modeSwitch {
+  display: inline-flex;
+  width: fit-content;
+  gap: 0;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+}
+
+.modeSwitch :global(button) {
+  min-height: 32px !important;
+  border-radius: var(--g-radius-md) !important;
+  border: none !important;
+  box-shadow: none !important;
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.modeSwitch :global(button[class*="secondary"]) {
+  background: transparent !important;
+  color: var(--color-text-secondary) !important;
+}
+
+.modeSwitch :global(button[class*="secondary"]:hover),
+.modeSwitch :global(button[class*="secondary"]:active) {
+  background: var(--color-surface-hover) !important;
+  color: var(--color-text) !important;
+}
+
+.rulesToolbar {
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-4);
+}
+
+.addRuleButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
+  cursor: pointer;
+}
+
+.addRuleButton:hover,
+.addRuleButton:active {
+  color: var(--color-primary-hover);
+  background: transparent;
 }
 
 .ruleCard {
-  border: 1px solid var(--color-border-light);
-  border-radius: 12px;
-  padding: 0.85rem;
-  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: var(--g-space-4) 0 0;
+  background: transparent;
 }
 
 .ruleCardHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  list-style: none;
+  cursor: pointer;
   margin-bottom: 0.5rem;
+}
+
+.ruleCardHeader::-webkit-details-marker {
+  display: none;
+}
+
+.ruleTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 20px;
+}
+
+.ruleTitle strong {
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.ruleChevron {
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid var(--color-text-muted);
+  transition: transform 0.16s ease;
+}
+
+.ruleCard[open] .ruleChevron {
+  transform: rotate(90deg);
+}
+
+.deleteRuleButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-danger);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
+  cursor: pointer;
+}
+
+.deleteRuleButton:hover,
+.deleteRuleButton:active {
+  background: transparent;
+  color: var(--color-danger-700);
+}
+
+.ruleDescriptionField {
+  grid-column: span 2;
+}
+
+.ruleDescriptionField :global(input) {
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
+@media (max-width: 1100px) {
+  .ruleFieldsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -56,6 +314,23 @@
   }
 
   .row {
+    grid-template-columns: 1fr;
+  }
+
+  .ruleFieldsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .ruleDescriptionField {
+    grid-column: span 1;
+  }
+
+  .rulesToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .metaRow {
     grid-template-columns: 1fr;
   }
 }

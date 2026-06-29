@@ -2,8 +2,8 @@ package killswitch
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,7 +15,7 @@ import (
 
 // errorProducer is a mq.Producer whose Enqueue always returns an error.
 // Injecting it into audit.NewWriter makes LogCritical return that error,
-// exercising the fail-closed audit failure branch inside Post (F-0069).
+// exercising the fail-closed audit failure branch inside Post.
 type errorProducer struct{}
 
 func (p *errorProducer) Publish(_ context.Context, _ string, _ []byte) error {
@@ -49,7 +49,7 @@ func newHandlerWithAuditError(t *testing.T, fh *fakeHub) *Handler {
 
 // TestPost_AuditFailureReturns500 covers the fail-closed audit path: when
 // the admin audit MQ enqueue fails AFTER a successful Hub fan-out, Post must
-// return 500 with AUDIT_FAILURE code. This is the F-0069 fail-closed
+// return 500 with AUDIT_FAILURE code. This is the fail-closed
 // discipline — a kill-switch toggle without an audit row is unacceptable, so
 // the CP rejects the request rather than silently succeeding.
 func TestPost_AuditFailureReturns500(t *testing.T) {

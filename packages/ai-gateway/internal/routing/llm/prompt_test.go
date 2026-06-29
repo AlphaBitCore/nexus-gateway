@@ -46,8 +46,8 @@ func TestBuildRequestBody_CanonicalMessages_FiltersToUserRole(t *testing.T) {
 
 // TestBuildRequestBody_EmptyMessages_ReturnsSystemOnly demonstrates that
 // the canonical path still produces a valid (if non-grounded) router-LLM
-// body when no user content is supplied. S5 will add an explicit
-// short-circuit upstream of this call so the router LLM is never
+// body when no user content is supplied. A future explicit
+// short-circuit upstream of this call would keep the router LLM from being
 // invoked in the empty-user-content case; until then the body is
 // system-only and the downstream codec (Anthropic) may reject — the
 // strategy's smartFallback path then takes over.

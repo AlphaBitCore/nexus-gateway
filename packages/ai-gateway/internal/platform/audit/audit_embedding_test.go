@@ -165,6 +165,11 @@ func setupCoerceTest() (*Writer, *Record, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
 	logger := warnLogger(buf)
 	w := NewWriter(nil, "test.queue", nil, logger)
+	// The coerce runs synchronously in Enqueue BEFORE ensureStarted; claim startOnce
+	// so Enqueue's lazy ensureStarted() does not spin up a consumer worker that would
+	// log to buf from a background goroutine, racing the test's logBuf.String() read.
+	w.startOnce.Do(func() {})
+	w.recCh = make(chan *Record, 1)
 	rec := &Record{RequestID: "req-embed-test"}
 	return w, rec, buf
 }

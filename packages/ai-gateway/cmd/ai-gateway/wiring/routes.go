@@ -110,14 +110,16 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	adapters.RegisterBuiltins(trafficReg)
 	trafficReg.Freeze()
 
-	// `cache.broker` yaml flag gates same-key in-flight dedupe. When false,
-	// BrokerRegistry stays nil and every MISS goes direct to upstream
-	// (no joiner wait, no cache fill).
+	// The broker registry is ALWAYS constructed so an enabled cache tier always
+	// has a fill path (the broker pump is the sole cache writer). The
+	// `cache.broker` yaml flag now controls only same-key in-flight DEDUP:
+	// true → 1-leader-N-joiners (fewer upstream calls); false → every MISS its
+	// own upstream call (low p99) but still cache-filling. A MISS only reaches
+	// the broker when a tier is active; cache-off traffic stays on the direct
+	// path with zero broker overhead.
 	cacheMetrics := streamcache.NewMetrics(prometheus.DefaultRegisterer)
-	var brokerRegistry *streamcache.Registry
-	if deps.Config.Cache.Broker {
-		brokerRegistry = streamcache.NewRegistry(deps.ResponseCache, deps.Logger, cacheMetrics)
-	}
+	brokerRegistry := streamcache.NewRegistry(deps.ResponseCache, deps.Logger, cacheMetrics,
+		streamcache.WithDedup(deps.Config.Cache.Broker))
 
 	// Rulepack lister for hooks-test endpoint.
 	var rulePackLister rulepack.InstallLister
@@ -180,12 +182,20 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	guard := metricsGuard
 	mux.HandleFunc("POST /internal/provider-test",
 		guard.require(debug.ProviderTestHandler(deps.ProviderReg, deps.Logger)))
+	mux.HandleFunc("POST /internal/provider-discover-models",
+		guard.require(debug.ProviderDiscoverModelsHandler(deps.ProviderReg, deps.Logger)))
 	mux.HandleFunc("POST /internal/routing-simulate",
 		guard.require(debug.RoutingSimulateHandler(deps.RouterResolver, deps.FormatBridge, deps.Logger)))
 	mux.HandleFunc("POST /internal/v1/credentials/{id}/probe",
 		guard.require(debug.CredentialProbeHandler(deps.CacheLayer, deps.ProviderReg, deps.CredManager, deps.Logger)))
 	mux.HandleFunc("POST /internal/hooks-test",
 		guard.require(debug.HooksTestHandler(deps.GWHookRegistry, rulePackLister, deps.Logger)))
+	// Pattern perf test: called by the CP BFF when an author clicks "Test
+	// performance" on a rule-pack or hook regex. Measures the pattern on the real
+	// Vectorscan engine (the CP has no libhs) so a prefilter-defeating regex is
+	// caught at authoring time. INTERNAL_SERVICE_TOKEN-gated like the siblings.
+	mux.HandleFunc("POST /internal/pattern-perf-test",
+		guard.require(debug.PatternPerfHandler()))
 	// Embedding probe: called by CP BFF when admin clicks "Test Embedding" on
 	// the Cache Settings page. Embeddings are request/response only (no stream).
 	mux.HandleFunc("POST /internal/embedding-probe",

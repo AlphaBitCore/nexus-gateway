@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"math"
 	"time"
@@ -46,7 +46,7 @@ type pendingExemptionMessage struct {
 
 // ExemptionConsumer reads agent-uploaded auto-exemption events from
 // nexus.event.exemption and INSERTs them into exemption_request as
-// status='PENDING' rows, closing the E20 (Cert-Pin Auto-Exemption) loop:
+// status='PENDING' rows, closing the Cert-Pin Auto-Exemption loop:
 //
 //	agent runtime TLS-bump failure
 //	    → exemption.Store local Add (Source=auto)

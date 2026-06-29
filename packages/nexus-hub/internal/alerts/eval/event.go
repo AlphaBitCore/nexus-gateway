@@ -16,17 +16,18 @@ const (
 	EventAudit   EventKind = "audit"
 )
 
-// Event is the decoded payload an Aggregator's OnEvent receives. Traffic
-// events use the Hub-side consumer.TrafficEventMessage shape (pointer types
-// for nullable columns + SourceProcess + JSONB hooks_pipeline) which is
-// what the existing Hub TrafficEventWriter consumes from the same MQ
-// subjects. Audit events use the shared mq.AdminAuditMessage (CP publishes
-// that exact shape).
+// Event is the decoded payload an Aggregator's OnEvent receives. Traffic events
+// use consumer.AlertView — the narrow, compiler-enforced projection of the
+// producer message holding only the fields the aggregators read (pointer types
+// for nullable columns + SourceProcess + JSONB hooks_pipeline). An aggregator
+// that needs a field absent from AlertView fails to compile, which is the guard
+// against the narrowed alert decode silently dropping a field a rule depends on.
+// Audit events use the shared mq.AdminAuditMessage (CP publishes that exact shape).
 type Event struct {
 	Kind      EventKind
 	Source    EventSource
 	Timestamp time.Time
 
-	Traffic *consumer.TrafficEventMessage
+	Traffic *consumer.AlertView
 	Audit   *mq.AdminAuditMessage
 }

@@ -2,8 +2,8 @@ package jwtverifier
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -410,7 +410,7 @@ func (c *MQRevocationChecker) StartConsumer(
 	return err
 }
 
-// replayResponse matches the /api/admin/revocations reply shape from Task 4.4.
+// replayResponse matches the /api/admin/revocations reply shape.
 // The CP handler emits the cursor as "lastId" (camelCase) to match the rest of
 // the admin API style.
 type replayResponse struct {

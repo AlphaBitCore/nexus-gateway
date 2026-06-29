@@ -229,63 +229,71 @@ export function ThingStatsTab({ thingId, thingType }: Props) {
   return (
     <Stack gap="md">
       <div className={styles.header}>
-        <span className={styles.headerLabel}>{t('pages:thingStats.range')}</span>
-        <Select
-          value={range}
-          onValueChange={(v) => setRange(v as RangePreset)}
-          options={[
-            { value: '1h', label: t('pages:thingStats.range1h', { defaultValue: 'Last 1 hour' }) },
-            { value: '6h', label: t('pages:thingStats.range6h', { defaultValue: 'Last 6 hours' }) },
-            { value: '24h', label: t('pages:thingStats.range24h', { defaultValue: 'Last 24 hours' }) },
-            { value: '7d', label: t('pages:thingStats.range7d', { defaultValue: 'Last 7 days' }) },
-            { value: '30d', label: t('pages:thingStats.range30d', { defaultValue: 'Last 30 days' }) },
-          ]}
-        />
+        <div className={styles.rangeSelect}>
+          <Select
+            value={range}
+            onValueChange={(v) => setRange(v as RangePreset)}
+            options={[
+              { value: '1h', label: t('pages:thingStats.range1h', { defaultValue: 'Last 1 hour' }) },
+              { value: '6h', label: t('pages:thingStats.range6h', { defaultValue: 'Last 6 hours' }) },
+              { value: '24h', label: t('pages:thingStats.range24h', { defaultValue: 'Last 24 hours' }) },
+              { value: '7d', label: t('pages:thingStats.range7d', { defaultValue: 'Last 7 days' }) },
+              { value: '30d', label: t('pages:thingStats.range30d', { defaultValue: 'Last 30 days' }) },
+            ]}
+          />
+        </div>
         <span className={styles.granuleBadge}>
           {t('pages:thingStats.granulePrefix', { defaultValue: 'Granule' })}: {data.granule}
         </span>
       </div>
 
       {/* KPI cards */}
-      <div className={styles.kpiGrid}>
-        {catalog.kpis.map((kpi: KpiSpec) => {
-          const value = kpi.derive
-            ? kpi.derive(globalSums)
-            : kpi.metric
-              ? sumGlobal(data.rows, kpi.metric, kpi.dimensionKey ?? '')
-              : null;
-          return (
-            <div key={kpi.id} className={styles.kpiCard}>
-              <span className={styles.kpiLabel}>
-                {t(kpi.labelKey, { defaultValue: kpi.id })}
-              </span>
-              <span className={styles.kpiValue}>
-                {formatStatsValue(value, kpi.unit)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      <section className={styles.kpiSection}>
+        <h3 className={styles.kpiTitle}>
+          {t('pages:thingStats.summaryHeading', { defaultValue: 'Summary' })}
+        </h3>
+        <div className={styles.kpiGrid}>
+          {catalog.kpis.map((kpi: KpiSpec) => {
+            const value = kpi.derive
+              ? kpi.derive(globalSums)
+              : kpi.metric
+                ? sumGlobal(data.rows, kpi.metric, kpi.dimensionKey ?? '')
+                : null;
+            return (
+              <div key={kpi.id} className={styles.kpiCard}>
+                <span className={styles.kpiLabel}>
+                  {t(kpi.labelKey, { defaultValue: kpi.id })}
+                </span>
+                <span className={styles.kpiValue}>
+                  {formatStatsValue(value, kpi.unit)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       {/* Trends — small multiples */}
-      <h3 className={styles.sectionTitle}>
-        {t('pages:thingStats.trendsHeading', { defaultValue: 'Trends' })}
-      </h3>
-      <div className={styles.trendGrid}>
-        {catalog.trends.map((trend: TrendSpec) => (
-          <div key={trend.id} className={styles.trendCard}>
-            <div className={styles.trendLabel}>
-              {t(trend.labelKey, { defaultValue: trend.id })}
+      <section className={styles.trendsSection}>
+        <h3 className={styles.trendsTitle}>
+          {t('pages:thingStats.trendsHeading', { defaultValue: 'Trends' })}
+        </h3>
+        <div className={styles.trendGrid}>
+          {catalog.trends.map((trend: TrendSpec) => (
+            <div key={trend.id} className={styles.trendCard}>
+              <div className={styles.trendLabel}>
+                {t(trend.labelKey, { defaultValue: trend.id })}
+              </div>
+              <TimeSeriesChart
+                data={trendPoints(data.rows, trend)}
+                label={t(trend.labelKey, { defaultValue: trend.id })}
+                unit={statsUnitToChartUnit(trend.unit)}
+                height={140}
+              />
             </div>
-            <TimeSeriesChart
-              data={trendPoints(data.rows, trend)}
-              label={t(trend.labelKey, { defaultValue: trend.id })}
-              unit={statsUnitToChartUnit(trend.unit)}
-              height={140}
-            />
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </section>
 
       {/* Breakdowns — one tab per dimension */}
       {catalog.breakdowns.length > 0 && (
@@ -314,8 +322,8 @@ function BreakdownSection({ thingId, startISO, endISO, breakdowns }: BreakdownSe
   const [active, setActive] = useState<string>(breakdowns[0]?.id ?? '');
 
   return (
-    <>
-      <h3 className={styles.sectionTitle}>
+    <section className={styles.breakdownsSection}>
+      <h3 className={styles.breakdownsTitle}>
         {t('pages:thingStats.breakdownsHeading', { defaultValue: 'Breakdowns' })}
       </h3>
       <Tabs value={active} onValueChange={setActive}>
@@ -337,7 +345,7 @@ function BreakdownSection({ thingId, startISO, endISO, breakdowns }: BreakdownSe
           </TabsContent>
         ))}
       </Tabs>
-    </>
+    </section>
   );
 }
 

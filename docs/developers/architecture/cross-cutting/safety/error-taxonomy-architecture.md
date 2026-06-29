@@ -99,17 +99,19 @@ These writers emit a flat gateway `proxy_error` envelope (`{"error":{"message":"
 Compliance hooks return a `Decision` (`packages/shared/policy/hooks/core/types.go`):
 
 - `Approve` — pass through.
-- `RejectHard` — the gateway emits HTTP 403 with the gateway `proxy_error` envelope (same flat shape as §4 — not the per-ingress encoder), sets `rec.HookReasonCode` from the hook result, terminates the request before upstream dispatch. The blocking rule + actor are captured on the audit row.
-- `BlockSoft` — the gateway emits HTTP 246 (Nexus soft-reject convention) with the `proxy_error` envelope and an `X-Nexus-Hook` response header. Wired in the request, response, cache-hit, and streaming paths.
-- `Modify` — the gateway pushes the hook's rewritten body back onto the wire via the adapter's `RewriteRequestBody` (request stage) or its response equivalent (non-streaming response + cache-hit response + streaming via the held-back SSE prefix). Adapters that return `ErrRewriteUnsupported` fall through with a warning log and stamp `REDACT_INFLIGHT_UNSUPPORTED` on the audit row.
+- `RejectHard` — the operator-facing `block` action. How the rejection reaches the client depends on which service owns the response: the **AI Gateway** emits HTTP 403 with the gateway `proxy_error` envelope (same flat shape as §4 — not the per-ingress encoder) at both the request and response stages; the **Compliance Proxy** (via the shared `tlsbump` forwarder, `richReject=true`) emits a 403 at the request stage and HTTP 451 at the response/SSE stages with an attributed reject body; the **Agent** on-host interceptor (`richReject=false`, fail-open) emits a minimal `Forbidden` with no attribution body. In all cases `rec.HookReasonCode` is set from the hook result and the blocking rule + actor are captured on the audit row, with the redacted copy persisted.
+- `BlockSoft` — there is no distinct soft-block response and no HTTP 246. The internal `BlockSoft` decision still exists (e.g. a soft AI-Guard verdict folded into the merge) but `ActionFromDecision` folds it to the `block` action, so it dispatches exactly like `RejectHard` above.
+- `Modify` — the `redact` action: the service pushes the hook's rewritten body back onto the wire via the adapter's `RewriteRequestBody` (request stage) or its response equivalent (non-streaming response + cache-hit response + streaming via the held-back SSE prefix), and the same masked body is forwarded, returned, and stored. Adapters that return `ErrRewriteUnsupported` fall through with a warning log and stamp `REDACT_INFLIGHT_UNSUPPORTED` on the audit row.
 - `Abstain` — no opinion, equivalent to Approve.
+
+**Block response attribution (proxies that own the client response).** When the AI Gateway or Compliance Proxy blocks, the reject body tells the caller what tripped the policy, with a safety asymmetry by stage: a **request-stage** block may carry matched rule/category IDs and the blocked values (the caller already holds its own request data), while a **response-stage** block carries only rule-ID / category labels and **never** echoes the upstream's original sensitive value (echoing it would leak the very content the block exists to contain). The agent never synthesizes an attributed body.
 
 The hook pipeline's `HookResult.ReasonCode` is the per-hook string the audit row carries. Standard values live in `packages/shared/policy/decision/types.go` (the `Reason*` constant block):
 
-- `REDACT_INFLIGHT_UNSUPPORTED` — redaction policy unavailable for the live request shape.
-- `REDACT_STORAGE_ONLY_BY_POLICY` — admin policy says redact for storage only, not in-flight.
-- `STORAGE_DROPPED_BY_POLICY` — payload-capture policy dropped the body before storage.
+- `REDACT_INFLIGHT_UNSUPPORTED` — a `redact` match could not be applied on the live wire shape (adapter returned `ErrRewriteUnsupported`); the redacted copy is absent so the raw body is dropped rather than persisted.
 - `AIGUARD_SUGGESTED_VS_POLICY` — AI-Guard scanner suggested action overridden by admin policy.
+
+`REDACT_STORAGE_ONLY_BY_POLICY` and `STORAGE_DROPPED_BY_POLICY` stay defined as constants so historical rows that carry them still render, but no live path stamps them: a single `action` axis admits no store-only-redact divergence, and `drop-content` is not an operator choice.
 
 Audit-only reason strings (`no_compatible_capability`, `feature_requires_native_responses_target`, `QUOTA_EXCEEDED`) are written ad-hoc at the rejection site and are not enumerated as constants today — they exist only as the literal string the writer emits and the corresponding `rec.HookReasonCode` assignment. New writers should follow the same pattern: pick a stable snake_case string, set it on the audit record, and grep'able literal at the producer site is the single source of truth.
 
@@ -158,7 +160,7 @@ The standard API error path across all four services uses a single `{"error":{"m
 - `packages/ai-gateway/internal/providers/specs/<name>/errors/` and `<name>/errors.go` — per-provider upstream-to-canonical normalisers.
 - `packages/ai-gateway/internal/ingress/envelope/error_envelope.go` — wire envelope encoders + SSE error-frame synth.
 - `packages/ai-gateway/internal/ingress/proxy/proxy.go`, `packages/ai-gateway/internal/ingress/proxy/cross_format.go` — gateway-internal `proxy_error` writers + hook decision dispatch.
-- `packages/ai-gateway/internal/platform/streaming/live.go` — streaming-side hook decision handling (BlockSoft + Modify).
+- `packages/ai-gateway/internal/platform/streaming/live.go` — streaming-side hook decision handling (`RejectHard` in-band termination + `Modify` rewrite of the held-back SSE prefix).
 - `packages/ai-gateway/internal/platform/metrics/metrics.go` — `requests_total` + `errors_total` registration.
 - `packages/shared/policy/decision/types.go` — `Reason*` constants.
 - `packages/shared/policy/hooks/core/types.go` — `Decision` vocabulary re-exports.

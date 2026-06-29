@@ -2,9 +2,9 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
+	json "github.com/goccy/go-json"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -122,6 +122,9 @@ func (w *TrafficEventWriter) insertTrafficEvents(ctx context.Context, tx pgx.Tx,
 			// the producer; '' for non-AI forwards. Column is NOT NULL DEFAULT
 			// '', so bind the string directly (empty is valid, never NULL).
 			stripNul(e.EndpointType),
+			// ingress_format ($91). Client-facing wire format; '' for
+			// compliance-proxy / agent. NOT NULL DEFAULT '', bind directly.
+			stripNul(e.IngressFormat),
 		)
 	}
 
@@ -189,7 +192,11 @@ INSERT INTO traffic_event (
     gateway_cache_l2_entry_key,
     -- Canonical request modality (typology.EndpointKind), stamped by the
     -- producing service. '' for non-classified (compliance-proxy / agent).
-    endpoint_type
+    endpoint_type,
+    -- Client-facing wire format (provcore.Format) the request/response bodies
+    -- are stored in. Drives the control-plane view-time normalize. '' for
+    -- compliance-proxy / agent transparent forwards.
+    ingress_format
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -229,7 +236,8 @@ INSERT INTO traffic_event (
     $85, $86,
     $87, $88,
     $89,
-    $90
+    $90,
+    $91
 ) ON CONFLICT (id) DO NOTHING
 `
 
@@ -243,23 +251,29 @@ func (w *TrafficEventWriter) insertPayloads(ctx context.Context, tx pgx.Tx, item
 			continue
 		}
 		// Demux Body discriminator into inline vs spill columns.
-		// inline_*_body holds the JSONB body; *_spill_ref holds {backend,
+		// inline_*_body holds the raw body bytes (BYTEA); *_spill_ref holds {backend,
 		// key, size, sha256, contentType}. Exactly one is set per direction.
 		var (
 			inlineReq, inlineResp     any
+			reqEnc, respEnc           *string
 			reqSpillRef, respSpillRef any
 			reqSize, respSize         *int64
 			reqTrunc, respTrunc       bool
 			reqCT, respCT             *string
 		)
 		if e.RequestBody.Kind == "inline" {
-			// Use json.Marshal(body) so the envelope {kind, encoding, inlineBytes, ...}
-			// is stored as JSONB. InlineBytes may be non-JSON (SSE/binary) when
-			// Encoding == "base64"; casting raw bytes to json.RawMessage would fail
-			// PostgreSQL's JSONB validation.
-			if b, err := json.Marshal(e.RequestBody); err == nil {
-				inlineReq = json.RawMessage(b)
-			}
+			// Store the captured body's RAW bytes in the BYTEA inline_request_body
+			// column; the discriminator rides in inline_request_encoding.
+			// PostgreSQL stores the bytes as-is — no JSONB parse/validate/tree-store
+			// (the former audit-drain bottleneck) and no base64 inflation. A
+			// compressed body arrives base64-of-frame on the wire, so ColumnPayload
+			// base64-decodes it to the raw frame here (ingest CPU, which has
+			// headroom) so PG writes 33% fewer bytes — disk write bandwidth is the
+			// single-box no-loss wall. Size/truncated/content-type have their own
+			// columns below.
+			payload, enc := e.RequestBody.ColumnPayload()
+			inlineReq = payload
+			reqEnc = &enc
 			s := e.RequestBody.SizeBytes
 			reqSize = &s
 			reqTrunc = e.RequestBody.Truncated
@@ -279,11 +293,13 @@ func (w *TrafficEventWriter) insertPayloads(ctx context.Context, tx pgx.Tx, item
 			}
 		}
 		if e.ResponseBody.Kind == "inline" {
-			// Same as request: marshal full envelope to avoid JSONB failures on
-			// non-JSON bodies (streaming SSE, binary).
-			if b, err := json.Marshal(e.ResponseBody); err == nil {
-				inlineResp = json.RawMessage(b)
-			}
+			// Same as request: RAW bytes into the BYTEA column, encoding in
+			// inline_response_encoding. SSE response bytes are UTF-8 → stored as
+			// "text" verbatim; a compressed body is base64-decoded to its raw frame
+			// (no base64 inflation on disk).
+			payload, enc := e.ResponseBody.ColumnPayload()
+			inlineResp = payload
+			respEnc = &enc
 			s := e.ResponseBody.SizeBytes
 			respSize = &s
 			respTrunc = e.ResponseBody.Truncated
@@ -309,6 +325,7 @@ func (w *TrafficEventWriter) insertPayloads(ctx context.Context, tx pgx.Tx, item
 			reqSize, respSize,
 			reqTrunc, respTrunc,
 			reqCT, respCT,
+			reqEnc, respEnc,
 		)
 		count++
 	}
@@ -335,8 +352,9 @@ INSERT INTO traffic_event_payload (
     request_spill_ref, response_spill_ref,
     request_size_bytes, response_size_bytes,
     request_truncated, response_truncated,
-    request_content_type, response_content_type
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    request_content_type, response_content_type,
+    inline_request_encoding, inline_response_encoding
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (traffic_event_id) DO NOTHING
 `
 

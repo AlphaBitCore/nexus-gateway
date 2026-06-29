@@ -1,5 +1,5 @@
 /**
- * Global time-range context (S45, M5-12).
+ * Global time-range context.
  *
  * A single React context that holds the operator's chosen time window
  * (start / end ISO strings + a preset label) so multiple pages can stay

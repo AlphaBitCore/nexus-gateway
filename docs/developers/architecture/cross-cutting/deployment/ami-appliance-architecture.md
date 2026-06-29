@@ -244,11 +244,25 @@ Scan and is rejected on submission.
 ## 8. AMI build pipeline (`nexus-ami/build.sh` → `nexus.pkr.hcl`)
 
 ```
-make build-all                          → dist/bin/<svc>/<svc> (4 Go binaries)
-make control-plane-ui-build             → packages/control-plane-ui/dist/
+git archive HEAD                        → nexus-ami/artifacts/nexus-src.tar.gz (built ON instance)
+make control-plane-ui-build             → packages/control-plane-ui/dist/ (portable, built locally)
 build.sh stages → nexus-ami/artifacts/  → flatten + copy + tar
 packer init . && packer build           → AMI ID in us-east-1
 ```
+
+**The four Go services are compiled ON the build instance with the Vectorscan
+(Hyperscan) content-scanning engine — not cross-compiled locally.** The services
+link `libhs` via cgo; a `CGO_ENABLED=0` cross-compile silently selects the
+pure-Go RE2 fallback matcher, and libhs is C++ that cannot cross-compile from a
+macOS arm64 control host. So `build.sh` ships the committed source tree
+(`git archive HEAD` — commit first) and `scripts/build-binaries.sh` builds it
+natively on the linux/amd64 instance, the same on-instance-compile model
+`install-valkey.sh` already uses. The runtime needs `libstdc++` (installed by
+`install.sh`); libhs itself is statically linked, built **`FAT_RUNTIME=OFF`** (a
+`FAT_RUNTIME=ON` archive resolves its CPU-dispatch IFUNCs to a no-op stub in a Go
+cgo binary, silently disabling `hs_scan` — `build-binaries.sh` runs a firing
+self-test to gate that). The Go toolchain + libhs/ragel build trees **and the
+Nexus source tree are deleted** after the build, so neither ships in the AMI.
 
 Packer steps:
 
@@ -275,10 +289,12 @@ Packer steps:
    (a problem we hit on China → us-east-1 at ~250 KB/s). A single-file
    transfer is atomic and fails loudly.
 3. `shell` provisioner runs `scripts/install.sh`. The script first extracts
-   the tarball to `/tmp/nexus/`, then (~10 minutes total) installs
-   Postgres, builds Valkey from source, installs NATS, installs Node +
-   Prisma, places binaries + configs + systemd units + the cross-compiled
-   CLI download artifacts.
+   the tarball to `/tmp/nexus/`, then (~15 minutes total) runs
+   `build-binaries.sh` (installs a transient Go + libhs `FAT_RUNTIME=OFF` +
+   ragel toolchain, compiles the 4 Go services `-tags vectorscan`, self-tests
+   that Vectorscan fires, then deletes the toolchain + Nexus source), installs
+   Postgres, builds Valkey from source, installs NATS, installs Node + Prisma,
+   and places the binaries + configs + systemd units.
 4. `shell` provisioner runs `scripts/harden.sh` (~30 seconds).
 5. Packer snapshots the EBS root volume → registers the AMI.
 
@@ -335,6 +351,7 @@ values and where each is set:
 | Service DB pools | `database.maxConns` | hub 40 · ai-gateway 25 · control-plane 15 · compliance-proxy 4 (config-only) | per-service yaml |
 | systemd | `LimitNOFILE` / `LimitNPROC` | 1048576 / 65535 | the four `nexus-*.service` units |
 | Go runtime | `GOMEMLIMIT` | per-service share of ~40% RAM | `first-boot.sh` → `/etc/nexus/<svc>.env` |
+| Audit stream | `NEXUS_EVENTS_STORAGE` | `file` (durable; overrides the in-memory code default) | `first-boot.sh` → `/etc/nexus/nexus-hub.env` |
 | Kernel | `somaxconn` / `tcp_max_syn_backlog` / `nr_open` / `file-max` | 65535 / 65535 / 2097152 / 2097152 | `/etc/sysctl.d/99-nexus.conf` (`install.sh`) |
 | NATS | `max_payload` | 16 MB | `install-nats.sh` |
 | Valkey | `maxmemory` | ~15% RAM, `allkeys-lru` | `first-boot.sh` |

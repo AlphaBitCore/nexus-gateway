@@ -1,8 +1,8 @@
 package bedrock
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 
@@ -140,7 +140,7 @@ func encodeCohereEmbedRequest(canonicalBody []byte, _ provcore.CallTarget) (prov
 //	    "texts":         ["...", "..."]
 //	}
 //
-// Note: Cohere Embed on Bedrock does NOT include a usage field — token counts
+// Cohere Embed on Bedrock does NOT include a usage field — token counts
 // are not returned. Usage is set to zeros in the canonical response.
 func decodeCohereEmbedResponse(nativeBody []byte, modelID string) (provcore.DecodeResult, error) {
 	if !gjson.ValidBytes(nativeBody) {

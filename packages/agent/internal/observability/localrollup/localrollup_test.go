@@ -13,8 +13,8 @@ package localrollup
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"strings"
@@ -382,7 +382,7 @@ func TestAggregate5m_FullDimensionFanOutAndMetricArms(t *testing.T) {
 	})
 
 	// Event 2: passthrough flow with duration but no upstream_total — exercises
-	// the #84 "treat duration as upstream wall time" branch.
+	// the "treat duration as upstream wall time" branch.
 	insertAuditEvent(t, db, auditRow{
 		id: "e-pt-1", ts: mid.Add(time.Second),
 		srcProc: "/usr/bin/python", destHost: "api.openai.com", action: "passthrough",

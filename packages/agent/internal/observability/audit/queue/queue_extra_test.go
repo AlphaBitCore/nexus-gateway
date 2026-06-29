@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -547,6 +548,15 @@ func TestNewQueue_CreateTablesErrorOnDirectoryPath(t *testing.T) {
 // fails. The function must surface the error and have cleaned up
 // .encrypted along the way.
 func TestMigrateToEncrypted_BackupRenameFailureSurfaces(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// This test forces os.Rename to fail by dropping write permission on the
+		// containing directory (chmod 0o500) — Unix permission semantics. On
+		// Windows os.Chmod only toggles the read-only file attribute and does not
+		// gate directory renames, so the rename succeeds and no error surfaces.
+		// There is no simple Windows equivalent; the rename-failure path is
+		// exercised on Linux/macOS.
+		t.Skip("rename-failure is induced via Unix directory permissions; no Windows equivalent")
+	}
 	dir := t.TempDir()
 	// Build the plain db under a SUB-directory we can chmod 0o500.
 	sub := filepath.Join(dir, "ro")

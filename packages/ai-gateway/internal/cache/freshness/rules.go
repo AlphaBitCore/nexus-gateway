@@ -2,7 +2,6 @@ package freshness
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode"
 )
@@ -47,8 +46,8 @@ type Rule struct {
 
 	// Languages lists the BCP-47 language tags this rule applies to
 	// ("en", "zh"). An empty slice means the rule applies to all languages.
-	// S1 does not perform language detection — the field is stored for future
-	// use by S2 (Hub shadow) and passed through to the Prometheus label.
+	// Language detection is not performed here — the field is stored for future
+	// use (Hub shadow) and passed through to the Prometheus label.
 	Languages []string `json:"languages"`
 
 	// Enabled controls whether this rule participates in detection. Disabled
@@ -56,25 +55,34 @@ type Rule struct {
 	Enabled bool `json:"enabled"`
 }
 
-// compiledRule is the internal representation built from a Rule. Regex
-// compilation is done once at NewDetector / Reload time to avoid repeated
-// compilation on the hot path.
+// compiledRule is the internal representation built from a Rule. Keyword
+// lowercasing is done once at NewDetector / Reload time to avoid repeated work
+// on the hot path.
 type compiledRule struct {
 	rule     Rule
-	patterns []*regexp.Regexp // one pattern per keyword, case-insensitive
+	keywords []string // keyword literals, pre-lowercased for case-insensitive substring match
 }
 
-// matches reports whether the compiled rule fires for the given text.
+// matches reports whether the compiled rule fires. text is the original
+// message (used for the question-mark and entity checks, which are
+// case-sensitive); lowered is its lowercase form, supplied by the caller so the
+// per-request lowercasing happens once rather than once per rule.
 //
 // All conditions are AND-ed:
-//  1. At least one keyword regex matches.
+//  1. At least one keyword is a case-insensitive substring of text.
 //  2. If RequireQuestionMark: text contains "?" or "？".
 //  3. If RequireEntity: entityHeuristic returns true.
-func (cr *compiledRule) matches(text string) bool {
+//
+// Keyword matching is a literal substring search (strings.Contains over the
+// pre-lowered text and pre-lowered keywords). The keywords are literals, so a
+// regular expression would do the same job at far higher cost: a `(?i)` regex
+// walks the input rune-by-rune through the NFA case-folding every position,
+// which on a large message body dominates request CPU.
+func (cr *compiledRule) matches(text, lowered string) bool {
 	// Step 1 — keyword match (any keyword is sufficient).
 	keywordMatched := false
-	for _, p := range cr.patterns {
-		if p.MatchString(text) {
+	for _, kw := range cr.keywords {
+		if strings.Contains(lowered, kw) {
 			keywordMatched = true
 			break
 		}
@@ -106,23 +114,18 @@ func compile(r Rule) (*compiledRule, error) {
 	if len(r.Keywords) == 0 {
 		return nil, fmt.Errorf("rule %q: keywords must not be empty", r.ID)
 	}
-	patterns := make([]*regexp.Regexp, 0, len(r.Keywords))
+	keywords := make([]string, 0, len(r.Keywords))
 	for _, kw := range r.Keywords {
 		if strings.TrimSpace(kw) == "" {
 			return nil, fmt.Errorf("rule %q: keyword must not be blank", r.ID)
 		}
-		// (?i) = case-insensitive; regexp.QuoteMeta escapes any regex
-		// metacharacters in the keyword literal. We intentionally use a
-		// simple substring match rather than word-boundary anchors because
-		// multi-word phrases (e.g. "exchange rate") must match across
-		// language boundaries where word-boundary semantics differ.
-		p, err := regexp.Compile("(?i)" + regexp.QuoteMeta(kw))
-		if err != nil {
-			return nil, fmt.Errorf("rule %q keyword %q: %w", r.ID, kw, err)
-		}
-		patterns = append(patterns, p)
+		// Pre-lowercase the keyword literal once. Matching is a plain substring
+		// search (strings.Contains) rather than word-boundary anchors because
+		// multi-word phrases (e.g. "exchange rate") must match across language
+		// boundaries where word-boundary semantics differ.
+		keywords = append(keywords, strings.ToLower(kw))
 	}
-	return &compiledRule{rule: r, patterns: patterns}, nil
+	return &compiledRule{rule: r, keywords: keywords}, nil
 }
 
 // compileAll compiles every enabled rule in rs. Returns (compiled list, first

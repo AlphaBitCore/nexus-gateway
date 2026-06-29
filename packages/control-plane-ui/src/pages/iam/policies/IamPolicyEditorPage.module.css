@@ -18,7 +18,7 @@
 
 .tooltipIcon {
   cursor: help;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 .validationTitle {
@@ -38,13 +38,13 @@
 
 .jsonLabelText {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .jsonTextarea {
   width: 100%;
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   padding: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
@@ -53,7 +53,7 @@
 }
 
 .statementHeading {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   font-size: var(--g-font-size-sm);
 }
 
@@ -78,5 +78,5 @@
 
 .conditionTextarea {
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }

@@ -4,8 +4,8 @@ package status
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net"
 	"strings"
@@ -26,13 +26,13 @@ type SyncConfigFn func() (bool, string, error)
 type ShutdownFn func()
 
 // QueryEventsFn queries audit events from the local SQLite queue.
-// #88-compat shim: the handler now decodes ai_only + since URL params
+// Compat shim: the handler decodes ai_only + since URL params
 // and forwards them via a struct to a *Filtered handler. The QueryEventsFn
 // type stays for back-compat with existing wirings; new code should pass
 // queue.Queue.QueryEventsFiltered to NewServerFiltered.
 type QueryEventsFn func(search, action string, offset, limit int) ([]auditevent.Event, int, error)
 
-// QueryEventsFilteredFn adds the AI-only and Since filters #88 exposes
+// QueryEventsFilteredFn adds the AI-only and Since filters exposed
 // to the UI's Traffic page. statusapi prefers this when wired; falls
 // back to QueryEventsFn (zero values for the new fields) for older
 // callers. sinceUnixMillis=0 disables time filter; aiOnly=false disables
@@ -253,7 +253,7 @@ type Server struct {
 	syncConfigFn          SyncConfigFn
 	shutdownFn            ShutdownFn
 	queryEventsFn         QueryEventsFn
-	queryEventsFilteredFn QueryEventsFilteredFn // #88 — when wired, handler prefers this
+	queryEventsFilteredFn QueryEventsFilteredFn // when wired, handler prefers this
 	eventByIDFn           EventByIDFn           // detail-by-id (drawer fetches body/normalized/spill on demand)
 	queryLifecycleFn      QueryLifecycleFn
 	getAppliedConfigFn    GetAppliedConfigFn
@@ -309,10 +309,10 @@ func NewServer(
 	}
 }
 
-// SetQueryEventsFiltered wires the #88 successor handler that supports
+// SetQueryEventsFiltered wires the successor handler that supports
 // aiOnly + since filters. When set, the QUERY_EVENTS handler prefers
 // it over the legacy QueryEventsFn — callers don't have to migrate
-// in a single PR. Idempotent; safe to call multiple times.
+// all at once. Idempotent; safe to call multiple times.
 func (s *Server) SetQueryEventsFiltered(fn QueryEventsFilteredFn) {
 	s.queryEventsFilteredFn = fn
 }

@@ -3,8 +3,8 @@ package sso
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"sync"

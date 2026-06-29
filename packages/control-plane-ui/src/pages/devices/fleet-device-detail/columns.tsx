@@ -19,7 +19,7 @@ export const buildTrafficColumns = (t: TFunc): DataTableColumn<AgentAuditEvent>[
   { key: 'timestamp', label: t('pages:fleet.timestamp'), render: (r) => new Date(r.timestamp).toLocaleString() },
   { key: 'sourceProcess', label: t('pages:fleet.source'), render: (r) => r.sourceProcess || '—' },
   { key: 'destHost', label: t('pages:fleet.targetHost'), render: (r) => r.destHost ?? '—' },
-  { key: 'action', label: 'Action', render: (r) => <Badge variant="outline">{r.action || '—'}</Badge> },
+  { key: 'action', label: t('common:action'), render: (r) => <Badge variant="outline">{r.action || '—'}</Badge> },
   {
     key: 'requestHookDecision',
     label: t('pages:fleet.hookDecision'),
@@ -29,7 +29,7 @@ export const buildTrafficColumns = (t: TFunc): DataTableColumn<AgentAuditEvent>[
   },
   {
     key: 'duration',
-    label: 'Duration',
+    label: t('common:duration'),
     render: (r) => r.duration != null ? `${r.duration}ms` : <span className={styles.dim}>—</span>,
   },
 ];

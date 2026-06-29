@@ -7,9 +7,9 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"math/big"
@@ -342,6 +342,7 @@ func TestAuditEventToMap_BasicFields(t *testing.T) {
 		Method:        "POST",
 		Path:          "/v1/chat/completions",
 		Action:        "inspect",
+		IngressFormat: "anthropic",
 	}
 	m := AuditEventToMap(e)
 
@@ -363,6 +364,10 @@ func TestAuditEventToMap_BasicFields(t *testing.T) {
 	checkStr("targetMethod", "POST")
 	checkStr("targetPath", "/v1/chat/completions")
 	checkStr("action", "inspect")
+	// The domain-matched adapter must ride the upload payload so it reaches
+	// traffic_event.ingress_format for the CP view-time recompute (regression
+	// guard: this map is the agent→Hub serializer, not the Event struct).
+	checkStr("ingressFormat", "anthropic")
 }
 
 func TestAuditEventToMap_IdentityEmpty(t *testing.T) {
@@ -1248,7 +1253,7 @@ func TestBuildDeviceAuthModeFn_EmptyURL(t *testing.T) {
 	fn := buildDeviceAuthModeFn(bc)
 	// bootstrap.Get will fail on empty URL → returns ""
 	got := fn()
-	// We just verify no panic and the return is a string.
+	// Verify no panic and that the return is a string.
 	_ = got
 }
 
@@ -1519,7 +1524,7 @@ func TestBuildDeviceAuthModeFn_SuccessPath(t *testing.T) {
 	}
 }
 
-// identity.go — SSOAuthState.Authenticate with enrolled device (FR-29 path)
+// identity.go — SSOAuthState.Authenticate with enrolled device
 
 func TestSSOAuthState_Authenticate_EnrolledDevice(t *testing.T) {
 	// Simulate an enrolled device: create the three required files.

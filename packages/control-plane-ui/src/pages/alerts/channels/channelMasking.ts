@@ -4,7 +4,7 @@ import type { AlertChannel, AlertSeverity } from '@/api/services';
  * Literal prefix that Hub writes when masking a sensitive config value
  * on GET. Values starting with this string were redacted server-side; the
  * UI should treat them as "do not touch unless the user explicitly edits".
- * Note: the middle dots are Unicode bullets (U+2022), not ASCII asterisks.
+ * The middle dots are Unicode bullets (U+2022), not ASCII asterisks.
  */
 export const MASK_PREFIX = 'xxxx-••••-';
 

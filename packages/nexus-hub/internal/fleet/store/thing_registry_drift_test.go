@@ -58,7 +58,7 @@ func TestFindDriftedThings(t *testing.T) {
 	})
 }
 
-// TestFindEqualVersionOnlineThings covers the F-0112 content-pass candidate
+// TestFindEqualVersionOnlineThings covers the content-pass candidate
 // query: online Things at desired_ver == reported_ver, id/type only.
 func TestFindEqualVersionOnlineThings(t *testing.T) {
 	t.Run("happy multi-row", func(t *testing.T) {
@@ -263,7 +263,7 @@ func TestUpdateShadowReport(t *testing.T) {
 			t.Errorf("must wrap; got: %v", err)
 		}
 	})
-	// F-0111: the UPDATE must carry the monotonic guard so a stale / duplicate /
+	// the UPDATE must carry the monotonic guard so a stale / duplicate /
 	// older report cannot regress reported_ver (or the reported content/outcomes
 	// it stamps) and manufacture a drift flap. The SQL-text expectations below
 	// fail if anyone reverts the guard to the old unconditional
@@ -293,10 +293,10 @@ func TestUpdateShadowReport(t *testing.T) {
 			t.Fatalf("UpdateShadowReport: %v", err)
 		}
 	})
-	// F-0120: per-key merge. Both reported and reported_outcomes must fold the
+	// per-key merge. Both reported and reported_outcomes must fold the
 	// incoming keys in with `||` (COALESCE-guarded against a NULL column) rather
 	// than full-replacing the column, so a Thing reporting a single changed key
-	// (per-key dispatch, F-0122) cannot wipe sibling keys' reported state. The
+	// (per-key dispatch) cannot wipe sibling keys' reported state. The
 	// SQL-text expectation below fails if anyone reverts the merge to the old
 	// `reported = $2` full-replace form.
 	t.Run("per-key merge: reported folds in with || preserving siblings", func(t *testing.T) {
@@ -341,7 +341,7 @@ func TestUpdateShadowReport(t *testing.T) {
 }
 
 // TestUpdateDesiredForType covers the nexus-hub fan-out (per-Thing pg_notify
-// emit) + the F-0110 gate (non-nexus-hub types emit NO pg_notify) + marshal
+// emit) + the gate (non-nexus-hub types emit NO pg_notify) + marshal
 // err + query err + scan err + notify err propagation.
 func TestUpdateDesiredForType(t *testing.T) {
 	t.Run("nexus-hub 2-row fan-out emits 2 notifies", func(t *testing.T) {
@@ -381,7 +381,7 @@ func TestUpdateDesiredForType(t *testing.T) {
 			t.Errorf("nexus-hub must emit exactly 2 pg_notify Execs: %v", err)
 		}
 	})
-	// F-0110: every non-nexus-hub type (agent, ai-gateway, compliance-proxy,
+	// every non-nexus-hub type (agent, ai-gateway, compliance-proxy,
 	// control-plane) must NOT run the pg_notify loop — config is delivered to
 	// those Things via the WebSocket broadcast, never via pg_notify. The mock
 	// declares only Begin/Query/Commit and NO ExpectExec(pg_notify); pgxmock

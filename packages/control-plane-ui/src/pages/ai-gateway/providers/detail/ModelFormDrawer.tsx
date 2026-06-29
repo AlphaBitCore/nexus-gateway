@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Dialog, Button, Input, MultiSelectDropdown, Stack } from '@/components/ui';
+import { Dialog, Button, Input, MultiSelectDropdown, Select, Stack } from '@/components/ui';
 import { systemApi } from '@/api/services';
 import { mergeModelFeatureOptions, MODEL_FEATURE_OPTIONS } from '../_shared/model-feature-options';
 import { ProviderModelCapabilitiesPanel } from './ProviderModelCapabilitiesPanel';
@@ -86,39 +86,41 @@ export function ModelFormDrawer({ detail, mode, open, onClose }: ModelFormDrawer
     ? t('pages:providers.editModel', 'Edit model')
     : t('pages:providers.addModel');
 
+  const footer = (
+    <>
+      <Button variant="secondary" onClick={onClose}>{t('common:cancel')}</Button>
+      {isEdit ? (
+        <Button
+          variant="primary"
+          onClick={() => detail.handleModelUpdate()}
+          disabled={detail.modelUpdating || codeChecking || !!codeError
+            || !detail.editModelForm.watch('editModelName')
+            || !detail.editModelForm.watch('editModelCode')
+            || !detail.editModelForm.watch('editModelProviderModelId')}
+        >
+          {detail.modelUpdating ? t('pages:providers.saving') : t('common:save')}
+        </Button>
+      ) : (
+        <Button
+          variant="primary"
+          onClick={() => submitCreate(detail, createCapability)}
+          disabled={detail.modelCreating || codeChecking || !!codeError
+            || !detail.newModelForm.watch('modelName')
+            || !detail.newModelForm.watch('modelCode')
+            || !detail.newModelForm.watch('modelProviderModelId')}
+        >
+          {detail.modelCreating ? t('pages:providers.saving') : t('common:create')}
+        </Button>
+      )}
+    </>
+  );
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={title} variant="drawer" size="xl">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={title} variant="drawer" size="xl" footer={footer} footerClassName={styles.footer}>
       <Stack gap="lg" className={styles.form}>
         {isEdit
           ? <EditBody detail={detail} codeError={codeError} typeOptions={MODEL_TYPE_OPTIONS} statusOptions={MODEL_STATUS_OPTIONS} />
           : <CreateBody detail={detail} codeError={codeError} typeOptions={MODEL_TYPE_OPTIONS} capability={createCapability} onCapabilityChange={setCreateCapability} />}
-
-        <div className={styles.footer}>
-          <Button variant="secondary" onClick={onClose}>{t('common:cancel')}</Button>
-          {isEdit ? (
-            <Button
-              variant="primary"
-              onClick={() => detail.handleModelUpdate()}
-              disabled={detail.modelUpdating || codeChecking || !!codeError
-                || !detail.editModelForm.watch('editModelName')
-                || !detail.editModelForm.watch('editModelCode')
-                || !detail.editModelForm.watch('editModelProviderModelId')}
-            >
-              {detail.modelUpdating ? t('pages:providers.saving') : t('common:save')}
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={() => submitCreate(detail, createCapability)}
-              disabled={detail.modelCreating || codeChecking || !!codeError
-                || !detail.newModelForm.watch('modelName')
-                || !detail.newModelForm.watch('modelCode')
-                || !detail.newModelForm.watch('modelProviderModelId')}
-            >
-              {detail.modelCreating ? t('pages:providers.saving') : t('common:create')}
-            </Button>
-          )}
-        </div>
       </Stack>
     </Dialog>
   );
@@ -182,9 +184,7 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
           <div className={styles.field}><label className={styles.label}>{t('pages:providers.providerModelIdLabel')}</label>
             <Input value={v.pmid} onChange={(e) => f.setValue('modelProviderModelId', e.target.value)} placeholder={t('pages:providers.placeholderProviderModelId')} /></div>
           <div className={styles.field}><label className={styles.label}>{t('pages:providers.type')}</label>
-            <select value={v.type} onChange={(e) => f.setValue('modelType', e.target.value)}>
-              {typeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select></div>
+            <Select value={v.type} onValueChange={(value) => f.setValue('modelType', value)} options={typeOptions} /></div>
           <div className={styles.field + ' ' + styles.fieldFull}><label className={styles.label}>{t('pages:providers.modelDescriptionLabel')}</label>
             <Input value={v.description} onChange={(e) => f.setValue('modelDescription', e.target.value)} placeholder={t('pages:providers.placeholderOptionalDescription')} /></div>
         </div>
@@ -213,7 +213,7 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
             <div className={styles.field}><label className={styles.label}>{t('pages:providers.maxOutputTokens')}</label>
               <Input value={v.maxOutput} onChange={(e) => f.setValue('modelMaxOutput', e.target.value)} type="number" /></div>
           )}
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.modelAliasesLabel')}</label>
+          <div className={`${styles.field} ${styles.fieldFull}`}><label className={styles.label}>{t('pages:providers.modelAliasesLabel')}</label>
             <Input value={v.aliases} onChange={(e) => f.setValue('modelAliases', e.target.value)} placeholder={t('pages:providers.placeholderModelAliases')} /></div>
         </div>
       </section>
@@ -222,6 +222,7 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
         <h3 className={styles.sectionHeader}>{t('pages:providers.sectionFeatures', 'Features')}</h3>
         <MultiSelectDropdown
           label={t('pages:providers.features')}
+          className={styles.featureSelect}
           options={MODEL_FEATURE_OPTIONS}
           value={v.features}
           onChange={(val) => f.setValue('modelSelectedFeatures', val)}
@@ -231,7 +232,7 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
 
       {(v.type === 'embedding' || v.type === 'chat') && (
         <section className={styles.section}>
-          <h3 className={styles.sectionHeader}>{t('pages:providers.sectionCapabilities', 'Capabilities')}</h3>
+          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', '能力配置')}</h3>
           <ProviderModelCapabilitiesPanel
             modelType={v.type}
             value={capability}
@@ -279,13 +280,9 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
           <div className={styles.field}><label className={styles.label}>{t('pages:providers.providerModelIdLabel')}</label>
             <Input value={v.pmid} onChange={(e) => f.setValue('editModelProviderModelId', e.target.value)} /></div>
           <div className={styles.field}><label className={styles.label}>{t('pages:providers.type')}</label>
-            <select value={v.type} onChange={(e) => f.setValue('editModelType', e.target.value)}>
-              {typeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select></div>
+            <Select value={v.type} onValueChange={(value) => f.setValue('editModelType', value)} options={typeOptions} /></div>
           <div className={styles.field}><label className={styles.label}>{t('pages:providers.status')}</label>
-            <select value={v.status} onChange={(e) => f.setValue('editModelStatus', e.target.value)}>
-              {statusOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select></div>
+            <Select value={v.status} onValueChange={(value) => f.setValue('editModelStatus', value)} options={statusOptions} /></div>
           <div className={styles.field + ' ' + styles.fieldFull}><label className={styles.label}>{t('pages:providers.description')}</label>
             <Input value={v.description} onChange={(e) => f.setValue('editModelDescription', e.target.value)} /></div>
         </div>
@@ -314,7 +311,7 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
             <div className={styles.field}><label className={styles.label}>{t('pages:providers.maxOutputTokens')}</label>
               <Input value={v.maxOutput} onChange={(e) => f.setValue('editModelMaxOutput', e.target.value)} type="number" /></div>
           )}
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.modelAliasesLabel')}</label>
+          <div className={`${styles.field} ${styles.fieldFull}`}><label className={styles.label}>{t('pages:providers.modelAliasesLabel')}</label>
             <Input value={v.aliases} onChange={(e) => f.setValue('editModelAliases', e.target.value)} placeholder={t('pages:providers.placeholderModelAliases')} /></div>
         </div>
       </section>
@@ -323,6 +320,7 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
         <h3 className={styles.sectionHeader}>{t('pages:providers.sectionFeatures', 'Features')}</h3>
         <MultiSelectDropdown
           label={t('pages:providers.features')}
+          className={styles.featureSelect}
           options={mergeModelFeatureOptions(v.features)}
           value={v.features}
           onChange={(val) => f.setValue('editModelFeatures', val)}
@@ -332,7 +330,7 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
 
       {(v.type === 'embedding' || v.type === 'chat') && (
         <section className={styles.section}>
-          <h3 className={styles.sectionHeader}>{t('pages:providers.sectionCapabilities', 'Capabilities')}</h3>
+          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', '能力配置')}</h3>
           <ProviderModelCapabilitiesPanel
             modelType={v.type}
             value={detail.editingCapabilityJson}

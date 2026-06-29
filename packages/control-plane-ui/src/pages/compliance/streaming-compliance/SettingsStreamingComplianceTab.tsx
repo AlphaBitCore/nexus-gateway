@@ -24,12 +24,14 @@ import {
 // agent) and Provider (ai-gateway) and reuse the existing edit panels for
 // those resources — this tab only owns the global default knob.
 //
-// Mode legend:
-//   passthrough        — relay only, no hook, no body capture.
-//   buffer_full_block  — hold full response, run hook at end, can HTTP-451.
-//                        Trades real-time UX for the ability to block.
-//   chunked_async      — relay bytes in real time + accumulate + run hook
-//                        per chunk. Audit-only; cannot stop sent bytes.
+// Mode legend (see the in-panel disclosure for the user-facing wording):
+//   passthrough        — relay only; compliance scans at storage time, no
+//                        inflight redaction. Lowest latency.
+//   buffer_full_block  — hold the full response, scan before any byte ships;
+//                        redaction + hard-block guaranteed. Higher TTFB.
+//   chunked_async      — real-time stream with best-effort inflight redaction;
+//                        bounded-fragment wire risk (a short leading fragment
+//                        may reach the client before redaction engages).
 export function SettingsStreamingComplianceTab() {
   const { t } = useTranslation();
 
@@ -82,168 +84,155 @@ export function SettingsStreamingComplianceTab() {
   if (!data) return null;
 
   return (
-    <Card>
-      <Stack gap="md">
-        <h2>{t('pages:settingsStreamingCompliance.title', 'Streaming Compliance')}</h2>
-        <p style={{ fontSize: 'var(--g-font-size-base)', color: 'var(--color-text-secondary)' }}>
+    <Stack gap="md">
+      <div className={styles.sectionHeader}>
+        <h2 className={styles.sectionTitle}>{t('pages:settingsStreamingCompliance.title', 'Streaming Compliance')}</h2>
+        <p className={styles.sectionSubtitle}>
           {t(
             'pages:settingsStreamingCompliance.subtitle',
             'Global default for SSE response handling. Per-host overrides live on Interception Domains; per-provider overrides live on Providers.',
           )}
         </p>
-
-        <FormField
-          label={t('pages:settingsStreamingCompliance.defaultMode', 'Default Mode')}
-          helpText={t(
-            'pages:settingsStreamingCompliance.defaultModeHelp',
-            'passthrough: relay only. buffer_full_block: hold response + run hook + can block (breaks SSE realtime). chunked_async: real-time relay + audit-only hook.',
-          )}
-        >
-          <select
-            value={defaultMode}
-            onChange={(e) => setDefaultMode(e.target.value as StreamingComplianceConfig['default_mode'])}
-            className={styles.nativeSelect}
-          >
-            <option value="passthrough">passthrough</option>
-            <option value="buffer_full_block">buffer_full_block</option>
-            <option value="chunked_async">chunked_async</option>
-          </select>
-        </FormField>
-
-        {/*
-          Mode advisories. Two sources:
-          (a) data.warnings — what the backend returned for the persisted
-              mode. Single source of truth — modeWarnings() in Go.
-          (b) localModeWarning — fired when admin has picked a different
-              mode in the dropdown but hasn't saved yet. Same text the
-              backend would return; surfacing pre-save so they aren't
-              surprised after Save.
-          We render unconditionally when present (no extra hover/tooltip
-          chrome) — these are constraints admins MUST see, not optional
-          help. Style follows the existing subtitle muted text.
-        */}
-        {(() => {
-          const persistedWarnings = data?.warnings ?? [];
-          const localWarning =
-            defaultMode === 'buffer_full_block' &&
-            data?.default_mode !== 'buffer_full_block'
-              ? t(
-                  'pages:settingsStreamingCompliance.bufferModifyWarning',
-                  'Heads up: buffer_full_block silently ignores response-hook Modify decisions (the original body replays unchanged). Use chunked_async if rewrite is required.',
-                )
-              : null;
-          const lines = [...persistedWarnings];
-          if (localWarning) lines.push(localWarning);
-          if (lines.length === 0) return null;
-          return (
-            <div
-              role="note"
-              style={{
-                padding: 'var(--g-space-3)',
-                border: '1px solid var(--color-border-warning, var(--color-border))',
-                borderRadius: 'var(--g-radius-sm)',
-                background: 'var(--color-background-warning-subtle, transparent)',
-                fontSize: 'var(--g-font-size-sm)',
-                color: 'var(--color-text-secondary)',
-              }}
+      </div>
+      <Card>
+        <Stack gap="md">
+          <div className={styles.formGrid}>
+            <FormField
+              label={t('pages:settingsStreamingCompliance.defaultMode', 'Default Mode')}
+              helpText={t(
+                'pages:settingsStreamingCompliance.defaultModeHelp',
+                'Stream mode is high-performance but best-effort on the wire; for guaranteed redaction/blocking choose Buffer.',
+              )}
             >
-              {lines.map((w, i) => (
-                <div key={i}>{w}</div>
-              ))}
-            </div>
-          );
-        })()}
+              <select
+                value={defaultMode}
+                onChange={(e) => setDefaultMode(e.target.value as StreamingComplianceConfig['default_mode'])}
+                className={styles.nativeSelect}
+              >
+                <option value="passthrough">passthrough</option>
+                <option value="buffer_full_block">buffer_full_block</option>
+                <option value="chunked_async">chunked_async</option>
+              </select>
+            </FormField>
+
+            <FormField
+              label={t('pages:settingsStreamingCompliance.chunkBytes', 'Chunk Bytes')}
+              helpText={t(
+                'pages:settingsStreamingCompliance.chunkBytesHelp',
+                'chunked_async: bytes scanned per checkpoint. Adapts upward for large responses.',
+              )}
+            >
+              <Input type="number" value={chunkBytes} onChange={(e) => setChunkBytes(e.target.value)} min={0} step={1024} />
+            </FormField>
+            <FormField
+              label={t('pages:settingsStreamingCompliance.hookTimeoutMs', 'Hook Timeout (ms)')}
+              helpText={t(
+                'pages:settingsStreamingCompliance.hookTimeoutMsHelp',
+                'Per-hook execution budget. Exceeding the budget triggers fail_behavior.',
+              )}
+            >
+              <Input type="number" value={hookTimeoutMs} onChange={(e) => setHookTimeoutMs(e.target.value)} min={0} step={100} />
+            </FormField>
+            <FormField
+              label={t('pages:settingsStreamingCompliance.maxBufferBytes', 'Max Buffer (bytes)')}
+              helpText={t(
+                'pages:settingsStreamingCompliance.maxBufferBytesHelp',
+                'Per-stream in-memory cap. Streams over this threshold spill to SpillStore (when enabled) or are truncated.',
+              )}
+            >
+              <Input type="number" value={maxBufferBytes} onChange={(e) => setMaxBufferBytes(e.target.value)} min={0} step={1024 * 1024} />
+            </FormField>
+
+            <FormField
+              label={t('pages:settingsStreamingCompliance.failBehavior', 'On Hook Failure')}
+              helpText={t(
+                'pages:settingsStreamingCompliance.failBehaviorHelp',
+                'fail_open: continue on hook error/timeout. fail_close: block (buffer_full_block) or audit-flag (chunked_async).',
+              )}
+            >
+              <select
+                value={failBehavior}
+                onChange={(e) => setFailBehavior(e.target.value as StreamingComplianceConfig['fail_behavior'])}
+                className={styles.nativeSelect}
+              >
+                <option value="fail_open">fail_open</option>
+                <option value="fail_close">fail_close</option>
+              </select>
+            </FormField>
+          </div>
 
         {/*
-          Three numeric knobs side-by-side. CSS Grid (vs the previous Stack
-          + flex:1 wrappers) gives every cell the same width and a single
-          top-aligned baseline so the inputs don't bob up/down when the
-          help text under each label wraps to a different number of lines.
+          Honest per-mode disclosure (user-binding). One plain sentence per
+          mode stating exactly what compliance enforcement it does — and, for
+          stream mode, the bounded-fragment wire risk admins MUST see before
+          choosing it over Buffer. Informational, always visible; not a knob.
         */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
-            columnGap: 'var(--g-space-4)',
-            alignItems: 'flex-start',
-          }}
-        >
-          <FormField
-            label={t('pages:settingsStreamingCompliance.chunkBytes', 'Chunk Bytes')}
-            helpText={t(
-              'pages:settingsStreamingCompliance.chunkBytesHelp',
-              'chunked_async: bytes per checkpoint. Adapts upward when total/chunk_bytes > 64.',
-            )}
-          >
-            <Input type="number" value={chunkBytes} onChange={(e) => setChunkBytes(e.target.value)} min={0} step={1024} />
-          </FormField>
-          <FormField
-            label={t('pages:settingsStreamingCompliance.hookTimeoutMs', 'Hook Timeout (ms)')}
-            helpText={t(
-              'pages:settingsStreamingCompliance.hookTimeoutMsHelp',
-              'Per-hook execution budget. Exceeding the budget triggers fail_behavior.',
-            )}
-          >
-            <Input type="number" value={hookTimeoutMs} onChange={(e) => setHookTimeoutMs(e.target.value)} min={0} step={100} />
-          </FormField>
-          <FormField
-            label={t('pages:settingsStreamingCompliance.maxBufferBytes', 'Max Buffer (bytes)')}
-            helpText={t(
-              'pages:settingsStreamingCompliance.maxBufferBytesHelp',
-              'Per-stream in-memory cap. Streams over this threshold spill to SpillStore (when enabled) or are truncated.',
-            )}
-          >
-            <Input type="number" value={maxBufferBytes} onChange={(e) => setMaxBufferBytes(e.target.value)} min={0} step={1024 * 1024} />
-          </FormField>
+        <div role="note" className={styles.disclosure}>
+          <div className={styles.disclosureTitle}>
+            {t('pages:settingsStreamingCompliance.disclosureTitle', 'How each mode handles compliance')}
+          </div>
+          <div className={styles.disclosureRow}>
+            <span className={styles.disclosureMode}>passthrough</span>
+            <span>
+              {t(
+                'pages:settingsStreamingCompliance.disclosurePassthrough',
+                'Streamed in real time; compliance scanning runs at storage time only — no inflight redaction. Lowest latency, no inflight enforcement.',
+              )}
+            </span>
+          </div>
+          <div className={styles.disclosureRow}>
+            <span className={styles.disclosureMode}>chunked_async</span>
+            <span>
+              {t(
+                'pages:settingsStreamingCompliance.disclosureStream',
+                'Real-time streaming with inflight redaction on a best-effort basis. High performance, but carries a bounded-fragment risk: a complete sensitive value is never delivered, yet a short leading fragment may reach the client before redaction engages. Choose buffer_full_block for guaranteed redaction.',
+              )}
+            </span>
+          </div>
+          <div className={styles.disclosureRow}>
+            <span className={styles.disclosureMode}>buffer_full_block</span>
+            <span>
+              {t(
+                'pages:settingsStreamingCompliance.disclosureBuffer',
+                'The full response is buffered and scanned before any byte is delivered — redaction and hard-block are guaranteed (strong compliance), at the cost of higher time-to-first-byte.',
+              )}
+            </span>
+          </div>
         </div>
 
-        <FormField
-          label={t('pages:settingsStreamingCompliance.failBehavior', 'On Hook Failure')}
-          helpText={t(
-            'pages:settingsStreamingCompliance.failBehaviorHelp',
-            'fail_open: continue on hook error/timeout. fail_close: block (buffer_full_block) or audit-flag (chunked_async).',
-          )}
-        >
-          <select
-            value={failBehavior}
-            onChange={(e) => setFailBehavior(e.target.value as StreamingComplianceConfig['fail_behavior'])}
-            className={styles.nativeSelect}
-          >
-            <option value="fail_open">fail_open</option>
-            <option value="fail_close">fail_close</option>
-          </select>
-        </FormField>
+        <div className={styles.switchGrid}>
+          <div className={styles.switchField}>
+            <div className={styles.switchTitle}>{t('pages:settingsStreamingCompliance.captureRequestTitle', 'Capture request body')}</div>
+            <div className={styles.switchRow}>
+              <Switch checked={captureRequest} onCheckedChange={setCaptureRequest} aria-label="capture request body" />
+              <span className={styles.switchHelp}>{t('pages:settingsStreamingCompliance.captureRequestHelp', '(default; per-host can override)')}</span>
+            </div>
+          </div>
 
-        <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-          <Switch checked={captureRequest} onCheckedChange={setCaptureRequest} aria-label="capture request body" />
-          <span style={{ fontSize: 'var(--g-font-size-base)' }}>
-            {t('pages:settingsStreamingCompliance.captureRequest', 'Capture request body (default; per-host can override)')}
-          </span>
-        </Stack>
+          <div className={styles.switchField}>
+            <div className={styles.switchTitle}>{t('pages:settingsStreamingCompliance.captureResponseTitle', 'Capture response body')}</div>
+            <div className={styles.switchRow}>
+              <Switch checked={captureResponse} onCheckedChange={setCaptureResponse} aria-label="capture response body" />
+              <span className={styles.switchHelp}>{t('pages:settingsStreamingCompliance.captureResponseHelp', '(default; per-host can override)')}</span>
+            </div>
+          </div>
 
-        <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-          <Switch checked={captureResponse} onCheckedChange={setCaptureResponse} aria-label="capture response body" />
-          <span style={{ fontSize: 'var(--g-font-size-base)' }}>
-            {t('pages:settingsStreamingCompliance.captureResponse', 'Capture response body (default; per-host can override)')}
-          </span>
-        </Stack>
-
-        <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-          <Switch checked={rawSpillEnabled} onCheckedChange={setRawSpillEnabled} aria-label="enable raw body spill" />
-          <span style={{ fontSize: 'var(--g-font-size-base)' }}>
-            {t(
-              'pages:settingsStreamingCompliance.rawSpillEnabled',
-              'Spill bodies larger than the inline threshold to SpillStore (default: localfs).',
-            )}
-          </span>
-        </Stack>
+          <div className={styles.switchField}>
+            <div className={styles.switchTitle}>{t('pages:settingsStreamingCompliance.rawSpillEnabledTitle', 'Spill bodies larger than the inline threshold to SpillStore')}</div>
+            <div className={styles.switchRow}>
+              <Switch checked={rawSpillEnabled} onCheckedChange={setRawSpillEnabled} aria-label="enable raw body spill" />
+              <span className={styles.switchHelp}>{t('pages:settingsStreamingCompliance.rawSpillEnabledHelpShort', '(default: localfs).')}</span>
+            </div>
+          </div>
+        </div>
 
         <Stack direction="horizontal" gap="sm">
-          <Button onClick={() => save(undefined)} loading={saving}>
+          <Button className={styles.saveButton} onClick={() => save(undefined)} loading={saving}>
             {t('common:save')}
           </Button>
         </Stack>
-      </Stack>
-    </Card>
+        </Stack>
+      </Card>
+    </Stack>
   );
 }

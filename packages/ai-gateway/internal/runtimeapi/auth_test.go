@@ -48,7 +48,7 @@ func TestAuth_RejectsWrongToken(t *testing.T) {
 	}
 }
 
-// TestAuth_UnconfiguredTokenFailsClosed (F-0076) — when the runtime API token
+// TestAuth_UnconfiguredTokenFailsClosed — when the runtime API token
 // is unset, every request gets 503 Service Unavailable (fail closed), never a
 // 401 that could be misread as a credential failure, and never 200. This
 // mirrors compliance-proxy runtime/auth and the other platform token gates.

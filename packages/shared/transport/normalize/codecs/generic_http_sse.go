@@ -1,7 +1,7 @@
 package codecs
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	core "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
@@ -42,7 +42,10 @@ func (n *GenericHTTPNormalizer) normalizeSSE(raw []byte) (core.NormalizedPayload
 		frameBytes += len(data)
 		frame := core.SSEFrame{Event: event}
 		var decoded any
-		if json.Valid([]byte(data)) && json.Unmarshal([]byte(data), &decoded) == nil && decoded != nil {
+		// json.Unmarshal already validates — a preceding json.Valid was a
+		// redundant second full scan (and goccy's Valid decodes into interface{},
+		// allocating ~4x the frame). One Unmarshal both validates and decodes.
+		if json.Unmarshal([]byte(data), &decoded) == nil && decoded != nil {
 			frame.Data = decoded
 		} else {
 			// Non-JSON data, or the JSON literal `null` (whose decoded

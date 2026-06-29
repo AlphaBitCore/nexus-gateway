@@ -1,12 +1,9 @@
 package audit
 
 import (
-	"encoding/json"
-	"strings"
+	"github.com/goccy/go-json"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // toMessage converts an internal AuditEvent to the canonical wire format
@@ -100,6 +97,10 @@ func toMessage(e AuditEvent, thingID, thingName string) mq.TrafficEventMessage {
 	if e.ResponseHookReasonCode != nil {
 		msg.ResponseHookReasonCode = *e.ResponseHookReasonCode
 	}
+	// Domain-matched adapter id → traffic_event.ingress_format so the control
+	// plane's view-time normalize recompute keys on the authoritative adapter
+	// (not path/sniff). Empty when no domain adapter matched.
+	msg.IngressFormat = e.IngressFormat
 	msg.ComplianceTags = e.ComplianceTags
 	if len(e.RequestBlockingRule) > 0 {
 		raw := json.RawMessage(e.RequestBlockingRule)
@@ -135,92 +136,4 @@ func toMessage(e AuditEvent, thingID, thingName string) mq.TrafficEventMessage {
 	msg.AttestationVerified = e.AttestationVerified
 	msg.AttestationAgentID = e.AttestationAgentID
 	return msg
-}
-
-// applyNormalize populates msg.RequestNormalized / ResponseNormalized
-// (and the status / error / version / redaction-spans columns).
-//
-// The emitter-supplied normalized copies (e.RequestNormalized /
-// e.ResponseNormalized) are authoritative when present: they are the
-// payloads the hook pipeline actually saw, already governed by the
-// stage's storageAction (span-redacted, or replaced by the drop-content
-// placeholder), with the relocated span offsets riding alongside on
-// e.*RedactionSpans. Re-deriving from raw bytes would discard that
-// governance and mis-align the span offsets.
-//
-// Directions without a runtime copy fall back to invoking the wired
-// shared/normalize closure against the captured raw bytes — which the
-// emitter has already storage-governed, so the derived copy cannot leak.
-// The fallback is skipped when fn is nil, when the adapter did not
-// identify a provider, or when the body is empty / spilled (only inline
-// bytes are normalized here).
-//
-// Adapter-type routing: e.Provider carries the traffic adapter's stable
-// identifier (e.g. "openai", "anthropic", "gemini"), which is the same
-// routing key the registry uses.
-func applyNormalize(msg *mq.TrafficEventMessage, e AuditEvent, fn NormalizeFn) {
-	stamped := false
-
-	if len(e.RequestNormalized) > 0 {
-		msg.RequestNormalized = e.RequestNormalized
-		msg.RequestNormalizeStatus = "ok"
-		stamped = true
-	}
-	if len(e.ResponseNormalized) > 0 {
-		msg.ResponseNormalized = e.ResponseNormalized
-		msg.ResponseNormalizeStatus = "ok"
-		stamped = true
-	}
-	if len(e.RequestRedactionSpans) > 0 {
-		msg.RequestRedactionSpans = e.RequestRedactionSpans
-	}
-	if len(e.ResponseRedactionSpans) > 0 {
-		msg.ResponseRedactionSpans = e.ResponseRedactionSpans
-	}
-
-	if fn != nil && e.Provider != "" {
-		adapterType := strings.ToLower(e.Provider)
-		contentType := "application/json" // cp inspects JSON bodies post-bump
-
-		if reqBytes := inlineBodyBytes(e.RequestBody); msg.RequestNormalized == nil && len(reqBytes) > 0 {
-			raw, status, errReason := fn("request", contentType, adapterType, e.Model, e.Path, false, reqBytes)
-			if raw != nil || status != "" {
-				msg.RequestNormalized = raw
-				msg.RequestNormalizeStatus = status
-				msg.RequestNormalizeError = errReason
-				stamped = true
-			}
-		}
-		if respBytes := inlineBodyBytes(e.ResponseBody); msg.ResponseNormalized == nil && len(respBytes) > 0 {
-			// cp captures responses on bumped traffic; SSE streams flow
-			// through the streaming path and arrive here as the assembled
-			// transcript when the live pipeline materialised one. Treat as
-			// non-stream for the registry lookup; the OpenAI / Anthropic /
-			// Gemini decoders all handle assembled JSON.
-			raw, status, errReason := fn("response", contentType, adapterType, e.Model, e.Path, false, respBytes)
-			if raw != nil || status != "" {
-				msg.ResponseNormalized = raw
-				msg.ResponseNormalizeStatus = status
-				msg.ResponseNormalizeError = errReason
-				stamped = true
-			}
-		}
-	}
-	if stamped {
-		// Must be the schema version the registry stamps inside the
-		// payloads themselves: any divergent value makes the hub backfill
-		// treat every fresh proxy row as a version-mismatch candidate and
-		// re-normalize it pointlessly.
-		msg.NormalizeVersion = normcore.SchemaVersion
-	}
-}
-
-// inlineBodyBytes returns the in-memory bytes from an audit.Body
-// container, or nil when the body is absent. Spilled containers carry
-// their bytes in memory too (the emitter re-attaches them after the
-// spill decision; InlineBytes never serializes for non-inline kinds),
-// so spill-destined bodies normalize live instead of waiting for the
-// hub backfill to fetch the spill object.
-func inlineBodyBytes(b audit.Body) []byte {
-	return b.InlineBytes
 }

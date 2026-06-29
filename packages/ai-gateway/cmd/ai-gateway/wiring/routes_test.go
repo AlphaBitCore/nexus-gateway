@@ -130,7 +130,7 @@ func TestMountCoreRoutes_withCORSEnabled(t *testing.T) {
 	}
 }
 
-// TestMountCoreRoutes_metricsRequiresToken is the F-0079 regression guard:
+// TestMountCoreRoutes_metricsRequiresToken is the regression guard:
 // /metrics must reject an unauthenticated request (401) and serve only when
 // the internal-service bearer token is presented.
 func TestMountCoreRoutes_metricsRequiresToken(t *testing.T) {
@@ -163,7 +163,7 @@ func TestMountCoreRoutes_metricsRequiresToken(t *testing.T) {
 	}
 }
 
-// TestMountCoreRoutes_readEndpointsRateLimited is the F-0047 regression guard:
+// TestMountCoreRoutes_readEndpointsRateLimited is the regression guard:
 // the authenticated read-only endpoints are wrapped by the per-VK limiter, so
 // the route stays registered (not 404) and the wrapper does not break the
 // unauthenticated 401 path (no VK header → inner requireVK emits 401, never a

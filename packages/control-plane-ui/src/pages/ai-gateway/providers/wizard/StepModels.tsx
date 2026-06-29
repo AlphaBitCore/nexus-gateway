@@ -34,6 +34,14 @@ export function StepModels({ wizard }: { wizard: ProviderWizardHook }) {
     existingModelCodes,
     modelCodeConflicts,
     updateModelId,
+    fetchModels,
+    fetchingModels,
+    fetchModelsError,
+    fetchModelsUnsupported,
+    fetchModelsCount,
+    baseUrl,
+    apiKey,
+    skipCredential,
   } = wizard;
 
   return (
@@ -44,6 +52,48 @@ export function StepModels({ wizard }: { wizard: ProviderWizardHook }) {
           ? t('pages:providers.modelsStepUncheckHint')
           : t('pages:providers.modelsStepCustomHint')}
       </p>
+
+      {isCustom && (
+        <div className={styles.fetchModelsSection}>
+          <p className={styles.fetchModelsHint}>
+            {t('pages:providers.wizardModelsFetchHint', 'Model fetch is available for OpenAI / OpenAI-compatible providers.')}
+          </p>
+          <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
+            <Button
+              variant="secondary"
+              onClick={fetchModels}
+              disabled={fetchingModels || !baseUrl?.trim() || (!apiKey && !skipCredential)}
+              title={
+                !baseUrl?.trim() || (!apiKey && !skipCredential)
+                  ? t('pages:providers.wizardModelsFetchDisabledHint', 'Provide a Base URL and API key first')
+                  : undefined
+              }
+            >
+              {fetchingModels
+                ? t('pages:providers.wizardModelsFetching', 'Fetching…')
+                : t('pages:providers.wizardModelsFetchButton', 'Fetch from /v1/models')}
+            </Button>
+          </Stack>
+          {fetchModelsUnsupported && (
+            <p role="alert" className={styles.fetchModelsUnsupported}>
+              {t(
+                'pages:providers.wizardModelsFetchOpenAIOnly',
+                'Model fetch from /v1/models is available for OpenAI / OpenAI-compatible providers only. Add models manually below.',
+              )}
+            </p>
+          )}
+          {fetchModelsError && !fetchModelsUnsupported && (
+            <p role="alert" className={styles.fetchModelsError}>
+              {fetchModelsError}
+            </p>
+          )}
+          {fetchModelsCount !== null && fetchModelsCount !== undefined && !fetchModelsUnsupported && !fetchModelsError && (
+            <p className={styles.fetchModelsHint}>
+              {t('pages:providers.wizardModelsFetchCount', 'Fetched {{count}} models — select the ones to add.', { count: fetchModelsCount })}
+            </p>
+          )}
+        </div>
+      )}
 
       {!manualMode && models.length === 0 && isCustom && (
         <Button variant="secondary" onClick={() => setManualMode(true)} className={styles.addModelBtn}>
@@ -144,6 +194,11 @@ export function StepModels({ wizard }: { wizard: ProviderWizardHook }) {
 
       {models.length > 0 && (
         <>
+          {fetchModelsCount !== null && fetchModelsCount !== undefined && (
+            <p className={styles.fetchModelsHint}>
+              {t('pages:providers.wizardModelsTypeGuessHint', 'Model types are guessed from the id — verify before saving.')}
+            </p>
+          )}
           <div className={styles.modelTableWrapper}>
             <table className={styles.wizTable}>
               <thead>

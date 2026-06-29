@@ -1,7 +1,7 @@
 package wiring
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	auditclassify "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/classify"
 	auditevent "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/event"
@@ -49,6 +49,10 @@ func AuditEventToMap(e auditevent.Event) map[string]any {
 		"complianceTags":        e.ComplianceTags,
 		"providerName":          e.ProviderName,
 		"modelName":             e.ModelName,
+		// Domain-matched adapter id → traffic_event.ingress_format so the
+		// control plane's view-time normalize recompute keys on the
+		// authoritative adapter for this agent row (empty ⇒ path/sniff).
+		"ingressFormat":         e.IngressFormat,
 		"apiKeyClass":           e.ApiKeyClass,
 		"apiKeyFingerprint":     e.ApiKeyFingerprint,
 		"usageExtractionStatus": e.UsageExtractionStatus,
@@ -118,7 +122,7 @@ func AuditEventToMap(e auditevent.Event) map[string]any {
 	if e.ResponseSpillRef != nil {
 		m["responseSpillRef"] = e.ResponseSpillRef
 	}
-	// V2 (#58) — pre-computed NormalizedPayload JSON. Hub-side
+	// Pre-computed NormalizedPayload JSON. Hub-side
 	// AgentAuditAPI.Normalize is also available; sending the agent
 	// pre-normalized lets Hub skip the redundant work for AI traffic
 	// the agent already understood.

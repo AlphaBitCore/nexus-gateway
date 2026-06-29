@@ -2,7 +2,7 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -235,25 +235,28 @@ func (w *QueueWriter) buildRow(e sharedaudit.AuditEvent) event.Event {
 	// the agent's own detail view reads the localfs body back from the ref.
 	// Empty (capture disabled) → both nil so SQLite stores NULL.
 	row := event.Event{
-		ID:                    e.ID,
-		TraceID:               e.TraceID,
-		Timestamp:             e.Timestamp,
-		SourceIP:              e.SourceIP,
-		TargetHost:            e.TargetHost,
-		Method:                e.Method,
-		Path:                  e.Path,
-		StatusCode:            statusCode,
-		LatencyMs:             e.LatencyMs,
-		Action:                deriveAction(e),
-		HookDecision:          e.RequestHookDecision,
-		HookReason:            hookReason,
-		HookReasonCode:        hookReasonCode,
-		ComplianceTags:        e.ComplianceTags,
-		BumpStatus:            e.BumpStatus,
-		ProviderName:          e.Provider,
-		ModelName:             e.Model,
-		ApiKeyClass:           e.APIKeyClass,
-		ApiKeyFingerprint:     e.APIKeyFingerprint,
+		ID:                e.ID,
+		TraceID:           e.TraceID,
+		Timestamp:         e.Timestamp,
+		SourceIP:          e.SourceIP,
+		TargetHost:        e.TargetHost,
+		Method:            e.Method,
+		Path:              e.Path,
+		StatusCode:        statusCode,
+		LatencyMs:         e.LatencyMs,
+		Action:            deriveAction(e),
+		HookDecision:      e.RequestHookDecision,
+		HookReason:        hookReason,
+		HookReasonCode:    hookReasonCode,
+		ComplianceTags:    e.ComplianceTags,
+		BumpStatus:        e.BumpStatus,
+		ProviderName:      e.Provider,
+		ModelName:         e.Model,
+		ApiKeyClass:       e.APIKeyClass,
+		ApiKeyFingerprint: e.APIKeyFingerprint,
+		// Domain-matched adapter id → persisted as ingress_format and used by
+		// the detail drawer's view-time recompute as the authoritative adapter.
+		IngressFormat:         e.IngressFormat,
 		PromptTokens:          promptTokens,
 		CompletionTokens:      completionTokens,
 		UsageExtractionStatus: e.UsageExtractionStatus,
@@ -274,7 +277,7 @@ func (w *QueueWriter) buildRow(e sharedaudit.AuditEvent) event.Event {
 		// shared/audit.AuditEvent propagated down to the agent.Event
 		// row so the SQLite normalized_request / normalized_response
 		// columns persist. The emitter already applied the stage's
-		// storageAction, so these are the governed copies; the relocated
+		// action, so these are the governed copies; the relocated
 		// redaction spans ride alongside. nil/empty when no AI adapter
 		// matched (or the row is unredacted, for the spans).
 		NormalizedRequest:      e.RequestNormalized,

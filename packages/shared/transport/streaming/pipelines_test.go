@@ -432,36 +432,6 @@ func TestLivePipeline_NilPipelineResult_NoPanic(t *testing.T) {
 	}
 }
 
-// TestLivePipeline_SoftReject_FinalDecisionPropagates — checkpoint returns
-// BlockSoft; events still flow, final result decision = BlockSoft.
-func TestLivePipeline_SoftReject_FinalDecisionPropagates(t *testing.T) {
-	var n int
-	mp := &mockPipeline{
-		decideFn: func(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
-			n++
-			if n == 1 {
-				return &core.CompliancePipelineResult{Decision: core.BlockSoft, Reason: "soft"}
-			}
-			return &core.CompliancePipelineResult{Decision: core.Approve}
-		},
-	}
-	lp := NewLivePipeline(LiveConfig{CheckpointChars: 3}, mp, nil)
-
-	in := makeOpenAISSE("abc", "def", "ghi", "jkl")
-	var out bytes.Buffer
-	res, err := lp.Process(context.Background(), strings.NewReader(in), &out, &core.HookInput{IngressType: "X"})
-	if err != nil {
-		t.Fatalf("err = %v", err)
-	}
-	if res == nil || res.Decision != core.BlockSoft {
-		t.Errorf("decision = %+v, want BlockSoft (sticky once seen)", res)
-	}
-	// Content should still have been streamed.
-	if !strings.Contains(out.String(), "abc") {
-		t.Error("output missed content; soft reject must still flush")
-	}
-}
-
 // TestLivePipeline_ReaderError_PropagatesToProcess — non-EOF reader error
 // surfaces from Process.
 func TestLivePipeline_ReaderError_PropagatesToProcess(t *testing.T) {

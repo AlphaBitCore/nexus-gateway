@@ -9,10 +9,18 @@
   margin-top: 20px;
 }
 
+.tierTabContent {
+  padding-top: var(--g-space-3);
+}
+
+.tierTabs {
+  margin-top: calc(var(--g-space-3) - var(--g-space-6));
+}
+
 .panelTitle {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   line-height: 24px;
   color: var(--color-text-primary);
 }
@@ -57,7 +65,7 @@
   align-items: center;
   justify-content: center;
   color: var(--color-text-tertiary);
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   line-height: 20px;
   font-style: normal;
 }
@@ -73,8 +81,8 @@
   background: transparent !important;
   box-shadow: none !important;
   color: var(--color-tab-active, var(--color-info)) !important;
-  font-size: 14px !important;
-  font-weight: 400 !important;
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
   line-height: 22px;
   margin-bottom: -1px;
 }
@@ -88,7 +96,7 @@
 }
 
 .textActionIcon {
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   line-height: 1;
   color: currentColor;
 }
@@ -103,8 +111,8 @@
   background: var(--color-primary) !important;
   border-color: var(--color-primary) !important;
   color: var(--color-primary-foreground) !important;
-  font-size: 14px !important;
-  font-weight: 400 !important;
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
   box-shadow: none !important;
 }
 
@@ -125,30 +133,76 @@
   margin-left: 4px;
 }
 
+.providerCell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 300px;
+  min-width: 0;
+}
+
+.providerIdLine {
+  display: block;
+  box-sizing: border-box;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-normal);
+  line-height: 18px;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusDisabled,
+.statusEnabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-full);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 18px;
+}
+
+.statusDisabled {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.statusEnabled {
+  border: 1px solid var(--color-danger);
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
 /* Emergency banner, two states ────────────────────────────────────────── */
 
 .bannerInactive {
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
   border: 1px solid color-mix(in srgb, var(--color-info) 16%, transparent);
   display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 14px;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  font-size: var(--g-font-size-sm);
   line-height: 22px;
   color: var(--color-primary);
   letter-spacing: -0.1504px;
 }
 
 .bannerInactive strong {
-  font-weight: 400;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .bannerActive {
   padding: 14px 16px;
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   background: var(--color-danger-light);
   border: 1px solid var(--color-danger);
   color: var(--color-danger-dark);
@@ -158,7 +212,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   font-size: 1rem;
 }
 
@@ -193,22 +247,67 @@
 
 .flagGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.flagGrid > :global(*) :global(p) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+@media (max-width: 720px) {
+  .flagGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .providerCell {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+.drawerFooter {
+  flex: 0 0 80px;
+  min-height: 80px;
+  width: calc(100% + (var(--g-space-6) * 2));
+  margin: 0 calc(var(--g-space-6) * -1) calc(var(--g-space-6) * -1);
+  padding: var(--g-space-4) var(--g-space-6);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+}
+
+.drawerFooterActions {
+  height: 100%;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.drawerFooterActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .reasonInput {
   width: 100%;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   line-height: 20px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   border: 1px solid var(--color-border);
   resize: vertical;
   min-height: 60px;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
+}
+
+.reasonInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
 }
 
 .reasonInput::placeholder {
@@ -228,7 +327,7 @@
   border: 1px solid var(--color-danger);
   color: var(--color-danger-dark);
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   font-size: 0.875rem;
 }
 
@@ -237,20 +336,41 @@
 .tierTable {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
 }
 
 .tierTable thead th {
   text-align: left;
-  padding: 8px 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--color-border);
-  font-weight: 600;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 18px;
 }
 
 .tierTable tbody td {
-  padding: 10px 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--color-border-subtle);
   vertical-align: middle;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: 20px;
+}
+
+.tierTable tbody tr:hover {
+  background: var(--color-surface-hover);
+}
+
+.tierTable code {
+  color: var(--color-text);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
 }
 
 .confirmBody { margin: 0; font-size: 0.9375rem; }

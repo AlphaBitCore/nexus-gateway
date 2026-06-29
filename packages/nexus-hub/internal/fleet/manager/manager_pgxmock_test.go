@@ -2,8 +2,8 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"strings"
@@ -670,7 +670,7 @@ func TestManager_HandleShadowReport_BreakGlass_NonFatal(t *testing.T) {
 	}
 }
 
-// TestManager_HandleShadowReport_BreakGlass_DeniedWritesAudit locks SEC-M5-05:
+// TestManager_HandleShadowReport_BreakGlass_DeniedWritesAudit locks the rule that
 // a break-glass report carrying a key OUTSIDE the {killswitch, exemptions}
 // writable allowlist is rejected, and the rejection must leave a durable
 // break_glass_denied config_change_event (so a node probing the privileged
@@ -793,7 +793,7 @@ func TestManager_GetShadowComparison(t *testing.T) {
 		if !got.Keys["b"].InDesired {
 			t.Error("key b (desired-only) must have InDesired=true")
 		}
-		// c: reported only → InDesired false (the F-0112 auto-heal must ignore it).
+		// c: reported only → InDesired false (the auto-heal must ignore it).
 		if got.Keys["c"].Desired != nil {
 			t.Errorf("key c desired should be nil, got %v", got.Keys["c"].Desired)
 		}
@@ -910,9 +910,9 @@ func TestManager_ForceResyncAll(t *testing.T) {
 		mock.ExpectQuery(`FROM thing t`).
 			WithArgs("t-1").
 			WillReturnRows(minimalGetThingRow("t-1", "agent", desired, 9))
-		// F-0116: the version bump is the reliable-delivery guarantee — it MUST
+		// The version bump is the reliable-delivery guarantee — it MUST
 		// take the advisory lock and run inside a tx like every other per-Thing
-		// desired writer (F-0109).
+		// desired writer.
 		mock.ExpectBegin()
 		expectConfigVersionLock(mock, "agent")
 		expectWriteDesiredAndBumpVer(mock, "t-1", 10)
@@ -932,7 +932,7 @@ func TestManager_ForceResyncAll(t *testing.T) {
 		// No WS connection, no MQ: the immediate push fails with
 		// ErrNoDeliveryPath, but the desired_ver bump guarantees the HTTP
 		// heartbeat pull will deliver — so it is honestly counted as Pushed,
-		// not Failed (F-0116).
+		// not Failed.
 		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
 		desired := map[string]any{"k1": map[string]any{"v": 1}}
 		mock.ExpectQuery(`FROM thing t`).
@@ -1240,7 +1240,7 @@ func TestManager_UpdateConfig_Happy(t *testing.T) {
 		WithArgs("agent", "hooks", pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "desired_ver"}).
 			AddRow("t-1", int64(42)))
-	// F-0110: thingType="agent" is NOT nexus-hub, so UpdateDesiredForType emits
+	// thingType="agent" is NOT nexus-hub, so UpdateDesiredForType emits
 	// NO per-Thing pg_notify — config reaches agents via the WS broadcast below.
 	// (No ExpectExec(pg_notify); an emit here would surface as an unmatched SQL.)
 	// Step 4: InsertConfigChangeEvent (9 args).
@@ -1379,7 +1379,7 @@ func TestManager_UpdateConfig_InsertEventErr(t *testing.T) {
 	mock.ExpectQuery(`WITH next AS`).
 		WithArgs("agent", "h", pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "desired_ver"}).AddRow("t-1", int64(2)))
-	// F-0110: agent type emits no pg_notify in UpdateDesiredForType.
+	// agent type emits no pg_notify in UpdateDesiredForType.
 	mock.ExpectExec(`INSERT INTO config_change_event`).
 		WillReturnError(errors.New("planner err"))
 	mock.ExpectRollback()
@@ -1406,7 +1406,7 @@ func TestManager_UpdateConfig_CommitErr(t *testing.T) {
 	mock.ExpectQuery(`WITH next AS`).
 		WithArgs("agent", "h", pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "desired_ver"}).AddRow("t-1", int64(2)))
-	// F-0110: agent type emits no pg_notify in UpdateDesiredForType.
+	// agent type emits no pg_notify in UpdateDesiredForType.
 	mock.ExpectExec(`INSERT INTO config_change_event`).
 		WithArgs("agent", "h", "", "actor", "", pgxmock.AnyArg(), int64(1), "", false).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
@@ -1560,7 +1560,7 @@ func expectInsertAdminAudit(mock pgxmock.PgxPoolIface) {
 
 // expectConfigVersionLock pins the per-type advisory lock that UpdateConfig /
 // SetOverride / ClearOverride take as the FIRST statement of their transaction
-// (store.AcquireConfigVersionLock, F-0109). It must be expected immediately
+// (store.AcquireConfigVersionLock). It must be expected immediately
 // after ExpectBegin and before any other in-tx statement.
 func expectConfigVersionLock(mock pgxmock.PgxPoolIface, thingType string) {
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)`).

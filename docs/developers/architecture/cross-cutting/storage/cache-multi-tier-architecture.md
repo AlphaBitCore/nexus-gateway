@@ -7,7 +7,7 @@ The cache is two-tier:
 - **L1** — exact-match response cache keyed by a canonicalised request body hash. Backed by Redis (string `SET` / `GET`).
 - **L2** — semantic vector cache. Backed by Valkey's `valkey-search` module (`FT.CREATE` HNSW index + `FT.SEARCH`). Looked up only when L1 misses.
 
-A third sibling — the in-flight singleflight broker — coalesces concurrent MISS callers for the same key onto one upstream call and one cache write; joiners are stamped as `hit_inflight` instead of `miss`.
+A third sibling — the in-flight broker — is the **sole cache-fill path** (its pump collects the upstream timeline and writes the entry on the terminal frame). It is therefore **always constructed**; the `cache.broker` yaml flag controls only same-key **dedup**, not whether the cache fills. With `cache.broker=true` (dedup on) concurrent MISS callers for the same key coalesce onto one upstream call and one cache write, and joiners are stamped `hit_inflight` instead of `miss`. With `cache.broker=false` (the default, dedup off) each MISS opens its own upstream call (low p99 under bursty same-key load) but **still fills the cache** — every caller is its own leader. A MISS only reaches the broker when a cache tier is active; cache-off traffic stays on the direct path with zero broker overhead.
 
 What the cache does **not** serve:
 
@@ -49,9 +49,11 @@ Streaming and non-streaming requests both cache; the L1 schema discriminator (`s
 
 - `Enabled` — atomic bool. When false, both `Lookup*` and `Store*` short-circuit to no-ops.
 - `TTL` — nanosecond-precision Redis SET TTL. Default 1 hour.
-- `ApplyFreshnessRules` — gates whether the proxy's pre-lookup classifier honours a freshness detector match.
+- `ApplyFreshnessRules` — gates whether the proxy's pre-lookup classifier honours a freshness detector match. **Defaults ON** (`extract_cache_config.apply_freshness_rules`): freshness protection is intrinsic to caching, so enabling a tier never silently replays a stale time-sensitive answer. The detector only runs when a cache tier is active, so a cache-off gateway pays nothing.
 
 The proxy reads these through `IsEnabled()` / `ApplyFreshnessRules()` on the hot path; the values are pushed via the Hub shadow (`response_cache.extract_config`) and dispatched into `SetConfig` without restarting the service.
+
+**Emergency master kill switch** (`Cache.SetMasterKill` / `MasterKilled`): the Tier-1 `cache_master_kill_switch` (cacheconfig global, Hub shadow key `cache`) is wired into `*cache.Cache` and read once per request at the cache stage — `cacheEnabled = (l1Enabled || l2Enabled) && !MasterKilled()`. When active it disables **both** gateway response cache tiers (L1 + L2) regardless of either tier's own enable flag, forcing the lean cache-off path (no key build, no lookup, no freshness projection). It does **not** disable provider-side prompt caching (Anthropic markers / Gemini context cache), which only makes the upstream cache and never serves a stored gateway response. The flag lives on the L1 `*cache.Cache` object because that object is already threaded into both the config-dispatch receiver and the proxy hot path; the invariant that makes this safe is "L2 active ⟹ `ResponseCache != nil`" (both tiers derive from the same Redis client and L2's `*redis.Client` requirement is strictly narrower than L1's `UniversalClient`).
 
 **Yaml-only knobs** (set once at boot, since changing them invalidates existing entries):
 
@@ -68,11 +70,13 @@ The proxy reads these through `IsEnabled()` / `ApplyFreshnessRules()` on the hot
 4. The **forward-header allowlist version hash** — folded in so a yaml allowlist change invalidates entries whose `UpstreamHeaders` were recorded under a different effective filter.
 5. An optional **scope key** (e.g. `vk:<id>`, `user:<id>`, `org:<id>`) — folded as `scope=<scopeKey>\n` when non-empty. When `vary_by=none` the scope key is empty, producing a byte-identical key to the legacy layout (fleet-wide dedup is preserved). Non-empty scope keys enforce per-tenant L1 isolation for the same body + provider + model — matching the isolation that L2's tag filter applies. See `cache/core/cache.go` `BuildScopedKey`.
 
+**Scope readiness (fail-closed).** The `vary_by` scope arrives on the semantic-cache config snapshot (`semantic.ConfigCache`). Before the first Hub push it is the zero value `""` (fleet-wide), so an L1 entry written in that boot window could be read by a different virtual key. L1 therefore gates its lookup/store on `SemanticConfigCache.ScopeReady()` (true once the first config push lands) — failing closed (no cache participation) until the fleet scope is known. The config snapshot is delivered on **every** Redis topology, including Sentinel/Cluster where the `*redis.Client`-only L2 index lifecycle is unavailable: `registerAGSemanticCacheConfig` updates the in-process `ConfigCache` (carrying `vary_by` + the readiness signal) independently of index management, so L1 isolation works wherever L1 itself works. A deployment with no semantic `ConfigCache` wired at all reports ready (fleet-wide is then the real, intended config, not a transient window).
+
 The body that's hashed is the output of the provider adapter's `PrepareBody`, not the raw client body. That folds out cross-format ingress differences (Anthropic ingress → OpenAI target produces the same key whether the caller hit `/v1/messages` or `/v1/chat/completions`).
 
 The proxy also runs an optional `Normaliser.NormalizeKey` step on the prepared body before hashing. This strips volatile fields (e.g. provider billing nonces) that would otherwise force every request to miss. The mutation is key-only; the upstream call still receives the unmodified prepared body.
 
-**L1 skip reason `GatewayCacheSkipReasonNoEmbeddableText`** (updated label): the L2-eligibility check in `proxy_l2.go` uses this reason for all cases where no embeddable text can be extracted from the request (previously mislabeled `OversizeForEmbedding`, which only covered one sub-case). See `platform/audit/enums.go`.
+**L1 skip reason `GatewayCacheSkipReasonNoEmbeddableText`**: the L2-eligibility check in `proxy_l2.go` uses this reason for all cases where no embeddable text can be extracted from the request. See `platform/audit/enums.go`.
 
 ## L2 — semantic vector cache
 

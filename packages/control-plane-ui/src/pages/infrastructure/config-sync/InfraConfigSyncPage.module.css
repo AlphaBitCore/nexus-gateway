@@ -1,9 +1,17 @@
 /* ── InfraConfigSyncPage ─────────────────────────────────────────── */
 
+.pageStack {
+  gap: 12px;
+}
+
+.tabs {
+  margin-top: 0;
+}
+
 .filterBar {
   display: flex;
   align-items: center;
-  gap: var(--g-space-3);
+  gap: 12px;
   /* keep single-row layout; wrap only when the viewport can't fit both
      fields at their preferred size so desktops always read as one line */
   flex-wrap: wrap;
@@ -17,11 +25,8 @@
   gap: 8px;
 }
 
-/* Extra horizontal gap requested specifically between the Type filter's
-   Select and the Config Key filter block. Overrides the default .filterBar
-   `gap` (var(--g-space-3)) with an explicit 100px when present. */
 .filterField--spaced {
-  margin-left: 100px;
+  margin-left: 0;
 }
 
 /* Explicit width so the Select is wider than its content-sized default
@@ -31,8 +36,8 @@
 }
 
 .filterLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -59,12 +64,12 @@
 
 .outOfSyncName {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
 .outOfSyncMeta {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
   display: flex;
   gap: var(--g-space-2);
@@ -94,6 +99,6 @@
   border-radius: var(--g-radius-md);
   color: var(--color-success);
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 

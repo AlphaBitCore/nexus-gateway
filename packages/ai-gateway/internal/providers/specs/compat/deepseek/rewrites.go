@@ -13,9 +13,9 @@ import "strings"
 // HTTP 400 `{"error":{"type":"invalid_request_error","message":
 // "Thinking mode does not support this tool_choice"}}`.
 //
-// Observed (2026-06, api.deepseek.com): deepseek-v4-pro (400 above, on
+// Observed (api.deepseek.com): deepseek-v4-pro (400 above, on
 // tool_choice:"required"); deepseek-reasoner (same rejection class —
-// four consecutive structured-output calls lost to it on 2026-06-11).
+// drops structured-output calls when a forced tool_choice is set).
 // Only these two evidenced families are matched — removal flattens the
 // caller's forcing, so a speculative rule would silently change behavior
 // on models that might accept it (§3a Rule 7: every rule cites its 400).

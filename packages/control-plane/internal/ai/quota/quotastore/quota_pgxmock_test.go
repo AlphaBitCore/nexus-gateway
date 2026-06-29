@@ -2,8 +2,8 @@ package quotastore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -243,7 +243,7 @@ func TestGetQuotaOverrideByTarget(t *testing.T) {
 
 func TestCreateQuotaOverride(t *testing.T) {
 	s, m := newMock(t)
-	// expiresAt is the 7th positional INSERT arg (F-0161); assert it is bound
+	// expiresAt is the 7th positional INSERT arg; assert it is bound
 	// verbatim and round-trips back through the scan.
 	m.ExpectQuery(`INSERT INTO "QuotaOverride" .*"expiresAt".*VALUES`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -277,7 +277,7 @@ func TestUpdateDeleteQuotaOverride(t *testing.T) {
 		t.Fatalf("UpdateQuotaOverride: %v", err)
 	}
 	// Clear-cost path: the clear flag is true and the value is nil so the CASE
-	// resets the column to NULL (F-0146 "Inherit from policy" on edit). Typed
+	// resets the column to NULL ("Inherit from policy" on edit). Typed
 	// nils because pgxmock distinguishes (*string)(nil) from an untyped nil.
 	m.ExpectQuery(`UPDATE "QuotaOverride" SET`).
 		WithArgs("qo1", (*string)(nil), true, (*float64)(nil), false, (*string)(nil), false, (*string)(nil), false, (*time.Time)(nil)).

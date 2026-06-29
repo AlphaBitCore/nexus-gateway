@@ -101,6 +101,9 @@ export function ExtractCacheCard() {
         <p className={styles.cardSubtitle}>
           {t('pages:aiGateway.cache.extract.cardSubtitle')}
         </p>
+        <p className={styles.perfTip} role="note">
+          {t('pages:aiGateway.cache.perfTip')}
+        </p>
       </div>
 
       <Card>

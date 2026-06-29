@@ -13,6 +13,7 @@ import (
 type fakeFile struct {
 	writeErr error
 	closeErr error
+	syncErr  error
 }
 
 func (f *fakeFile) Write(p []byte) (int, error) {
@@ -21,6 +22,7 @@ func (f *fakeFile) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+func (f *fakeFile) Sync() error  { return f.syncErr }
 func (f *fakeFile) Close() error { return f.closeErr }
 
 func TestWriter_SurfacesHandleWriteError(t *testing.T) {

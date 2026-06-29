@@ -3,8 +3,8 @@ package consumer
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"os"
@@ -229,5 +229,23 @@ func TestTrafficEventWriter_HandleMessage_AcksPoisonPill(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&ackCount); got != 1 {
 		t.Errorf("Ack called %d times; want 1", got)
+	}
+}
+
+func TestDrainWorkersPerQueue_defaultBandAndEnv(t *testing.T) {
+	t.Setenv("NEXUS_HUB_DRAIN_WORKERS", "")
+	if got := drainWorkersPerQueue(); got < 2 || got > 6 {
+		t.Fatalf("default must clamp to [2,6], got %d", got)
+	}
+	t.Setenv("NEXUS_HUB_DRAIN_WORKERS", "11")
+	if got := drainWorkersPerQueue(); got != 11 {
+		t.Fatalf("explicit env overrides the band: got %d want 11", got)
+	}
+	// Non-positive / unparseable values fall back to the CPU-derived default band.
+	for _, bad := range []string{"0", "-3", "x"} {
+		t.Setenv("NEXUS_HUB_DRAIN_WORKERS", bad)
+		if got := drainWorkersPerQueue(); got < 2 || got > 6 {
+			t.Fatalf("bad env %q must fall back to [2,6], got %d", bad, got)
+		}
 	}
 }

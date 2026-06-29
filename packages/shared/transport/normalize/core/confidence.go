@@ -2,7 +2,7 @@ package core
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 // FieldSpec declares the wire-level top-level keys a Tier-1 normalizer

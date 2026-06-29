@@ -22,7 +22,7 @@ func hexKey(t *testing.T) string {
 	return hex.EncodeToString(b)
 }
 
-// TestParse_StripsStarAndSelectsCurrent is the F-0390 golden: the leading "*"
+// TestParse_StripsStarAndSelectsCurrent is the golden: the leading "*"
 // marks the current id AND is stripped from the stored id, and a no-marker map
 // falls back to last-entry-wins. These two are the exact rules every consumer
 // (CP MultiVault mint side, ai-gw MultiDecryptor open side, hmackeyring) depends
@@ -161,7 +161,7 @@ type errTestShort struct{}
 func (errTestShort) Error() string { return "value too short" }
 
 // TestParse_CredentialKeyMapMustMatch is the cross-side [MUST MATCH] regression
-// for F-0364/F-0390 expressed at the shared-parser level: the SAME
+// expressed at the shared-parser level: the SAME
 // CREDENTIAL_KEY_MAP="v1:<hex>,*v2:<hex>" must yield, on BOTH the Control Plane
 // mint side and the AI Gateway open side, the SAME stamped/stored id "v2" with
 // the "*" stripped — and a ciphertext sealed under the "v2" key (CP encrypt with

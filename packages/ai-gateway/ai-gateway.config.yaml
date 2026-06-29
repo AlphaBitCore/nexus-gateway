@@ -159,7 +159,8 @@ audit:
 # MaxAttemptsPerTarget is clamped to [1,5] at load.
 routing:
   defaultRetryPolicy:
-    maxAttemptsPerTarget: 1
+    # 2 = one same-target retry on a transient fault before L3 failover.
+    maxAttemptsPerTarget: 2
     retryOn: ["network", "timeout", "429", "5xx"]
     backoffInitial: 250ms
     backoffMax: 5s

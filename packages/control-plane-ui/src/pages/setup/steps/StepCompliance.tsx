@@ -32,10 +32,12 @@ export function StepCompliance({ onSkip, onDone }: Props) {
 
   return (
     <div className={styles.stepContent}>
-      <h2 className={styles.stepTitle}>{t('pages:setup.complianceTitle', 'Configure Compliance')}</h2>
-      <p className={styles.stepDesc}>
-        {t('pages:setup.complianceDesc', 'Optional compliance features. You can configure these now or skip and set them up later.')}
-      </p>
+      <div className={styles.complianceHeader}>
+        <h2 className={styles.complianceTitle}>{t('pages:setup.complianceTitle', 'Configure Compliance')}</h2>
+        <p className={styles.complianceDesc}>
+          {t('pages:setup.complianceDesc', 'Optional compliance features. You can configure these now or skip and set them up later.')}
+        </p>
+      </div>
 
       <Stack gap="sm">
         {items.map((item) => (

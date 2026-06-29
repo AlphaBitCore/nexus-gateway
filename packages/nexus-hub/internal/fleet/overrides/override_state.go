@@ -2,8 +2,10 @@ package overrides
 
 import (
 	"bytes"
-	"encoding/json"
+	stdjson "encoding/json"
 	"errors"
+
+	"github.com/goccy/go-json"
 )
 
 // OverrideState wraps a JSON-object payload that fully replaces the template
@@ -50,7 +52,11 @@ func NewOverrideState(b []byte) (OverrideState, error) {
 	if len(b) == 0 {
 		return OverrideState{}, ErrEmptyState
 	}
-	if !json.Valid(b) {
+	// stdlib encoding/json.Valid is a zero-alloc stack scanner; goccy's json.Valid
+	// decodes into interface{} (~4x alloc). stdlib is stricter, rejecting a few
+	// RFC-malformed states goccy would leniently accept — the safer default for
+	// config input that must round-trip.
+	if !stdjson.Valid(b) {
 		return OverrideState{}, ErrInvalidJSONState
 	}
 	// Decoder + Token gives us the top-level JSON type without doing the

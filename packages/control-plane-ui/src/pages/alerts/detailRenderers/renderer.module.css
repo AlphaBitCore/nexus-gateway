@@ -7,7 +7,7 @@
 .jsonBlock {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   padding: 0.75rem;
   font-family: var(--g-font-mono);
   font-size: 0.8125rem;
@@ -27,7 +27,7 @@
 }
 
 .statLabel {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
 }
 
@@ -38,7 +38,7 @@
 
 .emphasis {
   font-size: 1.125rem;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
@@ -53,7 +53,7 @@
   height: 12px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--g-radius-full);
   overflow: hidden;
 }
 
@@ -106,6 +106,6 @@
 }
 
 .table th {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
 }

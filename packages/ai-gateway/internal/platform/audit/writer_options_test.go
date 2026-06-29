@@ -2,8 +2,8 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
+	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync"
@@ -13,9 +13,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -322,10 +322,12 @@ func TestWithSpillStore_ChainsAndStores(t *testing.T) {
 	}
 	big := []byte(`{"long":"enough-to-exceed-4-bytes"}`)
 	msg := w.recordToMessage(&Record{
-		RequestID:    "req-spill",
-		Timestamp:    time.Now(),
-		RequestBody:  big,
-		ResponseBody: big,
+		RequestID:      "req-spill",
+		Timestamp:      time.Now(),
+		RequestBody:    big,
+		ResponseBody:   big,
+		RequestAction:  decision.ActionApprove,
+		ResponseAction: decision.ActionApprove,
 	})
 	if msg.RequestBody.Kind != sharedaudit.BodySpill {
 		t.Errorf("RequestBody.Kind = %q, want spill", msg.RequestBody.Kind)
@@ -346,24 +348,20 @@ func TestWithPayloadCaptureStore_FallbackToDefault(t *testing.T) {
 	}
 	// Body well under 256 KiB → inline path picked.
 	body := []byte(`{"a":"b"}`)
-	msg := w.recordToMessage(&Record{RequestID: "r", Timestamp: time.Now(), RequestBody: body})
+	msg := w.recordToMessage(&Record{RequestID: "r", Timestamp: time.Now(), RequestBody: body, RequestAction: decision.ActionApprove})
 	if msg.RequestBody.Kind != sharedaudit.BodyInline {
 		t.Errorf("small body should be inline, got %q", msg.RequestBody.Kind)
 	}
 }
 
-func TestWithNormalizer_RunsAndStampsVersion(t *testing.T) {
-	calls := 0
-	var seenDirs []string
+func TestWithNormalizer_WiredButNotInvokedAtWriteTime(t *testing.T) {
+	// The normalize seam stays wireable for tests like this one, but
+	// recordToMessage never invokes it: the normalized projection is recomputed at
+	// view time, so the wire envelope's normalized columns + NormalizeVersion stay
+	// empty.
 	fn := NormalizeFn(func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (json.RawMessage, string, string) {
-		calls++
-		seenDirs = append(seenDirs, direction)
-		p := normalize.NormalizedPayload{
-			Kind:             normalize.KindAIChat,
-			NormalizeVersion: normalize.SchemaVersion,
-		}
-		b, _ := json.Marshal(p)
-		return b, "ok", ""
+		t.Fatalf("normalize bridge must never run at write time (direction=%s)", direction)
+		return nil, "", ""
 	})
 	w := NewWriter(nil, "q", nil, slog.Default()).WithNormalizer(fn)
 	if w.normalize == nil {
@@ -378,29 +376,25 @@ func TestWithNormalizer_RunsAndStampsVersion(t *testing.T) {
 		RequestBody:         []byte(`{"model":"gpt-4"}`),
 		ResponseBody:        []byte(`{"choices":[]}`),
 		ResponseContentType: "text/event-stream",
+		RequestAction:       decision.ActionApprove,
+		ResponseAction:      decision.ActionApprove,
 	}
 	msg := w.recordToMessage(rec)
-	if calls != 2 {
-		t.Errorf("normalize calls = %d, want 2 (request + response)", calls)
+	if msg.RequestNormalized != nil || msg.ResponseNormalized != nil {
+		t.Errorf("normalized columns must stay nil; got req=%s resp=%s", msg.RequestNormalized, msg.ResponseNormalized)
 	}
-	if len(seenDirs) != 2 || seenDirs[0] != "request" || seenDirs[1] != "response" {
-		t.Errorf("directions = %v, want [request response]", seenDirs)
+	if msg.RequestNormalizeStatus != "" || msg.ResponseNormalizeStatus != "" {
+		t.Errorf("normalize statuses must stay empty; got %q/%q", msg.RequestNormalizeStatus, msg.ResponseNormalizeStatus)
 	}
-	if msg.RequestNormalizeStatus != "ok" || msg.ResponseNormalizeStatus != "ok" {
-		t.Errorf("statuses = %q/%q, want ok/ok", msg.RequestNormalizeStatus, msg.ResponseNormalizeStatus)
-	}
-	if msg.NormalizeVersion != normalize.SchemaVersion {
-		t.Errorf("NormalizeVersion = %q, want %q", msg.NormalizeVersion, normalize.SchemaVersion)
+	if msg.NormalizeVersion != "" {
+		t.Errorf("NormalizeVersion must stay empty, got %q", msg.NormalizeVersion)
 	}
 }
 
-func TestWithNormalizer_BypassNormalizeSkipsResponse(t *testing.T) {
-	calls := 0
-	dirs := []string{}
+func TestWithNormalizer_BypassNormalizePassthroughFlagsStillStamped(t *testing.T) {
 	fn := NormalizeFn(func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		calls++
-		dirs = append(dirs, direction)
-		return json.RawMessage(`{"kind":"ai-chat"}`), "ok", ""
+		t.Fatalf("normalize bridge must never run at write time (direction=%s)", direction)
+		return nil, "", ""
 	})
 	w := NewWriter(nil, "q", nil, slog.Default()).WithNormalizer(fn)
 	rec := &Record{
@@ -409,19 +403,15 @@ func TestWithNormalizer_BypassNormalizeSkipsResponse(t *testing.T) {
 		IngressFormat:    "openai",
 		RequestBody:      []byte(`{"a":1}`),
 		ResponseBody:     []byte(`{"b":2}`),
+		RequestAction:    decision.ActionApprove,
+		ResponseAction:   decision.ActionApprove,
 		PassthroughFlags: []string{"bypassNormalize"},
 	}
 	msg := w.recordToMessage(rec)
-	if calls != 1 {
-		t.Errorf("normalize calls = %d, want 1 (response skipped)", calls)
+	if msg.RequestNormalized != nil || msg.ResponseNormalized != nil {
+		t.Errorf("normalized columns must stay nil regardless of bypass; got req=%s resp=%s", msg.RequestNormalized, msg.ResponseNormalized)
 	}
-	if len(dirs) != 1 || dirs[0] != "request" {
-		t.Errorf("dirs = %v, want only [request]", dirs)
-	}
-	if msg.ResponseNormalized != nil {
-		t.Errorf("ResponseNormalized should be nil when bypassNormalize is set")
-	}
-	// Wire envelope still carries the passthrough fields (separate from skip).
+	// Wire envelope still carries the passthrough fields.
 	if len(msg.PassthroughFlags) != 1 || msg.PassthroughFlags[0] != "bypassNormalize" {
 		t.Errorf("PassthroughFlags = %v, want [bypassNormalize]", msg.PassthroughFlags)
 	}
@@ -710,9 +700,9 @@ func TestNewAuditMetrics_NilRegistryReturnsNil(t *testing.T) {
 	m.incDropped()
 }
 
-// Close — verifies the public Close path drains via the background
-// goroutine + drainBuffer. Uses tiny buffer + healthy producer so the
-// drain finishes well within the 15s deadline.
+// Close — verifies the public Close path drains the queue via the consumer
+// workers and waits for them to exit. Healthy producer so the drain finishes
+// promptly.
 
 func TestClose_DrainsAndStopsBackgroundLoop(t *testing.T) {
 	prod := &memProducer{}
@@ -732,192 +722,138 @@ func TestClose_DrainsAndStopsBackgroundLoop(t *testing.T) {
 	// it internally).
 }
 
-// flush — queue-full retry path (record dropped when buf is at max).
+// publish — queue-full retry path (records dropped, counted, when the queue is at
+// cap and no durable spill is wired).
 
-func TestFlush_QueueFullDuringRetryDropsRecord(t *testing.T) {
-	// Producer always fails so flush wants to re-buffer; pre-fill buf
-	// up to maxQueueSize so the re-buffer arm hits the dropped path.
+func TestPublishBatch_QueueFullDuringRetryDropsRecords(t *testing.T) {
+	// Producer always fails so each publish wants to re-queue; a full bounded queue
+	// with no durable spill forces the re-queue overflow to a counted bounded drop
+	// (handlePublishFailure → spillData(false) → incDropped) — the queue never grows
+	// past its cap, and the drops surface on the metric.
+	prom := prometheus.NewRegistry()
 	prod := &memProducer{alwaysFail: true}
-	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
-	w := &Writer{
-		producer: prod,
-		queue:    "q",
-		logger:   slog.Default(),
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-		metrics:  newAuditMetrics(reg),
-	}
-	// Enqueue one record we'll flush.
-	w.Enqueue(&Record{RequestID: "to-flush", Timestamp: time.Now()})
+	w := NewWriter(prod, "q", opsmetrics.NewRegistry(prom), slog.Default())
+	const cap = 1
+	w.recCh = make(chan *Record, cap)
+	w.recCh <- &Record{RequestID: "fill"} // saturate
 
-	// At this point buf has 1 record. flush() pops them into batch, then
-	// the failed Enqueue tries to re-buffer. If we artificially pre-fill
-	// buf to maxQueueSize BETWEEN the pop and the failure, the re-buffer
-	// hits the dropped path. We can't interleave races, but we can simply
-	// stuff maxQueueSize records first and then call flush — the pop
-	// snapshots the entire buf, and each per-record retry sees an empty
-	// buf, so the test must instead use a different shape: enqueue
-	// maxQueueSize+1 records, fail them all, observe the re-buffer
-	// eventually saturates and drops.
-	for range maxQueueSize {
-		w.Enqueue(&Record{RequestID: "filler", Timestamp: time.Now()})
+	const n = 16
+	batch := make([]*Record, n)
+	for i := range batch {
+		batch[i] = &Record{RequestID: fmt.Sprintf("filler-%d", i), Timestamp: time.Now()}
 	}
-	// Drop counter must move forward across the call.
-	w.flush()
-	// At this point the producer was called for the original batch; each
-	// failure tried to re-buffer; once buf hit maxQueueSize the rest were
-	// dropped. We can't easily count from outside without the registry,
-	// so verify behaviorally: buf can be at most maxQueueSize, no panic.
-	w.mu.Lock()
-	bufLen := len(w.buf)
-	w.mu.Unlock()
-	if bufLen > maxQueueSize {
-		t.Errorf("buf len %d exceeds max %d after retry storm", bufLen, maxQueueSize)
+	w.publishBatchOn(0, batch) // all fail → re-queue; one fits, the rest drop
+
+	// The queue never grows past its cap under the retry storm.
+	if got := len(w.recCh); got > cap {
+		t.Errorf("queue len %d exceeds cap %d after retry storm", got, cap)
+	}
+	// The overflow records were counted as drops (n records, one re-queued slot →
+	// at least n-cap drops surface on the metric).
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got < float64(n-cap) {
+		t.Errorf("dropped_total = %v, want >= %d (retry-storm overflow must count drops)", got, n-cap)
 	}
 }
 
-func TestFlush_MarshalFailureSkipsRecord(t *testing.T) {
+func TestPublishBatch_MarshalFailureSkipsRecord(t *testing.T) {
 	// The audit Record only carries JSON-friendly types in fields we
 	// populate, but Metadata is `any` and accepts a chan, which fails to
 	// marshal. The proxy handler would never set such a value in
 	// production — but recordToMessage threads Metadata straight onto
 	// Details, so we get observable coverage of the json.Marshal error
-	// branch in flush.
+	// branch in marshalRecord (the record is dropped at marshal, never
+	// published and never re-queued — a re-queue would loop forever).
 	prod := &memProducer{}
-	w := &Writer{
-		producer: prod,
-		queue:    "q",
-		logger:   slog.Default(),
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-	}
-	w.Enqueue(&Record{
+	w := NewWriter(prod, "q", nil, slog.Default())
+	w.recCh = make(chan *Record, 4) // would catch any erroneous re-queue
+	w.publishBatchOn(0, []*Record{{
 		RequestID: "bad-meta",
 		Timestamp: time.Now(),
 		Metadata:  make(chan int),
-	})
-	w.flush()
+	}})
 	if len(prod.msgs()) != 0 {
 		t.Errorf("marshal failure should not have emitted a message; got %d", len(prod.msgs()))
 	}
-	// Buffer is empty (we did not re-buffer marshal failures — they would
-	// loop forever).
-	w.mu.Lock()
-	if len(w.buf) != 0 {
-		t.Errorf("buf len %d, want 0 (marshal failure should not re-buffer)", len(w.buf))
+	// The failed record was not re-queued (a marshal failure is terminal — re-queuing
+	// it would loop forever).
+	if len(w.recCh) != 0 {
+		t.Errorf("queue len %d, want 0 (marshal failure should not re-queue)", len(w.recCh))
 	}
-	w.mu.Unlock()
 }
 
 // Enqueue nil — short-circuit branch.
 
 func TestEnqueue_NilRecordIsNoOp(t *testing.T) {
 	w := NewWriter(nil, "q", nil, slog.Default())
+	// Claim startOnce so Enqueue's ensureStarted() does not start consumers, then
+	// size the queue so we can observe that a nil record never enters it.
+	w.startOnce.Do(func() {})
+	w.recCh = make(chan *Record, 4)
 	w.Enqueue(nil)
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if len(w.buf) != 0 {
-		t.Errorf("nil record should not enter buf; got len %d", len(w.buf))
+	if len(w.recCh) != 0 {
+		t.Errorf("nil record should not enter the queue; got len %d", len(w.recCh))
 	}
 }
 
-// flushLoop ticker tick — verify a record enqueued before a ticker tick
-// actually gets flushed via the goroutine path (rather than via direct
-// w.flush() calls). Drives the `<-ticker.C` branch.
-
-func TestFlushLoop_TickerFlushesPendingRecords(t *testing.T) {
+// Consumer lazy-start via Enqueue — a record enqueued onto a writer that was never
+// explicitly Start()ed must still be published: the first Enqueue lazily starts the
+// consumer workers (ensureStarted), and Close drains the remainder. Pins the
+// lazy-start contract that lets a caller skip Start().
+func TestEnqueue_LazyStartsConsumerAndPublishes(t *testing.T) {
 	prod := &memProducer{}
-	// Use a writer with a real flushLoop — NewWriter wires it for us. We
-	// can't change defaultFlushInterval at runtime, but we can shut down
-	// via Close() and rely on Close's drainBuffer to push pending records
-	// out the door (independent of the ticker). To actually hit the
-	// `case <-ticker.C` branch we'd need to wait 5s. That's the
-	// production cadence; covering it requires a long-running test.
-	// Instead, exercise the same code path by closing the writer
-	// immediately, which is the canonical way the flushLoop exits.
-	w := NewWriter(prod, "q", nil, slog.Default())
+	w := NewWriter(prod, "q", nil, slog.Default()) // NOT Start()ed
 	w.Enqueue(&Record{RequestID: "loop-r1", Timestamp: time.Now()})
-	w.Close()
+	w.Close() // drains the queue via the lazily-started consumer
 	if got := len(prod.msgs()); got != 1 {
-		t.Errorf("loop drain → want 1 published, got %d", got)
+		t.Errorf("lazy-start drain → want 1 published, got %d", got)
 	}
 }
 
-// flushLoop ticker branch — push the ticker.C case directly. We replace
-// the default flushInterval indirectly by spawning a parallel flushLoop
-// off a separate Writer constructed manually with a 10ms ticker so the
-// test stays under 100ms.
+// consumeLoop linger branch — a single record (a partial batch, well under
+// batchMaxCount) is published by the consumer's consumerLinger timer rather than
+// being held until a full batch accumulates. Exercises the `<-timer.C` arm of the
+// real consumeLoop.
 
-func TestFlushLoop_TickerCaseExercised(t *testing.T) {
-	// Build a Writer manually so we don't pay defaultFlushInterval=5s.
+func TestConsumeLoop_LingerFlushesPartialBatch(t *testing.T) {
 	prod := &memProducer{}
-	w := &Writer{
-		producer: prod,
-		queue:    "q",
-		logger:   slog.Default(),
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
-	}
+	w := NewWriter(prod, "q", nil, slog.Default()).Start()
+	defer w.Close()
 
-	// Custom loop with a tiny ticker — exercises the same select shape
-	// as flushLoop minus the timing constant. Mirrors flushLoop verbatim.
-	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				w.flush()
-			case <-w.stopCh:
-				return
-			}
-		}
-	}()
+	// One record only — far below batchMaxCount, so it can only be published when the
+	// consumerLinger timer fires for the partial batch.
+	w.Enqueue(&Record{RequestID: "linger-r1", Timestamp: time.Now()})
 
-	w.Enqueue(&Record{RequestID: "ticker-r1", Timestamp: time.Now()})
-
-	// Wait long enough for at least one tick + flush.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if len(prod.msgs()) >= 1 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	close(w.stopCh)
-	w.wg.Wait()
-	if got := len(prod.msgs()); got < 1 {
-		t.Errorf("ticker should have flushed at least 1; got %d", got)
+	// consumerLinger is 100ms; allow generous slack for scheduling.
+	if got := waitForMsgCount(prod, 1, 2*time.Second); got != 1 {
+		t.Errorf("linger timer should have published the partial batch; got %d", got)
 	}
 }
 
-// Sanity: when a normalizer is wired but produces 'failed' status, the
-// status + error reason still travel to the wire; NormalizeVersion is
-// stamped because at least one direction produced bytes.
+// The write path no longer invokes the normalize bridge, so a wired
+// normalizer — even one that would report a failed status — never runs and
+// never stamps the normalize status / error / version columns.
 
-func TestNormalizer_FailedStatusStillStamps(t *testing.T) {
-	failErr := errors.New("simulated")
+func TestNormalizer_NotInvokedSoNoStatusStamped(t *testing.T) {
 	fn := NormalizeFn(func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		// Return non-nil raw to ensure NormalizeVersion is stamped, but
-		// status reflects failure for completeness.
-		return json.RawMessage(`{"kind":"ai-chat"}`), "failed", failErr.Error()
+		t.Fatalf("normalize bridge must never run at write time (direction=%s)", direction)
+		return nil, "", ""
 	})
 	w := NewWriter(nil, "q", nil, slog.Default()).WithNormalizer(fn)
 	msg := w.recordToMessage(&Record{
-		RequestID:    "r",
-		Timestamp:    time.Now(),
-		RequestBody:  []byte(`{"a":1}`),
-		ResponseBody: []byte(`{"b":2}`),
+		RequestID:      "r",
+		Timestamp:      time.Now(),
+		RequestBody:    []byte(`{"a":1}`),
+		ResponseBody:   []byte(`{"b":2}`),
+		RequestAction:  decision.ActionApprove,
+		ResponseAction: decision.ActionApprove,
 	})
-	if msg.RequestNormalizeStatus != "failed" || msg.ResponseNormalizeStatus != "failed" {
-		t.Errorf("status = %q/%q, want failed/failed", msg.RequestNormalizeStatus, msg.ResponseNormalizeStatus)
+	if msg.RequestNormalizeStatus != "" || msg.ResponseNormalizeStatus != "" {
+		t.Errorf("normalize statuses must stay empty; got %q/%q", msg.RequestNormalizeStatus, msg.ResponseNormalizeStatus)
 	}
-	if msg.RequestNormalizeError == "" || msg.ResponseNormalizeError == "" {
-		t.Errorf("errors should be propagated; got %q / %q", msg.RequestNormalizeError, msg.ResponseNormalizeError)
+	if msg.RequestNormalizeError != "" || msg.ResponseNormalizeError != "" {
+		t.Errorf("normalize errors must stay empty; got %q/%q", msg.RequestNormalizeError, msg.ResponseNormalizeError)
 	}
-	if msg.NormalizeVersion == "" {
-		t.Error("NormalizeVersion should be stamped when any direction returned bytes")
+	if msg.NormalizeVersion != "" {
+		t.Errorf("NormalizeVersion must stay empty, got %q", msg.NormalizeVersion)
 	}
 }

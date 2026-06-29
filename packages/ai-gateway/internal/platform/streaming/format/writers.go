@@ -1,8 +1,8 @@
 package format
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"strings"
 )

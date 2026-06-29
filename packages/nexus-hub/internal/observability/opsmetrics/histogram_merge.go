@@ -2,8 +2,8 @@ package opsmetrics
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // HistogramBucketCount mirrors the canonical 6-bucket layout used by the

@@ -2,8 +2,8 @@ package codec
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 	"time"

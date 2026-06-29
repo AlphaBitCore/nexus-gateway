@@ -14,7 +14,7 @@ import (
 )
 
 // testEncrypt encrypts plaintext with the given hex MASTER key, returning hex
-// ciphertext, iv, tag. SEC-W2-03: it HKDF-derives the provider-credential
+// ciphertext, iv, tag. It HKDF-derives the provider-credential
 // sub-key from the master, mirroring the Decryptor's open side, so the
 // round-trip exercises the real derivation rather than the raw master.
 func testEncrypt(t *testing.T, keyHex, plaintext string) (string, string, string) {
@@ -124,7 +124,7 @@ func TestDecryptor_InvalidTagHex(t *testing.T) {
 	}
 }
 
-// TestNewDecryptor_RejectsWeakKey locks SEC-M2-02 on the AI Gateway open side:
+// TestNewDecryptor_RejectsWeakKey locks the weak-key guard on the AI Gateway open side:
 // a valid-hex, correct-length but degenerate master (all-zeros / a committed
 // example / a single repeated byte) must fail closed at construction — symmetric
 // with the Control Plane minting side's keycheck.ValidateMasterKey gate. A
@@ -256,7 +256,7 @@ func TestMultiDecryptor_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestMultiDecryptor_StarMarkerStripped is the F-0364/F-0390 regression: when an
+// TestMultiDecryptor_StarMarkerStripped is the regression: when an
 // operator uses the documented "*vN:" current-marker syntax in CREDENTIAL_KEY_MAP
 // (recommended in .env.example), the gateway must store that key under the
 // STRIPPED id "vN" — the same id the Control Plane stamps onto ciphertext — not

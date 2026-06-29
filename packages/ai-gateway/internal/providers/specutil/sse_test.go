@@ -195,6 +195,47 @@ func TestSSEScanner_EmptyBodyReturnsEOF(t *testing.T) {
 	}
 }
 
+// TestSSEScanner_PooledBufferReuse_NoStaleBytes drives many scanners
+// sequentially against the shared buffer pool: a long first stream is fully
+// consumed and Closed (returning its buffer), then a shorter second stream that
+// reuses the recycled buffer must parse its OWN bytes exactly — never a residue
+// of the longer first stream. This is the cross-request-leak guard for the
+// per-stream buffer pooling; it fails if Close returns a buffer still aliased by
+// emitted data, or if a recycled buffer exposes stale content.
+func TestSSEScanner_PooledBufferReuse_NoStaleBytes(t *testing.T) {
+	// First stream: long payloads to dirty the buffer well past the second's length.
+	long := strings.Repeat("X", 4096)
+	first := NewSSEScanner(newBody("data: " + long + "\n\ndata: " + long + "\n\n"))
+	for i := range 2 {
+		ev, err := first.Next()
+		if err != nil {
+			t.Fatalf("first stream event %d: %v", i, err)
+		}
+		if string(ev.Data) != long {
+			t.Fatalf("first stream event %d corrupted", i)
+		}
+	}
+	if _, err := first.Next(); !errors.Is(err, io.EOF) {
+		t.Fatalf("first stream end: want EOF, got %v", err)
+	}
+	first.Close() // returns the (dirtied) buffer to the pool
+
+	// Second stream: short, distinct payload. If pooling leaked the first
+	// stream's bytes, this would read trailing 'X's after "short".
+	second := NewSSEScanner(newBody("data: short\n\n"))
+	defer second.Close()
+	ev, err := second.Next()
+	if err != nil {
+		t.Fatalf("second stream: %v", err)
+	}
+	if string(ev.Data) != "short" {
+		t.Fatalf("second stream Data=%q, want %q (stale bytes leaked from pool)", ev.Data, "short")
+	}
+	if _, err := second.Next(); !errors.Is(err, io.EOF) {
+		t.Fatalf("second stream end: want EOF, got %v", err)
+	}
+}
+
 // errReader returns a fixed error on Read so we can exercise the
 // scanner.Err() path.
 type errReader struct{ err error }

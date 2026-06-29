@@ -1,10 +1,10 @@
 .calloutBox {
   margin-bottom: 0;
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   border: 1px solid color-mix(in srgb, var(--color-primary) 16%, transparent);
   background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   color: var(--color-primary);
   line-height: 22px;
   letter-spacing: -0.1504px;

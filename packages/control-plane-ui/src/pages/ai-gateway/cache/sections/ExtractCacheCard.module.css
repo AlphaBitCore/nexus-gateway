@@ -122,3 +122,14 @@
   font-size: 0.8125rem;
   color: var(--color-error-fg);
 }
+
+.perfTip {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
+  border: 1px solid var(--color-warning-border);
+  border-radius: 6px;
+}

@@ -13,7 +13,7 @@ import (
 // Snapshot() which locks briefly + copies the underlying byte slice
 // (so the caller can't observe mid-write torn state).
 //
-// Exported in #92 so ai-gateway/internal/platform/streaming (which has
+// Exported so ai-gateway/internal/platform/streaming (which has
 // its own LivePipeline impl for cross-format transcoding reasons) can
 // reuse the same goroutine-safe accumulator instead of carrying its
 // own byte-for-byte copy. Single point of truth for the contract.

@@ -6,17 +6,59 @@
 package proxy
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
+
+// readBufPool reuses the request-body read scratch across requests. The body
+// escapes to the async audit writer, so it cannot itself be pooled (a
+// refcount/return-after-drain scheme was tried and reverted for live-object
+// heap retention); instead the scratch is pooled and a right-sized body is
+// copied out. Buffers are pre-grown to a typical body size so reading a payload
+// does not pay bytes.Buffer's geometric regrowth (64K→128K→256K…, each step a
+// full re-copy) or a fresh alloc per request. Pre-grown to 128 KiB: most current
+// requests carry ~128K-token contexts, so a 64 KiB pre-grow forced at least one
+// doubling+re-copy on the hot read path. This is a FIXED size, independent of
+// the client Content-Length (which is untrusted — the read is bounded by
+// LimitReader(maxBytes+1) below, never by a caller-supplied length).
+// readBufPreGrowBytes is the per-buffer pre-grow size, configurable via
+// server.requestReadBufKb (SetReadBufPreGrow, called once at wiring before any
+// request). Defaults to 64 KiB — the conservative out-of-the-box fallback when
+// unconfigured; deployments that routinely carry ~128K-token contexts raise it
+// (e.g. 128) to avoid a bytes.Buffer doubling+re-copy on the read path. Read by
+// the pool's New below, which runs lazily on first Get — i.e. after wiring — so
+// the configured value is in effect.
+var readBufPreGrowBytes = 64 << 10
+
+// SetReadBufPreGrow sets the request-body read-scratch pre-grow size (bytes). A
+// non-positive value keeps the current default. Call at startup before serving;
+// it is not safe to change while requests are in flight.
+func SetReadBufPreGrow(n int) {
+	if n > 0 {
+		readBufPreGrowBytes = n
+	}
+}
+
+var readBufPool = sync.Pool{New: func() any {
+	b := new(bytes.Buffer)
+	b.Grow(readBufPreGrowBytes)
+	return b
+}}
+
+// readBufPoolCap drops scratch buffers that grew past this cap rather than
+// returning them to the pool (oversized-body guard).
+const readBufPoolCap = 256 << 10
 
 // admissionStage authenticates and admits the request before any body
 // processing.
@@ -72,7 +114,7 @@ func (st admissionStage) run() bool {
 	// URL path for Gemini/Azure). Runs only after auth + rate-limit
 	// admission has passed.
 	bodyReadStart := time.Now()
-	body, modelID, isStream, err := h.readBody(s.r, s.resolved)
+	body, bodyHandle, modelID, isStream, err := h.readBody(s.r, s.resolved)
 	s.phaseTimer.MarkBetween(traffic.PhaseBodyRead, time.Since(bodyReadStart))
 	if err != nil {
 		if errors.Is(err, errRequestTooLarge) {
@@ -112,13 +154,18 @@ func (st admissionStage) run() bool {
 	if pcCfg.StoreRequestBody && len(body) > 0 {
 		s.rec.RequestBody = body
 		s.rec.RequestContentType = s.r.Header.Get("Content-Type")
+		// The captured body IS the pooled buffer; hand its handle to the record so
+		// the audit writer returns it to the pool at terminal resolution. When NOT
+		// captured (this branch skipped), bodyHandle is simply dropped and the
+		// buffer is GC'd — still used by s.body for upstream forwarding this request.
+		s.rec.AttachPooledRequestBody(bodyHandle)
 	}
 
 	// Phase 3.5: Build the canonical request context. One
 	// normcore.Registry.Normalize call per request produces the
 	// canonical *normcore.NormalizedPayload that L4 consumers
 	// (routing first; hooks + audit follow in subsequent stories)
-	// read instead of re-parsing raw bytes. The S1 RequestContext
+	// read instead of re-parsing raw bytes. The RequestContext
 	// type is the L3 immutable carrier; routing reads its Normalized()
 	// via *routingcore.RoutingContext.Request.
 	// Use resolved.BodyFormat (post-header-override), matching every
@@ -151,36 +198,56 @@ var errRequestTooLarge = errors.New("request body exceeds the configured network
 // never collapses the read to zero (which would otherwise 413 every
 // inbound request). The inline-vs-spill cutoff (`MaxInlineBodyBytes`)
 // is NOT applied here — it only governs how the captured copy is
-// stored on traffic_event_payload (inline JSONB vs spill file).
+// stored on traffic_event_payload (inline BYTEA vs spill file).
 //
 // To detect overflow without buffering the oversized body in memory we
 // read up to `maxBytes + 1`; if the returned slice exceeds `maxBytes`,
 // we return errRequestTooLarge so the caller can answer 413 cleanly.
-func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, modelID string, isStream bool, err error) {
+func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle *[]byte, modelID string, isStream bool, err error) {
 	maxBytes := h.payloadCaptureConfig().MaxRequestBytes
 	if maxBytes <= 0 {
 		maxBytes = payloadcapture.DefaultMaxRequestBytes
 	}
-	body, err = io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
-	if err != nil {
-		return nil, "", false, fmt.Errorf("failed to read request body")
+	// Read into a POOLED scratch buffer (pre-grown to ~64 KB) so the common
+	// ~50 KB body neither pays io.ReadAll's geometric regrowth nor a fresh
+	// per-request buffer allocation. The body escapes to the async audit writer,
+	// so a right-sized copy is taken out of the scratch and the scratch is
+	// returned to the pool — severing the async-ownership coupling without
+	// retaining the (oversized) scratch past the request.
+	buf := readBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	// Return to the pool only if it did not balloon on an oversized body — one
+	// 10 MiB request must not inflate every pooled scratch thereafter.
+	defer func() {
+		if buf.Cap() <= readBufPoolCap {
+			readBufPool.Put(buf)
+		}
+	}()
+	if _, err = buf.ReadFrom(io.LimitReader(r.Body, maxBytes+1)); err != nil {
+		return nil, nil, "", false, fmt.Errorf("failed to read request body")
 	}
-	if int64(len(body)) > maxBytes {
-		return nil, "", false, errRequestTooLarge
+	if int64(buf.Len()) > maxBytes {
+		return nil, nil, "", false, errRequestTooLarge
 	}
+	// Right-sized escaping copy taken from a POOL: the body escapes to the async
+	// audit writer, which returns the buffer to the pool at the record's terminal
+	// resolution (severing the per-request fresh allocation, the #1 hot-path
+	// allocator). bodyHandle is the pool handle; the caller attaches it to the
+	// audit Record when the body is captured, else drops it (the buffer GC's).
+	body, bodyHandle = audit.AcquireRequestBody(buf.Bytes())
 
 	modelID, isStream, err = ExtractIngressModel(in, r, body)
 	if err != nil {
-		return nil, "", false, err
+		return nil, nil, "", false, err
 	}
 
 	if modelID == "" {
-		return nil, "", false, fmt.Errorf("model is required")
+		return nil, nil, "", false, fmt.Errorf("model is required")
 	}
 
 	if modelID == "auto" && typology.KindFromWireShape(in.WireShape) == typology.EndpointKindEmbeddings {
-		return nil, "", false, fmt.Errorf("model \"auto\" is not supported for embeddings")
+		return nil, nil, "", false, fmt.Errorf("model \"auto\" is not supported for embeddings")
 	}
 
-	return body, modelID, isStream, nil
+	return body, bodyHandle, modelID, isStream, nil
 }

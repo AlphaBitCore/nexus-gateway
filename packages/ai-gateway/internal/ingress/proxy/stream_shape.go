@@ -30,16 +30,16 @@ func (st streamShapeStage) run() bool {
 	if ingress, ok := IngressFromContext(r.Context()); ok {
 		emitDone = ingress.BodyFormat.IsOpenAIFamily()
 	}
-	// #115 — resolve admin streaming mode + buffer cap from the Store.
-	// ai-gateway honors buffer_full_block (architect parity fix;
-	// replaces the prior "chunked_async only" hardcode). Three-service
+	// Resolve admin streaming mode + buffer cap from the Store.
+	// ai-gateway honors buffer_full_block (replaces the prior
+	// "chunked_async only" hardcode). Three-service
 	// alignment: agent / compliance-proxy / ai-gateway all dispatch on
 	// the same streampolicy.Store snapshot. Nil Store falls through to
 	// chunked_async — the default for traffic that has already opted
 	// into the gateway (unlike tlsbump's transparent-forwarder posture
 	// where nil Store means "no opt-in, transparent passthrough").
 	//
-	// #115/O6 follow-up: read MaxBufferBytes from the same snapshot so
+	// Read MaxBufferBytes from the same snapshot so
 	// admin-configured caps (64MB default, larger for high-volume
 	// deployments) propagate into both buffer and live pipelines. Zero
 	// means "use the pipeline's built-in default" (8MB) — same shape as
@@ -50,6 +50,27 @@ func (st streamShapeStage) run() bool {
 		snapshot := h.deps.StreamingPolicy.Get()
 		streamMode = snapshot.Mode
 		streamMaxBufferBytes = snapshot.MaxBufferBytes
+	}
+
+	// Enforcement routing (B2): an enforcing response scope OVERRIDES the admin
+	// streaming-mode knob (a UX/perf preference) — the live path is audit-only and
+	// can never enforce, so an enforcing hook must never land on it. A hard-block
+	// scope must BUFFER (zero-leak by contract, never best-effort streamed). A
+	// redact scope under chunked_async ARMS Model A: real-time streaming with a
+	// bounded tail + prescan gate that escalates to the canonical buffer on a
+	// confirmed hit (runModelAStream); redact streaming is best-effort-wire by
+	// design (see the streaming-compliance disclosure). A redact scope under
+	// passthrough (raw forwarding — the boot default) cannot be honored on the
+	// wire, so it falls back to BUFFER rather than streaming raw PII. An explicit
+	// admin buffer_full_block already redacts in the buffer path for both scopes.
+	if s.responseEnforcingBlock {
+		streamMode = streampolicy.ModeBufferFullBlock
+	} else if s.responseEnforcingRedact {
+		if streamMode == streampolicy.ModeChunkedAsync {
+			s.modelAArmed = true
+		} else if streamMode != streampolicy.ModeBufferFullBlock {
+			streamMode = streampolicy.ModeBufferFullBlock
+		}
 	}
 
 	// Build a cross-format stream transcoder when the ingress and target wire

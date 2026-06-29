@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -69,7 +70,9 @@ func (h *Handler) extractRequestContentForHooks(ctx context.Context, adapter tra
 	if h != nil && h.deps != nil && h.deps.Metrics != nil {
 		h.deps.Metrics.RecordTrafficExtract(ingressFormat, "request", "success")
 	}
-	return hookcore.PayloadFromTextSegments(extracted.Segments)
+	// PayloadFromExtracted (not PayloadFromTextSegments) so assistant-history
+	// tool-call arguments echoed in the request enter the redaction pipeline.
+	return hookcore.PayloadFromExtracted(extracted.Segments, extracted.ToolCallSegments)
 }
 
 // extractResponseForHooks pulls the canonical content blocks, model
@@ -98,11 +101,24 @@ func (h *Handler) extractResponseForHooks(ctx context.Context, adapter traffic.A
 	if h != nil && h.deps != nil && h.deps.Metrics != nil {
 		h.deps.Metrics.RecordTrafficExtract(ingressFormat, "response", "success")
 	}
-	model := ""
+	model, finish := "", ""
 	if extracted.Metadata != nil {
 		model = extracted.Metadata["model"]
+		// finish_reason is stamped by the traffic adapter's ExtractResponse
+		// (openai.go: choices[].finish_reason → Metadata["finish_reason"]) so
+		// the response-hook input carries the real terminal reason instead of a
+		// fabricated default. Multi-choice responses join with "," — the first
+		// element is the canonical single-choice value.
+		if fr := extracted.Metadata["finish_reason"]; fr != "" {
+			finish = fr
+			if i := strings.IndexByte(fr, ','); i >= 0 {
+				finish = fr[:i]
+			}
+		}
 	}
-	return hookcore.PayloadFromTextSegments(extracted.Segments), model, ""
+	// PayloadFromExtracted carries assistant tool-call arguments into the
+	// hook pipeline so response-side tool-arg PII is scanned and masked.
+	return hookcore.PayloadFromExtracted(extracted.Segments, extracted.ToolCallSegments), model, finish
 }
 
 // usageInt returns the pointer's dereferenced value, or 0 when nil.
@@ -116,7 +132,7 @@ func usageInt(p *int) int {
 // aigwHookOutcomeFromResult converts a request-side CompliancePipelineResult
 // into a HookOutcomeInput suitable for traffic.FormatHookOutcome. The mapping
 // follows spec §4.5:
-//   - RejectHard / BlockSoft → Rejected = hookName, RejectReason = reasonCode (or reason)
+//   - RejectHard → Rejected = hookName, RejectReason = reasonCode (or reason)
 //   - Modify → appended to Passed + Transformed = true
 //   - Approve / Abstain → appended to Passed
 //   - Any reject halts iteration (later hooks are not reported).
@@ -130,7 +146,7 @@ func aigwHookOutcomeFromResult(r *hookcore.CompliancePipelineResult) traffic.Hoo
 	in := traffic.HookOutcomeInput{}
 	for _, hr := range r.HookResults {
 		switch hr.Decision {
-		case hookcore.RejectHard, hookcore.BlockSoft:
+		case hookcore.RejectHard:
 			// Reject halts the pipeline: discard any previously-accumulated
 			// Passed hooks and return only the reject attribution (spec §4.5).
 			reason := hr.ReasonCode

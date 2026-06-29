@@ -20,8 +20,6 @@
 //     payload as Segments, conservatively avoiding short tokens
 //     (UUIDs, locale codes, ids) by length-filtering. This catches
 //     the user's prompt without depending on the exact RPC shape.
-//  3. Anything the adapter cannot parse confidently lands in Extra so
-//     compliance hooks doing defence-in-depth scans still see it.
 //
 // **Limitation**: the form-encoded extraction is heuristic (walks all
 // string-typed leaf nodes ≥ 16 chars). The package is registered and the
@@ -123,16 +121,6 @@ import (
 )
 
 const adapterID = "gemini-web"
-
-// jsonRequestKnownKeys lists known top-level fields when the request
-// body happens to be plain JSON (forward-compat path). Anything else
-// falls into Extra.
-var jsonRequestKnownKeys = []string{
-	"prompt", "messages", "contents", "systemInstruction",
-	"system_instruction", "generationConfig", "safetySettings",
-	"tools", "toolConfig", "model", "stream", "session_id",
-	"conversation_id", "client_metadata", "metadata",
-}
 
 // minHeuristicTextLen is the minimum string length the form-encoded
 // RPC walker treats as candidate prompt text. Set conservatively to
@@ -236,7 +224,6 @@ func extractJSONRequest(body []byte) (traffic.NormalizedContent, error) {
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, jsonRequestKnownKeys),
 	}, nil
 }
 
@@ -291,20 +278,18 @@ func extractFormEncodedRequest(body []byte) (traffic.NormalizedContent, error) {
 		inner = outer.Str
 	default:
 		// Fall back: walk the outer payload directly.
-		return walkHeuristicSegments([]byte(freq), body), nil
+		return walkHeuristicSegments([]byte(freq)), nil
 	}
 
 	if !gjson.Valid(inner) {
-		return walkHeuristicSegments([]byte(freq), body), nil
+		return walkHeuristicSegments([]byte(freq)), nil
 	}
-	return walkHeuristicSegments([]byte(inner), body), nil
+	return walkHeuristicSegments([]byte(inner)), nil
 }
 
 // walkHeuristicSegments recursively walks a JSON value and collects
-// string-typed leaves whose length is at least minHeuristicTextLen. The
-// `originalBody` is captured into Extra["form_body_preview"] so audit
-// can re-examine the raw bytes if needed.
-func walkHeuristicSegments(payload, originalBody []byte) traffic.NormalizedContent {
+// string-typed leaves whose length is at least minHeuristicTextLen.
+func walkHeuristicSegments(payload []byte) traffic.NormalizedContent {
 	root := gjson.ParseBytes(payload)
 	seen := map[string]bool{}
 	var segments []string
@@ -325,19 +310,8 @@ func walkHeuristicSegments(payload, originalBody []byte) traffic.NormalizedConte
 	}
 	visit(root)
 
-	// Audit fallback: a truncated preview of the form body so a hook
-	// doing defence-in-depth still has the bytes available.
-	preview := originalBody
-	if len(preview) > 4096 {
-		preview = preview[:4096]
-	}
-	extra := map[string]string{
-		"form_body_preview": string(preview),
-	}
-
 	return traffic.NormalizedContent{
 		Segments: segments,
-		Extra:    extra,
 	}
 }
 

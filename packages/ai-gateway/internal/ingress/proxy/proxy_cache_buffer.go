@@ -1,161 +1,213 @@
 package proxy
 
+// proxy_cache_buffer.go — ai-gateway streaming BUFFER mode.
+//
+// LOCKED design (05-PLAN §B3 ai-gateway bullet): the ai-gateway buffer path is
+// the S-canon LOCUS. Unlike the shared wire-frame BufferPipeline + FrameRedactor
+// seam (which tlsbump uses), ai-gateway does NOT redact wire frames. It consumes
+// the CANONICAL ChunkSubscription PRE-transcode, accumulates the full canonical
+// (OpenAI-shape) response body, runs the response pipeline on the canonical waist
+// (reuse redactCanonicalBuffer / RewriteResponseBody), then forward-encodes the
+// redacted canonical to the ingress wire via the existing stream transcoder. This
+// makes buffer mode actually redact a Modify decision (instead of degrading and
+// replaying the original — a leak) AND makes redaction correct for non-OpenAI
+// ingress (Anthropic / Gemini): the scan/rewrite is wire-shape-agnostic because
+// it runs on canonical, and the transcoder re-encodes the masked canonical back
+// to the client's native wire.
+//
+// redactCanonicalBuffer (proxy_upstream.go) is the single redaction entry point,
+// shared by this buffer path AND the future B2 Model-A escalation hand-off — one
+// redaction impl, multiple delivery wrappers. B2 routing/escalation is NOT wired
+// here (NON-GOAL): this file only provides the clean canonical-buffer substrate.
+
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/streaming"
-	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/responseprehook"
-	sharedstreaming "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 )
 
-// runStreamDeps bundles the dependencies the SSE dispatchers need.
-// Shared by both live (runLiveStream) and buffer (runBufferStream)
-// modes so the dispatch site at proxy_cache.go's hot path is a single
-// if/else over a single struct (#115).
-type runStreamDeps struct {
-	Deps         *Deps
-	AdapterType  string
-	Path         string
-	AcceptHeader string
-	HookRunner   streaming.StreamHookRunner
-	HookCtx      *streaming.StreamHookContext
-	SSEReader    io.Reader
-	// Tee is both an io.Writer (BufferPipeline) and an
-	// http.ResponseWriter (LivePipeline needs Flusher). The production
-	// streamCaptureTee satisfies both interfaces.
-	Tee    http.ResponseWriter
-	Logger *slog.Logger
-	// HoldBack + EmitDone are live-mode-only LiveConfig fields. Buffer
-	// mode ignores them (whole-body read + replay is the only behaviour).
-	HoldBack bool
-	EmitDone bool
-	// MaxBufferBytes resolves admin streampolicy MaxBufferBytes through
-	// to both buffer (BufferConfig.MaxBufferSize) and live
-	// (LiveConfig.MaxBufferSize) pipelines. Zero means "use the
-	// pipeline's built-in default" (8MB in both). #115/O6 follow-up:
-	// previously runBufferStream passed BufferConfig{} and silently
-	// defaulted regardless of the admin-configured 64MB cap; the cap
-	// only affected tlsbump callers.
-	MaxBufferBytes int
-}
-
-// runBufferStream wires shared.BufferPipeline against the ai-gateway
-// hookRunner + StreamHookContext + tee. #115 architect-parity fix —
-// admin streamingMode=buffer_full_block now drives ai-gateway's SSE
-// handler into whole-body-buffer mode (matches the existing tlsbump
-// behaviour used by agent + compliance-proxy).
+// emitCanonicalStream forward-encodes a canonical chunk sequence to the ingress
+// wire and writes it to w. It re-uses the stream transcoder selected by the
+// shape stage; when that is nil (OpenAI-family same-shape passthrough) it builds
+// the chat-completions encoder so a Modify re-emit still rebuilds valid OpenAI
+// frames (the wire reader's Delta-fallback drops tool_calls, so it cannot be
+// used for a redacted re-emit).
 //
-// Buffer mode trade-offs vs live (chunked_async):
-//
-//   - One hook checkpoint at end-of-body instead of per-N-char
-//     checkpoints. Catches more context but delays first byte to
-//     client.
-//
-//   - Modify decisions are not supported (BufferPipeline's switch
-//     has no Modify branch). When the response hook returns Modify
-//     under buffer mode we log a warning + treat as Approve; the
-//     bytes are replayed unchanged. This is documented in
-//     sse-streaming-compliance-architecture.md "Asymmetries"
-//     subsection.
-//
-//   - OnCheckpoint fires once with the single end-of-stream result;
-//     the StreamHookContext callback is still invoked so rec fields
-//     populate the same way as live mode.
-func runBufferStream(ctx context.Context, d runStreamDeps) {
-	// PR #24 follow-up S4-code: production always wires SSEReader +
-	// Tee; defensive nil-guard so a future caller that forgets one
-	// of the deps doesn't nil-deref into a 502. Symmetric with
-	// runPassthroughStream's guard.
-	if d.SSEReader == nil || d.Tee == nil {
-		return
+// Terminal framing is emitted exactly once via a synthetic Done chunk carrying
+// the final aggregated usage, so per-chunk Done/Usage are stripped from the body
+// chunks. The OpenAI encoder does not emit `data: [DONE]` (the live pipeline
+// normally appends it), so this helper appends it when emitDone is set.
+func emitCanonicalStream(ctx context.Context, w io.Writer, transcoder canonicalbridge.StreamTranscoder, model string, emitDone bool, chunks []provcore.Chunk, finalUsage *provcore.Usage, finishReason string) error {
+	enc := transcoder
+	if enc == nil {
+		enc = canonicalbridge.NewChatCompletionsStreamEncoder(model)
 	}
-	hookCtx := d.HookCtx
-	if hookCtx == nil {
-		// Defensive — caller always supplies one in production, but
-		// keep the function nil-safe so an experimental wiring path
-		// doesn't panic.
-		hookCtx = &streaming.StreamHookContext{}
+	for _, c := range chunks {
+		c.Done = false
+		c.Usage = nil
+		b, err := enc.Write(ctx, c)
+		if err != nil {
+			return err
+		}
+		if len(b) > 0 {
+			if _, werr := w.Write(b); werr != nil {
+				return werr
+			}
+		}
 	}
-	baseInput := &hookcore.HookInput{
-		RequestID:      hookCtx.RequestID,
-		Stage:          "response",
-		IngressType:    hookCtx.IngressType,
-		Path:           hookCtx.Path,
-		Method:         hookCtx.Method,
-		Model:          hookCtx.Model,
-		SourceIP:       hookCtx.SourceIP,
-		ProviderRegion: hookCtx.ProviderRegion,
-	}
-
-	// Adapter: shared.BufferPipeline takes a PipelineExecutor
-	// interface; ai-gateway built its hookRunner as a func value of
-	// the same signature. Wrap once so the buffer pipeline sees a
-	// type that satisfies the interface.
-	executor := bufferModeExecutor{run: d.HookRunner}
-
-	bp := sharedstreaming.NewBufferPipeline(sharedstreaming.BufferConfig{
-		MaxBufferSize: d.MaxBufferBytes,
-	}, executor, d.Logger)
-
-	// #91 PreHook — install the same Registry-normalize-before-hooks
-	// callback the live path uses, so the buffer pipeline's single
-	// checkpoint sees structured Normalized rather than flat-text.
-	if cb := buildBufferPreHookCallback(ctx, d.Deps, d.AdapterType, d.Path, d.AcceptHeader); cb != nil {
-		bp.WithPreHook(cb)
-	}
-
-	result, err := bp.Process(ctx, d.SSEReader, d.Tee, baseInput)
+	// Terminal framing is emitted exactly once via a synthetic Done chunk.
+	// FinishReason carries the real observed finish_reason (the body chunks'
+	// terminal-reason frame re-encodes to nothing — its delta is empty) so the
+	// encoder emits the true value instead of its hardcoded default.
+	b, err := enc.Write(ctx, provcore.Chunk{Done: true, Usage: finalUsage, FinishReason: finishReason})
 	if err != nil {
-		d.Logger.Error("buffer pipeline error", "error", err)
+		return err
 	}
-	// Mirror live mode's OnCheckpoint callback so rec fields populate
-	// regardless of dispatch path — admins reading TrafficEvent rows
-	// see ResponseHookDecision / Reason / Tags consistently across
-	// modes.
-	if result != nil && hookCtx.OnCheckpoint != nil {
-		hookCtx.OnCheckpoint(result)
+	if len(b) > 0 {
+		if _, werr := w.Write(b); werr != nil {
+			return werr
+		}
 	}
+	if emitDone {
+		if _, werr := w.Write([]byte("data: [DONE]\n\n")); werr != nil {
+			return werr
+		}
+	}
+	return nil
 }
 
-// bufferModeExecutor adapts ai-gateway's StreamHookRunner (function
-// type) to shared.PipelineExecutor (interface). Same signature shape;
-// the adapter is a 1-line method.
+// runCanonicalBufferStream is the streaming BUFFER-mode handler. It consumes the
+// canonical ChunkSubscription pre-transcode, accumulates the full canonical
+// response, redacts on the canonical waist via redactCanonicalBuffer, and
+// forward-encodes the result to the ingress wire through the capture tee.
 //
-// The Modify-degradation log + Prometheus counter
-// (nexus_streaming_modify_degraded_total) live inside
-// shared.BufferPipeline (#115/R3) so all three data planes emit the
-// same signal from a single registration. This adapter is purely a
-// type bridge.
-type bufferModeExecutor struct {
-	run streaming.StreamHookRunner
-}
-
-func (b bufferModeExecutor) Execute(ctx context.Context, input *hookcore.HookInput) *hookcore.CompliancePipelineResult {
-	return b.run(ctx, input)
-}
-
-// buildBufferPreHookCallback is the buffer-mode counterpart to
-// buildStreamPreHookCallback. Same underlying responseprehook.Build
-// helper; the only difference is the returned type fits
-// sharedstreaming.PreHookCallback (BufferPipeline.WithPreHook accepts
-// that type). Both PreHookCallback aliases resolve to
-// hookcore.PreHookCallback at the type level so the underlying
-// function value is identical.
-func buildBufferPreHookCallback(ctx context.Context, deps *Deps, adapterType, path, accept string) sharedstreaming.PreHookCallback {
-	if deps == nil {
-		return nil
+//   - RejectHard (hard block) → only an in-band SSE error frame is delivered;
+//     ZERO content bytes reach the client. The 200 SSE preamble was already
+//     flushed by the preamble stage, so a block can only be surfaced in-band.
+//   - Modify → the masked canonical body is re-emitted; the original PII /
+//     tool-arg PII is never delivered.
+//   - Approve / no response hook → the buffered canonical chunks are re-encoded
+//     to the wire unchanged.
+//
+// Usage accounting (usage) and the capture tee (the storage copy) are preserved:
+// usage is recorded from the canonical chunks as they drain, and the redacted
+// wire transcript flows through the same tee the relay stage stamps onto the
+// audit record. The returned *chunkSSEReader is a terminal-error carrier only
+// (the buffer owns the subscription, so it classifies client-abort / upstream
+// faults itself); the accounting stage reads it via terminalError().
+func (h *Handler) runCanonicalBufferStream(ctx context.Context, s *streamState, tee http.ResponseWriter, usage *chunkUsageHolder) *chunkSSEReader {
+	term := &chunkSSEReader{ctx: ctx, ingressFormat: s.ingressFormat}
+	// Defensive nil-guard, symmetric with the live/passthrough handlers: a wiring
+	// path that forgot the subscription or tee no-ops rather than nil-derefs.
+	if s.sub == nil || tee == nil {
+		return term
 	}
-	return responseprehook.Build(responseprehook.Options{
-		Ctx:          ctx,
-		Registry:     deps.NormalizeRegistry,
-		AdapterID:    adapterType,
-		EndpointPath: path,
-		ContentType:  accept,
-		Direction:    normcore.DirectionResponse,
-	})
+
+	acc := newCanonicalStreamAccumulator(s.target.ModelCode)
+	// Bound the accumulation: the canonical buffer holds the whole response
+	// before redacting, so an unbounded (or malicious) upstream would grow it
+	// without limit → OOM. Tally the canonical content bytes and fail closed
+	// once the admin-resolved cap (stream_shape.go) is crossed, mirroring the
+	// shared BufferPipeline's MaxBufferSize bound. Zero → the 8MB default.
+	maxBuf := s.streamMaxBufferBytes
+	if maxBuf <= 0 {
+		maxBuf = defaultCanonicalBufferMaxBytes
+	}
+	var bufferedBytes int
+	var collected []provcore.Chunk
+	for {
+		chunk, err := s.sub.Next(ctx)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			// Client disconnect / deadline: nothing to deliver, classify as a
+			// client abort (mirrors chunkSSEReader); no error frame to a gone peer.
+			if ctx.Err() != nil {
+				term.termErr.Store(&streamTerminalError{code: streamErrCodeClientAbort, err: err})
+				return term
+			}
+			// Provider error: synthesize an ingress-shaped terminal SSE error frame
+			// so the client receives a parseable payload, then classify (§9.5).
+			var pe *provcore.ProviderError
+			if !errors.As(err, &pe) {
+				pe = &provcore.ProviderError{Status: http.StatusBadGateway, Code: provcore.CodeUpstreamError, Message: err.Error()}
+			}
+			_, _ = tee.Write(envelope.SynthesizeSSEErrorFrame(s.ingressFormat, pe))
+			term.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
+			return term
+		}
+		if chunk.Usage != nil {
+			usage.record(chunk.Usage)
+		}
+		bufferedBytes += canonicalChunkSize(chunk)
+		if bufferedBytes > maxBuf {
+			// Cap exceeded: the 200 SSE preamble was already flushed, so deliver
+			// an in-band SSE error frame (zero further content) and classify the
+			// stream as an upstream fault for the accounting stage. Accumulation
+			// is bounded — no OOM. ResponseHookRewritten stays false so the
+			// relay's redacted-copy guard keeps storage at NULL.
+			pe := &provcore.ProviderError{
+				Status:  http.StatusBadGateway,
+				Code:    provcore.CodeUpstreamError,
+				Message: fmt.Sprintf("stream exceeded maximum buffer size of %d bytes", maxBuf),
+			}
+			_, _ = tee.Write(envelope.SynthesizeSSEErrorFrame(s.ingressFormat, pe))
+			term.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: pe})
+			return term
+		}
+		acc.add(chunk)
+		collected = append(collected, chunk)
+		if chunk.Done {
+			break
+		}
+	}
+
+	ingress, _ := IngressFromContext(s.r.Context())
+	snap := usage.snapshot()
+	var finalUsage *provcore.Usage
+	if usageHasAny(snap) {
+		finalUsage = &snap
+	}
+	tokenTotal := int64(usageInt(snap.TotalTokens))
+
+	outcome := h.redactCanonicalBuffer(s.r, s.rec, ingress, s.target, acc.canonicalBody(), tokenTotal, s.requestID, s.logger)
+
+	if outcome.failClosed {
+		// Hard block / fail-closed: deliver ONLY an in-band SSE error frame — zero
+		// content bytes. The audit fields (ResponseHookDecision / ResponseAction)
+		// were stamped by redactCanonicalBuffer; ResponseHookRewritten stays false
+		// so the relay's redacted-copy guard keeps ResponseBodyRedacted nil →
+		// storage stores NULL, never a leak. fail-closed posture: the ai-gateway
+		// is NOT in the packet path, so a redaction the policy required but could
+		// not produce is surfaced as the error frame, never as the original body.
+		pe := &provcore.ProviderError{Status: outcome.errStatus, Code: "blocked", Message: outcome.errMsg}
+		_, _ = tee.Write(envelope.SynthesizeSSEErrorFrame(s.ingressFormat, pe))
+		if ingress.BodyFormat.IsOpenAIFamily() {
+			_, _ = tee.Write([]byte("data: [DONE]\n\n"))
+		}
+		return term
+	}
+
+	var emit []provcore.Chunk
+	if outcome.rewritten {
+		// Modify: re-emit the REDACTED canonical body. Masked content + masked
+		// tool-call arguments are read back from the rewritten canonical and
+		// forward-encoded to the ingress wire; the original is never delivered.
+		emit = []provcore.Chunk{syntheticChunkFromCanonical(outcome.body, acc.reasoning.String())}
+	} else {
+		// Approve / no response hook: re-encode the buffered canonical chunks
+		// unchanged to the ingress wire.
+		emit = collected
+	}
+	if err := emitCanonicalStream(ctx, tee, s.transcoder, s.target.ModelCode, s.emitDone, emit, finalUsage, acc.finishReason); err != nil {
+		term.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
+	}
+	return term
 }

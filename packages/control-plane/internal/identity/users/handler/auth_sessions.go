@@ -3,7 +3,7 @@ package iam
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strconv"
 	"time"
@@ -241,7 +241,7 @@ type revocationEvent struct {
 
 // ListRevocations returns revoked_token rows with id > since, ascending. The
 // response includes a lastId cursor callers pipeline into the next request.
-// Task 4.5 consumes this endpoint on RS-side reconnect catch-up.
+// The RS-side reconnect catch-up flow consumes this endpoint.
 func (h *Handler) ListRevocations(c echo.Context) error {
 	if h.revocationStore == nil {
 		return c.JSON(http.StatusServiceUnavailable, errJSON(

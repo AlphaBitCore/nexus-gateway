@@ -51,11 +51,11 @@ export function StepReview({ wizard }: { wizard: ProviderWizardHook }) {
   } = wizard;
 
   return (
-    <div className={styles.stepPanelLarge}>
+    <div className={clsx(styles.stepPanelLarge, styles.reviewPanel)}>
       <h2 className={clsx(styles.stepTitle, styles.reviewTitleSpaced)}>{t('pages:providers.review', 'Review')}</h2>
 
       <div className={styles.reviewGrid}>
-        <section>
+        <section className={styles.reviewCard}>
           <h3 className={styles.reviewSectionTitle}>{t('pages:providers.reviewProvider')}</h3>
           <ReviewRow label={t('pages:providers.name')} value={name} />
           {displayName && <ReviewRow label={t('pages:providers.displayName')} value={displayName} />}
@@ -67,7 +67,7 @@ export function StepReview({ wizard }: { wizard: ProviderWizardHook }) {
           />
         </section>
 
-        <section>
+        <section className={styles.reviewCard}>
           <h3 className={styles.reviewSectionTitle}>{t('pages:providers.reviewCredential')}</h3>
           {skipCredential ? (
             <ReviewRow label={t('pages:providers.status')} value={t('pages:providers.reviewSkipped')} muted last />
@@ -79,16 +79,21 @@ export function StepReview({ wizard }: { wizard: ProviderWizardHook }) {
           )}
         </section>
 
-        <section>
-          <h3 className={styles.reviewSectionTitle}>{t('pages:providers.reviewModels')}</h3>
+        <section className={styles.reviewModelsSection}>
+          <div className={styles.reviewModelsTitleRow}>
+            <h3 className={styles.reviewSectionTitle}>
+              {t('pages:providers.reviewSelected')} {t('pages:providers.reviewModels')}
+            </h3>
+            {models.filter((m) => m.selected).length > 0 && (
+              <span className={styles.reviewModelsCount}>
+                {t('pages:providers.reviewModelCount', { count: models.filter((m) => m.selected).length })}
+              </span>
+            )}
+          </div>
           {models.filter((m) => m.selected).length === 0 ? (
             <ReviewRow label={t('pages:providers.reviewModels')} value={t('pages:providers.reviewNoneOptional')} muted last />
           ) : (
             <>
-              <ReviewRow
-                label={t('pages:providers.reviewSelected')}
-                value={t('pages:providers.reviewModelCount', { count: models.filter((m) => m.selected).length })}
-              />
               <div className={cardStyles.modelCardGrid}>
                 {models.filter((m) => m.selected).map((m) => {
                   const inputN = m.inputPrice ? Number(m.inputPrice) : null;
@@ -96,7 +101,7 @@ export function StepReview({ wizard }: { wizard: ProviderWizardHook }) {
                   const ctxN = m.maxContextTokens ? Number(m.maxContextTokens) : null;
                   const outTokN = m.maxOutputTokens ? Number(m.maxOutputTokens) : null;
                   return (
-                    <div key={m.modelId} className={cardStyles.modelCard}>
+                    <div key={m.modelId} className={clsx(cardStyles.modelCard, styles.reviewModelCard)}>
                       <div className={cardStyles.modelCardHeader}>
                         <div>
                           <div className={cardStyles.modelCardName}>{m.name}</div>

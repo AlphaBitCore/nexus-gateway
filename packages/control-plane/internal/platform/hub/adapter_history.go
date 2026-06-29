@@ -1,8 +1,8 @@
 package hub
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // historyEventFieldMap renames Hub-internal config_change_event fields into

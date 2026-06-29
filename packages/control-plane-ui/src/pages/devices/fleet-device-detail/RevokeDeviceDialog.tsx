@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Dialog, Stack, Button } from '@/components/ui';
+import styles from '../FleetDeviceDetailPage.module.css';
 
 interface RevokeDeviceDialogProps {
   open: boolean;
@@ -11,7 +12,7 @@ interface RevokeDeviceDialogProps {
 export function RevokeDeviceDialog({ open, onOpenChange, onConfirm, loading }: RevokeDeviceDialogProps) {
   const { t } = useTranslation();
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={t('pages:fleet.revokeDeviceConfirmTitle')}>
+    <Dialog open={open} onOpenChange={onOpenChange} title={t('pages:fleet.revokeDeviceConfirmTitle')} className={styles.fleetDialog}>
       <Stack gap="md">
         <p>{t('pages:fleet.revokeDeviceConfirmBody')}</p>
         <Stack direction="horizontal" gap="sm" justify="end">

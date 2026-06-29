@@ -224,7 +224,7 @@ func (f *fakeVKLookupEnvelope) GetVirtualKeyByHash(_ context.Context, keyHash st
 }
 
 func hmacHashVKEnvelope(raw, secret string) string {
-	// SEC-W2-01: the authenticator hashes VKs under the HKDF-derived VK-domain
+	// the authenticator hashes VKs under the HKDF-derived VK-domain
 	// sub-key, not the raw master — mirror that so the seeded lookup hash matches.
 	sub := keyderive.DeriveSubkey([]byte(secret), keyderive.ClassAPIKeyVirtualKey)
 	mac := hmac.New(sha256.New, sub[:])

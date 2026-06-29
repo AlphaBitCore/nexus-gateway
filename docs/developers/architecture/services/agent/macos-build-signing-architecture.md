@@ -124,7 +124,7 @@ relative to the bundle), and the menu app registers it on first launch via
 `SMAppService.daemon(plistName:)` — a system-domain boot daemon (root,
 `RunAtLoad`, `KeepAlive`), so pre-login enforcement is preserved (it is **not** a
 per-user login agent). The menu app registers itself as a Login Item via
-`SMAppService.mainApp` (replacing the old per-user `LaunchAgent`). Both
+`SMAppService.mainApp`. Both
 registrations are brokered by `smd`/launchd with a one-time approval — the
 unprivileged menu app needs no `sudo` and no `launchctl bootstrap`. On a managed
 device the `com.apple.servicemanagement` profile pre-approves both, so
@@ -132,12 +132,12 @@ device the `com.apple.servicemanagement` profile pre-approves both, so
 
 Because the registration is tied to the `.app`, **deleting the app deregisters
 the daemon** and schedules the NE extension for removal — no orphaned
-`/Library/LaunchDaemons` plist, no launchd spawn-error spam, and the
-`disabled.plist`-override `Bootstrap failed: 5: Input/output error` class is
-gone (there is no free-standing plist to bootstrap or get stuck disabled).
+`/Library/LaunchDaemons` plist, no launchd spawn-error spam, and no
+free-standing plist that could be bootstrapped or get stuck disabled (the
+`disabled.plist`-override `Bootstrap failed: 5: Input/output error` class).
 
 Installation still goes through the `.pkg` only — never by copying the `.app`
-into `/Applications` — but the post-install script no longer bootstraps launchd.
+into `/Applications` — and the post-install script does not bootstrap launchd.
 It only:
 
 - sets ownership and permissions on the state directory (`root:wheel`, with
@@ -159,7 +159,7 @@ The uninstall script is idempotent: it stops the running daemon by label
 (classic or SMAppService), removes the app (which deregisters the SMAppService
 daemon and schedules the NE for removal), cleans any classic `/Library` residue,
 wipes state/logs/keychain, and optionally the per-user `~/.nexus` data. Upgrades
-no longer require a manual uninstall-first: preinstall boots out the running
+do not require a manual uninstall-first: preinstall boots out the running
 daemon by label and the post-install app launch re-registers the new bundle.
 
 ## References

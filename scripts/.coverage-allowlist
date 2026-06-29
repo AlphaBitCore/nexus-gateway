@@ -190,6 +190,18 @@
 # Symmetric with the darwin entry above. Added 2026-06-09 (user-approved).
 */packages/agent/internal/platform/linux
 
+# (D) agent/internal/platform/windows — the Windows WFP (Windows Filtering
+# Platform) transparent-proxy platform impl, symmetric with the darwin (NE)
+# and linux (netfilter) entries above. The unit-testable logic IS tested
+# (flow-table bookkeeping, policy-state snapshot, audit-pump buffering); the
+# remainder is OS surface needing the live NexusWFP kernel driver: WFP callout
+# registration, DeviceIoControl IOCTL round-trips to the driver (wfp_ioctl.go),
+# connect-redirect flow capture (wfp_windows.go / wfp_audit_pump.go), and Win32
+# PID/process resolution (windows_windows.go). Covered by the on-host WFP driver
+# bring-up (docs: agent-windows-wfp-driver) + the integration suite. Package
+# sits at 14.4% unit. Added 2026-06-15 (user-approved).
+*/packages/agent/internal/platform/windows
+
 # (D) Agent OS-direct shims — keychain, systray. (openbrowser removed: the
 # URL/host security validation is now unit-tested via a launch seam; only the
 # process spawn is excluded, which does not need a whole-package exemption.)

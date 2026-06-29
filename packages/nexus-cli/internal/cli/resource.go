@@ -2,8 +2,9 @@ package cli
 
 import (
 	"bufio"
-	"encoding/json"
+	stdjson "encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/url"
 	"os"
@@ -310,7 +311,7 @@ func resolveBody(body, bodyFile string, stdin io.Reader) (json.RawMessage, error
 	default:
 		return nil, nil // no body
 	}
-	if !json.Valid(raw) {
+	if !stdjson.Valid(raw) {
 		return nil, fmt.Errorf("request body is not valid JSON")
 	}
 	return json.RawMessage(raw), nil

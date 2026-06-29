@@ -89,3 +89,58 @@ rules:
     severity: soft
     pattern: '(?i)respond\s+(only\s+)?in\s+(base64|hex|leet|rot13|backwards)'
     labels: [detector:jailbreak, attack:format-override]
+  # --- Named-persona families (expansion) ---
+  - id: jb-dan-201
+    category: jailbreak.dan
+    severity: hard
+    pattern: '(?i)\b(STAN|DUDE|Mongo\s+Tom|AIM|Niccolo)\b.{0,80}(no\s+restrictions?|without\s+(any\s+)?(filters?|rules?|morals?)|do\s+anything)'
+    description: Named DAN-derivative jailbreak personas (STAN/DUDE/AIM/Mongo Tom).
+    labels: [detector:jailbreak, attack:persona]
+  - id: jb-persona-001
+    category: jailbreak.persona
+    severity: hard
+    pattern: '(?i)(you\s+are|act\s+as|pretend\s+to\s+be)\s+(my\s+)?(evil\s+(confidant|trusted)|unfiltered\s+(ai|assistant)|amoral\s+(ai|chatbot))'
+    description: Evil-confidant / unfiltered-persona role assignment.
+    labels: [detector:jailbreak, attack:persona]
+  - id: jb-devmode-002
+    category: jailbreak.developer_mode
+    severity: hard
+    pattern: '(?i)(developer\s+mode\s+(enabled|on|output)|enable\s+developer\s+mode|jailbroken\s+(mode|response))'
+    description: Developer-mode / jailbroken-mode activation.
+    labels: [detector:jailbreak, attack:developer-mode]
+  - id: jb-norefuse-001
+    category: jailbreak.no_refusal
+    severity: hard
+    pattern: '(?i)(never\s+refuse|do\s+not\s+(ever\s+)?(refuse|decline)|refusal\s+is\s+not\s+(allowed|an\s+option))'
+    description: Explicit no-refusal coercion.
+    labels: [detector:jailbreak, attack:no-refusal]
+  - id: jb-noguard-001
+    category: jailbreak.no_guardrails
+    severity: hard
+    pattern: '(?i)(you\s+have\s+no\s+(guidelines?|guardrails?|filters?)|your\s+(filters?|guardrails?|safety)\s+(are|is)\s+(off|disabled)|ignore\s+your\s+(safety\s+)?guidelines?)'
+    description: Guardrail-disable assertion.
+    labels: [detector:jailbreak, attack:no-guardrails]
+  - id: jb-simulate-001
+    category: jailbreak.simulation
+    severity: soft
+    pattern: '(?i)simulate\s+(an?\s+)?(ai|assistant|chatbot|language\s+model)\s+(with\s+no|without\s+(any\s+)?)(restrictions?|filters?|rules?|guidelines?)'
+    description: Simulate-an-unrestricted-AI framing.
+    labels: [detector:jailbreak, attack:simulation]
+  - id: jb-policy-001
+    category: jailbreak.policy_bypass
+    severity: hard
+    pattern: '(?i)(not\s+bound\s+by|ignore|bypass|forget)\s+(openai|anthropic|the\s+company)(''?s)?\s+(policy|policies|content\s+policy|usage\s+policy|guidelines)'
+    description: Vendor-policy bypass assertion.
+    labels: [detector:jailbreak, attack:policy-bypass]
+  - id: jb-token-001
+    category: jailbreak.token_smuggling
+    severity: soft
+    pattern: '(?i)(respond\s+with\s+(only\s+)?the\s+first\s+letter|answer\s+using\s+the\s+first\s+character\s+of\s+each|spell\s+(it\s+)?out\s+one\s+(letter|character)\s+(at\s+a\s+time|per))'
+    description: Token-smuggling / character-at-a-time evasion.
+    labels: [detector:jailbreak, attack:token-smuggling]
+  - id: jb-grandma-001
+    category: jailbreak.pretext
+    severity: soft
+    pattern: '(?i)(my\s+(deceased\s+)?grandma(\s+used\s+to|\s+would)|act\s+as\s+my\s+(late\s+)?grandmother).{0,60}(tell|read|recipe|napalm|password)'
+    description: Grandma/relative pretext jailbreak.
+    labels: [detector:jailbreak, attack:pretext]

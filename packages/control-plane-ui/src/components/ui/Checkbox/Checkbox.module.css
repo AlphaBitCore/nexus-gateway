@@ -8,7 +8,7 @@
   width: 16px;
   height: 16px;
   border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   background: var(--color-surface);
   cursor: pointer;
   transition:
@@ -39,6 +39,6 @@
   align-items: center;
   justify-content: center;
   color: var(--color-primary-foreground);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   line-height: 1;
 }

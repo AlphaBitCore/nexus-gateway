@@ -1,19 +1,119 @@
 .kvGrid {
   display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: var(--g-space-2) var(--g-space-4);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
   padding: var(--g-space-4);
+}
+
+.kvGrid > * {
+  min-width: 0;
 }
 
 .kvLabel {
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
+  margin-bottom: 4px;
 }
 
 .kvValue {
   font-size: var(--g-font-size-sm);
   color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+}
+
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--g-space-4);
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.detailTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.statusBadge {
+  border: 1px solid currentColor;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.detailSubtitle {
+  margin: 4px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+}
+
+.headerActions {
+  flex: 0 0 auto;
+}
+
+.headerActions :global(button) {
+  height: 38px !important;
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.headerActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.headerActions :global(button[class*="primary"]) {
+  color: var(--color-primary-foreground) !important;
 }
 
 .tabBar {
@@ -26,7 +126,7 @@
 .tab {
   padding: 10px 20px;
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   cursor: pointer;
   border: none;
   background: transparent;
@@ -40,15 +140,106 @@
   composes: tab;
   color: var(--color-primary);
   border-bottom-color: var(--color-primary);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .sectionTitle {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
-  padding: 0 var(--g-space-4);
+  line-height: 20px;
+  padding: 0;
   margin: 0;
+}
+
+.trafficEventsSection {
+  gap: 8px !important;
+}
+
+.trafficInfoCallout {
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, transparent);
+  border-radius: var(--g-radius-lg);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+  color: var(--color-primary);
+  font-size: var(--g-font-size-sm);
+  line-height: 22px;
+  letter-spacing: -0.1504px;
+}
+
+.trafficEventsSubtitle {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  line-height: 18px;
+}
+
+.statsSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.statsSection :global([class*="disabledBanner"]) {
+  padding: 12px 16px !important;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, transparent) !important;
+  border-radius: var(--g-radius-lg) !important;
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg)) !important;
+  color: var(--color-primary) !important;
+  font-size: var(--g-font-size-sm) !important;
+  line-height: 22px !important;
+  letter-spacing: -0.1504px !important;
+}
+
+.copyButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: var(--g-space-2);
+  padding: 0;
+  border: 0;
+  border-radius: var(--g-radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.copyButton:hover {
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.copyButton svg {
+  width: 18px;
+  height: 18px;
+}
+
+.copyButton::after {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 10;
+  padding: 4px 8px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-text);
+  color: var(--color-bg);
+  content: attr(data-tooltip);
+  font-size: var(--g-font-size-xs);
+  line-height: 16px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(2px);
+  transition: opacity var(--g-transition-fast), transform var(--g-transition-fast);
+  white-space: nowrap;
+}
+
+.copyButton:hover::after,
+.copyButton:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .table {
@@ -60,7 +251,7 @@
 .th {
   text-align: left;
   padding: var(--g-space-2) var(--g-space-4);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   border-bottom: 1px solid var(--color-border);
 }
@@ -91,4 +282,28 @@
   font-size: var(--g-font-size-sm);
   overflow-x: auto;
   margin: 0;
+}
+
+.tagSection :global(button),
+.tagSection :global(button *),
+.fleetDialog :global(button),
+.fleetDialog :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+@media (max-width: 1100px) {
+  .kvGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .headerTitleRow {
+    flex-direction: column;
+  }
+
+  .kvGrid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -2,8 +2,8 @@ package vkstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -108,7 +108,7 @@ func TestGetVirtualKey(t *testing.T) {
 
 func TestCreateVirtualKey_Defaults(t *testing.T) {
 	s, m := newMock(t)
-	// SEC-W2-01 Layer A: key_version is arg 3 (KeyVersion unset → ""); vkType
+	// key_version is arg 3 (KeyVersion unset → ""); vkType
 	// ""→"personal" (arg 13), vkStatus ""→"active" (arg 14).
 	m.ExpectQuery(`INSERT INTO "VirtualKey"`).
 		WithArgs("k", "hash", "", "vk_abc", (*string)(nil), (*string)(nil), true,

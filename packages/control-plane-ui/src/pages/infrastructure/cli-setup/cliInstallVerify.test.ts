@@ -3,7 +3,7 @@ import enPages from '@/i18n/locales/en/pages.json';
 import esPages from '@/i18n/locales/es/pages.json';
 import zhPages from '@/i18n/locales/zh/pages.json';
 
-// SEC-W4-02 regression: the in-product CLI install instructions must verify the
+// The in-product CLI install instructions must verify the
 // downloaded binary against its published .sha256 sidecar BEFORE chmod/run, in
 // every locale. A naive `curl | chmod +x` (the pre-fix state) lets a write to
 // the served downloads dir ship attacker code to every operator. This test pins

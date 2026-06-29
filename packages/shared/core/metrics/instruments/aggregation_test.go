@@ -56,7 +56,7 @@ func TestCombineValues(t *testing.T) {
 	}
 }
 
-// TestMergeRollupRowsDistinctMax is the core F-0166 regression: three 5m
+// TestMergeRollupRowsDistinctMax is the core regression: three 5m
 // buckets each reporting 5 distinct active entities for the same cell must
 // merge to 5 (the per-bucket max), NOT 15 (the sum). A neighbouring sum-kind
 // metric in the same input still sums, proving the registry routes per-metric.

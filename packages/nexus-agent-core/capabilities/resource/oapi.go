@@ -53,7 +53,7 @@ type oapiSchema struct {
 
 // refMaxHops caps $ref chain following. The embedded corpus's deepest real
 // chain is 3 hops (the device-groups membership-query bodies), and every ref
-// is same-document (#/components/schemas/...) — measured 2026-06-05, guarded
+// is same-document (#/components/schemas/...), guarded
 // by TestDistillRefBodiesNonEmpty. The cap is inclusive: a 3-hop chain resolves.
 const refMaxHops = 3
 

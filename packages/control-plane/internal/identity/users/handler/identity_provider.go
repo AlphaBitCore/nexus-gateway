@@ -2,8 +2,8 @@ package iam
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -179,9 +179,8 @@ func validateIdPRequest(body *idpWriteRequest, isCreate bool) string {
 	if body.Type == "oidc" {
 		issuer, _ := body.Config["issuer"].(string)
 		clientID, _ := body.Config["clientId"].(string)
-		redirectURI, _ := body.Config["redirectUri"].(string)
-		if issuer == "" || clientID == "" || redirectURI == "" {
-			return "OIDC config requires issuer, clientId, redirectUri"
+		if issuer == "" || clientID == "" {
+			return "OIDC config requires issuer, clientId"
 		}
 		if isCreate {
 			if cs, _ := body.Config["clientSecret"].(string); cs == "" || cs == sensitiveMaskIdP {
@@ -342,7 +341,7 @@ func (h *Handler) UpdateIdentityProvider(c echo.Context) error {
 	}
 
 	// Enabled true→false transition: every user linked to this IdP loses
-	// their active sessions. SDD NFR-3 requires this fan-out within ~5s.
+	// their active sessions. This fan-out must complete within ~5s.
 	// Best-effort; failures are logged inside revokeUserScope.
 	if existing.Enabled && !r.Enabled {
 		userIDs, listErr := h.fed.ListUserIDsByIdP(ctx, idpID)
@@ -392,7 +391,7 @@ func (h *Handler) DeleteIdentityProvider(c echo.Context) error {
 
 	// Snapshot linked user IDs BEFORE the cascade — once
 	// UserFederatedIdentity rows are gone the link is unreachable.
-	// Used for the post-delete revocation fan-out (SDD NFR-3).
+	// Used for the post-delete revocation fan-out.
 	var revokeUserIDs []string
 	if !force {
 		linked, err := h.scim.CountFederatedIdentitiesForIdP(ctx, idpID)

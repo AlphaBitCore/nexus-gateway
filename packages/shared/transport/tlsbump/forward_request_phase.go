@@ -3,9 +3,7 @@ package tlsbump
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -18,7 +16,7 @@ import (
 
 // runRequestPhase is the pre-upstream compliance phase: read + normalize
 // the request body, build and run the request-stage hook pipeline, apply
-// its decision (refuse / soft-block / inflight rewrite / approve), and
+// its decision (refuse / inflight rewrite / approve), and
 // stash the requestAuditCtx on the request context for the post-upstream
 // emit sites. No-op when compliance is disabled for this request.
 //
@@ -28,7 +26,7 @@ import (
 // CPMarkerFromContext.
 //
 // Returns true when the request was fully answered here (strict
-// fail-closed refusal, REJECT_HARD, or BLOCK_SOFT) and must not be
+// fail-closed refusal or REJECT_HARD) and must not be
 // forwarded upstream.
 func (x *bumpedExchange) runRequestPhase() bool {
 	bo, logger := x.flow.bo, x.flow.logger
@@ -45,7 +43,7 @@ func (x *bumpedExchange) runRequestPhase() bool {
 	// Only on the fail-open caller (the agent NE host-packet path, where a
 	// buffering deadlock would hang the host's networking). The strict
 	// fail-closed appliance (compliance-proxy) is NOT in a host packet path —
-	// it keeps buffering so its request-stage RejectHard/BlockSoft inspection is
+	// it keeps buffering so its request-stage RejectHard inspection is
 	// never silently bypassed by an unknown-length body; its traffic is unary
 	// LLM API calls that carry Content-Length, so this path is rarely hit there.
 	if !bo.strictFailClosed && isStreamingRequestBody(x.r) {
@@ -133,14 +131,13 @@ func (x *bumpedExchange) runRequestPhase() bool {
 		SourceProcessBundle: bo.procBundle,
 		SourceUser:          bo.procUser,
 	}
-	// Stamp request-side normalize result (computed above by
-	// runtimeNormalize) so agent SQLite + Hub MQ wire both
-	// carry the pre-computed NormalizedPayload. Falls back to
-	// empty when content is nil (non-AI adapter / parse miss).
-	if content != nil {
-		if b, err := json.Marshal(content); err == nil {
-			auditInfo.RequestNormalized = b
-		}
+	// Persist the domain-matched adapter id as ingress_format so the
+	// view-time normalize recompute (Control Plane + Agent UI) keys on the
+	// authoritative adapter instead of resolving by path + content sniff.
+	// Guarded: empty when no domain rule matched an adapter → recompute
+	// falls back to path/sniff (preserves old-row behaviour).
+	if x.matchedDomain != nil && x.matchedDomain.AdapterID != "" {
+		auditInfo.IngressFormat = x.matchedDomain.AdapterID
 	}
 
 	// Build and run request pipeline. Pass endpointType so
@@ -190,20 +187,14 @@ func (x *bumpedExchange) runRequestPhase() bool {
 				bo.auditEmitter.Emit(reqInput, auditInfo, result, "BUMP_SUCCESS", http.StatusForbidden, int(time.Since(x.requestStart).Milliseconds()), captureBodyIfEnabled(x.pcCfg.StoreRequestBody, bodyBytes), nil, traffic.UsageMeta{})
 			}
 			stampRejectMarkers(x.w.Header(), bo.identity, x.txID, x.domainRuleID, cpHookOutcomeFromResult(result))
-			WriteRejectResponse(x.w, x.r, bo.rejectConfig, x.txID, result.Reason, result.ReasonCode, http.StatusForbidden)
-			return true
-
-		case compliance.BlockSoft:
-			logger.Info("request soft-rejected by compliance (BLOCK_SOFT)",
-				"target", x.flow.targetHost,
-				"transactionId", x.txID,
-				"reason", result.Reason,
-			)
-			if bo.auditEmitter != nil {
-				bo.auditEmitter.Emit(reqInput, auditInfo, result, "BUMP_SUCCESS", 246, int(time.Since(x.requestStart).Milliseconds()), captureBodyIfEnabled(x.pcCfg.StoreRequestBody, bodyBytes), nil, traffic.UsageMeta{})
+			if bo.richReject {
+				WriteRejectResponse(x.w, x.r, bo.rejectConfig, x.txID, result.Reason, result.ReasonCode, http.StatusForbidden)
+			} else {
+				// Agent on-host interceptor: minimal 403 with no attribution
+				// body (it does not synthesize a rich error page in the host
+				// outbound path).
+				http.Error(x.w, "Forbidden", http.StatusForbidden)
 			}
-			x.w.WriteHeader(246)
-			_, _ = fmt.Fprintf(x.w, "Request flagged by policy: %s", result.Reason)
 			return true
 
 		case compliance.Modify:
@@ -214,8 +205,19 @@ func (x *bumpedExchange) runRequestPhase() bool {
 			// stamp REDACT_INFLIGHT_UNSUPPORTED on the result so the
 			// audit trail reflects the degraded path.
 			if resolvedAdapter != nil && len(result.ModifiedContent) > 0 {
-				rewriteContent := contentBlocksToNormalized(result.ModifiedContent)
+				rewriteContent := rewriteContentWithToolArgs(result.ModifiedContent, content, result.TransformSpans)
 				rewritten, _, rErr := resolvedAdapter.RewriteRequestBody(x.flow.ctx, bodyBytes, x.r.URL.Path, rewriteContent)
+				if rErr == nil {
+					// Fail closed when tool-call args were masked but this
+					// per-host adapter cannot put them back on its native wire
+					// (only the OpenAI canonical adapter implements
+					// traffic.ToolArgMasker). Without this guard a non-OpenAI
+					// upstream would receive UNMASKED tool-arg PII while the audit
+					// recorded it redacted — a silent divergence. Routing to the
+					// disclosed REDACT_INFLIGHT_UNSUPPORTED path makes the gap
+					// honest instead of silent.
+					rErr = traffic.GuardToolArgMasking(resolvedAdapter, rewriteContent)
+				}
 				switch {
 				case errors.Is(rErr, traffic.ErrRewriteUnsupported):
 					logger.Warn("inflight rewrite unsupported; forwarding original body",
@@ -234,7 +236,7 @@ func (x *bumpedExchange) runRequestPhase() bool {
 				default:
 					bodyBytes = rewritten
 					// The rewritten copy is the only raw bytes allowed into
-					// the audit store under storageAction=redact — the emitter
+					// the audit store under the redact action — the emitter
 					// selects it via StorageRawBody at build time.
 					auditInfo.RequestBodyRedacted = rewritten
 					logger.Info("request body redacted by compliance hook",

@@ -9,7 +9,6 @@
 package decision
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -71,6 +70,51 @@ const (
 	StorageDropContent StorageAction = "drop-content"
 )
 
+// Action is the single hook match-outcome axis. It replaces the orthogonal
+// InflightAction × StorageAction pair and governs both the inflight
+// disposition and what is stored:
+//   - approve: forward/return unchanged, store as-is
+//   - redact:  rewrite the payload; the same masked body is forwarded,
+//     returned, and stored
+//   - block:   reject (403 on a proxy; connection drop on the agent) and
+//     store the redacted copy
+type Action string
+
+const (
+	ActionApprove Action = "approve"
+	ActionRedact  Action = "redact"
+	ActionBlock   Action = "block"
+)
+
+// Valid reports whether a is one of the three defined actions.
+func (a Action) Valid() bool {
+	switch a {
+	case ActionApprove, ActionRedact, ActionBlock:
+		return true
+	}
+	return false
+}
+
+// ActionFromLegacy maps the deprecated onMatch (inflightAction, storageAction)
+// pair to the single Action. The new action follows the inflight axis; an
+// approve paired with a redacting storage policy upgrades to redact (the
+// compliance-safe direction, never less masked than before). An empty inflight
+// is the legacy match default (block-hard).
+func ActionFromLegacy(inflight InflightAction, storage StorageAction) Action {
+	switch inflight {
+	case InflightBlockHard, InflightBlockSoft:
+		return ActionBlock
+	case InflightRedact:
+		return ActionRedact
+	case InflightApprove:
+		if storage == StorageRedact || storage == StorageDropContent {
+			return ActionRedact
+		}
+		return ActionApprove
+	}
+	return ActionBlock
+}
+
 // CompliancePipelineResult is the aggregated result from the hook pipeline.
 type CompliancePipelineResult struct {
 	Decision    Decision
@@ -84,21 +128,13 @@ type CompliancePipelineResult struct {
 	// TransformSpans is the union of byte-level modifications emitted by
 	// every hook in this pipeline run.
 	TransformSpans []normalize.TransformSpan `json:"transformSpans,omitempty"`
-	// StorageAction is the strictest operator policy declared across the
-	// hooks that matched this run.
-	StorageAction StorageAction `json:"storageAction,omitempty"`
+	// Action is the strictest single-axis outcome aggregated across the hooks
+	// that matched this run. It drives both the inflight disposition and what
+	// is stored (approve = as-is; redact/block = the redacted copy).
+	Action Action `json:"action,omitempty"`
 	// BlockingRule is the rule-pack attribution that caused the pipeline's
 	// (reject) decision.
 	BlockingRule *BlockingRule `json:"blockingRule,omitempty"`
-	// Redetect re-locates rule-attributed sensitive content within one
-	// text block of the storage-bound normalized payload. The pipeline
-	// stamps it from the executed hooks' compiled patterns when the run
-	// produced TransformSpans; the audit writers hand it to
-	// redact.ApplyStorageAction so a span whose hook-time address does not
-	// resolve on the storage-time payload can be re-located and redacted
-	// in place instead of degrading to the drop placeholder. In-process
-	// only — never serialized.
-	Redetect redact.Redetector `json:"-"`
 }
 
 // HookResult is the output produced by a single hook execution.
@@ -117,9 +153,8 @@ type HookResult struct {
 	ModifiedContent []ContentBlock `json:"modifiedContent,omitempty"`
 	// TransformSpans are the byte-level modifications this hook produced.
 	TransformSpans []normalize.TransformSpan `json:"transformSpans,omitempty"`
-	// StorageAction reflects this hook's onMatch.storageAction policy
-	// when the hook matched.
-	StorageAction StorageAction `json:"storageAction,omitempty"`
+	// Action reflects this hook's onMatch.action policy when the hook matched.
+	Action Action `json:"action,omitempty"`
 	// BlockingRule, when non-nil, identifies the rule-pack rule that
 	// produced the (reject) Decision.
 	BlockingRule *BlockingRule `json:"blockingRule,omitempty"`
@@ -133,7 +168,7 @@ const (
 	ReasonAIGuardSuggestedVsPolicy  = "AIGUARD_SUGGESTED_VS_POLICY"
 	// ReasonFailClosed marks a request/response refused because a mandatory
 	// (fail-closed) hook could not be built under a strict (appliance) policy,
-	// so the traffic could not be inspected. SEC-W3-01 / F-0371: the strict
+	// so the traffic could not be inspected: the strict
 	// caller refuses uninspectable traffic rather than forwarding it.
 	ReasonFailClosed = "COMPLIANCE_FAIL_CLOSED"
 )

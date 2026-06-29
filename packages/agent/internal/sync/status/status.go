@@ -2,7 +2,7 @@
 package status
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"sync"
 	"time"
 )
@@ -257,8 +257,8 @@ type Collector struct {
 	// audit event whose provider_name field was non-empty — i.e. the
 	// agent saw a real LLM call on this device. The menu-bar UI
 	// reads this to render a brief tray-icon pulse so the user
-	// gets at-a-glance "agent is doing AI work right now" feedback
-	// (see #69). Zero time = no provider traffic since boot.
+	// gets at-a-glance "agent is doing AI work right now" feedback.
+	// Zero time = no provider traffic since boot.
 	lastProviderTrafficAt time.Time
 }
 

@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"testing"

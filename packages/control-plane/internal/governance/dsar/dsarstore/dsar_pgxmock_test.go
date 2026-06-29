@@ -2,8 +2,8 @@ package dsarstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -139,8 +139,8 @@ func expectAccessHappy(m pgxmock.PgxPoolIface) {
 		WillReturnRows(pgxmock.NewRows([]string{"deviceId", "hostname", "assignedAt", "releasedAt"}).
 			AddRow("dev1", "host1", tNow, (*time.Time)(nil)))
 	m.ExpectQuery(`FROM traffic_event_payload p\s+JOIN traffic_event t`).WithArgs("subj1", 1000).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "source", "req", "resp"}).
-			AddRow("e1", "ai-gateway", json.RawMessage(`{"prompt":"hi"}`), json.RawMessage(`{"text":"yo"}`)))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "source", "req", "resp", "reqEnc", "respEnc"}).
+			AddRow("e1", "ai-gateway", []byte(`{"prompt":"hi"}`), []byte(`{"text":"yo"}`), "text", "text"))
 	m.ExpectQuery(`FROM "AssistantSession"`).WithArgs("subj1").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "title", "msgCount", "createdAt", "updatedAt"}).
 			AddRow("ses1", "Chat", 3, tNow, tNow))
@@ -180,7 +180,7 @@ func TestFulfillDSARAccess(t *testing.T) {
 		t.Fatalf("FulfillDSARAccess: %v", err)
 	}
 	// Art.15 export must now cover every personal-data surface, not just
-	// VK/agent/device traffic (F-0262).
+	// VK/agent/device traffic.
 	if exp.User == nil || exp.User["displayName"] != "Jane Doe" {
 		t.Errorf("User record missing/incorrect: %+v", exp.User)
 	}
@@ -336,7 +336,7 @@ func expectErasureHappy(m pgxmock.PgxPoolIface) {
 	m.ExpectExec(`DELETE FROM "AssistantPendingConfirm"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 4))
 	m.ExpectExec(`DELETE FROM "AssistantChatEvent"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 2))
 	m.ExpectExec(`UPDATE dsar_request\s+SET outcome = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	// Account-record deletion stage (F-0335): owned keys, identity/credential
+	// Account-record deletion stage: owned keys, identity/credential
 	// rows, then the NexusUser itself. The admin-audit hash chain is NOT touched
 	// — there is deliberately NO DELETE on AdminAuditLog queued, and pgxmock's
 	// ExpectationsWereMet would fail if the code issued one.
@@ -376,11 +376,11 @@ func TestFulfillDSARErasure(t *testing.T) {
 		t.Errorf("AssistantErased = %d; want 12", res.AssistantErased)
 	}
 	// Prior ACCESS exports persisted in dsar_request.outcome are scrubbed too
-	// so ACCESS-then-ERASURE leaves no residual PII (F-0263).
+	// so ACCESS-then-ERASURE leaves no residual PII.
 	if res.AccessOutcomesScrubbed != 1 {
 		t.Errorf("AccessOutcomesScrubbed = %d; want 1", res.AccessOutcomesScrubbed)
 	}
-	// Account-record deletion (F-0335): the subject's owned keys, SSO link rows,
+	// Account-record deletion: the subject's owned keys, SSO link rows,
 	// refresh + SCIM tokens, and the NexusUser itself are GONE; the audit chain
 	// is untouched (no AdminAuditLog DELETE was queued — ExpectationsWereMet
 	// below would fail if the code had issued one).

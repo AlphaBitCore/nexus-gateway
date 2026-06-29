@@ -1,6 +1,6 @@
 # Normalization architecture
 
-The normalize layer turns raw provider/wire bytes into a canonical `NormalizedPayload` — readable text, token usage, and request/response structure — independent of which provider or wire format produced them. It lives in `packages/shared/transport/normalize` and is shared by the AI Gateway, Compliance Proxy, Agent, and Hub audit pipeline, so the same bytes yield the same normalized result everywhere.
+The normalize layer turns raw provider/wire bytes into a canonical `NormalizedPayload` — readable text, token usage, and request/response structure — independent of which provider or wire format produced them. It lives in `packages/shared/transport/normalize` and is shared by the AI Gateway, Compliance Proxy, and Agent (request-path enforcement) and the Control Plane (view-time recompute), so the same bytes yield the same normalized result everywhere. The canonical projection is **not persisted on the audit write path**; the Control Plane recomputes it on demand from the stored (already-redacted) body when an operator opens the Traffic drawer — see §5.2 and [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md).
 
 ## 1. The NormalizedPayload contract
 
@@ -84,19 +84,46 @@ Traffic no AI tier claims still gets a TYPED structural projection, never a blin
 
 - **AI Gateway** — `core.ExtractUsage` (`packages/ai-gateway/internal/providers/core/usage_extractor.go`) is the entry point; each codec's `DecodeResponse` delegates there.
 - **Compliance Proxy** — wires the registry to normalize intercepted request/response bodies (`packages/compliance-proxy/cmd/compliance-proxy/wiring/normalize.go`).
-- **Agent** — normalizes a client's outbound traffic on the forward path.
-- **Hub** — normalizes at audit time when ingesting agent audit uploads.
+- **Agent** — normalizes a client's outbound traffic on the forward path (enforcement / hook input).
+- **Control Plane** — recomputes the normalized projection at view time, on demand, from the stored (already-redacted) request/response body when an operator opens the Traffic drawer (`GET /traffic/:id/normalized`). No producer persists the projection on the audit write path, and the Hub neither self-derives nor backfills it — see [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2.
 
 Because all four build from the same assembly, the same upstream bytes produce byte-identical canonical output regardless of where they were captured. A new provider's usage or text mapping is added once, in the shared layer, and every service inherits it. The interception-side detail (per-host adapters, Tier-2 detectors for consumer surfaces) is in [compliance-pipeline-architecture.md](../compliance-proxy/compliance-pipeline-architecture.md).
 
 ### 5.1 AI Gateway audit key selection — always the ingress format
 
-The AI Gateway audit emitter (`internal/platform/audit`) feeds captured request/response bodies through this registry via `core.BuildAuditFn`. The routing key it supplies is the **ingress wire format** for **both** directions — never the routed upstream adapter — because every byte buffer the gateway captures is in the client (ingress) wire shape:
+The AI Gateway captures request/response bodies in the client (ingress) wire shape and persists `rec.IngressFormat` — the **authoritative ingress wire-format key** — onto `traffic_event.ingress_format` so the Control Plane's view-time recompute selects the right codec. The key is the ingress wire format for **both** directions — never the routed upstream adapter — because every byte buffer the gateway captures is in the client (ingress) wire shape:
 
 - **Request** bytes are captured at handler dispatch in the client's wire shape. The codec translates `A → canonical → B` only for the bytes sent upstream, which are never the captured `RequestBody`.
 - **Response** bytes are always re-encoded back to the ingress shape (`B → canonical → A`) before they touch `rec.ResponseBody`. Every capture site does this: non-stream responses are stored after `egressReshapeNonStream`; the streaming tee wraps the client `ResponseWriter` so it buffers the per-chunk-reshaped SSE the client received; error bodies are `EncodeErrorEnvelopeForIngress` output. There is no path where the captured response bytes are in the upstream provider's wire shape.
 
-So a non-Gemini model (e.g. OpenAI `o1`) served over the Gemini `:generateContent` ingress records its response in Gemini `candidates[]` shape and is keyed on `gemini` → the Gemini normalizer claims it at Tier 1 (`kind=ai-chat`). Cross-format ingresses whose format has no adapter-only registration (`/v1/responses`, where the ingress format is `openai-responses`) resolve through the registry's path-keyed fallback (`::/v1/responses`); SSE that no Tier-1 key folds is claimed by the matching codec through the Tier-1.5 sniff pass, and only shapes no sniffer recognizes reach the Tier-2 SSE walker. The single key source is `audit.normalizeAdapterType`, which returns `rec.IngressFormat` lower-cased.
+So a non-Gemini model (e.g. OpenAI `o1`) served over the Gemini `:generateContent` ingress records its response in Gemini `candidates[]` shape and is keyed on `gemini` → the Gemini normalizer claims it at Tier 1 (`kind=ai-chat`). Cross-format ingresses whose format has no adapter-only registration (`/v1/responses`, where the ingress format is `openai-responses`) resolve through the registry's path-keyed fallback (`::/v1/responses`); SSE that no Tier-1 key folds is claimed by the matching codec through the Tier-1.5 sniff pass, and only shapes no sniffer recognizes reach the Tier-2 SSE walker. The persisted key is `traffic_event.ingress_format` (stamped from `rec.IngressFormat`), consumed by the Control Plane view-time recompute (`GetTrafficEventForNormalize` reads it, lower-cased; an empty value — agent / compliance-proxy rows that carry the domain-matched adapter id, or older rows — falls through to the path-and-sniff resolution). See [traffic-capture-storage-normalize-design.md](traffic-capture-storage-normalize-design.md) for the ingress-frame invariant and the cross-protocol rationale.
+
+### 5.2 AI Gateway lazy canonical (compute-on-demand)
+
+The request-path canonical (`buildRequestContext` → `Registry.Normalize`) is
+computed only when a synchronous consumer needs it:
+
+- **Lazy compute.** `buildRequestContext` installs a lazy normalize seam and
+  materializes the canonical only when a synchronous consumer pulls it — the
+  response cache stage (when `cacheEnabled`) or a `smart` routing rule (the only
+  strategy that reads `rctx.Request.Messages`, gated by
+  `Handler.smartRouteNeedsCanonical` → `Resolver.RequestNeedsCanonical`, recursive
+  over the strategy tree via `core.ConfigReadsContent` / `StrategyTreeReadsContent`).
+  Each consumer is fail-safe — it pulls the canonical on any uncertainty. When no
+  consumer needs it, the request path leaves it nil.
+
+`NEXUS_LAZY_CANONICAL` gates this (default **on**; set `NEXUS_LAZY_CANONICAL=0`
+to force always-compute as a kill-switch). The gate decision is consumer-derived
+and independent of the ingress↔upstream spec relationship.
+
+**The audit path runs no normalize.** The gateway does not stamp
+`request_normalized` / `response_normalized` on the audit row, and the request
+canonical is not reused for audit — the audit path runs no `Normalize` and no
+`json.Marshal` of the canonical on the request goroutine. The normalized
+projection is recomputed at view time by the Control Plane from the stored
+(already-redacted) body, so it is neither produced on the latency path nor
+persisted on the write path. See §5 and
+[audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2.
 
 ## 6. Adding a normalizer or detector
 

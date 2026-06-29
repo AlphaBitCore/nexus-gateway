@@ -222,7 +222,7 @@ func IsPinningError(err error) bool {
 	//   alert(46) certificate_unknown     → "certificate unknown"
 	//   alert(49) access_denied           → "access denied"
 	//   alert(44) certificate_required    → "certificate required"
-	// Note: the overly broad "tls: alert" was removed — it matched
+	// Do not match the overly broad "tls: alert" — it also matches
 	// legitimate TLS misconfigurations (expired cert, wrong cipher) and
 	// could bypass compliance inspection.
 	msg := strings.ToLower(err.Error())

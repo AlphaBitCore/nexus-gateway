@@ -1,5 +1,5 @@
 // TransparentProxyProvider.swift — NETransparentProxyProvider implementation
-// for macOS traffic interception (E17 Phase 3A).
+// for macOS traffic interception.
 //
 // Intercepts TCP flows from managed applications, queries the Go agent for
 // interception decisions via Unix socket IPC, and routes flows accordingly.
@@ -41,7 +41,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
         var bytesIn: Int64 = 0
         var bytesOut: Int64 = 0
         var bumpStatus: String = ""
-        // E50 phase fields populated by URLSessionTaskMetricsHandler when
+        // Phase fields populated by URLSessionTaskMetricsHandler when
         // an upstream URLSession task completes. Optional because not
         // every flow goes through URLSession (raw TCP relay does not).
         var upstreamTtfbMs: Int? = nil
@@ -235,7 +235,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
             return false
         }
 
-        // E55 self-intercept guard: NE intercepts ALL outbound traffic
+        // Self-intercept guard: NE intercepts ALL outbound traffic
         // including the agent daemon's own connections.
         //
         // A claim + direct-relay approach for daemon self-traffic was
@@ -253,7 +253,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
         // before NE fully claims the daemon PID (this is how the
         // existing WebSocket gets established + reconnects).
         //
-        // Known limitation / future option (tracked: task #56): the
+        // Known limitation / future option: the
         // clean fix would use NETransparentProxyNetworkSettings.
         // excludedNetworkRules to tell NECP not to route daemon-bound
         // traffic to the proxy at the IP level. That needs the daemon
@@ -283,9 +283,9 @@ class NexusProxyProvider: NETransparentProxyProvider {
         // anywhere in our code path (IPC stuck, peek timeout, panic)
         // takes down the entire host's UDP stack including DNS, which
         // looks like a complete network outage to the user.
-        // See incident 2026-05-15: shipping `.any` rule + blanket
-        // close-all-UDP killed DNS/DHCP/mDNS and required manual
-        // launchctl unload + plist deletion to recover.
+        // Shipping an `.any` rule + blanket close-all-UDP kills
+        // DNS/DHCP/mDNS and requires manual launchctl unload + plist
+        // deletion to recover.
         if let udpFlow = flow as? NEAppProxyUDPFlow {
             // Layer 2 defense: explicit fast-decline for known macOS
             // system network services. Even though startProxy() already
@@ -380,8 +380,8 @@ class NexusProxyProvider: NETransparentProxyProvider {
         activeFlows[flowId] = FlowState(flow: tcpFlow, startTime: Date())
         flowLock.unlock()
 
-        // E55 / #79: peek the TLS ClientHello BEFORE asking the daemon
-        // for a decision. Pre-E55 we sent `host` (which is the IP
+        // Peek the TLS ClientHello BEFORE asking the daemon
+        // for a decision. Previously we sent `host` (which is the IP
         // literal for callers like Cursor/curl/Claude Desktop that
         // pre-resolve DNS) directly — daemon Engine.Evaluate would
         // never match an interception_domain pattern → passthrough →
@@ -405,7 +405,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
         return true // we are handling this flow
     }
 
-    /// E55 / #79: peeks the TLS ClientHello of an inbound flow,
+    /// Peeks the TLS ClientHello of an inbound flow,
     /// extracts the SNI hostname, and only THEN asks the daemon for
     /// the inspect/passthrough/deny decision. Without this two-step
     /// pre-decision peek, callers that pre-resolve DNS (Cursor /
@@ -422,7 +422,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
     /// Fail-safe: 500ms timeout (server-speaks-first protocols never
     /// emit a ClientHello, e.g. SSH/SMTP/IMAP) — on timeout we just
     /// requestDecision with the original host (IP or remoteHostname).
-    /// Same outcome as the pre-E55 path for non-TLS flows.
+    /// Same outcome as the non-peek path for non-TLS flows.
     private func peekSNIThenDecide(flowId: String,
                                    flow: NEAppProxyTCPFlow,
                                    initialHost: String,
@@ -607,8 +607,8 @@ class NexusProxyProvider: NETransparentProxyProvider {
     private let relayEstablishTimeout: DispatchTimeInterval = .seconds(5)
 
     /// failOpenResetFlow applies the established fail-open reset shape
-    /// (the #82 / commit 61b597d93 contract) to a claimed-but-unusable
-    /// flow: the app sees an immediate ECONNRESET and macOS routes the
+    /// to a claimed-but-unusable flow: the app sees an immediate
+    /// ECONNRESET and macOS routes the
     /// retry natively, rather than the flow hanging until the ~75s OS TCP
     /// timeout. Idempotent via completeFlow (a second call no-ops once the
     /// flow row is removed). code 60 = ETIMEDOUT (Darwin).
@@ -917,7 +917,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
         // BUMP_SUCCESS=inspect, BUMP_FAILED_PASSTHROUGH=inspect-attempted-
         // then-fallback. duration_ms near 0 with 0 bytes = flow was
         // reset before any relay (typically flow.open failed and we
-        // closeRead'd per the #82 fail-open contract).
+        // closeRead'd per the fail-open contract).
         let durationMs = Int(Date().timeIntervalSince(state.startTime) * 1000)
         logger.info("completeFlow: flow=\(flowId, privacy: .public) bytes_in=\(state.bytesIn) bytes_out=\(state.bytesOut) duration_ms=\(durationMs) bump_status=\(state.bumpStatus, privacy: .public)")
 
@@ -926,7 +926,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
 
     private func reportFlowClosed(flowId: String, state: FlowState) {
         let durationMs = Int(Date().timeIntervalSince(state.startTime) * 1000)
-        // E50: forward optional phase fields. nil when URLSession metrics
+        // Forward optional phase fields. nil when URLSession metrics
         // weren't captured this flow (passthrough / raw TCP relay path).
         ipcClient.notifyFlowClosed(
             flowId: flowId,
@@ -940,7 +940,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
         )
     }
 
-    /// E50 phase setters — called by the URLSession metrics delegate when
+    /// Phase setters — called by the URLSession metrics delegate when
     /// upstream task metrics surface (typically `urlSession(_:task:didFinishCollecting:)`).
     /// `metrics.taskInterval.duration` ≈ upstreamTotalMs and
     /// `responseStartDate - requestStartDate` ≈ upstreamTtfbMs.

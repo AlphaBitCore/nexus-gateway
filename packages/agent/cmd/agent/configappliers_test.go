@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"testing"
 
@@ -63,9 +63,9 @@ func TestTeeCatB(t *testing.T) {
 	}
 }
 
-// TestApplyOfKillSwitch verifies F-0129 and F-0130 fixes:
-// - The applier returns a non-nil live snapshot (F-0130).
-// - The pauser's adminEngaged bit tracks the shadow payload (F-0129).
+// TestApplyOfKillSwitch verifies:
+// - The applier returns a non-nil live snapshot.
+// - The pauser's adminEngaged bit tracks the shadow payload.
 func TestApplyOfKillSwitch(t *testing.T) {
 	newDeps := func() (*killswitch.Switch, *protectionpause.Pauser) {
 		ks := killswitch.New(slog.Default())
@@ -80,7 +80,7 @@ func TestApplyOfKillSwitch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// F-0130: returned bytes must be a non-nil live snapshot.
+		// Returned bytes must be a non-nil live snapshot.
 		if out == nil {
 			t.Fatal("applyOfKillSwitch must return non-nil snapshot bytes")
 		}
@@ -91,7 +91,7 @@ func TestApplyOfKillSwitch(t *testing.T) {
 		if !snap.Engaged {
 			t.Error("snapshot.Engaged must be true after engage shadow")
 		}
-		// F-0129: pauser's adminEngaged bit must be set.
+		// Pauser's adminEngaged bit must be set.
 		if !p.IsAdminEngaged() {
 			t.Error("pauser.IsAdminEngaged must be true after engage shadow")
 		}
@@ -113,15 +113,15 @@ func TestApplyOfKillSwitch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("disengage shadow: %v", err)
 		}
-		// F-0129: admin brake cleared.
+		// Admin brake cleared.
 		if p.IsAdminEngaged() {
 			t.Error("pauser.IsAdminEngaged must be false after disengage shadow")
 		}
-		// F-0129: user pause keeps kill switch engaged.
+		// User pause keeps kill switch engaged.
 		if !ks.IsEngaged() {
 			t.Error("killswitch must remain engaged because user pause is still active")
 		}
-		// F-0130: returned bytes must be non-nil.
+		// Returned bytes must be non-nil.
 		if out == nil {
 			t.Fatal("applyOfKillSwitch must return non-nil snapshot bytes on disengage")
 		}

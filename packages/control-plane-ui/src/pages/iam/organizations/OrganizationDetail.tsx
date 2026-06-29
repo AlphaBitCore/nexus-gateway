@@ -9,7 +9,7 @@ import { useZodForm, FormInput, FormSwitch } from '@/lib/forms';
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import { z } from 'zod';
 import {
-  PageHeader, Badge, statusToVariant, DataTable, AlertDialog, Breadcrumb,
+  Badge, statusToVariant, DataTable, AlertDialog,
   Skeleton, ErrorBanner, Tooltip, FormField, Switch, OrgTreeSelect,
   Button, Stack, Card, Tabs, TabsList, TabsTrigger, TabsContent,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
@@ -212,21 +212,25 @@ export function OrganizationDetail() {
 
   return (
     <Stack gap="md">
-      <Stack direction="horizontal" gap="sm" align="center">
-        <Button variant="secondary" size="sm" onClick={() => navigate(-1)}>
-          ← {t('common:back')}
-        </Button>
-        <Breadcrumb items={[
-          { label: t('pages:organizations.title'), to: '/iam/organizations' },
-          { label: org.name },
-        ]} />
-      </Stack>
-
-      <PageHeader
-        title={org.name}
-        subtitle={org.source === 'idp' ? `IdP-managed · Code: ${org.code}` : (org.description || `Code: ${org.code}`)}
-        action={
-          <Stack direction="horizontal" gap="sm">
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/iam/organizations" className={styles.backLink} aria-label={t('common:back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{org.name}</h1>
+            <div className={styles.headerMeta}>
+              <Badge variant="outline">{org.code}</Badge>
+              {org.source === 'idp' && <Badge variant="outline">{t('common:idpManaged')}</Badge>}
+              <Badge variant={statusToVariant(org.enabled ? 'active' : 'disabled')}>
+                {org.enabled ? t('pages:organizations.active') : t('pages:organizations.disabled')}
+              </Badge>
+            </div>
+          </div>
+          <Stack direction="horizontal" gap="sm" className={styles.headerActions}>
             {canUpdate && !isEditing && (
               org.source === 'idp' ? (
                 <Tooltip content={t('pages:organizations.editLockedIdP')}>
@@ -251,8 +255,8 @@ export function OrganizationDetail() {
               >{t('pages:organizations.delete')}</Button>
             )}
           </Stack>
-        }
-      />
+        </div>
+      </section>
 
       <Tabs defaultValue="info">
         <TabsList>
@@ -264,8 +268,8 @@ export function OrganizationDetail() {
 
         {/* Info Tab */}
         <TabsContent value="info">
-          <Card>
-            {isEditing ? (
+          {isEditing ? (
+            <Card>
               <Stack gap="md">
                 <FormInput form={form} name="name" label={t('pages:organizations.name')} required />
                 <FormInput form={form} name="code" label={t('pages:organizations.code')} required helpText={t('pages:organizations.codeHelpText')} />
@@ -292,9 +296,11 @@ export function OrganizationDetail() {
                   </Button>
                 </Stack>
               </Stack>
-            ) : (
-              <>
-                <h2 className={styles.widgetTitle}>{t('pages:organizations.organizationInformation')}</h2>
+            </Card>
+          ) : (
+            <section className={styles.contentSection}>
+              <h2 className={styles.widgetTitle}>{t('pages:organizations.organizationInformation')}</h2>
+              <Card>
                 <div className={styles.kvGrid}>
                   <div>
                     <div className={styles.kvLabel}>{t('pages:organizations.name')}</div>
@@ -366,14 +372,14 @@ export function OrganizationDetail() {
                     </div>
                   )}
                 </div>
-              </>
-            )}
-          </Card>
+              </Card>
+            </section>
+          )}
         </TabsContent>
 
         {/* Members Tab */}
         <TabsContent value="members">
-          <Card>
+          <section className={styles.contentSection}>
             <Stack gap="md">
               <Stack direction="horizontal" gap="sm" align="center" style={{ justifyContent: 'space-between' }}>
                 <h2 className={styles.widgetTitle} style={{ margin: 'var(--g-space-0)' }}>{t('pages:organizations.members')}</h2>
@@ -419,12 +425,12 @@ export function OrganizationDetail() {
                 </>
               )}
             </Stack>
-          </Card>
+          </section>
         </TabsContent>
 
         {/* Projects Tab */}
         <TabsContent value="projects">
-          <Card>
+          <section className={styles.contentSection}>
             <h2 className={styles.widgetTitle}>{t('pages:organizations.projects')}</h2>
             {(org.projects ?? []).length === 0 ? (
               <div className={styles.emptySection}>
@@ -438,12 +444,12 @@ export function OrganizationDetail() {
                 emptyMessage={t('pages:organizations.noProjectsShort')}
               />
             )}
-          </Card>
+          </section>
         </TabsContent>
 
         {/* Sub-Organizations Tab */}
         <TabsContent value="children">
-          <Card>
+          <section className={styles.contentSection}>
             <h2 className={styles.widgetTitle}>{t('pages:organizations.subOrganizations')}</h2>
             {(org.children ?? []).length === 0 ? (
               <div className={styles.emptySection}>
@@ -457,7 +463,7 @@ export function OrganizationDetail() {
                 emptyMessage={t('pages:organizations.noSubOrganizationsShort')}
               />
             )}
-          </Card>
+          </section>
         </TabsContent>
       </Tabs>
 

@@ -28,8 +28,8 @@
 //	covered end-to-end via /smoke-gateway.
 //
 // Failure modes NOT covered here (require real broker/executor wiring beyond
-// the established test seam): runRequestHooks StorageDropContent/StorageRedact
-// branches, fetchUpstreamWithPreparedBody zero-attempts defensive floor.
+// the established test seam): fetchUpstreamWithPreparedBody zero-attempts
+// defensive floor.
 package proxy
 
 import (
@@ -71,7 +71,7 @@ func TestReadBody_IOReadError_ReturnsGenericError(t *testing.T) {
 	}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	req.Body = errReader{}
-	_, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatOpenAI})
+	_, _, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatOpenAI})
 	if err == nil {
 		t.Fatal("expected error on broken body")
 	}
@@ -414,7 +414,7 @@ func TestReadBody_ExtractIngressModel_Error(t *testing.T) {
 	}}
 	body := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
-	_, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatBedrock})
+	_, _, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatBedrock})
 	if err == nil {
 		t.Fatal("expected error for Bedrock ingress format (not exposed in this release)")
 	}

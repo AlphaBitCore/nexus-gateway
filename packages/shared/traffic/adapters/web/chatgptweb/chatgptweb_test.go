@@ -114,29 +114,6 @@ func TestExtractRequest_MultiTurnConversation(t *testing.T) {
 	}
 }
 
-// TestExtractRequest_Extra pins that unrecognised top-level fields land
-// in Extra so a chatgpt.com protocol revision with new payload fields
-// (e.g. a new `system_hints` extension or a brand-new field) reaches
-// hooks instead of being silently dropped.
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{
-		"messages": [{"author":{"role":"user"},"content":{"content_type":"text","parts":["hi"]}}],
-		"x_new_field": {"sensitive": "data"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/backend-api/f/conversation")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	x, ok := nc.Extra["x_new_field"]
-	if !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_new_field", nc.Extra)
-	}
-	if _, ok := nc.Extra["messages"]; ok {
-		t.Errorf("messages must not leak into Extra")
-	}
-}
-
 func TestExtractRequest_MissingMessages(t *testing.T) {
 	a := &Adapter{}
 	_, err := a.ExtractRequest(context.Background(), []byte(`{"conversation_id":"x"}`), "/backend-api/f/conversation")

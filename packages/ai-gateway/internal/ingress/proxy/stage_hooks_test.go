@@ -1,7 +1,6 @@
 // stage_hooks_test.go — characterization pins for the request-hooks
 // stage of the proxy pipeline: the Modify rewrite reaching the upstream
-// wire, the storage-policy reason-code stamps, and the rewrite-failure
-// arms (adapter-unsupported vs hard error).
+// wire and the rewrite-failure arms (adapter-unsupported vs hard error).
 package proxy
 
 import (
@@ -13,68 +12,15 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/openai"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
-
-// storagePolicyHook approves the request inflight while declaring a
-// storage policy (and optionally storage-side transform spans) on its
-// result — the "audit-only" hook shape that diverges the persisted copy
-// from the wire copy.
-type storagePolicyHook struct {
-	goHooks.AnyEndpointAnyModality
-	storage goHooks.StorageAction
-	spans   []normcore.TransformSpan
-}
-
-func (h storagePolicyHook) Execute(_ context.Context, _ *goHooks.HookInput) (*goHooks.HookResult, error) {
-	return &goHooks.HookResult{
-		Decision:       goHooks.Approve,
-		StorageAction:  h.storage,
-		TransformSpans: h.spans,
-	}, nil
-}
-
-// newRequestStageHookCache builds a HookConfigCache serving exactly one
-// request-stage hook backed by the supplied implementation.
-func newRequestStageHookCache(t *testing.T, impl goHooks.Hook) *compliance.HookConfigCache {
-	t.Helper()
-	reg := builtins.Registry.Clone()
-	reg.Register("req-storage-hook", func(_ *goHooks.HookConfig) (goHooks.Hook, error) {
-		return impl, nil
-	})
-	reg.Freeze()
-	loader := func(_ context.Context) ([]goHooks.HookConfig, error) {
-		return []goHooks.HookConfig{{
-			ID:                "req-storage-1",
-			ImplementationID:  "req-storage-hook",
-			Name:              "req-storage",
-			Priority:          1,
-			Enabled:           true,
-			Stage:             "request",
-			FailBehavior:      "fail-closed",
-			TimeoutMs:         1000,
-			ApplicableIngress: []string{"ALL"},
-			Config:            map[string]any{},
-		}}, nil
-	}
-	cache := compliance.NewHookConfigCache(loader, reg, 0, slog.Default())
-	if err := cache.Start(context.Background()); err != nil {
-		t.Fatalf("cache.Start: %v", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	return cache
-}
 
 // rewriteStubAdapter delegates everything to the embedded adapter but
 // fails RewriteRequestBody with the configured error, driving the
@@ -86,6 +32,55 @@ type rewriteStubAdapter struct {
 
 func (a *rewriteStubAdapter) RewriteRequestBody(_ context.Context, _ []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
 	return nil, 0, a.rewriteErr
+}
+
+// toolArgNonMaskerAdapter embeds the real OpenAI adapter for extraction but
+// reports MasksToolCallArgs()==false and succeeds RewriteRequestBody without
+// touching tool args — modelling a per-host (anthropic/gemini) adapter that
+// masks text yet cannot reconstruct masked tool-call arguments onto its wire.
+type toolArgNonMaskerAdapter struct{ *openai.Adapter }
+
+func (a *toolArgNonMaskerAdapter) RewriteRequestBody(_ context.Context, body []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
+	return body, 1, nil // text masked; tool args silently dropped (non-masker)
+}
+
+func (a *toolArgNonMaskerAdapter) MasksToolCallArgs() bool { return false }
+
+// TestRunRequestHooks_ToolArgMasking_FailsClosedOnNonMasker pins that the
+// AI-gateway request path fails closed when a redact hook masked a tool-call
+// argument but the resolved (non-OpenAI) adapter cannot reconstruct it onto its
+// wire: a nil-error text rewrite that silently drops the masked tool args would
+// forward the tool-arg PII upstream while the audit records it redacted.
+// GuardToolArgMasking turns that divergence into a 403.
+func TestRunRequestHooks_ToolArgMasking_FailsClosedOnNonMasker(t *testing.T) {
+	h := &Handler{deps: &Deps{
+		HookConfigCache: newPiiRedactHookCache(t),
+		TrafficAdapter:  &toolArgNonMaskerAdapter{Adapter: &openai.Adapter{}},
+		Logger:          slog.Default(),
+	}}
+
+	// Request history carries an assistant tool_call whose arguments hold PII.
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"send","arguments":"{\"to\":\"alice@example.com\"}"}}]}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	auditRec := &audit.Record{RequestID: "req-toolarg"}
+
+	rewritten, _, rejected := h.runRequestHooks(req, rec, auditRec, "req-toolarg", body, routingcore.RoutingTarget{}, openAIIngress, nil, slog.Default())
+	if !rejected {
+		t.Fatalf("masked tool args + non-masker adapter must fail closed; response=%s", rec.Body.String())
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status=%d want 403", rec.Code)
+	}
+	if rewritten != nil {
+		t.Errorf("rewritten=%q want nil (rejected, nothing forwarded)", string(rewritten))
+	}
+	if auditRec.RequestAction != goHooks.ActionBlock {
+		t.Errorf("RequestAction=%q want block", auditRec.RequestAction)
+	}
+	if auditRec.HookReasonCode != goHooks.ReasonRedactInflightUnsupported {
+		t.Errorf("HookReasonCode=%q want %q", auditRec.HookReasonCode, goHooks.ReasonRedactInflightUnsupported)
+	}
 }
 
 // TestServeProxy_RequestHookModify_ForwardsRewrittenBodyUpstream pins the
@@ -132,88 +127,12 @@ func TestServeProxy_RequestHookModify_ForwardsRewrittenBodyUpstream(t *testing.T
 	}
 }
 
-// TestRunRequestHooks_StorageDropContent_StampsReasonCode pins the
-// storage-policy stamp for drop-content: an approve-inflight hook whose
-// storage policy is drop-content lets the request proceed unmodified but
-// stamps the audit row with the dropped-by-policy reason code so audit
-// consumers can tell why the persisted content is absent.
-func TestRunRequestHooks_StorageDropContent_StampsReasonCode(t *testing.T) {
-	h := &Handler{deps: &Deps{
-		HookConfigCache: newRequestStageHookCache(t, storagePolicyHook{storage: goHooks.StorageDropContent}),
-		TrafficAdapter:  &openai.Adapter{},
-		Logger:          slog.Default(),
-	}}
-
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
-	rec := httptest.NewRecorder()
-	auditRec := &audit.Record{RequestID: "req-test"}
-
-	rewritten, _, rejected := h.runRequestHooks(req, rec, auditRec, "req-test", body, routingcore.RoutingTarget{}, openAIIngress, nil, slog.Default())
-	if rejected {
-		t.Fatalf("unexpected rejection; response=%s", rec.Body.String())
-	}
-	if rewritten != nil {
-		t.Errorf("inflight approve must not rewrite the wire body; got %q", string(rewritten))
-	}
-	if auditRec.HookReasonCode != goHooks.ReasonStorageDroppedByPolicy {
-		t.Errorf("HookReasonCode=%q want %q", auditRec.HookReasonCode, goHooks.ReasonStorageDroppedByPolicy)
-	}
-	if auditRec.RequestStorageAction != string(goHooks.StorageDropContent) {
-		t.Errorf("RequestStorageAction=%q want %q", auditRec.RequestStorageAction, goHooks.StorageDropContent)
-	}
-}
-
-// TestRunRequestHooks_StorageRedactOnly_StampsReasonCode pins the
-// audit-only redact stamp: an approve decision carrying storage-side
-// transform spans plus a redact storage policy means the persisted copy
-// diverges from the wire copy — the audit row records the
-// redact-storage-only reason code and the spans.
-func TestRunRequestHooks_StorageRedactOnly_StampsReasonCode(t *testing.T) {
-	span := normcore.TransformSpan{
-		Source:         normcore.SourceHook,
-		SourceID:       "email",
-		Action:         normcore.ActionRedact,
-		ContentAddress: "messages[0].content",
-		Start:          5,
-		End:            22,
-		Replacement:    "[REDACTED_EMAIL]",
-	}
-	h := &Handler{deps: &Deps{
-		HookConfigCache: newRequestStageHookCache(t, storagePolicyHook{
-			storage: goHooks.StorageRedact,
-			spans:   []normcore.TransformSpan{span},
-		}),
-		TrafficAdapter: &openai.Adapter{},
-		Logger:         slog.Default(),
-	}}
-
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"ping alice@example.com"}]}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
-	rec := httptest.NewRecorder()
-	auditRec := &audit.Record{RequestID: "req-test"}
-
-	rewritten, _, rejected := h.runRequestHooks(req, rec, auditRec, "req-test", body, routingcore.RoutingTarget{}, openAIIngress, nil, slog.Default())
-	if rejected {
-		t.Fatalf("unexpected rejection; response=%s", rec.Body.String())
-	}
-	if rewritten != nil {
-		t.Errorf("storage-only redact must not rewrite the wire body; got %q", string(rewritten))
-	}
-	if auditRec.HookReasonCode != goHooks.ReasonRedactStorageOnlyByPolicy {
-		t.Errorf("HookReasonCode=%q want %q", auditRec.HookReasonCode, goHooks.ReasonRedactStorageOnlyByPolicy)
-	}
-	if len(auditRec.RequestTransformSpans) == 0 {
-		t.Error("RequestTransformSpans must carry the storage-side redact spans")
-	}
-}
-
-// TestRunRequestHooks_RewriteUnsupported_ForwardsOriginalBody pins the
-// degraded Modify path: when the traffic adapter cannot reverse-encode
-// (ErrRewriteUnsupported) the original body is forwarded, the request is
-// NOT rejected, and the audit row records the inflight-unsupported
-// reason code.
-func TestRunRequestHooks_RewriteUnsupported_ForwardsOriginalBody(t *testing.T) {
+// TestRunRequestHooks_RewriteUnsupported_FailsClosed pins the degraded
+// Modify path: when the traffic adapter cannot reverse-encode
+// (ErrRewriteUnsupported) the request is rejected (fail CLOSED) rather than
+// forwarding the unredacted original upstream. The audit row records the
+// block action and the inflight-unsupported reason code.
+func TestRunRequestHooks_RewriteUnsupported_FailsClosed(t *testing.T) {
 	h := &Handler{deps: &Deps{
 		HookConfigCache: newPiiRedactHookCache(t),
 		TrafficAdapter:  &rewriteStubAdapter{Adapter: &openai.Adapter{}, rewriteErr: traffic.ErrRewriteUnsupported},
@@ -226,11 +145,17 @@ func TestRunRequestHooks_RewriteUnsupported_ForwardsOriginalBody(t *testing.T) {
 	auditRec := &audit.Record{RequestID: "req-test"}
 
 	rewritten, _, rejected := h.runRequestHooks(req, rec, auditRec, "req-test", body, routingcore.RoutingTarget{}, openAIIngress, nil, slog.Default())
-	if rejected {
-		t.Fatalf("unsupported rewrite must not reject; response=%s", rec.Body.String())
+	if !rejected {
+		t.Fatalf("unsupported rewrite must fail closed (reject); response=%s", rec.Body.String())
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status=%d want 403", rec.Code)
 	}
 	if rewritten != nil {
-		t.Errorf("rewritten=%q want nil (original body forwarded)", string(rewritten))
+		t.Errorf("rewritten=%q want nil (rejected, nothing forwarded)", string(rewritten))
+	}
+	if auditRec.RequestAction != goHooks.ActionBlock {
+		t.Errorf("RequestAction=%q want %q (block)", auditRec.RequestAction, goHooks.ActionBlock)
 	}
 	if auditRec.HookReasonCode != goHooks.ReasonRedactInflightUnsupported {
 		t.Errorf("HookReasonCode=%q want %q", auditRec.HookReasonCode, goHooks.ReasonRedactInflightUnsupported)

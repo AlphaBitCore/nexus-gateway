@@ -24,6 +24,17 @@ type Config struct {
 type NATSConfig struct {
 	// URL is the NATS server URL (e.g. "nats://localhost:4222").
 	URL string `yaml:"url"`
+
+	// PublishPoolSize is the number of NATS connections the producer opens and
+	// publishes across. A single connection + the per-batch PublishAsyncComplete
+	// drain-to-zero barrier serialises async publishes, which caps audit publish
+	// throughput far below what NATS can sustain (measured: ~1.3k rec/s on one
+	// connection vs ~7.9k that the marshal stage alone produces). The producer
+	// fans EnqueueBatchAsync across the pool — each connection has its own
+	// JetStream context and ack barrier, so they pipeline independently and
+	// throughput scales ~linearly with the pool size. 0 falls back to a sensible
+	// default (see defaultPublishPoolSize). Env: MQ_NATS_PUBLISH_POOL_SIZE.
+	PublishPoolSize int `yaml:"publishPoolSize"`
 }
 
 // RedisConfig holds Redis connection settings for the Redis MQ driver.

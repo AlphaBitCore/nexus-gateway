@@ -283,7 +283,7 @@ func (e *TargetExecutor) executeInner(
 		// is chat-kind (KindFromWireShape→Chat), so without this guard the rewrite
 		// below would flip req.WireShape to openai-chat → BuildURL targets
 		// /v1/chat/completions and the verbatim Responses body (input, no messages)
-		// 400s with "Missing required parameter: messages" (E56). This mirrors the
+		// 400s with "Missing required parameter: messages". This mirrors the
 		// proxy-level needsCanonicalization=false rule and the egress
 		// native-passthrough skip — all three sites must agree.
 		nativeResponses := base.WireShape == typology.WireShapeOpenAIResponses &&
@@ -311,7 +311,7 @@ func (e *TargetExecutor) executeInner(
 		// internal PrepareBody hits its same-format passthrough and never
 		// re-derives the override — we MUST thread it explicitly to the
 		// attempt or the batch body ({"requests":[…]}) is POSTed to the
-		// single-embed URL and Gemini 400s (audit F-0053).
+		// single-embed URL and Gemini 400s.
 		var bridgeURLOverride string
 		switch {
 		case usePrepared:
@@ -362,7 +362,7 @@ func (e *TargetExecutor) executeInner(
 				// override (Gemini :batchEmbedContents) only exists here. Hand the
 				// prepared body + override straight to ExecuteWithBody so the
 				// override reaches the dispatched URL — adapter.Execute would
-				// passthrough the same-format body and emit no override (F-0053).
+				// passthrough the same-format body and emit no override.
 				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, req.Body, nil, bridgeURLOverride)
 			default:
 				outcome = e.attempt(attemptCtx, adapter, req, target)

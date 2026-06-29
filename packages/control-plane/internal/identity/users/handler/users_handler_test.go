@@ -9,9 +9,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"math/big"
@@ -236,6 +236,9 @@ func (s *stubIAMStore) ListPolicyAttachedUserIDs(_ context.Context, _ string) ([
 }
 func (s *stubIAMStore) ListIamGroups(_ context.Context) ([]iamstore.GroupRow, error) {
 	return s.groups, s.groupsErr
+}
+func (s *stubIAMStore) ListIamGroupsPage(_ context.Context, _ string, _, _ int) ([]iamstore.GroupRow, int, error) {
+	return s.groups, len(s.groups), s.groupsErr
 }
 func (s *stubIAMStore) GetIamGroup(_ context.Context, _ string) (*iamstore.GroupRow, error) {
 	return s.group, s.groupErr
@@ -828,7 +831,7 @@ func TestCreateIAMPolicy_MissingName_Returns400(t *testing.T) {
 func TestCreateIAMPolicy_Success_Returns201(t *testing.T) {
 	is := &stubIAMStore{createdPolicy: &iamstore.PolicyRow{ID: "p-new", Name: "New Policy"}}
 	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
-	h.iamEngine = superAdminTestEngine() // SEC-M6-02 ceiling: caller must hold the granted perms
+	h.iamEngine = superAdminTestEngine() // grant ceiling: caller must hold the granted perms
 	body, _ := json.Marshal(map[string]any{"name": "New Policy", "document": json.RawMessage(`{"Version":"2026-05-12","Statement":[{"Effect":"Allow","Action":["settings:read"],"Resource":["*"]}]}`)})
 	c, rec := adminAuthCtx(http.MethodPost, "/iam/policies", body, "admin", "admin_user")
 	if err := h.CreateIAMPolicy(c); err != nil {
@@ -839,7 +842,7 @@ func TestCreateIAMPolicy_Success_Returns201(t *testing.T) {
 	}
 }
 
-// TestCreateIAMPolicy_InvalidDocument_Returns400 asserts the F-0064 fix: a
+// TestCreateIAMPolicy_InvalidDocument_Returns400 asserts that a
 // syntactically-well-formed but semantically-invalid policy document (here a
 // "**" wildcard, which ValidatePolicyDocument rejects) is refused with 400
 // instead of being persisted unvalidated.
@@ -859,7 +862,7 @@ func TestCreateIAMPolicy_InvalidDocument_Returns400(t *testing.T) {
 	}
 }
 
-// TestCreateIAMPolicy_NonObjectDocument_Returns400 asserts F-0064 rejects a
+// TestCreateIAMPolicy_NonObjectDocument_Returns400 asserts the handler rejects a
 // document that is valid JSON but not a policy object (a bare JSON string),
 // which the structural decode cannot map onto a PolicyDocument.
 func TestCreateIAMPolicy_NonObjectDocument_Returns400(t *testing.T) {
@@ -878,8 +881,8 @@ func TestCreateIAMPolicy_NonObjectDocument_Returns400(t *testing.T) {
 	}
 }
 
-// TestUpdateIAMPolicy_InvalidDocument_Returns400 asserts F-0064 on the update
-// path: an invalid document body (bad Effect enum) is rejected with 400 and
+// TestUpdateIAMPolicy_InvalidDocument_Returns400 asserts document validation on
+// the update path: an invalid document body (bad Effect enum) is rejected with 400 and
 // never persisted.
 func TestUpdateIAMPolicy_InvalidDocument_Returns400(t *testing.T) {
 	is := &stubIAMStore{updatedPolicy: &iamstore.PolicyRow{ID: "p1", Name: "Updated"}}
@@ -2394,7 +2397,7 @@ func TestRevokeUserAccess_Success_Returns200(t *testing.T) {
 	}
 }
 
-// TestRevokeUserAccess_PushesVKInvalidate locks SEC-M3-01: revoking a user's
+// TestRevokeUserAccess_PushesVKInvalidate locks the cache-invalidate push: revoking a user's
 // access must push a virtual_keys cache invalidate to the AI Gateway so the
 // disabled keys stop authenticating immediately, not after the ≤30s cache TTL.
 func TestRevokeUserAccess_PushesVKInvalidate(t *testing.T) {
@@ -3469,7 +3472,7 @@ func (f *flexOrgStore) CountProjectVirtualKeys(_ context.Context, _ string) (int
 func TestUpdateIAMPolicy_WithDocument_Returns200(t *testing.T) {
 	is := &stubIAMStore{updatedPolicy: &iamstore.PolicyRow{ID: "p1", Name: "P"}}
 	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
-	h.iamEngine = superAdminTestEngine() // SEC-M6-02 ceiling: caller must hold the new document's perms
+	h.iamEngine = superAdminTestEngine() // grant ceiling: caller must hold the new document's perms
 	body, _ := json.Marshal(map[string]any{"document": map[string]any{
 		"Version":   "2026-05-12",
 		"Statement": []map[string]any{{"Effect": "Allow", "Action": []string{"settings:read"}, "Resource": []string{"*"}}},
@@ -3502,7 +3505,7 @@ func TestCreateAPIKey_AdminUserPrincipal_SetsOwner(t *testing.T) {
 	}
 }
 
-// F-0365 — CreateAPIKey ownerUserId grant ceiling.
+// CreateAPIKey ownerUserId grant ceiling.
 //
 // An admin API key whose ownerUserId is set authenticates AS that owner
 // (authn.EffectivePrincipal). Without the ceiling, a caller holding only
@@ -3874,7 +3877,7 @@ func (l *stubPolicyLoader) LoadPolicies(_ context.Context, _, _ string) ([]cpiam
 }
 
 // superAdminTestEngine returns an IAM engine whose caller holds "*" on the
-// universal NRN — i.e. covers any grant. Used to satisfy the SEC-M6-02/03 grant
+// universal NRN — i.e. covers any grant. Used to satisfy the grant
 // ceiling on handler happy-path tests that are not exercising the ceiling itself.
 func superAdminTestEngine() *cpiam.Engine {
 	loader := &stubPolicyLoader{policies: []cpiam.LoadedPolicy{{
@@ -3887,7 +3890,7 @@ func superAdminTestEngine() *cpiam.Engine {
 }
 
 // scopedTestEngine returns an IAM engine whose caller holds exactly the given
-// (action,resource) grants and nothing else — used to drive the SEC-M6-02/03
+// (action,resource) grants and nothing else — used to drive the
 // escalation-blocked regression tests.
 func scopedTestEngine(actions, resources []string) *cpiam.Engine {
 	loader := &stubPolicyLoader{policies: []cpiam.LoadedPolicy{{
@@ -5047,7 +5050,7 @@ func TestUpdateIAMGroup_StoreError_Returns500(t *testing.T) {
 func TestCreateIAMPolicy_StoreError_Returns500(t *testing.T) {
 	is := &stubIAMStore{createPolicyErr: errors.New("db")}
 	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
-	h.iamEngine = superAdminTestEngine() // SEC-M6-02 ceiling passes; store error is the path under test
+	h.iamEngine = superAdminTestEngine() // grant ceiling passes; store error is the path under test
 	body, _ := json.Marshal(map[string]any{
 		"name": "My Policy",
 		"document": map[string]any{
@@ -6112,7 +6115,7 @@ func TestUpdateIdentityProvider_WithJIT_Returns200(t *testing.T) {
 // `if h.hub != nil` branches are exercised without a real Hub server.
 type stubHub struct {
 	invalidateErr   error    // injected error for InvalidateConfigE
-	invalidatedKeys []string // configKeys passed to InvalidateConfigE (SEC-M3-01)
+	invalidatedKeys []string // configKeys passed to InvalidateConfigE
 }
 
 func (s *stubHub) NotifyConfigChange(_ context.Context, _ hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error) {
@@ -6980,7 +6983,7 @@ func TestListUserDeviceAssignments_NilAssignments_Returns200(t *testing.T) {
 	}
 }
 
-// --- SEC-M6-02 / SEC-M6-03 grant-ceiling (permission boundary) regression ---
+// --- grant-ceiling (permission boundary) regression ---
 
 // adminStarPolicyDoc grants admin:* on every resource — the escalation payload a
 // delegated IAM operator would try to author/attach to become super-admin.

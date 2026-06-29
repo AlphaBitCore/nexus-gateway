@@ -172,7 +172,20 @@ paths:
                                         - "null"
                                     description: Inline script body (script hooks only).
                                 config:
-                                    description: Implementation-specific JSON configuration object.
+                                    description: |-
+                                        Implementation-specific JSON configuration object, stored
+                                        opaquely (the per-implementation JSON schema is served by
+                                        `GET /api/admin/hooks/implementations`). For content-touching
+                                        hooks (pii-detector, keyword-filter, content-safety,
+                                        rulepack-engine, quality-checker, webhook-forward) it carries
+                                        an `onMatch` block whose single `action` field selects the
+                                        match outcome — `approve` (forward / store unchanged),
+                                        `redact` (mask matched spans; the same masked body is
+                                        forwarded, returned, and stored), or `block` (reject; store the
+                                        masked copy). Absent `action` defaults to `block`. The
+                                        deprecated two-key form (`inflightAction` + `storageAction`) is
+                                        still accepted during a migration window and folded to a single
+                                        `action`.
                                 priority:
                                     type: integer
                                     description: Execution order within the stage; lower runs first.
@@ -209,6 +222,9 @@ paths:
                                 patternDefinitions:
                                     - id: ssn
                                       regex: \d{3}-\d{2}-\d{4}
+                                onMatch:
+                                    action: redact
+                                    replacement: "[REDACTED_<RULE_ID>]"
                             priority: 10
                             failBehavior: fail-open
                             applicableIngress:
@@ -439,7 +455,11 @@ paths:
                                         - "null"
                                     description: New inline script body.
                                 config:
-                                    description: New implementation-specific JSON configuration; must be JSON-serializable.
+                                    description: |-
+                                        New implementation-specific JSON configuration; must be
+                                        JSON-serializable. For content-touching hooks it carries the
+                                        `onMatch.action` selector (`approve` / `redact` / `block`); see
+                                        the create operation's `config` description.
                                 priority:
                                     type:
                                         - integer
@@ -823,7 +843,10 @@ components:
                         - string
                         - "null"
                 config:
-                    description: arbitrary JSON value
+                    description: |-
+                        Implementation-specific JSON configuration, returned verbatim.
+                        Content-touching hooks carry an `onMatch.action` selector
+                        (`approve` / `redact` / `block`).
                 priority:
                     type: integer
                 timeoutMs:

@@ -81,8 +81,8 @@
 
 .brandName {
   font-family: var(--g-font-display);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   letter-spacing: 0;
 }
@@ -113,7 +113,7 @@
   background: transparent;
   border: 1px solid var(--color-border);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   line-height: 1;
   color: var(--color-text);
   transition: background var(--g-transition-fast), color var(--g-transition-fast);
@@ -135,7 +135,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   cursor: pointer;
@@ -175,8 +175,8 @@
      control via --color-accent / --color-accent-foreground. */
   background: var(--color-accent);
   color: var(--color-accent-foreground);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
 }
 
 /* ── User info ────────────────────────────────────────────────────────────── */
@@ -188,8 +188,8 @@
 }
 
 .userName {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
 }
 
@@ -204,7 +204,7 @@
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   background: var(--color-muted);
   padding: 2px 8px;
@@ -243,8 +243,8 @@
   background: transparent;
   border: none;
   border-radius: var(--g-radius-sm);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   cursor: pointer;
   transition: color var(--g-transition-fast), background var(--g-transition-fast);

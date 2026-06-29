@@ -1,0 +1,225 @@
+name: nexus/insecure-code
+version: v1.0.0
+maintainer: nexus
+description: >-
+  Insecure-code-construct detection for LLM-generated and user-supplied code
+  flowing through the gateway. Day-1 rules are CWE-aligned weak-output checks:
+  weak crypto (MD5/SHA1/DES/RC4/AES-ECB/hardcoded IV), hardcoded secrets in
+  code, disabled TLS verification, injection-prone string construction
+  (SQL/OS-command), insecure randomness in a security context, and unsafe
+  deserialization. Distinct from nexus/tool-call-safety: that pack flags
+  runtime tool-call ABUSE (an action the agent is about to take); this pack
+  flags code-quality / security WEAKNESSES that the code itself ships. All
+  rules emit `detector:insecure-code` plus a `cwe:` label so downstream
+  policies can filter by weakness class. Severities are advisory (soft/warn)
+  except for unambiguous TLS-verification disablement (hard).
+rules:
+  # --- Weak crypto (CWE-327 broken cipher / CWE-328 weak hash) ---
+  - id: ic-crypto-001
+    category: insecure_code.weak_crypto
+    severity: soft
+    pattern: '(?i)(?:hashlib\.md5\s*\(|\bmd5\.new\s*\(|createhash\s*\(\s*["'']md5["'']|getinstance\s*\(\s*["'']md5["''])'
+    description: MD5 message-digest API in use; broken for security (CWE-328).
+    labels: [detector:insecure-code, cwe:328, severity:confidential]
+  - id: ic-crypto-002
+    category: insecure_code.weak_crypto
+    severity: soft
+    pattern: '(?i)(?:hashlib\.sha1\s*\(|\bsha1\.new\s*\(|createhash\s*\(\s*["'']sha-?1["'']|getinstance\s*\(\s*["'']sha-?1["''])'
+    description: SHA-1 message-digest API in use; collision-broken for security (CWE-328).
+    labels: [detector:insecure-code, cwe:328, severity:confidential]
+  - id: ic-crypto-003
+    category: insecure_code.weak_crypto
+    severity: soft
+    pattern: '(?i)(?:getinstance\s*\(\s*["''](?:des|desede|rc4)\b|\b(?:des|des3|arc4)\.new\s*\(|createciph(?:er|eriv)\s*\(\s*["''](?:des|rc4)|["''](?:des|3des|tripledes|rc4)[-/])'
+    description: DES / 3DES / RC4 cipher selection; weak/broken algorithm (CWE-327).
+    labels: [detector:insecure-code, cwe:327, severity:confidential]
+  - id: ic-crypto-004
+    category: insecure_code.weak_crypto
+    severity: soft
+    pattern: '(?i)(?:\bMODE_ECB\b|aes/ecb|["'']aes[-/][\w-]{0,12}ecb)'
+    description: AES in ECB mode; leaks plaintext structure (CWE-327).
+    labels: [detector:insecure-code, cwe:327, severity:confidential]
+  - id: ic-crypto-005
+    category: insecure_code.weak_crypto
+    severity: warn
+    pattern: '(?i)(?:\biv\s*=\s*b?["''][A-Za-z0-9+/=]{8,64}["'']|IvParameterSpec\s*\(\s*new\s+byte\s*\[)'
+    description: Hardcoded / zero initialization vector defeats CBC/CTR secrecy (CWE-327).
+    labels: [detector:insecure-code, cwe:327, severity:internal]
+  # --- Hardcoded secrets in code (CWE-798) ---
+  - id: ic-secret-001
+    category: insecure_code.hardcoded_secret
+    severity: soft
+    pattern: '(?i)(?:password|passwd|pwd)\s*[:=]\s*["''][A-Za-z0-9._/+@!?#-]{4,}["'']'
+    description: Password assigned a string literal in source (CWE-798).
+    labels: [detector:insecure-code, cwe:798, severity:restricted]
+  - id: ic-secret-002
+    category: insecure_code.hardcoded_secret
+    severity: soft
+    pattern: '(?i)(?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|client[_-]?secret)\s*[:=]\s*["''][A-Za-z0-9._/+=-]{8,}["'']'
+    description: API key / token / client secret assigned a string literal in source (CWE-798).
+    labels: [detector:insecure-code, cwe:798, severity:restricted]
+  - id: ic-secret-003
+    category: insecure_code.hardcoded_secret
+    severity: soft
+    pattern: '(?i)(?:mongodb|postgres(?:ql)?|mysql|redis|amqp)://[A-Za-z0-9._-]{1,40}:[^@\s/"'']{3,40}@'
+    description: Database/broker URI with inline user:password credentials (CWE-798).
+    labels: [detector:insecure-code, cwe:798, severity:restricted]
+  # --- Disabled TLS verification (CWE-295) ---
+  - id: ic-tls-001
+    category: insecure_code.disabled_tls
+    severity: hard
+    pattern: '(?i)\bverify\s*=\s*False\b'
+    description: TLS certificate verification disabled (requests verify=False) (CWE-295).
+    labels: [detector:insecure-code, cwe:295, severity:restricted]
+  - id: ic-tls-002
+    category: insecure_code.disabled_tls
+    severity: hard
+    pattern: '(?i)\brejectUnauthorized\s*:\s*false\b'
+    description: Node.js TLS verification disabled (rejectUnauthorized false) (CWE-295).
+    labels: [detector:insecure-code, cwe:295, severity:restricted]
+  - id: ic-tls-003
+    category: insecure_code.disabled_tls
+    severity: hard
+    pattern: '\bInsecureSkipVerify\s*:\s*true\b'
+    description: Go TLS verification disabled (InsecureSkipVerify true) (CWE-295).
+    labels: [detector:insecure-code, cwe:295, severity:restricted]
+  - id: ic-tls-004
+    category: insecure_code.disabled_tls
+    severity: hard
+    pattern: '(?i)CURLOPT_SSL_VERIFY(?:PEER|HOST)\s*,\s*(?:0|false)\b'
+    description: libcurl peer/host TLS verification disabled (CWE-295).
+    labels: [detector:insecure-code, cwe:295, severity:restricted]
+  - id: ic-tls-005
+    category: insecure_code.disabled_tls
+    severity: hard
+    pattern: 'NSAllowsArbitraryLoads</key>\s{0,20}<true\s{0,4}/?>'
+    description: iOS App Transport Security disabled globally (NSAllowsArbitraryLoads true) (CWE-295).
+    labels: [detector:insecure-code, cwe:295, severity:restricted]
+  # --- Injection-prone construction (CWE-89 SQLi / CWE-78 OS-command) ---
+  - id: ic-inj-001
+    category: insecure_code.injection
+    severity: soft
+    pattern: '(?i)\b(?:execute|executemany|query)\s*\(\s*["''][^"'']{0,160}["'']{1,2}\s*\+'
+    description: SQL query built by string concatenation into execute/query (CWE-89).
+    labels: [detector:insecure-code, cwe:89, severity:restricted]
+  - id: ic-inj-002
+    category: insecure_code.injection
+    severity: soft
+    pattern: '(?i)\b(?:execute|executemany|query)\s*\(\s*(?:f["'']|["''][^"'']{0,160}["'']{1,2}\s*(?:%|\.format\s*\())'
+    description: SQL query built by f-string / %-format / .format into execute/query (CWE-89).
+    labels: [detector:insecure-code, cwe:89, severity:restricted]
+  - id: ic-inj-003
+    category: insecure_code.injection
+    severity: soft
+    pattern: '(?i)\bshell\s*=\s*True\b'
+    description: subprocess invoked with shell=True; command-injection prone (CWE-78).
+    labels: [detector:insecure-code, cwe:78, severity:restricted]
+  - id: ic-inj-004
+    category: insecure_code.injection
+    severity: soft
+    pattern: '(?i)(?:os\.system|os\.popen)\s*\(\s*(?:f["'']|["''][^"'']{0,160}["'']{1,2}\s*\+|[A-Za-z_][\w.]{0,40}\s*\+)'
+    description: os.system / os.popen invoked with a concatenated or interpolated command (CWE-78).
+    labels: [detector:insecure-code, cwe:78, severity:restricted]
+  # --- Insecure randomness in a security context (CWE-330) ---
+  - id: ic-rand-001
+    category: insecure_code.insecure_random
+    severity: soft
+    pattern: '(?i)(?:token|secret|api[_-]?key|private[_-]?key|nonce|salt|otp|session[_-]?id)\w{0,8}\s*[:=]\s*[^\n;]{0,40}\brandom\.(?:random|randint|randrange|choice|getrandbits)\s*\('
+    description: Python `random` (non-cryptographic PRNG) used to derive a token/key/secret (CWE-330).
+    labels: [detector:insecure-code, cwe:330, severity:confidential]
+  - id: ic-rand-002
+    category: insecure_code.insecure_random
+    severity: soft
+    pattern: '(?i)(?:token|secret|api[_-]?key|password|nonce|salt|otp|session[_-]?id)\w{0,8}\s*[:=]\s*[^\n;]{0,40}\bMath\.random\s*\('
+    description: JavaScript `Math.random()` used to derive a token/key/secret (CWE-330).
+    labels: [detector:insecure-code, cwe:330, severity:confidential]
+  # --- Unsafe deserialization (CWE-502) ---
+  - id: ic-deser-001
+    category: insecure_code.deserialization
+    severity: soft
+    pattern: '(?i)(?:\bpickle\.loads?\s*\(|\bcpickle\.loads?\s*\(|\byaml\.load\s*\(\s*[^,)]{1,60}\)|\bmarshal\.load\s*\(|\bObjectInputStream\s*\()'
+    description: Unsafe deserialization of untrusted data (pickle / default yaml.load / Marshal / ObjectInputStream) (CWE-502).
+    labels: [detector:insecure-code, cwe:502, severity:restricted]
+  - id: ic-deser-002
+    category: insecure_code.deserialization
+    severity: soft
+    pattern: '(?i)\byaml\.load\s*\(\s*[^,)]{1,80},\s*Loader\s*=\s*yaml\.(?:Unsafe|Full)Loader'
+    description: 'PyYAML yaml.load with UnsafeLoader/FullLoader executes arbitrary tags; use SafeLoader (CWE-502).'
+    labels: [detector:insecure-code, cwe:502, severity:restricted]
+  # --- Code injection via eval/exec on untrusted input (CWE-95) ---
+  - id: ic-eval-001
+    category: insecure_code.code_injection
+    severity: soft
+    pattern: '(?i)\beval\s*\(\s*(?:request|input\s*\(|sys\.argv|os\.environ|params|req\.(?:body|query|params)|user_?input|untrusted|flask\.request)'
+    description: 'eval() applied to request/input/argv-derived untrusted data executes arbitrary code (CWE-95).'
+    labels: [detector:insecure-code, cwe:95, severity:restricted]
+  - id: ic-eval-002
+    category: insecure_code.code_injection
+    severity: soft
+    pattern: '(?i)\bexec\s*\(\s*(?:request|input\s*\(|sys\.argv|os\.environ|params|req\.(?:body|query|params)|user_?input|untrusted|flask\.request)'
+    description: 'exec() applied to request/input/argv-derived untrusted data executes arbitrary code (CWE-95).'
+    labels: [detector:insecure-code, cwe:95, severity:restricted]
+  - id: ic-eval-003
+    category: insecure_code.code_injection
+    severity: soft
+    pattern: '(?i)new\s+Function\s*\(\s*(?:req\.|request|params|user_?input|location\.|document\.)'
+    description: 'JavaScript new Function() built from request/DOM-derived untrusted data executes arbitrary code (CWE-95).'
+    labels: [detector:insecure-code, cwe:95, severity:restricted]
+  # --- OS-command injection: shell with interpolated argument (CWE-78) ---
+  - id: ic-inj-005
+    category: insecure_code.injection
+    severity: soft
+    pattern: '(?i)exec\.Command\s*\(\s*["''](?:sh|bash|/bin/sh|/bin/bash|cmd)["'']\s*,\s*["'']-c["'']\s*,\s*[A-Za-z_]'
+    description: 'Go exec.Command spawning a shell with -c and a variable argument; command-injection prone (CWE-78).'
+    labels: [detector:insecure-code, cwe:78, severity:restricted]
+  - id: ic-inj-006
+    category: insecure_code.injection
+    severity: soft
+    pattern: '(?i)\b(?:check_output|check_call|Popen)\s*\(\s*(?:f["'']|["''][^"'']{0,160}["'']{1,2}\s*(?:\+|%|\.format\s*\())'
+    description: 'subprocess check_output/check_call/Popen given an f-string / concatenated / formatted command string; command-injection prone (CWE-78).'
+    labels: [detector:insecure-code, cwe:78, severity:restricted]
+  # --- Path traversal in file access (CWE-22) ---
+  - id: ic-path-001
+    category: insecure_code.path_traversal
+    severity: soft
+    pattern: '(?i)(?:open|fopen|readfile|read_file|sendfile|os\.open|ioutil\.readfile|fs\.readfile)\s*\(\s*[^\n)]{0,80}\.\./'
+    description: 'File open whose path embeds a ../ traversal sequence; path-traversal prone (CWE-22).'
+    labels: [detector:insecure-code, cwe:22, severity:restricted]
+  - id: ic-path-002
+    category: insecure_code.path_traversal
+    severity: soft
+    pattern: '(?i)(?:os\.path\.join|filepath\.join|path\.join)\s*\(\s*[^\n)]{0,80}(?:req\.(?:body|query|params)|request\.(?:args|form|json)|params\[|user_?input)'
+    description: 'Filesystem path joined directly with request/user-supplied input without sanitization; path-traversal prone (CWE-22).'
+    labels: [detector:insecure-code, cwe:22, severity:restricted]
+  # --- XML external entity (XXE) — parser without DTD/entity hardening (CWE-611) ---
+  - id: ic-xxe-001
+    category: insecure_code.xxe
+    severity: warn
+    pattern: '(?i)DocumentBuilderFactory\.newInstance\s*\('
+    description: 'Java DocumentBuilderFactory in use; disable DOCTYPE/external entities or it is XXE-prone (CWE-611).'
+    labels: [detector:insecure-code, cwe:611, severity:restricted]
+  - id: ic-xxe-002
+    category: insecure_code.xxe
+    severity: warn
+    pattern: '(?i)etree\.(?:parse|fromstring)\s*\(\s*[^\n)]{0,80},\s*[A-Za-z_]{0,20}parser'
+    description: 'lxml etree parse with a custom parser; if resolve_entities is left enabled it is XXE-prone (CWE-611).'
+    labels: [detector:insecure-code, cwe:611, severity:restricted]
+  # --- DOM-based XSS sinks (CWE-79) ---
+  - id: ic-xss-001
+    category: insecure_code.xss
+    severity: soft
+    pattern: '(?i)\.innerHTML\s*=\s*(?:["''][^"'']{0,160}["'']\s*\+|[A-Za-z_$][\w.$]{0,60}\s*\+|`[^`]{0,160}\$\{)'
+    description: 'Assignment to .innerHTML built by string concatenation or template interpolation; DOM-based XSS sink (CWE-79).'
+    labels: [detector:insecure-code, cwe:79, severity:restricted]
+  - id: ic-xss-002
+    category: insecure_code.xss
+    severity: soft
+    pattern: 'dangerouslySetInnerHTML\s*=\s*\{\{'
+    description: 'React dangerouslySetInnerHTML bypasses JSX escaping; XSS sink if the HTML is untrusted (CWE-79).'
+    labels: [detector:insecure-code, cwe:79, severity:restricted]
+  - id: ic-xss-003
+    category: insecure_code.xss
+    severity: soft
+    pattern: '(?i)document\.write\s*\(\s*(?:[A-Za-z_$][\w.$]{0,60}\s*\+|["''][^"'']{0,120}["'']\s*\+|location\.|document\.)'
+    description: 'document.write() given concatenated or location/document-derived data; DOM-based XSS sink (CWE-79).'
+    labels: [detector:insecure-code, cwe:79, severity:restricted]

@@ -16,11 +16,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -158,6 +159,11 @@ type Cache struct {
 	enabled             atomic.Bool
 	ttlNs               atomic.Int64 // nanoseconds
 	applyFreshnessRules atomic.Bool
+	// masterKill is the emergency cache kill switch (cache shadow blob's
+	// global.cache_master_kill_switch); read once at the cache stage to gate
+	// BOTH response cache tiers (L1 here + L2). Lives here for wiring reasons;
+	// invariant "L2 active ⟹ this != nil" documented in cache-multi-tier-architecture.md.
+	masterKill atomic.Bool
 }
 
 // New creates a Cache backed by the given Redis client. Returns nil (cache
@@ -228,6 +234,25 @@ func (c *Cache) ApplyFreshnessRules() bool {
 	return c.applyFreshnessRules.Load()
 }
 
+// SetMasterKill atomically updates the emergency kill switch (driven by the
+// cache shadow blob on each Hub push). Safe on a nil receiver (no-op).
+func (c *Cache) SetMasterKill(killed bool) {
+	if c == nil {
+		return
+	}
+	c.masterKill.Store(killed)
+}
+
+// MasterKilled reports whether the emergency switch has disabled ALL gateway
+// response caching (L1 + L2). The cache stage reads it once per request. Safe
+// on nil (returns false — no Cache means caching is already off).
+func (c *Cache) MasterKilled() bool {
+	if c == nil {
+		return false
+	}
+	return c.masterKill.Load()
+}
+
 // ttl returns the current runtime TTL as a time.Duration.
 func (c *Cache) ttl() time.Duration {
 	if c == nil {
@@ -250,18 +275,47 @@ func canonicalizeJSON(body []byte) []byte {
 	if err := json.Unmarshal(body, &v); err != nil {
 		return body
 	}
-	out, err := marshalSortedKeys(v)
-	if err != nil {
+	buf := canonBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer func() {
+		// Don't pool back a buffer grown by a rare large body — it would pin a
+		// multi-MiB backing array per P for the process lifetime, trading the
+		// transient alloc this change removes for permanent residency. 64 KiB
+		// covers the overwhelming majority of chat bodies; larger ones pay a
+		// fresh allocation instead of parking a big array.
+		if buf.Cap() <= canonBufCapLimit {
+			canonBufPool.Put(buf)
+		}
+	}()
+	if err := marshalSortedKeysInto(buf, v); err != nil {
 		return body
 	}
-	return out
+	// Copy out: the returned bytes outlive the pooled buffer (the caller hashes
+	// them into the cache key). Byte-identical to the prior marshalSortedKeys
+	// output — only the buffer management changed (one pooled buffer written
+	// down the recursion instead of a fresh bytes.Buffer per tree node + a
+	// copy-up at every level, which was ~13% of heap via bytes.growSlice).
+	return append([]byte(nil), buf.Bytes()...)
 }
 
-// marshalSortedKeys recursively marshals a JSON value, sorting object
-// keys alphabetically at every nesting level. Array element order is
-// preserved — message ordering is semantically load-bearing in chat
-// conversations.
-func marshalSortedKeys(v any) ([]byte, error) {
+// canonBufCapLimit caps which buffers are recycled: a buffer grown past this by
+// a rare large body is dropped (GC'd) instead of pooled, so it cannot pin a
+// multi-MiB backing array per P for the process lifetime. 64 KiB covers the vast
+// majority of chat bodies.
+const canonBufCapLimit = 64 * 1024
+
+// canonBufPool reuses the canonicalization scratch buffer across requests so the
+// per-node buffer-growth churn does not re-allocate on every cache-key build.
+// The pooled buffer never escapes (canonicalizeJSON copies the result out).
+var canonBufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+// marshalSortedKeysInto recursively writes a JSON value into buf, sorting object
+// keys alphabetically at every nesting level (array element order preserved —
+// message ordering is semantically load-bearing in chat conversations). Writing
+// into a single buffer passed down the recursion produces bytes IDENTICAL to the
+// prior return-and-copy implementation while avoiding a bytes.Buffer allocation
+// (and its growth) at every object/array node.
+func marshalSortedKeysInto(buf *bytes.Buffer, v any) error {
 	switch x := v.(type) {
 	case map[string]any:
 		keys := make([]string, 0, len(x))
@@ -269,7 +323,6 @@ func marshalSortedKeys(v any) ([]byte, error) {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		var buf bytes.Buffer
 		buf.WriteByte('{')
 		for i, k := range keys {
 			if i > 0 {
@@ -277,35 +330,35 @@ func marshalSortedKeys(v any) ([]byte, error) {
 			}
 			kb, err := json.Marshal(k)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			buf.Write(kb)
 			buf.WriteByte(':')
-			vb, err := marshalSortedKeys(x[k])
-			if err != nil {
-				return nil, err
+			if err := marshalSortedKeysInto(buf, x[k]); err != nil {
+				return err
 			}
-			buf.Write(vb)
 		}
 		buf.WriteByte('}')
-		return buf.Bytes(), nil
+		return nil
 	case []any:
-		var buf bytes.Buffer
 		buf.WriteByte('[')
 		for i, item := range x {
 			if i > 0 {
 				buf.WriteByte(',')
 			}
-			ib, err := marshalSortedKeys(item)
-			if err != nil {
-				return nil, err
+			if err := marshalSortedKeysInto(buf, item); err != nil {
+				return err
 			}
-			buf.Write(ib)
 		}
 		buf.WriteByte(']')
-		return buf.Bytes(), nil
+		return nil
 	default:
-		return json.Marshal(x)
+		vb, err := json.Marshal(x)
+		if err != nil {
+			return err
+		}
+		buf.Write(vb)
+		return nil
 	}
 }
 

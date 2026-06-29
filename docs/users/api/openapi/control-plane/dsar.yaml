@@ -263,8 +263,9 @@ paths:
                 For an ERASURE request the response contains the
                 `outcome`. Erasure is a full Art.17 account deletion by default,
                 performed in one atomic transaction: it anonymises the subject's
-                traffic rows, scrubs the captured payload/normalized bodies,
-                deletes the assistant data, scrubs prior-ACCESS exports, and then
+                traffic rows, scrubs the captured payload bodies (and nulls any
+                retained `traffic_event_normalized` sidecar), deletes the
+                assistant data, scrubs prior-ACCESS exports, and then
                 deletes the account record itself — the subject's owned virtual
                 keys and admin API keys, federated-identity links, refresh tokens,
                 the SCIM tokens they created, and the `NexusUser` row. The
@@ -272,7 +273,11 @@ paths:
                 (accountability exception). The `outcome` reports the per-stage
                 counts (anonymised rows, scrubbed bodies, deleted assistant rows,
                 scrubbed prior-ACCESS exports, deleted owned keys / identity links
-                / tokens, and whether the account row was deleted). The updated
+                / tokens, and whether the account row was deleted). `normalizedScrubbed`
+                counts the `traffic_event_normalized` sidecar rows nulled; for current
+                traffic this is a no-op (rows carry no sidecar — the normalized projection
+                is recomputed at view time from the captured body), so erasure correctness
+                rests on the payload-body scrub (`payloadsScrubbed`). The updated
                 request record is returned under `request`. Responds 404 when the
                 request ID is unknown.
             x-nexus-iam-action: iam.ResourceDSAR.Action(iam.VerbFulfill)

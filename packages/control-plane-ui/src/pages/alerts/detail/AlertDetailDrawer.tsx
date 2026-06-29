@@ -270,29 +270,42 @@ export function AlertDetailDrawer({
                 </tbody>
               </table>
 
-              <Stack direction="horizontal" gap="sm">
-                {data.state === 'firing' && (
-                  <Button
-                    variant="secondary"
-                    loading={ackLoading}
-                    onClick={() => ackAlert(data.id)}
-                  >
-                    {t('pages:alerts.drawer.ack')}
-                  </Button>
-                )}
-                {data.state !== 'resolved' && (
-                  <Button
-                    variant="primary"
-                    loading={resolveLoading}
-                    onClick={() => resolveAlert(data.id)}
-                  >
-                    {t('pages:alerts.drawer.resolve')}
-                  </Button>
-                )}
-              </Stack>
             </Stack>
           )}
         </div>
+        {data && !error && (
+          <div className={styles.footer}>
+            <Stack direction="horizontal" gap="sm">
+              {data.state === 'firing' && (
+                <Button
+                  className={styles.footerButton}
+                  variant="secondary"
+                  loading={ackLoading}
+                  onClick={() => ackAlert(data.id)}
+                >
+                  {t('pages:alerts.drawer.ack')}
+                </Button>
+              )}
+              {data.state !== 'resolved' && (
+                <Button
+                  className={styles.footerButton}
+                  variant="primary"
+                  loading={resolveLoading}
+                  onClick={() => resolveAlert(data.id)}
+                >
+                  {t('pages:alerts.drawer.resolve')}
+                </Button>
+              )}
+              <Button
+                className={styles.footerButton}
+                variant="secondary"
+                onClick={onClose}
+              >
+                {t('common:close', 'Close')}
+              </Button>
+            </Stack>
+          </div>
+        )}
       </div>
     </>
   );

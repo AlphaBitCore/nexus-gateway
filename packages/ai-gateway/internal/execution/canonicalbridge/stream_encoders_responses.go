@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"sync/atomic"
 	"time"
 
@@ -290,16 +290,26 @@ func (e *responsesStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 			e.closeCurrentItem(&buf)
 		}
 		terminalEvent, terminalStatus := "response.completed", "completed"
-		// If usage absent + the canonical FinishReason wasn't stop, we
-		// could classify as incomplete. We don't have finish_reason on the
-		// Chunk struct; defer the "incomplete" decision to the caller
-		// (which can write a synthetic response.incomplete via a custom
-		// pathway). Default to completed.
+		// Map the canonical finish_reason to the Responses terminal event:
+		// length / content_filter become response.incomplete with an
+		// incomplete_details.reason so a re-encoder (buffer mode) preserves the
+		// real terminal status instead of always reporting completed. Empty /
+		// stop / tool_calls stay completed.
+		var incompleteReason string
+		switch chunk.FinishReason {
+		case "length":
+			terminalEvent, terminalStatus, incompleteReason = "response.incomplete", "incomplete", "max_output_tokens"
+		case "content_filter":
+			terminalEvent, terminalStatus, incompleteReason = "response.incomplete", "incomplete", "content_filter"
+		}
 		respPayload := map[string]any{
 			"id":     e.id,
 			"object": "response",
 			"status": terminalStatus,
 			"model":  e.model,
+		}
+		if incompleteReason != "" {
+			respPayload["incomplete_details"] = map[string]any{"reason": incompleteReason}
 		}
 		if chunk.Usage != nil {
 			usage := map[string]any{}

@@ -1,13 +1,13 @@
 /**
- * IAM key correctness regression — explicit, named fixtures (F-0286).
+ * IAM key correctness regression — explicit, named fixtures.
  *
- * Context: F-0159 shipped undetected because quota-override pages used
+ * Context: the wrong-key regression shipped undetected because quota-override pages used
  * `usePermission('quotaPolicy:...')` keys (→ admin:quota-POLICY.*) instead of
  * `usePermission('quota:...')` keys (→ admin:quota-OVERRIDE.*). The existing
  * ACTION_MAP coverage test (usePermission.coverage.test.ts) and the broad
  * sweep in iamPageResourceConsistency.test.ts both catch this TODAY — but only
  * after the fix. These tests are the explicit, named regression fixtures that
- * would have caught F-0159 at PR time and make the discrimination unmistakable
+ * would have caught that bug at PR time and make the discrimination unmistakable
  * to the next engineer maintaining ACTION_MAP or quota pages.
  *
  * What this file tests that the other tests do NOT:
@@ -16,7 +16,7 @@
  *      the precise target action value, so a rename/remap is caught even if
  *      a new route guard is also changed to match.
  *   2. Explicit anti-regression: asserts that quota:* and quotaPolicy:*
- *      resolve to DIFFERENT resources, with the F-0159 scenario spelled out.
+ *      resolve to DIFFERENT resources, with the wrong-key scenario spelled out.
  *   3. Route-level fixture: asserts that infrastructure/overrides allowedActions
  *      contains admin:settings.read, matching thing_overrides.go list endpoint.
  *
@@ -31,7 +31,7 @@ import { ACTION_MAP } from '../../src/hooks/usePermission';
 // ---------------------------------------------------------------------------
 // 1. Exact action mapping for quota-override keys
 //    These are the keys the quota-override pages MUST use. If someone
-//    accidentally swaps these for quotaPolicy:* keys (the F-0159 bug), this
+//    accidentally swaps these for quotaPolicy:* keys (the wrong-key bug), this
 //    test fails immediately with a clear message.
 // ---------------------------------------------------------------------------
 describe('ACTION_MAP — quota-override resource correctness (F-0159 regression)', () => {
@@ -53,7 +53,7 @@ describe('ACTION_MAP — quota-override resource correctness (F-0159 regression)
     expect(ACTION_MAP['quota:reset']).toBe('admin:quota-override.update');
   });
 
-  // The "wrong key" that F-0159 used — assert it resolves to the POLICY
+  // The "wrong key" from the regression — assert it resolves to the POLICY
   // resource, NOT override. This makes the discrimination explicit: if you
   // use quotaPolicy:create on an override page, the backend will 403 any
   // principal whose policy only covers quota-override.create.
@@ -88,7 +88,7 @@ describe('ACTION_MAP — quota-override resource correctness (F-0159 regression)
 // 2. Quota-override pages use quota:* keys, NOT quotaPolicy:* keys.
 //    Scans the actual page source files and asserts:
 //      - At least one quota:* call is present (pages are not accidentally empty).
-//      - No quotaPolicy:* call is present (F-0159 regression).
+//      - No quotaPolicy:* call is present (the wrong-key regression).
 // ---------------------------------------------------------------------------
 const SRC = join(__dirname, '..', '..', 'src');
 
@@ -131,7 +131,7 @@ describe('quota-override page files — key source scan (F-0159 regression)', ()
   });
 
   it('quota-override pages do NOT use quotaPolicy:* keys (F-0159 was this bug)', () => {
-    // F-0159: quota-override pages had usePermission('quotaPolicy:create') etc.,
+    // The wrong-key bug: quota-override pages had usePermission('quotaPolicy:create') etc.,
     // which routes to admin:quota-policy.create — the WRONG resource. Any
     // principal whose IAM only covers quota-override would get silent 403s on
     // every mutation affordance (Create/Edit/Delete buttons hidden).

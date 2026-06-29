@@ -50,21 +50,6 @@ import (
 // InterceptionDomain.adapter_id rows seeded for chatgpt.com.
 const adapterID = "chatgpt-web"
 
-// requestKnownKeys lists the chatgpt.com /backend-api/f/conversation
-// request fields the adapter recognises. Anything else lands in
-// NormalizedContent.Extra so a future protocol revision (a brand-new
-// field carrying user data) reaches compliance hooks instead of being
-// silently dropped.
-var requestKnownKeys = []string{
-	"messages", "model", "model_slug", "action", "conversation_id",
-	"parent_message_id", "timezone", "history_and_training_disabled",
-	"conversation_mode", "force_paragen", "force_rate_limit",
-	"force_use_sse", "force_nulligen", "system_hints",
-	"supported_encodings", "client_contextual_info",
-	"reset_rate_limits", "websocket_request_id", "supports_buffering",
-	"variant_purpose",
-}
-
 // Adapter implements the chatgpt-web extraction.
 type Adapter struct{}
 
@@ -121,7 +106,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 

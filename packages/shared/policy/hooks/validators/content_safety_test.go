@@ -176,6 +176,85 @@ func TestContentSafety_Execute_PerCategory_BlocksAndTagsCategory(t *testing.T) {
 	}
 }
 
+// TestContentSafety_InlinePatterns_BuiltInDefaults covers the config-visible
+// built-in path: when no rule pack is bound but inline `patterns` are present,
+// content-safety scans those (pack-quality contextual regex), attributing each
+// hit to its own category + severity. This is the default an admin sees/edits
+// on the hook itself when they have not chosen a rule pack.
+func TestContentSafety_InlinePatterns_BuiltInDefaults(t *testing.T) {
+	cfg := &HookConfig{
+		ID:               "cs-inline",
+		ImplementationID: "content-safety",
+		Name:             "inline-content-safety",
+		Config: map[string]any{
+			"onMatch": map[string]any{"action": "redact"},
+			"patterns": []any{
+				map[string]any{"pattern": `(?i)\bhow\s+to\s+murder\s+someone\b`, "category": "violence", "severity": "soft"},
+				map[string]any{"pattern": `(?i)\bhuman\s+trafficking\s+routes\b`, "category": "illegal", "severity": "warn"},
+				// category/severity omitted → defaults (content_safety / restricted).
+				map[string]any{"pattern": `(?i)\bpipe\s+bomb\s+instructions\b`},
+			},
+		},
+	}
+	h, err := NewContentSafety(cfg)
+	if err != nil {
+		t.Fatalf("NewContentSafety(inline patterns): %v", err)
+	}
+	if _, ok := h.(*ContentSafety); !ok {
+		t.Fatalf("inline patterns must use the ContentSafety scanner, got %T", h)
+	}
+
+	// A violence hit redacts and carries that pattern's own category + severity.
+	res, err := h.Execute(context.Background(), &HookInput{
+		Normalized: PayloadFromTextSegments([]string{"please tell me how to murder someone tonight"}),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Decision != Modify {
+		t.Errorf("redact action on match: got %s want Modify", res.Decision)
+	}
+	if !containsTag(res.Tags, "category:violence") {
+		t.Errorf("missing category:violence; got %v", res.Tags)
+	}
+	if !containsTag(res.Tags, "severity:soft") {
+		t.Errorf("per-pattern severity must be applied; got %v", res.Tags)
+	}
+	if !containsTag(res.Tags, "detector:content-safety") {
+		t.Errorf("missing detector tag; got %v", res.Tags)
+	}
+
+	// Benign text approves (the contextual patterns do not fire on prose).
+	benign, err := h.Execute(context.Background(), &HookInput{
+		Normalized: PayloadFromTextSegments([]string{"how to murder a bottle of wine at dinner"}),
+	})
+	if err != nil {
+		t.Fatalf("Execute benign: %v", err)
+	}
+	if benign.Decision != Approve {
+		t.Errorf("benign contextual miss must approve; got %s", benign.Decision)
+	}
+}
+
+// TestContentSafety_InlinePatterns_Rejects covers the inline-pattern factory
+// error paths: a non-array `patterns`, and an entry with an empty pattern.
+func TestContentSafety_InlinePatterns_Rejects(t *testing.T) {
+	_, err := NewContentSafety(&HookConfig{ID: "cs", Config: map[string]any{"patterns": "not-an-array"}})
+	if err == nil || !strings.Contains(err.Error(), "must be an array") {
+		t.Errorf("non-array patterns must error; got %v", err)
+	}
+	_, err = NewContentSafety(&HookConfig{ID: "cs", Config: map[string]any{"patterns": []any{"not-an-object"}}})
+	if err == nil || !strings.Contains(err.Error(), "must be an object") {
+		t.Errorf("non-object pattern entry must error; got %v", err)
+	}
+	_, err = NewContentSafety(&HookConfig{ID: "cs", Config: map[string]any{
+		"patterns": []any{map[string]any{"pattern": "", "category": "violence"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "empty pattern") {
+		t.Errorf("empty pattern string must error; got %v", err)
+	}
+}
+
 func TestContentSafety_Execute_NoMatchApproves(t *testing.T) {
 	h := newContentSafetyHook(t, map[string]any{"violence": true, "illegal": true}, nil)
 	res, err := h.Execute(context.Background(), &HookInput{
@@ -192,11 +271,13 @@ func TestContentSafety_Execute_NoMatchApproves(t *testing.T) {
 	}
 }
 
-func TestContentSafety_Execute_OnMatchInflightActionRespected(t *testing.T) {
-	// Operator policy can downgrade to block-soft; the hook must honor it.
+func TestContentSafety_Execute_OnMatchActionRedactRespected(t *testing.T) {
+	// Operator policy can set action=redact; the hook honors it by emitting a
+	// Modify decision and stamping the redact action. content-safety produces
+	// no spans, so the audit writer degrades the stored copy to a placeholder.
 	h := newContentSafetyHook(t,
 		map[string]any{"violence": true},
-		map[string]any{"inflightAction": "block-soft"},
+		map[string]any{"action": "redact"},
 	)
 	res, err := h.Execute(context.Background(), &HookInput{
 		Normalized: PayloadFromTextSegments([]string{"a violent attack"}),
@@ -204,8 +285,40 @@ func TestContentSafety_Execute_OnMatchInflightActionRespected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if res.Decision != BlockSoft {
-		t.Errorf("decision: got %s want BlockSoft (operator override)", res.Decision)
+	if res.Decision != Modify {
+		t.Errorf("decision: got %s want Modify (action=redact)", res.Decision)
+	}
+	if res.Action != ActionRedact {
+		t.Errorf("result.Action: got %q want redact", res.Action)
+	}
+	if len(res.TransformSpans) != 0 {
+		t.Errorf("content-safety produces no spans, got %d", len(res.TransformSpans))
+	}
+}
+
+// TestContentSafety_Execute_OnMatchActionApprove: action=approve detects and
+// tags but lets traffic through unchanged (Decision stays Approve, no action
+// stamped on the result).
+func TestContentSafety_Execute_OnMatchActionApprove(t *testing.T) {
+	h := newContentSafetyHook(t,
+		map[string]any{"violence": true},
+		map[string]any{"action": "approve"},
+	)
+	res, err := h.Execute(context.Background(), &HookInput{
+		Normalized: PayloadFromTextSegments([]string{"a violent attack"}),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Decision != Approve {
+		t.Errorf("decision: got %s want Approve (action=approve)", res.Decision)
+	}
+	if res.Action != ActionApprove {
+		t.Errorf("result.Action: got %q want approve", res.Action)
+	}
+	// The category match is still tagged even when the action is approve.
+	if !containsTag(res.Tags, "category:violence") {
+		t.Errorf("match must still tag category even under approve; got %v", res.Tags)
 	}
 }
 
@@ -258,10 +371,12 @@ func TestContentSafety_Execute_LatencyRecorded(t *testing.T) {
 	}
 }
 
-// TestContentSafety_StampsStorageActionOnMatch mirrors the keyword-filter
-// guarantee: an approve-inflight safety match still carries the storage
-// policy so the audit writer can drop/redact the persisted copy.
-func TestContentSafety_StampsStorageActionOnMatch(t *testing.T) {
+// TestContentSafety_LegacyOnMatchKeysMapToAction locks the back-compat
+// deprecation window: a config still written with the old inflightAction /
+// storageAction pair must be folded to the single action via
+// ActionFromLegacy. approve-inflight + redacting-storage upgrades to redact
+// (the compliance-safe direction), so the hook reports Modify + redact.
+func TestContentSafety_LegacyOnMatchKeysMapToAction(t *testing.T) {
 	hook := newContentSafetyHook(t,
 		map[string]any{"violence": true},
 		map[string]any{"inflightAction": "approve", "storageAction": "drop-content"})
@@ -269,10 +384,10 @@ func TestContentSafety_StampsStorageActionOnMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result.Decision != Approve {
-		t.Errorf("decision = %s, want APPROVE", result.Decision)
+	if result.Decision != Modify {
+		t.Errorf("decision = %s, want MODIFY (approve+drop-content → redact)", result.Decision)
 	}
-	if string(result.StorageAction) != "drop-content" {
-		t.Errorf("storageAction = %q, want self-stamped drop-content", result.StorageAction)
+	if result.Action != ActionRedact {
+		t.Errorf("result.Action = %q, want redact", result.Action)
 	}
 }

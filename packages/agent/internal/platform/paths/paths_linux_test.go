@@ -22,7 +22,7 @@ func TestLinuxStatusSocketPath_XDGRuntimeDir(t *testing.T) {
 
 // TestLinuxStatusSocketPath_NoXDGNoHome verifies that the last-resort fallback
 // is /run/nexus-agent/ (not /tmp) when both XDG_RUNTIME_DIR and HOME are absent.
-// F-0307: /tmp is world-accessible and predictable; /run/nexus-agent is created
+// /tmp is world-accessible and predictable; /run/nexus-agent is created
 // with mode 0700 and is only reachable by the daemon user.
 func TestLinuxStatusSocketPath_NoXDGNoHome(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "")

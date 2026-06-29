@@ -3,10 +3,12 @@ package validators
 import (
 	"context"
 	"fmt"
+	"io"
 	"regexp"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 )
 
 // categoryKeywords maps each content-safety category to its default detection keywords.
@@ -35,45 +37,46 @@ var categoryKeywords = map[string][]string{
 	},
 }
 
-// categoryPattern is a compiled pattern set for one category.
-type categoryPattern struct {
-	name     string
-	patterns []*regexp.Regexp
-}
-
-// ContentSafety evaluates content against category-based keyword lists.
-// The decision on match is derived from onMatch.inflightAction.
-// Applies to all text-carrying endpoints, text modality only, via
-// the embedded TextOnlyContentScanning helper.
+// ContentSafety evaluates content against a compiled set of patterns, each
+// attributed to a category and severity. Patterns come from one of two
+// declarative sources (see NewContentSafety): inline `patterns` (the
+// config-visible, editable built-in default — pack-quality contextual regex)
+// or the legacy `categories` toggles backed by categoryKeywords. The decision
+// on match is derived from onMatch.action. Matching is executed through
+// the Matcher seam (Vectorscan under -tags vectorscan). Applies to all
+// text-carrying endpoints, text modality only, via the embedded
+// TextOnlyContentScanning helper.
 type ContentSafety struct {
 	core.TextOnlyContentScanning
-	cfg        *core.HookConfig
-	categories []categoryPattern
-	onMatch    core.OnMatchConfig
+	contentPrescan // raw-body prefilter (core.RawContentPrescanner)
+	cfg            *core.HookConfig
+	patCategory    []string // category attributed to each compiled pattern (by ID)
+	patSeverity    []string // severity tag for each compiled pattern (by ID)
+	matcher        matcher.Matcher
+	onMatch        core.OnMatchConfig
 }
 
 // NewContentSafety constructs a ContentSafety hook from declarative config.
 //
-// Config shape:
+// Three sources, in priority order:
 //
-//	{
-//	  "categories": {"violence": true, "hate_speech": true},
-//	  "onMatch": {"inflightAction":"block-hard","storageAction":"redact"}
-//	}
+//  1. `_rulePackInstalls` bound → delegates to NewRulePackEngine (an admin
+//     chose a rule pack; it takes over, like keyword-filter).
 //
-// When `_rulePackInstalls` is attached the factory delegates to
-// NewRulePackEngine for unified rule-pack evaluation.
+//  2. inline `patterns` → the config-visible built-in default, used when no
+//     rule pack is chosen. Each entry is {pattern, category, severity?}; this
+//     is where the pack-quality contextual regex lives so admins can see/edit
+//     it on the hook itself.
+//
+//  3. legacy `categories` toggles → categoryKeywords fallback (backward compat).
+//
+//     {
+//     "patterns": [{"pattern":"(?i)\\bhow to murder\\b","category":"violence","severity":"soft"}],
+//     "onMatch": {"action":"block"}
+//     }
 func NewContentSafety(cfg *core.HookConfig) (core.Hook, error) {
 	if _, ok := cfg.Config["_rulePackInstalls"]; ok {
 		return NewRulePackEngine(cfg)
-	}
-	rawCats, ok := cfg.Config["categories"]
-	if !ok {
-		return nil, fmt.Errorf("content-safety: missing 'categories' in config")
-	}
-	catMap, ok := rawCats.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("content-safety: 'categories' must be a map")
 	}
 
 	onMatch, err := core.ParseOnMatch(cfg.Config)
@@ -81,32 +84,76 @@ func NewContentSafety(cfg *core.HookConfig) (core.Hook, error) {
 		return nil, fmt.Errorf("content-safety: %w", err)
 	}
 
-	var cats []categoryPattern
-	for name, rawEnabled := range catMap {
-		enabled, _ := rawEnabled.(bool)
-		if !enabled {
-			continue
+	var (
+		pats        []matcher.Pattern
+		patCategory []string
+		patSeverity []string
+	)
+
+	if rawPatterns, ok := cfg.Config["patterns"]; ok {
+		patternList, ok := rawPatterns.([]any)
+		if !ok {
+			return nil, fmt.Errorf("content-safety: 'patterns' must be an array")
 		}
-		keywords, found := categoryKeywords[name]
-		if !found {
-			return nil, fmt.Errorf("content-safety: unknown category %q", name)
-		}
-		var compiled []*regexp.Regexp
-		for _, kw := range keywords {
-			pattern := `\b` + regexp.QuoteMeta(kw) + `\b`
-			re, err := core.CompilePattern(pattern, "i")
-			if err != nil {
-				return nil, fmt.Errorf("content-safety: failed to compile pattern for %q keyword %q: %w", name, kw, err)
+		for i, raw := range patternList {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("content-safety: pattern[%d] must be an object", i)
 			}
-			compiled = append(compiled, re)
+			expr, _ := m["pattern"].(string)
+			if expr == "" {
+				return nil, fmt.Errorf("content-safety: pattern[%d] has empty pattern string", i)
+			}
+			category, _ := m["category"].(string)
+			if category == "" {
+				category = "content_safety"
+			}
+			severity, _ := m["severity"].(string)
+			if severity == "" {
+				severity = "restricted"
+			}
+			pats = append(pats, matcher.Pattern{ID: len(pats), Expr: expr, Flags: "i"})
+			patCategory = append(patCategory, category)
+			patSeverity = append(patSeverity, severity)
 		}
-		cats = append(cats, categoryPattern{name: name, patterns: compiled})
+	} else {
+		rawCats, ok := cfg.Config["categories"]
+		if !ok {
+			return nil, fmt.Errorf("content-safety: config needs 'patterns' or 'categories'")
+		}
+		catMap, ok := rawCats.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("content-safety: 'categories' must be a map")
+		}
+		for name, rawEnabled := range catMap {
+			enabled, _ := rawEnabled.(bool)
+			if !enabled {
+				continue
+			}
+			keywords, found := categoryKeywords[name]
+			if !found {
+				return nil, fmt.Errorf("content-safety: unknown category %q", name)
+			}
+			for _, kw := range keywords {
+				pats = append(pats, matcher.Pattern{ID: len(pats), Expr: `\b` + regexp.QuoteMeta(kw) + `\b`, Flags: "i"})
+				patCategory = append(patCategory, name)
+				patSeverity = append(patSeverity, "restricted")
+			}
+		}
+	}
+
+	mtch, bad := buildMatcher(pats)
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("content-safety: failed to compile pattern id %d: %w", bad[0].ID, bad[0].Err)
 	}
 
 	return &ContentSafety{
-		cfg:        cfg,
-		categories: cats,
-		onMatch:    onMatch,
+		contentPrescan: newContentPrescan(pats),
+		cfg:            cfg,
+		patCategory:    patCategory,
+		patSeverity:    patSeverity,
+		matcher:        mtch,
+		onMatch:        onMatch,
 	}, nil
 }
 
@@ -121,30 +168,43 @@ func (cs *ContentSafety) Execute(_ context.Context, input *core.HookInput) (*cor
 		Decision:         core.Approve,
 	}
 
-	for _, text := range input.TextSegmentsWith(cs.cfg.ProjectionOptions()) {
-		for idx := range cs.categories {
-			cat := &cs.categories[idx]
-			for _, re := range cat.patterns {
-				if re.MatchString(text) {
-					result.Decision = core.DecisionForInflight(cs.onMatch.InflightAction)
-					result.Reason = fmt.Sprintf("content safety violation: %s", cat.name)
-					result.ReasonCode = "CONTENT_SAFETY_VIOLATION"
-					result.Tags = core.AppendTag(result.Tags, "severity:restricted")
-					result.Tags = core.AppendTag(result.Tags, "detector:content-safety")
-					result.Tags = core.AppendTag(result.Tags, "category:"+cat.name)
-					// Self-stamp the storage policy: the pipeline stamps it
-					// only for non-Approve decisions, so an approve-inflight
-					// match would otherwise persist the matched content.
-					// No spans here, so redact degrades to drop-content at
-					// the audit writer (never store what we cannot redact).
-					result.StorageAction = cs.onMatch.StorageAction
-					result.LatencyMs = int(time.Since(start).Milliseconds())
-					return result, nil
-				}
+	segments := input.TextSegmentsWith(cs.cfg.ProjectionOptions())
+	matched := matchedSet(cs.matcher, segments)
+	core.ObserveContentScan(cs.cfg.ImplementationID, len(matched))
+
+	// Segment-major, pattern-minor first-match-wins: pattern IDs are assigned in
+	// config order, so the earliest configured pattern that hits a segment wins
+	// — and is attributed back to its own category + severity.
+	for si := range segments {
+		for pid := range cs.patCategory {
+			if _, ok := matched[[2]int{pid, si}]; !ok {
+				continue
 			}
+			result.Decision = core.DecisionForAction(cs.onMatch.Action)
+			result.Reason = fmt.Sprintf("content safety violation: %s", cs.patCategory[pid])
+			result.ReasonCode = "CONTENT_SAFETY_VIOLATION"
+			result.Tags = core.AppendTag(result.Tags, "severity:"+cs.patSeverity[pid])
+			result.Tags = core.AppendTag(result.Tags, "detector:content-safety")
+			result.Tags = core.AppendTag(result.Tags, "category:"+cs.patCategory[pid])
+			// This detector produces no spans, so a redact/block match
+			// has nothing to mask: the audit writer degrades to the drop
+			// placeholder (never store what we cannot redact).
+			result.Action = cs.onMatch.Action
+			result.LatencyMs = int(time.Since(start).Milliseconds())
+			return result, nil
 		}
 	}
 
 	result.LatencyMs = int(time.Since(start).Milliseconds())
 	return result, nil
+}
+
+// Close releases the matcher's resources (the Vectorscan database, if any) when
+// a config swap evicts this hook. No-op for the RE2 matcher.
+func (cs *ContentSafety) Close() error {
+	_ = cs.closePrescan()
+	if c, ok := cs.matcher.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }

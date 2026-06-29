@@ -2,7 +2,7 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 
@@ -348,7 +348,7 @@ func impactOf(t *testing.T, tl agent.Tool, in json.RawMessage) (any, error) {
 	return d.ImpactDetail(context.Background(), in)
 }
 
-// TestMitigateToolsImpactDetail covers FR-22/AC-6: the three high-blast-radius tools
+// TestMitigateToolsImpactDetail: the three high-blast-radius tools
 // produce a structured impact preview (current → effect) read-only, the VK revoke
 // flags irreversibility, and an ordinary confirm tool produces none.
 func TestMitigateToolsImpactDetail(t *testing.T) {
@@ -397,10 +397,10 @@ func TestMitigateImpactDetail_PropagatesReadError(t *testing.T) {
 	}
 }
 
-// TestHighBlastToolsImplementImpactDetailer is the AC-6 regression guard: every tool
+// TestHighBlastToolsImplementImpactDetailer is the regression guard: every tool
 // in the high-blast-radius set MUST provide an impact preview, so a future tool added
 // to this set without an ImpactDetailer (which would reach the confirm card with no
-// preview, violating FR-22) fails CI here rather than silently shipping. The frontend
+// preview) fails CI here rather than silently shipping. The frontend
 // "preview present" contract relies on this always-attach invariant.
 func TestHighBlastToolsImplementImpactDetailer(t *testing.T) {
 	highBlast := map[string]json.RawMessage{

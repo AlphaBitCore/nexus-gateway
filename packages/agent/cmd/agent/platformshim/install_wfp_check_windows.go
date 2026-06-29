@@ -12,15 +12,12 @@ import (
 )
 
 // CmdInstallWfpCheck is the MSI custom-action target invoked after
-// the `NexusWFP` kernel-mode service is registered + started
-// (FR-W4.1, E59 replacement of E42's CmdInstallWinDivertCheck).
+// the `NexusWFP` kernel-mode service is registered + started.
 // Runs as the installing user (Impersonate="yes" on the WiX
 // <CustomAction>), which lets it pop a MessageBox into the user's
 // desktop session — deferred system-context actions cannot.
 //
-// Behaviour mirrors the WinDivert-era helper (A1-spec Q6 + the
-// later "OK/Cancel" refinement) but checks the NexusWFP service
-// instead:
+// It checks the NexusWFP service:
 //
 //  1. If NexusWFP is RUNNING → exit 0 silently; MSI continues.
 //

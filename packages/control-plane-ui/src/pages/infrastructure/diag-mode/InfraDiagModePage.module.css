@@ -2,9 +2,15 @@
 
 .sectionTitle {
   font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   margin: 0;
+}
+
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .dataTable {
@@ -29,18 +35,25 @@
 
 .empty {
   color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
   text-align: center;
   padding: 16px 0;
 }
 
 .formGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--g-space-3);
 }
 
 .formGridFull {
   grid-column: 1 / -1;
+}
+
+.formHalf,
+.windowField,
+.reasonField {
+  min-width: 0;
 }
 
 .previewBanner {
@@ -49,7 +62,7 @@
 }
 
 .previewCount {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
@@ -58,6 +71,22 @@
   gap: var(--g-space-2);
   align-items: center;
   flex-wrap: wrap;
+}
+
+.activeWindowActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nodeIdsTextarea {
+  background: var(--color-bg) !important;
+}
+
+.enableButton,
+.enableButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .warningCard {
@@ -74,4 +103,14 @@
   font-size: var(--g-font-size-xs);
   color: var(--color-danger);
   margin: 4px 0 0 0;
+}
+
+@media (max-width: 720px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .formGridFull {
+    grid-column: auto;
+  }
 }

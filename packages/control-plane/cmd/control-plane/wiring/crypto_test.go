@@ -59,7 +59,7 @@ func TestInitCrypto_WithValidKeyAndCredentialKeyMap_MultiVaultNonNil(t *testing.
 	}
 }
 
-// TestInitCrypto_KeyMapOnly_ProductionBoots is the F-0085 regression guard:
+// TestInitCrypto_KeyMapOnly_ProductionBoots is the regression guard:
 // in production mode with NO single key and NO passphrase but a valid
 // CREDENTIAL_KEY_MAP, InitCrypto must boot (the map provides decryption) — the
 // single-key vault's prod-required error must be relaxed when a map is set.

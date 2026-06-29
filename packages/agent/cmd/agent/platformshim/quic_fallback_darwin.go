@@ -3,8 +3,8 @@
 package platformshim
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"path/filepath"

@@ -1089,7 +1089,7 @@ func TestExecute_ReadBodyError_SurfacesUpstreamError(t *testing.T) {
 	}
 }
 
-// TestExecute_CodecURLOverride_AppliedToBaseURL pins F-0053: a codec that
+// TestExecute_CodecURLOverride_AppliedToBaseURL pins the contract: a codec that
 // emits EncodeResult.URLOverride must see that override land on the
 // dispatched URL through Execute (full path: prepareBodyFull → codec
 // translation surfaces the override → executeWithBodyAndURL applies it).
@@ -1127,7 +1127,7 @@ func TestExecute_CodecURLOverride_AppliedToBaseURL(t *testing.T) {
 	}
 }
 
-// TestExecuteWithBody_CodecURLOverride_ThreadsThrough pins the F-0053 fix
+// TestExecuteWithBody_CodecURLOverride_ThreadsThrough pins the fix
 // on the cache-MISS fast path: PrepareBody surfaces the codec's URLOverride
 // and ExecuteWithBody must honor the value passed to it — the dispatcher no
 // longer re-derives it by peeking at provider-specific body fields.

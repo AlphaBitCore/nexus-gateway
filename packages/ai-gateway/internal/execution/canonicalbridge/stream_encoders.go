@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -120,7 +120,7 @@ func (e *openAIStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 				map[string]any{
 					"index":         0,
 					"delta":         map[string]any{},
-					"finish_reason": "stop",
+					"finish_reason": finishReasonOrStop(chunk.FinishReason),
 				},
 			},
 		}
@@ -316,7 +316,7 @@ func (e *anthropicStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 		}
 		writeAnthropicEvent(&buf, "message_delta", map[string]any{
 			"type":  "message_delta",
-			"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
+			"delta": map[string]any{"stop_reason": canonicalFinishToAnthropicStop(chunk.FinishReason), "stop_sequence": nil},
 			"usage": map[string]any{"output_tokens": outputTokens},
 		})
 		writeAnthropicEvent(&buf, "message_stop", map[string]any{"type": "message_stop"})
@@ -340,7 +340,7 @@ func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 	if chunk.Done {
 		candidate := map[string]any{
 			"content":      map[string]any{"parts": []any{}, "role": "model"},
-			"finishReason": "STOP",
+			"finishReason": canonicalFinishToGemini(chunk.FinishReason),
 			"index":        0,
 		}
 		resp := map[string]any{"candidates": []any{candidate}}
@@ -488,7 +488,7 @@ func (e *cohereStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 		}
 		msgEnd := map[string]any{
 			"type":  "message-end",
-			"delta": map[string]any{"finish_reason": "COMPLETE"},
+			"delta": map[string]any{"finish_reason": canonicalFinishToCohere(chunk.FinishReason)},
 		}
 		if chunk.Usage != nil {
 			tokens := map[string]any{}
@@ -583,6 +583,66 @@ func buildGeminiUsage(u *provcore.Usage) map[string]any {
 func oaiDeltaSSE(payload map[string]any) []byte {
 	data, _ := json.Marshal(payload)
 	return fmt.Appendf(nil, "data: %s\n\n", data)
+}
+
+// finishReasonOrStop returns the canonical OpenAI finish_reason, defaulting to
+// "stop" when the upstream stream never reported one. An empty FinishReason on
+// the terminal chunk is the case for the live cross-format path (whose Done
+// chunk is not threaded with a captured finish_reason); only buffer mode
+// threads the real value, so this default preserves prior live behavior.
+func finishReasonOrStop(fr string) string {
+	if fr == "" {
+		return "stop"
+	}
+	return fr
+}
+
+// canonicalFinishToAnthropicStop maps a canonical OpenAI finish_reason to an
+// Anthropic stop_reason for the synthesized terminal message_delta. Empty →
+// "end_turn" (the historical default), keeping the live transcode unchanged.
+// Inverse of anthropic/codec.MapStopReason.
+func canonicalFinishToAnthropicStop(fr string) string {
+	switch fr {
+	case "length":
+		return "max_tokens"
+	case "tool_calls", "function_call":
+		return "tool_use"
+	case "content_filter":
+		return "stop_sequence"
+	case "", "stop":
+		return "end_turn"
+	default:
+		return fr
+	}
+}
+
+// canonicalFinishToGemini maps a canonical OpenAI finish_reason to a Gemini
+// finishReason for the synthesized terminal candidate. Empty → "STOP".
+// Inverse of gemini/codec.MapFinishReason.
+func canonicalFinishToGemini(fr string) string {
+	switch fr {
+	case "length":
+		return "MAX_TOKENS"
+	case "content_filter":
+		return "SAFETY"
+	case "", "stop", "tool_calls", "function_call":
+		return "STOP"
+	default:
+		return "OTHER"
+	}
+}
+
+// canonicalFinishToCohere maps a canonical OpenAI finish_reason to a Cohere
+// finish_reason for the synthesized terminal message-end. Empty → "COMPLETE".
+func canonicalFinishToCohere(fr string) string {
+	switch fr {
+	case "length":
+		return "MAX_TOKENS"
+	case "tool_calls", "function_call":
+		return "TOOL_CALL"
+	default:
+		return "COMPLETE"
+	}
 }
 
 func (e *openAIStreamEncoder) oaiToolCallEnvelope(deltas []provcore.ToolCallDelta) []byte {

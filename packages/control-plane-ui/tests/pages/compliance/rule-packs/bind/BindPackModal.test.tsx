@@ -33,12 +33,17 @@ describe('BindPackModal', () => {
       <BindPackModal open hookId="hook-x" onClose={() => {}} onBound={onBound} />,
     );
 
-    await waitFor(() => expect(screen.getByText('nexus/prompt-injection')).toBeDefined());
-    await user.click(screen.getByText('nexus/prompt-injection'));
+    // The pack family is offered as one option in the multi-select dropdown;
+    // its two versions are grouped under the family name (latest first).
+    const trigger = await screen.findByRole('button', { name: /rule packs/i });
+    await user.click(trigger);
 
-    const versionSelect = screen.getByLabelText(/version/i);
-    await user.selectOptions(versionSelect, 'v1.0.0');
-    await user.click(screen.getByRole('button', { name: /bind|install/i }));
+    const option = await screen.findByRole('option', { name: /nexus\/prompt-injection/i });
+    await user.click(option);
+
+    // Submitting binds each selected family at its latest version and reports
+    // the resulting install(s) via onBound.
+    await user.click(screen.getByRole('button', { name: /bind \d+ pack/i }));
 
     await waitFor(() => expect(onBound).toHaveBeenCalled());
   });

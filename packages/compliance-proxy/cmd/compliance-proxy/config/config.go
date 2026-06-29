@@ -269,7 +269,7 @@ type AccessControlConfig struct {
 	// true, CONNECTs whose target is not in the domain allowlist are
 	// tunneled as raw TCP (no MITM, no audit) instead of returning 403.
 	// Other rejection reasons (IP allowlist, private IP, SNI mismatch) are
-	// unaffected. Default false. See docs/developers/specs/e31/e31-s5-cp-unlisted-passthrough.md.
+	// unaffected. Default false.
 	AllowUnlistedPassthrough bool `yaml:"allowUnlistedPassthrough"`
 }
 

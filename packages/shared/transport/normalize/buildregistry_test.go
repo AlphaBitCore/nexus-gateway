@@ -8,7 +8,7 @@ import (
 	core "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// #67 — every data-plane service must wire the same Tier 1+2+3
+// Every data-plane service must wire the same Tier 1+2+3
 // Registry via BuildRegistry. These tests pin the contract:
 //
 //   - Returned Registry is non-nil and frozen (mutation panics).
@@ -48,7 +48,7 @@ func TestBuildRegistry_HasOpenAIChat(t *testing.T) {
 }
 
 func TestBuildRegistry_HasOpenAICompatAlias(t *testing.T) {
-	// #72 — openai.Adapter.ID() returns "openai-compat"; without this
+	// openai.Adapter.ID() returns "openai-compat"; without this
 	// alias the agent's Tier 1 lookup miss falls all the way to Tier 3
 	// generic-http and audit rows persist as http-text instead of
 	// ai-chat. This test guards the alias from accidental removal.

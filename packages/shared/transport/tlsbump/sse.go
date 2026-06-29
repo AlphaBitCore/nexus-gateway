@@ -28,9 +28,9 @@ import (
 //	policy.ModeChunkedAsync    → "live"   (real-time relay + per-chunk hook)
 //	policy.ModeBufferFullBlock → "buffer" (full-buffer hook with reject)
 //
-// Nil Store = passthrough (#115: deleted the legacy YAML
-// `streamingMode` fallback path — admin policy is now the single
-// source of truth, three-service aligned).
+// Nil Store = passthrough (there is no legacy YAML `streamingMode`
+// fallback path — admin policy is the single source of truth,
+// three-service aligned).
 func resolveStreamingMode(bo *bumpOptions, matched *domain.InterceptionDomain) string {
 	if bo.streamingPolicyStore == nil {
 		// No Store wired by the caller — fail-safe to passthrough so
@@ -73,7 +73,7 @@ func resolveStreamingMode(bo *bumpOptions, matched *domain.InterceptionDomain) s
 // once Connection is gone Values("Connection") returns nothing.
 //
 // This matches the same logic used by responseio.Copy and copyResponse on the
-// non-SSE path (Task 0.3), closing the asymmetry noted in that review.
+// non-SSE path, closing the SSE/non-SSE asymmetry.
 func stripDynamicHopByHop(h http.Header) {
 	for _, line := range h.Values("Connection") {
 		for _, name := range strings.Split(line, ",") {
@@ -118,7 +118,7 @@ func handleSSEResponse(
 		_ = resp.Body.Close()
 	}()
 
-	// SEC-W3-01 / F-0371: strict (appliance) fail-closed guard, evaluated
+	// Strict (appliance) fail-closed guard, evaluated
 	// BEFORE any response header is written to the client. If a mandatory
 	// fail-closed response hook cannot be built under strict policy, the
 	// streamed body CANNOT be inspected — refuse with 451 rather than relaying
@@ -158,9 +158,9 @@ func handleSSEResponse(
 	// strip the static set. Both must happen before copying to the client.
 	stripDynamicHopByHop(resp.Header)
 
-	// Capture content-type ONCE up front — #89 stampSSEResponseNormalized
-	// needs it on every branch, and it must be read before the strip+copy
-	// loop modifies the header map.
+	// Capture content-type ONCE up front — buildSSEPreHookCallback needs it
+	// on every branch, and it must be read before the strip+copy loop
+	// modifies the header map.
 	respContentType := resp.Header.Get("Content-Type")
 
 	// Copy response headers to client, stripping hop-by-hop per RFC 7230 §6.1.
@@ -275,7 +275,6 @@ func handleSSEResponse(
 		if captureBuf != nil {
 			capturedBytes = captureBuf.Bytes()
 		}
-		stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, capturedBytes, respContentType, logger)
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, capturedBytes)
 		return
 	}
@@ -306,7 +305,6 @@ func handleSSEResponse(
 				"duration_ms", int(time.Since(requestStart).Milliseconds()),
 			)
 		}
-		stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, captureBuf.Bytes(), respContentType, logger)
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
 
 	case "live":
@@ -335,7 +333,6 @@ func handleSSEResponse(
 					dest = io.MultiWriter(w, captureBuf)
 				}
 				_ = streaming.Passthrough(ctx, resp.Body, dest)
-				stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, captureBuf.Bytes(), respContentType, logger)
 				emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
 				return
 			}
@@ -353,7 +350,6 @@ func handleSSEResponse(
 				dest = io.MultiWriter(w, captureBuf)
 			}
 			_ = streaming.Passthrough(ctx, resp.Body, dest)
-			stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, captureBuf.Bytes(), respContentType, logger)
 			emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
 			return
 		}
@@ -365,13 +361,10 @@ func handleSSEResponse(
 		if captureMax > 0 {
 			livePipeline.WithBodyCapture(captureMax)
 		}
-		// #90 — fire normalize before every checkpoint so hooks see
+		// Fire normalize before every checkpoint so hooks see
 		// the Registry-produced rich Normalized (model/tools/reasoning),
-		// not just flat-text. The callback ALSO stamps
-		// auditInfo.ResponseNormalized on each fire, so by end-of-stream
-		// the audit row carries the latest cumulative-normalized payload
-		// — no post-Process stamp needed.
-		if cb := buildSSEPreHookCallback(ctx, bo, audCtx, auditInfo, respInput, respContentType); cb != nil {
+		// not just flat-text.
+		if cb := buildSSEPreHookCallback(ctx, bo, audCtx, respInput, respContentType); cb != nil {
 			livePipeline.WithPreHook(cb)
 		}
 		result, err := livePipeline.Process(ctx, resp.Body, w, respInput)
@@ -414,7 +407,6 @@ func handleSSEResponse(
 					dest = io.MultiWriter(w, captureBuf)
 				}
 				_ = streaming.Passthrough(ctx, resp.Body, dest)
-				stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, captureBuf.Bytes(), respContentType, logger)
 				emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
 				return
 			}
@@ -431,7 +423,6 @@ func handleSSEResponse(
 				dest = io.MultiWriter(w, captureBuf)
 			}
 			_ = streaming.Passthrough(ctx, resp.Body, dest)
-			stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, captureBuf.Bytes(), respContentType, logger)
 			emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
 			return
 		}
@@ -444,14 +435,30 @@ func handleSSEResponse(
 		if captureMax > 0 {
 			bufPipeline.WithBodyCapture(captureMax)
 		}
-		// #90 — fire normalize between Phase 1 (read full body) and
+		// Fire normalize between Phase 1 (read full body) and
 		// Phase 2 (run hooks) so hooks see the Registry-produced rich
 		// Normalized (model/tools/reasoning), not just buildCheckpointInput's
-		// flat-text fallback. The same callback ALSO stamps
-		// auditInfo.ResponseNormalized so the audit row carries it — no
-		// post-Process stamp needed.
-		if cb := buildSSEPreHookCallback(ctx, bo, audCtx, auditInfo, respInput, respContentType); cb != nil {
+		// flat-text fallback.
+		if cb := buildSSEPreHookCallback(ctx, bo, audCtx, respInput, respContentType); cb != nil {
 			bufPipeline.WithPreHook(cb)
+		}
+		// Wire the per-host frame redactor so a Modify (redact) decision rewrites
+		// the buffered timeline — splicing the masked text into the per-host text
+		// frames and passing non-text frames byte-verbatim — instead of degrading
+		// to a verbatim replay of the unredacted stream (a PII leak). nil adapter
+		// leaves the redactor unset → backward-compatible Modify-degrade.
+		var sseAdapter traffic.Adapter
+		if audCtx != nil {
+			sseAdapter = audCtx.adapter
+		}
+		ssePath := ""
+		if respInput != nil {
+			ssePath = respInput.Path
+		}
+		spliceWired := false
+		if fr := newSSEFrameRedactor(ctx, sseAdapter, ssePath, logger); fr != nil {
+			bufPipeline.WithFrameRedactor(fr)
+			spliceWired = true
 		}
 		result, err := bufPipeline.Process(ctx, resp.Body, w, respInput)
 		if err != nil {
@@ -464,6 +471,7 @@ func handleSSEResponse(
 				"error", err,
 			)
 		}
+		stampSpliceRedactedBody(auditInfo, result, spliceWired, bufPipeline)
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, result, resp.StatusCode, requestStart, finalizeUsage(ctx, acc), bufPipeline.CapturedBytes())
 
 	default:
@@ -475,7 +483,6 @@ func handleSSEResponse(
 			dest = io.MultiWriter(w, captureBuf)
 		}
 		_ = streaming.Passthrough(ctx, resp.Body, dest)
-		stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, captureBuf.Bytes(), respContentType, logger)
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
 	}
 }

@@ -1,7 +1,11 @@
 package traffic
 
 // LatencyBreakdown is the typed wrapper over the `traffic_event.latency_breakdown`
-// JSONB column. Keys are phase names; values are durations in milliseconds.
+// JSONB column. Keys are phase names; values are integer durations in
+// milliseconds, EXCEPT keys ending in `_us` (the sub-millisecond hook framing
+// segments — hook_extract_us / hook_build_us / hook_pipeline_us /
+// hook_rewrite_us), whose values are microseconds so they retain resolution
+// instead of flooring to 0/1.
 //
 // Producers should not construct LatencyBreakdown directly — go through
 // PhaseTimer.Snapshot() to keep the closed enum invariant. Consumers (Hub

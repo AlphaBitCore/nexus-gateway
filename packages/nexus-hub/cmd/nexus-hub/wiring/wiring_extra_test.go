@@ -478,7 +478,7 @@ func TestBuildEchoConfig_WithSpillDedup(t *testing.T) {
 		MQResult{},
 		storageRes,
 		nil, IdentityResult{}, FleetResult{}, AlertsResult{},
-		SelfShadowResult{}, nil, nil, testLogger(),
+		SelfShadowResult{}, nil, testLogger(),
 	)
 	if ec.SpillDedup == nil {
 		t.Error("SpillDedup should be wired from StorageResult")

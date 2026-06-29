@@ -1,13 +1,13 @@
 import Foundation
 
-/// IPC client used by the slim menu-bar app (E40 Phase 1).
+/// IPC client used by the slim menu-bar app.
 ///
 /// Talks to the Go daemon's statusapi over a Unix socket. Only the
 /// commands the seven-item NSMenu actually needs are exposed:
 /// GET_STATUS, CHECK_UPDATE, PAUSE_PROTECTION, RESUME_PROTECTION,
 /// SHUTDOWN. Every other command (QUERY_EVENTS, AUTHENTICATE*,
 /// ENROLL_TOKEN, SYNC_CONFIG, GET_RUNTIME) belongs to the Wails
-/// Dashboard once Phase 2 lands, and is invoked from the Go side
+/// Dashboard, and is invoked from the Go side
 /// over its own statusapi client.
 actor StatusClient {
     private let socketPath: String = {

@@ -3,7 +3,7 @@ package hooks
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"time"
@@ -36,11 +36,10 @@ func (h *Handler) RegisterHookExtrasRoutes(g *echo.Group, iamMW func(action stri
 // hook implementation.
 var onMatchSchema = map[string]any{
 	"type":        "object",
-	"description": "Unified policy shape. inflightAction controls what the upstream-bound copy of the body sees; storageAction controls the audit-log copy independently.",
+	"description": "Match policy. The single action selects the outcome: approve forwards and stores the body as-is; redact rewrites the forwarded, returned, and stored copies; block rejects and stores the masked copy. The deprecated inflightAction/storageAction pair is still accepted and folded to one action for a deprecation window.",
 	"properties": map[string]any{
-		"inflightAction": map[string]any{"type": "string", "enum": []string{"approve", "block-hard", "block-soft", "redact"}},
-		"storageAction":  map[string]any{"type": "string", "enum": []string{"keep", "redact", "drop-content"}},
-		"replacement":    map[string]any{"type": "string"},
+		"action":      map[string]any{"type": "string", "enum": []string{"approve", "redact", "block"}},
+		"replacement": map[string]any{"type": "string"},
 	},
 }
 

@@ -19,7 +19,7 @@ import (
 )
 
 // testEncrypt encrypts plaintext with the given hex MASTER key, returning hex
-// ciphertext, iv, tag. It mirrors the production seal side (SEC-W2-03 / C1-02):
+// ciphertext, iv, tag. It mirrors the production seal side:
 // it HKDF-derives the provider-credential sub-key from the master and binds the
 // supplied row-identity aad, so the Manager's Decryptor (which does the same)
 // can open it.
@@ -528,7 +528,7 @@ func TestManager_CacheGetSet(t *testing.T) {
 	}
 }
 
-// TestManager_CacheEmptyStringDistinctFromMiss is the F-0095 regression guard:
+// TestManager_CacheEmptyStringDistinctFromMiss is the regression guard:
 // a credential that legitimately decrypts to "" must be cached and reported as
 // a hit, NOT mistaken for a cache miss. Before the (string, bool) signature an
 // empty-string sentinel made these two states indistinguishable, so such a
@@ -559,7 +559,7 @@ func TestManager_CacheEmptyStringDistinctFromMiss(t *testing.T) {
 
 // TestGetDecrypted_EmptyPlaintextCachedNotRedecrypted verifies end-to-end that
 // a credential decrypting to "" is served from cache on the second call rather
-// than re-fetched + re-decrypted (the observable F-0095 failure mode).
+// than re-fetched + re-decrypted (the observable failure mode).
 func TestGetDecrypted_EmptyPlaintextCachedNotRedecrypted(t *testing.T) {
 	d, _ := creddecrypt.NewDecryptor(testKeyHex)
 	src := newFakeSource()

@@ -13,7 +13,7 @@ import (
 // DeviceGroupLookup is the seam IAM middleware uses to resolve which
 // DeviceGroups a given device belongs to. Implemented by *store.DB in
 // production (pulls from DeviceGroupMembership ∪ device_group_membership_cache
-// once S2 lands; static rows only until then). Declared as an interface
+// once the membership cache is populated; static rows only until then). Declared as an interface
 // so unit tests can wire an in-memory fake. Nil disables group-scope
 // resolution and middleware falls back to the unscoped-only path —
 // safe but maximally permissive for legacy policies.
@@ -127,7 +127,7 @@ func RequireIAMPermission(engine *iam.Engine, action string, resourceFn func(ech
 // deviceIDParam is the Echo path-parameter name. lookup may be nil —
 // when nil the middleware behaves exactly like RequireIAMPermission
 // (unscoped only), which is the safe default for any handler that
-// hasn't wired group resolution yet. Once S2 caches are live and the
+// hasn't wired group resolution yet. Once the membership caches are live and the
 // DB-backed lookup is constructed in main.go, every device-scoped
 // route should switch to this middleware.
 func RequireIAMPermissionForDevice(engine *iam.Engine, action, deviceIDParam string, lookup DeviceGroupLookup) echo.MiddlewareFunc {

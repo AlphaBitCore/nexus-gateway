@@ -2,8 +2,8 @@ package selfshadow
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync"
@@ -294,7 +294,7 @@ func TestApplyAll_SkipsKeysNotInDesired(t *testing.T) {
 	}
 }
 
-// TestApplyAll_HandlerErrorReportedKeyNotEchoed verifies F-0115: a handler
+// TestApplyAll_HandlerErrorReportedKeyNotEchoed verifies a handler
 // returning an error does not abort the dispatch round, but its key is NOT
 // echoed into reported. Echoing on failure would make the Configuration tab
 // show the key as in-sync ("applied") when the apply actually failed; the
@@ -326,7 +326,7 @@ func TestApplyAll_HandlerErrorReportedKeyNotEchoed(t *testing.T) {
 	}
 }
 
-// TestApplyAll_UnmanagedDesiredKeyMirrored verifies F-0258: a desired key
+// TestApplyAll_UnmanagedDesiredKeyMirrored verifies a desired key
 // with no registered handler is mirrored verbatim into reported so the
 // Configuration tab shows it as in-sync. No handler means the apply is a
 // no-op = already applied, so the truthful reported value equals desired.

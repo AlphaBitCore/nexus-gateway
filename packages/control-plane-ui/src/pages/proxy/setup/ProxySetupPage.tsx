@@ -32,41 +32,45 @@ export default function ProxySetupPage() {
         </Card>
       )}
 
-      {nodes.map((node) => {
-        const online = node.status === 'online';
-        return (
-          <Card key={node.id}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--g-space-3)' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--g-space-0-5)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-2)' }}>
-                  <span style={{ fontWeight: 'var(--g-font-weight-semibold)' }}>{node.name}</span>
-                  <Badge variant={online ? 'success' : 'default'}>
-                    {node.status}
-                  </Badge>
+      {nodes.length > 0 && (
+        <div className={styles.nodeList}>
+          {nodes.map((node) => {
+            const online = node.status === 'online';
+            return (
+              <Card key={node.id}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--g-space-3)' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--g-space-0-5)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-2)' }}>
+                      <span style={{ fontWeight: 'var(--g-font-weight-semibold)' }}>{node.name}</span>
+                      <Badge variant={online ? 'success' : 'default'}>
+                        {node.status}
+                      </Badge>
+                    </div>
+                    <div className={styles.nodeId}>{node.id}</div>
                 </div>
-                <div className={styles.nodeId}>{node.id}</div>
-              </div>
 
-              <Tooltip content={!online ? t('infrastructure.offlineSetupDisabled') : undefined}>
-                {/* span wrapper ensures pointer events reach the Tooltip trigger
-                    even when the Button is disabled (disabled elements don't fire
-                    mouse events in browsers). */}
-                <span style={{ display: 'inline-block', cursor: online ? undefined : 'not-allowed' }}>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    disabled={!online}
-                    style={{ pointerEvents: online ? undefined : 'none' }}
-                    onClick={() => navigate(`/infrastructure/nodes/${node.id}/setup`)}
-                  >
-                    {t('infrastructure.configureSetup')}
-                  </Button>
-                </span>
-              </Tooltip>
-            </div>
-          </Card>
-        );
-      })}
+                  <Tooltip content={!online ? t('infrastructure.offlineSetupDisabled') : undefined}>
+                    {/* span wrapper ensures pointer events reach the Tooltip trigger
+                        even when the Button is disabled (disabled elements don't fire
+                        mouse events in browsers). */}
+                    <span style={{ display: 'inline-block', cursor: online ? undefined : 'not-allowed' }}>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={!online}
+                        style={{ pointerEvents: online ? undefined : 'none' }}
+                        onClick={() => navigate(`/infrastructure/nodes/${node.id}/setup`)}
+                      >
+                        {t('infrastructure.configureSetup')}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </Stack>
   );
 }

@@ -7,9 +7,9 @@ package siem
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -541,7 +541,7 @@ func (b *Bridge) queryAdminEvents(ctx context.Context, cursor bridgeCheckpoint, 
 		setIfNotNil(evt, "actorRole", actorRole)
 		setIfNotNil(evt, "sourceIp", sourceIP)
 		setIfNotNil(evt, "entityId", entityID)
-		// via = "assistant" marks an AI-initiated admin write (E90 I5). Exporting it
+		// via = "assistant" marks an AI-initiated admin write. Exporting it
 		// is what makes AI-vs-human writes distinguishable in the external SIEM — the
 		// surface a security team actually triages on. Omitted (not "") for human rows.
 		setIfNotNil(evt, "via", via)

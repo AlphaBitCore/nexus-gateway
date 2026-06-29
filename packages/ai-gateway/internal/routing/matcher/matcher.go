@@ -1,8 +1,8 @@
 package matcher
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"regexp"
 	"strings"
 	"sync"

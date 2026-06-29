@@ -46,7 +46,7 @@ func newMock(t *testing.T) pgxmock.PgxPoolIface {
 
 // TestDeleteUserAccountHappyPath asserts the helper issues every FK-dependent
 // delete in RESTRICT-safe order within the tx, reports the per-stage counts, and
-// — critically for F-0350 — clears the ScimToken RESTRICT row BEFORE the
+// — critically — clears the ScimToken RESTRICT row BEFORE the
 // NexusUser delete so it no longer blocks deletion. It also asserts that no
 // AdminAuditLog delete is ever queued (ExpectationsWereMet would fail if one
 // were issued).

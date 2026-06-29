@@ -19,7 +19,7 @@ import (
 // key coming from the Provider/Credential rows).
 //
 // Retries and singleflight deduplication are the caller's concern
-// (S3/S4 wrap this client in a golang.org/x/sync/singleflight keyed by
+// (callers wrap this client in a golang.org/x/sync/singleflight keyed by
 // SHA-256(input)).
 //
 // Cross-provider batch embeddings (used by the proxy's /v1/embeddings

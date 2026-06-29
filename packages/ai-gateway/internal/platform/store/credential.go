@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // Credential represents an encrypted provider credential.

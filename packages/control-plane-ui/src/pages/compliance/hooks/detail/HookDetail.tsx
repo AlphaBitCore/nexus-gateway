@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import { useApi } from '@/hooks/useApi';
 import { hookApi, rulePacksApi } from '@/api/services';
 import { useMutation } from '@/hooks/useMutation';
 import { usePermission } from '@/hooks/usePermission';
 import {
-  PageHeader, Badge, statusToVariant, AlertDialog, Breadcrumb,
+  Badge, statusToVariant, AlertDialog,
   Skeleton, ErrorBanner, Button, Stack, Card, Tooltip,
   Tabs, TabsList, TabsTrigger, TabsContent, Textarea,
 } from '@/components/ui';
@@ -118,17 +118,23 @@ export function HookDetail() {
   if (isEditing) {
     return (
       <Stack gap="lg">
-        <Breadcrumb items={[
-          { label: t('pages:hooks.title', 'Hooks'), to: '/compliance/hooks' },
-          { label: hook.name },
-        ]} />
-        <PageHeader
-          title={hook.name}
-          subtitle={t('pages:hooks.editHook')}
-          action={
-            <Button variant="secondary" onClick={() => setIsEditing(false)}>{t('common:cancel')}</Button>
-          }
-        />
+        <section className={styles.detailHeader}>
+          <div className={styles.headerTitleRow}>
+            <Link to="/compliance/hooks" className={styles.backLink} aria-label={t('common:back', 'Back')}>
+              <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Link>
+            <div className={styles.headerTextBlock}>
+              <h1 className={styles.detailTitle}>{hook.name}</h1>
+              <p className={styles.detailSubtitle}>{t('pages:hooks.editHook')}</p>
+            </div>
+            <div className={styles.headerActions}>
+              <Button variant="secondary" onClick={() => setIsEditing(false)}>{t('common:cancel')}</Button>
+            </div>
+          </div>
+        </section>
         <HookForm
           embedded
           hook={hook}
@@ -191,16 +197,20 @@ export function HookDetail() {
   };
 
   return (
-    <Stack gap="lg">
-      <Breadcrumb items={[
-        { label: t('pages:hooks.title', 'Hooks'), to: '/compliance/hooks' },
-        { label: hook.name },
-      ]} />
-      <PageHeader
-        title={hook.name}
-        subtitle={t('pages:hooks.hookConfiguration', 'Hook Configuration')}
-        action={
-          <Stack direction="horizontal" gap="sm">
+    <Stack gap="sm">
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/compliance/hooks" className={styles.backLink} aria-label={t('common:back', 'Back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{hook.name}</h1>
+            <p className={styles.detailSubtitle}>{t('pages:hooks.hookConfiguration', 'Hook Configuration')}</p>
+          </div>
+          <Stack direction="horizontal" gap="sm" className={styles.headerActions}>
             {canUpdate && (
               <Button onClick={() => setIsEditing(true)}>{t('common:edit')}</Button>
             )}
@@ -208,8 +218,8 @@ export function HookDetail() {
               <Button variant="danger" onClick={() => setShowDelete(true)}>{t('common:delete')}</Button>
             )}
           </Stack>
-        }
-      />
+        </div>
+      </section>
 
       <Tabs defaultValue="overview">
         <TabsList aria-label={t('pages:hooks.hookSections')}>
@@ -227,18 +237,20 @@ export function HookDetail() {
         {/* Overview Tab */}
         <TabsContent value="overview">
           <Stack gap="md">
-            <div className={styles.badgesRow}>
-              <span className={clsx(styles.badge, categoryBadgeClass(hook.classification?.category, styles))}>
-                {hook.classification?.categoryLabel ?? '-'}
-              </span>
-              <span className={clsx(styles.badge, stageBadgeClass(stage, styles))}>
-                {stage}
-              </span>
-              <Badge variant={statusToVariant(hook.enabled ? 'enabled' : 'disabled')}>{hook.enabled ? t('common:enabled') : t('common:disabled')}</Badge>
-            </div>
-
-            <Card>
+            <section className={styles.detailSection}>
+              <div className={styles.detailSectionHeader}>
               <h2 className={styles.widgetTitle}>{t('pages:hooks.details')}</h2>
+                <div className={styles.badgesRow}>
+                  <span className={clsx(styles.badge, categoryBadgeClass(hook.classification?.category, styles))}>
+                    {hook.classification?.categoryLabel ?? '-'}
+                  </span>
+                  <span className={clsx(styles.badge, stageBadgeClass(stage, styles))}>
+                    {stage}
+                  </span>
+                  <Badge variant={statusToVariant(hook.enabled ? 'enabled' : 'disabled')}>{hook.enabled ? t('common:enabled') : t('common:disabled')}</Badge>
+                </div>
+              </div>
+            <Card>
               <div className={styles.kvGrid}>
                 <div>
                   <div className={styles.kvLabelRow}>
@@ -328,6 +340,7 @@ export function HookDetail() {
                 )}
               </div>
             </Card>
+            </section>
           </Stack>
         </TabsContent>
 
@@ -397,21 +410,25 @@ export function HookDetail() {
               </div>
             )}
             {Boolean(hook.config) && (
-              <Card>
+              <section className={styles.detailSection}>
                 <h2 className={styles.widgetTitle}>{t('pages:hooks.configuration')}</h2>
+              <Card padding="none">
                 <pre className={styles.configPre}>
                   {JSON.stringify(hook.config, null, 2)}
                 </pre>
               </Card>
+              </section>
             )}
 
             {hook.endpoint && (
-              <Card>
+              <section className={styles.detailSection}>
                 <h2 className={styles.widgetTitle}>{t('pages:hooks.webhookEndpoint')}</h2>
+              <Card>
                 <code className={styles.endpointCode}>
                   {hook.endpoint}
                 </code>
               </Card>
+              </section>
             )}
 
             {!hook.config && !hook.endpoint && (
@@ -426,12 +443,14 @@ export function HookDetail() {
 
         {/* Pipeline Tab */}
         <TabsContent value="pipeline">
-          <Card>
+          <section className={styles.detailSection}>
             <h2 className={styles.widgetTitle}>{t('pages:hooks.pipelinePositionTitle')}</h2>
+          <Card>
             <p className={clsx(styles.pipelineText, pipelinePosition ? styles.pipelineTextActive : styles.pipelineTextMuted)}>
               {pipelinePosition ?? t('pages:hooks.pipelineUnknown')}
             </p>
           </Card>
+          </section>
         </TabsContent>
 
         {/* Rule Packs Tab */}
@@ -443,8 +462,9 @@ export function HookDetail() {
 
         {/* Test Tab */}
         <TabsContent value="test">
-          <Card>
+          <section className={styles.detailSection}>
             <h2 className={styles.widgetTitle}>{t('pages:hooks.testHook')}</h2>
+          <Card>
             <p className={styles.testDescription}>
               {t('pages:hooks.testDescription')}
             </p>
@@ -477,6 +497,7 @@ export function HookDetail() {
               </pre>
             )}
           </Card>
+          </section>
         </TabsContent>
       </Tabs>
 

@@ -2,8 +2,8 @@ package codecs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )

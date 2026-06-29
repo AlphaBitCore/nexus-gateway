@@ -2,7 +2,6 @@ package tlsbump
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"sync"
@@ -12,7 +11,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // isStreamingRequestBody reports whether the request body must be relayed to
@@ -233,39 +231,25 @@ func (x *bumpedExchange) runStreamingRequestPhase() bool {
 	return false
 }
 
-// normalizeStreamingRequest runs the request-side adapter normalize against the
-// tee-captured streaming request body, post-upstream, once the body has been
-// drained by the upstream forward. The streaming path cannot normalize before
-// forwarding (the body is not buffered yet), so without this a structured
-// request — e.g. an OpenAI Responses body on a chunked/unknown-length POST —
-// would land on the traffic_event as tier3 generic-http even though its adapter
-// parses it cleanly. For a request that completes before its response (the
-// common stream:true chat case) the capture is whole here; for a true bidi
-// stream it is the first-message prefix, still better than http-binary.
+// refineStreamingRequestMeta refines the request-side provider/model
+// attribution from the tee-captured streaming request body, post-upstream,
+// once the body has been drained by the upstream forward. The streaming path
+// resolves provider/model from headers alone before forwarding (the body is
+// not buffered yet); the captured body lets DetectRequestMeta produce a more
+// accurate provider/model than that header-only guess. For a request that
+// completes before its response (the common stream:true chat case) the capture
+// is whole here; for a true bidi stream it is the first-message prefix.
 //
-// No-op on the buffered path (requestCapture nil, RequestNormalized already
-// set) and when no adapter matched or the capture is empty.
-func (x *bumpedExchange) normalizeStreamingRequest(audCtx *requestAuditCtx) {
+// No-op on the buffered path (requestCapture nil), when no adapter matched, or
+// when the capture is empty.
+func (x *bumpedExchange) refineStreamingRequestMeta(audCtx *requestAuditCtx) {
 	if audCtx == nil || audCtx.requestCapture == nil || audCtx.adapter == nil {
-		return
-	}
-	if len(audCtx.info.RequestNormalized) > 0 {
 		return
 	}
 	body := audCtx.requestCapture.Bytes()
 	if len(body) == 0 {
 		return
 	}
-	bo, logger := x.flow.bo, x.flow.logger
-	content := runtimeNormalize(context.Background(), bo.normalizeRegistry, audCtx.adapter, body,
-		audCtx.input.Path, audCtx.input.ContentType, normalize.DirectionRequest, logger, x.txID)
-	if content != nil {
-		if b, err := json.Marshal(content); err == nil {
-			audCtx.info.RequestNormalized = b
-		}
-	}
-	// The body is available now, so provider/model detection can be refined
-	// beyond the header-only guess made when the audit ctx was built.
 	meta := audCtx.adapter.DetectRequestMeta(x.r, body)
 	if meta.Provider != "" {
 		audCtx.input.DetectedProvider = meta.Provider

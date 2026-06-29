@@ -188,7 +188,7 @@ func TestStrictFailClosed_CaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestStrictFailClosed_ComplianceProxyAppliance is the SEC-W3-01 regression: the
+// TestStrictFailClosed_ComplianceProxyAppliance is the regression: the
 // compliance-proxy is a dedicated forward-proxy appliance that opts into strict
 // fail-closed (tlsbump.WithStrictFailClosed). An admin-configured fail-closed
 // hook that is UNBUILDABLE must therefore make BuildPipeline ERROR — so the

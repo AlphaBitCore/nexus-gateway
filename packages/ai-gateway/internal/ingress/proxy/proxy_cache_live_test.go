@@ -19,7 +19,7 @@ import (
 // TestRunLiveStream_HappyPath_FlowsThroughLivePipeline — verifies the
 // runLiveStream helper builds a LivePipeline + installs PreHook + runs
 // Process. Symmetric with the runBufferStream tests; the live helper
-// is the chunked_async counterpart in #115's dispatch.
+// is the chunked_async counterpart in the streaming-relay dispatch.
 func TestRunLiveStream_HappyPath_FlowsThroughLivePipeline(t *testing.T) {
 	body := strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n")
 	var teeBuf bytes.Buffer
@@ -54,7 +54,6 @@ func TestRunLiveStream_HappyPath_FlowsThroughLivePipeline(t *testing.T) {
 		SSEReader:    body,
 		Tee:          tee,
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		HoldBack:     false,
 		EmitDone:     true,
 	})
 
@@ -90,8 +89,8 @@ func TestRunLiveStream_NilDeps_NoPreHook_StillRuns(t *testing.T) {
 	}
 }
 
-// TestRunLiveStream_NilSSEReaderOrTee_NoOp — PR #24 follow-up
-// S4-code defensive nil-guard. Symmetric with runBufferStream and
+// TestRunLiveStream_NilSSEReaderOrTee_NoOp — defensive nil-guard.
+// Symmetric with runBufferStream and
 // runPassthroughStream guards. Production always wires both; this
 // test pins the no-op fallback so a future malformed runStreamDeps
 // doesn't nil-deref into a 502.

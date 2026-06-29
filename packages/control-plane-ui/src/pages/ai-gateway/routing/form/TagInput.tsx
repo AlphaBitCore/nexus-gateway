@@ -18,9 +18,10 @@ export interface TagInputProps {
   onChange: (next: string[]) => void;
   placeholder?: string;
   ariaLabel?: string;
+  className?: string;
 }
 
-export function TagInput({ value, onChange, placeholder, ariaLabel }: TagInputProps) {
+export function TagInput({ value, onChange, placeholder, ariaLabel, className }: TagInputProps) {
   const [draft, setDraft] = useState('');
 
   const commit = useCallback(
@@ -57,7 +58,7 @@ export function TagInput({ value, onChange, placeholder, ariaLabel }: TagInputPr
   };
 
   return (
-    <div className={styles.tagInput}>
+    <div className={`${styles.tagInput} ${className ?? ''}`}>
       {value.map((tag, idx) => (
         <span key={`${tag}-${idx}`} className={styles.tag}>
           {tag}

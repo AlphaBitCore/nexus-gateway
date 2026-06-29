@@ -10,8 +10,8 @@ package hubapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -371,7 +371,7 @@ func TestInternalThingsAPI_ShadowReport_DBError_Returns500(t *testing.T) {
 // InternalThingsAPI.BreakGlassReport — dispatch reaches HandleShadowReport.
 // The break-glass reconciliation itself is non-fatal (GetThing errors here,
 // logged + swallowed), so a well-formed report acks 200 — proving the route is
-// wired to the reconciliation path (F-0143), not a 404.
+// wired to the reconciliation path, not a 404.
 func TestInternalThingsAPI_BreakGlassReport_OK(t *testing.T) {
 	e := newTestEcho()
 	h, mock := newInternalAPIMock(t)
@@ -379,10 +379,10 @@ func TestInternalThingsAPI_BreakGlassReport_OK(t *testing.T) {
 	mock.ExpectExec(`UPDATE thing\s+SET reported`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
-	// A single node may NOT break-glass the fleet killswitch (SEC-C3-02), so the
+	// A single node may NOT break-glass the fleet killswitch, so the
 	// report is denied and audited: emitBreakGlassDenied looks up the thing type
 	// (best-effort — error tolerated, type falls back to "") then writes a
-	// break_glass_denied config_change_event in its own tx (SEC-M5-05).
+	// break_glass_denied config_change_event in its own tx.
 	mock.ExpectQuery(`FROM thing t`).WillReturnError(errors.New("transient"))
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO config_change_event`).
@@ -1612,7 +1612,7 @@ func TestInternalThingsAPI_AuditUpload_EnqueueError_Returns503(t *testing.T) {
 	}
 }
 
-// InternalThingsAPI.AuditUpload — F-0374: a device-token caller may not stamp
+// InternalThingsAPI.AuditUpload: a device-token caller may not stamp
 // audit rows for a FOREIGN thing_id (the body's thingId must equal the
 // authenticated device's id, exactly like the other six mutation handlers).
 func TestInternalThingsAPI_AuditUpload_DeviceForeignThingID_Returns403(t *testing.T) {
@@ -1636,7 +1636,7 @@ func TestInternalThingsAPI_AuditUpload_DeviceForeignThingID_Returns403(t *testin
 	}
 }
 
-// InternalThingsAPI.AuditUpload — F-0374: a service-token caller (fleet-shared
+// InternalThingsAPI.AuditUpload: a service-token caller (fleet-shared
 // INTERNAL_SERVICE_TOKEN, no Thing bound) may not stamp audit rows for an AGENT
 // thing_id. requireMutationAuthority looks the target type up by id; an agent
 // (non-backend-service) target is refused with 403, so a leaked service token
@@ -1695,7 +1695,7 @@ func TestHubAPI_ResyncThing_SingleKey_Success_Returns200(t *testing.T) {
 	}
 	st := store.NewWithPgxPool(mock)
 	// NewWithPool wires the mock as the tx pool so ForceResyncKey's desired_ver
-	// bump (F-0116) runs against pgxmock. A WSPool that always succeeds makes the
+	// bump runs against pgxmock. A WSPool that always succeeds makes the
 	// post-bump push return nil.
 	mgr := manager.NewWithPool(st, mock, nil, nil, &successWSPool{}, "hub-test", discardLog())
 	h := &HubAPI{Mgr: mgr}
@@ -1924,7 +1924,7 @@ func TestInternalThingsAPI_UpdateCheck_MalformedState_Returns500(t *testing.T) {
 func TestHubAPI_ResyncThing_AllKeys_NoWSReceiver_StillSucceeds(t *testing.T) {
 	// A thing with one key in Desired + nil ws + nil mq: the immediate push has
 	// no delivery path, but ForceResyncAll bumps desired_ver first so the HTTP
-	// heartbeat pull is guaranteed to deliver it (F-0116). The key is therefore
+	// heartbeat pull is guaranteed to deliver it. The key is therefore
 	// counted as Pushed (keyCount=1) and the response carries NO "failed" list —
 	// the old behaviour wrongly reported it as a delivery failure.
 	e := newTestEcho()
@@ -2144,7 +2144,7 @@ func TestGetAttestationPubKey_GenericError_Returns500(t *testing.T) {
 	}
 }
 
-// TestGetAttestationPubKey_Happy_IncludesCertExpiresAt is the SEC-M4-01 wire
+// TestGetAttestationPubKey_Happy_IncludesCertExpiresAt is the wire
 // contract: a 200 response carries the cert NotAfter so CP can enforce expiry.
 func TestGetAttestationPubKey_Happy_IncludesCertExpiresAt(t *testing.T) {
 	h, mock := newInternalAPIMock(t)
@@ -2175,7 +2175,7 @@ func TestGetAttestationPubKey_Happy_IncludesCertExpiresAt(t *testing.T) {
 	}
 }
 
-// TestGetAttestationPubKey_RevokedDevice_Returns404 is the SEC-M4-01 revocation
+// TestGetAttestationPubKey_RevokedDevice_Returns404 is the revocation
 // wire contract: a revoked (unenrolled) device's attestation is no longer served
 // (the store query's status!='revoked' filter yields no row), so the endpoint
 // 404s — which CP maps to unknown_agent → MITM fallback.
@@ -2204,7 +2204,7 @@ func TestGetAttestationPubKey_RevokedDevice_Returns404(t *testing.T) {
 }
 
 // TestInternalThingsAPI_ShadowReport_MatchingDevice_PassesGuard proves the
-// F-0060 fix does not block the legitimate break-glass-eligible path: a device
+// cross-Thing binding does not block the legitimate break-glass-eligible path: a device
 // token operating on its OWN id passes requireThingMatch and reaches the
 // manager (here the mocked DB errors, so the status is 5xx — the point is it is
 // NOT 403).
@@ -2224,7 +2224,7 @@ func TestInternalThingsAPI_ShadowReport_MatchingDevice_PassesGuard(t *testing.T)
 // service-token caller (no Thing in context) is never blocked by the cross-Thing
 // guard regardless of the body id — the trusted CP / Hub-internal path.
 // TestInternalThingsAPI_ShadowReport_ServiceToken_AgentTargetBlocked is the
-// SEC-W2-02 (FIX-5/C C2) closure for the shadow path: a service-token caller may
+// closure for the shadow path: a service-token caller may
 // no longer overwrite an arbitrary AGENT's shadow. Before the fix the guard was
 // bypassed for ANY service-token caller (the act-as-any-thing vulnerability); now
 // the operated Thing's type is resolved and an agent target is refused (403). A

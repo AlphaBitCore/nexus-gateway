@@ -54,7 +54,6 @@ export default function InfraRecentErrorsPage() {
   // admin's view interleaves them and can't isolate either class.
   const [eventType, setEventType] = useState<string>('');
   const [search, setSearch] = useState('');
-  const [filterOpen, setFilterOpen] = useState(false);
   const [hideSilenced, setHideSilenced] = useState(true);
 
   const { from, to } = useMemo(() => rangeBounds(timeRange), [timeRange]);
@@ -75,7 +74,7 @@ export default function InfraRecentErrorsPage() {
   // Affected-events list is server-paginated via the existing
   // /api/admin/diag-events cursor. We accumulate pages in `detailPages`
   // and reset whenever the operator opens a different group. Page size
-  // is 25 because the dialog body has limited height; the operator can
+  // is 10 because the dialog body has limited height; the operator can
   // hit "Load more" to walk the cursor when triaging a long tail.
   const [showSilencesPopup, setShowSilencesPopup] = useState(false);
 
@@ -260,21 +259,17 @@ export default function InfraRecentErrorsPage() {
         subtitle={t('infrastructure.recentErrors.description')}
       />
 
-      <HeroStats hero={hero} timeRange={timeRange} />
-
       <FilterPanel
-        filterOpen={filterOpen}
-        setFilterOpen={setFilterOpen}
         timeRange={timeRange}
         setTimeRange={setTimeRange}
         nodeType={nodeType}
         setNodeType={setNodeType}
         eventType={eventType}
         setEventType={setEventType}
-        hideSilenced={hideSilenced}
-        setHideSilenced={setHideSilenced}
         onRefresh={() => { groups.refetch(); silences.refetch(); }}
       />
+
+      <HeroStats hero={hero} timeRange={timeRange} />
 
       <IssueList
         filteredGroups={filteredGroups}
@@ -282,6 +277,8 @@ export default function InfraRecentErrorsPage() {
         silencesData={silences.data}
         search={search}
         setSearch={setSearch}
+        hideSilenced={hideSilenced}
+        setHideSilenced={setHideSilenced}
         groupsError={groups.error}
         groupsLoading={groups.loading}
         groupsRefetch={groups.refetch}

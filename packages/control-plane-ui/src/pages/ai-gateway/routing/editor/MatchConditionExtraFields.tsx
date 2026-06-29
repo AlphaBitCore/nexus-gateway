@@ -62,6 +62,7 @@ export function MatchConditionExtraFields({
           onChange={onChangeRequestedModelLiterals}
           placeholder={t('pages:routing.matchRequestedModelLiteralsPlaceholder')}
           ariaLabel={t('pages:routing.matchRequestedModelLiteralsLabel')}
+          className={styles.controlField}
         />
       </div>
       <div className={styles.fieldGroup}>
@@ -77,6 +78,7 @@ export function MatchConditionExtraFields({
           value={modelTypes}
           onChange={onChangeModelTypes}
           emptyLabel={t('pages:routing.matchModelTypesPlaceholder')}
+          className={styles.controlField}
         />
       </div>
       <div className={styles.fieldGroup}>
@@ -91,6 +93,7 @@ export function MatchConditionExtraFields({
           providerGroups={providerGroups}
           value={selectedProviderIds}
           onChange={onChangeProviders}
+          className={styles.controlField}
         />
       </div>
       <div className={styles.fieldGroup}>
@@ -105,6 +108,7 @@ export function MatchConditionExtraFields({
           value={projectIds}
           onChange={onChangeProjectIds}
           emptyLabel={t('pages:routing.placeholderProjects')}
+          className={styles.controlField}
         />
       </div>
       <div className={styles.fieldGroup}>
@@ -119,6 +123,7 @@ export function MatchConditionExtraFields({
           onChange={onChangeVirtualKeys}
           placeholder={t('pages:routing.matchVirtualKeysPlaceholder')}
           ariaLabel={t('pages:routing.matchVirtualKeysLabel')}
+          className={styles.controlField}
         />
       </div>
     </>

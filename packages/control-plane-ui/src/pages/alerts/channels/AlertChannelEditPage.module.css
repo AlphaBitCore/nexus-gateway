@@ -1,23 +1,156 @@
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+}
+
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.headerDeleteButton,
+.headerDeleteButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.detailTitle {
+  margin: var(--g-space-0);
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
+}
+
+.detailSubtitle {
+  margin: 4px 0 0;
+  max-width: 760px;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+}
+
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
 .sectionTitle {
-  margin: 0 0 var(--g-space-3);
+  margin: var(--g-space-0);
   font-size: 1rem;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.generalGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4) var(--g-space-3);
+}
+
+.fullWidthField {
+  min-width: 0;
+}
+
+.fullWidthField :global(button[aria-haspopup='listbox']) {
+  background: var(--color-bg);
+}
+
+.fullWidthField :global([class*='triggerArrow']) {
+  right: 12px;
+  font-size: var(--g-font-size-xs);
+  line-height: 1;
+}
+
+.generalGrid :global([class*='Select_icon']) {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+}
+
+.hint {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.headerHint {
+  margin: 4px 0 12px;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
 }
 
 .switchRow {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--g-space-4);
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: var(--g-space-2);
 }
 
 .switchRow label {
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .footerActions {
-  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  justify-content: flex-start;
+  padding: var(--g-space-3) var(--g-space-0);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.footerButton,
+.footerButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .secretRow {
@@ -42,7 +175,7 @@
   grid-template-columns: 1fr 1fr auto;
   gap: var(--g-space-2);
   font-size: 0.75rem;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   padding-bottom: 4px;
 }
@@ -52,25 +185,36 @@
   justify-content: flex-end;
 }
 
+.deleteHeaderButton,
+.deleteHeaderButton :global(*) {
+  color: var(--color-danger) !important;
+}
+
+.deleteHeaderButton:hover,
+.deleteHeaderButton:active {
+  color: var(--color-danger) !important;
+  background: var(--color-danger-light) !important;
+}
+
 .inlineCode {
   font-family: var(--g-font-mono);
   font-size: 0.8125rem;
   background: var(--color-surface);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   border: 1px solid var(--color-border);
-}
-
-.hint {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-  margin-top: 4px;
 }
 
 .twoColumn {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--g-space-4);
+}
+
+@media (max-width: 900px) {
+  .generalGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {

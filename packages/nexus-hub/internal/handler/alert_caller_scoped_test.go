@@ -3,7 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,7 +46,7 @@ func alertEnvelopeBody(t *testing.T, targetKey string) *bytes.Reader {
 // TestAlertCallerScoped_ServiceToken proves that when no Thing is set in the
 // Echo context (service-token auth path), alertCallerScoped injects
 // Caller{IsService: true} — meaning HandleRaise will not apply the per-Thing
-// scope guard and will call the raiser unconditionally (F-0071).
+// scope guard and will call the raiser unconditionally.
 func TestAlertCallerScoped_ServiceToken(t *testing.T) {
 	raiser := &minRaiser{}
 	// Use HandleRaise as the inner handler: if IsService=true the scope check is
@@ -79,7 +79,7 @@ func TestAlertCallerScoped_ServiceToken(t *testing.T) {
 // TestAlertCallerScoped_DeviceToken proves that when a Thing IS set in the
 // Echo context (device-token auth path), alertCallerScoped injects
 // Caller{IsService: false, ThingID: thing.ID} — meaning HandleRaise will
-// enforce per-Thing scoping and return 403 for a mismatched target (F-0071).
+// enforce per-Thing scoping and return 403 for a mismatched target.
 func TestAlertCallerScoped_DeviceToken(t *testing.T) {
 	const thingID = "thing-n42"
 
@@ -112,7 +112,7 @@ func TestAlertCallerScoped_DeviceToken(t *testing.T) {
 }
 
 // TestAlertCallerScoped_DeviceToken_OwnTarget proves that a device-token caller
-// CAN raise an alert whose TargetKey references its own ThingID (F-0071 happy
+// CAN raise an alert whose TargetKey references its own ThingID (happy
 // path): the scope guard must pass and the raiser must be invoked.
 func TestAlertCallerScoped_DeviceToken_OwnTarget(t *testing.T) {
 	const thingID = "thing-n42"

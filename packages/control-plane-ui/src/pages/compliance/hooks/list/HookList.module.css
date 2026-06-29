@@ -1,82 +1,233 @@
-.filterSelect {
+.hooksHeader {
+  margin-bottom: calc(8px - var(--g-space-6));
+}
+
+.headerSubtitle {
+  max-width: none !important;
+  white-space: nowrap;
+}
+
+.filterToolbar {
+  display: flex;
+  flex-direction: column;
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  width: min(100%, 420px);
+  max-width: 100%;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-surface);
+}
+
+.searchIcon {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin: 0 8px 0 17px;
+  border: 1.8px solid var(--color-text-muted);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.searchIcon::after {
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  width: 7px;
+  height: 1.8px;
+  border-radius: var(--g-radius-xs);
+  background: var(--color-text-muted);
+  content: '';
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+
+.searchInput {
+  min-width: 0;
+  min-height: 36px;
   height: 36px;
-  padding: 0 var(--g-space-3);
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
+.searchInput:focus,
+.searchInput:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.searchBox:focus-within {
+  border-color: var(--color-link);
+}
+
+.clearSearchButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--g-space-2);
+  border: 0;
+  border-radius: var(--g-radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.clearSearchButton:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.clearSearchButton span,
+.clearSearchButton span::after {
+  position: absolute;
+  width: 12px;
+  height: 1.5px;
+  border-radius: var(--g-radius-full);
+  background: currentColor;
+  content: '';
+}
+
+.clearSearchButton span {
+  transform: rotate(45deg);
+}
+
+.clearSearchButton span::after {
+  left: 0;
+  top: 0;
+  transform: rotate(90deg);
+}
+
+.filterSelect {
+  appearance: none;
+  width: 220px;
+  height: 38px;
+  padding: 0 36px 0 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  background: var(--color-surface);
-  color: var(--color-text);
+  background-color: var(--color-surface);
+  background-image: url('/icons/chevron-down.svg');
+  background-position: calc(100% - 12px) 50%;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+  color: var(--color-text-secondary);
   font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
   cursor: pointer;
 }
 
+.filterSelect:focus,
 .filterSelect:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  border-color: var(--color-border);
+  outline: none;
+  box-shadow: none;
+}
+
+@media (max-width: 720px) {
+  .filterRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .searchBox,
+  .filterSelect {
+    width: 100%;
+  }
 }
 
 .categoryBadge {
   font-size: var(--g-font-size-xs);
   padding: 2px 8px;
-  border-radius: 999px;
-  font-weight: 600;
+  border-radius: var(--g-radius-full);
+  font-weight: var(--g-font-weight-semibold);
   display: inline-block;
 }
 
 .stageBadge {
   font-size: var(--g-font-size-xs);
   padding: 2px 8px;
-  border-radius: 4px;
-  font-weight: 600;
+  border-radius: var(--g-radius-sm);
+  font-weight: var(--g-font-weight-semibold);
   display: inline-block;
 }
 
-.toolbarCard {
-  background: var(--color-surface);
+.pipelineCard {
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--color-border);
-  border-radius: var(--g-radius-md);
-  padding: var(--g-space-4);
-  margin-bottom: var(--g-space-4);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-xs);
 }
 
-.segmentedTabRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--g-space-2);
+.pipelineToggle {
+  display: inline-flex;
   align-items: center;
-  margin-bottom: var(--g-space-3);
-}
-
-.segmentedTab {
-  padding: 6px 14px;
-  font-size: var(--g-font-size-sm);
-  font-weight: 500;
-  border: 1px solid var(--color-border);
-  border-radius: var(--g-radius-md);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.segmentedTab:hover {
-  border-color: var(--color-primary);
+  justify-content: center;
+  gap: var(--g-space-2);
+  width: auto;
+  min-height: 44px;
+  padding: 0 var(--g-space-4);
+  border: none;
+  background: transparent;
   color: var(--color-primary);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  cursor: pointer;
 }
 
-.segmentedTabActive {
-  composes: segmentedTab;
-  background: var(--color-primary);
-  color: var(--color-primary-foreground);
-  border-color: var(--color-primary);
+.pipelineToggle:hover,
+.pipelineToggle:active {
+  background: transparent !important;
 }
 
-.segmentedTabActive:hover {
-  color: var(--color-primary-foreground);
+.pipelineChevron {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  transition: transform var(--g-transition-fast);
+}
+
+.pipelineChevronOpen {
+  transform: rotate(180deg);
 }
 
 .pipelineWrap {
-  margin-top: var(--g-space-3);
+  padding: var(--g-space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.listMeta {
+  margin-top: calc(16px - var(--g-space-6));
+  margin-bottom: calc(8px - var(--g-space-6));
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  line-height: 18px;
 }
 
 /* ── Category badge variants ─────────────────────────────────────────── */

@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 import { hubApi } from '@/api/services/infrastructure/nodes/hub';
 import type { ScheduledJob, JobRun } from '@/api/services/infrastructure/nodes/hub';
 import {
-  Stack, Card, Badge, Button, Skeleton, ErrorBanner, Breadcrumb,
+  Stack, Card, Badge, Button, Skeleton, ErrorBanner,
   DataTable, ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE,
 } from '@/components/ui';
 import type { AdminListPageSize, DataTableColumn } from '@/components/ui';
@@ -127,22 +127,30 @@ export default function InfraJobDetailPage() {
   if (!job) return null;
 
   return (
-    <Stack gap="lg">
-      <Breadcrumb items={[
-        { label: t('infrastructure.jobsTitle'), to: '/infrastructure/jobs' },
-        { label: job.name },
-      ]} />
-
-      <div className={styles.headerRow}>
-        <h1 className={styles.headerName}>{job.name}</h1>
-        <Badge variant={jobStatusVariant(job.lastStatus)}>{job.lastStatus ?? '—'}</Badge>
-        <Badge variant={job.enabled ? 'success' : 'default'}>
-          {job.enabled ? t('infrastructure.enabled', 'Enabled') : t('infrastructure.disabled', 'Disabled')}
-        </Badge>
+    <Stack gap="md">
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/infrastructure/jobs" className={styles.backLink} aria-label={t('infrastructure.jobsTitle')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{job.name}</h1>
+            <div className={styles.headerMeta}>
+              <Badge variant={jobStatusVariant(job.lastStatus)}>{job.lastStatus ?? '—'}</Badge>
+              <Badge variant={job.enabled ? 'success' : 'default'}>
+                {job.enabled ? t('infrastructure.enabled', 'Enabled') : t('infrastructure.disabled', 'Disabled')}
+              </Badge>
+            </div>
+          </div>
+        </div>
         <div className={styles.headerActions}>
           <Button
-            variant="secondary"
+            variant="primary"
             size="sm"
+            className={styles.headerActionButton}
             loading={busy === 'trigger'}
             onClick={() => {
               setBusy('trigger');
@@ -152,8 +160,9 @@ export default function InfraJobDetailPage() {
             {t('infrastructure.triggerJob')}
           </Button>
           <Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
+            className={styles.headerActionButton}
             loading={busy === 'toggle'}
             onClick={() => {
               setBusy('toggle');
@@ -163,34 +172,36 @@ export default function InfraJobDetailPage() {
             {job.enabled ? t('infrastructure.disable', 'Disable') : t('infrastructure.enable', 'Enable')}
           </Button>
         </div>
-      </div>
+      </section>
 
-      <Card>
+      <section className={styles.contentSection}>
         <h2 className={styles.sectionTitle}>{t('infrastructure.jobInfo', 'Job Information')}</h2>
-        <dl className={styles.infoGrid}>
-          <InfoRow label={t('infrastructure.jobId', 'Job ID')} value={<code className={styles.mono}>{job.id}</code>} />
-          <InfoRow label={t('infrastructure.jobName', 'Job Name')} value={job.name} />
-          <InfoRow label={t('infrastructure.description', 'Description')} value={job.description} />
-          <InfoRow label={t('infrastructure.interval', 'Interval')} value={formatNsDuration(job.interval)} />
-          <InfoRow label={t('infrastructure.status', 'Status')} value={<Badge variant={jobStatusVariant(job.lastStatus)}>{job.lastStatus ?? '—'}</Badge>} />
-          <InfoRow label={t('infrastructure.lastRun', 'Last Run')} value={job.lastRun ? new Date(job.lastRun).toLocaleString() : null} />
-          <InfoRow label={t('infrastructure.nextRun', 'Next Run')} value={job.nextRun ? new Date(job.nextRun).toLocaleString() : null} />
-          <InfoRow label={t('infrastructure.lastDuration', 'Last Duration')} value={formatNsDuration(job.lastDuration)} />
-          <InfoRow label={t('infrastructure.runCount', 'Runs')} value={job.runCount.toLocaleString()} />
-          <InfoRow label={t('infrastructure.errorCount', 'Errors')} value={
-            <span className={job.errorCount > 0 ? styles.errorCount : undefined}>
-              {job.errorCount.toLocaleString()}
-            </span>
-          } />
-          {job.lastError && (
-            <InfoRow label={t('infrastructure.lastError', 'Last Error')} value={
-              <code className={styles.errorText}>{job.lastError}</code>
+        <Card>
+          <dl className={styles.infoGrid}>
+            <InfoRow label={t('infrastructure.jobId', 'Job ID')} value={<code className={styles.mono}>{job.id}</code>} />
+            <InfoRow label={t('infrastructure.jobName', 'Job Name')} value={job.name} />
+            <InfoRow label={t('infrastructure.description', 'Description')} value={job.description} />
+            <InfoRow label={t('infrastructure.interval', 'Interval')} value={formatNsDuration(job.interval)} />
+            <InfoRow label={t('infrastructure.status', 'Status')} value={<Badge variant={jobStatusVariant(job.lastStatus)}>{job.lastStatus ?? '—'}</Badge>} />
+            <InfoRow label={t('infrastructure.lastRun', 'Last Run')} value={job.lastRun ? new Date(job.lastRun).toLocaleString() : null} />
+            <InfoRow label={t('infrastructure.nextRun', 'Next Run')} value={job.nextRun ? new Date(job.nextRun).toLocaleString() : null} />
+            <InfoRow label={t('infrastructure.lastDuration', 'Last Duration')} value={formatNsDuration(job.lastDuration)} />
+            <InfoRow label={t('infrastructure.runCount', 'Runs')} value={job.runCount.toLocaleString()} />
+            <InfoRow label={t('infrastructure.errorCount', 'Errors')} value={
+              <span className={job.errorCount > 0 ? styles.errorCount : undefined}>
+                {job.errorCount.toLocaleString()}
+              </span>
             } />
-          )}
-        </dl>
-      </Card>
+            {job.lastError && (
+              <InfoRow label={t('infrastructure.lastError', 'Last Error')} value={
+                <code className={styles.errorText}>{job.lastError}</code>
+              } />
+            )}
+          </dl>
+        </Card>
+      </section>
 
-      <Card>
+      <section className={styles.contentSection}>
         <div className={styles.runsHeader}>
           <h2 className={styles.sectionTitle}>{t('infrastructure.runHistory', 'Run History')}</h2>
           <Button variant="ghost" size="sm" onClick={() => refetchRuns()}>
@@ -215,7 +226,7 @@ export default function InfraJobDetailPage() {
           onOffsetChange={(v) => setOffset(v)}
           onLimitChange={(v) => { setPageLimit(v); setOffset(0); }}
         />
-      </Card>
+      </section>
     </Stack>
   );
 }

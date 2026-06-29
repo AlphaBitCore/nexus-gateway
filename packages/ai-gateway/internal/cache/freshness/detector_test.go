@@ -1,7 +1,7 @@
 package freshness
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"path/filepath"

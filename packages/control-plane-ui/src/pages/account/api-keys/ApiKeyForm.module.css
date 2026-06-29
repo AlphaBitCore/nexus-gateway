@@ -1,5 +1,5 @@
 .warningText {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .rawKeyBlock {

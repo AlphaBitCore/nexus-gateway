@@ -34,8 +34,13 @@ type PendingAuthzEntry struct {
 	// against the returned ID token's `nonce` claim on the callback — binding
 	// the token to this login and defeating ID-token replay/injection. Empty for
 	// SAML and local-password login.
-	IdPNonce  string
-	ExpiresAt time.Time
+	IdPNonce string
+	// OIDCRedirectURI is the redirect_uri derived from the incoming request at
+	// SSO-start time (scheme + host + X-Forwarded-Prefix + /authserver/oidc/callback).
+	// Stored here so the callback leg uses the exact same URI for the token
+	// exchange without re-deriving from a different request context.
+	OIDCRedirectURI string
+	ExpiresAt       time.Time
 }
 
 // PendingAuthzStore holds pending authorize-request snapshots keyed by the
@@ -88,6 +93,26 @@ func (s *PendingAuthzStore) SetIdPID(authctx, idpID string) bool {
 		return false
 	}
 	e.IdPID = idpID
+	s.data[authctx] = e
+	return true
+}
+
+// SetOIDCRedirectURI mutates the OIDCRedirectURI of an existing pending entry,
+// returning false if no live entry is found. OIDC SSO derives the callback URL
+// from the current request so reverse proxies and sub-path deployments return
+// to the same origin the browser used.
+func (s *PendingAuthzStore) SetOIDCRedirectURI(authctx, redirectURI string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.data[authctx]
+	if !ok {
+		return false
+	}
+	if time.Now().After(e.ExpiresAt) {
+		delete(s.data, authctx)
+		return false
+	}
+	e.OIDCRedirectURI = redirectURI
 	s.data[authctx] = e
 	return true
 }

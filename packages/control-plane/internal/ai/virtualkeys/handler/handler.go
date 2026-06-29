@@ -9,8 +9,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -270,7 +270,7 @@ func extractNullableTimeFromBody(body []byte, field string) (present bool, t *ti
 // lifetime cap on APPLICATION virtual keys, enforced identically at create
 // (CreateVirtualKey), edit (UpdateVirtualKey), and renewal (RenewVirtualKey).
 // An application VK must carry a bounded, future expiry so the re-approval
-// cadence (SEC-W2-01) cannot be escaped by minting/editing a never-expiring or
+// cadence cannot be escaped by minting/editing a never-expiring or
 // far-future key. Returns "" when expiresAt is acceptable, otherwise the 400
 // validation message; callers wrap it in errJSON(..., "validation_error", "").
 //

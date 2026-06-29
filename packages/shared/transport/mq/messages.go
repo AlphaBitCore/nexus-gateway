@@ -1,7 +1,7 @@
 package mq
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
@@ -48,7 +48,13 @@ type TrafficEventMessage struct {
 	OrgID      string `json:"orgId,omitempty"`
 	OrgName    string `json:"orgName,omitempty"`
 
-	Identity map[string]any `json:"identity"`
+	// Identity is the producer-built "who made this call" JSONB object. Typed as
+	// any so producers can supply either a typed struct (ai-gateway emits a
+	// compiled-encoder identityWire to avoid map reflection on the hot path) or a
+	// plain map[string]any (compliance-proxy). The wire encoding is unchanged JSON
+	// either way; this message is marshal-only (the consumer decodes into a
+	// separate consumer.TrafficEventMessage), so the field type is producer-local.
+	Identity any `json:"identity"`
 
 	// EndpointType classifies the request modality. Values are the
 	// canonical typology.EndpointKind strings ("chat", "embeddings",
@@ -58,6 +64,18 @@ type TrafficEventMessage struct {
 	// traffic_event.endpoint_type; consumed by the cost-formula registry
 	// in ai-gateway/internal/execution/estimator/.
 	EndpointType string `json:"endpointType,omitempty"`
+
+	// IngressFormat is the wire shape the CLIENT used on the request — the
+	// provcore.Format key of the ingress endpoint that was hit ("openai",
+	// "openai-responses", "anthropic", "gemini", …), post any
+	// x-nexus-aigw-body-format override. Stamped from audit.Record.IngressFormat;
+	// persisted onto traffic_event.ingress_format. The captured request AND
+	// response bodies are stored in THIS frame (client-facing), so the
+	// control-plane view-time normalize must decode them with this format, not
+	// the upstream provider's adapter_type (which describes the bytes we sent
+	// upstream — a body we never store). Empty for compliance-proxy + agent
+	// traffic (transparent forwarding; ingress == upstream).
+	IngressFormat string `json:"ingressFormat,omitempty"`
 
 	ProviderID       string `json:"providerId,omitempty"`
 	ProviderName     string `json:"providerName,omitempty"`
@@ -195,7 +213,7 @@ type TrafficEventMessage struct {
 
 	// Request/ResponseRedactionSpans carry the transform spans relocated to
 	// their offsets in the (post-redact) normalized payload, so the audit UI
-	// can mark each redaction inline. Only set when storageAction=="redact";
+	// can mark each redaction inline. Only set when the action is "redact";
 	// nil otherwise. Marshalled as json.RawMessage for the same schema-stability
 	// reason as the normalized payloads above.
 	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`
@@ -299,6 +317,6 @@ type AdminAuditMessage struct {
 	// Via records the channel that initiated the mutation — "assistant" for an
 	// AI-initiated admin write performed by the web assistant, empty for a direct
 	// human/UI action. The Hub consumer feeds it into the audit hash chain so the
-	// AI-attribution marker is tamper-evident (E90 I5).
+	// AI-attribution marker is tamper-evident.
 	Via string `json:"via,omitempty"`
 }

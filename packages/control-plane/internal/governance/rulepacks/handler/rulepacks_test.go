@@ -3,8 +3,8 @@ package rulepacks
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -40,6 +40,23 @@ type fakeStore struct {
 	deleteInstErr error
 	upsertOvrErr  error
 	loadForErr    error
+	upgradeRes    *rulepack.UpgradeResult
+	upgradeErr    error
+}
+
+func (f *fakeStore) UpgradeInstallToLatest(_ context.Context, installID string) (*rulepack.UpgradeResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.upgradeErr != nil {
+		return nil, f.upgradeErr
+	}
+	if f.upgradeRes != nil {
+		return f.upgradeRes, nil
+	}
+	if _, ok := f.installs[installID]; !ok {
+		return nil, rulepack.ErrInstallNotFound
+	}
+	return &rulepack.UpgradeResult{InstallID: installID, Upgraded: false}, nil
 }
 
 func newFakeStore() *fakeStore {
@@ -282,7 +299,7 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 
 // samplePack is a fully-valid pack: it satisfies the same ValidatePack contract
 // the JSON Create handler now enforces (namespaced name, v-prefixed semver,
-// severity ∈ {hard,soft,warn}, non-empty category, compilable pattern). F-0266.
+// severity ∈ {hard,soft,warn}, non-empty category, compilable pattern).
 func samplePack() rulepack.Pack {
 	return rulepack.Pack{
 		ID:         "pack-1",
@@ -573,7 +590,7 @@ func TestCreate_RuleMissingFields_Returns400(t *testing.T) {
 	}
 }
 
-// F-0266: a JSON-authored pack with an uncompilable regex must be rejected
+// A JSON-authored pack with an uncompilable regex must be rejected
 // with 400 — never silently stored (the evaluator skips uncompilable patterns,
 // so a stored "PII block" rule with a typo'd regex never fires). ImportPack
 // must NOT be reached.
@@ -598,7 +615,7 @@ func TestCreate_InvalidRegex_Returns400_NotStored(t *testing.T) {
 	}
 }
 
-// F-0266: a bad severity / missing category authored via JSON Create must also
+// A bad severity / missing category authored via JSON Create must also
 // be rejected with 400 — the YAML Import validator's checks now apply here too.
 func TestCreate_BadSeverity_Returns400(t *testing.T) {
 	store := newFakeStore()
@@ -1367,3 +1384,80 @@ func TestRegisterRoutes_DoesNotPanic(t *testing.T) {
 
 // Avoid unused bytes import
 var _ = bytes.NewReader
+
+func TestUpgradeInstall_Advances_FiresInvalidation(t *testing.T) {
+	store := newFakeStore()
+	store.seedInstall(rulepack.Install{ID: "inst-1", BoundHookID: "h1", Enabled: true})
+	store.upgradeRes = &rulepack.UpgradeResult{
+		InstallID: "inst-1", PackName: "nexus/pii",
+		FromVersion: "v1.0.0", ToVersion: "v2.0.0", Upgraded: true,
+	}
+	spy := &hubSpy{}
+	h := newTestHandler(store, spy)
+	c, rec := echoCtx(http.MethodPost, "/rule-pack-installs/inst-1/upgrade", "")
+	c.SetParamNames("installId")
+	c.SetParamValues("inst-1")
+	if err := h.UpgradeInstall(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"upgraded":true`) || !strings.Contains(rec.Body.String(), `"toVersion":"v2.0.0"`) {
+		t.Errorf("unexpected body: %s", rec.Body.String())
+	}
+	if len(spy.seen()) == 0 {
+		t.Error("expected hub invalidation when an upgrade changes the effective rule set")
+	}
+}
+
+func TestUpgradeInstall_NoOp_SkipsInvalidation(t *testing.T) {
+	store := newFakeStore()
+	store.seedInstall(rulepack.Install{ID: "inst-1", BoundHookID: "h1", Enabled: true})
+	store.upgradeRes = &rulepack.UpgradeResult{InstallID: "inst-1", Upgraded: false}
+	spy := &hubSpy{}
+	h := newTestHandler(store, spy)
+	c, rec := echoCtx(http.MethodPost, "/rule-pack-installs/inst-1/upgrade", "")
+	c.SetParamNames("installId")
+	c.SetParamValues("inst-1")
+	if err := h.UpgradeInstall(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"upgraded":false`) {
+		t.Errorf("unexpected body: %s", rec.Body.String())
+	}
+	if len(spy.seen()) != 0 {
+		t.Error("no-op upgrade must NOT fan out hook invalidation")
+	}
+}
+
+func TestUpgradeInstall_NotFound_Returns404(t *testing.T) {
+	store := newFakeStore()
+	store.upgradeErr = rulepack.ErrInstallNotFound
+	h := newTestHandler(store, nil)
+	c, rec := echoCtx(http.MethodPost, "/rule-pack-installs/missing/upgrade", "")
+	c.SetParamNames("installId")
+	c.SetParamValues("missing")
+	if err := h.UpgradeInstall(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d; want 404", rec.Code)
+	}
+}
+
+func TestUpgradeInstall_EmptyInstallID_Returns400(t *testing.T) {
+	h := newTestHandler(newFakeStore(), nil)
+	c, rec := echoCtx(http.MethodPost, "/rule-pack-installs//upgrade", "")
+	c.SetParamNames("installId")
+	c.SetParamValues("")
+	if err := h.UpgradeInstall(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400", rec.Code)
+	}
+}

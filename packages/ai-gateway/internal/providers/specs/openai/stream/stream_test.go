@@ -213,6 +213,30 @@ func TestStreamDecoder_usageChunk_extractedViaSharedNormalize(t *testing.T) {
 	}
 }
 
+// TestStreamDecoder_nullUsageChunk_noExtraction guards the IsObject() usage
+// gate: OpenAI-stream content deltas carry `"usage": null` on every non-final
+// chunk, which gjson reports as Exists()==true. The decoder must NOT treat a
+// null usage as a usage block (no full-normalize, no Usage stamped) — only a
+// real usage object on the final include_usage chunk sets Chunk.Usage.
+func TestStreamDecoder_nullUsageChunk_noExtraction(t *testing.T) {
+	payload := `{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}],"usage":null}`
+	body := sseBody("data: " + payload + "\n\n" + "data: [DONE]\n\n")
+	d := ostream.NewStreamDecoder(slog.Default())
+	sess, _ := d.Open(body, typology.WireShapeOpenAIChat)
+	defer sess.Close()
+
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if chunk.Delta != "hi" {
+		t.Errorf("Delta: got %q, want hi", chunk.Delta)
+	}
+	if chunk.Usage != nil {
+		t.Errorf("Usage must be nil for a null-usage chunk, got %+v", chunk.Usage)
+	}
+}
+
 func TestStreamDecoder_contextCancelled_returnsCtxErr(t *testing.T) {
 	// After [DONE] the session is marked done; closing the context before
 	// a call returns the context error.
@@ -275,5 +299,27 @@ func TestStreamDecoder_rawBytesForwardedVerbatim(t *testing.T) {
 	expected := "data: " + payload + "\n\n"
 	if string(chunk.RawBytes) != expected {
 		t.Errorf("RawBytes: got %q, want %q", chunk.RawBytes, expected)
+	}
+}
+
+// TestStreamDecoder_finishReason_populated proves the OpenAI decoder surfaces
+// the canonical finish_reason from the trailing delta-empty chunk so a
+// re-encoder (buffer mode) can preserve it instead of collapsing to "stop".
+func TestStreamDecoder_finishReason_populated(t *testing.T) {
+	for _, fr := range []string{"tool_calls", "length", "content_filter"} {
+		d := ostream.NewStreamDecoder(slog.Default())
+		body := sseBody(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"` + fr + `"}]}` + "\n\n")
+		sess, err := d.Open(body, typology.WireShapeOpenAIChat)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		chunk, err := sess.Next(context.Background())
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if chunk.FinishReason != fr {
+			t.Errorf("FinishReason = %q, want %q", chunk.FinishReason, fr)
+		}
+		_ = sess.Close()
 	}
 }

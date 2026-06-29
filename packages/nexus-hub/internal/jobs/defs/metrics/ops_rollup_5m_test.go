@@ -2,8 +2,8 @@ package metrics
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 

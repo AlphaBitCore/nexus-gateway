@@ -227,6 +227,14 @@
     "cachedInputReadPriceHelp": "Precio por millón de tokens de entrada en caché (HIT). Opcional. Si está vacío, se factura según Entrada $/M. Multiplicadores típicos: Anthropic ~0.1×, OpenAI ~0.5×, Gemini ~0.25×.",
     "cachedInputWritePriceHelp": "Precio por millón de tokens de creación de caché (WRITE). Opcional. Si está vacío, se factura según Entrada $/M. Multiplicador típico: Anthropic ~1.25×.",
     "addAnotherModel": "+ Agregar otro modelo",
+    "wizardModelsFetchHint": "La obtención de modelos está disponible para proveedores OpenAI / compatibles con OpenAI.",
+    "wizardModelsFetchButton": "Obtener desde /v1/models",
+    "wizardModelsFetching": "Obteniendo…",
+    "wizardModelsFetchDisabledHint": "Proporcione primero una URL base y una clave API",
+    "wizardModelsFetchOpenAIOnly": "La obtención de modelos desde /v1/models solo está disponible para proveedores OpenAI / compatibles con OpenAI. Agregue modelos manualmente a continuación.",
+    "wizardModelsFetchError": "Error al obtener modelos",
+    "wizardModelsFetchCount": "Se obtuvieron {{count}} modelos — seleccione los que desea agregar.",
+    "wizardModelsTypeGuessHint": "Los tipos de modelo se infieren del identificador — verifíquelos antes de guardar.",
     "emptyModelsHint": "Aún no hay modelos en este flujo. Puede agregarlos ahora o desde la página del proveedor después de la creación.",
     "review": "Revisión",
     "reviewProvider": "Proveedor",
@@ -292,6 +300,7 @@
     "modelTableFeatures": "Características",
     "modelTableInputPrice": "Entrada $/M",
     "modelTableOutputPrice": "Salida $/M",
+    "pricingNotSet": "Precio no configurado",
     "modelTableCachedInputReadPrice": "Lectura caché $/M",
     "modelTableCachedInputWritePrice": "Escritura caché $/M",
     "modelTableContext": "Contexto",
@@ -833,10 +842,10 @@
       "importButton": "Importar",
       "importWarnings": "Advertencias",
       "importErrors": "Errores",
-      "bindSuccess": "Paquete de reglas instalado",
-      "bindTitle": "Vincular paquete de reglas",
-      "bindSubtitle": "Asocia una versión del paquete al hook seleccionado y controla si comienza habilitado.",
-      "bindPack": "Paquete",
+      "bindSuccess": "Paquetes de reglas instalados",
+      "bindTitle": "Vincular paquetes de reglas",
+      "bindSubtitle": "Busca y selecciona uno o más paquetes de reglas para instalarlos en el hook actual (cada uno se vincula en su última versión).",
+      "bindPack": "Paquetes de reglas",
       "bindChooseVersion": "Selecciona una versión",
       "bindEnabled": "Habilitado",
       "bindButton": "Vincular",
@@ -898,26 +907,48 @@
       "overridesPerInstallScope": "Los overrides solo aplican a este install. Otros installs del mismo hook, o el mismo paquete vinculado en otro hook, conservan sus propias filas de override.",
       "addRule": "Agregar regla",
       "colFlags": "Flags",
+      "perfTest": {
+        "label": "Rendimiento Vectorscan",
+        "test": "Probar rendimiento",
+        "testing": "Probando…",
+        "clean": "normal",
+        "adversarial": "adverso",
+        "unreachable": "Pasarela de IA inaccesible",
+        "failed": "La prueba de rendimiento falló",
+        "verdict": {
+          "ok": "Rápido",
+          "slow": "Lento",
+          "invalid": "Inválido"
+        }
+      },
       "colLabels": "Etiquetas (separadas por coma)",
       "formMode": "Modo formulario",
       "jsonMode": "Modo JSON",
-      "ruleItemTitle": "Regla"
+      "ruleItemTitle": "Regla",
+      "bindOptionMulti": "{{name}} · última {{version}} ({{count}} versiones)",
+      "bindOptionSingle": "{{name}} · {{version}}",
+      "bindSearchPlaceholder": "Buscar paquetes de reglas…",
+      "bindEmptyLabel": "Selecciona paquetes de reglas",
+      "bindButtonMulti": "Vincular {{count}} paquete(s)",
+      "importLintTitle": "Compatibilidad del motor y rendimiento",
+      "severityTip": "La severidad es una señal de clasificación, no la acción aplicada. La política de acción onMatch del hook vinculado decide si una coincidencia bloquea, redacta o se marca.",
+      "severityHard": "hard — crítico",
+      "severitySoft": "soft — elevado",
+      "severityWarn": "warn — aviso",
+      "upgradeButton": "Actualizar a la última",
+      "upgradeSuccess": "{{name}} actualizado de {{from}} a {{to}}",
+      "upgradeNoop": "{{name}} ya está en la última versión ({{to}})"
     },
     "form": {
       "placeholderName": "Nombre",
       "placeholderValue": "Valor",
       "placeholderOneValuePerLine": "Un valor por línea",
       "onMatchSection": "Política de acción",
-      "onMatchHelp": "Controla qué sucede cuando este hook coincide. La acción in-flight modela lo que recibe el proveedor upstream; la acción de almacenamiento modela lo que persiste el registro de auditoría. Las dos son independientes.",
-      "inflightAction": "Acción in-flight",
-      "inflightApprove": "Aprobar (reenviar original)",
-      "inflightBlockHard": "Bloqueo duro (HTTP 403)",
-      "inflightBlockSoft": "Bloqueo suave (HTTP 246)",
-      "inflightRedact": "Redactar (reenviar saneado)",
-      "storageAction": "Acción de almacenamiento",
-      "storageKeep": "Conservar (almacenar original en auditoría)",
-      "storageRedact": "Redactar (almacenar copia saneada)",
-      "storageDropContent": "Descartar contenido (solo metadatos)",
+      "onMatchHelp": "Controla qué sucede cuando este hook coincide. Aprobar reenvía y almacena el tráfico sin cambios; redactar reescribe la carga (la misma copia saneada se reenvía, se devuelve y se almacena); bloquear rechaza la solicitud y almacena la copia saneada.",
+      "action": "Acción",
+      "actionApprove": "Aprobar (reenviar y almacenar sin cambios)",
+      "actionRedact": "Redactar (reescribir y almacenar saneado)",
+      "actionBlock": "Bloquear (rechazar; almacenar copia saneada)",
       "replacement": "Plantilla de reemplazo",
       "replacementHelp": "Marcador usado en los spans redactados. Acepta el token <RULE_ID>.",
       "applicableTrafficKinds": "Aplica a tipos de tráfico",
@@ -956,6 +987,7 @@
     "backToList": "Volver a la lista",
     "goToDetail": "Ir al detalle de la clave virtual",
     "modelAccess": "Acceso a modelos",
+    "selectModels": "Seleccionar modelos",
     "searchModels": "Buscar modelos...",
     "selectAll": "Seleccionar todo",
     "deselectAll": "Deseleccionar todo",
@@ -1022,8 +1054,8 @@
     "virtualKeyCreatedMsg": "Mensaje de clave virtual creada",
     "nameHelpText": "Etiqueta legible para esta clave virtual. Se usa como nombre de visualización en paneles y registros de auditoría.",
     "namePlaceholder": "engineering-openai",
-    "projectTooltip": "Tooltip de proyecto",
-    "expirationTooltip": "Tooltip de expiración",
+    "projectTooltip": "Proyecto al que pertenece esta clave virtual. Se utiliza para la atribución del tráfico y el cálculo de cuotas.",
+    "expirationTooltip": "Las claves virtuales de aplicación requieren una fecha de vencimiento máxima de 3 meses. La clave no se puede usar después de su vencimiento.",
     "disabledKeysTooltip": "Tooltip de claves deshabilitadas",
     "vkType": "Tipo de Virtual Key",
     "vkStatus": "Estado de Virtual Key",
@@ -1041,7 +1073,8 @@
     "deleted": "Clave virtual eliminada",
     "rejectVk": "Rechazar clave virtual",
     "rejectConfirm": "¿Está seguro de que desea rechazar la clave virtual \"{{name}}\"?",
-    "rejectReason": "Motivo"
+    "rejectReason": "Motivo",
+    "selectProject": "Seleccionar proyecto"
   },
   "credentials": {
     "title": "Credenciales",
@@ -1802,19 +1835,7 @@
       },
       "ruleDesc": {
         "claudeCodeCchStrip": "Elimina el nonce de facturación de Claude Code (cch=<hex>) de los system prompts de Anthropic para que las claves de caché se mantengan estables entre sesiones consecutivas que comparten el mismo system prompt.",
-        "bedrockClaudeCchStrip": "El mismo eliminador de nonce para solicitudes Claude por Bedrock — Bedrock usa el formato Anthropic Messages, por lo que el token cch aparece en la misma posición.",
-        "openaiFieldOrder": "Canonicaliza el orden de los campos JSON de nivel superior para los cuerpos en formato OpenAI, de modo que las claves de caché sean estables entre SDKs (Python / Go / TypeScript producen órdenes diferentes).",
-        "azureOpenaiFieldOrder": "Canonicalización del orden de campos para Azure OpenAI, que usa el mismo formato de cable que OpenAI.",
-        "deepseekFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de DeepSeek.",
-        "glmFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de GLM (Zhipu).",
-        "moonshotFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de Moonshot.",
-        "mistralFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de Mistral.",
-        "xaiFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de xAI (Grok).",
-        "groqFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de Groq.",
-        "perplexityFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de Perplexity.",
-        "togetherFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de Together AI.",
-        "fireworksFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de Fireworks AI.",
-        "minimaxFieldOrder": "Canonicalización del orden de campos para la API compatible con OpenAI de MiniMax."
+        "bedrockClaudeCchStrip": "El mismo eliminador de nonce para solicitudes Claude por Bedrock — Bedrock usa el formato Anthropic Messages, por lo que el token cch aparece en la misma posición."
       },
       "overridesTitle": "Anulaciones activas por proveedor",
       "overridesSubtitle": "Proveedores con al menos una opción de caché anulada respecto al valor por defecto del adaptador.",
@@ -2769,7 +2790,10 @@
         "requestBody": "Cuerpo de la solicitud",
         "responseBody": "Cuerpo de la respuesta",
         "routingTrace": "Trazo de enrutamiento",
-        "details": "Detalles"
+        "details": "Detalles",
+        "errorBadge": "Error",
+        "errorTitle": "Error de gateway / proveedor — HTTP {{status}} · {{code}}",
+        "errorHint": "Esta fila es un sobre de error, no contenido de chat."
       },
       "tabs": {
         "overview": "Resumen",
@@ -3564,6 +3588,12 @@
     "certExpiresAt": "Vencimiento del certificado",
     "allStatuses": "Todos los estados",
     "allOS": "Todas las plataformas",
+    "statusActive": "Activo",
+    "statusEnrolled": "Inscrito",
+    "statusOffline": "Desconectado",
+    "statusRevoked": "Revocado",
+    "osMacOS": "macOS",
+    "osWindows": "Windows",
     "certSerial": "Serie del certificado",
     "enrollDevice": "Registrar dispositivo",
     "hostnameHint": "Nombre de host (opcional)",
@@ -4338,7 +4368,7 @@
     "jobsTitle": "Tareas Programadas",
     "jobsDescription": "Estado y gestión de tareas en segundo plano",
     "killSwitchTitle": "Interruptor de Emergencia del Fleet",
-    "killSwitchDescription": "Detenga inmediatamente la inspección TLS en TODOS los Compliance Proxies y Agents del fleet. Úselo solo en emergencias: un despliegue defectuoso de un proveedor, un hook regresivo que bloquea tráfico legítimo, o un fallo crítico de NetworkExtension.",
+    "killSwitchDescription": "Control de emergencia para detener la inspección TLS en proxies y agents.",
     "killSwitchEngaged": "ACTIVADO — Inspección TLS deshabilitada en todo el fleet",
     "killSwitchDisengaged": "Operación normal — Inspección TLS activa",
     "killSwitchStatusComplianceProxy": "Compliance Proxies",
@@ -5062,7 +5092,7 @@
     "agentSetup": {
       "downloadTitle": "1. Descarga el instalador",
       "downloadHintMacOS": "Distribuye el .pkg firmado + notarizado a través de tu canal de distribución de software (Jamf, Kandji, un recurso compartido interno, GitHub Releases, etc.). Los usuarios finales instalan con doble clic.",
-      "downloadHintWindows": "Instalador MSI WiX v4 (firmado cuando el cert Authenticode esté provisionado). Doble clic ejecuta el asistente estándar de Windows: registra Nexus Agent como Servicio de Windows, instala el driver kernel WinDivert, fija variables de entorno a nivel sistema NEXUS_DEVICE_CA_PEM + NODE_EXTRA_CA_CERTS + REQUESTS_CA_BUNDLE + SSL_CERT_FILE para que Node.js / Python / Go / curl confíen en el TLS interceptado por el agente. Apto para distribución vía GPO / SCCM / Intune.",
+      "downloadHintWindows": "Instalador MSI WiX v4 (firmado cuando el cert Authenticode esté provisionado). Doble clic ejecuta el asistente estándar de Windows: registra Nexus Agent como Servicio de Windows, instala el driver kernel callout NexusWFP de Windows Filtering Platform (WFP) firmado vía pnputil, fija variables de entorno a nivel sistema NEXUS_DEVICE_CA_PEM + NODE_EXTRA_CA_CERTS + REQUESTS_CA_BUNDLE + SSL_CERT_FILE para que Node.js / Python / Go / curl confíen en el TLS interceptado por el agente. Apto para distribución vía GPO / SCCM / Intune.",
       "downloadHintLinux": "Binario Go raw cross-compilado (sin empaquetado .deb/.rpm todavía). Operadores lo instalan manualmente bajo una unit de systemd — ver Step 2. Sirve igual para servidores headless y workstations dev.",
       "downloadFilenameMacOS": "NexusAgent-<VERSION>.pkg",
       "downloadFilenameWindows": "NexusAgent-<VERSION>.msi",
@@ -5075,9 +5105,9 @@
       "installMacOSStep3": "macOS muestra una notificación «System Extension Blocked» en el primer inicio. Abre Configuración del Sistema → General → Ítems de inicio y extensiones → Extensiones de red y aprueba com.nexus-gateway.agent.extension de YOUR ORG NAME. (Para parques administrados por MDM, despliega la plantilla .mobileconfig que viene con el agente para preaprobar.)",
       "installMacOSStep4": "En el primer inicio, postinstall genera una CA del dispositivo y la instala en el Llavero del Sistema como ancla raíz de confianza — esto es lo que hace que las conexiones TLS interceptadas por el agente sean confiables para cada cliente HTTPS local.",
       "installWindowsStep1": "Doble clic en NexusAgent-<VERSION>.msi. Windows muestra el asistente estándar de instalación (Welcome → License → Install Location → Confirm → Install → Finish). Haz clic en Siguiente; UAC pedirá elevación una vez porque el MSI registra un servicio del sistema y un driver kernel.",
-      "installWindowsStep2": "El asistente instala: nexus-agent.exe (servicio) + nexus-agent-tray.exe (auto-arranque en login) + nexus-dashboard.exe (acceso directo del menú Inicio) bajo C:\\Program Files\\Nexus Agent\\; WinDivert64.sys + WinDivert.dll para captura kernel de paquetes; %ProgramData%\\NexusAgent\\ para CA del dispositivo + config + logs.",
+      "installWindowsStep2": "El asistente instala: nexus-agent.exe (servicio) + nexus-agent-tray.exe (auto-arranque en login) + nexus-dashboard.exe (acceso directo del menú Inicio) bajo C:\\Program Files\\Nexus Agent\\; el driver callout NexusWFP firmado (nexus-wfp.sys + nexus-wfp.inf + catálogo .cat, por arquitectura amd64 + arm64) registrado en el driver store de Windows vía `pnputil /add-driver nexus-wfp.inf /install` — pnputil es dueño del driver store, así que el driver no se copia en System32\\drivers; %ProgramData%\\NexusAgent\\ para CA del dispositivo + config + logs.",
       "installWindowsStep3": "En el primer arranque del servicio el daemon genera la CA del dispositivo en %ProgramData%\\NexusAgent\\device-ca.pem y la importa al store Root LocalMachine de Windows vía certutil. El MSI también fija variables de entorno a nivel sistema NEXUS_DEVICE_CA_PEM / NODE_EXTRA_CA_CERTS / REQUESTS_CA_BUNDLE / SSL_CERT_FILE para que Node.js (Claude CLI, Cursor, apps Electron), Python (requests, boto3, pip), Go y curl confíen automáticamente en el TLS interceptado por el agente sin configuración por app. Cierra sesión y vuelve a entrar (o ejecuta `refreshenv` en cualquier cmd / pwsh) para que los procesos ya en ejecución vean las variables.",
-      "installWindowsStep4": "Verificación: en PowerShell elevado ejecuta `sc.exe query NexusAgent` (esperando STATE: 4 RUNNING) y `Get-Item Env:NEXUS_DEVICE_CA_PEM` (esperando C:\\ProgramData\\NexusAgent\\device-ca.pem). El ícono de bandeja se vuelve verde en pocos segundos. Si WinDivert no cargó (raro, casi siempre conflictos de SecureBoot / EDR corporativo), la bandeja se vuelve amarilla y el agente degrada a system-proxy fallback — revisa la página Diagnostics del Dashboard para el código de error Win32.",
+      "installWindowsStep4": "Verificación: en PowerShell elevado ejecuta `sc.exe query NexusAgent` (esperando STATE: 4 RUNNING), `sc.exe query NexusWFP` (el servicio del driver kernel — esperando RUNNING) y `Get-Item Env:NEXUS_DEVICE_CA_PEM` (esperando C:\\ProgramData\\NexusAgent\\device-ca.pem). El ícono de bandeja se vuelve verde en pocos segundos. Si el driver NexusWFP no cargó (raro, casi siempre conflictos de SecureBoot / EDR corporativo), la bandeja se vuelve amarilla y el agente degrada a system-proxy fallback (HTTP CONNECT) — la mayoría del tráfico TCP sigue fluyendo pero la captura UDP / QUIC no está disponible; revisa la página Diagnostics del Dashboard para ver el error.",
       "installLinuxStep1Deb": "curl -L -o /usr/local/bin/nexus-agent {{downloadBase}}/downloads/nexus-agent-linux-latest && sudo chmod +x /usr/local/bin/nexus-agent",
       "installLinuxStep1Rpm": "# El mismo binario funciona en cualquier Linux glibc (Debian / Ubuntu / RHEL / Fedora / SUSE / Amazon Linux). No hay empaquetado por distro hoy.",
       "installLinuxStep2": "Crea una unit de systemd en /etc/systemd/system/nexus-agent.service: [Unit] After=network.target / [Service] ExecStart=/usr/local/bin/nexus-agent run --config /etc/nexus-agent/agent.yaml User=root Restart=always / [Install] WantedBy=multi-user.target. Luego sudo systemctl daemon-reload && sudo systemctl enable --now nexus-agent.",
@@ -5184,13 +5214,13 @@
             }
           },
           "windows": {
-            "windivertFailed": {
-              "q": "WinDivert no cargó — la bandeja se volvió amarilla",
-              "a": "Causas más comunes: (1) SecureBoot está aplicando política cross-cert estricta y rechaza la cadena de firma de WinDivert64.sys — deshabilita SecureBoot o pide a IT que despliegue el cross-cert vía GPO. (2) Un EDR corporativo (CrowdStrike, SentinelOne, Defender for Endpoint) bloquea drivers kernel desconocidos — solicita regla allow por proveedor para WinDivert v2.2.2 publicado por basil00. (3) Otra herramienta de captura de paquetes (Wireshark/npcap, Sysmon) ya tiene el mismo slot kernel. Mientras WinDivert no está disponible, el agente corre en modo system-proxy fallback (HTTP CONNECT) — la mayoría del tráfico fluye pero captura UDP / QUIC no está disponible."
+            "wfpDriverFailed": {
+              "q": "El driver NexusWFP no cargó — la bandeja se volvió amarilla",
+              "a": "Causas más comunes: (1) SecureBoot está rechazando la cadena de firma del driver NexusWFP firmado — pide a IT que confíe o despliegue el certificado de firma (por ejemplo vía GPO). (2) Un EDR corporativo (CrowdStrike, SentinelOne, Defender for Endpoint) bloquea drivers kernel desconocidos — solicita una regla allow para el driver NexusWFP firmado. (3) Otra herramienta WFP / de captura de paquetes (Wireshark/npcap, Sysmon) tiene un slot de filtro en conflicto. Mientras el driver no está disponible, el agente corre en modo system-proxy fallback (HTTP CONNECT) — la mayoría del tráfico TCP sigue fluyendo pero la captura UDP / QUIC no está disponible. Revisa el estado del driver con `sc.exe queryex NexusWFP`."
             },
             "msiHang": {
               "q": "Instalación o desinstalación MSI se cuelga en «Starting services» / «Stopping services»",
-              "a": "Dos causas conocidas: (1) el servicio agent sigue corriendo y WinDivert sostiene un divert handle — abre Services.msc, detén NexusAgent primero, luego re-ejecuta el desinstalador. (2) Servicio SCM WinDivert quedó atascado en STOP_PENDING — `sc.exe queryex WinDivert` muestra PID 0 si así; un reinicio es la recuperación limpia. **Nunca fuerces delete del servicio kernel con `sc delete` mientras está STOP_PENDING** — riesgo de BSOD DRIVER_POWER_STATE_FAILURE en el próximo arranque."
+              "a": "Dos causas conocidas: (1) el servicio agent sigue corriendo y el driver NexusWFP sigue activo — abre Services.msc, detén NexusAgent primero, luego re-ejecuta el desinstalador (que detiene el servicio NexusWFP y luego elimina el driver con `pnputil /delete-driver /uninstall /force`). (2) El servicio kernel NexusWFP quedó atascado en STOP_PENDING — `sc.exe queryex NexusWFP` muestra PID 0 si así; un reinicio es la recuperación limpia. **Nunca fuerces delete del servicio kernel con `sc delete` mientras está STOP_PENDING** — riesgo de BSOD DRIVER_POWER_STATE_FAILURE en el próximo arranque."
             }
           },
           "linux": {
@@ -5838,9 +5868,13 @@
     "title": "Cumplimiento de streaming",
     "subtitle": "Valor predeterminado global para el manejo de respuestas SSE. Las anulaciones por host están en Dominios de Intercepción; las de por proveedor en Proveedores.",
     "defaultMode": "Modo predeterminado",
-    "defaultModeHelp": "passthrough: solo retransmisión. buffer_full_block: retiene la respuesta + ejecuta hook + puede bloquear. chunked_async: retransmisión en tiempo real + hook de solo auditoría.",
+    "defaultModeHelp": "El modo stream es de alto rendimiento pero de mejor esfuerzo en el cable; para una redacción/bloqueo garantizados elija Buffer.",
+    "disclosureTitle": "Cómo gestiona el cumplimiento cada modo",
+    "disclosurePassthrough": "Se retransmite en tiempo real; el análisis de cumplimiento se ejecuta solo al momento de almacenar — sin redacción en vuelo. Latencia mínima, sin aplicación en vuelo.",
+    "disclosureStream": "Streaming en tiempo real con redacción en vuelo en modo de mejor esfuerzo. Alto rendimiento, pero conlleva un riesgo de fragmento acotado: nunca se entrega un valor sensible completo, pero un breve fragmento inicial puede llegar al cliente antes de que se active la redacción. Elija buffer_full_block para una redacción garantizada.",
+    "disclosureBuffer": "La respuesta completa se almacena en búfer y se analiza antes de entregar cualquier byte — la redacción y el bloqueo estricto están garantizados (cumplimiento fuerte), a costa de un mayor tiempo hasta el primer byte.",
     "chunkBytes": "Bytes por fragmento",
-    "chunkBytesHelp": "chunked_async: bytes por punto de control. Se adapta hacia arriba cuando total/chunk_bytes > 64.",
+    "chunkBytesHelp": "chunked_async: bytes analizados por punto de control. Se adapta hacia arriba para respuestas grandes.",
     "hookTimeoutMs": "Tiempo de espera del hook (ms)",
     "hookTimeoutMsHelp": "Presupuesto de ejecución por hook. Excederlo activa fail_behavior.",
     "maxBufferBytes": "Búfer máximo (bytes)",
@@ -5849,12 +5883,11 @@
     "failBehaviorHelp": "fail_open: continúa ante error/tiempo de espera del hook. fail_close: bloquea (buffer_full_block) o marca auditoría (chunked_async).",
     "captureRequest": "Capturar cuerpo de solicitud (predeterminado; el host puede anular)",
     "captureResponse": "Capturar cuerpo de respuesta (predeterminado; el host puede anular)",
-    "rawSpillEnabled": "Derramar cuerpos más grandes que el umbral en línea a SpillStore (predeterminado: localfs).",
-    "bufferModifyWarning": "Aviso: buffer_full_block ignora silenciosamente las decisiones Modify de los hooks de respuesta (el cuerpo original se reproduce sin cambios). Use chunked_async si necesita reescritura."
+    "rawSpillEnabled": "Derramar cuerpos más grandes que el umbral en línea a SpillStore (predeterminado: localfs)."
   },
   "identityProvider": {
     "title": "Identity Provider",
-    "subtitle": "Proveedores de identidad externos (Okta, Azure AD, Google Workspace, ...) en los que la plataforma confía para el inicio de sesión único y el aprovisionamiento SCIM. Nexus es el Service Provider; configure el IdP en el proveedor primero, luego regístrelo aquí.",
+    "subtitle": "Administra IdP externos para SSO y aprovisionamiento SCIM; configúralos primero en el proveedor y luego regístralos aquí.",
     "localIdpNote": "Almacén local de usuarios integrado. No recibe envíos SCIM y no tiene asignaciones de grupos externos.",
     "addIdp": "Añadir proveedor de identidad",
     "testConnection": "Probar",
@@ -6217,7 +6250,7 @@
         "disableConfirmButton": "Desactivar ahora",
         "disableSuccess": "Caché semántica desactivada en toda la flota",
         "disableError": "No se pudo desactivar la caché semántica",
-        "disableMenuTrigger": "Desactivar cachés…",
+        "disableMenuTrigger": "Desactivar cachés",
         "disableSemanticItem": "Desactivar caché semántica",
         "disableExtractItem": "Desactivar caché exacta",
         "disableAllItem": "Desactivar toda la caché de la pasarela",
@@ -6242,7 +6275,8 @@
         "ttlHelp": "Tiempo de validez de una respuesta cacheada. Rango 60–604800 (1 minuto a 7 días). Predeterminado 3600 (1 hora). Sube para FAQs estáticas, baja para respuestas sensibles al tiempo.",
         "ttlOutOfRange": "TTL debe estar entre 60 y 604800 segundos cuando está habilitada.",
         "saved": "Configuración de caché exacta guardada."
-      }
+      },
+      "perfTip": "Nota de rendimiento: la caché es opcional y cada solicitud paga el coste de una búsqueda. Cuando la tasa de aciertos es baja, esa sobrecarga supera el ahorro y puede ralentizar la pasarela: actívala solo cuando tu tráfico repite prompts con frecuencia."
     }
   },
   "cache": {

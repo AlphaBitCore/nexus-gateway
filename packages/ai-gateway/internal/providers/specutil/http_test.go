@@ -198,7 +198,7 @@ func TestLiveTransport_RoundTripDelegatesToActiveRT(t *testing.T) {
 	}
 }
 
-// TestProbeClient_BlocksCloudMetadata proves the F-0369 SSRF guard: the shared
+// TestProbeClient_BlocksCloudMetadata proves the SSRF guard: the shared
 // provider-probe client refuses to dial the cloud-metadata endpoint (and the
 // broader link-local range) even though the probe URL is admin-supplied. The
 // dial is aborted by the ssrf-guard before any bytes leave the host.

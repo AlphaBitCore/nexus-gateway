@@ -64,13 +64,17 @@ func TestDecodeConfig_UnmarshalErrorBranch(t *testing.T) {
 	if err == nil {
 		t.Fatal("decodeConfig must return error when JSON shape mismatches T")
 	}
-	if !strings.Contains(err.Error(), "url") || !strings.Contains(err.Error(), "string") {
+	// The error must cite the offending field and the target type. Match
+	// case-insensitively: the JSON library reports the field either by its json
+	// tag ("url") or its Go field name ("URL") depending on the implementation.
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "url") || !strings.Contains(lower, "string") {
 		t.Errorf("expected unmarshal-into-string error citing field, got %v", err)
 	}
 }
 
 // TestPostJSON_TransportError covers the `c.Do(req)` error arm of postJSON.
-// F-0370: the raw transport error MUST NOT propagate — it is collapsed to the
+// The raw transport error MUST NOT propagate — it is collapsed to the
 // single generic delivery error so a caller reading the dispatch row cannot
 // distinguish "unreachable" / "TLS failure" / "SSRF-guard reject" from each
 // other or from a non-2xx status. The status is dropped to 0.
@@ -235,7 +239,7 @@ func TestWebhookSender_NewRequestError(t *testing.T) {
 }
 
 // TestWebhookSender_TransportError covers the `c.Do(req)` error arm of
-// Webhook.Send. F-0370: the raw transport error MUST be collapsed to the generic
+// Webhook.Send. The raw transport error MUST be collapsed to the generic
 // delivery error (not propagated), so the dispatch oracle cannot distinguish the
 // failure cause; the status drops to 0.
 func TestWebhookSender_TransportError(t *testing.T) {

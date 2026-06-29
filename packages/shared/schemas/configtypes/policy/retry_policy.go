@@ -32,7 +32,12 @@ const (
 // overrides build on top.
 func DefaultRetryPolicy() RetryPolicy {
 	return RetryPolicy{
-		MaxAttemptsPerTarget: 1,
+		// 2 = one same-target retry before L3 failover. Transient upstream faults
+		// (network blip, timeout, 429, 5xx) recover in place instead of surfacing
+		// as a hard error or burning an immediate failover — the right default for
+		// flaky provider endpoints. Bounded to one retry so a non-idempotent
+		// generation is re-sent at most once.
+		MaxAttemptsPerTarget: 2,
 		RetryOn:              []ErrorClass{ErrorClassNetwork, ErrorClassTimeout, ErrorClassRate429, ErrorClass5xx},
 		BackoffInitial:       250 * time.Millisecond,
 		BackoffMax:           5 * time.Second,

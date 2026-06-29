@@ -10,22 +10,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-direction: row;
   flex-wrap: wrap;
   gap: var(--g-space-3);
+  margin-top: 4px;
   margin-bottom: var(--g-space-3);
 }
 
 .counters {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--g-space-3);
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
+  margin-left: auto;
+  text-align: right;
 }
 
 .counters strong {
   color: var(--color-text);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .counterDot {
@@ -39,6 +44,17 @@
   display: flex;
   align-items: center;
   gap: var(--g-space-2);
+  order: -1;
+}
+
+.toolbarButton,
+.toolbarButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.toolbarButton {
+  height: 38px;
+  min-height: 38px;
 }
 
 /* ── Killswitch bypass banner ─────────────────────────────────────── */
@@ -53,7 +69,7 @@
   background: var(--color-danger);
   color: var(--color-surface);
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .killswitchIcon {
@@ -64,6 +80,10 @@
 
 .tableWrap {
   overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs);
 }
 
 .table {
@@ -82,7 +102,7 @@
   text-align: left;
   border-bottom: 1px solid var(--color-border);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -144,9 +164,6 @@
 .keyCode {
   font-family: var(--g-font-mono);
   font-size: var(--g-font-size-xs);
-  padding: 2px 8px;
-  background: var(--color-bg-hover);
-  border-radius: var(--g-radius-sm);
 }
 
 .keyMeta {
@@ -194,7 +211,7 @@
   gap: 4px;
   padding: 2px 8px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   background: var(--color-danger);
   color: var(--color-surface);
   border-radius: var(--g-radius-sm);
@@ -202,7 +219,7 @@
 }
 
 .applyErrorIcon {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   line-height: 1;
 }
 
@@ -210,7 +227,7 @@
   display: inline-block;
   padding: 1px 6px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
@@ -222,7 +239,7 @@
   display: inline-block;
   padding: 1px 6px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   background: color-mix(in srgb, var(--color-accent) 18%, transparent);
@@ -234,7 +251,7 @@
   display: inline-block;
   padding: 1px 6px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   background: var(--color-bg-hover);

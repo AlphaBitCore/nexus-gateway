@@ -2,8 +2,8 @@ package core
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 )

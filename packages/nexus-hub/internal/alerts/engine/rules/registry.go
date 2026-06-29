@@ -9,8 +9,8 @@
 package rules
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 )

@@ -12,7 +12,7 @@ import (
 // that a configured Modify hook is being silently no-op'd because of
 // the streaming-mode choice.
 //
-// Three-service unification (#115/R3): all three data planes
+// Three-service unification: all three data planes
 // (ai-gateway, compliance-proxy, agent) run buffer mode through the
 // same shared.BufferPipeline, so this single shared registration
 // covers all three. Prometheus scrape job/instance labels distinguish

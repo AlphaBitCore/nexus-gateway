@@ -2,7 +2,7 @@ package diag
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,7 +32,7 @@ func makeDiagCtx(t *testing.T, body any) (echo.Context, *httptest.ResponseRecord
 // diagInsertArgCount is the count of bound parameters in the INSERT INTO
 // thing_diag_event query in opsmetrics_diag.go. Tracks the column list
 // 1:1 — bump in lockstep when a new column lands on the drain path. The
-// trace_id column lifted the count from 14 to 15 (see PR-G).
+// trace_id column lifted the count from 14 to 15.
 const diagInsertArgCount = 15
 
 // expectInsert registers a pgxmock expectation for the INSERT INTO

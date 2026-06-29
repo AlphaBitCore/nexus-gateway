@@ -88,7 +88,7 @@ func fillBuffer(t *testing.T, c *Conn) {
 	t.Fatalf("buffer never reported full after %d writes (cap=%d)", cap(c.outCh)+1, cap(c.outCh))
 }
 
-// TestPool_SendDropOnFullBufferClosesConnAndCounts covers F-0251 for Send: when
+// TestPool_SendDropOnFullBufferClosesConnAndCounts covers the full-buffer drop for Send: when
 // a Thing's outbound buffer is full, the dropped push must (a) make Send return
 // false, (b) increment ws.send_dropped_total{type}, and (c) close the
 // connection so the Thing reconnects and rebuilds full state.
@@ -119,7 +119,7 @@ func TestPool_SendDropOnFullBufferClosesConnAndCounts(t *testing.T) {
 	}
 }
 
-// TestPool_BroadcastDropOnFullBufferCounts covers F-0251 for Broadcast: a Thing
+// TestPool_BroadcastDropOnFullBufferCounts covers the full-buffer drop for Broadcast: a Thing
 // whose buffer is full must be skipped (not counted as sent), increment the
 // drop counter, and be closed; a healthy sibling of the same type still
 // receives the message.

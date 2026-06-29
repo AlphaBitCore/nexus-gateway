@@ -3,8 +3,8 @@ package geminicache
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"

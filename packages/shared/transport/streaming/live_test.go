@@ -285,16 +285,16 @@ func (f *flakeyWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// TestLivePipeline_WriterError_ClosesUpstream pins the PR #24
-// follow-up S1-code fix: when the writer hits an error mid-stream,
+// TestLivePipeline_WriterError_ClosesUpstream pins the writer-error
+// close fix: when the writer hits an error mid-stream,
 // LivePipeline.Process must close the upstream io.Closer so the
 // reader goroutine's blocking parser.Next returns and wg.Wait can
 // complete. Without this, a writer error against a slow upstream
 // would wedge the goroutine for the full upstream response duration.
 //
-// The 2nd-round architect review (R-7) flagged that using
-// strings.Reader here doesn't actually test the wedge — strings.Reader
-// returns EOF too fast for the regression-without-fix to manifest.
+// Using strings.Reader here would not actually test the wedge —
+// strings.Reader returns EOF too fast for the regression-without-fix
+// to manifest.
 // Switched to blockingReader: first Read returns the seed event,
 // subsequent Reads BLOCK until Close fires. Without the
 // CloseUpstreamOnExit call on writer error, the test would time out
@@ -327,8 +327,8 @@ func TestLivePipeline_WriterError_ClosesUpstream(t *testing.T) {
 	}
 }
 
-// TestLivePipeline_RejectHard_ClosesUpstream pins the PR #24
-// 2nd-round follow-up R-1 fix: the RejectHard branch in the
+// TestLivePipeline_RejectHard_ClosesUpstream pins the RejectHard
+// close fix: the RejectHard branch in the
 // compliance goroutine also needs to call CloseUpstreamOnExit (the
 // initial fix covered writer-error + overflow but missed RejectHard).
 // Without this, a slow upstream + RejectHard mid-stream wedges
@@ -369,8 +369,8 @@ func TestLivePipeline_RejectHard_ClosesUpstream(t *testing.T) {
 // cancel, then return; the main goroutine reads `finalResult` only
 // after wg.Wait(), so happens-before via wg makes the publish safe.
 //
-// Run with `go test -race` (CI default). PR #24 architect review
-// flagged a potential race on `finalResult`; this test pins that the
+// Run with `go test -race` (CI default). A potential race on
+// `finalResult` was flagged here; this test pins that the
 // path is race-free under the race detector. Any future refactor that
 // reorders the publish before wg.Wait() will trip this test.
 func TestLivePipeline_CancelDuringCheckpoint_FinalResultRaceFree(t *testing.T) {

@@ -90,8 +90,8 @@ func TestDetectResponseUsageNonAnthropicModel(t *testing.T) {
 	}
 }
 
-// Anthropic-on-Bedrock delegation regression — pins that the P0-2
-// anthropic adapter audit (commit 510db2f5) reaches Bedrock callers.
+// Anthropic-on-Bedrock delegation regression — pins that the
+// anthropic adapter audit reaches Bedrock callers.
 
 func TestExtractRequest_AnthropicOnBedrock_ToolUseDelegation(t *testing.T) {
 	body := []byte(`{
@@ -141,18 +141,6 @@ func TestExtractRequest_LlamaMalformed(t *testing.T) {
 	_, err := a.ExtractRequest(context.Background(), []byte(`not json`), "/model/meta.llama3-70b-instruct-v1:0/invoke")
 	if !errors.Is(err, traffic.ErrMalformed) {
 		t.Errorf("err=%v want ErrMalformed", err)
-	}
-}
-
-func TestExtractRequest_LlamaExtra(t *testing.T) {
-	body := []byte(`{"prompt":"hi","x_custom_field":{"sensitive":"value"}}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/model/meta.llama3-2-90b-instruct-v1:0/invoke")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if x, ok := nc.Extra["x_custom_field"]; !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_custom_field", nc.Extra)
 	}
 }
 

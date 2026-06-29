@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -422,20 +422,27 @@ func cmdRun(args []string) int {
 		AgentVersion: version,
 	})
 
+	// Build the shared Tier 1+2+3 normalize Registry once (shared with
+	// Hub agent_audit / ai-gateway / compliance-proxy). Built here so both the
+	// status server's view-time normalize recompute and the interception
+	// bridges below share the same frozen registry instance.
+	normalizeRegistry := wiring.InitNormalizeRegistry()
+
 	// Status server.
 	statusSocketPath := guiSocketPath()
 	statusServer := wiring.InitStatusServer(wiring.StatusServerDeps{
-		SocketPath:  statusSocketPath,
-		Collector:   statusCollector,
-		HubClient:   hubClient,
-		Ctx:         ctx,
-		Cancel:      cancel,
-		Version:     version,
-		Emitter:     lifecycleEmitter,
-		AuditQueue:  auditQueue,
-		ConfigMgr:   cfgMgr,
-		Auth:        authState,
-		SpillReader: spillReader,
+		SocketPath:        statusSocketPath,
+		Collector:         statusCollector,
+		HubClient:         hubClient,
+		Ctx:               ctx,
+		Cancel:            cancel,
+		Version:           version,
+		Emitter:           lifecycleEmitter,
+		AuditQueue:        auditQueue,
+		ConfigMgr:         cfgMgr,
+		Auth:              authState,
+		SpillReader:       spillReader,
+		NormalizeRegistry: normalizeRegistry,
 	})
 
 	// Wire IPC handlers onto the status server.
@@ -480,10 +487,6 @@ func cmdRun(args []string) int {
 	// diagnostics IPC.
 	wirePlatformReporting(plat, backpressureStore, statusCollector, statusServer, cfg)
 
-	// Build the shared Tier 1+2+3 normalize Registry once (shared with
-	// Hub agent_audit / ai-gateway / compliance-proxy).
-	normalizeRegistry := wiring.InitNormalizeRegistry()
-
 	// Linux/Windows: wire the shared/tlsbump bridge deps onto the platform
 	// BEFORE Start launches the accept loop (no-op on macOS, which wires its
 	// own deps in WireDarwinBridge below).
@@ -500,6 +503,12 @@ func cmdRun(args []string) int {
 		AttestationSigner:    attestationSigner,
 		UpstreamProxy:        cfg.UpstreamProxy,
 	})
+
+	// Keep the platform's QUIC-force-TCP-fallback allowlist in sync with the
+	// Hub-pushed forceQUICFallbackBundles config (Windows NexusWFP only; no-op
+	// elsewhere). Wired before Start so the initial list is stored before the
+	// driver comes up.
+	wiring.WireQUICFallback(ctx, plat, cfgMgr, logger)
 
 	wiring.StartPlatformInterception(ctx, plat, connHandler, recoveryCfg)
 	defer plat.Stop() //nolint:errcheck
@@ -1075,11 +1084,11 @@ func buildDrainUpload(
 				if err != nil {
 					return fmt.Errorf("marshal audit events: %w", err)
 				}
-				// 2026-05-24: switched from UploadAuditWithRetry (POSTs to
-				// /things/audit, cp-shape envelope, silently drops agent
-				// PayloadRequest/Response fields → 100% body NULL in DB)
-				// to UploadAgentAuditWithRetry (POSTs raw array to
-				// /things/agent-audit handler that knows AgentAuditEvent).
+				// UploadAgentAuditWithRetry POSTs the raw array to the
+				// /things/agent-audit handler that knows AgentAuditEvent.
+				// The cp-shape /things/audit envelope silently drops agent
+				// PayloadRequest/Response fields (body lands NULL in DB),
+				// so it must not be used for agent audit uploads.
 				if _, err = tc.UploadAgentAuditWithRetry(batchCtx, data, 3); err != nil {
 					return err
 				}

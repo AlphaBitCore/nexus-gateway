@@ -4,8 +4,8 @@ package embeddings
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"math"
 
 	"github.com/tidwall/gjson"

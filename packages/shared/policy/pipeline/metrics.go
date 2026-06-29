@@ -5,8 +5,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 )
 
 // Metrics holds the Prometheus metrics for the compliance pipeline.
@@ -27,12 +25,6 @@ type Metrics struct {
 	// PipelineSkippedTotal counts hooks excluded at BuildPipeline time due to
 	// endpoint or modality mismatch. Labels: endpoint, reason, stage.
 	PipelineSkippedTotal *prometheus.CounterVec
-	// RedactStorageOutcomeTotal counts storage-redaction outcomes from
-	// redact.ApplyStorageAction: outcome="rescued" (spans failed to resolve
-	// but storage-time re-detection redacted in place) or "degraded" (the
-	// stored copy was replaced with the drop placeholder), with the
-	// degradation cause. Labels: outcome, cause.
-	RedactStorageOutcomeTotal *prometheus.CounterVec
 }
 
 // RegisterMetrics creates and registers compliance metrics under the given
@@ -99,12 +91,6 @@ func RegisterMetrics(reg prometheus.Registerer, namespace string) *Metrics {
 			Name:      "pipeline_skipped_total",
 			Help:      "Total hooks excluded at BuildPipeline time due to endpoint or modality mismatch",
 		}, []string{"endpoint", "reason", "stage"}),
-		RedactStorageOutcomeTotal: factory.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Subsystem: "redact",
-			Name:      "storage_outcome_total",
-			Help:      "Storage-redaction outcomes: rescued (re-detection redacted in place after spans failed to resolve) or degraded (stored copy replaced with the drop placeholder), by cause",
-		}, []string{"outcome", "cause"}),
 	}
 	metricsOnce.Do(func() {
 		PipelineDuration = m.PipelineDuration
@@ -115,14 +101,6 @@ func RegisterMetrics(reg prometheus.Registerer, namespace string) *Metrics {
 		HookDecisionTotal = m.HookDecisionTotal
 		HookFailOpenTotal = m.HookFailOpenTotal
 		PipelineSkippedTotal = m.PipelineSkippedTotal
-		RedactStorageOutcomeTotal = m.RedactStorageOutcomeTotal
-		// The redact package owns the outcome decision but stays free of
-		// the metrics dependency; wire its callback seam to the counter.
-		// The closure reads the package var so it always points at the
-		// first-registered (service-boot) metric set.
-		redact.OnStorageOutcome = func(outcome, cause string) {
-			RedactStorageOutcomeTotal.WithLabelValues(outcome, cause).Inc()
-		}
 	})
 	return m
 }
@@ -191,8 +169,4 @@ var (
 		Name: "noop_pipeline_skipped_total",
 		Help: "no-op; replaced by first RegisterMetrics call",
 	}, []string{"endpoint", "reason", "stage"})
-	RedactStorageOutcomeTotal *prometheus.CounterVec = noopFactory.NewCounterVec(prometheus.CounterOpts{
-		Name: "noop_redact_storage_outcome_total",
-		Help: "no-op; replaced by first RegisterMetrics call",
-	}, []string{"outcome", "cause"})
 )

@@ -82,10 +82,12 @@ model SemanticCacheConfig {
 model ExtractCacheConfig {
   /// Sentinel row identifier — always "singleton".
   id                    String   @id @default("singleton")
-  /// Master switch. When false the L1 hot-path lookups (LookupStream /
-  /// LookupResponse) are bypassed and traffic_event.gateway_cache_status =
-  /// "skipped" / skip_reason = "disabled".
-  enabled               Boolean  @default(true)
+  /// L1 (exact-match) tier toggle. When false the L1 hot-path lookups
+  /// (LookupStream / LookupResponse) are bypassed and
+  /// traffic_event.gateway_cache_status = "skipped" / skip_reason = "disabled".
+  /// Defaults OFF: caching is opt-in so a freshly-seeded gateway runs as a lean
+  /// passthrough with no cache work on the hot path.
+  enabled               Boolean  @default(false)
   /// Cache entry TTL in seconds. Range [60, 604800] (1 minute to 7 days).
   /// Default 3600 matches the original yaml default.
   ttl_seconds           Int      @default(3600) @map("ttl_seconds")
@@ -95,6 +97,12 @@ model ExtractCacheConfig {
   /// stored on extract_cache_config but its effect is fleet-wide across all
   /// gateway cache layers — surfaced in the UI on the Freshness rules card
   /// where it lives in the admin's mental model.
+  /// Defaults ON: freshness protection is intrinsic to caching, so enabling a
+  /// cache tier must not silently replay stale time-sensitive answers. The
+  /// detector only runs when a cache tier is active (the cache stage gates it
+  /// on cacheEnabled), so a cache-off gateway still pays zero freshness cost
+  /// and stays a lean passthrough. Admins who want maximum hit-rate can turn
+  /// it off explicitly.
   apply_freshness_rules Boolean  @default(true) @map("apply_freshness_rules")
   updated_at            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updated_by            String?  @map("updated_by")

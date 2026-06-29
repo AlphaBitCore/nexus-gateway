@@ -48,9 +48,8 @@ func TestNormalisePath(t *testing.T) {
 	}
 }
 
-// Delegation tests — Copilot Chat is OpenAI-compatible, so audit code
-// paths added in the openai-compat audit (commit 6e7a61de) reach
-// Copilot users automatically.
+// Delegation tests — Copilot Chat is OpenAI-compatible, so the
+// openai-compat audit code paths reach Copilot users automatically.
 
 func TestExtractRequest_CopilotChat(t *testing.T) {
 	body := []byte(`{

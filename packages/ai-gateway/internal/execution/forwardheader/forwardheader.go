@@ -453,7 +453,7 @@ func checkAgainstDenylist(label, name string, _ bool) error {
 // header name, suitable for the
 // `nexus_forward_header_dropped_total{header}` metric.
 //
-// Cardinality contract (NFR-FH4):
+// Cardinality contract:
 //   - If lowerName is an exact match for a hard-denylist entry,
 //     return that entry verbatim.
 //   - If lowerName starts with a denylist prefix, return the prefix

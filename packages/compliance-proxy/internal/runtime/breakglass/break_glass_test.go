@@ -3,8 +3,8 @@ package breakglass
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -625,9 +625,9 @@ func TestEscapeBGError_QuoteAndNewlineInResponse(t *testing.T) {
 // characters (newlines, tabs, carriage returns, quotes, backslashes, and non-ASCII
 // control bytes that KMS / subprocess stderr routinely carries) survive the
 // WriteError → JSON encode → JSON decode round-trip intact.
-// Prior to F-0319 the handler hand-built JSON literals via string concatenation;
-// a missing escaper caused raw control bytes to produce invalid JSON.
-// json.NewEncoder in WriteError handles all of these correctly.
+// json.NewEncoder in WriteError handles all of these correctly; hand-built JSON
+// literals via string concatenation would let raw control bytes produce invalid
+// JSON when an escaper is missing.
 func TestWriteError_ControlChars(t *testing.T) {
 	cases := map[string]string{
 		"newline":         "kms: signing failed\nretry exhausted",

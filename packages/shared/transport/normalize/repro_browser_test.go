@@ -2,7 +2,7 @@ package normalize
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,8 +34,8 @@ type reproEvent struct {
 
 // TestRepro_BrowserCaptures replays four captured payloads (chatgpt + claude.ai
 // request + response) through the canonical Tier 1+2+3 registry the
-// agent / cp / ai-gateway / hub all share. Bug surfaced 2026-05-25 from
-// the live agent capture: chatgpt.com request normalized as chatgpt-web
+// agent / cp / ai-gateway / hub all share. The reproduced failure from
+// a live agent capture: chatgpt.com request normalized as chatgpt-web
 // (good) but response landed NULL (bad); claude.ai both request + response
 // landed as generic-http (bad — should be claude-web both sides).
 func TestRepro_BrowserCaptures(t *testing.T) {

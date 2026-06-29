@@ -118,6 +118,35 @@ func TestConfigCache_Concurrency(t *testing.T) {
 	wg.Wait()
 }
 
+// TestConfigCache_ScopeReady verifies the boot-window fail-closed signal the
+// L1 exact-match tier gates on: false until the first Set, true afterwards, and
+// true on a nil receiver (no semantic ConfigCache wired = documented fleet-wide,
+// not a transient window).
+func TestConfigCache_ScopeReady(t *testing.T) {
+	var nilCache *ConfigCache
+	if !nilCache.ScopeReady() {
+		t.Fatal("nil ConfigCache should report ScopeReady=true (fleet-wide default)")
+	}
+
+	c := NewConfigCache()
+	if c.ScopeReady() {
+		t.Fatal("ScopeReady must be false before the first Set (boot window: VaryBy unknown)")
+	}
+	// VaryBy is the value the L1 tier needs; before Set it is the zero "".
+	if c.Get().VaryBy != "" {
+		t.Fatalf("pre-Set VaryBy = %q, want empty", c.Get().VaryBy)
+	}
+	c.Set(ConfigSnapshot{Enabled: false}) // even a disabled push flips loaded
+	if !c.ScopeReady() {
+		t.Fatal("ScopeReady must be true after the first Set, even a disabled snapshot")
+	}
+	// Set normalises an empty VaryBy to the strict "vk" default, so the L1 key
+	// now isolates rather than running fleet-wide.
+	if got := c.Get().VaryBy; got != "vk" {
+		t.Fatalf("post-Set default VaryBy = %q, want \"vk\"", got)
+	}
+}
+
 // TestConfigCache_Overwrite verifies that the most recent Set wins.
 func TestConfigCache_Overwrite(t *testing.T) {
 	c := NewConfigCache()

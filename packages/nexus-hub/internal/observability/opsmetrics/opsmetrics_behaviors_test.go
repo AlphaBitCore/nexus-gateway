@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"strings"
@@ -1110,25 +1110,14 @@ func TestParseHistogramBuckets_FloatFallback(t *testing.T) {
 }
 
 // TestParseHistogramBuckets_GarbageElementSkipped pins the unrecoverable-
-// element branch: a JSON string in the array is rejected by both Int64()
-// and Float64() and is silently skipped (continue), leaving the slot zero.
-func TestParseHistogramBuckets_GarbageElementSkipped(t *testing.T) {
-	// json.Number can hold any token after UseNumber, but only number
-	// literals are allowed in a []json.Number. A non-numeric value
-	// produces a decoder error before we reach the inner loop, so this
-	// pins instead an element-level skip via a JSON `null` which decodes
-	// to an empty json.Number — Int64() and Float64() both error and the
-	// loop continues without storing anything (slot stays zero).
-	raw := []byte(`{"buckets":[null, 5, 0, 0, 0, 0]}`)
-	got, err := ParseHistogramBuckets(raw)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if got[0] != 0 {
-		t.Errorf("got[0] = %d; want 0 (null skipped)", got[0])
-	}
-	if got[1] != 5 {
-		t.Errorf("got[1] = %d; want 5", got[1])
+// element branch: goccy/go-json validates each []json.Number element eagerly at
+// decode time, so a non-numeric element (JSON null) is rejected during Decode and
+// the whole parse returns the wrapped error — it does NOT decode to an empty
+// json.Number that the inner loop could skip. This pins that real behavior.
+func TestParseHistogramBuckets_NullElementErrors(t *testing.T) {
+	_, err := ParseHistogramBuckets([]byte(`{"buckets":[null, 5, 0, 0, 0, 0]}`))
+	if err == nil || !strings.Contains(err.Error(), "parse histogram buckets") {
+		t.Errorf("err = %v; want a 'parse histogram buckets' decode error for a null element", err)
 	}
 }
 

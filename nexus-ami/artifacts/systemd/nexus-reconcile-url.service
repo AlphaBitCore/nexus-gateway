@@ -1,0 +1,27 @@
+[Unit]
+Description=Nexus Gateway public-URL reconcile (re-syncs publicURL / issuer / OAuth redirect / TLS cert SAN to the current public IP on every boot)
+Documentation=https://github.com/AlphaBitCore/nexus-gateway
+# Runs on EVERY boot (NOT gated by the .initialized marker) so a public-IP
+# change from an EC2 stop/start — or attaching an Elastic IP — is picked up.
+# Ordered AFTER first-boot (so the initial stamp exists), AFTER postgresql (the
+# cp-ui redirect lives in the DB), and AFTER the nexus services so the script
+# can restart them in place when — and only when — the IP actually changed.
+# It deliberately does NOT use Before=postgresql.service (same deadlock hazard
+# documented in nexus-first-boot.service); it waits for pg_isready instead.
+After=network-online.target postgresql.service nexus-first-boot.service
+After=nexus-hub.service nexus-control-plane.service nexus-gateway.service nexus-proxy.service
+Wants=network-online.target
+# Only meaningful once first-boot has produced the initial config.
+ConditionPathExists=/etc/nexus/.initialized
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nexus-reconcile-url
+RemainAfterExit=yes
+# Bounded by the script's own pg_isready wait (<=30s) + short curl timeouts.
+TimeoutStartSec=120
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

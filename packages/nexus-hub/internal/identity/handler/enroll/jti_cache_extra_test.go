@@ -33,7 +33,7 @@ func (f *fakeDedup) SetNX(_ context.Context, key string, _ time.Duration) (bool,
 	return true, nil
 }
 
-// TestJTICache_RedisGuardSurvivesRestart is the SEC-M4-03 regression: with the
+// TestJTICache_RedisGuardSurvivesRestart is the regression test: with the
 // Redis L2 wired, a JTI redeemed once cannot be replayed by a FRESH jtiCache
 // (simulating a Hub restart that clears the in-memory L1) — the persistent dedup
 // still reports the JTI as seen.

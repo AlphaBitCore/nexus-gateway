@@ -114,7 +114,7 @@ export function MultiSelectDropdown({
         }}
         className={styles.trigger}
       >
-        <span className={styles.triggerText}>{summary}</span>
+        <span className={clsx(styles.triggerText, value.length === 0 && styles.triggerPlaceholder)}>{summary}</span>
         <span aria-hidden className={styles.triggerArrow}>
           &#x25BC;
         </span>

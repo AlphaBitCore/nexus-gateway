@@ -18,8 +18,8 @@ package oidcdisco
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net"
 	"net/http"
@@ -108,8 +108,7 @@ type Resolver struct {
 // also defeats DNS-rebinding (the check runs on the actual dialed address, not a
 // pre-resolved one). An OIDC issuer is external by nature — a private/loopback
 // issuer is never legitimate — so the guard comes from the admin-egress
-// chokepoint as ExternalOnly (FIX-4 consistency follow-up; behaviour-identical
-// to the prior BlockPrivateDialControl). fetch() additionally pre-validates via
+// chokepoint as ExternalOnly. fetch() additionally pre-validates via
 // a DNS lookup so the common case fails fast with a clear error before any
 // socket is opened.
 func NewResolver(opts ...Option) *Resolver {
@@ -159,10 +158,10 @@ func validatePublicHost(ctx context.Context, host string) error {
 	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		// DNS failure: not an SSRF block — let fetch proceed and fail with the
-		// real network error (F-0270 contract: DNS failure ≠ SSRF). Returning
-		// err here would mis-classify a resolution failure as an SSRF block, so
-		// nilerr's "return the error" suggestion is wrong for this call site.
-		return nil //nolint:nilerr // F-0270: DNS resolution failure must NOT be reported as an SSRF block
+		// real network error (DNS failure ≠ SSRF). Returning err here would
+		// mis-classify a resolution failure as an SSRF block, so nilerr's
+		// "return the error" suggestion is wrong for this call site.
+		return nil //nolint:nilerr // DNS resolution failure must NOT be reported as an SSRF block
 	}
 	for _, a := range addrs {
 		ip := net.ParseIP(a)

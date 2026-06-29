@@ -1,9 +1,8 @@
 // coverage_gaps_test.go pins observable behavior of the package paths that
 // the legacy mq_writer_test.go / ndjson_test.go suite leaves at 0% or low
-// coverage: Register wiring, WithNormalizer / WithThingIdentity
-// fluent constructors, the Enqueue overflow → NDJSON branch, the loop()
-// timer-fire and batch-size-fire flush arms, applyNormalize request and
-// response stamping, fallbackToNDJSON, inlineBodyBytes, eventToMap pointer
+// coverage: Register wiring, the WithThingIdentity fluent constructor, the
+// Enqueue overflow → NDJSON branch, the loop() timer-fire and
+// batch-size-fire flush arms, fallbackToNDJSON, eventToMap pointer
 // branches, and the toMessage pointer-field passthrough surface.
 //
 // Tests assert observable side effects (Prometheus counter delta, emitted
@@ -12,8 +11,8 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -26,10 +25,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // discardWriter is a thread-safe io.Writer that drops everything written
@@ -175,26 +171,6 @@ func TestRegister_BindsAllHandles(t *testing.T) {
 	}
 	if len(families) == 0 {
 		t.Fatalf("expected metric families on the registry after Register + increment")
-	}
-}
-
-// TestWithNormalizer_StoresFnAndReturnsReceiver verifies that the
-// normalizer closure is stored on the writer and chainable (returns *w).
-func TestWithNormalizer_StoresFnAndReturnsReceiver(t *testing.T) {
-	w := NewMQBatchWriter(&countingProducer{}, "q", 100, time.Hour, 10, nil, quietLogger())
-	defer w.Close(context.Background()) //nolint:errcheck
-
-	calls := atomic.Int64{}
-	fn := func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		calls.Add(1)
-		return json.RawMessage(`{"d":"` + direction + `"}`), "ok", ""
-	}
-	got := w.WithNormalizer(fn)
-	if got != w {
-		t.Fatalf("WithNormalizer must return receiver for chaining")
-	}
-	if w.normalize == nil {
-		t.Fatalf("normalize closure not stored on writer")
 	}
 }
 
@@ -622,209 +598,6 @@ func TestToMessage_ErrorCodeEmptyStaysNil(t *testing.T) {
 	}
 }
 
-// TestInlineBodyBytes_AbsentReturnsNil pins the spilled / absent branches.
-func TestInlineBodyBytes_AbsentReturnsNil(t *testing.T) {
-	if got := inlineBodyBytes(sharedaudit.EmptyBody()); got != nil {
-		t.Errorf("EmptyBody must yield nil; got %q", string(got))
-	}
-	// Manually crafted spill body — Kind != Inline.
-	spill := sharedaudit.Body{
-		Kind:     sharedaudit.BodyKind("spill"),
-		SpillRef: &sharedaudit.SpillRef{Backend: "s3", Key: "k", Size: 1},
-	}
-	if got := inlineBodyBytes(spill); got != nil {
-		t.Errorf("Spill body must yield nil; got %q", string(got))
-	}
-}
-
-// TestInlineBodyBytes_InlineReturnsBytes verifies the happy path.
-func TestInlineBodyBytes_InlineReturnsBytes(t *testing.T) {
-	body := sharedaudit.NewInlineBody([]byte(`{"hello":"world"}`), 17, false, "application/json")
-	got := inlineBodyBytes(body)
-	if string(got) != `{"hello":"world"}` {
-		t.Errorf("inlineBodyBytes = %q, want JSON object", string(got))
-	}
-}
-
-// TestApplyNormalize_NilFnNoop pins early returns.
-func TestApplyNormalize_NilFnNoop(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	applyNormalize(msg, AuditEvent{Provider: "openai"}, nil)
-	if msg.RequestNormalized != nil || msg.NormalizeVersion != "" {
-		t.Errorf("nil fn must leave msg untouched")
-	}
-}
-
-// TestApplyNormalize_EmptyProviderNoop pins early returns.
-func TestApplyNormalize_EmptyProviderNoop(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	called := false
-	applyNormalize(msg, AuditEvent{Provider: ""}, func(_, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		called = true
-		return nil, "", ""
-	})
-	if called {
-		t.Error("normalize fn must not be invoked when Provider==\"\"")
-	}
-	if msg.NormalizeVersion != "" {
-		t.Errorf("NormalizeVersion must stay empty")
-	}
-}
-
-// TestApplyNormalize_SpillDestinedBodyNormalizesLive pins the pre-spill
-// normalize contract: a spill-kind Body container whose in-memory bytes
-// were retained by the emitter still normalizes at flush time — spilled
-// traffic gets requestNormalized on the wire without waiting for the
-// hub backfill to fetch the spill object.
-func TestApplyNormalize_SpillDestinedBodyNormalizesLive(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	body := sharedaudit.Body{
-		Kind:        sharedaudit.BodySpill,
-		SpillRef:    &sharedaudit.SpillRef{Backend: "s3", Key: "spill/evt/request", Size: 999},
-		InlineBytes: []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"big"}]}`),
-		SizeBytes:   999,
-		ContentType: "application/json",
-	}
-	event := AuditEvent{Provider: "openai", Model: "gpt-4o", Path: "/v1/chat/completions", RequestBody: body}
-	fn := func(direction, _, _, _, _ string, _ bool, raw []byte) (json.RawMessage, string, string) {
-		if direction != "request" {
-			t.Errorf("direction = %q, want request", direction)
-		}
-		if len(raw) == 0 {
-			t.Fatal("spill-destined bytes did not reach the normalize fn")
-		}
-		return json.RawMessage(`{"kind":"ai-chat"}`), "ok", ""
-	}
-	applyNormalize(msg, event, fn)
-	if string(msg.RequestNormalized) != `{"kind":"ai-chat"}` {
-		t.Errorf("RequestNormalized = %s, want the normalized payload", msg.RequestNormalized)
-	}
-	if msg.RequestNormalizeStatus != "ok" {
-		t.Errorf("RequestNormalizeStatus = %q, want ok", msg.RequestNormalizeStatus)
-	}
-}
-
-// TestApplyNormalize_StampsRequestAndResponse pins the full request +
-// response normalize pipeline, including the stamped lowercase adapter
-// type, the lifted normalize wire version, and per-direction status/error.
-func TestApplyNormalize_StampsRequestAndResponse(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	event := AuditEvent{
-		Provider:     "OpenAI",
-		Model:        "gpt-4o",
-		Path:         "/v1/chat/completions",
-		RequestBody:  sharedaudit.NewInlineBody([]byte(`{"model":"gpt-4o","messages":[]}`), 32, false, "application/json"),
-		ResponseBody: sharedaudit.NewInlineBody([]byte(`{"id":"x","choices":[]}`), 23, false, "application/json"),
-	}
-	calls := 0
-	fn := func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (json.RawMessage, string, string) {
-		calls++
-		if adapterType != "openai" {
-			t.Errorf("adapterType = %q, want lowercase %q", adapterType, "openai")
-		}
-		if contentType != "application/json" {
-			t.Errorf("contentType = %q, want application/json", contentType)
-		}
-		if stream {
-			t.Errorf("cp must not flag normalize as stream=true")
-		}
-		if model != "gpt-4o" {
-			t.Errorf("model = %q, want gpt-4o", model)
-		}
-		if path != "/v1/chat/completions" {
-			t.Errorf("path = %q", path)
-		}
-		return json.RawMessage(`{"d":"` + direction + `"}`), "ok", ""
-	}
-
-	applyNormalize(msg, event, fn)
-
-	if calls != 2 {
-		t.Errorf("normalize fn called %d times, want 2 (request + response)", calls)
-	}
-	if string(msg.RequestNormalized) != `{"d":"request"}` {
-		t.Errorf("RequestNormalized = %s", string(msg.RequestNormalized))
-	}
-	if string(msg.ResponseNormalized) != `{"d":"response"}` {
-		t.Errorf("ResponseNormalized = %s", string(msg.ResponseNormalized))
-	}
-	if msg.RequestNormalizeStatus != "ok" || msg.ResponseNormalizeStatus != "ok" {
-		t.Errorf("status = (%q,%q)", msg.RequestNormalizeStatus, msg.ResponseNormalizeStatus)
-	}
-	if msg.NormalizeVersion != normcore.SchemaVersion {
-		t.Errorf("NormalizeVersion = %q, want the registry schema version %q", msg.NormalizeVersion, normcore.SchemaVersion)
-	}
-}
-
-// TestApplyNormalize_StatusOnlyStillStamps verifies the "raw==nil but
-// status!=\"\"" branch: even when the decoder produces no JSON (e.g. an
-// unsupported provider), the status string still lands and triggers the
-// NormalizeVersion stamp.
-func TestApplyNormalize_StatusOnlyStillStamps(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	event := AuditEvent{
-		Provider:    "anthropic",
-		RequestBody: sharedaudit.NewInlineBody([]byte(`{"messages":[]}`), 15, false, "application/json"),
-	}
-	fn := func(_, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		return nil, "failed", "no model"
-	}
-	applyNormalize(msg, event, fn)
-	if msg.RequestNormalizeStatus != "failed" {
-		t.Errorf("RequestNormalizeStatus = %q, want failed", msg.RequestNormalizeStatus)
-	}
-	if msg.RequestNormalizeError != "no model" {
-		t.Errorf("RequestNormalizeError = %q", msg.RequestNormalizeError)
-	}
-	if msg.NormalizeVersion != normcore.SchemaVersion {
-		t.Errorf("NormalizeVersion = %q, want the registry schema version %q", msg.NormalizeVersion, normcore.SchemaVersion)
-	}
-}
-
-// TestApplyNormalize_RawNilStatusEmptyNoStamp verifies the "no signal"
-// branch: when the decoder returns (nil, "", "") for both directions, the
-// stamped flag stays false → NormalizeVersion stays empty.
-func TestApplyNormalize_RawNilStatusEmptyNoStamp(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	event := AuditEvent{
-		Provider:    "openai",
-		RequestBody: sharedaudit.NewInlineBody([]byte(`{"x":1}`), 7, false, "application/json"),
-	}
-	fn := func(_, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		return nil, "", ""
-	}
-	applyNormalize(msg, event, fn)
-	if msg.NormalizeVersion != "" {
-		t.Errorf("NormalizeVersion must stay empty when nothing was stamped; got %q", msg.NormalizeVersion)
-	}
-	if msg.RequestNormalized != nil {
-		t.Errorf("RequestNormalized must stay nil; got %s", string(msg.RequestNormalized))
-	}
-}
-
-// TestApplyNormalize_OnlyResponse pins the path where the request body is
-// absent (e.g. spilled) but the response is inline.
-func TestApplyNormalize_OnlyResponse(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	event := AuditEvent{
-		Provider:     "openai",
-		ResponseBody: sharedaudit.NewInlineBody([]byte(`{"id":"r"}`), 10, false, "application/json"),
-	}
-	fn := func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		if direction != "response" {
-			t.Errorf("expected response-only call; got direction=%q", direction)
-		}
-		return json.RawMessage(`{"r":1}`), "ok", ""
-	}
-	applyNormalize(msg, event, fn)
-	if msg.RequestNormalized != nil {
-		t.Errorf("RequestNormalized must stay nil; got %s", string(msg.RequestNormalized))
-	}
-	if msg.ResponseNormalized == nil {
-		t.Fatal("ResponseNormalized must be stamped")
-	}
-}
-
 // TestEventToMap_AllPointerFieldsLandOnMap exercises every conditional
 // addition in eventToMap (statusCode, requestHookReason, hooks pipelines,
 // complianceTags, subjectId, dsarDeleteRequested, userAgent, response hook
@@ -1197,93 +970,4 @@ func TestDrain_RemovesEveryPendingEvent(t *testing.T) {
 	}
 	// Flush + loop together must have delivered all 5 events.
 	waitFor(t, time.Second, func() bool { return len(prod.snapshot()) >= 5 })
-}
-
-// TestApplyNormalize_GovernedCopyPreferred — the emitter-supplied
-// normalized copies are the payloads the hook pipeline saw, already
-// storage-governed (span-redacted / placeholder). They must land on the
-// wire verbatim, with their redaction spans, WITHOUT re-deriving from raw
-// bytes (which would discard governance and mis-align span offsets).
-func TestApplyNormalize_GovernedCopyPreferred(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	governedReq := json.RawMessage(`{"kind":"ai-chat","messages":[{"role":"user","content":[{"type":"text","text":"[EMAIL-REDACTED]"}]}]}`)
-	governedResp := json.RawMessage(`{"kind":"ai-chat","redacted":true}`)
-	reqSpans := json.RawMessage(`[{"start":0,"end":16,"replacement":"[EMAIL-REDACTED]","contentAddress":"messages.0.content.0"}]`)
-	event := AuditEvent{
-		Provider:               "openai",
-		RequestBody:            sharedaudit.NewInlineBody([]byte(`{"messages":[{"content":"leak@example.com"}]}`), 44, false, "application/json"),
-		RequestNormalized:      governedReq,
-		ResponseNormalized:     governedResp,
-		RequestRedactionSpans:  reqSpans,
-		ResponseRedactionSpans: nil,
-	}
-	fn := func(_, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		t.Error("normalize fn must not run when governed copies exist for both directions")
-		return nil, "", ""
-	}
-
-	applyNormalize(msg, event, fn)
-
-	if string(msg.RequestNormalized) != string(governedReq) {
-		t.Errorf("RequestNormalized = %s, want the governed copy verbatim", msg.RequestNormalized)
-	}
-	if string(msg.ResponseNormalized) != string(governedResp) {
-		t.Errorf("ResponseNormalized = %s, want the governed copy verbatim", msg.ResponseNormalized)
-	}
-	if string(msg.RequestRedactionSpans) != string(reqSpans) {
-		t.Errorf("RequestRedactionSpans = %s, want pass-through", msg.RequestRedactionSpans)
-	}
-	if msg.ResponseRedactionSpans != nil {
-		t.Errorf("ResponseRedactionSpans must stay nil when emitter stamped none")
-	}
-	if msg.RequestNormalizeStatus != "ok" || msg.ResponseNormalizeStatus != "ok" {
-		t.Errorf("status = (%q,%q), want ok/ok", msg.RequestNormalizeStatus, msg.ResponseNormalizeStatus)
-	}
-	if msg.NormalizeVersion != normcore.SchemaVersion {
-		t.Errorf("NormalizeVersion = %q, want %q", msg.NormalizeVersion, normcore.SchemaVersion)
-	}
-}
-
-// TestApplyNormalize_GovernedCopyStampsWithoutProvider — governed copies
-// must land even when the adapter left Provider empty (the fn fallback's
-// precondition); a leak-relevant copy never depends on detector luck.
-func TestApplyNormalize_GovernedCopyStampsWithoutProvider(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	governed := json.RawMessage(`{"kind":"ai-chat","redacted":true,"ruleIds":["kw-1"]}`)
-	applyNormalize(msg, AuditEvent{Provider: "", RequestNormalized: governed}, nil)
-	if string(msg.RequestNormalized) != string(governed) {
-		t.Errorf("RequestNormalized = %s, want governed copy", msg.RequestNormalized)
-	}
-	if msg.NormalizeVersion != normcore.SchemaVersion {
-		t.Errorf("NormalizeVersion = %q, want %q", msg.NormalizeVersion, normcore.SchemaVersion)
-	}
-}
-
-// TestApplyNormalize_FallbackPerDirection — a direction with a governed
-// copy keeps it; the other direction without one falls back to the
-// normalize fn over its (already storage-governed) raw bytes.
-func TestApplyNormalize_FallbackPerDirection(t *testing.T) {
-	msg := &mq.TrafficEventMessage{}
-	governedReq := json.RawMessage(`{"kind":"ai-chat","redacted":true}`)
-	event := AuditEvent{
-		Provider:          "openai",
-		RequestBody:       sharedaudit.NewInlineBody([]byte(`{"q":1}`), 7, false, "application/json"),
-		ResponseBody:      sharedaudit.NewInlineBody([]byte(`{"id":"r"}`), 10, false, "application/json"),
-		RequestNormalized: governedReq,
-	}
-	fn := func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-		if direction != "response" {
-			t.Errorf("only the response direction lacks a governed copy; fn called for %q", direction)
-		}
-		return json.RawMessage(`{"r":1}`), "ok", ""
-	}
-
-	applyNormalize(msg, event, fn)
-
-	if string(msg.RequestNormalized) != string(governedReq) {
-		t.Errorf("RequestNormalized = %s, want governed copy untouched", msg.RequestNormalized)
-	}
-	if string(msg.ResponseNormalized) != `{"r":1}` {
-		t.Errorf("ResponseNormalized = %s, want fn-derived copy", msg.ResponseNormalized)
-	}
 }

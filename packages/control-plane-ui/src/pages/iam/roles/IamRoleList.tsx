@@ -9,9 +9,11 @@ import {
   PageHeader, DataTable, ListFilterToolbar, AlertDialog,
   Skeleton, ErrorBanner, Button, Stack, Card,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
+  RowActions, RowActionIconButton, OpenActionIcon, DeleteActionIcon,
 } from '@/components/ui';
 import { IamRoleForm } from './IamRoleForm';
 import type { IamGroup } from '../../../api/types';
+import styles from './IamRoleList.module.css';
 
 export function IamRoleList() {
   const { t } = useTranslation();
@@ -56,7 +58,7 @@ export function IamRoleList() {
   if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
 
   return (
-    <Stack gap="lg">
+    <Stack gap="md">
       <PageHeader
         title={t('pages:iam.roles')}
         subtitle={t('pages:iam.rolesSubtitle')}
@@ -66,52 +68,57 @@ export function IamRoleList() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
+        className={styles.filterToolbar}
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('pages:iam.searchRolesPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}
-        meta={
-          total === 0
-            ? t('pages:iam.noRolesMatch')
-            : t('pages:iam.showingRoles', { count: rows.length, total: total.toLocaleString() })
-        }
       />
 
-      <Card padding="none">
-        <DataTable
-          hideSearch
-          frameless
-          pageSize={pageLimit}
-          columns={[
-            { key: 'name', label: t('pages:iam.name') },
-            { key: 'description', label: t('pages:iam.description'), render: (r) => r.description || '\u2014' },
-            {
-              key: 'actions',
-              label: t('pages:iam.actions'),
-              render: (r) => (
-                <Stack direction="horizontal" gap="xs" onClick={e => e.stopPropagation()}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={(e) => { e.stopPropagation(); navigate(`/iam/roles/${r.id}`); }}
-                  >
-                    {t('common:edit')}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={(e) => { e.stopPropagation(); setDeleting(r); }}
-                  >
-                    {t('common:delete')}
-                  </Button>
-                </Stack>
-              ),
-            },
-          ]}
-          data={rows}
-          onRowClick={(role) => navigate(`/iam/roles/${role.id}`)}
-          emptyMessage={t('pages:iam.noRolesConfigured')}
-        />
-      </Card>
+      <div className={styles.tableSection}>
+        <div className={styles.resultMeta}>
+          {total === 0
+            ? t('pages:iam.noRolesMatch')
+            : t('pages:iam.showingRoles', { count: rows.length, total: total.toLocaleString() })}
+        </div>
+        <Card padding="none">
+          <DataTable
+            hideSearch
+            frameless
+            pageSize={pageLimit}
+            columns={[
+              { key: 'name', label: t('pages:iam.name') },
+              { key: 'description', label: t('pages:iam.description'), render: (r) => r.description || '\u2014' },
+              {
+                key: 'actions',
+                label: t('common:actions', 'Actions'),
+                render: (r) => (
+                  <RowActions>
+                    <RowActionIconButton
+                      label={t('common:view', 'View')}
+                      onAction={() => navigate(`/iam/roles/${r.id}`)}
+                    >
+                      <OpenActionIcon />
+                    </RowActionIconButton>
+                    <RowActionIconButton
+                      label={t('common:delete')}
+                      tone="danger"
+                      onAction={() => setDeleting(r)}
+                    >
+                      <DeleteActionIcon />
+                    </RowActionIconButton>
+                  </RowActions>
+                ),
+              },
+            ]}
+            data={rows}
+            onRowClick={(role) => navigate(`/iam/roles/${role.id}`)}
+            emptyMessage={t('pages:iam.noRolesConfigured')}
+          />
+        </Card>
+      </div>
 
       <ListPagination offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
 

@@ -4,8 +4,8 @@ package configdispatch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -79,8 +79,14 @@ type Deps struct {
 
 	// SemanticIndexLifecycle receives the latest ConfigSnapshot from the Hub
 	// shadow and ensures the Valkey index is up to date. May be nil when the
-	// semantic cache module is disabled at startup.
+	// semantic cache module is disabled at startup (e.g. Sentinel/Cluster Redis,
+	// where the *redis.Client index management is unavailable).
 	SemanticIndexLifecycle *semantic.IndexLifecycle
+	// SemanticConfigCache is the in-process fleet semantic config snapshot. The
+	// handler Sets it directly when SemanticIndexLifecycle is nil so the L1 hot
+	// path still learns vary_by + the loaded signal on a degraded Redis topology.
+	// Always non-nil in production (constructed even on Sentinel/Cluster).
+	SemanticConfigCache *semantic.ConfigCache
 	// FreshnessDetector holds the atomically-swappable time-sensitive rule set.
 	// May be nil when freshness detection is disabled.
 	FreshnessDetector *freshness.Detector
@@ -361,6 +367,16 @@ func registerAGCacheConfig(l *cfgloader.Loader, d Deps) {
 		if err := json.Unmarshal(raw, &blob); err != nil {
 			return nil, fmt.Errorf("cache parse: %w", err)
 		}
+		// Emergency master kill switch (Tier-1 global). Wire it into the L1
+		// Cache object, which the proxy cache stage reads to gate BOTH L1 and
+		// L2 response caching. Without this the switch was parsed but never
+		// consulted by the data plane. Provider-side caching (L3 markers /
+		// Gemini context cache) is intentionally NOT gated here — it makes the
+		// upstream cache (cost/latency only), never serves a stored response,
+		// so it is not "gateway response caching" the emergency switch targets.
+		if d.ResponseCache != nil {
+			d.ResponseCache.SetMasterKill(blob.Global.CacheMasterKillSwitch)
+		}
 		if d.GeminiCacheMgrSet != nil {
 			d.GeminiCacheMgrSet.SetConfig(blob)
 		}
@@ -421,17 +437,23 @@ type semanticCacheConfigBlob struct {
 
 // registerAGSemanticCacheConfig registers the semantic_cache.config handler.
 // On each Hub push the handler:
-//  1. Decodes the blob into a semantic.ConfigSnapshot.
-//  2. Calls IndexLifecycle.OnConfigSnapshot which atomically updates the
-//     in-process ConfigCache and, on fingerprint changes, calls EnsureIndex.
+//  1. Decodes the blob into a semantic.ConfigSnapshot (empty payload → disabled).
+//  2. Applies it via applySemanticSnapshot.
+//
+// The in-process ConfigCache update is DECOUPLED from index lifecycle: the
+// snapshot carries fleet config (vary_by, enabled, threshold) the L1 + L2 hot
+// path needs even on a Sentinel/Cluster Redis where the *redis.Client index
+// management (IndexLifecycle) is unavailable. Coupling the two previously left
+// the ConfigCache un-Set on Sentinel, so L1's ScopeReady() never flipped and
+// vary_by never reached the gateway.
 func registerAGSemanticCacheConfig(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, configkey.SemanticCacheConfig, func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
-		if d.SemanticIndexLifecycle == nil {
+		if d.SemanticIndexLifecycle == nil && d.SemanticConfigCache == nil {
 			return nil, nil
 		}
 		if len(raw) == 0 {
 			// Empty payload: disable the semantic cache.
-			d.SemanticIndexLifecycle.OnConfigSnapshot(ctx, semantic.ConfigSnapshot{Enabled: false})
+			applySemanticSnapshot(ctx, d, semantic.ConfigSnapshot{Enabled: false})
 			return nil, nil
 		}
 		var blob semanticCacheConfigBlob
@@ -462,9 +484,25 @@ func registerAGSemanticCacheConfig(l *cfgloader.Loader, d Deps) {
 			snap.EmbeddingDimension = *blob.EmbeddingDimension
 		}
 
-		d.SemanticIndexLifecycle.OnConfigSnapshot(ctx, snap)
+		applySemanticSnapshot(ctx, d, snap)
 		return nil, nil
 	})
+}
+
+// applySemanticSnapshot pushes a semantic ConfigSnapshot into the data plane.
+// When the index lifecycle is wired (normal *redis.Client topology) it owns the
+// ConfigCache.Set plus EnsureIndex. When it is nil (Sentinel/Cluster degraded
+// L2) the ConfigCache is Set directly so vary_by + enabled still reach the
+// hot path — L1 exact-match runs on every Redis topology and folds vary_by into
+// its key, so it must learn the fleet scope regardless of L2 index availability.
+func applySemanticSnapshot(ctx context.Context, d Deps, snap semantic.ConfigSnapshot) {
+	if d.SemanticIndexLifecycle != nil {
+		d.SemanticIndexLifecycle.OnConfigSnapshot(ctx, snap)
+		return
+	}
+	if d.SemanticConfigCache != nil {
+		d.SemanticConfigCache.Set(snap)
+	}
 }
 
 // extractCacheConfigBlob mirrors the JSON Hub-shadow payload for

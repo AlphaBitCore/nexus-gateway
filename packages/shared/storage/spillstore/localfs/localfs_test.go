@@ -298,7 +298,7 @@ func seedAged(t *testing.T, s *localfs.Store, root string, n int) []string {
 }
 
 // TestSweepFiltered_AllReferenced — every aged blob is still referenced, so
-// the reference-checked sweep deletes nothing (F-0187: never orphan a live
+// the reference-checked sweep deletes nothing (never orphan a live
 // spill).
 func TestSweepFiltered_AllReferenced(t *testing.T) {
 	s, root := newStore(t)
@@ -939,7 +939,7 @@ type failingReader struct{ err error }
 
 func (f *failingReader) Read(_ []byte) (int, error) { return 0, f.err }
 
-// TestStore_Put_HonorsExplicitKey is the SEC-M5-01 mechanism test: when
+// TestStore_Put_HonorsExplicitKey is the mechanism test: when
 // PutOptions.Key is set (the Hub spill-blob handler passes the node-namespaced,
 // token-signed key), Put writes to exactly that key instead of re-deriving the
 // shared <day>/<eventId>-<dir>.bin key — so two nodes minting for the same

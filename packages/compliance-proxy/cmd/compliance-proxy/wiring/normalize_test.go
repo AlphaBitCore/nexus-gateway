@@ -9,7 +9,7 @@ import (
 
 // WireNormalizer accepts an audit.Writer (which is an interface alias for
 // sharedaudit.Writer). When passed a non-*MQBatchWriter it silently skips the
-// identity wiring but must not panic and must register the normalizer infra.
+// identity wiring but must not panic and must build the normalize registry.
 
 // plainWriter is a simple audit.Writer that is NOT a *MQBatchWriter.
 type plainWriter struct{}

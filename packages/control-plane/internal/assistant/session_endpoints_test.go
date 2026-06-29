@@ -290,7 +290,7 @@ func TestStreamSession_ClientDisconnectArmsGrace(t *testing.T) {
 	}
 }
 
-// TestInterrupt_EmitsTurnAborted is the AC-4 abort path end-to-end: a running turn
+// TestInterrupt_EmitsTurnAborted is the abort path end-to-end: a running turn
 // interrupted mid-inference surfaces turn_aborted (not an error) on the stream.
 func TestInterrupt_EmitsTurnAborted(t *testing.T) {
 	release := make(chan struct{})

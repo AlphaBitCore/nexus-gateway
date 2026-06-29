@@ -32,6 +32,7 @@ export function AuditLogPage() {
   const [userFilterLabel, setUserFilterLabel] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [selectedEntry, setSelectedEntry] = useState<AdminAuditEntry | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -102,13 +103,6 @@ export function AuditLogPage() {
   const entries = data?.data ?? [];
   const total = data?.total ?? 0;
 
-  const hasActiveFilters =
-    Boolean(actionFilter) ||
-    Boolean(entityTypeFilter) ||
-    Boolean(userFilterId) ||
-    Boolean(startTime) ||
-    Boolean(endTime);
-
   const clearAllFilters = () => {
     setActionFilter('');
     setEntityTypeFilter('');
@@ -153,25 +147,33 @@ export function AuditLogPage() {
         action={
           canExport ? (
             <Button variant="secondary" onClick={() => void handleExport()}>
-              {t('pages:audit.export')}
+              <span className={styles.exportButtonContent}>
+                <svg className={styles.exportIcon} width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+                  <path d="M8 2v7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  <path d="M5.25 6.75 8 9.5l2.75-2.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M3 11.5v1.25A1.25 1.25 0 0 0 4.25 14h7.5A1.25 1.25 0 0 0 13 12.75V11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                {t('pages:audit.export')}
+              </span>
             </Button>
           ) : undefined
         }
       />
 
       <ListFilterToolbar
+        variant="boxed"
         searchPlaceholder=""
         searchValue=""
         onSearchChange={() => {}}
         hideSearch
-        meta={
-          <span className={styles.metaSubline}>
-            {t('pages:audit.metaSubline')}
-          </span>
-        }
       >
-        <div className={styles.userCombobox}>
+        <div className={styles.userSearchBox}>
+          <svg className={styles.searchIcon} viewBox="0 0 24 24" fill="none" aria-hidden>
+            <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" strokeWidth="2" />
+            <path d="M15.5 15.5 21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
           <SearchableCombobox
+            className={styles.userCombobox}
             ariaLabel={t('pages:audit.searchAriaLabel')}
             placeholder={t('pages:audit.searchPlaceholder')}
             valueId={userFilterId}
@@ -193,77 +195,116 @@ export function AuditLogPage() {
               setOffset(0);
             }}
           />
+          <button
+            type="button"
+            className={styles.advancedButton}
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            {t('common:advancedFilter')}
+          </button>
+          {advancedOpen && (
+            <div className={styles.advancedPanel}>
+              <div className={styles.advancedGrid}>
+                <div className={styles.advancedField}>
+                  <span className={styles.advancedLabel}>{t('common:action')}</span>
+                  <select
+                    aria-label={t('pages:audit.allActions')}
+                    value={actionFilter}
+                    onChange={(e) => { setActionFilter(e.target.value); setOffset(0); }}
+                    className={styles.filterSelect}
+                  >
+                    <option value="">{t('pages:audit.allActions')}</option>
+                    <option value="create">{t('pages:audit.actionCreate')}</option>
+                    <option value="update">{t('pages:audit.actionUpdate')}</option>
+                    <option value="delete">{t('pages:audit.actionDelete')}</option>
+                    <option value="reset">{t('pages:audit.actionReset')}</option>
+                    <option value="simulate">{t('pages:audit.actionSimulate')}</option>
+                  </select>
+                </div>
+
+                <div className={styles.advancedField}>
+                  <span className={styles.advancedLabel}>{t('common:entityType')}</span>
+                  <select
+                    aria-label={t('pages:audit.allEntityTypes')}
+                    value={entityTypeFilter}
+                    onChange={(e) => { setEntityTypeFilter(e.target.value); setOffset(0); }}
+                    className={styles.filterSelect}
+                  >
+                    <option value="">{t('pages:audit.allEntityTypes')}</option>
+                    <option value="routingRule">{t('pages:audit.entityRoutingRule')}</option>
+                    <option value="credential">{t('pages:audit.entityCredential')}</option>
+                    <option value="virtualKey">{t('pages:audit.entityVirtualKey')}</option>
+                    <option value="quota">{t('pages:audit.entityQuota')}</option>
+                    <option value="model">{t('pages:audit.entityModel')}</option>
+                    <option value="provider">{t('pages:audit.entityProvider')}</option>
+                    <option value="iamRole">{t('pages:audit.entityIamRole')}</option>
+                  </select>
+                </div>
+
+                <div className={styles.advancedFieldWide}>
+                  <span className={styles.advancedLabel}>{t('common:timeRange')}</span>
+                  <div className={styles.dateRangeBox}>
+                    <label className={styles.dateRangeField}>
+                      <span className={styles.dateRangeLabel}>{t('common:startTime')}</span>
+                      <Input
+                        type="datetime-local"
+                        aria-label={t('common:startTime')}
+              step={1}
+                        data-empty={startTime === '' || undefined}
+              value={startTime ? startTime.slice(0, 19) : ''}
+                        onChange={(e) => {
+                          setStartTime(e.target.value ? new Date(e.target.value).toISOString() : '');
+                          setOffset(0);
+                        }}
+                        className={styles.dateInput}
+                      />
+                    </label>
+                    <span className={styles.dateRangeDivider} aria-hidden />
+                    <label className={styles.dateRangeField}>
+                      <span className={styles.dateRangeLabel}>{t('common:endTime')}</span>
+                      <Input
+                        type="datetime-local"
+                        aria-label={t('common:endTime')}
+              step={1}
+                        data-empty={endTime === '' || undefined}
+              value={endTime ? endTime.slice(0, 19) : ''}
+                        onChange={(e) => {
+                          setEndTime(e.target.value ? new Date(e.target.value).toISOString() : '');
+                          setOffset(0);
+                        }}
+                        className={styles.dateInput}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div className={styles.advancedFooter}>
+                <Button variant="secondary" onClick={clearAllFilters}>
+                  {t('common:reset')}
+                </Button>
+                <Button onClick={() => setAdvancedOpen(false)}>
+                  {t('common:confirmSearch')}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-
-        <select
-          aria-label={t('pages:audit.allActions')}
-          value={actionFilter}
-          onChange={(e) => { setActionFilter(e.target.value); setOffset(0); }}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:audit.allActions')}</option>
-          <option value="create">{t('pages:audit.actionCreate')}</option>
-          <option value="update">{t('pages:audit.actionUpdate')}</option>
-          <option value="delete">{t('pages:audit.actionDelete')}</option>
-          <option value="reset">{t('pages:audit.actionReset')}</option>
-          <option value="simulate">{t('pages:audit.actionSimulate')}</option>
-        </select>
-
-        <select
-          aria-label={t('pages:audit.allEntityTypes')}
-          value={entityTypeFilter}
-          onChange={(e) => { setEntityTypeFilter(e.target.value); setOffset(0); }}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:audit.allEntityTypes')}</option>
-          <option value="routingRule">{t('pages:audit.entityRoutingRule')}</option>
-          <option value="credential">{t('pages:audit.entityCredential')}</option>
-          <option value="virtualKey">{t('pages:audit.entityVirtualKey')}</option>
-          <option value="quota">{t('pages:audit.entityQuota')}</option>
-          <option value="model">{t('pages:audit.entityModel')}</option>
-          <option value="provider">{t('pages:audit.entityProvider')}</option>
-          <option value="iamRole">{t('pages:audit.entityIamRole')}</option>
-        </select>
-
-        <Input
-          type="datetime-local"
-          aria-label={t('pages:audit.startTimeTitle')}
-          value={startTime ? startTime.slice(0, 16) : ''}
-          onChange={(e) => {
-            setStartTime(e.target.value ? new Date(e.target.value).toISOString() : '');
-            setOffset(0);
-          }}
-          className={styles.dateInput}
-          title={t('pages:audit.startTimeTitle')}
-        />
-        <Input
-          type="datetime-local"
-          aria-label={t('pages:audit.endTimeTitle')}
-          value={endTime ? endTime.slice(0, 16) : ''}
-          onChange={(e) => {
-            setEndTime(e.target.value ? new Date(e.target.value).toISOString() : '');
-            setOffset(0);
-          }}
-          className={styles.dateInput}
-          title={t('pages:audit.endTimeTitle')}
-        />
-
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearAllFilters} aria-label={t('pages:audit.clearFilters')}>
-            {t('pages:audit.clearFilters')}
-          </Button>
-        )}
       </ListFilterToolbar>
 
-      <Card padding="none">
-        <AdminAuditLogTable
-          entries={entries}
-          selectedEntry={selectedEntry}
-          onSelectEntry={setSelectedEntry}
-          onToggleEntry={() => closeDrawer()}
-          pageSize={pageLimit}
-        />
-      </Card>
+      <div className={styles.tableSection}>
+        <p className={styles.tableMeta}>
+          {t('pages:audit.metaSubline')}
+        </p>
+        <Card padding="none">
+          <AdminAuditLogTable
+            entries={entries}
+            selectedEntry={selectedEntry}
+            onSelectEntry={setSelectedEntry}
+            onToggleEntry={() => closeDrawer()}
+            pageSize={pageLimit}
+          />
+        </Card>
+      </div>
 
       {selectedEntry && (
         <AdminAuditEntryDrawer

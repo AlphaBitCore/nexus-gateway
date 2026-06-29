@@ -3,8 +3,8 @@ package codecs
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -373,58 +373,73 @@ func (n *AnthropicMessagesNormalizer) normalizeResponse(raw []byte, meta core.Me
 		// providers: UncachedInput = PromptTokens − CacheReadTokens −
 		// CacheCreationTokens always yields the billable un-cached input
 		// regardless of upstream convention.
-		uncached := resp.Usage.InputTokens
-		cacheRead := resp.Usage.CacheReadInputTokens
-		cacheWrite := resp.Usage.CacheCreationInputTokens
-		output := resp.Usage.OutputTokens
-
-		u := &core.Usage{}
-		if uncached != 0 || cacheRead != 0 || cacheWrite != 0 {
-			prompt := uncached + cacheRead + cacheWrite
-			u.PromptTokens = &prompt
-		}
-		setIntPtr(&u.CompletionTokens, output)
-		if cacheWrite != 0 {
-			v := cacheWrite
-			u.CacheCreationTokens = &v
-		}
-		if cacheRead != 0 {
-			v := cacheRead
-			u.CacheReadTokens = &v
-		}
-		// TotalTokens = full input + output (matches OpenAI convention).
-		if u.PromptTokens != nil || output != 0 {
-			tot := 0
-			if u.PromptTokens != nil {
-				tot += *u.PromptTokens
-			}
-			tot += output
-			u.TotalTokens = &tot
-		}
-		// Anthropic's API counts thinking tokens as part of output_tokens
-		// but never breaks down how many of those are thinking vs visible
-		// text. Derive a heuristic by summing the character length of
-		// every ContentReasoning (thinking) block × chars/3.5 (matches
-		// the estimator's default Anthropic-family tokenizer). The
-		// resulting count is approximate (±15%) but lets dashboards +
-		// the reasoning_ratio widget surface a non-zero signal instead
-		// of misclassifying every Claude row as "no reasoning happened".
+		// Sum the character length of every ContentReasoning (thinking) block to
+		// drive the reasoning-token estimate (see anthropicUsageToCanonical).
 		reasoningChars := 0
 		for _, b := range blocks {
 			if b.Type == core.ContentReasoning {
 				reasoningChars += len(b.Text)
 			}
 		}
-		if reasoningChars > 0 {
-			est := reasoningChars * 2 / 7
-			if est < 1 {
-				est = 1
-			}
-			u.ReasoningTokens = &est
-		}
-		out.Usage = u
+		out.Usage = anthropicUsageToCanonical(resp.Usage, reasoningChars)
 	}
 	return out, nil
+}
+
+// anthropicUsageToCanonical projects an Anthropic usage block (plus the summed
+// character length of the response's thinking blocks) into canonical Usage. It is
+// the single source of the non-streaming Anthropic usage shape — called by the
+// full normalizeResponse and by the usage-only fast path (ExtractUsageOnly), which
+// pass the same reasoningChars so both yield identical Usage.
+//
+// Anthropic's raw input_tokens is the UNCACHED count; the canonical
+// (OpenAI-style) PromptTokens is the TOTAL input = uncached + cache_read +
+// cache_creation, so cost calculation stays uniform across providers
+// (UncachedInput = PromptTokens − CacheReadTokens − CacheCreationTokens).
+//
+// Anthropic counts thinking tokens inside output_tokens but never breaks down how
+// many are thinking vs visible text, so ReasoningTokens is a heuristic:
+// reasoningChars × 2/7 (chars/3.5, the estimator's default Anthropic tokenizer).
+// Approximate (±15%) but lets the reasoning_ratio widget show a non-zero signal
+// instead of misclassifying every Claude row as "no reasoning". It does not affect
+// the billed total — output_tokens already includes the thinking tokens.
+func anthropicUsageToCanonical(raw *anthropicUsage, reasoningChars int) *core.Usage {
+	uncached := raw.InputTokens
+	cacheRead := raw.CacheReadInputTokens
+	cacheWrite := raw.CacheCreationInputTokens
+	output := raw.OutputTokens
+
+	u := &core.Usage{}
+	if uncached != 0 || cacheRead != 0 || cacheWrite != 0 {
+		prompt := uncached + cacheRead + cacheWrite
+		u.PromptTokens = &prompt
+	}
+	setIntPtr(&u.CompletionTokens, output)
+	if cacheWrite != 0 {
+		v := cacheWrite
+		u.CacheCreationTokens = &v
+	}
+	if cacheRead != 0 {
+		v := cacheRead
+		u.CacheReadTokens = &v
+	}
+	// TotalTokens = full input + output (matches OpenAI convention).
+	if u.PromptTokens != nil || output != 0 {
+		tot := 0
+		if u.PromptTokens != nil {
+			tot += *u.PromptTokens
+		}
+		tot += output
+		u.TotalTokens = &tot
+	}
+	if reasoningChars > 0 {
+		est := reasoningChars * 2 / 7
+		if est < 1 {
+			est = 1
+		}
+		u.ReasoningTokens = &est
+	}
+	return u
 }
 
 // MergeAnthropicEventUsage is the EXPORTED variant of mergeAnthropicUsage

@@ -1,8 +1,8 @@
 package resource
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"

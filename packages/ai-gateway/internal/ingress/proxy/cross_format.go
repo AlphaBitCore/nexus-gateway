@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 
@@ -145,7 +145,7 @@ type ResponsesCrossFormatRejection struct {
 // adapter does not declare responses-api support); on same-shape
 // passthrough every field rides through to OpenAI.
 //
-// Per provider-adapter-architecture.md §3a Rule 6 + Requirements F-7.
+// Per provider-adapter-architecture.md §3a Rule 6.
 func validateResponsesIngressForCrossFormat(body []byte) *ResponsesCrossFormatRejection {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return nil

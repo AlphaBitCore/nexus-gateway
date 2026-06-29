@@ -22,6 +22,6 @@ func TestWireNormalizer_WithRealMQBatchWriter(t *testing.T) {
 	defer result.Writer.Close(context.Background()) //nolint:errcheck
 
 	// WireNormalizer should type-assert to *MQBatchWriter and call
-	// WithThingIdentity + WithNormalizer on it.
+	// WithThingIdentity on it.
 	WireNormalizer(result.Writer, "proxy-001", "host.example.com")
 }

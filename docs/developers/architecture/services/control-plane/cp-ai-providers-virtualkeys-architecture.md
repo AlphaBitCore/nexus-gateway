@@ -101,6 +101,22 @@ the gateway cache. How the gateway
 resolves a virtual key to its owning organisation for traffic attribution is in
 [vk-org-resolution.md](vk-org-resolution.md).
 
+## Provider model discovery
+
+`internal/ai/providers/handler.ProviderDiscoverModels` serves `POST /api/admin/providers/discover-models`. The endpoint enables the create-provider wizard to pre-fill the Models step by fetching the upstream model list before the provider is saved — it therefore operates on a not-yet-saved (caller-supplied) base URL and API key.
+
+**Request.** JSON body with three fields: `adapterType` (required, validated against the set of supported wire-format slugs), `baseUrl` (required), `apiKey` (optional; some providers expose `/v1/models` without authentication).
+
+**Response.** The handler forwards the request body to the AI Gateway internal endpoint `POST /internal/provider-discover-models` authenticated with `INTERNAL_SERVICE_TOKEN`. The AI Gateway response is relayed verbatim. On transport failure (AI Gateway unreachable) the handler returns HTTP 200 with `{"success": false, "error": "..."}` so the UI can surface a readable message rather than an opaque 502. On success the relay carries `{"success": true, "models": [{"id": "...", "suggestedType": "..."}]}` where `suggestedType` is a best-effort heuristic (`chat`, `embedding`, `audio`, or `image`) derived from the model id by the AI Gateway.
+
+**OpenAI-family only.** Only adapters that implement the `ListModels` transport capability — currently the shared OpenAI transport used by `openai`, `deepseek`, and all `specs/compat/*` adapters — support discovery. For any other `adapterType` the AI Gateway returns `{"success": false, "code": "discovery_unsupported"}`, which the wizard surfaces as an explicit "not available for this adapter" message. The handler validates the `adapterType` field before forwarding, so unknown slugs are rejected with HTTP 400 at the Control Plane boundary.
+
+**IAM tier.** Gated on `iam.ResourceProvider.Action(iam.VerbCreate)` — the same tier as `POST /api/admin/providers/test-connection`. The rationale is identical: the endpoint dials a caller-supplied base URL and relays upstream response detail (model metadata or error body), which is a blind-SSRF / internal-endpoint fingerprinting oracle if exposed to read-only viewers. Only a caller already authorized to configure a provider (and thus able to set the base URL anyway) may run the probe. See `RegisterProviderDiscoverRoutes` in `packages/control-plane/internal/ai/providers/handler/`.
+
+**Key: no Hub propagation.** Discovery is a read-only pre-flight probe; no row is created and no shadow key is updated. There is therefore no propagation step and no 502-on-push-failure contract.
+
+**Pricing note.** The AI Gateway discovery endpoint returns model ids and suggested types; it does not return pricing data (the upstream `/v1/models` endpoint carries no pricing). Every discovered model row lands in the wizard with pricing fields blank. Admins must fill input/output prices manually before the provider is saved in order for the gateway's cost stamping to work. The models page on the provider detail surfaces a "Pricing not set" badge on any model where `inputPricePerMillion` is null, as a persistent reminder.
+
 ## Routing rules
 
 `internal/ai/routing/` owns routing-rule CRUD (`/routing-rules`) and a
@@ -161,7 +177,7 @@ It is the operator probe for replaying a request against the gateway.
 
 ## References
 
-- `packages/control-plane/internal/ai/providers/` — provider / model / credential admin
+- `packages/control-plane/internal/ai/providers/` — provider / model / credential admin; `handler/provider_discover.go` — discover-models forwarder
 - `packages/control-plane/internal/ai/providers/credstore/` — credential store + encryption columns
 - `packages/control-plane/internal/ai/virtualkeys/` — virtual-key CRUD + approval workflow
 - `packages/control-plane/internal/ai/routing/` — routing-rule admin + simulate proxy

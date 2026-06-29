@@ -130,14 +130,29 @@ func (s *openaiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 				return true
 			})
 		}
+		// finish_reason rides a trailing chunk (delta empty) and is already in
+		// the canonical OpenAI vocabulary (stop / length / tool_calls /
+		// content_filter). Surface it on the canonical Chunk so a re-encoder
+		// (buffer mode) preserves the real value instead of collapsing to "stop".
+		if fr := choice0.Get("finish_reason"); fr.Type == gjson.String && fr.Str != "" {
+			chunk.FinishReason = fr.Str
+		}
 	}
 
-	if usage := gjson.GetBytes(ev.Data, "usage"); usage.Exists() {
+	if usage := gjson.GetBytes(ev.Data, "usage"); usage.IsObject() {
 		// Streaming Usage extraction via provcore.ExtractUsage (same parser
 		// path as the non-streaming codec, compliance proxy, agent, and Hub
 		// audit). The full SSE chunk JSON is passed; shared/normalize finds the
 		// usage block and applies the canonical alias chain (Kimi flat /
 		// DeepSeek / Moonshot / OpenAI Responses-shape fallbacks).
+		//
+		// Guard on IsObject (not Exists): OpenAI-stream chunks carry
+		// `"usage": null` on EVERY non-final delta, and gjson reports an
+		// explicit null as Exists()==true. Running the full normalizer on each
+		// null-usage chunk re-ran Tier-1 confidence scoring + canonical assembly
+		// per delta — the dominant streaming allocator. A real usage block is
+		// always a JSON object, so IsObject() runs ExtractUsage only on the
+		// final include_usage chunk while staying correct for every alias shape.
 		u := provcore.ExtractUsage(ev.Data, provcore.FormatOpenAI)
 		// Zero-value Usage means the alias chain didn't recognise the
 		// shape — fall back to nil so downstream stamping treats it as

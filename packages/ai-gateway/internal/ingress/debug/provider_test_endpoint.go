@@ -1,7 +1,7 @@
 package debug
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strings"

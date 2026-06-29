@@ -43,7 +43,7 @@ type mockAdapter struct {
 	lastRewrites []string
 	// lastURLOverride captures the urlOverride argument the executor passed
 	// to ExecuteWithBody, so tests can assert a codec endpoint-selection
-	// suffix (Gemini :batchEmbedContents) reaches the adapter (F-0053).
+	// suffix (Gemini :batchEmbedContents) reaches the adapter.
 	lastURLOverride string
 }
 
@@ -340,7 +340,9 @@ func TestExecutor_ExecuteWithPreparedBody_FailoverFallsBackToExecute(t *testing.
 		context.Background(),
 		[]routingcore.RoutingTarget{target("primary"), target("secondary")},
 		baseReq(),
-		configtypes.DefaultRetryPolicy(),
+		// max=1 so the primary 5xx fails over to the secondary (the path under
+		// test) rather than retrying the primary in place under the new default.
+		fastBackoffPolicy(1),
 		preparedBody, nil, "",
 	)
 	if result.Error != nil {
@@ -367,9 +369,11 @@ func TestExecutor_FallbackOn500(t *testing.T) {
 	exec := New(reg, res, nil, nil)
 
 	targets := []routingcore.RoutingTarget{target(providerSlug), target(providerSlug)}
-	// Default policy: MaxAttemptsPerTarget=1 -> first target's 500 immediately
-	// L3 failovers to the second target which succeeds.
-	result := exec.Execute(context.Background(), targets, baseReq(), configtypes.DefaultRetryPolicy())
+	// max=1 (no same-target retry) -> first target's 500 immediately L3
+	// failovers to the second target which succeeds. Pinned to max=1 so this
+	// stays a failover test independent of the platform default (which now
+	// allows one same-target retry).
+	result := exec.Execute(context.Background(), targets, baseReq(), fastBackoffPolicy(1))
 
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
@@ -417,6 +421,41 @@ func TestExecutor_RateLimited_L2Retry(t *testing.T) {
 	}
 }
 
+// TestExecutor_DefaultPolicy_RetriesOnceOn5xx pins the platform default's
+// user-visible behaviour: with the SHIPPED DefaultRetryPolicy() (no explicit
+// override), a single target that returns a transient 5xx then a 200 succeeds
+// via one same-target retry — not an immediate hard error. This is the
+// behaviour change that makes flaky upstream endpoints self-heal.
+func TestExecutor_DefaultPolicy_RetriesOnceOn5xx(t *testing.T) {
+	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
+		{err: &provcore.ProviderError{Status: 503, Code: provcore.CodeUpstreamError, Message: "high demand"}},
+		{resp: &provcore.Response{StatusCode: 200, Body: []byte(`ok`)}},
+	}}
+	reg := newRegistry(t, adapter)
+	res := okResolver()
+	exec := New(reg, res, nil, nil)
+
+	// Single target: a same-target retry is the only way this can reach 200.
+	result := exec.Execute(context.Background(),
+		[]routingcore.RoutingTarget{target(providerSlug)},
+		baseReq(),
+		configtypes.DefaultRetryPolicy(),
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after one same-target retry, got %d", result.StatusCode)
+	}
+	if len(result.Attempts) != 2 {
+		t.Fatalf("expected 2 attempts on the single target (503 then 200), got %d", len(result.Attempts))
+	}
+	if res.calls != 1 {
+		t.Fatalf("the L2 retry must reuse the resolved target (1 resolver call), got %d", res.calls)
+	}
+}
+
 func TestExecutor_4xxNoRetry(t *testing.T) {
 	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
 		{err: &provcore.ProviderError{Status: 401, Code: provcore.CodeAuthFailed, Message: "unauthorized", Raw: []byte(`unauth`)}},
@@ -449,7 +488,10 @@ func TestExecutor_AllExhausted(t *testing.T) {
 	exec := New(reg, res, nil, nil)
 
 	targets := []routingcore.RoutingTarget{target(providerSlug), target(providerSlug)}
-	result := exec.Execute(context.Background(), targets, baseReq(), configtypes.DefaultRetryPolicy())
+	// max=1 keeps this a clean per-target-exhaust test: one try per target, both
+	// fail, ErrAllTargetsExhausted. (The retry-then-exhaust path is covered by the
+	// explicit-policy multi-attempt tests.)
+	result := exec.Execute(context.Background(), targets, baseReq(), fastBackoffPolicy(1))
 
 	if !errors.Is(result.Error, ErrAllTargetsExhausted) {
 		t.Fatalf("expected ErrAllTargetsExhausted, got %v", result.Error)

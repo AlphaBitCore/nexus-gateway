@@ -53,7 +53,9 @@ describe('ProviderDetailPage', () => {
 
   it('the enabled provider shows Disable and toggles it off', () => {
     wrap();
-    fireEvent.click(screen.getByRole('button', { name: i18n.t('pages:providers.disable') }));
+    // The status button labels itself with the current state ("Enabled") and
+    // toggles to the opposite when clicked.
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('common:enabled') }));
     expect(spies.toggleEnabled).toHaveBeenCalledWith(false);
   });
 

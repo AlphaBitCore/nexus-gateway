@@ -1,6 +1,6 @@
 package semantic
 
-// lookup_test.go covers all branches of the S4 L2 read path:
+// lookup_test.go covers all branches of the L2 read path:
 //   - cosineSimilarity conversion helper
 //   - parseSearchResult RESP2 parsing (hit/miss/threshold/edge-cases)
 //   - flatArrayToMap, toInt64, parseFloat32, escapeTagValue, isNetworkError

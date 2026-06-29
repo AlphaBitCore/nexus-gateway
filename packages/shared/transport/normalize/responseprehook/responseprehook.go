@@ -3,13 +3,13 @@
 // to stamp a Registry-normalized payload onto the hook executor's
 // HookInput BEFORE the compliance pipeline sees it.
 //
-// Pre-#90 each SSE-pipeline branch built its compliance HookInput with
+// Previously each SSE-pipeline branch built its compliance HookInput with
 // `core.PayloadFromTextSegments` — a flat-text fallback whose
 // Normalized.Kind defaulted to "text" and dropped every adapter-specific
 // signal (model name, tool_calls, reasoning segments). That broke any
 // hook whose match rules referenced rich Normalized fields.
 //
-// #93 unifies the three ingress services on a single callback shape so
+// This package unifies the three ingress services on a single callback shape so
 // the contract is identical everywhere. Service-specific concerns (e.g.
 // stamping auditInfo.ResponseNormalized alongside ci.Normalized) ride
 // through the OnPayload option, never inlined into the helper itself.
@@ -75,7 +75,7 @@ type Options struct {
 	// Logger receives the single WARN line emitted when the inner
 	// Registry.Normalize call or the OnPayload callback panics. Build
 	// wraps both in a recover() so the SSE pipeline never crashes on a
-	// pre-hook bug (#97). nil → slog.Default() — never silent.
+	// pre-hook bug. nil → slog.Default() — never silent.
 	Logger *slog.Logger
 }
 
@@ -90,10 +90,9 @@ type Options struct {
 //
 // Best-effort contract: nil/empty rawBody / nil ci / Normalize hard
 // error are silently dropped — never abort hook execution because the
-// pre-hook stumbled (Registry already debug-logs per-tier traces via
-// #87).
+// pre-hook stumbled (Registry already debug-logs per-tier traces).
 //
-// Panic-safety (#97): both the inner Registry.Normalize call and the
+// Panic-safety: both the inner Registry.Normalize call and the
 // OnPayload callback are wrapped in recover(). A panicking
 // Tier 1/2/3 normalizer or audit-stamp closure must NEVER take down
 // the SSE pipeline — losing one stream's normalized payload is
@@ -136,7 +135,7 @@ func Build(opts Options) hookcore.PreHookCallback {
 			Stream:       stream,
 		}, logger)
 		if err != nil {
-			// #115/S5 — non-panic normalize failures (ErrUnsupported,
+			// Non-panic normalize failures (ErrUnsupported,
 			// tier hard errors) used to drop silently here; the hook
 			// executor then operated on the flat-text fallback that
 			// buildCheckpointInput stamps, so admin-configured Modify
@@ -171,7 +170,7 @@ func Build(opts Options) hookcore.PreHookCallback {
 // shape as Registry.Normalize; on panic returns an empty payload + the
 // recovered value coerced to an error stand-in (returned as a normal
 // error so the caller's existing "err != nil → silent drop" branch
-// triggers). #97 panic-safety.
+// triggers).
 func normalizeWithRecover(
 	ctx context.Context,
 	reg *normcore.Registry,
@@ -197,8 +196,7 @@ func normalizeWithRecover(
 }
 
 // invokeOnPayloadWithRecover guards the caller-supplied OnPayload so
-// the SSE pipeline survives buggy audit-stamp closures. #97
-// panic-safety.
+// the SSE pipeline survives buggy audit-stamp closures.
 func invokeOnPayloadWithRecover(
 	fn func(*normcore.NormalizedPayload, []byte),
 	payload *normcore.NormalizedPayload,
@@ -224,8 +222,8 @@ func invokeOnPayloadWithRecover(
 // normalize error path (counted by nexus_prehook_normalize_drop_total).
 // errors.Is(err, errPanicked) is the disjoint-counter discriminator.
 //
-// PR #24 / S6: changed from a string-typed panicError sentinel to a
-// stdlib errors.New value. Future callers that branch on this error
-// (e.g. errors.Is in the disjoint-counter check) get the standard
-// stdlib sentinel comparison semantics without a custom type.
+// Uses a stdlib errors.New value rather than a string-typed panicError
+// sentinel so callers that branch on this error (e.g. errors.Is in the
+// disjoint-counter check) get the standard stdlib sentinel comparison
+// semantics without a custom type.
 var errPanicked = errors.New("responseprehook: Registry.Normalize panicked")

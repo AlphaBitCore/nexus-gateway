@@ -19,22 +19,9 @@ const BUNDLED_RULES: {
   /** i18n key under `pages:settings.promptCache.ruleDesc.*`. */
   descriptionKey: string;
 }[] = [
-  // Anthropic family
+  // Anthropic family — surgical billing-nonce strips (opt-in, off by default).
   { id: 'claude-code-cch-strip',           adapterType: 'anthropic',    defaultEnabled: false, keyNormalizeSafe: true, descriptionKey: 'claudeCodeCchStrip' },
   { id: 'bedrock-claude-cch-strip',        adapterType: 'bedrock',      defaultEnabled: false, keyNormalizeSafe: true, descriptionKey: 'bedrockClaudeCchStrip' },
-  // OpenAI-compatible family — field-order canonicalisation, one rule per adapter
-  { id: 'openai-field-order-normalize',         adapterType: 'openai',       defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'openaiFieldOrder' },
-  { id: 'azure-openai-field-order-normalize',   adapterType: 'azure-openai', defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'azureOpenaiFieldOrder' },
-  { id: 'deepseek-field-order-normalize',       adapterType: 'deepseek',     defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'deepseekFieldOrder' },
-  { id: 'glm-field-order-normalize',            adapterType: 'glm',          defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'glmFieldOrder' },
-  { id: 'moonshot-field-order-normalize',       adapterType: 'moonshot',     defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'moonshotFieldOrder' },
-  { id: 'mistral-field-order-normalize',        adapterType: 'mistral',      defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'mistralFieldOrder' },
-  { id: 'xai-field-order-normalize',            adapterType: 'xai',          defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'xaiFieldOrder' },
-  { id: 'groq-field-order-normalize',           adapterType: 'groq',         defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'groqFieldOrder' },
-  { id: 'perplexity-field-order-normalize',     adapterType: 'perplexity',   defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'perplexityFieldOrder' },
-  { id: 'together-field-order-normalize',       adapterType: 'together',     defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'togetherFieldOrder' },
-  { id: 'fireworks-field-order-normalize',      adapterType: 'fireworks',    defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'fireworksFieldOrder' },
-  { id: 'minimax-field-order-normalize',        adapterType: 'minimax',      defaultEnabled: true, keyNormalizeSafe: true, descriptionKey: 'minimaxFieldOrder' },
 ];
 
 /**
@@ -45,18 +32,6 @@ const BUNDLED_RULES: {
 const ADAPTER_GROUP_ORDER: string[] = [
   'anthropic',
   'bedrock',
-  'openai',
-  'azure-openai',
-  'deepseek',
-  'fireworks',
-  'glm',
-  'groq',
-  'minimax',
-  'mistral',
-  'moonshot',
-  'perplexity',
-  'together',
-  'xai',
 ];
 
 /**

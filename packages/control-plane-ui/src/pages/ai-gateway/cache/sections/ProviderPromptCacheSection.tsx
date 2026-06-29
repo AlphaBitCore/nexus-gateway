@@ -20,6 +20,9 @@ export function ProviderPromptCacheSection() {
       <p className={styles.cardSubtitle}>
         {t('pages:aiGateway.cache.providerPrompt.subtitle')}
       </p>
+      <p className={styles.perfTip} role="note">
+        {t('pages:aiGateway.cache.perfTip')}
+      </p>
       <section aria-labelledby="card-provider-prompt-cache">
         <Stack gap="md">
           <SettingsCacheTab />

@@ -6,8 +6,8 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +48,7 @@ func TestRegisterProviderTestRoutes_WiresThreeRoutes(t *testing.T) {
 	}
 }
 
-// TestRegisterProviderTestRoutes_TestConnectionGatedOnCreate proves F-0369: the
+// TestRegisterProviderTestRoutes_TestConnectionGatedOnCreate proves the
 // draft test-connection route is gated on the provider-config-write tier
 // (provider:create), NOT provider:read. A read-only viewer can no longer use the
 // probe as a blind-SSRF / internal-endpoint fingerprinting oracle. The
@@ -68,7 +68,7 @@ func TestRegisterProviderTestRoutes_TestConnectionGatedOnCreate(t *testing.T) {
 	h.RegisterProviderTestRoutes(g, iamMW)
 
 	// RegisterProviderTestRoutes constructs the middlewares in this fixed order:
-	//   1) test-connection            -> provider:create   (raised, F-0369)
+	//   1) test-connection            -> provider:create   (raised)
 	//   2) /:id/test provider gate     -> provider:read
 	//   3) /:id/test credential gate   -> credential:probe
 	//   4) provider-health             -> provider:read
@@ -332,8 +332,8 @@ func TestDecryptCredential_MultiVault_Success(t *testing.T) {
 	multi := newTestMultiVault(t)
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, multi, ProxyConfig{})
 
-	// Encrypt something with v2 (current) so we can decrypt it back. SEC-C1-02:
-	// seal under the same row-identity AAD the decrypt path rebuilds from
+	// Encrypt something with v2 (current) so we can decrypt it back.
+	// Seal under the same row-identity AAD the decrypt path rebuilds from
 	// (credentialID, providerID).
 	v2Vault := vaultForKey(t, "v2")
 	aad := keyderive.ProviderCredentialAAD("cred-tc", "prov-tc")

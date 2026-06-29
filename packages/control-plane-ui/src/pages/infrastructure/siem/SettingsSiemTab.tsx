@@ -28,6 +28,8 @@ export function SettingsSiemTab() {
   const [form, setForm] = useState<SiemConfig | null>(null);
   const [headerRows, setHeaderRows] = useState<Array<{ key: string; value: string }>>([]);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [collapsedServices, setCollapsedServices] = useState<Set<string>>(() => new Set());
+  const [collapsedResources, setCollapsedResources] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     if (data) {
@@ -112,71 +114,104 @@ export function SettingsSiemTab() {
     }
   };
 
+  const toggleServiceOpen = (service: string) => {
+    setCollapsedServices((prev) => {
+      const next = new Set(prev);
+      if (next.has(service)) next.delete(service);
+      else next.add(service);
+      return next;
+    });
+  };
+
+  const toggleResourceOpen = (service: string, resource: string) => {
+    const key = `${service}|${resource}`;
+    setCollapsedResources((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   return (
-    <Card>
-      <Stack gap="md">
-        <h2>{t('pages:settingsSiem.title')}</h2>
-        <p className={styles.subtitle}>
-          {t('pages:settingsSiem.subtitle')}
-        </p>
+    <section className={styles.contentSection}>
+      <h2 className={styles.sectionTitle}>{t('pages:settingsSiem.title')}</h2>
+      <p className={styles.subtitle}>
+        {t('pages:settingsSiem.subtitle')}
+      </p>
+      <Card>
+        <Stack gap="md">
+          <div className={styles.topGrid}>
+            <div className={styles.switchBlock}>
+              <span className={styles.fieldTitle}>{t('pages:settingsSiem.enabled')}</span>
+              <Switch checked={form.enabled} onCheckedChange={checked => setForm({ ...form, enabled: checked })} />
+            </div>
 
-        <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-          <Switch checked={form.enabled} onCheckedChange={checked => setForm({ ...form, enabled: checked })} />
-          <span style={{ fontSize: 'var(--g-font-size-base)' }}>{t('pages:settingsSiem.enabled')}</span>
-        </Stack>
+            <FormField label={t('pages:settingsSiem.url')} className={styles.formField}>
+              <Input
+                type="url"
+                value={form.url}
+                onChange={e => setForm({ ...form, url: e.target.value })}
+                placeholder="https://siem.example.com/ingest"
+              />
+            </FormField>
 
-        <FormField label={t('pages:settingsSiem.url')}>
-          <Input
-            type="url"
-            value={form.url}
-            onChange={e => setForm({ ...form, url: e.target.value })}
-            placeholder="https://siem.example.com/ingest"
-          />
-        </FormField>
-
-        <div style={{ maxWidth: 100 }}>
-          <FormField label={t('pages:settingsSiem.format')}>
+            <FormField label={t('pages:settingsSiem.format')} className={styles.formField}>
             <Select
               value={form.format}
               onValueChange={value => setForm({ ...form, format: value as SiemFormat })}
               options={FORMAT_OPTIONS}
             />
           </FormField>
-        </div>
+          </div>
 
-        <div>
-          <h3 style={{ marginTop: 'var(--g-space-4)', fontSize: 'var(--g-font-size-md)' }}>{t('pages:settingsSiem.headers')}</h3>
-          {headerRows.map((row, i) => (
-            <Stack key={i} direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-              <Input
-                placeholder={t('pages:settingsSiem.headerNamePlaceholder')}
-                value={row.key}
-                onChange={e => {
-                  const next = [...headerRows]; next[i] = { ...next[i], key: e.target.value }; setHeaderRows(next);
-                }}
-                style={{ flex: 1 }}
-              />
-              <Input
-                placeholder={t('pages:settingsSiem.headerValuePlaceholder')}
-                value={row.value}
-                onChange={e => {
-                  const next = [...headerRows]; next[i] = { ...next[i], value: e.target.value }; setHeaderRows(next);
-                }}
-                style={{ flex: 2 }}
-              />
-              <Button variant="danger" onClick={() => setHeaderRows(headerRows.filter((_, j) => j !== i))}>
-                {t('common:remove')}
-              </Button>
-            </Stack>
-          ))}
-          <Button variant="secondary" onClick={() => setHeaderRows([...headerRows, { key: '', value: '' }])}>
-            {t('common:add')}
-          </Button>
-        </div>
+          <section className={styles.formSection}>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.subsectionTitle}>{t('pages:settingsSiem.headers')}</h3>
+              <button
+                type="button"
+                className={styles.addHeaderButton}
+                onClick={() => setHeaderRows([...headerRows, { key: '', value: '' }])}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                {t('common:add')}
+              </button>
+            </div>
+            <div className={styles.headerRows}>
+              {headerRows.map((row, i) => (
+                <div key={i} className={styles.headerRow}>
+                  <Input
+                    placeholder={t('pages:settingsSiem.headerNamePlaceholder')}
+                    value={row.key}
+                    onChange={e => {
+                      const next = [...headerRows]; next[i] = { ...next[i], key: e.target.value }; setHeaderRows(next);
+                    }}
+                  />
+                  <Input
+                    placeholder={t('pages:settingsSiem.headerValuePlaceholder')}
+                    value={row.value}
+                    onChange={e => {
+                      const next = [...headerRows]; next[i] = { ...next[i], value: e.target.value }; setHeaderRows(next);
+                    }}
+                  />
+                  <Button
+                    variant="danger"
+                    className={styles.removeHeaderButton}
+                    onClick={() => setHeaderRows(headerRows.filter((_, j) => j !== i))}
+                  >
+                    {t('common:remove')}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </section>
 
         {/* Event Types — grouped */}
-        <div>
-          <h3 style={{ marginTop: 'var(--g-space-4)', fontSize: 'var(--g-font-size-md)' }}>{t('pages:settingsSiem.eventTypes')}</h3>
+          <section className={styles.formSection}>
+          <h3 className={styles.subsectionTitle}>{t('pages:settingsSiem.eventTypes')}</h3>
           <p className={styles.helpText}>
             {t('pages:settingsSiem.eventTypesHelp')}
           </p>
@@ -186,49 +221,78 @@ export function SettingsSiemTab() {
             const allChecked = allInService.every(et => form.eventTypes.includes(et.type));
             const someChecked = allInService.some(et => form.eventTypes.includes(et.type));
             const serviceLabel = t(`pages:iam.services.${service}`, { defaultValue: service });
+            const serviceCollapsed = collapsedServices.has(service);
             return (
-              <div key={service} style={{ marginBottom: 'var(--g-space-4)', borderLeft: '3px solid var(--color-border-subtle)', paddingLeft: 'var(--g-space-3)' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-2)', fontSize: 'var(--g-font-size-base)', fontWeight: 'var(--g-font-weight-bold)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 'var(--g-space-1)', cursor: 'pointer' }}>
-                  <Checkbox
-                    checked={allChecked ? true : (someChecked ? 'indeterminate' : false)}
-                    onCheckedChange={() => toggleBatch(allInService)}
-                  />
-                  <span>{serviceLabel}</span>
-                </label>
-                <div style={{ paddingLeft: 'var(--g-space-4)' }}>
+              <div key={service} className={styles.eventService}>
+                <div className={styles.treeHeader}>
+                  <button
+                    type="button"
+                    className={styles.treeToggle}
+                    aria-label={serviceCollapsed ? 'Expand' : 'Collapse'}
+                    aria-expanded={!serviceCollapsed}
+                    onClick={() => toggleServiceOpen(service)}
+                  >
+                    <span className={serviceCollapsed ? styles.chevronCollapsed : styles.chevronExpanded} aria-hidden="true" />
+                  </button>
+                  <label className={styles.serviceLabel}>
+                    <Checkbox
+                      checked={allChecked ? true : (someChecked ? 'indeterminate' : false)}
+                      onCheckedChange={() => toggleBatch(allInService)}
+                    />
+                    <span>{serviceLabel}</span>
+                  </label>
+                </div>
+                {!serviceCollapsed && (
+                <div className={styles.resourceList}>
                   {resources.map(({ resource, types }) => {
                     const rAll = types.every(et => form.eventTypes.includes(et.type));
                     const rSome = types.some(et => form.eventTypes.includes(et.type));
+                    const resourceKey = `${service}|${resource}`;
+                    const resourceCollapsed = collapsedResources.has(resourceKey);
                     return (
-                      <div key={resource} style={{ marginBottom: 'var(--g-space-2)' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-2)', fontSize: 'var(--g-font-size-sm)', fontWeight: 'var(--g-font-weight-semibold)', marginBottom: 'var(--g-space-0-5)', cursor: 'pointer' }}>
-                          <Checkbox
-                            checked={rAll ? true : (rSome ? 'indeterminate' : false)}
-                            onCheckedChange={() => toggleBatch(types)}
-                          />
-                          <span style={{ fontFamily: 'monospace' }}>{resource}</span>
-                        </label>
-                        <div style={{ paddingLeft: 'var(--g-space-6)', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--g-space-0-5)' }}>
+                      <div key={resource} className={styles.eventResource}>
+                        <div className={styles.treeHeader}>
+                          <button
+                            type="button"
+                            className={styles.treeToggle}
+                            aria-label={resourceCollapsed ? 'Expand' : 'Collapse'}
+                            aria-expanded={!resourceCollapsed}
+                            onClick={() => toggleResourceOpen(service, resource)}
+                          >
+                            <span className={resourceCollapsed ? styles.chevronCollapsed : styles.chevronExpanded} aria-hidden="true" />
+                          </button>
+                          <label className={styles.resourceLabel}>
+                            <Checkbox
+                              checked={rAll ? true : (rSome ? 'indeterminate' : false)}
+                              onCheckedChange={() => toggleBatch(types)}
+                            />
+                            <span>{resource}</span>
+                          </label>
+                        </div>
+                        {!resourceCollapsed && (
+                        <div className={styles.typeGrid}>
                           {types.map(et => (
-                            <label key={et.type} style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-2)', fontSize: 'var(--g-font-size-sm)', cursor: 'pointer' }}>
+                            <label key={et.type} className={styles.typeLabel}>
                               <Checkbox
                                 checked={form.eventTypes.includes(et.type)}
                                 onCheckedChange={() => toggleEventType(et.type)}
                               />
-                              <span style={{ fontFamily: 'monospace' }}>{et.type}</span>
+                              <span>{et.type}</span>
                             </label>
                           ))}
                         </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
+                )}
               </div>
             );
           })}
-        </div>
+          </section>
 
-        <Stack direction="horizontal" gap="sm">
+        <Stack direction="horizontal" gap="sm" className={styles.footerActions}>
           <Button onClick={() => save(undefined)} loading={saving}>{t('common:save')}</Button>
           <Button variant="secondary" onClick={() => sendTest(undefined)} loading={testing}>
             {t('pages:settingsSiem.testButton')}
@@ -240,7 +304,8 @@ export function SettingsSiemTab() {
             {testResult.ok ? t('pages:settingsSiem.testSuccess') : `${t('pages:settingsSiem.testFailure')}: ${testResult.error}`}
           </div>
         )}
-      </Stack>
-    </Card>
+        </Stack>
+      </Card>
+    </section>
   );
 }

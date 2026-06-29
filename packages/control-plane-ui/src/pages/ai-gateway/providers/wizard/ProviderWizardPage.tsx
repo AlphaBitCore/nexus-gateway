@@ -14,9 +14,6 @@ export function ProviderWizard() {
 
   return (
     <div className={styles.wizardRoot}>
-      {/* Top accent */}
-      <div className={styles.accentBar} />
-
       <div className={styles.wizardContent}>
         <Breadcrumb items={[
           { label: t('pages:providers.title', 'Providers'), to: '/ai-gateway/providers' },

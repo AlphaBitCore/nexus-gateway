@@ -14,6 +14,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/wiring"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/infrastructure/infra"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/profiling"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/runtimemem"
 )
 
 var buildVersion = "dev"
@@ -25,6 +27,7 @@ func run() int {
 	// export each variable manually. systemd EnvironmentFile / docker
 	// --env-file values still win (godotenv non-overload).
 	_, _ = bootenv.LoadFromRepoRoot(slog.Default())
+	runtimemem.AutoSetMemoryLimit(slog.Default())
 	configPath := flag.String("config", "control-plane.config.yaml", "config file path")
 	flag.Parse()
 
@@ -34,6 +37,8 @@ func run() int {
 		return 1
 	}
 	cfg, logger := boot.Config, boot.Logger
+	// Opt-in profiler: SIGUSR1 dumps to NEXUS_PPROF_DIR / HTTP on NEXUS_PPROF_ADDR. No-op unless set.
+	profiling.Start("nexus-control-plane")
 	opsReg := wiring.InitOpsMetrics()
 
 	ctx, ctxCancel := context.WithCancel(context.Background())

@@ -1,7 +1,7 @@
 package canonicalbridge
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"testing"
 

@@ -16,18 +16,7 @@ import { FallbackChainSection } from './FallbackChainSection';
 import { MatchConditionsSection } from './MatchConditionsSection';
 import { RetryPolicySection } from './RetryPolicySection';
 import { HelpIconButton } from '@nexus-gateway/ui-shared';
-
-function useStrategyOptions() {
-  const { t } = useTranslation();
-  return [
-    { value: 'single', label: t('pages:routing.strategySingle') },
-    { value: 'fallback', label: t('pages:routing.strategyFallback') },
-    { value: 'loadbalance', label: t('pages:routing.strategyLoadbalance') },
-    { value: 'conditional', label: t('pages:routing.strategyConditional') },
-    { value: 'ab_split', label: t('pages:routing.strategyAbSplit') },
-    { value: 'smart', label: t('pages:routing.strategySmart') },
-  ];
-}
+import { useStrategyOptions } from '../_shared/useStrategyOptions';
 
 interface RoutingRuleFormProps {
   rule?: RoutingRule;

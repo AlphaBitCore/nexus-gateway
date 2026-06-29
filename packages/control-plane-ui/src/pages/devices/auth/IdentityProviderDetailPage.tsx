@@ -6,15 +6,13 @@
  * not a Dialog.
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { iamApi } from '@/api/services';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 import type { IdentityProvider, IdentityProviderWriteRequest } from '@/api/types';
 import {
-  PageHeader,
-  Breadcrumb,
   Stack,
   Skeleton,
   ErrorBanner,
@@ -26,6 +24,7 @@ import {
 import { IDP_LIST_ROUTE } from './idpRoutes';
 import { IdentityProviderForm } from './IdentityProviderForm';
 import { ScimTokenSection, GroupMappingSection } from './IdentityProviderPage';
+import detailStyles from '../../iam/_shared/Iam.module.css';
 
 export function IdentityProviderDetailPage() {
   const { t } = useTranslation();
@@ -63,29 +62,33 @@ export function IdentityProviderDetailPage() {
 
   return (
     <Stack gap="md">
-      <Breadcrumb
-        items={[
-          { label: t('pages:identityProvider.title'), to: IDP_LIST_ROUTE },
-          { label: data.name },
-        ]}
-      />
-      <PageHeader
-        title={data.name}
-        subtitle={t('pages:identityProvider.idpId') + ': ' + data.id}
-        action={
-          !isLocal && (
+      <section className={detailStyles.detailHeader}>
+        <div className={detailStyles.detailHeaderRow}>
+          <Link to={IDP_LIST_ROUTE} className={detailStyles.detailBackLink} aria-label={t('common:back')}>
+            <svg className={detailStyles.detailBackIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={detailStyles.detailHeaderText}>
+            <h1 className={detailStyles.detailTitle}>{data.name}</h1>
+            <div className={detailStyles.detailMeta}>
+              <span>{t('pages:identityProvider.idpId')}: {data.id}</span>
+              <Badge variant="info">{(data.type || '').toUpperCase()}</Badge>
+              <Badge variant={data.enabled ? 'success' : 'default'}>
+                {data.enabled ? t('pages:identityProvider.enabled') : t('pages:identityProvider.disabled')}
+              </Badge>
+            </div>
+          </div>
+          {!isLocal && (
+            <div className={detailStyles.detailHeaderActions}>
             <Button variant="danger" onClick={() => setConfirmDelete(true)}>
               {t('common:delete', 'Delete')}
             </Button>
-          )
-        }
-      />
-      <div style={{ display: 'flex', gap: 'var(--g-space-2)', alignItems: 'center' }}>
-        <Badge variant="info">{(data.type || '').toUpperCase()}</Badge>
-        <Badge variant={data.enabled ? 'success' : 'default'}>
-          {data.enabled ? t('pages:identityProvider.enabled') : t('pages:identityProvider.disabled')}
-        </Badge>
-      </div>
+            </div>
+          )}
+        </div>
+      </section>
 
       {isLocal ? (
         <Card>
@@ -104,13 +107,9 @@ export function IdentityProviderDetailPage() {
             onCancel={() => navigate(IDP_LIST_ROUTE)}
           />
 
-          <Card>
-            <ScimTokenSection idp={data} />
-          </Card>
+          <ScimTokenSection idp={data} />
 
-          <Card>
-            <GroupMappingSection idp={data} />
-          </Card>
+          <GroupMappingSection idp={data} />
         </>
       )}
 

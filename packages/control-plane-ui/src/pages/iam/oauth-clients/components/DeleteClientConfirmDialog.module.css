@@ -9,3 +9,8 @@
   justify-content: flex-end;
   margin-top: var(--g-space-2);
 }
+
+.actions :global(button),
+.actions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}

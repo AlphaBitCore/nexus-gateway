@@ -6,7 +6,7 @@
 }
 
 .subtitle {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-secondary);
   margin-bottom: var(--g-space-2);
 }
@@ -16,7 +16,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   outline: none;
   background: var(--color-bg);
   margin-bottom: var(--g-space-2);
@@ -44,8 +44,8 @@
 }
 
 .masterLabel {
-  font-weight: 500;
-  font-size: 13px;
+  font-weight: var(--g-font-weight-medium);
+  font-size: var(--g-font-size-xs);
 }
 
 .masterCode {
@@ -54,7 +54,7 @@
   color: var(--color-text-secondary);
   background: var(--color-bg-subtle);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--g-radius-xs);
 }
 
 .masterCount {
@@ -74,7 +74,7 @@
   padding: var(--g-space-3);
   text-align: center;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   font-style: italic;
 }
 
@@ -105,12 +105,12 @@
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   min-width: 64px;
 }
 
 .verbCode {
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
 }

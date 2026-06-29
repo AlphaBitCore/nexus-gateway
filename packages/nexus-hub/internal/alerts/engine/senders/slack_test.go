@@ -2,7 +2,7 @@ package senders_test
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,7 +90,7 @@ func TestSlackSender_MissingConfigIsError(t *testing.T) {
 	}
 }
 
-// TestSlackSender_WebhookErrorCollapsesOracle verifies F-0247 + F-0370: when the
+// TestSlackSender_WebhookErrorCollapsesOracle verifies that when the
 // webhook POST fails with a non-2xx status, the returned error (persisted on the
 // AlertDispatch row and shown in the admin UI) must NOT contain the secret webhook
 // URL AND must NOT reveal the upstream status code — both are fingerprinting

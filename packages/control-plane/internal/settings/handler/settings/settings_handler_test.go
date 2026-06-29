@@ -8,8 +8,8 @@ package settings
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -891,7 +891,7 @@ func TestUpdateAgentSettings_RejectsTooManyForceQUICEntries(t *testing.T) {
 	}
 }
 
-// TestUpdateAgentSettings_RejectsForceQUICSystemBundle closes SEC-M8-01 at the
+// TestUpdateAgentSettings_RejectsForceQUICSystemBundle closes the gap at the
 // CP write path: naming a system networking daemon directly must be rejected
 // before it can reach the agent_settings shadow, so a low-priv admin cannot
 // close that daemon's UDP fleet-wide.

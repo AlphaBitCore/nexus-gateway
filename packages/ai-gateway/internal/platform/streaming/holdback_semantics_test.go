@@ -10,8 +10,8 @@ import (
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
 
-// TestLivePipeline_HoldBackFalse_StillRunsHooksAndPreHook (#102
-// binding) pins the contract that the LivePipeline default behaviour
+// TestLivePipeline_HoldBackFalse_StillRunsHooksAndPreHook
+// pins the contract that the LivePipeline default behaviour
 // when HoldBack=false is NOT equivalent to passthrough.
 //
 // passthrough = wire bytes copied through, NO compliance pipeline,
@@ -46,7 +46,6 @@ func TestLivePipeline_HoldBackFalse_StillRunsHooksAndPreHook(t *testing.T) {
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars:  10,
 		ReinspectStepChars: 10,
-		HoldBack:           false, // key under test
 	}, hookRun, nil, nil)
 
 	lp.WithPreHook(func(_ []byte, _ *hookcore.HookInput) {

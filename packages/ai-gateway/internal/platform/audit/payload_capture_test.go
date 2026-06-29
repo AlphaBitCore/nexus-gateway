@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"log/slog"
 	"testing"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 )
 
 // TestRecordToMessage_PopulatesBodiesWhenCaptured asserts that once the
@@ -19,9 +21,11 @@ func TestRecordToMessage_PopulatesBodiesWhenCaptured(t *testing.T) {
 
 	t.Run("capture on", func(t *testing.T) {
 		msg := w.recordToMessage(&Record{
-			RequestID:    "r1",
-			RequestBody:  reqBody,
-			ResponseBody: respBody,
+			RequestID:      "r1",
+			RequestBody:    reqBody,
+			ResponseBody:   respBody,
+			RequestAction:  decision.ActionApprove,
+			ResponseAction: decision.ActionApprove,
 		})
 		if !bytes.Equal(msg.RequestBody.InlineBytes, reqBody) {
 			t.Errorf("RequestBody: want %q, got %q", reqBody, msg.RequestBody.InlineBytes)

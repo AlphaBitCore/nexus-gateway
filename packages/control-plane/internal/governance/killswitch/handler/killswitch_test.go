@@ -3,8 +3,8 @@ package killswitch
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -413,7 +413,7 @@ func TestPost_HubErrorReturns502(t *testing.T) {
 		t.Fatalf("decode error envelope: %v; body=%s", err, rec.Body.String())
 	}
 	// Primary-leg push failure now routes through the shared propagation
-	// helper (F-0102), so the kill-switch toggle returns the same unified
+	// helper, so the kill-switch toggle returns the same unified
 	// propagation envelope as every other security-sensitive handler.
 	if env.Error.Code != "HUB_PROPAGATION_FAILED" || env.Error.Type != "propagation_error" {
 		t.Fatalf("error envelope = %+v, want code=HUB_PROPAGATION_FAILED type=propagation_error", env.Error)

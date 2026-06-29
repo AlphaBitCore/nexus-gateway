@@ -1,5 +1,5 @@
 /**
- * DSAR (Data Subject Access Request) service (S42, M5-9).
+ * DSAR (Data Subject Access Request) service.
  *
  * Compliance officers file, view, and fulfill GDPR/CCPA data subject
  * rights requests through the dashboard. Two request types:

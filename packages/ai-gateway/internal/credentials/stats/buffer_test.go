@@ -3,7 +3,6 @@ package credstats
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -320,7 +319,7 @@ func TestRecordAttempt_StatsHashShape(t *testing.T) {
 	}
 }
 
-// TestRecordAttempt_FailReasonTruncated is the F-0098 regression guard:
+// TestRecordAttempt_FailReasonTruncated is the regression guard:
 // an oversized upstream error string must be capped at maxFailReasonLen
 // before it is written to the per-credential Redis hash, so a hostile or
 // verbose provider error (full HTML page, stack trace) cannot bloat Redis.
@@ -563,11 +562,13 @@ func TestRecordAttempt_SuccessReadError(t *testing.T) {
 	b, _, logSink, m := closedMiniredisBuffer(t, nil)
 	b.RecordAttempt("err-cred", 200, "")
 
-	if !strings.Contains(logSink.String(), "circuit state read failed") {
-		t.Errorf("expected 'circuit state read failed' log, got: %s", logSink.String())
+	// The success-path circuit transition is one atomic Lua EVAL; a Redis
+	// failure during it is logged + counted under the consolidated label.
+	if !strings.Contains(logSink.String(), "circuit success update failed") {
+		t.Errorf("expected 'circuit success update failed' log, got: %s", logSink.String())
 	}
-	if v := counterValue(t, m.redisWriteFailures.WithLabelValues("circuit_read")); v != 1 {
-		t.Errorf("redisWriteFailures[circuit_read] = %v, want 1", v)
+	if v := counterValue(t, m.redisWriteFailures.WithLabelValues("circuit_success")); v != 1 {
+		t.Errorf("redisWriteFailures[circuit_success] = %v, want 1", v)
 	}
 }
 
@@ -615,52 +616,29 @@ func TestRecordAttempt_SuccessCloseError(t *testing.T) {
 	}
 }
 
-// resetErrorCmdable wraps a real redis.Cmdable but forces every HSet
-// after stats-pipeline runs to return a configured error. Used to exercise
-// the auth-fail-reset error branch (success path, no transition, HSet
-// returns err).
-type hsetErrorClient struct {
-	redis.Cmdable
-	failErr error
-}
-
-func (c *hsetErrorClient) HSet(ctx context.Context, key string, values ...any) *redis.IntCmd {
-	cmd := redis.NewIntCmd(ctx)
-	cmd.SetErr(c.failErr)
-	return cmd
-}
-
-// TestRecordAttempt_AuthFailResetErrorBranch: A 2xx where state read
-// returns "" (no key) reaches the HSet(auth_fails=0) branch. To make
-// that HSet return a non-Nil error we wrap the client. Note: this also
-// makes the stats-pipeline HSet fail, but the stats error log/metric
-// path is exercised elsewhere — here we focus on confirming that the
-// reset path's warn fires when HSet returns err.
-func TestRecordAttempt_AuthFailResetErrorBranch(t *testing.T) {
+// TestRecordAttempt_SuccessResetsSubThresholdAuthFails verifies the "reset"
+// case of the atomic success-circuit script: a credential with a sub-threshold
+// auth_fails counter (a circuit hash with no 'state' field = still closed) has
+// that counter reset to 0 on a success, so transient auth failures below the
+// open threshold do not accumulate across recoveries.
+func TestRecordAttempt_SuccessResetsSubThresholdAuthFails(t *testing.T) {
 	mini, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mini.Close)
-	realRdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	b := New(rdb, nil, nil, nil)
 
-	wrapped := &hsetErrorClient{Cmdable: realRdb, failErr: errors.New("synthetic hset failure")}
-	logSink := &bytes.Buffer{}
-	logger := slog.New(slog.NewTextHandler(logSink, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-	b := New(wrapped, logger, nil, m)
+	const cred = "reset-cred"
+	circuitKey := credstate.CircuitKey(cred)
+	// Seed a closed circuit hash carrying a sub-threshold auth_fails counter.
+	mini.HSet(circuitKey, credstate.CircuitFieldAuthFails, "2")
 
-	b.RecordAttempt("reset-err-cred", 200, "")
-	// The stats pipeline's HSet calls are also intercepted by our wrapper,
-	// so the stats stage logs an error. We specifically assert the reset
-	// stage also logs (covering the final HSet error branch).
-	logged := logSink.String()
-	if !strings.Contains(logged, "circuit auth-fail reset failed") {
-		t.Errorf("expected 'circuit auth-fail reset failed' log, got: %s", logged)
-	}
-	if v := counterValue(t, m.redisWriteFailures.WithLabelValues("circuit_reset")); v != 1 {
-		t.Errorf("redisWriteFailures[circuit_reset] = %v, want 1", v)
+	b.RecordAttempt(cred, 200, "") // success → reset the counter to 0
+
+	if got := mini.HGet(circuitKey, credstate.CircuitFieldAuthFails); got != "0" {
+		t.Errorf("auth_fails after success = %q, want 0 (sub-threshold counter reset)", got)
 	}
 }
 

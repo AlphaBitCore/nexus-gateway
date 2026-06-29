@@ -13,6 +13,22 @@ export type StrategyType =
   | 'smart'
   | 'policy';
 
+/**
+ * The user-selectable routing strategy types, in canonical display order. This is
+ * the single source of truth for every strategy picker and filter in the UI (the
+ * Strategy Type dropdown on create/edit and the strategy filter on the list page),
+ * so they never drift. `policy` is intentionally excluded: it is the stage-0
+ * pipeline type, chosen via the pipeline-stage control, not a routing strategy.
+ */
+export const STRATEGY_TYPES: readonly Exclude<StrategyType, 'policy'>[] = [
+  'single',
+  'fallback',
+  'loadbalance',
+  'conditional',
+  'ab_split',
+  'smart',
+];
+
 export interface ProviderModelEntry {
   provider: string;
   model: string;

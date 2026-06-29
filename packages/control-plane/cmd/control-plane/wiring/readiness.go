@@ -18,7 +18,7 @@ type ReadinessChecker interface {
 // dependency-health booleans ({checks:{db,hub}, status}) — no mutation, no
 // sensitive data — so open access is safe.
 //
-// Note: the `/api/admin/` prefix on the second path is a
+// The `/api/admin/` prefix on the second path is a
 // naming smell — it can falsely read as admin-gated. It is kept for client
 // compatibility; the iam-exempt markers below make the intent explicit so a
 // reviewer (and the check-iam-route-coverage scanner) never mistakes the

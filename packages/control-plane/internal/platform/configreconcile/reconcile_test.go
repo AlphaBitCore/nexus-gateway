@@ -2,8 +2,8 @@ package configreconcile
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync"
@@ -389,7 +389,7 @@ func TestReconciler_NonJSONSourceFallsBackToRawBytes(t *testing.T) {
 	}
 }
 
-// --- F-0345 Category-B pending reconcile arm ---
+// --- Category-B pending reconcile arm ---
 
 type fakePending struct {
 	calls  int32

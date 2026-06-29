@@ -96,10 +96,10 @@ var Catalog = []ResourceDef{
 	// flipping the toggle. Distinct resource so granting "manage attestation"
 	// does NOT imply granting generic agent-device CRUD or platform settings
 	// write — these are different operational responsibilities (security
-	// engineering owns attestation policy, IT owns device CRUD). For S2 the
-	// PATCH on agent_settings still audits as `settings.update` (single
-	// payload, single event); per-agent attestation overrides land in a
-	// later epic and will iamMW() this action directly.
+	// engineering owns attestation policy, IT owns device CRUD). The
+	// PATCH on agent_settings audits as `settings.update` (single
+	// payload, single event); per-agent attestation overrides will iamMW()
+	// this action directly.
 	{Name: "agent-attestation", Service: ServiceAgent, Verbs: []Verb{VerbRead, VerbUpdate}},
 
 	// ── Platform Operations (Service: platform) ───────────────────────

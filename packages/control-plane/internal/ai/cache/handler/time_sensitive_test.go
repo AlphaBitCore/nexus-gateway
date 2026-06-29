@@ -2,8 +2,8 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -925,7 +925,7 @@ func TestPutTimeSensitivePattern_saveOverridesError(t *testing.T) {
 	}
 }
 
-// TestPutTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails (F-0102).
+// TestPutTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails.
 func TestPutTimeSensitivePattern_hubError(t *testing.T) {
 	ts := seededTSStore()
 	fh := &fakeHub{err: errors.New("hub: unavailable")}
@@ -985,7 +985,7 @@ func TestPostTimeSensitivePattern_saveOverridesError(t *testing.T) {
 	}
 }
 
-// TestPostTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails (F-0102).
+// TestPostTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails.
 func TestPostTimeSensitivePattern_hubError(t *testing.T) {
 	ts := &stubTSStore{}
 	fh := &fakeHub{err: errors.New("hub: unavailable")}
@@ -1033,7 +1033,7 @@ func TestDeleteTimeSensitivePattern_saveOverridesError(t *testing.T) {
 	}
 }
 
-// TestDeleteTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails (F-0102).
+// TestDeleteTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails.
 func TestDeleteTimeSensitivePattern_hubError(t *testing.T) {
 	ts := &stubTSStore{
 		blob: configstore.TimeSensitiveOverridesBlob{

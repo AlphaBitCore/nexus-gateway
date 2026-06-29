@@ -1,11 +1,10 @@
 // packages/shared/storage/configstore/aiguard_test.go — pgxmock-driven unit
 // tests for the singleton ai_guard_config SQL paths.
 //
-// History: this file was originally a destructive integration test
-// that mutated the shared dev DB's ai_guard_config singleton row. It
-// was gated behind NEXUS_DESTRUCTIVE_TESTS=1 in commit 494533313, then
-// rewritten to use pgxmock so it (a) never touches rows the test did not
-// seed and (b) runs in CI without TEST_DATABASE_URL.
+// These tests use pgxmock so they (a) never touch rows the test did not
+// seed and (b) run in CI without TEST_DATABASE_URL. A destructive
+// integration variant that mutates the shared dev DB's ai_guard_config
+// singleton row stays gated behind NEXUS_DESTRUCTIVE_TESTS=1.
 //
 // All pure decision-tree branches (ErrNoRows defaults, JSON parse,
 // marshal error paths, Save's auto-fill-ID + marshal-before-Exec

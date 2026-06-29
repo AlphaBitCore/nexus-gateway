@@ -11,9 +11,9 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -134,7 +134,7 @@ func envOrDefault(key, def string) string {
 // from Credential.encrypted{Key,Iv,Tag}.
 func (e *probeTestEnv) encryptForKey(plaintext string, aad []byte) (cipherHex, ivHex, tagHex string) {
 	master, _ := hex.DecodeString(e.keyHex)
-	// SEC-W2-03/C1-02: derive the provider-credential sub-key and bind aad,
+	// derive the provider-credential sub-key and bind aad,
 	// mirroring production so the MultiDecryptor can open it.
 	sub, err := keyderive.DeriveKey32(master, keyderive.ClassProviderCredential)
 	if err != nil {

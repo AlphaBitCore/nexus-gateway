@@ -42,6 +42,7 @@ type RulePackStore interface {
 	DeletePack(ctx context.Context, packID string) error
 	Install(ctx context.Context, in rulepack.Install) (*rulepack.Install, error)
 	UpdateInstall(ctx context.Context, installID string, enabled bool) error
+	UpgradeInstallToLatest(ctx context.Context, installID string) (*rulepack.UpgradeResult, error)
 	DeleteInstall(ctx context.Context, installID string) error
 	ListInstallsForHook(ctx context.Context, hookID string) ([]rulepack.Install, error)
 	UpsertOverrides(ctx context.Context, installID string, o []rulepack.Override) error
@@ -118,6 +119,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 	g.POST("/hooks/:hookId/rule-packs", h.Install, iamMW(iam.ResourceHook.Action(iam.VerbUpdate)))
 	g.GET("/hooks/:hookId/rule-packs", h.ListInstallsForHook, iamMW(iam.ResourceHook.Action(iam.VerbRead)))
 	g.PATCH("/rule-pack-installs/:installId", h.PatchInstall, iamMW(iam.ResourceHook.Action(iam.VerbUpdate)))
+	g.POST("/rule-pack-installs/:installId/upgrade", h.UpgradeInstall, iamMW(iam.ResourceHook.Action(iam.VerbUpdate)))
 	g.DELETE("/rule-pack-installs/:installId", h.UninstallByID, iamMW(iam.ResourceHook.Action(iam.VerbUpdate)))
 	g.PATCH("/rule-pack-installs/:installId/overrides", h.UpsertOverrides, iamMW(iam.ResourceHook.Action(iam.VerbUpdate)))
 	g.GET("/rule-pack-installs/:installId/effective-rules", h.EffectiveRules, iamMW(iam.ResourceHook.Action(iam.VerbRead)))
@@ -172,6 +174,10 @@ func (h *Handler) Preview(c echo.Context) error {
 		"pack":     pack,
 		"warnings": warnings,
 		"errors":   errs,
+		// Per-rule Vectorscan-compat + performance advisories (non-blocking);
+		// the UI surfaces these so authors can fix slow/divergent patterns
+		// before importing.
+		"lint": rulepack.LintPack(pack),
 	})
 }
 
@@ -215,6 +221,7 @@ func (h *Handler) Import(c echo.Context) error {
 		"packId":    saved.ID,
 		"ruleCount": len(saved.Rules),
 		"warnings":  warnings,
+		"lint":      rulepack.LintPack(pack),
 	})
 }
 
@@ -492,6 +499,41 @@ func (h *Handler) PatchInstall(c echo.Context) error {
 		"installId": installID,
 		"enabled":   *body.Enabled,
 	})
+}
+
+// UpgradeInstall advances an install's pinned pack version to the latest
+// available version of the same pack family. Installs pin to an exact version
+// row via packId, so this is a packId + pinVersion swap; the bound hook,
+// enabled flag, and per-rule overrides survive. A no-op (already-latest)
+// returns 200 with upgraded=false so the UI can render "up to date".
+func (h *Handler) UpgradeInstall(c echo.Context) error {
+	installID := c.Param("installId")
+	if installID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "installId required"})
+	}
+	res, err := h.store.UpgradeInstallToLatest(c.Request().Context(), installID)
+	if err != nil {
+		if errors.Is(err, rulepack.ErrInstallNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "install not found"})
+		}
+		if errors.Is(err, rulepack.ErrPackNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]any{"error": "pack not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	}
+
+	if res.Upgraded {
+		ae := audit.EntryFor(c, iam.ResourceRulePack, iam.VerbUpdate)
+		ae.EntityID = installID
+		ae.BeforeState = map[string]any{"pinVersion": res.FromVersion}
+		ae.AfterState = map[string]any{"pinVersion": res.ToVersion}
+		h.emitAudit(c, ae)
+		// Effective rule set changed — fan out hook invalidation so the
+		// three data-plane services rebuild the bound rule-pack engine.
+		h.invalidateHookConfig(c.Request().Context())
+	}
+
+	return c.JSON(http.StatusOK, res)
 }
 
 // UninstallByID removes a rule-pack install (and its overrides via

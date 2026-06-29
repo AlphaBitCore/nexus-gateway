@@ -6,6 +6,43 @@
   flex-shrink: 0;
 }
 
+.filterToolbar :global(select) {
+  height: 36px;
+  min-height: 36px;
+}
+
+.filterToolbar .orgFilter :global([class*='trigger']) {
+  height: 36px;
+  min-height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+}
+
+.filterToolbar .orgFilter :global([class*='triggerContent']) {
+  align-items: center;
+  min-height: 34px;
+}
+
+.filterToolbar .orgFilter :global([class*='singleValue']) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  line-height: 34px;
+}
+
+.tableSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.resultMeta {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
 /* ── User avatar + name cell ──────────────────────────────────────────── */
 
 .avatarCell {
@@ -21,7 +58,7 @@
   background: var(--color-primary-light);
   color: var(--color-primary);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -54,7 +91,7 @@
 
 .roleBadge {
   font-size: 11px;
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   padding: 1px 6px;
   white-space: nowrap;
   background: var(--color-primary-light);
@@ -63,7 +100,7 @@
 
 .roleBadgeOverflow {
   font-size: 11px;
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   padding: 1px 6px;
   cursor: default;
   background: var(--color-muted);

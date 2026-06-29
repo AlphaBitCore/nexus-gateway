@@ -2,8 +2,8 @@ package assistant
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,7 +108,7 @@ func TestDeleteSession(t *testing.T) {
 	}
 }
 
-// TestChatStreamMultiTurnContinuesOwnedSession proves P6 multi-turn reuse: when the
+// TestChatStreamMultiTurnContinuesOwnedSession proves multi-turn reuse: when the
 // client passes a sessionId it owns, ChatStream Loads the prior transcript (ref from
 // DB, content from spill) and continues THAT session — the done event carries the
 // same id back, and the turn persists via Save.
@@ -147,7 +147,7 @@ func TestChatStreamMultiTurnContinuesOwnedSession(t *testing.T) {
 	}
 }
 
-// TestStartChatSessionIDIsUserScoped is the F-0267 isolation assertion: the
+// TestStartChatSessionIDIsUserScoped is the isolation assertion: the
 // client-supplied session id is resolved ONLY within the caller's own userId
 // namespace, so two different users picking the SAME id ("shared-id") can never
 // reach each other's session. We drive a turn as "bob" continuing id "shared-id"
@@ -233,7 +233,7 @@ func TestIntersectModels(t *testing.T) {
 	}
 }
 
-// TestListModels_FiltersToReachable covers FR-17: a configured model the system VK
+// TestListModels_FiltersToReachable: a configured model the system VK
 // cannot reach (per the gateway's VK-scoped /v1/models) is dropped from the picker.
 func TestListModels_FiltersToReachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -701,8 +701,8 @@ func TestDeleteSessionNoPool(t *testing.T) {
 	}
 }
 
-// TestGetSessionCarriesWorkflowArtifactIDs pins the card-survival contract
-// (E91 S9): runs and freeze reviews stamped on the assistant message at turn
+// TestGetSessionCarriesWorkflowArtifactIDs pins the card-survival contract:
+// runs and freeze reviews stamped on the assistant message at turn
 // end ride the reload payload, so the web re-mounts their cards without
 // scraping prose — including a card-only turn whose text is empty.
 // TestTurnArtifacts_NoteRunDedupes: OnRunStarted notes the run id the moment

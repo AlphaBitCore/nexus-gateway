@@ -99,21 +99,6 @@ func TestExtractRequest_JSONUnknownShape(t *testing.T) {
 	}
 }
 
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{
-		"prompt":"hi",
-		"x_future_key":{"sensitive":"data"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/_/...")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if x, ok := nc.Extra["x_future_key"]; !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_future_key", nc.Extra)
-	}
-}
-
 // Form-encoded RPC shape (heuristic extraction)
 
 // TestExtractRequest_FormEncodedFreqPayload covers the typical
@@ -161,10 +146,6 @@ func TestExtractRequest_FormEncodedShortPromptSkipped(t *testing.T) {
 	}
 	if len(nc.Segments) != 0 {
 		t.Errorf("Segments=%v want empty for sub-threshold prompt", nc.Segments)
-	}
-	// But the body preview must reach Extra so audit can re-examine.
-	if _, ok := nc.Extra["form_body_preview"]; !ok {
-		t.Errorf("Extra missing form_body_preview safety net")
 	}
 }
 
@@ -519,28 +500,6 @@ func TestExtractRequest_FormEncodedInnerNotValidJSON(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("inner-invalid-JSON fall-back lost prompt; Segments=%v", nc.Segments)
-	}
-}
-
-// walkHeuristicSegments — large-preview truncation
-
-// TestWalkHeuristic_LargePreviewTruncated covers lines 372-374: when the
-// original body exceeds 4096 bytes the Extra preview is truncated.
-func TestWalkHeuristic_LargePreviewTruncated(t *testing.T) {
-	// Inner payload short, but original body very large.
-	prefix := "f.req=%5Bnull%2C%22%5B%5B%5C%22sufficiently+long+prompt+text+here%5C%22%5D%5D%22%5D"
-	body := []byte(prefix + "&filler=" + strings.Repeat("x", 8192))
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/_/...")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	preview, ok := nc.Extra["form_body_preview"]
-	if !ok {
-		t.Fatalf("missing form_body_preview")
-	}
-	if len(preview) != 4096 {
-		t.Errorf("preview len=%d want 4096", len(preview))
 	}
 }
 

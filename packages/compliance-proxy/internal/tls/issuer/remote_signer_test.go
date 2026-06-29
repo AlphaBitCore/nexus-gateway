@@ -373,7 +373,7 @@ func TestNewIssuerWithRemoteSigner_SubsequentBoot_ReusesStoredDEK(t *testing.T) 
 }
 
 // TestNewIssuerWithRemoteSigner_KeyIndependentOfCACert is the core security
-// assertion for F-0019: the cache AES key must NOT be a function of the
+// assertion: the cache AES key must NOT be a function of the
 // (public) CA cert. Two issuers sharing the same DEK store but DIFFERENT CA
 // certs MUST derive the SAME key — proving the key comes from the
 // KMS-managed DEK, so the published CA cert grants no decryption power.

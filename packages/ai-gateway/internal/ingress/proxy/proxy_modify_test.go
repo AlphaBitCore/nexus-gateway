@@ -48,11 +48,10 @@ func newPiiRedactHookCache(t *testing.T) *compliance.HookConfigCache {
 			TimeoutMs:         1000,
 			ApplicableIngress: []string{"ALL"},
 			Config: map[string]any{
-				// Canonical onMatch shape (replaces the legacy `action: "redact"`
-				// flat field that ParseOnMatch stopped reading in 8cbc9097).
+				// Legacy onMatch shape (replaces the older `action: "redact"`
+				// flat field that ParseOnMatch stopped reading).
 				// storageAction=redact mirrors the inflight intent so the audit
-				// copy also gets the email stripped — matches the prod
-				// pii-scanner row post-Fix-7.
+				// copy also gets the email stripped.
 				"onMatch": map[string]any{
 					"inflightAction": "redact",
 					"storageAction":  "redact",
@@ -111,9 +110,9 @@ func TestRunRequestHooks_Modify_RewritesBody(t *testing.T) {
 		t.Errorf("audit.RequestHookDecision = %q, want %q", auditRec.HookDecision, string(goHooks.Modify))
 	}
 	// The redacted wire copy must reach the audit record: it is the only
-	// bytes the raw storage policy may persist under storageAction=redact.
+	// bytes the raw storage policy may persist under action=redact.
 	// Without the stamp the writer fail-safes the raw request copy to
-	// NULL on every inflight-redact event.
+	// NULL on every redact event.
 	if string(auditRec.RequestBodyRedacted) != string(rewritten) {
 		t.Errorf("audit.RequestBodyRedacted = %q, want the rewritten body", auditRec.RequestBodyRedacted)
 	}
@@ -445,80 +444,4 @@ func TestRunRequestHooks_RejectHard_WritesHookMarker(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("response status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
-}
-
-// TestRunRequestHooks_BlockSoft_WritesHookMarker verifies that the soft-reject
-// path (HTTP 246) also emits X-Nexus-Hook and X-Nexus-Via.
-func TestRunRequestHooks_BlockSoft_WritesHookMarker(t *testing.T) {
-	reg := builtins.Registry.Clone()
-	reg.Register("reject-soft-hook", func(_ *goHooks.HookConfig) (goHooks.Hook, error) {
-		return &rejectSoftHookImpl{}, nil
-	})
-	reg.Freeze()
-
-	loader := func(_ context.Context) ([]goHooks.HookConfig, error) {
-		return []goHooks.HookConfig{{
-			ID:                "soft-1",
-			ImplementationID:  "reject-soft-hook",
-			Name:              "soft-reject",
-			Priority:          1,
-			Enabled:           true,
-			Stage:             "request",
-			FailBehavior:      "fail-closed",
-			TimeoutMs:         1000,
-			ApplicableIngress: []string{"ALL"},
-			Config:            map[string]any{},
-		}}, nil
-	}
-	cache := compliance.NewHookConfigCache(loader, reg, 0, slog.Default())
-	if err := cache.Start(context.Background()); err != nil {
-		t.Fatalf("cache.Start: %v", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-
-	h := &Handler{deps: &Deps{
-		HookConfigCache: cache,
-		TrafficAdapter:  &openai.Adapter{},
-		Logger:          slog.Default(),
-	}}
-
-	body := []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
-	rec := httptest.NewRecorder()
-	auditRec := &audit.Record{RequestID: "req-soft-marker"}
-
-	_, _, rejected := h.runRequestHooks(req, rec, auditRec, "req-soft-marker", body, routingcore.RoutingTarget{}, openAIIngress, nil, slog.Default())
-	if !rejected {
-		t.Fatal("expected hook to reject (soft) the request")
-	}
-
-	hookHdr := rec.Header().Get("X-Nexus-Hook")
-	if hookHdr == "" {
-		t.Error("X-Nexus-Hook header is absent on soft-rejected response")
-	}
-	if !strings.HasPrefix(hookHdr, "rejected:") {
-		t.Errorf("X-Nexus-Hook = %q, want prefix %q", hookHdr, "rejected:")
-	}
-
-	viaHdr := rec.Header().Get("X-Nexus-Via")
-	if !strings.Contains(viaHdr, "ai-gateway") {
-		t.Errorf("X-Nexus-Via = %q, expected to contain 'ai-gateway'", viaHdr)
-	}
-
-	if rec.Code != 246 {
-		t.Errorf("response status = %d, want 246", rec.Code)
-	}
-}
-
-// rejectSoftHookImpl is a test hook that always returns BlockSoft.
-type rejectSoftHookImpl struct {
-	goHooks.AnyEndpointAnyModality
-}
-
-func (r *rejectSoftHookImpl) Execute(_ context.Context, _ *goHooks.HookInput) (*goHooks.HookResult, error) {
-	return &goHooks.HookResult{
-		Decision:   goHooks.BlockSoft,
-		Reason:     "flagged by compliance",
-		ReasonCode: "policy-violation",
-	}, nil
 }

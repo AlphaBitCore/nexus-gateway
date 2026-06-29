@@ -54,8 +54,9 @@ export function ProviderDetailPage() {
                 variant="secondary"
                 onClick={() => toggleEnabled(!provider.enabled)}
                 disabled={toggleLoading}
+                className={styles.providerStatusButton}
               >
-                {provider.enabled ? t('pages:providers.disable') : t('pages:providers.enable')}
+                {provider.enabled ? t('common:enabled') : t('common:disabled')}
               </Button>
             )}
             {canDelete && (

@@ -477,7 +477,7 @@ func TestStreamDecoder_Open_NilBody(t *testing.T) {
 // TestStreamSession_Next_ErrorEventTerminatesStream covers the
 // `event: error` branch: it must surface a typed ProviderError (NOT fold
 // the error text into assistant Delta + report a billed HTTP-200 success),
-// and any subsequent Next call must return io.EOF (audit F-0225).
+// and any subsequent Next call must return io.EOF.
 func TestStreamSession_Next_ErrorEventTerminatesStream(t *testing.T) {
 	raw := "event: error\ndata: model crashed\n\n"
 	d := NewStreamDecoder(slog.Default())
@@ -515,7 +515,7 @@ func TestStreamSession_Next_ErrorEventTerminatesStream(t *testing.T) {
 
 // TestStreamSession_Next_ErrorEventEmptyData_DefaultMessage covers the
 // empty error-payload branch: the typed error still carries a fallback
-// message (audit F-0225).
+// message.
 func TestStreamSession_Next_ErrorEventEmptyData_DefaultMessage(t *testing.T) {
 	raw := "event: error\ndata: \n\n"
 	d := NewStreamDecoder(slog.Default())

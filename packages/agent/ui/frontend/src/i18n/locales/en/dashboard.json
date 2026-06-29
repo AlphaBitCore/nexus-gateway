@@ -475,7 +475,7 @@
     "certPath": "Certificate file",
     "interceptionMode": {
       "label": "Interception mode",
-      "fallbackWarning": "WinDivert kernel driver did not load; using system-proxy fallback. Some apps that ignore system proxy may bypass filtering. Contact support."
+      "fallbackWarning": "NexusWFP kernel driver did not load; using system-proxy fallback. Some apps that ignore system proxy may bypass filtering. Contact support."
     },
     "actions": {
       "title": "Recovery actions",

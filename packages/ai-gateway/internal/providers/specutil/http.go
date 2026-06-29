@@ -46,8 +46,18 @@ type HTTPConfig struct {
 	IdleConnTimeout time.Duration
 	// MaxIdleConns is the global pool cap.
 	MaxIdleConns int
-	// MaxIdleConnsPerHost is the per-host pool cap.
+	// MaxIdleConnsPerHost is the per-host idle pool cap.
 	MaxIdleConnsPerHost int
+	// MaxConnsPerHost caps TOTAL (active + idle) connections to one upstream host.
+	// CRITICAL for a proxy: when in-flight requests to a host exceed this, the
+	// transport BLOCKS them waiting for a connection to free — capping upstream
+	// concurrency regardless of how much the gateway can otherwise serve. The shared
+	// httpclient defaults this to 100 (right for fan-out clients hitting many hosts,
+	// WRONG for the upstream proxy which drives high concurrency to a FEW provider
+	// hosts), so the upstream transport sets it explicitly high. 0 here would inherit
+	// that 100 default — so DefaultHTTPConfig pins a real value; mirrors Bifrost's
+	// fasthttp MaxConnsPerHost (default 5000).
+	MaxConnsPerHost int
 }
 
 // DefaultHTTPConfig returns the baseline upstream HTTP client tunables.
@@ -70,6 +80,12 @@ func DefaultHTTPConfig() HTTPConfig {
 		IdleConnTimeout:     300 * time.Second,
 		MaxIdleConns:        2000,
 		MaxIdleConnsPerHost: 500,
+		// Total per-host connection cap. 5000 mirrors Bifrost's fasthttp default and
+		// is well above any realistic single-box concurrency, so the upstream call is
+		// never connection-starved (the prior implicit 100 default capped upstream
+		// concurrency at 100 → throughput collapsed under load). Tunable via
+		// AI_GATEWAY_UPSTREAM_MAX_CONNS_PER_HOST.
+		MaxConnsPerHost: 5000,
 	}
 }
 
@@ -122,7 +138,7 @@ var upstreamSingleton = &http.Client{
 // regardless of upstream policy) so it does not participate in the
 // hot-swap. Constructed once at init time.
 //
-// F-0369: the probe dials an admin-supplied provider base URL (a fresh,
+// The probe dials an admin-supplied provider base URL (a fresh,
 // not-yet-saved URL on the test-connection path), making it an SSRF primitive.
 // It is guarded with the AdminEgressAllowPrivate policy: the cloud-metadata /
 // link-local range (169.254.169.254 et al.) is refused at dial time, but
@@ -162,6 +178,7 @@ func buildUpstreamTransport(cfg HTTPConfig) http.RoundTripper {
 		KeepAlive:           cfg.KeepAlive,
 		MaxIdleConns:        cfg.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
+		MaxConnsPerHost:     cfg.MaxConnsPerHost,
 		IdleConnTimeout:     cfg.IdleConnTimeout,
 		TLSHandshakeTimeout: cfg.TLSHandshakeTimeout,
 		// ResponseHeaderTimeout bounds the time from finishing the request
@@ -216,6 +233,9 @@ func Configure(cfg HTTPConfig) {
 	}
 	if cfg.MaxIdleConnsPerHost <= 0 {
 		cfg.MaxIdleConnsPerHost = def.MaxIdleConnsPerHost
+	}
+	if cfg.MaxConnsPerHost <= 0 {
+		cfg.MaxConnsPerHost = def.MaxConnsPerHost
 	}
 	activeConfig.Store(&cfg)
 

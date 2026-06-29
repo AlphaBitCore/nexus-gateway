@@ -43,7 +43,7 @@ func ProcessInfo(pid int) (Meta, error) {
 		meta.Path = C.GoString(&pathBuf[0])
 		meta.Name = filepath.Base(meta.Path)
 		meta.BundleID = DetectBundleID(meta.Path)
-		// #80 defense: some Electron apps (Claude Desktop, Cursor)
+		// Defense: some Electron apps (Claude Desktop, Cursor)
 		// nest the executable inside a Frameworks/Helpers tree where
 		// the basename ends up looking like a version string ("2.1.141"
 		// because that's the Helper directory name). Prefer the
@@ -85,7 +85,7 @@ func ProcessInfo(pid int) (Meta, error) {
 // LooksLikeVersionString matches names that look like a version
 // number (e.g. "2.1.141", "1.0", "3.4.5-beta"). Used by ProcessInfo
 // to decide whether to fall back to the containing .app bundle's
-// display name (#80).
+// display name.
 func LooksLikeVersionString(s string) bool {
 	if s == "" {
 		return false
@@ -119,7 +119,7 @@ func LooksLikeVersionString(s string) bool {
 // BundleDisplayNameFromPath walks up from execPath looking for the
 // nearest .app bundle and reads its CFBundleName / CFBundleDisplayName
 // from Info.plist. Used by ProcessInfo as the fallback name when the
-// raw basename looks like a version string (#80). Returns empty when
+// raw basename looks like a version string. Returns empty when
 // no .app ancestor exists or its Info.plist can't be parsed.
 func BundleDisplayNameFromPath(execPath string) string {
 	dir := execPath

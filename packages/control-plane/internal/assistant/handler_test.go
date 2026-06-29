@@ -49,7 +49,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 }
 
 // countingUpstream is mockUpstream plus an atomic counter of admin-path (non-
-// inference) requests — i.e. the situation snapshot's reads — so the NFR-11/AC-5
+// inference) requests — i.e. the situation snapshot's reads — so the
 // per-turn call ceiling can be asserted end-to-end against the REAL situation.
 func countingUpstream(t *testing.T, adminHits *int32) *httptest.Server {
 	t.Helper()
@@ -67,7 +67,7 @@ func countingUpstream(t *testing.T, adminHits *int32) *httptest.Server {
 	}))
 }
 
-// TestChatStream_SituationCallCeiling is the AC-5 end-to-end assertion (NFR-11): the
+// TestChatStream_SituationCallCeiling is the end-to-end assertion: the
 // FIRST turn for a caller makes at most the documented ceiling of admin reads (the
 // situation's ~8), and a SECOND turn within the TTL makes ZERO — proving the cache is
 // actually wired through BuildWebAgent + the real runtime.Situation, not just the

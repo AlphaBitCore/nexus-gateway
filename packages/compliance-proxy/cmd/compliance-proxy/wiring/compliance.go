@@ -119,12 +119,7 @@ func InitCompliance(cfg *config.Config, cacheManager *cache.Manager, auditWriter
 	result.Resolver = result.HookConfigCache.Resolver(context.Background())
 
 	if auditWriter != nil {
-		// WithPreSpillNormalize: the proxy's audit writer runs a
-		// flush-time normalize pass (applyNormalize), so retaining a
-		// spilled body's in-memory bytes lets it project spill-destined
-		// traffic without a spill-store fetch. The agent does NOT set this
-		// — it normalizes inline before emit.
-		result.Emitter = compliance.NewAuditEmitter(auditWriter, logger).WithPreSpillNormalize()
+		result.Emitter = compliance.NewAuditEmitter(auditWriter, logger)
 		// Wire spillstore for out-of-band body storage. Returns
 		// (nil, nil) when cfg.Spill.Enabled is false; emitter then keeps
 		// inline-only behaviour. The runtime MaxInlineBodyBytes

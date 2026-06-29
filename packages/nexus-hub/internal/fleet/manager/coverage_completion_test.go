@@ -14,8 +14,8 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +29,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 )
 
-// TestHubSignal_SignVerify_HMAC locks the SEC-C3-01 inter-Hub authenticity
+// TestHubSignal_SignVerify_HMAC locks the inter-Hub authenticity
 // guarantee end to end: a frame signed with a secret round-trips through
 // VerifyAndDecodeHubSignal under the SAME secret, and every forgery /
 // corruption mode (wrong secret, stripped sig, mangled envelope, empty payload,

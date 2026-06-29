@@ -75,6 +75,37 @@ cache:
 	}
 }
 
+func TestLoad_Audit_EnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	_ = os.WriteFile(p, []byte("server:\n  port: 3050\n"), 0o644)
+
+	setRequiredEnvBaseline(t)
+	t.Setenv("AI_GATEWAY_AUDIT_SPOOL_DIR", "/tmp/spool-x")
+	t.Setenv("AI_GATEWAY_AUDIT_MAX_QUEUED_RECORDS", "777")
+	t.Setenv("AI_GATEWAY_AUDIT_LOSS_MODE", "spill")
+	t.Setenv("AI_GATEWAY_AUDIT_COMPRESS", "false")
+	t.Setenv("AI_GATEWAY_AUDIT_COMPRESS_MIN_BYTES", "2048")
+	t.Setenv("AI_GATEWAY_AUDIT_COMPRESS_LEVEL", "5")
+	t.Setenv("AI_GATEWAY_AUDIT_SPILL_RECOVERY_INTERVAL_MS", "1500")
+	t.Setenv("AI_GATEWAY_AUDIT_SPILL_RECOVERY_PACE_MS", "25")
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	a := cfg.Audit
+	if a.SpoolDir != "/tmp/spool-x" || a.MaxQueuedRecords != 777 || a.LossMode != "spill" {
+		t.Errorf("spool/queue/loss = %q/%d/%q", a.SpoolDir, a.MaxQueuedRecords, a.LossMode)
+	}
+	if a.Compress || a.CompressMinBytes != 2048 || a.CompressLevel != 5 {
+		t.Errorf("compress = %v/%d/%d", a.Compress, a.CompressMinBytes, a.CompressLevel)
+	}
+	if a.SpillRecoveryIntervalMs != 1500 || a.SpillRecoveryPaceMs != 25 {
+		t.Errorf("recovery = %d/%d, want 1500/25", a.SpillRecoveryIntervalMs, a.SpillRecoveryPaceMs)
+	}
+}
+
 func TestLoad_Otel_FromYAML(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "cfg.yaml")

@@ -56,6 +56,71 @@ func trafficEventRow(extra int) *pgxmock.Rows {
 	return pgxmock.NewRows(cols).AddRow(vals...)
 }
 
+// GetTrafficEventForNormalize must feed the view-time normalize the INGRESS
+// frame: AdapterType from a.ingress_format (NOT the upstream provider's
+// adapter_type) and Path from a.path (NOT target_path). The stored bodies are
+// client-facing, so any other choice mis-selects the codec for cross-protocol
+// routes and renders raw generic-http JSON. This pins that mapping.
+func TestGetTrafficEventForNormalize(t *testing.T) {
+	s, m := newMock(t)
+	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct", "req_spill", "resp_spill"}
+	reqSpill := []byte(`{"backend":"localfs","key":"req-k","sha256":"abc"}`)
+	m.ExpectQuery(`COALESCE\(a.ingress_format`).WithArgs("evt1").
+		WillReturnRows(pgxmock.NewRows(cols).AddRow(
+			"anthropic", "claude-opus-4-7", "/v1/messages",
+			[]byte(`{"contents":1}`), "", []byte(`{"content":[]}`), "",
+			"application/json", "application/json", reqSpill, nil))
+
+	in, err := s.GetTrafficEventForNormalize(context.Background(), "evt1")
+	if err != nil {
+		t.Fatalf("GetTrafficEventForNormalize: %v", err)
+	}
+	if !in.Found {
+		t.Fatal("Found=false, want true")
+	}
+	if in.AdapterType != "anthropic" {
+		t.Errorf("AdapterType=%q, want %q (must be ingress_format, not the upstream provider adapter)", in.AdapterType, "anthropic")
+	}
+	if in.Path != "/v1/messages" {
+		t.Errorf("Path=%q, want %q (must be the ingress path, not target_path)", in.Path, "/v1/messages")
+	}
+	if in.Model != "claude-opus-4-7" {
+		t.Errorf("Model=%q, want claude-opus-4-7", in.Model)
+	}
+	if string(in.RequestBody) != `{"contents":1}` || string(in.ResponseBody) != `{"content":[]}` {
+		t.Errorf("bodies decoded wrong: req=%q resp=%q", in.RequestBody, in.ResponseBody)
+	}
+	// The spill refs must ride along so the view-time handler can fetch a
+	// spilled body and recompute from it. A NULL ref scans to nil (no spill).
+	if string(in.RequestSpillRef) != string(reqSpill) {
+		t.Errorf("RequestSpillRef = %q, want %q", in.RequestSpillRef, reqSpill)
+	}
+	if in.ResponseSpillRef != nil {
+		t.Errorf("ResponseSpillRef = %q, want nil (NULL spill_ref)", in.ResponseSpillRef)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+func TestGetTrafficEventForNormalize_NotFoundAndError(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectQuery(`COALESCE\(a.ingress_format`).WithArgs("gone").WillReturnError(pgx.ErrNoRows)
+	in, err := s.GetTrafficEventForNormalize(context.Background(), "gone")
+	if err != nil {
+		t.Fatalf("ErrNoRows must map to Found=false, not error: %v", err)
+	}
+	if in == nil || in.Found {
+		t.Fatalf("want non-nil NormalizeInput with Found=false, got %+v", in)
+	}
+
+	s2, m2 := newMock(t)
+	m2.ExpectQuery(`COALESCE\(a.ingress_format`).WithArgs("x").WillReturnError(errors.New("boom"))
+	if _, err := s2.GetTrafficEventForNormalize(context.Background(), "x"); err == nil {
+		t.Fatal("want error from query failure, got nil")
+	}
+}
+
 func allFiltersParams() TrafficEventListParams {
 	start, end := tNow.Add(-time.Hour), tNow
 	return TrafficEventListParams{
@@ -122,7 +187,7 @@ func TestListTrafficEvents_Errors(t *testing.T) {
 
 func TestGetTrafficEvent(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`LEFT JOIN traffic_event_payload p`).WithArgs("evt1").WillReturnRows(trafficEventRow(4))
+	m.ExpectQuery(`LEFT JOIN traffic_event_payload p`).WithArgs("evt1").WillReturnRows(trafficEventRow(6))
 	got, err := s.GetTrafficEvent(context.Background(), "evt1")
 	if err != nil || got == nil || got.ID != "evt1" {
 		t.Fatalf("GetTrafficEvent: %+v %v", got, err)

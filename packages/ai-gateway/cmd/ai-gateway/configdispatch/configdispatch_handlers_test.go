@@ -14,8 +14,8 @@ package configdispatch
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -97,7 +97,7 @@ func miniredisCache(t *testing.T) (*cachecore.Cache, *miniredis.Miniredis) {
 	return c, mini
 }
 
-// F-0126: routing_rules / credentials / providers / models / virtual_keys are
+// routing_rules / credentials / providers / models / virtual_keys are
 // all registered ai-gateway keys backed by structurally-required deps (DB,
 // CacheLayer, CredManager). A nil dep there is a wiring regression, NOT a
 // disabled module — the applier must return an ERROR so the loader records a
@@ -197,7 +197,7 @@ func TestHandler_PayloadCapture_NilDB_NoOp(t *testing.T) {
 	}
 }
 
-// F-0125: ai-gateway intentionally registers NO streaming_compliance applier
+// ai-gateway intentionally registers NO streaming_compliance applier
 // (the key is absent from ValidByThingType["ai-gateway"], so Hub never pushes
 // it). A streaming_compliance shadow tick must therefore be treated as an
 // unknown key and skipped — never applied — so no Store mutation can ride in
@@ -453,6 +453,41 @@ func TestHandler_SemanticCacheConfig_NilLifecycle_NoOp(t *testing.T) {
 	d.SemanticIndexLifecycle = nil
 	if err := applyKey(t, d, "semantic_cache.config", []byte(`{}`)); err != nil {
 		t.Fatalf("semantic_cache.config with nil lifecycle: unexpected error: %v", err)
+	}
+}
+
+// TestHandler_SemanticCacheConfig_NilLifecycle_StillSetsConfigCache covers the
+// Sentinel/Cluster degraded path: there is no *redis.Client index lifecycle, but
+// the in-process ConfigCache must still receive the fleet snapshot so L1's
+// ScopeReady() flips and vary_by reaches the hot path. Without this fix L1
+// fails closed (never caches) on Sentinel/Cluster.
+func TestHandler_SemanticCacheConfig_NilLifecycle_StillSetsConfigCache(t *testing.T) {
+	d := newTestDeps(t)
+	d.SemanticIndexLifecycle = nil // Sentinel/Cluster: index management unavailable
+	cc := semantic.NewConfigCache()
+	d.SemanticConfigCache = cc
+
+	if cc.ScopeReady() {
+		t.Fatal("precondition: a fresh ConfigCache must start not-ready")
+	}
+	raw, _ := json.Marshal(semanticCacheConfigBlob{Enabled: true, VaryBy: "vk"})
+	if err := applyKey(t, d, "semantic_cache.config", raw); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cc.ScopeReady() {
+		t.Fatal("nil-lifecycle path must still Set the ConfigCache so L1 ScopeReady flips")
+	}
+	if got := cc.Get().VaryBy; got != "vk" {
+		t.Fatalf("VaryBy got %q, want vk (must reach the hot path on Sentinel)", got)
+	}
+	// An empty payload on the same path must also flip loaded (disabled but ready).
+	cc2 := semantic.NewConfigCache()
+	d.SemanticConfigCache = cc2
+	if err := applyKey(t, d, "semantic_cache.config", nil); err != nil {
+		t.Fatalf("empty payload unexpected error: %v", err)
+	}
+	if !cc2.ScopeReady() {
+		t.Fatal("empty payload on nil-lifecycle path must still flip ScopeReady")
 	}
 }
 
@@ -789,7 +824,7 @@ func TestKeys_ReturnsExpectedCount(t *testing.T) {
 		ObservabilityState: &obs,
 	})
 	keys := l.Keys()
-	const want = 19 // registered keys total (F-0125 removed the dead streaming_compliance applier)
+	const want = 19 // registered keys total (no streaming_compliance applier)
 	if len(keys) != want {
 		t.Fatalf("Keys(): got %d keys, want %d: %v", len(keys), want, keys)
 	}
@@ -878,7 +913,7 @@ func TestHandler_Credentials_WithCacheLayer_ReloadsCredentials(t *testing.T) {
 	mock, layer := newMockLayer(t)
 	expectCredentialReload(mock)
 	d.CacheLayer = layer
-	d.CredManager = &fakeCredInvalidator{} // required dep (F-0126)
+	d.CredManager = &fakeCredInvalidator{} // required dep
 	if err := applyKey(t, d, "credentials", []byte(`{}`)); err != nil {
 		t.Fatalf("credentials with non-nil CacheLayer: unexpected error: %v", err)
 	}
@@ -891,7 +926,7 @@ func TestHandler_Credentials_CacheLayerReloadError_Propagates(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery(`FROM "Credential"`).WillReturnError(fmt.Errorf("db error"))
 	d.CacheLayer = layer
-	d.CredManager = &fakeCredInvalidator{} // required dep (F-0126)
+	d.CredManager = &fakeCredInvalidator{} // required dep
 	if err := applyKey(t, d, "credentials", []byte(`{}`)); err == nil {
 		t.Fatal("credentials: expected error when CacheLayer.ReloadCredentials fails")
 	}
@@ -1065,10 +1100,10 @@ func TestHandler_CredentialReliability_WithReliabilityAndDB_CallsReload(t *testi
 	}
 }
 
-// credentials — F-0097 granular vs full invalidation (non-nil CredManager branch)
+// credentials — granular vs full invalidation (non-nil CredManager branch)
 
 // fakeCredInvalidator records which credential cache ops the credentials
-// applier performed so the F-0097 granular-vs-full decision is observable.
+// applier performed so the granular-vs-full decision is observable.
 type fakeCredInvalidator struct {
 	invalidated []string
 	cleared     int
@@ -1077,7 +1112,7 @@ type fakeCredInvalidator struct {
 func (f *fakeCredInvalidator) Invalidate(id string) { f.invalidated = append(f.invalidated, id) }
 func (f *fakeCredInvalidator) ClearCache()          { f.cleared++ }
 
-// F-0097: a targeted invalidate-by-id payload must evict ONLY the named
+// A targeted invalidate-by-id payload must evict ONLY the named
 // credentials (per-id Invalidate), never a full ClearCache storm.
 func TestHandler_Credentials_TargetedIDs_CallsInvalidatePerID(t *testing.T) {
 	fake := &fakeCredInvalidator{}
@@ -1098,7 +1133,7 @@ func TestHandler_Credentials_TargetedIDs_CallsInvalidatePerID(t *testing.T) {
 	}
 }
 
-// F-0097: a non-targeted payload (full reload signal) falls back to ClearCache.
+// A non-targeted payload (full reload signal) falls back to ClearCache.
 func TestHandler_Credentials_NoIDs_FallsBackToClearCache(t *testing.T) {
 	fake := &fakeCredInvalidator{}
 	d := newTestDeps(t)

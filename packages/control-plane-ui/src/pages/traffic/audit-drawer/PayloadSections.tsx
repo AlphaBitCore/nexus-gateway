@@ -34,8 +34,9 @@ export function JsonSection({ label, value }: { label: string; value: unknown })
   );
 }
 
-// PayloadSection renders request/response bodies. Bodies are stored as
-// jsonb so they may arrive as JSON objects/arrays, JSON-encoded strings,
+// PayloadSection renders request/response bodies. Bodies are captured as
+// raw bytes (BYTEA) on the server and surfaced through the detail API, so
+// they may arrive as JSON objects/arrays, JSON-encoded strings,
 // numbers, or null. We don't assume any particular shape — strings are
 // shown verbatim (without surrounding JSON quotes); structured values
 // are pretty-printed; nullish / empty values are skipped silently.
@@ -45,7 +46,7 @@ export function JsonSection({ label, value }: { label: string; value: unknown })
 // inlines the bytes onto `value`, but the ref metadata (backend, key,
 // size, sha256) is also threaded through so the drawer can show a
 // "Stored externally" badge — matters for ops who want to know whether
-// a body sits in a shared bucket vs Postgres jsonb.
+// a body sits in a shared bucket vs inline in the database.
 export function PayloadSection({ label, value, spillRef }: { label: string; value: unknown; spillRef?: SpillRef | null }) {
   const hasValue = value != null && value !== '' &&
     !(typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0);

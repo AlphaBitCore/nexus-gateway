@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -110,12 +109,6 @@ type RouteConfig struct {
 	// hub's own /debug/runtime when the target id matches HubID.
 	HubID       string
 	HubLocalURL string
-
-	// NormalizeAgentAudit, when non-nil, is the shared/normalize closure
-	// the agent-audit handler uses to project captured bytes into the
-	// canonical NormalizedPayload shape. Wired from cmd/nexus-hub via
-	// normalize.BuildAuditFn.
-	NormalizeAgentAudit func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (raw json.RawMessage, status, errReason string)
 }
 
 // Hub exposes no user-JWT-protected HTTP surface. User/admin operations are
@@ -219,7 +212,6 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 
 	agentAuditAPI := &audit.AgentAuditAPI{
 		MQProducer: cfg.MQProducer,
-		Normalize:  cfg.NormalizeAgentAudit,
 	}
 	things.POST("/agent-audit", agentAuditAPI.UploadAgentAudit)
 

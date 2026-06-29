@@ -65,7 +65,7 @@ func TestMiniMax_GroupIdForwarded(t *testing.T) {
 // TestMiniMax_NativePathRetired pins the audit decision: the legacy
 // chatcompletion_pro native shape is intentionally not routable. Any
 // caller that sets minimax.surface=native receives the same OpenAI-compat
-// URL as everyone else (the ingress route was removed; see main.go).
+// URL as everyone else (there is no native ingress route; see main.go).
 func TestMiniMax_NativePathRetired(t *testing.T) {
 	tr := minimax.NewTransport(slog.Default())
 	got, err := tr.BuildURL(

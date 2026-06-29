@@ -33,6 +33,7 @@ export interface RetryPolicySectionProps {
   onMaxAttemptsChange: (next: string) => void;
   retryOn: ErrorClass[];
   onRetryOnChange: (next: ErrorClass[]) => void;
+  hideTitle?: boolean;
 }
 
 export function RetryPolicySection({
@@ -42,6 +43,7 @@ export function RetryPolicySection({
   onMaxAttemptsChange,
   retryOn,
   onRetryOnChange,
+  hideTitle = false,
 }: RetryPolicySectionProps) {
   const { t } = useTranslation();
   const disabled = mode !== 'custom';
@@ -62,9 +64,11 @@ export function RetryPolicySection({
 
   return (
     <Card padding="lg" data-testid="routing-retry-policy-section">
-      <div className={`${styles.labelRow} ${styles.sectionTitleSpacing}`}>
-        <div className={styles.sectionTitle}>{t('pages:routing.retryPolicy.title')}</div>
-      </div>
+      {!hideTitle && (
+        <div className={`${styles.labelRow} ${styles.sectionTitleSpacing}`}>
+          <div className={styles.sectionTitle}>{t('pages:routing.retryPolicy.title')}</div>
+        </div>
+      )}
 
       <Stack gap="sm">
         <label className={styles.fieldLabel} style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-1-5)' }}>

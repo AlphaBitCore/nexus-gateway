@@ -2,13 +2,13 @@
 
 .kvGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--g-space-4);
 }
 
 .kvLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -17,21 +17,36 @@
 
 .kvValue {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   word-break: break-all;
+}
+
+.accountSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.accountTabs {
+  margin-top: var(--g-space-5);
 }
 
 .sectionHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--g-space-4);
+  margin-bottom: 0;
+}
+
+.sectionHeader :global(button),
+.sectionHeader :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
 }
 
 .sectionTitle {
   font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0;
 }
 
@@ -42,6 +57,44 @@
   max-width: 28rem;
 }
 
+.profileEditForm {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: none;
+}
+
+.profileEditFormFull {
+  grid-column: 1 / -1;
+}
+
+.profileEditFormFull :global(button),
+.profileEditFormFull :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.profileEditForm .formInput {
+  background: var(--color-bg);
+}
+
+.passwordForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: none;
+}
+
+.passwordFormFull {
+  grid-column: 1 / -1;
+}
+
+.passwordFormFull :global(button),
+.passwordFormFull :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.passwordForm .formInput {
+  background: var(--color-bg);
+}
+
 .formField {
   display: flex;
   flex-direction: column;
@@ -50,7 +103,7 @@
 
 .formLabel {
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-secondary);
 }
 
@@ -81,7 +134,7 @@
 
 .passwordTitle {
   font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0 0 var(--g-space-3) 0;
 }
 
@@ -89,7 +142,7 @@
   display: inline-block;
   padding: 2px 8px;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   border-radius: var(--g-radius-md);
   background: var(--color-muted);
   color: var(--color-text-secondary);
@@ -127,7 +180,7 @@
   text-align: left;
   padding: var(--g-space-2) var(--g-space-3);
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
   background: var(--color-muted);
   border-bottom: 1px solid var(--color-border);
@@ -143,7 +196,7 @@
 .tdMono {
   composes: td;
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
 }
 
 .emptyText {
@@ -182,6 +235,21 @@
   background: var(--color-surface);
 }
 
+.activityFilterToolbar :global([class*='row']) {
+  width: 100%;
+}
+
+.activityFilterToolbar {
+  margin-bottom: 16px !important;
+}
+
+.activitySortMeta {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  white-space: nowrap;
+}
+
 .intro {
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
@@ -196,4 +264,12 @@
 
 .retryBtn {
   margin-left: 8px;
+}
+
+@media (max-width: 960px) {
+  .kvGrid,
+  .profileEditForm,
+  .passwordForm {
+    grid-template-columns: 1fr;
+  }
 }

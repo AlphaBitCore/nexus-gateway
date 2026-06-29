@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"

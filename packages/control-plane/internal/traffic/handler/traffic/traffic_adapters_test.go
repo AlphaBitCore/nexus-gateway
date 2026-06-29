@@ -1,7 +1,7 @@
 package traffic
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"

@@ -267,6 +267,210 @@ func TestPipeline_FailClosed(t *testing.T) {
 	}
 }
 
+// enforcingConfig returns a HookConfig whose onMatch action makes the hook
+// ENFORCING (redact or block) and leaves FailBehavior unset, so the strict
+// fail-posture is what decides the error outcome.
+func enforcingConfig(id, name, action string) *core.HookConfig {
+	return &core.HookConfig{
+		ID: id, Name: name, Priority: 1,
+		Config: map[string]any{"onMatch": map[string]any{"action": action}},
+	}
+}
+
+// strictPipeline builds a NewPipeline and flips the strict posture so the test
+// exercises the non-packet-path (ai-gateway reverse proxy) behavior.
+func strictPipeline(hks []boundHook, strict bool) *Pipeline {
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	p.SetStrictFailClosed(strict)
+	return p
+}
+
+// TestPipeline_StrictEnforcing_BlockHookError_FailsClosed pins BUG-failopen:
+// an enforcing (block) hook that ERRORS in a STRICT pipeline must REJECT_HARD
+// even though FailBehavior was never seeded "fail-closed" — the guaranteed-
+// execution contract for block is broken, so a strict caller must not leak.
+func TestPipeline_StrictEnforcing_BlockHookError_FailsClosed(t *testing.T) {
+	hks := []boundHook{
+		{hook: &stubHook{err: errors.New("guard backend down")},
+			config: enforcingConfig("h1", "block-on-secret", "block")},
+	}
+	result := strictPipeline(hks, true).Execute(context.Background(), &core.HookInput{})
+
+	if result.Decision != core.RejectHard {
+		t.Fatalf("expected REJECT_HARD (strict enforcing fail-closed), got %s", result.Decision)
+	}
+	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_CLOSED" {
+		t.Fatalf("expected HOOK_ERROR_FAIL_CLOSED, got %q", result.HookResults[0].ReasonCode)
+	}
+}
+
+// TestPipeline_StrictEnforcing_RedactHookError_FailsClosed: a redact-scope hook
+// is also enforcing (guaranteed inflight rewrite), so its error in strict mode
+// fails closed too.
+func TestPipeline_StrictEnforcing_RedactHookError_FailsClosed(t *testing.T) {
+	hks := []boundHook{
+		{hook: &stubHook{err: errors.New("redactor down")},
+			config: enforcingConfig("h1", "pii-redactor", "redact")},
+	}
+	result := strictPipeline(hks, true).Execute(context.Background(), &core.HookInput{})
+
+	if result.Decision != core.RejectHard {
+		t.Fatalf("expected REJECT_HARD (strict redact fail-closed), got %s", result.Decision)
+	}
+	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_CLOSED" {
+		t.Fatalf("expected HOOK_ERROR_FAIL_CLOSED, got %q", result.HookResults[0].ReasonCode)
+	}
+}
+
+// TestPipeline_NonStrictEnforcing_HookError_FailsOpen: the SAME enforcing hook
+// error in a NON-strict pipeline (packet-path callers) stays fail-open and
+// increments hook_fail_open_total — host-network safety mandates fail-open.
+func TestPipeline_NonStrictEnforcing_HookError_FailsOpen(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	c := promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "test_strict_fail_open_total", Help: "test",
+	}, []string{"hook"})
+	prev := HookFailOpenTotal
+	HookFailOpenTotal = c
+	defer func() { HookFailOpenTotal = prev }()
+
+	hks := []boundHook{
+		{hook: &stubHook{err: errors.New("guard backend down")},
+			config: enforcingConfig("h1", "block-on-secret", "block")},
+	}
+	result := strictPipeline(hks, false).Execute(context.Background(), &core.HookInput{})
+
+	if result.Decision != core.Approve {
+		t.Fatalf("expected APPROVE (non-strict fail-open), got %s", result.Decision)
+	}
+	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_OPEN" {
+		t.Fatalf("expected HOOK_ERROR_FAIL_OPEN, got %q", result.HookResults[0].ReasonCode)
+	}
+	if v := testutil.ToFloat64(c.WithLabelValues("block-on-secret")); v != 1 {
+		t.Fatalf("expected fail_open_total{block-on-secret}=1, got %v", v)
+	}
+}
+
+// TestPipeline_StrictEnforcing_ExplicitFailOpenOverridesStrict: an admin who
+// sets FailBehavior=="fail-open" on a known-flaky enforcing hook MUST keep
+// fail-open even in strict mode — the explicit override always wins.
+func TestPipeline_StrictEnforcing_ExplicitFailOpenOverridesStrict(t *testing.T) {
+	cfg := enforcingConfig("h1", "flaky-block", "block")
+	cfg.FailBehavior = "fail-open"
+	hks := []boundHook{{hook: &stubHook{err: errors.New("flaky guard")}, config: cfg}}
+
+	result := strictPipeline(hks, true).Execute(context.Background(), &core.HookInput{})
+
+	if result.Decision != core.Approve {
+		t.Fatalf("expected APPROVE (explicit fail-open override wins in strict), got %s", result.Decision)
+	}
+	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_OPEN" {
+		t.Fatalf("expected HOOK_ERROR_FAIL_OPEN, got %q", result.HookResults[0].ReasonCode)
+	}
+}
+
+// TestPipeline_StrictNonEnforcing_HookError_FailsOpen: an approve-scope (non-
+// enforcing) hook error in strict mode stays fail-open — only enforcing hooks
+// fail closed under the new posture.
+func TestPipeline_StrictNonEnforcing_HookError_FailsOpen(t *testing.T) {
+	hks := []boundHook{
+		{hook: &stubHook{err: errors.New("advisory backend down")},
+			config: enforcingConfig("h1", "advisory-scan", "approve")},
+	}
+	result := strictPipeline(hks, true).Execute(context.Background(), &core.HookInput{})
+
+	if result.Decision != core.Approve {
+		t.Fatalf("expected APPROVE (non-enforcing stays fail-open), got %s", result.Decision)
+	}
+	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_OPEN" {
+		t.Fatalf("expected HOOK_ERROR_FAIL_OPEN, got %q", result.HookResults[0].ReasonCode)
+	}
+}
+
+// TestPipeline_StrictExplicitFailClosed_StillRejects: explicit fail-closed is
+// unchanged by the strict posture — it rejects regardless of enforcing scope.
+func TestPipeline_StrictExplicitFailClosed_StillRejects(t *testing.T) {
+	hks := []boundHook{
+		{hook: &stubHook{err: errors.New("svc down")}, config: &core.HookConfig{
+			ID: "h1", Name: "seeded-fail-closed", Priority: 1, FailBehavior: "fail-closed",
+		}},
+	}
+	result := strictPipeline(hks, true).Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.RejectHard {
+		t.Fatalf("expected REJECT_HARD (explicit fail-closed), got %s", result.Decision)
+	}
+}
+
+// TestPipeline_StrictEnforcing_DefaultBlockOnMatch_FailsClosed: a match-only
+// hook with NO onMatch block defaults to block (core.ParseOnMatch security
+// default), so it counts as enforcing and fails closed in strict mode.
+func TestPipeline_StrictEnforcing_DefaultBlockOnMatch_FailsClosed(t *testing.T) {
+	hks := []boundHook{
+		{hook: &stubHook{err: errors.New("detector down")}, config: &core.HookConfig{
+			ID: "h1", Name: "pii-detector", Priority: 1, // no onMatch => defaults to block
+		}},
+	}
+	result := strictPipeline(hks, true).Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.RejectHard {
+		t.Fatalf("expected REJECT_HARD (default block-on-match is enforcing), got %s", result.Decision)
+	}
+	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_CLOSED" {
+		t.Fatalf("expected HOOK_ERROR_FAIL_CLOSED, got %q", result.HookResults[0].ReasonCode)
+	}
+}
+
+// TestPipeline_StrictEnforcing_UnparseableOnMatch_FailsClosed: a malformed
+// onMatch makes core.ParseOnMatch error; the conservative posture treats it as
+// enforcing so a strict caller fails closed rather than leaking.
+func TestPipeline_StrictEnforcing_UnparseableOnMatch_FailsClosed(t *testing.T) {
+	hks := []boundHook{
+		{hook: &stubHook{err: errors.New("hook down")}, config: &core.HookConfig{
+			ID: "h1", Name: "bad-config", Priority: 1,
+			Config: map[string]any{"onMatch": "not-an-object"},
+		}},
+	}
+	result := strictPipeline(hks, true).Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.RejectHard {
+		t.Fatalf("expected REJECT_HARD (unparseable onMatch treated as enforcing), got %s", result.Decision)
+	}
+}
+
+// TestBuildPipeline_PlumbsStrictPosture verifies BuildPipeline threads the
+// strictFailClosed flag onto the runtime Pipeline so an enforcing hook error
+// fails closed end-to-end (not just when a test flips the field directly).
+func TestBuildPipeline_PlumbsStrictPosture(t *testing.T) {
+	cfgs := []core.HookConfig{{
+		ID: "h1", ImplementationID: "test-erroring", Name: "block-on-secret",
+		Enabled: true, Stage: "request", ApplicableIngress: []string{"ALL"},
+		Config: map[string]any{"onMatch": map[string]any{"action": "block"}},
+	}}
+	reg := core.NewHookRegistry()
+	reg.Register("test-erroring", func(_ *core.HookConfig) (core.Hook, error) {
+		return &stubHook{err: errors.New("backend down")}, nil
+	})
+	r := NewPolicyResolver(cfgs, reg, testLogger())
+
+	// strict=true → enforcing hook error rejects.
+	pipe, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
+		5*time.Second, 30*time.Second, false, true, testLogger())
+	if err != nil || pipe == nil {
+		t.Fatalf("BuildPipeline strict: err=%v pipe=%v", err, pipe)
+	}
+	if got := pipe.Execute(context.Background(), &core.HookInput{}); got.Decision != core.RejectHard {
+		t.Fatalf("strict BuildPipeline: expected REJECT_HARD, got %s", got.Decision)
+	}
+
+	// strict=false → same hook error stays fail-open.
+	pipeOpen, err := r.BuildPipeline("request", "AGENT", "", nil,
+		5*time.Second, 30*time.Second, false, false, testLogger())
+	if err != nil || pipeOpen == nil {
+		t.Fatalf("BuildPipeline non-strict: err=%v pipe=%v", err, pipeOpen)
+	}
+	if got := pipeOpen.Execute(context.Background(), &core.HookInput{}); got.Decision != core.Approve {
+		t.Fatalf("non-strict BuildPipeline: expected APPROVE, got %s", got.Decision)
+	}
+}
+
 // MODIFY no longer downgrades to REJECT_HARD when allowModify
 // is false. The pipeline always preserves the MODIFY decision; the
 // downstream caller (data-plane service) decides via TrafficAdapter
@@ -316,7 +520,8 @@ func TestPipeline_AllowModify_Preserved(t *testing.T) {
 	}
 }
 
-// TestPipeline_Modify_PreservesHookReasonCode pins the Q5 fix: a Modify
+// TestPipeline_Modify_PreservesHookReasonCode pins the Modify reason-code
+// fix: a Modify
 // hook that supplied its own ReasonCode (e.g. ReasonAIGuardSuggestedVsPolicy
 // stamped at the webhook-forward reconcile) propagates through
 // mergeResults' Modify branch instead of being clobbered by the generic

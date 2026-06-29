@@ -14,7 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 )
 
-// F-0100: POST /config-sync/update must be gated on the node-level IAM action
+// POST /config-sync/update must be gated on the node-level IAM action
 // (admin:node.update), matching the node.update audit row the handler stamps,
 // not the generic admin:settings.update. We assert by capturing the action
 // string RegisterNodeRoutes passes to iamMW for the config-sync/update route.
@@ -51,7 +51,7 @@ func TestConfigSyncUpdate_GatedOnNodeUpdate(t *testing.T) {
 	}
 }
 
-// F-0100 sibling guard: the config-sync READ surface stays on settings.read —
+// Sibling guard: the config-sync READ surface stays on settings.read —
 // it is the generic fleet-config inspection view, not a node mutation.
 func TestConfigSyncReads_GatedOnSettingsRead(t *testing.T) {
 	h := newHandler(t, nil, &fakeHub{}, nil)
@@ -81,7 +81,7 @@ func TestConfigSyncReads_GatedOnSettingsRead(t *testing.T) {
 	}
 }
 
-// F-0104: PATCH /setup/proxy/:thingId/onboarding must reject an unknown thingId
+// PATCH /setup/proxy/:thingId/onboarding must reject an unknown thingId
 // with 404 (propagated from Hub's GetThingServiceMeta "not found") before
 // pushing any type-wide config, rather than silently pushing under a bogus path
 // param and returning 200.
@@ -112,7 +112,7 @@ func TestSetupPatchOnboarding_UnknownThingId404(t *testing.T) {
 	}
 }
 
-// F-0105 + F-0106: a successful onboarding toggle (a) emits exactly one audit
+// A successful onboarding toggle (a) emits exactly one audit
 // row and (b) stamps the admin actor + source IP on the Hub config push.
 func TestSetupPatchOnboarding_Success_AuditsAndStampsActorSourceIP(t *testing.T) {
 	fh := &fakeHub{
@@ -138,7 +138,7 @@ func TestSetupPatchOnboarding_Success_AuditsAndStampsActorSourceIP(t *testing.T)
 		t.Fatalf("code = %d; want 200; body %s", rec.Code, rec.Body.String())
 	}
 
-	// F-0106: actor + source IP stamped on the push.
+	// Actor + source IP stamped on the push.
 	if fh.notifyReq.ActorID != "admin-1" {
 		t.Errorf("ActorID = %q; want admin-1", fh.notifyReq.ActorID)
 	}
@@ -152,7 +152,7 @@ func TestSetupPatchOnboarding_Success_AuditsAndStampsActorSourceIP(t *testing.T)
 		t.Errorf("ThingType = %q; want compliance-proxy", fh.notifyReq.ThingType)
 	}
 
-	// F-0105: exactly one audit row, recording the entity + new state.
+	// Exactly one audit row, recording the entity + new state.
 	if spy.count() != 1 {
 		t.Fatalf("audit count = %d; want 1", spy.count())
 	}
@@ -162,7 +162,7 @@ func TestSetupPatchOnboarding_Success_AuditsAndStampsActorSourceIP(t *testing.T)
 	}
 }
 
-// F-0105 negative: a failed Hub push must NOT emit an audit row (the audit
+// Negative: a failed Hub push must NOT emit an audit row (the audit
 // only lands when the user-visible mutation is durable, matching siblings).
 func TestSetupPatchOnboarding_HubPushFails_NoAudit(t *testing.T) {
 	fh := &fakeHub{
@@ -188,7 +188,7 @@ func TestSetupPatchOnboarding_HubPushFails_NoAudit(t *testing.T) {
 	}
 }
 
-// F-0100 configKey allowlist: ConfigSyncUpdate must reject sensitive configKeys
+// ConfigKey allowlist: ConfigSyncUpdate must reject sensitive configKeys
 // that have dedicated endpoints with narrower IAM verbs and additional business
 // rules. The generic update path must not bypass those surfaces.
 

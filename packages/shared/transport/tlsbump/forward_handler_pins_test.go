@@ -3,6 +3,7 @@ package tlsbump
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -262,17 +263,19 @@ func TestForwardHandler_DomainPassthrough_SkipsCompliance(t *testing.T) {
 	}
 }
 
-// TestForwardHandler_RequestHookRejectHard_Refuses: a request hook that
-// hard-rejects must produce a 403 refusal (detailed reject body), stamp
-// deny markers + the correlation ID, audit the decision, and never
-// contact upstream.
-func TestForwardHandler_RequestHookRejectHard_Refuses(t *testing.T) {
+// TestForwardHandler_RequestHookRejectHard_RichReject: a request hook that
+// hard-rejects on a richReject=true caller (compliance-proxy) must produce a
+// 403 refusal with the attributed reject body (blocked_by_policy + the hook's
+// rule-ID reason), stamp deny markers + the correlation ID, audit the
+// decision, and never contact upstream.
+func TestForwardHandler_RequestHookRejectHard_RichReject(t *testing.T) {
 	writer := &recordingAuditWriter{}
 	rt := &capturingRoundTripper{makeResp: jsonUpstream}
 	bo := &bumpOptions{
 		policyResolver: decidingResolver(t, "request", core.RejectHard, "pii detected", "PII_BLOCK"),
 		auditEmitter:   compliance.NewAuditEmitter(writer, discardSlog()),
 		rejectConfig:   RejectConfig{DefaultLevel: RejectLevelDetailed},
+		richReject:     true,
 	}
 	h := buildForwardHandler(context.Background(), "api.example.com:443", &UpstreamTransport{transport: rt}, discardSlog(), bo)
 
@@ -316,39 +319,57 @@ func TestForwardHandler_RequestHookRejectHard_Refuses(t *testing.T) {
 	}
 }
 
-// TestForwardHandler_RequestHookBlockSoft_Returns246: a soft block must
-// answer 246 with the policy-flag message, audit the decision, and never
-// contact upstream.
-func TestForwardHandler_RequestHookBlockSoft_Returns246(t *testing.T) {
+// TestForwardHandler_RequestHookRejectHard_MinimalReject: the agent-path
+// contrast — the same hard-reject on a richReject=false caller (the on-host
+// transparent interceptor) must produce a 403 with a MINIMAL "Forbidden" body
+// that carries NO attribution (no blocked_by_policy envelope, no hook reason),
+// while still stamping deny markers, auditing the decision, and never
+// contacting upstream.
+func TestForwardHandler_RequestHookRejectHard_MinimalReject(t *testing.T) {
 	writer := &recordingAuditWriter{}
 	rt := &capturingRoundTripper{makeResp: jsonUpstream}
 	bo := &bumpOptions{
-		policyResolver: decidingResolver(t, "request", core.BlockSoft, "suspicious prompt", "SOFT_FLAG"),
+		policyResolver: decidingResolver(t, "request", core.RejectHard, "pii detected", "PII_BLOCK"),
 		auditEmitter:   compliance.NewAuditEmitter(writer, discardSlog()),
+		// A Detailed reject config that MUST be ignored because richReject is
+		// false — the agent never synthesizes a rich error page.
+		rejectConfig: RejectConfig{DefaultLevel: RejectLevelDetailed},
+		richReject:   false,
 	}
 	h := buildForwardHandler(context.Background(), "api.example.com:443", &UpstreamTransport{transport: rt}, discardSlog(), bo)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, newBumpedRequest())
 
-	if rec.Code != 246 {
-		t.Fatalf("status = %d, want 246 on BLOCK_SOFT", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 on REJECT_HARD", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Request flagged by policy: suspicious prompt") {
-		t.Fatalf("soft-block body = %q, want the flagged-by-policy message with reason", rec.Body.String())
+	body := rec.Body.String()
+	if strings.Contains(body, "blocked_by_policy") {
+		t.Fatalf("minimal reject body = %q, must NOT contain the blocked_by_policy attribution envelope", body)
+	}
+	if strings.Contains(body, "pii detected") || strings.Contains(body, "PII_BLOCK") {
+		t.Fatalf("minimal reject body = %q, must NOT echo the hook reason / reason code", body)
+	}
+	if !strings.Contains(body, "Forbidden") {
+		t.Fatalf("minimal reject body = %q, want the bare \"Forbidden\" 403 text", body)
 	}
 	if got := rt.calls(); got != 0 {
-		t.Fatalf("upstream forwards = %d, want 0 — soft-blocked requests are not forwarded", got)
+		t.Fatalf("upstream forwards = %d, want 0 — the rejected request must never reach upstream", got)
+	}
+	// The deny marker is still stamped even on the minimal-body path.
+	if mode := rec.Header().Get("X-Nexus-Mode"); mode != "deny" {
+		t.Fatalf("X-Nexus-Mode = %q, want %q on the reject path", mode, "deny")
 	}
 	events := writer.snapshot()
 	if len(events) != 1 {
-		t.Fatalf("audit events = %d, want exactly 1 soft-block row", len(events))
+		t.Fatalf("audit events = %d, want exactly 1 reject row", len(events))
 	}
-	if events[0].RequestHookDecision != string(core.BlockSoft) {
-		t.Fatalf("RequestHookDecision = %q, want %q", events[0].RequestHookDecision, core.BlockSoft)
+	if events[0].RequestHookDecision != string(core.RejectHard) {
+		t.Fatalf("RequestHookDecision = %q, want %q", events[0].RequestHookDecision, core.RejectHard)
 	}
-	if events[0].StatusCode == nil || *events[0].StatusCode != 246 {
-		t.Fatalf("StatusCode = %v, want 246", events[0].StatusCode)
+	if events[0].StatusCode == nil || *events[0].StatusCode != http.StatusForbidden {
+		t.Fatalf("StatusCode = %v, want 403", events[0].StatusCode)
 	}
 }
 
@@ -429,16 +450,29 @@ func TestForwardHandler_NonAIFastPath_RelaysAndAuditsNonLLM(t *testing.T) {
 	}
 }
 
-// TestForwardHandler_ResponseHookRejectHard_Returns451: a response hook
-// that hard-rejects must suppress the upstream body and answer 451 with
-// deny markers, and the audit row must carry the response-stage decision.
-func TestForwardHandler_ResponseHookRejectHard_Returns451(t *testing.T) {
+// TestForwardHandler_ResponseHookRejectHard_RichReject_NoUpstreamLeak: a
+// response hook that hard-rejects on a richReject=true caller must suppress
+// the upstream body and answer 451 with the attributed reject body. The
+// attributed body is built from the hook's rule-ID/label reason only — it must
+// NEVER echo the upstream's original sensitive value. The negative assertion
+// constructs an upstream whose body carries an injected sensitive marker and
+// asserts that marker never appears in the synthesized reject body.
+func TestForwardHandler_ResponseHookRejectHard_RichReject_NoUpstreamLeak(t *testing.T) {
+	const sensitiveUpstreamMarker = "SSN-123-45-6789-LEAKED"
+	leakyUpstream := func() *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"upstream":"secret-body","detail":"` + sensitiveUpstreamMarker + `"}`)),
+		}
+	}
 	writer := &recordingAuditWriter{}
-	rt := &capturingRoundTripper{makeResp: jsonUpstream}
+	rt := &capturingRoundTripper{makeResp: leakyUpstream}
 	bo := &bumpOptions{
 		policyResolver: decidingResolver(t, "response", core.RejectHard, "policy text in response", "RESP_BLOCK"),
 		auditEmitter:   compliance.NewAuditEmitter(writer, discardSlog()),
 		rejectConfig:   RejectConfig{DefaultLevel: RejectLevelDetailed},
+		richReject:     true,
 	}
 	h := buildForwardHandler(context.Background(), "api.example.com:443", &UpstreamTransport{transport: rt}, discardSlog(), bo)
 
@@ -448,8 +482,18 @@ func TestForwardHandler_ResponseHookRejectHard_Returns451(t *testing.T) {
 	if rec.Code != http.StatusUnavailableForLegalReasons {
 		t.Fatalf("status = %d, want 451 on response REJECT_HARD", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), "secret-body") {
-		t.Fatalf("client received the blocked upstream body %q — it must be suppressed", rec.Body.String())
+	body := rec.Body.String()
+	if strings.Contains(body, "secret-body") {
+		t.Fatalf("client received the blocked upstream body %q — it must be suppressed", body)
+	}
+	// Negative assertion: the synthesized reject body must carry the hook's
+	// rule-ID/label only, never the upstream's original sensitive value.
+	if strings.Contains(body, sensitiveUpstreamMarker) {
+		t.Fatalf("reject body leaked the upstream sensitive value %q; body = %q", sensitiveUpstreamMarker, body)
+	}
+	// The rule-ID/label reason IS expected in the attributed body.
+	if !strings.Contains(body, "RESP_BLOCK") && !strings.Contains(body, "policy text in response") {
+		t.Fatalf("reject body = %q, want the rule-ID/label attribution (reason or reason code)", body)
 	}
 	if mode := rec.Header().Get("X-Nexus-Mode"); mode != "deny" {
 		t.Fatalf("X-Nexus-Mode = %q, want %q on the response reject path", mode, "deny")

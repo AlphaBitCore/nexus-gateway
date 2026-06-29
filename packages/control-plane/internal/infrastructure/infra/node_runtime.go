@@ -7,8 +7,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// RegisterNodeRuntimeRoutes wires the runtime introspection bridge route
-// (e31-s7). The handler is a pass-through to Hub's
+// RegisterNodeRuntimeRoutes wires the runtime introspection bridge route.
+// The handler is a pass-through to Hub's
 // GET /api/hub/things/:id/runtime — CP does not interpret the response,
 // it delegates parsing to the UI's Runtime State tab.
 func (h *Handler) RegisterNodeRuntimeRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -336,5 +337,56 @@ func TestServeProxy_SemanticCacheSkip_StillInjectsProviderCacheMarkers(t *testin
 	defer mu.Unlock()
 	if !strings.Contains(string(gotBody), `"cache_control"`) {
 		t.Fatalf("the provider must receive cache_control markers even on the semantic-cache skip path; upstream got:\n%.600s", gotBody)
+	}
+}
+
+// TestServeProxy_L1Disabled_L2Enabled_StageStaysActive proves the L1/L2
+// decouple: with the L1 extract cache OFF (deps.Cache nil) but the L2 semantic
+// tier ON, the cache stage must stay ACTIVE — skip the L1 lookup, attempt L2,
+// and on an L2 miss fall through to the live upstream stamping X-Nexus-Cache:
+// MISS. Before the decouple the stage gated the WHOLE pipeline on L1's enabled
+// flag, so an L1-off deployment short-circuited as "disabled" and never reached
+// L2 (no MISS stamp). The MISS header is therefore the differential: it is
+// emitted only from the active-cache default branch, never from the disabled
+// skip branch. (L2 actually serving a hit is covered by the tryL2Lookup tests.)
+func TestServeProxy_L1Disabled_L2Enabled_StageStaysActive(t *testing.T) {
+	upstream := openAIChatUpstream(t, `{
+		"id":"live-l2miss","object":"chat.completion","model":"gpt-4o",
+		"choices":[{"index":0,"message":{"role":"assistant","content":"live-after-l2-miss"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+	}`)
+	defer upstream.Close()
+
+	// L2 reader present but returns no entry (miss) → the stage must fall
+	// through to upstream as a MISS, not skip as disabled.
+	rdr := &stubSemanticReader{result: semantic.ReadResult{}}
+
+	// No withCache → deps.Cache stays nil → L1 disabled. L2 enabled via the
+	// stub reader + an enabled fleet semantic config.
+	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), func(d *Deps) {
+		d.SemanticReader = rdr
+		d.SemanticConfigCache = enabledFleetCache()
+		d.CredManager = &stubCredManager{}
+	})
+	if deps.Cache != nil {
+		t.Fatal("precondition: L1 cache must be nil (disabled) for this decouple test")
+	}
+
+	h := NewHandler(deps).ServeProxy(Ingress{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+	})
+	req := freshChatRequest(t, `{"model":"gpt-4o","messages":[{"role":"user","content":"what is the capital of France?"}]}`)
+	w := httptest.NewRecorder()
+	h(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Nexus-Cache"); got != "MISS" {
+		t.Fatalf("X-Nexus-Cache=%q want MISS — with L1 off + L2 on the cache stage must stay active (decouple), not skip as disabled", got)
+	}
+	if !strings.Contains(w.Body.String(), "live-after-l2-miss") {
+		t.Fatalf("want live upstream body after L2 miss; got:\n%s", w.Body.String())
 	}
 }

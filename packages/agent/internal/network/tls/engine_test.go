@@ -16,7 +16,7 @@ func TestNewEngine_GeneratesCA(t *testing.T) {
 	if !e.CACert().IsCA {
 		t.Error("CA cert should have IsCA=true")
 	}
-	// SEC-M1-01: the fleet-trusted MITM root must be path-length zero so a
+	// The fleet-trusted MITM root must be path-length zero so a
 	// stolen key cannot mint a working intermediate CA.
 	ca := e.CACert()
 	if !ca.MaxPathLenZero || ca.MaxPathLen != 0 {

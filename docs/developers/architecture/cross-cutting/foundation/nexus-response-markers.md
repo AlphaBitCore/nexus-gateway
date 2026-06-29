@@ -201,7 +201,7 @@ prefix — every hop writes the canonical `X-Nexus-*` headers.
 2. **Emit** — pick the right injection mechanic for your service (§6) and write the setter. Set the value as a string; never set an empty string except as a 1:1-alignment placeholder (the AI Gateway `X-Nexus-Mode` reservation is the canonical case).
 3. **Document** — add a row to the right §2 sub-table in this doc.
 
-The `markers_test.go` test (`TestExposeHeaders_HasAllMarkers`) is the gate that catches step 1 drift: a marker you set but did not add to the allowlist will show up in browser dev tools as "blocked by CORS"; a marker in the allowlist with no setter is dead-allowlist noise (the case that motivated the 2026-05-25 removal of `x-nexus-upgraded-to`).
+The `markers_test.go` test (`TestExposeHeaders_HasAllMarkers`) is the gate that catches step 1 drift: a marker you set but did not add to the allowlist will show up in browser dev tools as "blocked by CORS"; a marker in the allowlist with no setter is dead-allowlist noise.
 
 ### Reading markers client-side
 

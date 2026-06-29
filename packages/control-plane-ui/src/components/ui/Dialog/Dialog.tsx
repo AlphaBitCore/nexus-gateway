@@ -14,6 +14,8 @@ export interface DialogProps {
   description?: string;
   /** Body content. */
   children: React.ReactNode;
+  /** Optional footer rendered outside the scrollable drawer body. */
+  footer?: React.ReactNode;
   /** Width preset. Drawer variant uses `xl` by default. @default 'md' */
   size?: 'sm' | 'md' | 'lg' | 'xl';
   /**
@@ -25,6 +27,8 @@ export interface DialogProps {
   variant?: 'modal' | 'drawer';
   /** Additional class name for the content panel. */
   className?: string;
+  /** Additional class name for the footer panel. */
+  footerClassName?: string;
   /**
    * Hide the built-in X close button. Use when the dialog is gated behind
    * a custom condition (e.g. an acknowledgement checkbox) — the X would
@@ -41,9 +45,11 @@ export function Dialog({
   title,
   description,
   children,
+  footer,
   size,
   variant = 'modal',
   className,
+  footerClassName,
   hideClose = false,
 }: DialogProps) {
   const { t } = useTranslation();
@@ -69,6 +75,7 @@ export function Dialog({
             </RadixDialog.Description>
           )}
           <div className={styles.body}>{children}</div>
+          {footer ? <div className={clsx(styles.footer, footerClassName)}>{footer}</div> : null}
           {!hideClose && (
             <RadixDialog.Close asChild>
               <button data-design-system-escape="primitive-internal" className={styles.close} aria-label={t('common:close')}>

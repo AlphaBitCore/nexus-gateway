@@ -5,9 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"strings"
@@ -50,6 +50,30 @@ func newTestCacheWithRedis(t *testing.T) *Cache {
 		Prefix:  "test:" + t.Name(),
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return c
+}
+
+// TestCache_MasterKill verifies the emergency master kill switch: default off,
+// settable on/off, nil-safe both ways. The cache stage reads MasterKilled() to
+// force cacheEnabled=false for L1 + L2 regardless of either tier's own flag.
+func TestCache_MasterKill(t *testing.T) {
+	var nilCache *Cache
+	if nilCache.MasterKilled() {
+		t.Fatal("nil cache must report MasterKilled=false (no cache = nothing to kill)")
+	}
+	nilCache.SetMasterKill(true) // must not panic on nil
+
+	c := newTestCache("test:")
+	if c.MasterKilled() {
+		t.Fatal("MasterKilled must default false (kill switch off)")
+	}
+	c.SetMasterKill(true)
+	if !c.MasterKilled() {
+		t.Fatal("MasterKilled must be true after SetMasterKill(true)")
+	}
+	c.SetMasterKill(false)
+	if c.MasterKilled() {
+		t.Fatal("MasterKilled must be false again after SetMasterKill(false)")
+	}
 }
 
 // BuildKey tests (pre-existing, kept verbatim)
@@ -181,7 +205,7 @@ func TestBuildKey_V3_AllowlistVersionAffectsKey(t *testing.T) {
 	}
 }
 
-// TestBuildScopedKey_TenantIsolation is the F-0051 / F-0229 regression guard.
+// TestBuildScopedKey_TenantIsolation is the regression guard.
 // Two requests with byte-identical bodies but different tenant scopes must hash
 // to DIFFERENT L1 cache keys when a scope is folded in, while an empty scope
 // preserves fleet-wide dedup AND is byte-identical to the legacy BuildKey.

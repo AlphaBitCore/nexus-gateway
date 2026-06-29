@@ -92,7 +92,7 @@ func TestFetchAttestationPubKey_HappyPath(t *testing.T) {
 	if string(got.Key) != string(pub) {
 		t.Error("public key bytes differ from server response")
 	}
-	// SEC-M4-01: the cert expiry must be parsed off the wire so the verifier can
+	// The cert expiry must be parsed off the wire so the verifier can
 	// reject an expired key.
 	want, _ := time.Parse(time.RFC3339, "2099-01-02T03:04:05Z")
 	if !got.CertExpiresAt.Equal(want) {

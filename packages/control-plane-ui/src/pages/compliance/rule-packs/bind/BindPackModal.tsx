@@ -2,7 +2,15 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { rulePacksApi, type RulePackInstall, type RulePackMeta } from '@/api/services';
-import { Button, Dialog, ErrorBanner, FormField, Stack, Switch } from '@/components/ui';
+import {
+  Button,
+  Dialog,
+  ErrorBanner,
+  FormField,
+  MultiSelectDropdown,
+  Stack,
+  Switch,
+} from '@/components/ui';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 
@@ -17,8 +25,7 @@ export interface BindPackModalProps {
 
 export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalProps) {
   const { t } = useTranslation();
-  const [selectedName, setSelectedName] = useState('');
-  const [selectedVersion, setSelectedVersion] = useState('');
+  const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [enabled, setEnabled] = useState(true);
 
   const { data, loading, error } = useApi<RulePackMeta[]>(
@@ -27,6 +34,9 @@ export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalP
     { skip: !open },
   );
 
+  // Group packs by family name; each family's versions are sorted newest-first,
+  // so [0] is the latest. Multi-bind installs each selected family at its latest
+  // version (per-version pinning is a separate, not-yet-implemented concern).
   const packsByName = useMemo(() => {
     const grouped = new Map<string, RulePackMeta[]>();
     for (const pack of data ?? []) {
@@ -40,42 +50,61 @@ export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalP
     return grouped;
   }, [data]);
 
-  const packNames = useMemo(() => Array.from(packsByName.keys()).sort(), [packsByName]);
-  const versions = selectedName ? packsByName.get(selectedName) ?? [] : [];
+  const options = useMemo(
+    () =>
+      Array.from(packsByName.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, versions]) => ({
+          value: name,
+          label:
+            versions.length > 1
+              ? t('pages:hooks.rulePacks.bindOptionMulti', {
+                  defaultValue: '{{name}} · latest {{version}} ({{count}} versions)',
+                  name,
+                  version: versions[0]?.version ?? '',
+                  count: versions.length,
+                })
+              : t('pages:hooks.rulePacks.bindOptionSingle', {
+                  defaultValue: '{{name}} · {{version}}',
+                  name,
+                  version: versions[0]?.version ?? '',
+                }),
+        })),
+    [packsByName, t],
+  );
 
-  const { mutate: installPack, loading: saving, error: saveError } = useMutation(
-    async (input: { packId: string; pinVersion: string; enabled: boolean }) =>
-      rulePacksApi.install(hookId, input),
+  const { mutate: installPacks, loading: saving, error: saveError } = useMutation(
+    async (names: string[]) => {
+      // The install endpoint binds one pack per call; bind each selected family
+      // at its latest version. Done sequentially so a mid-list failure surfaces
+      // with the packs already bound left in place (idempotent re-bind is safe).
+      const installs: RulePackInstall[] = [];
+      for (const name of names) {
+        const latest = packsByName.get(name)?.[0];
+        if (!latest) continue;
+        installs.push(
+          await rulePacksApi.install(hookId, {
+            packId: latest.id,
+            pinVersion: latest.version,
+            enabled,
+          }),
+        );
+      }
+      return installs;
+    },
     {
-      successMessage: t('pages:hooks.rulePacks.bindSuccess', 'Rule pack installed'),
-      onSuccess: (install) => {
+      successMessage: t('pages:hooks.rulePacks.bindSuccess', 'Rule packs installed'),
+      onSuccess: (installs) => {
+        for (const install of installs) onBound(install);
         handleClose();
-        onBound(install);
       },
     },
   );
 
   function handleClose() {
-    setSelectedName('');
-    setSelectedVersion('');
+    setSelectedNames([]);
     setEnabled(true);
     onClose();
-  }
-
-  function choosePack(name: string) {
-    setSelectedName(name);
-    const nextVersions = packsByName.get(name) ?? [];
-    setSelectedVersion(nextVersions[0]?.version ?? '');
-  }
-
-  async function handleSubmit() {
-    const selectedPack = versions.find((item) => item.version === selectedVersion);
-    if (!selectedPack) return;
-    await installPack({
-      packId: selectedPack.id,
-      pinVersion: selectedPack.version,
-      enabled,
-    });
   }
 
   return (
@@ -84,10 +113,10 @@ export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalP
       onOpenChange={(next) => {
         if (!next) handleClose();
       }}
-      title={t('pages:hooks.rulePacks.bindTitle', 'Bind Rule Pack')}
+      title={t('pages:hooks.rulePacks.bindTitle', 'Bind Rule Packs')}
       description={t(
         'pages:hooks.rulePacks.bindSubtitle',
-        'Choose a pack family, pin a version, and install it onto the current hook.',
+        'Search and select one or more rule packs to install onto the current hook (each is bound at its latest version).',
       )}
       size="lg"
     >
@@ -98,43 +127,19 @@ export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalP
 
         {!loading && !error && (
           <>
-            <div>
-              <div className={styles.label}>
-                {t('pages:hooks.rulePacks.bindPack', 'Pack')}
-              </div>
-              <div className={styles.packList}>
-                {packNames.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    className={styles.packButton}
-                    data-selected={selectedName === name || undefined}
-                    onClick={() => choosePack(name)}
-                  >
-                    <span>{name}</span>
-                    <small>{(packsByName.get(name) ?? []).length} versions</small>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <FormField label={t('pages:hooks.rulePacks.colVersion', 'Version')}>
-              <select
-                aria-label={t('pages:hooks.rulePacks.colVersion', 'Version')}
-                className={styles.select}
-                value={selectedVersion}
-                onChange={(e) => setSelectedVersion(e.target.value)}
-                disabled={selectedName === ''}
-              >
-                <option value="">
-                  {t('pages:hooks.rulePacks.bindChooseVersion', 'Select a version')}
-                </option>
-                {versions.map((pack) => (
-                  <option key={pack.id} value={pack.version}>
-                    {pack.version}
-                  </option>
-                ))}
-              </select>
+            <FormField label={t('pages:hooks.rulePacks.bindPack', 'Rule packs')}>
+              <MultiSelectDropdown
+                label={t('pages:hooks.rulePacks.bindPack', 'Rule packs')}
+                options={options}
+                value={selectedNames}
+                onChange={setSelectedNames}
+                searchable
+                searchPlaceholder={t(
+                  'pages:hooks.rulePacks.bindSearchPlaceholder',
+                  'Search rule packs…',
+                )}
+                emptyLabel={t('pages:hooks.rulePacks.bindEmptyLabel', 'Select rule packs')}
+              />
             </FormField>
 
             <label className={styles.enabledRow}>
@@ -151,11 +156,14 @@ export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalP
                 {t('common:cancel', 'Cancel')}
               </Button>
               <Button
-                onClick={handleSubmit}
+                onClick={() => installPacks(selectedNames)}
                 loading={saving}
-                disabled={selectedName === '' || selectedVersion === ''}
+                disabled={selectedNames.length === 0}
               >
-                {t('pages:hooks.rulePacks.bindButton', 'Bind')}
+                {t('pages:hooks.rulePacks.bindButtonMulti', {
+                  defaultValue: 'Bind {{count}} pack(s)',
+                  count: selectedNames.length,
+                })}
               </Button>
             </div>
           </>
@@ -164,4 +172,3 @@ export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalP
     </Dialog>
   );
 }
-

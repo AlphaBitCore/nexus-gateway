@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import type { TrafficEvent } from '../../../api/types';
 import { Stack, AlertDialog, Button, Dialog } from '@/components/ui';
-import { DRAWER_MS } from '../../governance/adminAuditLogShared';
+import { DRAWER_MS, DRAWER_WIDTH } from '../../governance/adminAuditLogShared';
 import { formatDateTime, formatTokens } from '@/lib/format';
 import { ComplianceTagChipList } from '../list/ComplianceTagChips';
 import { LatencyWaterfall } from '@/components/charts/LatencyWaterfall';
@@ -29,10 +29,6 @@ import { CostBreakdown } from './CostBreakdown';
 import css from './trafficAuditDrawer.module.css';
 
 export { DRAWER_MS, DRAWER_WIDTH } from '../../governance/adminAuditLogShared';
-
-// Wider than the shared DRAWER_WIDTH — traffic events carry much more data
-// (payloads, hooks, compliance stages) than admin audit log entries.
-const TRAFFIC_DRAWER_WIDTH = 'min(860px, 95vw)';
 
 // ── Main drawer ──────────────────────────────────────────────────────────────
 
@@ -182,7 +178,7 @@ export function TrafficEventDrawer({
     position: 'fixed',
     top: 0,
     right: 0,
-    width: TRAFFIC_DRAWER_WIDTH,
+    width: DRAWER_WIDTH,
     height: '100vh',
     maxHeight: '100dvh',
     zIndex: 'var(--g-z-modal)',
@@ -690,6 +686,31 @@ export function TrafficEventDrawer({
           {/* ────────── Payloads ────────── */}
           {activeTab === 'payloads' && (
             <Stack gap="lg">
+              {/* Error envelope banner — for non-200 rows the response body is a
+                  gateway/provider error envelope, not chat content. Surface it as
+                  a typed error so an investigator doesn't read the raw JSON as a
+                  failed normalize. The body still renders in the sections below. */}
+              {e.statusCode != null && e.statusCode >= 400 ? (
+                <div className={css.errorBanner} data-testid="audit-drawer-error-banner">
+                  <span className={css.errorBannerBadge}>
+                    {t('pages:traffic.detail.payload.errorBadge')}
+                  </span>
+                  <div className={css.errorBannerBody}>
+                    <span className={css.errorBannerTitle}>
+                      {t('pages:traffic.detail.payload.errorTitle', {
+                        status: e.statusCode,
+                        code: e.errorCode || '—',
+                      })}
+                    </span>
+                    {e.errorReason ? (
+                      <span className={css.errorBannerReason}>{e.errorReason}</span>
+                    ) : null}
+                    <span className={css.errorBannerHint}>
+                      {t('pages:traffic.detail.payload.errorHint')}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
               {/* Normalized | Raw sub-tabs. */}
               <Stack direction="horizontal" gap="sm">
                 <button

@@ -2,7 +2,11 @@ module github.com/AlphaBitCore/nexus-gateway/packages/agent/ui
 
 go 1.25.0
 
-require github.com/wailsapp/wails/v2 v2.12.0
+require (
+	github.com/AlphaBitCore/nexus-gateway/packages/agent v0.0.0-20260605141610-29f7f6afe759
+	github.com/Microsoft/go-winio v0.6.2
+	github.com/wailsapp/wails/v2 v2.12.0
+)
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect

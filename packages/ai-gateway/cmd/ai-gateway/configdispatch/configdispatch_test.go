@@ -12,9 +12,9 @@ import (
 )
 
 // TestBuildConfigLoader_AllKeysRegistered locks in the registered key
-// list. AI Gateway consumes 19 shadow keys (streaming_compliance was removed
-// in F-0125 — it was never in ValidByThingType["ai-gateway"], so its applier
-// was dead code). A future edit that silently drops a known shadow key would
+// list. AI Gateway consumes 19 shadow keys (streaming_compliance is not
+// among them — it is never in ValidByThingType["ai-gateway"], so it has no
+// applier). A future edit that silently drops a known shadow key would
 // degrade the gateway back to the default-echo branch and Hub would never see
 // it apply.
 func TestBuildConfigLoader_AllKeysRegistered(t *testing.T) {

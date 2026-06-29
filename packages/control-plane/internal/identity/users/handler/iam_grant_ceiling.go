@@ -2,7 +2,7 @@ package iam
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -72,7 +72,7 @@ func (h *Handler) ceilingBlocks(c echo.Context, document cpiam.PolicyDocument) (
 }
 
 // ceilingBlocksOwner enforces the grant ceiling when minting an admin API key
-// that authenticates AS another principal (F-0365). An admin API key whose
+// that authenticates AS another principal. An admin API key whose
 // ownerUserId is set delegates to that owner (authn.EffectivePrincipal), so a
 // caller holding only `admin:api-key.create` could otherwise mint a key owned by
 // a super-admin and inherit super-admin authority — the ceiling never ran on

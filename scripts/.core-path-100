@@ -50,5 +50,5 @@ packages/agent/internal/platform/pidcache sweepExpiredLocked
 
 # --- ai-gateway traffic chain: traffic_event writer ---
 packages/ai-gateway/internal/platform/audit Enqueue
-packages/ai-gateway/internal/platform/audit flush
+packages/ai-gateway/internal/platform/audit consumeLoop
 packages/ai-gateway/internal/platform/audit publishRecord

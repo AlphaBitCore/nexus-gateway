@@ -85,7 +85,8 @@ func NewDetector(rules []Rule, log *slog.Logger, namespace string, reg prometheu
 //
 // Algorithm:
 //  1. Extract the last message where Role == "user".
-//  2. For each compiled rule, call compiledRule.matches(text).
+//  2. Lowercase the text once, then for each compiled rule call
+//     compiledRule.matches(text, lowered).
 //  3. On first match: increment the Prometheus counter and return (true, ruleID).
 //  4. Default: return (false, "").
 func (d *Detector) IsTimeSensitive(messages []ChatMessage) (matched bool, ruleID string) {
@@ -93,10 +94,13 @@ func (d *Detector) IsTimeSensitive(messages []ChatMessage) (matched bool, ruleID
 	if text == "" {
 		return false, ""
 	}
+	// Lowercase the candidate text once for all rules; each rule's keyword set
+	// is pre-lowercased at compile time, so matching is a substring search.
+	lowered := strings.ToLower(text)
 
 	rs := d.rules.Load()
 	for _, cr := range rs.compiled {
-		if cr.matches(text) {
+		if cr.matches(text, lowered) {
 			lang := ruleLanguageLabel(cr.rule.Languages)
 			d.metrics.recordSkip(cr.rule.ID, lang)
 			d.log.Debug("freshness detector matched",

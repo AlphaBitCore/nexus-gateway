@@ -3,9 +3,9 @@ package alerting_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -946,8 +946,8 @@ func TestMaskChannelConfig_MasksKnownKeys(t *testing.T) {
 	}
 }
 
-// TestMaskChannelConfig_MasksWebhookURL verifies F-0247: a Slack webhookUrl
-// (secret token in the path) is masked in API responses.
+// TestMaskChannelConfig_MasksWebhookURL verifies a Slack webhookUrl (secret
+// token in the path) is masked in API responses.
 func TestMaskChannelConfig_MasksWebhookURL(t *testing.T) {
 	cfg := map[string]any{
 		"webhookUrl": "https://hooks.slack.com/services/T00/B00/Xsecret9999",

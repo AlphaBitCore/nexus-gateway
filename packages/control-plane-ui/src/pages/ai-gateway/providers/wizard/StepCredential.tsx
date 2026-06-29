@@ -4,7 +4,6 @@ import {
 import { ProviderConnectivityTestButton } from '../list/ProviderConnectivityTestButton';
 import type { ProviderWizardHook } from './useProviderWizard';
 import styles from './ProviderWizard.module.css';
-import { LinkButton } from '@nexus-gateway/ui-shared';
 
 export function StepCredential({ wizard }: { wizard: ProviderWizardHook }) {
   const {
@@ -58,9 +57,9 @@ export function StepCredential({ wizard }: { wizard: ProviderWizardHook }) {
             </svg>
             {t('pages:providers.credentialEncryptionNote')}
           </div>
-          <LinkButton onClick={() => setSkipCredential(true)}>
+          <Button variant="secondary" onClick={() => setSkipCredential(true)} className={styles.skipCredentialButton}>
             {t('pages:providers.skipCredential', 'Skip — I will add a credential later')}
-          </LinkButton>
+          </Button>
         </Stack>
       )}
 

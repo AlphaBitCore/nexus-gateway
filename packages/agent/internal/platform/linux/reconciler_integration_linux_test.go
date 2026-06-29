@@ -175,7 +175,7 @@ func TestReconciler_StopRemovesChain(t *testing.T) {
 	}
 }
 
-// TestSOMARK_DialerStampsSocket covers FR-L4 at the syscall level:
+// TestSOMARK_DialerStampsSocket covers SO_MARK stamping at the syscall level:
 // every socket produced by MarkedDialer carries SO_MARK = AgentSOMark
 // on its outbound file descriptor. The test creates a marked dialer,
 // uses it to open a TCP connection to a localhost test listener,

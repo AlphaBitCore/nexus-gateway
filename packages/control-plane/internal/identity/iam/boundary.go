@@ -93,7 +93,7 @@ func (e *Engine) PrincipalCoversDocument(ctx context.Context, principalType, pri
 // PrincipalCoversPrincipal reports whether the caller (callerType, callerID)
 // already holds — via its own effective IAM policies — every permission the
 // OWNER (ownerType, ownerID) holds. It is the grant-ceiling primitive for the
-// "mint a key that authenticates AS another principal" path (F-0365): an admin
+// "mint a key that authenticates AS another principal" path: an admin
 // API key delegates to its owner user, so issuing a key owned by a more-powerful
 // principal would let a narrowly-scoped caller act as that principal. The check
 // loads the owner's effective Allow statements and runs each through

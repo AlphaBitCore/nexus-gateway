@@ -2,7 +2,7 @@ package extract
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"strings"
 
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"

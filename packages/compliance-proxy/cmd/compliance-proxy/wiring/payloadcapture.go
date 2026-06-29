@@ -3,8 +3,8 @@ package wiring
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
 

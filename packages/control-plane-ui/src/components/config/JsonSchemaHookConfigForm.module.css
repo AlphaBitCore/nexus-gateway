@@ -3,6 +3,7 @@
   padding: var(--g-space-2) var(--g-space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
+  background: var(--color-bg);
   font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
   resize: vertical;
@@ -50,17 +51,17 @@
 }
 
 .onMatchSection {
-  border: 1px solid var(--color-border);
-  border-radius: var(--g-radius-md);
-  padding: var(--g-space-3) var(--g-space-4);
-  margin-top: var(--g-space-3);
-  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--g-space-4);
+  margin-top: var(--g-space-4);
+  margin-bottom: var(--g-space-4);
+  background: transparent;
 }
 
 .onMatchLegend {
-  font-size: var(--g-font-size-sm);
-  font-weight: 600;
-  padding: 0 var(--g-space-2);
+  margin: 0 0 4px;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
@@ -69,4 +70,28 @@
   color: var(--color-text-muted);
   margin: 0 0 var(--g-space-3) 0;
   line-height: 1.5;
+}
+
+.onMatchActionsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.onMatchActionsGrid > * {
+  min-width: 0;
+}
+
+.onMatchActionsGrid :global(button[role="combobox"]) {
+  min-height: 36px;
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
+@media (max-width: 720px) {
+  .onMatchActionsGrid {
+    grid-template-columns: 1fr;
+  }
 }

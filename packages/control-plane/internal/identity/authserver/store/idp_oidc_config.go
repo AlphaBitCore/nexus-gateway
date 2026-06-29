@@ -1,7 +1,7 @@
 package store
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 // OIDCConfig is the runtime view of an IdentityProvider row's OIDC

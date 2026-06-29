@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TestLoad_SecretCustody_CommandUnwrapsCrownJewel pins the SEC-W2-03 Layer C
+// TestLoad_SecretCustody_CommandUnwrapsCrownJewel pins the command-custody
 // wiring on ai-gateway: with secretCustody.provider="command", Load() resolves
 // the crown-jewel env vars as base64 wrapped blobs and unwraps each at boot. The
 // unwrapped plaintext is what ai-gw uses to decrypt provider credentials + hash
@@ -87,6 +87,31 @@ func TestLoad_ServerHost_FromEnv(t *testing.T) {
 	}
 	if cfg.Server.Host != "127.0.0.1" {
 		t.Errorf("Server.Host = %q, want 127.0.0.1 (from AI_GATEWAY_HOST)", cfg.Server.Host)
+	}
+}
+
+// TestLoad_AuditMaxQueuedRecords covers the default (10000) and the env override
+// that bounds the audit Writer's in-heap record buffer (the audit body-pool cap).
+func TestLoad_AuditMaxQueuedRecords(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "does-not-exist.yaml")
+
+	setRequiredEnvBaseline(t)
+	cfgDef, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfgDef.Audit.MaxQueuedRecords != 10000 {
+		t.Errorf("default Audit.MaxQueuedRecords = %d, want 10000", cfgDef.Audit.MaxQueuedRecords)
+	}
+
+	t.Setenv("AI_GATEWAY_AUDIT_MAX_QUEUED_RECORDS", "4000")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Audit.MaxQueuedRecords != 4000 {
+		t.Errorf("Audit.MaxQueuedRecords = %d, want 4000 (from env)", cfg.Audit.MaxQueuedRecords)
 	}
 }
 
@@ -373,7 +398,7 @@ func TestValidate_RequiredFields(t *testing.T) {
 		{
 			name: "missing both credential keys (master AND key map)",
 			mutate: func(t *testing.T) string {
-				// F-0085: only fails when NEITHER the single key NOR the map is set.
+				// Only fails when NEITHER the single key NOR the map is set.
 				t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "")
 				t.Setenv("CREDENTIAL_KEY_MAP", "")
 				return ""
@@ -432,7 +457,7 @@ func TestValidate_RequiredFields(t *testing.T) {
 	}
 }
 
-// TestValidate_CredentialKeyMapOnlyBoots is the F-0085 regression guard: a
+// TestValidate_CredentialKeyMapOnlyBoots is the regression guard: a
 // deployment that sets ONLY CREDENTIAL_KEY_MAP (no single CREDENTIAL_ENCRYPTION_KEY)
 // must pass validate() — the map is a standalone credential-decryption mode.
 func TestValidate_CredentialKeyMapOnlyBoots(t *testing.T) {

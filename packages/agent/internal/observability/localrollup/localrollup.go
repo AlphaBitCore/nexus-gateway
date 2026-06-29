@@ -16,8 +16,8 @@ package localrollup
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"strings"
 	"time"
@@ -303,12 +303,12 @@ func (a *Aggregator) processBucket5m(ctx context.Context, bucket time.Time) erro
 				add(MetricLatencyUpstreamTtfbSum, float64(upstreamTtfb.Int64))
 				add(MetricLatencyUpstreamTtfbCount, 1)
 			}
-			// #84: stamp Avg Upstream + Avg Us for ALL flows including
-			// passthrough. Pre-fix only inspect flows had upstream_total
-			// populated (Swift NE only tagged URLSession-tracked
-			// flows), which made Stats permanently render n/a on macOS
-			// where 90%+ of traffic is passthrough. New semantic: when
-			// upstream_total is missing but duration is known, treat
+			// Stamp Avg Upstream + Avg Us for ALL flows including
+			// passthrough. When only inspect flows have upstream_total
+			// populated (Swift NE only tags URLSession-tracked flows),
+			// Stats renders n/a on macOS where 90%+ of traffic is
+			// passthrough. Semantic: when upstream_total is missing but
+			// duration is known, treat
 			// the whole flow as upstream wall time (Avg Upstream =
 			// durationMs) and our overhead as 0 (raw relay does
 			// nothing — bytes pass through with negligible CPU).
@@ -334,7 +334,7 @@ func (a *Aggregator) processBucket5m(ctx context.Context, bucket time.Time) erro
 				add(MetricLatencyUsSum, 0)
 				add(MetricLatencyUsCount, 1)
 			}
-			// #84: derived Success rate counters. audit_events has no
+			// Derived Success rate counters. audit_events has no
 			// status_code column (the agent never sees HTTP status for
 			// passthrough flows and rarely for inspect on macOS), so we
 			// synthesise:
@@ -673,8 +673,7 @@ func tableForGranule(g string) string {
 
 // QueryRollup reads rollup rows for the given query window from the local
 // SQLite. Auto-selects granularity via Granule(). Used by the agent IPC
-// handler (packages/agent/internal/sync/status or platform bridge — wire
-// site decided per Task #26).
+// handler (packages/agent/internal/sync/status or platform bridge).
 func (a *Aggregator) QueryRollup(ctx context.Context, q Query) ([]Row, error) {
 	if !q.EndTime.After(q.StartTime) {
 		return nil, nil

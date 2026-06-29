@@ -256,7 +256,7 @@ final class TransparentProxyManager {
                     let nsErr = error as NSError
                     self.logger.error("ensureRunning: startVPNTunnel THREW: domain=\(nsErr.domain) code=\(nsErr.code) localized=\(error.localizedDescription) — common causes: NEVPNErrorConfigurationDisabled (isEnabled=false), NEVPNErrorConfigurationStale (need re-load), NEVPNErrorConfigurationInvalid (bad protocol), NEVPNErrorConfigurationReadWriteFailed")
 
-                    // Auto-recovery (build #16+): code=1
+                    // Auto-recovery: code=1
                     // (NEVPNErrorConfigurationInvalid) and code=2
                     // (NEVPNErrorConfigurationStale) almost always
                     // mean the on-disk manager config was written by

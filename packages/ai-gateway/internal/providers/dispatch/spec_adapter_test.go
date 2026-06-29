@@ -3,8 +3,8 @@ package dispatch
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -217,7 +217,7 @@ func TestSpecAdapter_TranslateViaCodec(t *testing.T) {
 	}
 }
 
-// TestSpecAdapter_NonStream_OversizeBody_SetsTruncated pins the F-0349
+// TestSpecAdapter_NonStream_OversizeBody_SetsTruncated pins the
 // contract: when the upstream non-streaming body exceeds the runtime read
 // cap (req.MaxResponseBytes), Execute clamps the bytes AND flags
 // Response.Truncated so the handler refuses usage_extraction_status="ok".
@@ -370,9 +370,8 @@ func TestSpecAdapter_Passthrough_RewritesModelForAllOpenAIWireShapeFormats(t *te
 // nexus.dry_run, nexus.ext.<provider>.<key>, etc.) leaks through to the
 // upstream provider on the passthrough path (same-shape forward), causing
 // the provider to 400 with "Unrecognized request argument supplied: nexus"
-// (or equivalent for Anthropic / Gemini) — observed against OpenAI on
-// 2026-05-24 after E58-S5 removed the dry-run short-circuit that
-// previously masked the leak.
+// (or equivalent for Anthropic / Gemini) — observed against OpenAI on the live
+// passthrough path, which runs no dry-run short-circuit to mask the leak.
 //
 // Coverage is per-ingress shape because rewritePassthroughModel has
 // distinct exit paths: OpenAI-wire-shape parses+rewrites+marshals the
@@ -465,23 +464,47 @@ func TestStripNexusNamespace_FastPaths(t *testing.T) {
 	})
 }
 
-func TestSpecAdapter_Passthrough_InvalidJSONReturnsInvalidRequest(t *testing.T) {
-	adapter := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
+// TestSpecAdapter_Passthrough_MalformedJSONIsForwarded pins the contract:
+// in PURE passthrough (no cache, no hooks, same-format — the fast path here) the gw
+// no longer pays a full-body json.Valid to reject malformed client JSON. A malformed
+// body is the client's problem — it is forwarded (the surgical model rewrite still
+// applies what it can) and the upstream returns the error. The gateway must NOT
+// manufacture a CodeInvalidRequest of its own for malformed input on this path.
+//
+// This is scoped to pure passthrough ON PURPOSE: the moment a feature that must
+// PARSE the body runs — cross-format spec conversion (IngressChatToCanonical),
+// response cache (cache-key canonicalization), or hooks — malformed JSON still
+// fails there and the gw legitimately returns invalid_request, because those
+// features cannot operate on garbage. Only the parse-free passthrough drops the gate.
+func TestSpecAdapter_Passthrough_MalformedJSONIsForwarded(t *testing.T) {
+	captured := make(chan []byte, 1)
+	tr := &fakeTransport{do: func(_ context.Context, r *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(r.Body)
+		captured <- b
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	}}
+	adapter := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	_, err := adapter.Execute(context.Background(), Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{"model":"gpt-4o-mini"`),
 		Target:     CallTarget{APIKey: "sk-x", ProviderModelID: "moonshot-v1-8k"},
 	})
-	if err == nil {
-		t.Fatal("expected error")
+	// The gateway must not reject malformed JSON with its own invalid_request.
+	if err != nil {
+		var pe *ProviderError
+		if errors.As(err, &pe) && pe.Code == CodeInvalidRequest {
+			t.Fatalf("malformed JSON must be forwarded, not gw-rejected as invalid_request: %v", err)
+		}
 	}
-	var pe *ProviderError
-	if !errors.As(err, &pe) {
-		t.Fatalf("expected *ProviderError, got %T", err)
-	}
-	if pe.Code != CodeInvalidRequest {
-		t.Fatalf("expected invalid_request, got %q", pe.Code)
+	// It must reach the upstream transport (forwarded), with the model rewritten.
+	select {
+	case b := <-captured:
+		if !bytes.Contains(b, []byte("moonshot-v1-8k")) {
+			t.Fatalf("forwarded body must carry the rewritten provider model: %s", b)
+		}
+	default:
+		t.Fatal("malformed body was not forwarded to the upstream transport")
 	}
 }
 
@@ -874,4 +897,105 @@ func TestSpecAdapter_StreamOpened(t *testing.T) {
 		t.Errorf("expected terminal chunk")
 	}
 	_ = resp.Stream.Close()
+}
+
+// fakeModelListerTransport extends fakeTransport to also implement the
+// optional transportModelLister capability, letting tests verify that
+// specAdapter.ListModels delegates correctly to the underlying transport.
+type fakeModelListerTransport struct {
+	fakeTransport
+	ids []string
+	err error
+}
+
+func (f *fakeModelListerTransport) ListModels(_ context.Context, _ CallTarget) ([]string, error) {
+	return f.ids, f.err
+}
+
+// TestSpecAdapter_ListModels_supportedTransport verifies that specAdapter
+// exposes the model list when the transport implements transportModelLister.
+// This is the success path: ListModels returns (ids, supported=true, nil).
+func TestSpecAdapter_ListModels_supportedTransport(t *testing.T) {
+	tr := &fakeModelListerTransport{ids: []string{"gpt-4o", "gpt-4o-mini"}}
+	a := NewSpecAdapter(AdapterSpec{
+		Format:          FormatOpenAI,
+		Transport:       tr,
+		SchemaCodec:     &fakeCodec{},
+		StreamDecoder:   &fakeStreamDecoder{},
+		ErrorNormalizer: &fakeErrorNormalizer{},
+	}, slog.Default())
+
+	lister, ok := a.(interface {
+		ListModels(ctx context.Context, target CallTarget) (ids []string, supported bool, err error)
+	})
+	if !ok {
+		t.Fatal("specAdapter should implement modelLister when transport does")
+	}
+	ids, supported, err := lister.ListModels(context.Background(), CallTarget{BaseURL: "https://api.test"})
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if !supported {
+		t.Fatal("supported should be true when transport implements ListModels")
+	}
+	if len(ids) != 2 || ids[0] != "gpt-4o" || ids[1] != "gpt-4o-mini" {
+		t.Errorf("ids: got %v, want [gpt-4o gpt-4o-mini]", ids)
+	}
+}
+
+// TestSpecAdapter_ListModels_unsupportedTransport verifies that specAdapter
+// correctly reports supported=false when the transport does NOT implement
+// transportModelLister (e.g. the Anthropic transport). No error is returned;
+// the caller interprets supported=false as "model discovery unavailable".
+func TestSpecAdapter_ListModels_unsupportedTransport(t *testing.T) {
+	// fakeTransport does NOT implement transportModelLister.
+	tr := &fakeTransport{}
+	a := NewSpecAdapter(AdapterSpec{
+		Format:          FormatAnthropic,
+		Transport:       tr,
+		SchemaCodec:     &fakeCodec{},
+		StreamDecoder:   &fakeStreamDecoder{},
+		ErrorNormalizer: &fakeErrorNormalizer{},
+	}, slog.Default())
+
+	lister, ok := a.(interface {
+		ListModels(ctx context.Context, target CallTarget) (ids []string, supported bool, err error)
+	})
+	if !ok {
+		t.Fatal("specAdapter should always implement the ListModels method (returns supported=false for non-listing transports)")
+	}
+	ids, supported, err := lister.ListModels(context.Background(), CallTarget{})
+	if err != nil {
+		t.Fatalf("ListModels: unexpected error %v", err)
+	}
+	if supported {
+		t.Error("supported should be false when transport does not implement ListModels")
+	}
+	if ids != nil {
+		t.Errorf("ids should be nil when unsupported; got %v", ids)
+	}
+}
+
+// TestSpecAdapter_ListModels_transportError verifies that errors returned by
+// the transport's ListModels are propagated with supported=true.
+func TestSpecAdapter_ListModels_transportError(t *testing.T) {
+	tr := &fakeModelListerTransport{err: errors.New("upstream 503")}
+	a := NewSpecAdapter(AdapterSpec{
+		Format:          FormatOpenAI,
+		Transport:       tr,
+		SchemaCodec:     &fakeCodec{},
+		StreamDecoder:   &fakeStreamDecoder{},
+		ErrorNormalizer: &fakeErrorNormalizer{},
+	}, slog.Default())
+
+	lister := a.(interface {
+		ListModels(ctx context.Context, target CallTarget) (ids []string, supported bool, err error)
+	})
+	_, supported, err := lister.ListModels(context.Background(), CallTarget{})
+	if err == nil {
+		t.Fatal("expected transport error to be propagated")
+	}
+	if !supported {
+		t.Error("supported should be true even on transport error (the transport ran)")
+	}
 }

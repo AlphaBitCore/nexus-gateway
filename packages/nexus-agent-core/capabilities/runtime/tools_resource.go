@@ -3,8 +3,8 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/url"
 	"strings"
 

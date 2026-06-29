@@ -3,8 +3,8 @@ package matcher
 import (
 	"context"
 
-	"encoding/json"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/goccy/go-json"
 	"sort"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"

@@ -1,5 +1,109 @@
 [
   {
+    "id": "00a21d35-5325-5126-984e-a7a5d6dc8a9c",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-cls-003",
+    "category": "dlp.classification",
+    "severity": "soft",
+    "pattern": "(?i)\\bATTORNEY[ -](?:CLIENT (?:PRIVILEGED?|COMMUNICATION)|WORK PRODUCT)\\b",
+    "flags": null,
+    "description": "Attorney-client privilege / work-product legal marker.",
+    "labels": [
+      "detector:data-loss",
+      "marker:legal-privilege",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "00d831e2-b18e-5386-8149-56798e0c832f",
+    "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
+    "ruleId": "cs-w-003",
+    "category": "content_safety.weapons",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|step[-\\s]?by[-\\s]?step)\\s+(?:synthesi[sz]e|make|prepare)\\s+(?:tatp|hmtd|nitroglycerin|c-?4|semtex|thermite)\\b",
+    "flags": null,
+    "description": "High-explosive synthesis how-to.",
+    "labels": [
+      "detector:content-safety",
+      "category:weapons",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "014396a3-055e-5ded-9057-5deb56fe051f",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-src-004",
+    "category": "dlp.source_code",
+    "severity": "warn",
+    "pattern": "(?i)\\b[\\w.-]{1,60}\\.(?:pem|p12|pfx|jks|keystore|key|crt|cer)\\b",
+    "flags": null,
+    "description": "Certificate / private-key / keystore filename mentioned in content.",
+    "labels": [
+      "detector:data-loss",
+      "vector:cert-key-filename",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "022f3089-87d2-5313-b1c4-8a31d755b45e",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-typeform",
+    "category": "secret_leak.typeform",
+    "severity": "hard",
+    "pattern": "\\btfp_[A-Za-z0-9_-]{44,59}\\b",
+    "flags": null,
+    "description": "Typeform personal access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:typeform",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "02412a3d-7d81-55ce-bc95-01e74399a7c5",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-sl-004",
+    "category": "prompt_injection.system_leak",
+    "severity": "hard",
+    "pattern": "(?i)repeat\\s+(the\\s+)?(words?|text|everything)\\s+(above|before\\s+this)\\s+(verbatim|exactly|word\\s+for\\s+word)",
+    "flags": null,
+    "description": "Repeat-the-words-above verbatim prompt-leak trick.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:system-leak"
+    ]
+  },
+  {
+    "id": "03ea0a1e-4e8f-5534-bc23-3bcb2af26af9",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-dump-004",
+    "category": "dlp.bulk_dump",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:postgres(?:ql)?|mysql|mongodb(?:\\+srv)?|redis|mariadb|mssql|sqlserver)://[^\\s/@]{1,80}@(?:[\\w.-]{1,60}\\.(?:internal|corp|local|lan|intra)|10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3}|172\\.(?:1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3})",
+    "flags": null,
+    "description": "Database connection string targeting an internal/private host.",
+    "labels": [
+      "detector:data-loss",
+      "vector:db-conn-internal",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "0577d800-c623-5e08-887d-3ec60bdf0f52",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-con-004",
+    "category": "compliance.consent",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:do not sell (?:or share )?my (?:personal )?(?:information|data|info)|right to opt[- ]out of (?:the )?sale|CCPA|CPRA|California Consumer Privacy Act|California Privacy Rights Act)\\b",
+    "flags": null,
+    "description": "CCPA / CPRA do-not-sell / opt-out-of-sale rights language.",
+    "labels": [
+      "detector:compliance",
+      "framework:ccpa",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "05c1737e-2e4c-404a-a22b-90cae3b47ca8",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-io-003",
@@ -44,6 +148,21 @@
     ]
   },
   {
+    "id": "08bd6783-9aec-5a2f-8dc1-aaadb3e67272",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-slack-webhook",
+    "category": "secret_leak.slack",
+    "severity": "hard",
+    "pattern": "\\bhooks\\.slack\\.com/(?:services|workflows|triggers)/[A-Za-z0-9+/]{43,56}\\b",
+    "flags": null,
+    "description": "Slack incoming webhook URL (services / workflows / triggers).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:slack",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "0a0d736c-d2f1-4875-9fc2-327596e4a4fd",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-de-001",
@@ -58,6 +177,81 @@
     ]
   },
   {
+    "id": "0b6b4c98-48ad-5dfb-b14d-6e1ae09b071d",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rw-001",
+    "category": "malware.ransomware",
+    "severity": "hard",
+    "pattern": "(?i)\\bvssadmin(?:\\.exe)?\\s+delete\\s+shadows\\b",
+    "flags": null,
+    "description": "vssadmin delete shadows — shadow-copy destruction (ransomware staging).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:inhibit-recovery",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "0b9e33ca-3d9f-5d0a-b40e-ffe986b34b2f",
+    "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
+    "ruleId": "cs-w-002",
+    "category": "content_safety.weapons",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|step[-\\s]?by[-\\s]?step|recipe\\s+for)\\s+(?:build|make|construct|assemble)\\s+(?:a\\s+)?(?:pipe\\s+bomb|pressure[-\\s]cooker\\s+bomb|ied|improvised\\s+explosive|nail\\s+bomb|fertili[sz]er\\s+bomb)\\b",
+    "flags": null,
+    "description": "Improvised-explosive construction how-to.",
+    "labels": [
+      "detector:content-safety",
+      "category:weapons",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "0bd4b86d-a2f8-5420-94ed-f0772826fa7f",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-figma",
+    "category": "secret_leak.figma",
+    "severity": "hard",
+    "pattern": "\\bfigd_[A-Za-z0-9_-]{40,43}\\b",
+    "flags": null,
+    "description": "Figma personal access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:figma",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "0c3affec-e877-5eb4-93a4-4978a5a16c78",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-flutterwave",
+    "category": "secret_leak.flutterwave",
+    "severity": "hard",
+    "pattern": "\\bFLWSECK_TEST-[a-h0-9]{32}-X\\b",
+    "flags": null,
+    "description": "Flutterwave test secret key.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:flutterwave",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "0c5e6618-517b-511d-b893-6562f0c6700d",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-inj-001",
+    "category": "insecure_code.injection",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:execute|executemany|query)\\s*\\(\\s*[\"'][^\"']{0,160}[\"']{1,2}\\s*\\+",
+    "flags": null,
+    "description": "SQL query built by string concatenation into execute/query (CWE-89).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:89",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "0d16e588-fb50-4dd1-af1b-8595db3215d8",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-fs-001",
@@ -69,6 +263,51 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:tampering",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "0f665fd9-6bcd-5a50-b3d9-c03298ccc087",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-trav-001",
+    "category": "tool_call.traversal",
+    "severity": "soft",
+    "pattern": "(?i)(?:%2e%2e[%/\\\\]|%252e%252e|\\.\\.%2f|\\.\\.%5c|\\.{4,}/{2,})",
+    "flags": null,
+    "description": "Encoded path traversal (%2e%2e%2f / ....// ) bypassing literal ../ filters.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:traversal",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "0f923548-2b9b-5f7f-9748-f6821812f5c5",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-001",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:ssn|social\\s+security(?:\\s+(?:number|no\\.?|#))?)\\b\\s*[:#]?\\s*[0-9]{3}[ -]?[0-9]{2}[ -]?[0-9]{4}\\b",
+    "flags": null,
+    "description": "US SSN (3-2-4) under an SSN / social-security label word.",
+    "labels": [
+      "detector:pii",
+      "gov:us-ssn",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "10719d7d-7b07-5869-b4ac-ba1540dd664e",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-circleci",
+    "category": "secret_leak.circleci",
+    "severity": "hard",
+    "pattern": "\\bCCIPAT_[A-Za-z0-9]{22}_[A-Za-z0-9]{40}\\b",
+    "flags": null,
+    "description": "CircleCI personal access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:circleci",
       "severity:restricted"
     ]
   },
@@ -88,6 +327,155 @@
     ]
   },
   {
+    "id": "12470b7a-3062-53a8-9fc9-b22cb4d68596",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-xxe-002",
+    "category": "tool_call.xxe",
+    "severity": "soft",
+    "pattern": "(?i)<!DOCTYPE[^>]{0,80}(?:SYSTEM|PUBLIC)\\b",
+    "flags": null,
+    "description": "DOCTYPE declaration pulling an external SYSTEM/PUBLIC DTD (XXE vector).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:xxe",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "12494fa1-a16b-59bc-a50e-aca87b275513",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-confusion-002",
+    "category": "supply_chain.dependency_confusion",
+    "severity": "soft",
+    "pattern": "(?i)\\bpip\\d?\\s+install\\b[^\\n]{0,120}--(?:index-url|extra-index-url)[=\\s]",
+    "flags": null,
+    "description": "pip install points at a custom package index (non-PyPI feed can shadow internal names).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:dependency-confusion",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "124ae73a-2601-556c-81da-30a3c8c373f3",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-sentry",
+    "category": "secret_leak.sentry",
+    "severity": "hard",
+    "pattern": "\\bsntrys_[A-Za-z0-9+/=_.-]{80,}",
+    "flags": null,
+    "description": "Sentry user / org auth token (sntrys_ prefix).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:sentry",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "13572ed5-772f-5cd5-8722-79852d5f2794",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-brevo",
+    "category": "secret_leak.brevo",
+    "severity": "hard",
+    "pattern": "\\bxkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}\\b",
+    "flags": null,
+    "description": "Brevo (Sendinblue) API key.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:brevo",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "148836f6-d01f-50ba-9eda-52047ffb1391",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-tm-002",
+    "category": "prompt_injection.tool_misuse",
+    "severity": "hard",
+    "pattern": "(?i)(send|exfiltrate|post)\\s+(the\\s+)?(conversation|chat\\s+history|system\\s+prompt|secrets?)\\s+to\\s+(https?://|this\\s+(url|endpoint|webhook))",
+    "flags": null,
+    "description": "Tool-driven exfiltration of context to an external endpoint.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:tool-misuse"
+    ]
+  },
+  {
+    "id": "1490f79e-84e9-5f1f-8cd6-3caa76b4547f",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-dropbox",
+    "category": "secret_leak.dropbox",
+    "severity": "hard",
+    "pattern": "\\bsl\\.[A-Za-z0-9_-]{130,152}\\b",
+    "flags": null,
+    "description": "Dropbox short-lived access token (sl. prefix).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:dropbox",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "151b6302-132c-5898-a46c-105dfd56af2b",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-planetscale",
+    "category": "secret_leak.planetscale",
+    "severity": "hard",
+    "pattern": "\\bpscale_(?:tkn|pw|oauth)_[A-Za-z0-9_.-]{32,}\\b",
+    "flags": null,
+    "description": "PlanetScale service token / database password / OAuth token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:planetscale",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "159bb097-5a8b-5bc0-81af-6ec7f0ce911e",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-sh-004",
+    "category": "tool_call.shell",
+    "severity": "hard",
+    "pattern": "(?i)\\brm\\s+-[a-z]*rf?[a-z]*\\s+(?:~|\\$HOME)(?:/\\s|/\\.|\\s|\\s*$)",
+    "flags": null,
+    "description": "rm -rf against the entire home directory (~ or $HOME).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "15dc8791-c5c8-5b62-98bf-188dcb422ff5",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-ssti-002",
+    "category": "tool_call.ssti",
+    "severity": "hard",
+    "pattern": "(?i)(?:\\$\\{\\s*T\\(|#\\{|<%=)[^}>]{0,60}(?:Runtime|ProcessBuilder|getRuntime|java\\.lang)",
+    "flags": null,
+    "description": "Server-side template injection RCE marker (SpEL/OGNL/JSP Runtime access).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:ssti",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "16262cfa-b31b-53d1-93ce-57dc374fecf3",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-malpkg-004",
+    "category": "supply_chain.malicious_pkg",
+    "severity": "soft",
+    "pattern": "(?i)\\bnpm\\s+(?:install|i|add)\\b[^\\n]{0,80}\\bgit\\+https?://[^\\s]{3,200}",
+    "flags": null,
+    "description": "npm install from a git+http(s) URL, fetching a package outside the registry.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:malicious-package",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "17233807-304d-4861-9b46-763b3603898c",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-mt-001",
@@ -102,6 +490,36 @@
     ]
   },
   {
+    "id": "18404735-d1fe-510f-ad74-cfcec2f012b6",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-dump-001",
+    "category": "dlp.bulk_dump",
+    "severity": "hard",
+    "pattern": "(?i)(?:--\\s{0,4}(?:MySQL|MariaDB|PostgreSQL)[\\w ]{0,20}dump\\b|\\bmysqldump\\b|\\bpg_dump(?:all)?\\b)",
+    "flags": null,
+    "description": "SQL database dump header / dump-tool invocation.",
+    "labels": [
+      "detector:data-loss",
+      "vector:sql-dump",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "19a09ad5-b974-5438-84f1-d5530a641f1f",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-exfil-001",
+    "category": "supply_chain.exfil_in_build",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:env|printenv|export\\s+-p)\\b\\s*\\|\\s*(?:curl|wget|nc|ncat|netcat|telnet)\\b",
+    "flags": null,
+    "description": "Environment-variable dump piped to a network client (secret exfiltration in a build step).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:build-exfil",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "19ee7896-5123-444c-a94e-3caafa866120",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-sh-006",
@@ -113,6 +531,66 @@
     "labels": [
       "detector:content-safety",
       "category:self_harm",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "1ae57481-5005-5ac9-9bd9-bf16f27ea23f",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ex-002",
+    "category": "malware.exploit",
+    "severity": "warn",
+    "pattern": "(?:\\\\x90){8,}",
+    "flags": null,
+    "description": "NOP sled (>=8 consecutive x90 bytes) — shellcode staging.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:shellcode",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "1b0075f9-9020-501f-a29a-c9e41f0a7732",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-iam-003",
+    "category": "cloud_misconfig.iam",
+    "severity": "hard",
+    "pattern": "(?i)\"Principal\"\\s*:\\s*(?:\"\\*\"|\\{\\s*\"AWS\"\\s*:\\s*\"\\*\"\\s*\\})",
+    "flags": null,
+    "description": "Trust or resource policy Principal set to \"*\"; anyone can assume the role or access the resource.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "1b6b90fc-4d40-59af-9fb5-3d582efda82a",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-prefect",
+    "category": "secret_leak.prefect",
+    "severity": "hard",
+    "pattern": "\\bpn[ub]_[A-Za-z0-9]{32,36}\\b",
+    "flags": null,
+    "description": "Prefect Cloud user / service API key.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:prefect",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "1d75dcd4-25f9-53c0-86ab-988233c66a1d",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-path-001",
+    "category": "insecure_code.path_traversal",
+    "severity": "soft",
+    "pattern": "(?i)(?:open|fopen|readfile|read_file|sendfile|os\\.open|ioutil\\.readfile|fs\\.readfile)\\s*\\(\\s*[^\\n)]{0,80}\\.\\./",
+    "flags": null,
+    "description": "File open whose path embeds a ../ traversal sequence; path-traversal prone (CWE-22).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:22",
       "severity:restricted"
     ]
   },
@@ -132,6 +610,21 @@
     ]
   },
   {
+    "id": "1fad24fe-9701-5f9e-a571-caac3f73493d",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-algolia",
+    "category": "secret_leak.algolia",
+    "severity": "soft",
+    "pattern": "(?i)algolia[a-z0-9_-]*(?:admin|api)?[_-]?key\\s*[:=]\\s*[\"']?[a-f0-9]{32}\\b",
+    "flags": null,
+    "description": "Algolia admin / API key in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:algolia",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "21e0f3af-ac61-416c-8a16-4bfcb6b73a15",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-sh-004",
@@ -143,6 +636,51 @@
     "labels": [
       "detector:content-safety",
       "category:self_harm",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "23b203ab-d955-5155-b8fb-e4d94692ebeb",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-iam-002",
+    "category": "cloud_misconfig.iam",
+    "severity": "soft",
+    "pattern": "(?i)\"Resource\"\\s*:\\s*\"\\*\"|\\bresources\\s*=\\s*\\[\\s*[\"']\\*[\"']",
+    "flags": null,
+    "description": "IAM policy statement grants Resource \"*\" (all resources); scope to specific ARNs.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "24dc3f47-5628-5128-a7df-bfe98b814580",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-xss-001",
+    "category": "insecure_code.xss",
+    "severity": "soft",
+    "pattern": "(?i)\\.innerHTML\\s*=\\s*(?:[\"'][^\"']{0,160}[\"']\\s*\\+|[A-Za-z_$][\\w.$]{0,60}\\s*\\+|`[^`]{0,160}\\$\\{)",
+    "flags": null,
+    "description": "Assignment to .innerHTML built by string concatenation or template interpolation; DOM-based XSS sink (CWE-79).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:79",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "269421dd-c078-504f-ad32-90233284677e",
+    "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
+    "ruleId": "cs-har-001",
+    "category": "content_safety.harassment",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|help\\s+me)\\s+(?:dox|doxx)\\s+(?:someone|this\\s+person|him|her|them)\\b",
+    "flags": null,
+    "description": "Doxxing assistance request.",
+    "labels": [
+      "detector:content-safety",
+      "category:harassment",
       "severity:restricted"
     ]
   },
@@ -207,6 +745,141 @@
     ]
   },
   {
+    "id": "2a2693df-4252-5ab4-a0d9-5cbedb20efac",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-frameio",
+    "category": "secret_leak.frameio",
+    "severity": "hard",
+    "pattern": "\\bfio-u-[A-Za-z0-9_-]{64}\\b",
+    "flags": null,
+    "description": "Frame.io developer token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:frameio",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "2a2f5a29-e776-509f-a4c1-98ab03be0900",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-grafana",
+    "category": "secret_leak.grafana",
+    "severity": "hard",
+    "pattern": "\\bgl(?:sa|c)_[A-Za-z0-9]{32,}\\b",
+    "flags": null,
+    "description": "Grafana service-account (glsa_) or cloud-access (glc_) token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:grafana",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "2a7f1d1d-84f5-56fd-b020-dac28cd53ad0",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-ref-005",
+    "category": "dlp.internal_ref",
+    "severity": "soft",
+    "pattern": "(?i)apiVersion:[ \\t]{1,4}v1\\b[\\s\\S]{0,400}kind:[ \\t]{1,4}Config\\b",
+    "flags": null,
+    "description": "Kubeconfig file markers (apiVersion v1 plus kind Config) in payload.",
+    "labels": [
+      "detector:data-loss",
+      "marker:kubeconfig",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "2b2f6759-ee0a-50dc-8f89-d3c710bd9394",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-drop-002",
+    "category": "malware.dropper",
+    "severity": "soft",
+    "pattern": "(?i)(certutil\\s+-(urlcache|decode)|bitsadmin\\s+/transfer|wget\\s+.{0,60}\\s*;\\s*chmod\\s+\\+x\\s*;\\s*\\./)",
+    "flags": null,
+    "description": "LOLBin/dropper staging (certutil, bitsadmin, wget+chmod+run).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:dropper",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "2c128f39-8071-5b73-8450-fa4cc1cedbc3",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-enc-003",
+    "category": "cloud_misconfig.encryption",
+    "severity": "warn",
+    "pattern": "(?i)\\ballow_blob_public_access\\s*[:=]\\s*true\\b",
+    "flags": null,
+    "description": "Azure storage account allows anonymous public blob access (allow_blob_public_access = true).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:azure",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "2c168edd-efed-528f-89af-757927d3f014",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-miner-001",
+    "category": "supply_chain.cryptominer",
+    "severity": "hard",
+    "pattern": "(?i)(?:\\b(?:xmrig|coinhive|cryptonight|cryptoloot|minerd|cgminer|ccminer|ethminer|nicehash|jsecoin|webminepool|deepminer)\\b|stratum\\+(?:tcp|ssl|udp)://)",
+    "flags": null,
+    "description": "Cryptominer binary name or stratum mining-pool protocol scheme.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:cryptominer",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "2c718bf7-b739-517f-bfa1-4b1d636f3662",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-auth0",
+    "category": "secret_leak.auth0",
+    "severity": "soft",
+    "pattern": "(?i)auth0[a-z0-9_-]*(?:client[_-]?secret|secret)\\s*[:=]\\s*[\"']?[A-Za-z0-9_-]{40,64}",
+    "flags": null,
+    "description": "Auth0 application client secret in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:auth0",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "2d382548-4dde-5291-b33e-8ef9870d9470",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-gitlab-pat",
+    "category": "secret_leak.gitlab",
+    "severity": "hard",
+    "pattern": "\\bglpat-[A-Za-z0-9_-]{20}\\b",
+    "flags": null,
+    "description": "GitLab personal / project / group access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:gitlab",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "2e5c142e-7743-53a0-b61e-585a739bc11f",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-dump-002",
+    "category": "dlp.bulk_dump",
+    "severity": "soft",
+    "pattern": "(?i)\\bINSERT\\s{1,4}INTO\\s{1,4}[\\w.`\"]{1,64}\\s{0,4}(?:\\([^()]{1,400}\\)\\s{0,4})?VALUES\\s{0,4}(?:\\([^()]{1,120}\\)\\s{0,4},\\s{0,4}){4,8}\\([^()]{1,400}\\)",
+    "flags": null,
+    "description": "Multi-tuple bulk INSERT (5+ rows in one statement).",
+    "labels": [
+      "detector:data-loss",
+      "vector:bulk-insert",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "3094fb63-e82f-43b2-93d1-6ae61e1e80f2",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-jwt",
@@ -219,6 +892,21 @@
       "detector:secret-leak",
       "format:jwt",
       "severity:confidential"
+    ]
+  },
+  {
+    "id": "31c28a61-adf2-57d0-a32c-fb4adc88e873",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-iam-007",
+    "category": "cloud_misconfig.iam",
+    "severity": "hard",
+    "pattern": "(?i)[\"']\\*:\\*[\"']",
+    "flags": null,
+    "description": "IAM policy action set to \"*:*\" (all services, all actions); equivalent to full administrator access.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
     ]
   },
   {
@@ -266,6 +954,21 @@
     ]
   },
   {
+    "id": "34302803-2f7c-5faf-a8d7-dc734e77d8de",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-gdpr-001",
+    "category": "compliance.gdpr",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:right to be forgotten|right to erasure|erasure request|erase (?:my|all) (?:personal )?data|delete (?:my|all my) (?:personal )?data)\\b",
+    "flags": null,
+    "description": "GDPR Article 17 right-to-erasure / right-to-be-forgotten request language.",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "3582e402-84bf-40db-a775-30f5997ec975",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-sendgrid",
@@ -277,6 +980,66 @@
     "labels": [
       "detector:secret-leak",
       "provider:sendgrid",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "35d64390-1f53-5095-8ccd-0410948a46ba",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-tmp-001",
+    "category": "tool_call.insecure_temp",
+    "severity": "soft",
+    "pattern": "(?i)ln\\s+-s\\s+/(?:etc|root|proc|boot|dev|sys)\\b",
+    "flags": null,
+    "description": "Symlink creation pointing at a sensitive system directory (symlink race).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:tampering",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "37bf0deb-0d87-51b4-a496-87263c551499",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-tls-002",
+    "category": "insecure_code.disabled_tls",
+    "severity": "hard",
+    "pattern": "(?i)\\brejectUnauthorized\\s*:\\s*false\\b",
+    "flags": null,
+    "description": "Node.js TLS verification disabled (rejectUnauthorized false) (CWE-295).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:295",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "38433422-55e4-559e-9330-32aaa59acf65",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-gdpr-003",
+    "category": "compliance.gdpr",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:lawful basis (?:for|of) processing|legal basis (?:for|of) processing|legitimate interest(?:s)? (?:assessment|basis|balancing))\\b",
+    "flags": null,
+    "description": "GDPR lawful-basis / legitimate-interest processing-justification language.",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "38867f35-3c1e-5178-b7ce-226f17e80c57",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-cloud-001",
+    "category": "tool_call.cloud",
+    "severity": "hard",
+    "pattern": "(?i)(?:aws\\s+s3\\s+rb\\s+[^\\n]{0,40}--force|az\\s+group\\s+delete|gcloud\\s+projects\\s+delete|aws\\s+ec2\\s+terminate-instances|aws\\s+iam\\s+delete-)",
+    "flags": null,
+    "description": "Destructive cloud CLI op (aws s3 rb --force, az group delete, gcloud projects delete).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
       "severity:restricted"
     ]
   },
@@ -295,6 +1058,21 @@
     ]
   },
   {
+    "id": "39562161-518e-5cef-bb38-476f78f8efb8",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-legal-001",
+    "category": "compliance.legal_privilege",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:attorney[- ]client privilege(?:d)?|attorney work product|legal advice privilege|privileged and confidential communication|protected by (?:the )?attorney[- ]client|solicitor[- ]client privilege)\\b",
+    "flags": null,
+    "description": "Legal attorney-client / work-product privilege markers.",
+    "labels": [
+      "detector:compliance",
+      "framework:legal",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "3969f1eb-20c9-41dc-979b-715871e125b9",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-de-002",
@@ -309,6 +1087,36 @@
     ]
   },
   {
+    "id": "397794bf-099d-5f46-8168-7ce3f848bf51",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-006",
+    "category": "cloud_misconfig.public_access",
+    "severity": "soft",
+    "pattern": "(?i)\\bAccessControl\\s*:\\s*(?:PublicReadWrite|PublicRead|AuthenticatedRead)\\b",
+    "flags": null,
+    "description": "CloudFormation S3 bucket AccessControl set to a public canned ACL (PublicRead/PublicReadWrite); world-readable or world-writable bucket.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "3a7f9eb6-c62c-53a2-b5d5-eabee69fffbb",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-002",
+    "category": "cloud_misconfig.public_access",
+    "severity": "soft",
+    "pattern": "(?i)\\bacl\\s*[:=]\\s*[\"']public-read[\"']",
+    "flags": null,
+    "description": "Object-store canned ACL set to public-read; world-readable bucket.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "3b571f72-c801-441c-aaae-cc1c8dd260db",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-slack-bot",
@@ -320,6 +1128,96 @@
     "labels": [
       "detector:secret-leak",
       "provider:slack",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "3b9c4be1-f737-5896-ac2d-e9978e7338ea",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-cloudflare",
+    "category": "secret_leak.cloudflare",
+    "severity": "soft",
+    "pattern": "(?i)cloudflare[a-z0-9_-]*(?:token|key)\\s*[:=]\\s*[\"']?[A-Za-z0-9_-]{40}",
+    "flags": null,
+    "description": "Cloudflare API token in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:cloudflare",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "3bb0541f-10e5-5a04-8db7-c57613132ee9",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-newrelic",
+    "category": "secret_leak.newrelic",
+    "severity": "hard",
+    "pattern": "\\bNRAK-[A-Za-z0-9]{27}\\b",
+    "flags": null,
+    "description": "New Relic user API key.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:newrelic",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "3d32cf0c-8f23-55d6-8c34-195b23f65ca6",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-iam-001",
+    "category": "cloud_misconfig.iam",
+    "severity": "hard",
+    "pattern": "(?i)\"Action\"\\s*:\\s*\"\\*\"|\\bactions\\s*=\\s*\\[\\s*[\"']\\*[\"']",
+    "flags": null,
+    "description": "IAM policy statement grants Action \"*\" (all actions); equivalent to administrator access.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "3dd8b21c-0824-5388-838c-8262b0095125",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-heroku-apikey",
+    "category": "secret_leak.heroku",
+    "severity": "soft",
+    "pattern": "(?i)heroku[a-z0-9_-]*(?:api[_-]?key|token)\\s*[:=]\\s*[\"']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    "flags": null,
+    "description": "Heroku API key (UUID) in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:heroku",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "3e35517d-3641-5e49-adfa-ac49f757ebdd",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-pci-003",
+    "category": "compliance.pci",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:primary account number|full (?:card number|PAN)|unmasked (?:card number|PAN)|store the PAN|clear[- ]text (?:card number|PAN))\\b",
+    "flags": null,
+    "description": "PCI primary-account-number (PAN) in clear-text / unmasked context.",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "3e79b478-2117-5ff4-b026-6efe36e085cd",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-jfrog",
+    "category": "secret_leak.jfrog",
+    "severity": "hard",
+    "pattern": "\\bcmVmdGtuOjAxOj[A-Za-z0-9+/=]{40,}",
+    "flags": null,
+    "description": "JFrog Artifactory reference token (base64 reftkn header).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:jfrog",
       "severity:restricted"
     ]
   },
@@ -339,6 +1237,36 @@
     ]
   },
   {
+    "id": "418bed3c-61a4-506a-a504-c4d975137f91",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-c2-003",
+    "category": "malware.c2",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:sliver\\s+(?:implant|c2)|powershell\\s+empire|covenant\\s+grunt|mythic\\s+agent)\\b",
+    "flags": null,
+    "description": "Sliver / Empire / Covenant / Mythic C2 agent marker.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:c2-framework",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "42aa5ce9-d9ab-579a-9583-47d4068a7901",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-enc-001",
+    "category": "dlp.encoded",
+    "severity": "soft",
+    "pattern": "(?i)\\bdata:[a-z][a-z0-9.+-]{1,40}/[a-z0-9.+-]{1,40};base64,[A-Za-z0-9+/]{40,}={0,2}",
+    "flags": null,
+    "description": "data: URI carrying an embedded base64 payload.",
+    "labels": [
+      "detector:data-loss",
+      "vector:data-uri",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "4334460e-bd60-4a38-9f35-b7975ea44e56",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-en-001",
@@ -350,6 +1278,80 @@
     "labels": [
       "detector:prompt-injection",
       "attack:encoded-payload"
+    ]
+  },
+  {
+    "id": "4341aec6-7307-5ec5-9ac7-974f926954ba",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-con-001",
+    "category": "pii.contact",
+    "severity": "soft",
+    "pattern": "[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})\\.){1,8}[A-Za-z]{2,24}",
+    "flags": null,
+    "description": "Email address (RFC-64 local + DNS-label domain + letter TLD). Structured per DNS label so Vectorscan keys on the @ literal prefilter (the prior wide {1,255} domain repeat fell to a 140x slower per-position scan).",
+    "labels": [
+      "detector:pii",
+      "contact:email",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "43c72044-a9d3-51f0-937c-ded3c6863a54",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-integrity-002",
+    "category": "supply_chain.build_integrity",
+    "severity": "soft",
+    "pattern": "(?i)(?m)^\\s*FROM\\s+[^\\s]{3,160}:latest\\b",
+    "flags": null,
+    "description": "Dockerfile FROM uses an unpinned :latest tag (non-reproducible, mutable base image).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:unpinned-base-image",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "440fe584-0f71-5475-b632-e18eda0f52ac",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-norefuse-001",
+    "category": "jailbreak.no_refusal",
+    "severity": "hard",
+    "pattern": "(?i)(never\\s+refuse|do\\s+not\\s+(ever\\s+)?(refuse|decline)|refusal\\s+is\\s+not\\s+(allowed|an\\s+option))",
+    "flags": null,
+    "description": "Explicit no-refusal coercion.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:no-refusal"
+    ]
+  },
+  {
+    "id": "4459f100-ee25-5fc0-998d-7177a6dd9234",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-cmdi-002",
+    "category": "tool_call.command_injection",
+    "severity": "hard",
+    "pattern": "(?i)(?:\\$\\(|`)\\s*(?:curl|wget|rm|nc|cat|whoami|id|python|perl|eval|base64|bash|sh)\\b",
+    "flags": null,
+    "description": "Shell command substitution invoking a network or interpreter command.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:rce",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "44cd644d-c11d-5d42-85fb-cee1c690b901",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-install-003",
+    "category": "supply_chain.install_script",
+    "severity": "soft",
+    "pattern": "(?i)\"(?:pre|post)?install\"\\s*:\\s*\"[^\"]{0,200}(?:node\\s+-e|python[23]?\\s+-c|ruby\\s+-e|perl\\s+-e|eval)\\b",
+    "flags": null,
+    "description": "package.json install hook runs an inline interpreter eval at install time.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:install-rce",
+      "severity:confidential"
     ]
   },
   {
@@ -368,6 +1370,51 @@
     ]
   },
   {
+    "id": "44f659c8-c51f-50ba-b3ba-a238d5c86d65",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-cmdi-001",
+    "category": "tool_call.command_injection",
+    "severity": "hard",
+    "pattern": "(?i)(?:;|&&|\\|\\|)\\s*(?:rm|curl|wget|nc|bash|sh|chmod|chown|kill|cat|nohup|telnet)\\b",
+    "flags": null,
+    "description": "Shell command chaining (; && ||) into a destructive or network verb.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:rce",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "4514bcfd-3b1c-5e71-84d8-6d6975c69469",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-malpkg-003",
+    "category": "supply_chain.malicious_pkg",
+    "severity": "soft",
+    "pattern": "(?i)\\bnpm\\s+(?:install|i|add|ci)\\b[^\\n]{0,80}--unsafe-perm\\b",
+    "flags": null,
+    "description": "npm install with --unsafe-perm, running package install scripts as root.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:malicious-package",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "45295c73-6201-5a7d-acb7-5e1b025854bd",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-con-003",
+    "category": "compliance.consent",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:do[- ]not[- ]call(?: (?:list|registry|request))?|national do not call|TCPA|telephone consumer protection act|prior express (?:written )?consent)\\b",
+    "flags": null,
+    "description": "Do-not-call / TCPA telemarketing-consent language.",
+    "labels": [
+      "detector:compliance",
+      "framework:ccpa",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "455a29e8-8767-478d-a776-af158e596a06",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-ssh-private",
@@ -383,6 +1430,21 @@
     ]
   },
   {
+    "id": "45d1ba5c-d686-507f-9ce0-394e994477b3",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-gdpr-005",
+    "category": "compliance.gdpr",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:GDPR|general data protection regulation|data protection officer|data processing agreement|data protection impact assessment)\\b",
+    "flags": null,
+    "description": "General GDPR regulatory references (regulation name / DPO / DPA / DPIA).",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "46fc1115-e982-4bd7-84d4-9a6f0fc7c7ec",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-i-005",
@@ -394,6 +1456,51 @@
     "labels": [
       "detector:content-safety",
       "category:illegal",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "47128a12-0555-5831-9006-c7165277324b",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-snowflake",
+    "category": "secret_leak.snowflake",
+    "severity": "soft",
+    "pattern": "(?i)snowflake[a-z0-9_-]*(?:token|password|pat)\\s*[:=]\\s*[\"']?[A-Za-z0-9=+/_-]{32,}",
+    "flags": null,
+    "description": "Snowflake password / programmatic access token in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:snowflake",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "4802770d-6d8d-515e-9606-51f2c6e8973d",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-con-003",
+    "category": "pii.contact",
+    "severity": "warn",
+    "pattern": "(?i)\\b[0-9]{1,6}\\s+(?:[A-Za-z0-9.]+\\s+){1,4}(?:street|st|ave|avenue|boulevard|blvd|road|rd|lane|ln|drive|dr|court|ct|way|place|pl|circle|cir)\\b\\.?",
+    "flags": null,
+    "description": "US-style postal street address (house number + name + street-type suffix).",
+    "labels": [
+      "detector:pii",
+      "contact:address",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "488016cf-0529-524d-8f26-660d8cadf148",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-sec-007",
+    "category": "cloud_misconfig.iac_secret",
+    "severity": "hard",
+    "pattern": "(?i)\\bclient_secret\\s*[:=]\\s*[\"'][^\"'${}\\s]{8,}[\"']",
+    "flags": null,
+    "description": "Hardcoded Azure / OAuth client_secret literal in an IaC manifest (not a variable or env reference).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:azure",
       "severity:restricted"
     ]
   },
@@ -413,6 +1520,96 @@
     ]
   },
   {
+    "id": "4a023bea-228d-57f3-b530-80d873c77945",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-segment",
+    "category": "secret_leak.segment",
+    "severity": "soft",
+    "pattern": "(?i)segment[a-z0-9_-]*(?:write[_-]?key|api[_-]?key)\\s*[:=]\\s*[\"']?[A-Za-z0-9]{32}\\b",
+    "flags": null,
+    "description": "Segment write / API key in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:segment",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "4c8327cc-e2f0-58ad-9ed7-1c644c43b6dc",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-rubygems",
+    "category": "secret_leak.rubygems",
+    "severity": "hard",
+    "pattern": "\\brubygems_[a-f0-9]{48}\\b",
+    "flags": null,
+    "description": "RubyGems API key.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:rubygems",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "4ce1428e-3c84-5516-8d3d-f6b68376a840",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-gitlab-runner",
+    "category": "secret_leak.gitlab",
+    "severity": "hard",
+    "pattern": "\\bGR1348941[A-Za-z0-9_-]{20}\\b",
+    "flags": null,
+    "description": "GitLab runner registration token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:gitlab",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "4dd6ceaa-f6b7-5e0a-9a97-66e99b3b0928",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-tls-005",
+    "category": "insecure_code.disabled_tls",
+    "severity": "hard",
+    "pattern": "NSAllowsArbitraryLoads</key>\\s{0,20}<true\\s{0,4}/?>",
+    "flags": null,
+    "description": "iOS App Transport Security disabled globally (NSAllowsArbitraryLoads true) (CWE-295).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:295",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "4e745b7e-c184-5148-9039-c8617808c72b",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-crypto-002",
+    "category": "insecure_code.weak_crypto",
+    "severity": "soft",
+    "pattern": "(?i)(?:hashlib\\.sha1\\s*\\(|\\bsha1\\.new\\s*\\(|createhash\\s*\\(\\s*[\"']sha-?1[\"']|getinstance\\s*\\(\\s*[\"']sha-?1[\"'])",
+    "flags": null,
+    "description": "SHA-1 message-digest API in use; collision-broken for security (CWE-328).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:328",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "50243553-dbf5-5696-a503-690a17377e6c",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-k8s-004",
+    "category": "cloud_misconfig.k8s",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:runAsNonRoot\\s*:\\s*false|runAsUser\\s*:\\s*0)\\b",
+    "flags": null,
+    "description": "Container allowed to run as root (runAsNonRoot false or runAsUser 0).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:k8s",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "516fa7a6-2d17-4d96-8383-ca9dfc7da7cb",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-io-002",
@@ -424,6 +1621,21 @@
     "labels": [
       "detector:prompt-injection",
       "attack:instruction-override"
+    ]
+  },
+  {
+    "id": "518ff7d9-6de4-55ba-abc1-04e47731d2a1",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-ref-006",
+    "category": "dlp.internal_ref",
+    "severity": "soft",
+    "pattern": "(?i)\\bAuthorization:[ \\t]{1,4}Bearer[ \\t]{1,4}[A-Za-z0-9._~+/-]{8,}",
+    "flags": null,
+    "description": "Authorization: Bearer header echoed verbatim in content.",
+    "labels": [
+      "detector:data-loss",
+      "marker:bearer-header",
+      "severity:restricted"
     ]
   },
   {
@@ -442,6 +1654,66 @@
     ]
   },
   {
+    "id": "5244286f-a783-5b43-8c3a-3fcd7ff34cf4",
+    "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
+    "ruleId": "cs-har-002",
+    "category": "content_safety.harassment",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|best\\s+way\\s+to)\\s+(?:stalk|track\\s+the\\s+location\\s+of|secretly\\s+monitor)\\s+(?:my\\s+ex|someone|a\\s+person)\\b",
+    "flags": null,
+    "description": "Stalking / covert-tracking assistance request.",
+    "labels": [
+      "detector:content-safety",
+      "category:harassment",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "52927ff2-83f8-5efa-a7bf-343b1057ff95",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-k8s-001",
+    "category": "cloud_misconfig.k8s",
+    "severity": "hard",
+    "pattern": "(?i)\\bprivileged\\s*:\\s*true\\b",
+    "flags": null,
+    "description": "Kubernetes container securityContext privileged set to true; grants full host access.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:k8s",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "533fd8a9-1750-560f-a9e3-481eeff62ac3",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-ssrf-004",
+    "category": "tool_call.ssrf",
+    "severity": "soft",
+    "pattern": "(?i)https?://(?:0x[0-9a-f]{6,8}\\b|[0-9]{8,12}\\b|0[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.|\\[::1?\\]|\\[::ffff:)",
+    "flags": null,
+    "description": "SSRF filter bypass using decimal/octal/hex IP or IPv6 [::] loopback.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:ssrf",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "53e4e253-fdef-5026-af75-664a6e491493",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-postman",
+    "category": "secret_leak.postman",
+    "severity": "hard",
+    "pattern": "\\bPMAK-[A-Fa-f0-9]{24}-[A-Fa-f0-9]{34}\\b",
+    "flags": null,
+    "description": "Postman API key.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:postman",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "54ce5378-b5b0-4b6f-8c5d-8ed8c47066e5",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-sh-005",
@@ -453,6 +1725,36 @@
     "labels": [
       "detector:content-safety",
       "category:self_harm",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "55adf624-1f81-58a1-8f9a-2ed760e6adc7",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-enc-006",
+    "category": "cloud_misconfig.encryption",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:container_access_type|public_access)\\s*[:=]\\s*[\"'](?:container|blob)[\"']",
+    "flags": null,
+    "description": "Azure blob container access level set to container or blob; allows anonymous public read of the container contents.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:azure",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "56cda262-1f8d-54e7-9b6c-fb7c27f9b3af",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-git-002",
+    "category": "tool_call.git",
+    "severity": "hard",
+    "pattern": "(?i)git\\s+push\\s+[^\\n]{0,80}(?:--force\\b|-f\\b)[^\\n]{0,40}\\b(?:main|master|develop|production)\\b",
+    "flags": null,
+    "description": "git push --force targeting a protected branch (main/master/develop/production).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
       "severity:restricted"
     ]
   },
@@ -487,6 +1789,36 @@
     ]
   },
   {
+    "id": "576a59d9-2cf9-56ab-8332-beabf8ff4ff2",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-db-002",
+    "category": "tool_call.database",
+    "severity": "hard",
+    "pattern": "(?i)\\bdelete\\s+from\\s+[a-z_][\\w.\"]*\\s*(?:;|\\s*$)",
+    "flags": null,
+    "description": "DELETE FROM a table with no WHERE clause, wiping every row.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "57abf10f-aadd-5c3d-b34f-b9c6a6b87bda",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-inj-002",
+    "category": "insecure_code.injection",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:execute|executemany|query)\\s*\\(\\s*(?:f[\"']|[\"'][^\"']{0,160}[\"']{1,2}\\s*(?:%|\\.format\\s*\\())",
+    "flags": null,
+    "description": "SQL query built by f-string / %-format / .format into execute/query (CWE-89).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:89",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "58d94125-f5fa-477c-83d7-9e9934c44e8b",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-hp-001",
@@ -501,6 +1833,51 @@
     ]
   },
   {
+    "id": "5985ece3-7704-5fd7-9f4c-a2b4867b93db",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-npm",
+    "category": "secret_leak.npm",
+    "severity": "hard",
+    "pattern": "\\bnpm_[A-Za-z0-9]{36}\\b",
+    "flags": null,
+    "description": "npm automation / publish access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:npm",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "59c3c1c9-dd42-57f5-94c4-3a918ea98e67",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-exfil-002",
+    "category": "supply_chain.exfil_in_build",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:curl|wget|http|https)\\b[^\\n]{0,160}(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form|--upload-file|-T)\\b[^\\n]{0,40}\\$\\((?:env|printenv|cat\\s+[^)]{0,60})",
+    "flags": null,
+    "description": "Network client posting $(env) or a piped file as a request body (build-step exfiltration).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:build-exfil",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "5b822922-4e2e-5491-8352-01ea9d07829f",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-con-002",
+    "category": "compliance.consent",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:opt[- ]?out|unsubscribe|withdraw (?:my )?consent|revoke (?:my )?consent|remove me from (?:your|the) (?:mailing |email )?list|stop (?:sending me|emailing me))\\b",
+    "flags": null,
+    "description": "Opt-out / consent-withdrawal / unsubscribe request language.",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "5bdd40c9-580d-4926-888f-b0b95bcae9a8",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-io-004",
@@ -512,6 +1889,81 @@
     "labels": [
       "detector:prompt-injection",
       "attack:role-reassignment"
+    ]
+  },
+  {
+    "id": "5c0e8510-3724-5582-8a2f-62d154393da9",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-gdpr-002",
+    "category": "compliance.gdpr",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:data[ -]subject[ -]access[ -]request|subject access request|DSAR)\\b",
+    "flags": null,
+    "description": "GDPR data-subject access request (DSAR) language.",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "5c1e54fa-8ac7-5d6a-8966-f871733144d3",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-datadog-api",
+    "category": "secret_leak.datadog",
+    "severity": "soft",
+    "pattern": "(?i)\\bdd[_-]?api[_-]?key\\s*[:=]\\s*[\"']?[a-f0-9]{32}\\b",
+    "flags": null,
+    "description": "Datadog API key in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:datadog",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "5c431f8f-973a-5808-9396-6a978411b688",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-009",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:tfn|tax\\s+file(?:\\s+(?:number|no\\.?|#))?)\\b\\s*[:#]?\\s*[0-9]{3}[ -]?[0-9]{3}[ -]?[0-9]{2,3}\\b",
+    "flags": null,
+    "description": "Australia Tax File Number (TFN), 8-9 digits in 3-3-2/3 groups, under a TFN / tax-file label word.",
+    "labels": [
+      "detector:pii",
+      "gov:au-tfn",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "5c528da5-924b-593a-a431-07b9213a146a",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-002",
+    "category": "pii.government_id",
+    "severity": "warn",
+    "pattern": "\\b[0-9]{3}-[0-9]{2}-[0-9]{4}\\b",
+    "flags": null,
+    "description": "US SSN by strict dash-separated 3-2-4 structure (no context). Warn-only — dash-delimited shape is specific but context-free.",
+    "labels": [
+      "detector:pii",
+      "gov:us-ssn",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "5c728eab-bbf7-5c8d-a8e6-e8cdcfb6d13e",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-shippo",
+    "category": "secret_leak.shippo",
+    "severity": "hard",
+    "pattern": "\\bshippo_(?:live|test)_[a-f0-9]{40}\\b",
+    "flags": null,
+    "description": "Shippo live / test API token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:shippo",
+      "severity:restricted"
     ]
   },
   {
@@ -530,6 +1982,36 @@
     ]
   },
   {
+    "id": "5ce81194-6385-5006-abc2-1c27640d158e",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-rand-001",
+    "category": "insecure_code.insecure_random",
+    "severity": "soft",
+    "pattern": "(?i)(?:token|secret|api[_-]?key|private[_-]?key|nonce|salt|otp|session[_-]?id)\\w{0,8}\\s*[:=]\\s*[^\\n;]{0,40}\\brandom\\.(?:random|randint|randrange|choice|getrandbits)\\s*\\(",
+    "flags": null,
+    "description": "Python `random` (non-cryptographic PRNG) used to derive a token/key/secret (CWE-330).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:330",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "5d8fcb9c-7bde-5894-8bba-02fcd4741990",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-pgp-private",
+    "category": "secret_leak.pgp",
+    "severity": "hard",
+    "pattern": "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+    "flags": null,
+    "description": "PGP private key block header.",
+    "labels": [
+      "detector:secret-leak",
+      "format:pgp",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "5e86eeb7-71ec-4013-b08c-36178a3528c0",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-ev-001",
@@ -541,6 +2023,51 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:rce",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "5f54994d-afeb-500e-ae69-81fa65054592",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rs-201",
+    "category": "malware.reverse_shell",
+    "severity": "hard",
+    "pattern": "(?i)(bash\\s+-i\\s*>&\\s*/dev/tcp/|nc\\s+(-[a-z]*e|.{0,20}-e\\s+)/bin/(ba)?sh|python\\s+-c\\s+.{0,40}socket.{0,40}/bin/(ba)?sh)",
+    "flags": null,
+    "description": "Reverse-shell one-liner (bash /dev/tcp, nc -e, python socket).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:reverse_shell",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "5f8805e2-a1f3-5ede-af8b-3158319aaa5c",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-exp-001",
+    "category": "compliance.export_control",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:\\bITAR\\b|international traffic in arms regulations|\\bEAR99\\b|export administration regulations|export[- ]control(?:led|s)? (?:data|information|technology|jurisdiction)|deemed export|dual[- ]use (?:goods|technology|item))\\b",
+    "flags": null,
+    "description": "Export-control regime markers (ITAR / EAR99 / EAR / export-controlled / deemed-export / dual-use).",
+    "labels": [
+      "detector:compliance",
+      "framework:export-control",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "60050c91-d9b0-544d-ba10-05a2f10a22b3",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-003",
+    "category": "pii.financial",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:routing|aba|rtn)(?:\\s+(?:number|transit|no\\.?|#))?\\s*[:#]?\\s*[0-9]{9}\\b",
+    "flags": null,
+    "description": "US bank routing / ABA / RTN number (9 digits) under a label word.",
+    "labels": [
+      "detector:pii",
+      "finance:routing-number",
       "severity:restricted"
     ]
   },
@@ -575,6 +2102,21 @@
     ]
   },
   {
+    "id": "618f79a3-385c-5955-8f9e-9814947a52d0",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-install-002",
+    "category": "supply_chain.install_script",
+    "severity": "hard",
+    "pattern": "(?i)\"(?:pre|post)?install\"\\s*:\\s*\"[^\"]{0,240}(?:base64\\b[^\"]{0,40}(?:-d|--decode)\\b[^\"]{0,120}\\|\\s*(?:sh|bash)|Buffer\\.from\\([^\"]{0,80}base64[^\"]{0,80}(?:eval|exec|child_process|spawn))",
+    "flags": null,
+    "description": "package.json install hook base64-decodes a payload and executes it (obfuscated dropper).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:install-rce",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "61c8892e-9517-46b3-b468-6c708f88d69f",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-sp-001",
@@ -586,6 +2128,36 @@
     "labels": [
       "detector:prompt-injection",
       "attack:system-leak"
+    ]
+  },
+  {
+    "id": "624eb4b0-40eb-5d57-a51d-5cb6de3fffd0",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-install-001",
+    "category": "supply_chain.install_script",
+    "severity": "hard",
+    "pattern": "(?i)\"(?:pre|post)?install\"\\s*:\\s*\"[^\"]{0,200}(?:curl|wget|fetch)\\b[^\"]{0,160}\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh|node|python[23]?)\\b",
+    "flags": null,
+    "description": "package.json install hook pipes a remote download straight to a shell interpreter.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:install-rce",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "6266866f-8465-5b8f-9681-35542218de4a",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-src-003",
+    "category": "dlp.source_code",
+    "severity": "hard",
+    "pattern": "-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?(?:PRIVATE KEY|CERTIFICATE)-----",
+    "flags": null,
+    "description": "PEM private-key or certificate BEGIN marker (key material leakage).",
+    "labels": [
+      "detector:data-loss",
+      "vector:pem-key-material",
+      "severity:restricted"
     ]
   },
   {
@@ -603,6 +2175,36 @@
     ]
   },
   {
+    "id": "62ac8350-3660-5dfa-92df-11a94e681062",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-crypto-003",
+    "category": "insecure_code.weak_crypto",
+    "severity": "soft",
+    "pattern": "(?i)(?:getinstance\\s*\\(\\s*[\"'](?:des|desede|rc4)\\b|\\b(?:des|des3|arc4)\\.new\\s*\\(|createciph(?:er|eriv)\\s*\\(\\s*[\"'](?:des|rc4)|[\"'](?:des|3des|tripledes|rc4)[-/])",
+    "flags": null,
+    "description": "DES / 3DES / RC4 cipher selection; weak/broken algorithm (CWE-327).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:327",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "62ae176a-b63d-5b74-9f73-5c48a5c7d746",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-crypto-001",
+    "category": "insecure_code.weak_crypto",
+    "severity": "soft",
+    "pattern": "(?i)(?:hashlib\\.md5\\s*\\(|\\bmd5\\.new\\s*\\(|createhash\\s*\\(\\s*[\"']md5[\"']|getinstance\\s*\\(\\s*[\"']md5[\"'])",
+    "flags": null,
+    "description": "MD5 message-digest API in use; broken for security (CWE-328).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:328",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "62d28f6c-5b87-4cdb-85f2-625eeda0f19c",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-gh-fine",
@@ -614,6 +2216,21 @@
     "labels": [
       "detector:secret-leak",
       "provider:github",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "63314e97-b86d-507f-8338-a61d498864bb",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-iam-006",
+    "category": "cloud_misconfig.iam",
+    "severity": "hard",
+    "pattern": "(?i)\"Effect\"\\s*:\\s*\"Allow\"[\\s\\S]{0,120}\"NotAction\"\\s*:",
+    "flags": null,
+    "description": "IAM statement combines Effect \"Allow\" with NotAction; grants every action except the listed few, an easily-overlooked over-permission.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
       "severity:restricted"
     ]
   },
@@ -633,6 +2250,80 @@
     ]
   },
   {
+    "id": "6467c837-9a4d-58cf-a31b-36d201d24d49",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-src-002",
+    "category": "dlp.source_code",
+    "severity": "soft",
+    "pattern": "(?i)(?:https?://[\\w.%-]{1,40}:[\\w.%-]{1,60}@[\\w.-]{1,60}/[\\w./-]{1,120}(?:\\.git)?|\\b(?:nexus|artifactory|jfrog|verdaccio|registry|npm|pypi|gems)\\.[\\w.-]{1,40}\\.(?:internal|corp|local|lan)\\b)",
+    "flags": null,
+    "description": "Credential-embedded repo URL or internal package-registry host.",
+    "labels": [
+      "detector:data-loss",
+      "vector:private-repo",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "6478d87a-6765-52c8-a3e4-4ccfc07b02f8",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-adv-001",
+    "category": "compliance.regulated_advice",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:should I (?:take|stop taking|keep taking|increase|decrease) (?:my )?(?:medication|meds|dose|dosage|pills?)|what (?:dose|dosage) (?:of|should I)|is it safe for me to (?:take|stop|mix)|am I having a (?:heart attack|stroke)|do I have (?:cancer|diabetes|covid|an? infection))\\b",
+    "flags": null,
+    "description": "Medical advice-seeking that requires a licensed clinician.",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "64c48d40-dc32-5c9d-bdaa-cb6734e54f7e",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-devmode-002",
+    "category": "jailbreak.developer_mode",
+    "severity": "hard",
+    "pattern": "(?i)(developer\\s+mode\\s+(enabled|on|output)|enable\\s+developer\\s+mode|jailbroken\\s+(mode|response))",
+    "flags": null,
+    "description": "Developer-mode / jailbroken-mode activation.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:developer-mode"
+    ]
+  },
+  {
+    "id": "65d8d21e-54d5-552f-903a-c1d682f0851b",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-readme",
+    "category": "secret_leak.readme",
+    "severity": "hard",
+    "pattern": "\\brdme_[a-z0-9]{70}\\b",
+    "flags": null,
+    "description": "ReadMe.io API access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:readme",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "663b63a7-c196-512a-9990-0d138d64fa85",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-002",
+    "category": "pii.financial",
+    "severity": "soft",
+    "pattern": "\\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\\b",
+    "flags": null,
+    "description": "IBAN (2-letter country + 2 check digits + up to 30 alnum, optional single spaces between groups).",
+    "labels": [
+      "detector:pii",
+      "finance:iban",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "6685f82b-f326-46b5-bc63-091618a4dc11",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-ssrf-002",
@@ -644,6 +2335,21 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:ssrf",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "66924524-f96c-5f1b-98a1-37cbaaa3c023",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-ldap-001",
+    "category": "tool_call.ldapi",
+    "severity": "soft",
+    "pattern": "(?i)(?:\\)\\s*\\(\\s*[|&]\\s*\\(|\\*\\s*\\)\\s*\\(\\s*\\w+\\s*=)",
+    "flags": null,
+    "description": "LDAP filter break-out using )(| boolean metacharacters.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:ldapi",
       "severity:confidential"
     ]
   },
@@ -663,6 +2369,51 @@
     ]
   },
   {
+    "id": "69381a96-13ad-58be-b84f-faace98eac46",
+    "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
+    "ruleId": "cs-w-004",
+    "category": "content_safety.weapons",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|guide\\s+(?:to|for))\\s+(?:convert|modify)\\s+(?:a\\s+)?(?:semi[-\\s]?auto(?:matic)?|ar-?15|glock)\\s+(?:to\\s+(?:full[-\\s]?auto(?:matic)?|fully\\s+automatic)|with\\s+a\\s+(?:bump\\s+stock|auto\\s+sear))\\b",
+    "flags": null,
+    "description": "Illegal firearm full-auto conversion how-to.",
+    "labels": [
+      "detector:content-safety",
+      "category:weapons",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "69cbe50f-dfe6-50f9-8e43-d4ce1894fb5b",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-hipaa-006",
+    "category": "compliance.hipaa",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:patient name|patient record|patient chart|medical record number|date of birth and diagnosis|treatment history of (?:the )?patient|attending physician)\\b",
+    "flags": null,
+    "description": "HIPAA patient-identifier / medical-record context markers.",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "6a9ed9f6-8199-561c-b5ce-fb5319abd7ad",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-inj-003",
+    "category": "insecure_code.injection",
+    "severity": "soft",
+    "pattern": "(?i)\\bshell\\s*=\\s*True\\b",
+    "flags": null,
+    "description": "subprocess invoked with shell=True; command-injection prone (CWE-78).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:78",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "6aca553d-622a-406a-b845-d8cc9347895a",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-h-005",
@@ -674,6 +2425,21 @@
     "labels": [
       "detector:content-safety",
       "category:hate_speech",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "6ae9fb47-7aa1-5951-8f46-1a120daad37c",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-esc-001",
+    "category": "tool_call.container_escape",
+    "severity": "hard",
+    "pattern": "(?i)(?:docker\\s+run[^\\n]{0,80}(?:--privileged|-v\\s*/:/|--pid[= ]\\s*host|--net(?:work)?[= ]\\s*host)|nsenter\\s+[^\\n]{0,40}--target\\s+1\\b|--cap-add[= ]\\s*SYS_ADMIN)",
+    "flags": null,
+    "description": "Container escape via privileged/host-mount docker run or nsenter into PID 1.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:container-escape",
       "severity:restricted"
     ]
   },
@@ -692,6 +2458,126 @@
     ]
   },
   {
+    "id": "6cc208bb-46b6-5ddf-952b-85749b348c1a",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-inj-005",
+    "category": "insecure_code.injection",
+    "severity": "soft",
+    "pattern": "(?i)exec\\.Command\\s*\\(\\s*[\"'](?:sh|bash|/bin/sh|/bin/bash|cmd)[\"']\\s*,\\s*[\"']-c[\"']\\s*,\\s*[A-Za-z_]",
+    "flags": null,
+    "description": "Go exec.Command spawning a shell with -c and a variable argument; command-injection prone (CWE-78).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:78",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "6d6c6174-62d7-5137-bd95-512fa0fb2449",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-hipaa-005",
+    "category": "compliance.hipaa",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:\\bICD-10\\b|\\bICD-9\\b|\\bICD-11\\b|ICD-10[- ]?CM|\\bCPT code|diagnosis code|principal diagnosis|primary diagnosis|admitting diagnosis)\\b",
+    "flags": null,
+    "description": "HIPAA clinical-coding / diagnosis markers (ICD / CPT / diagnosis code).",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "6dd42d34-97c2-5952-acc6-89339139ca27",
+    "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
+    "ruleId": "cs-sh-008",
+    "category": "content_safety.self_harm",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:most\\s+(?:effective|lethal|painless)\\s+(?:way|method)\\s+to\\s+(?:kill\\s+myself|end\\s+my\\s+life|commit\\s+suicide)|how\\s+(?:much|many)\\s+\\w+\\s+(?:to\\s+overdose|is\\s+a\\s+lethal\\s+dose))\\b",
+    "flags": null,
+    "description": "Suicide/self-harm method-seeking (routes to crisis-safe handling; not awareness/support text).",
+    "labels": [
+      "detector:content-safety",
+      "category:self_harm",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "6ed1f845-01b5-5429-8d4b-c24f40cc2d62",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-miner-002",
+    "category": "supply_chain.cryptominer",
+    "severity": "soft",
+    "pattern": "\\b[48][0-9AB][1-9A-HJ-NP-Za-km-z]{93}\\b",
+    "flags": null,
+    "description": "Monero (XMR) wallet address embedded in code or config (miner payout target).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:cryptominer",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "6fea6232-a5df-5e34-b876-2d45753c52a7",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-confusion-004",
+    "category": "supply_chain.dependency_confusion",
+    "severity": "soft",
+    "pattern": "(?i)--extra-index-url[=\\s]\\s{0,4}https?://(?:(?:\\d{1,3}\\.){3}\\d{1,3}|[a-z0-9-]{1,60}\\.(?:io|dev|xyz|top|cc|ru|cn|me|app|cloud|ngrok\\.io|herokuapp\\.com))\\b",
+    "flags": null,
+    "description": "pip --extra-index-url pointing at a raw IP or a non-PyPI host (the canonical dependency-confusion install vector).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:dependency-confusion",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "7046ed14-755b-54ad-88b8-00e010439308",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-confusion-001",
+    "category": "supply_chain.dependency_confusion",
+    "severity": "hard",
+    "pattern": "(?i)--(?:registry|index-url|extra-index-url)[=\\s]\\s{0,4}https?://(?:\\d{1,3}\\.){3}\\d{1,3}\\b",
+    "flags": null,
+    "description": "Package-manager registry / index-url pinned to a raw IP address (attacker-controlled feed).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:dependency-confusion",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "71b6b9fc-7871-5159-a7a8-0103bf08c547",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-008",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:sin|social\\s+insurance(?:\\s+(?:number|no\\.?|#))?)\\b\\s*[:#]?\\s*[0-9]{3}[ -]?[0-9]{3}[ -]?[0-9]{3}\\b",
+    "flags": null,
+    "description": "Canada Social Insurance Number (SIN), 3-3-3 digits, under a SIN / social-insurance label word.",
+    "labels": [
+      "detector:pii",
+      "gov:ca-sin",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "71d5c040-a462-5025-9216-c2d95c1d5dab",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-hlt-001",
+    "category": "pii.health",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:mrn|medical\\s+record(?:\\s+(?:number|no\\.?|#))?)\\b\\s*[:#]?\\s*(?:[0-9][A-Z0-9]{4,11}|[A-Z0-9]{4,11}[0-9])\\b",
+    "flags": null,
+    "description": "Medical record number (5-12 alnum, must contain a digit) under an MRN label word.",
+    "labels": [
+      "detector:pii",
+      "health:mrn",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "735fac4e-4455-4b9e-9d0f-09348207ec0c",
     "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
     "ruleId": "jb-dm-001",
@@ -703,6 +2589,111 @@
     "labels": [
       "detector:jailbreak",
       "attack:developer-mode"
+    ]
+  },
+  {
+    "id": "7385e488-85c5-522d-844b-f77f219e68c4",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-001",
+    "category": "cloud_misconfig.public_access",
+    "severity": "hard",
+    "pattern": "(?i)\\bacl\\s*[:=]\\s*[\"']public-read-write[\"']",
+    "flags": null,
+    "description": "Object-store canned ACL set to public-read-write; world-writable bucket.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "73ebdaf4-74af-5d41-a7de-587c6aab4323",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-malpkg-002",
+    "category": "supply_chain.malicious_pkg",
+    "severity": "soft",
+    "pattern": "(?i)\\bpip\\d?\\s+install\\b[^\\n]{0,40}(?:git\\+(?:https?|ssh)://|https?://[^\\s]{1,120}\\.(?:zip|tar\\.gz|tgz|whl)\\b)",
+    "flags": null,
+    "description": "pip install from a direct git / URL / archive source, bypassing index vetting.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:malicious-package",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "7418ee5b-bb04-5d3b-ae98-f0a3e60ecfc4",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ob-001",
+    "category": "malware.obfuscation",
+    "severity": "hard",
+    "pattern": "(?i)\\bpowershell(?:\\.exe)?\\b[^\\n]{0,40}\\s-e(?:nc(?:odedcommand)?|c)\\b\\s+[A-Za-z0-9+/]{40,}",
+    "flags": null,
+    "description": "PowerShell -EncodedCommand with a base64 blob (staged execution).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:obfuscation",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "746f39c7-c65d-5b14-b47b-cbec40dd4f9b",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-clojars",
+    "category": "secret_leak.clojars",
+    "severity": "hard",
+    "pattern": "\\bCLOJARS_[a-z0-9]{60}\\b",
+    "flags": null,
+    "description": "Clojars deploy token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:clojars",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "75280fb3-1e34-5f0c-a966-12e2e312dfb7",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-scalingo",
+    "category": "secret_leak.scalingo",
+    "severity": "hard",
+    "pattern": "\\btk-us-[A-Za-z0-9_-]{48}\\b",
+    "flags": null,
+    "description": "Scalingo API token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:scalingo",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "7532b1a0-85ad-553e-a7fb-84193a603b76",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-enc-002",
+    "category": "dlp.encoded",
+    "severity": "soft",
+    "pattern": "(?:PK\\x03\\x04|BZh[1-9]|\\bH4sI[A-Za-z0-9+/]{8,})",
+    "flags": null,
+    "description": "Compressed-archive magic (zip / bzip2 / base64-gzip) in payload.",
+    "labels": [
+      "detector:data-loss",
+      "vector:archive-magic",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "75578972-fd2d-5605-bd5a-47941ed899c2",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-digitalocean",
+    "category": "secret_leak.digitalocean",
+    "severity": "hard",
+    "pattern": "\\bdo[opr]_v1_[a-f0-9]{64}\\b",
+    "flags": null,
+    "description": "DigitalOcean personal / oauth / refresh token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:digitalocean",
+      "severity:restricted"
     ]
   },
   {
@@ -720,6 +2711,20 @@
     ]
   },
   {
+    "id": "77a6f081-b829-5186-9c69-5971beb9e5f2",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-grandma-001",
+    "category": "jailbreak.pretext",
+    "severity": "soft",
+    "pattern": "(?i)(my\\s+(deceased\\s+)?grandma(\\s+used\\s+to|\\s+would)|act\\s+as\\s+my\\s+(late\\s+)?grandmother).{0,60}(tell|read|recipe|napalm|password)",
+    "flags": null,
+    "description": "Grandma/relative pretext jailbreak.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:pretext"
+    ]
+  },
+  {
     "id": "77d282b6-7fed-4003-8564-bf77a9f1a320",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-heroku",
@@ -731,6 +2736,36 @@
     "labels": [
       "detector:secret-leak",
       "provider:heroku",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "77eae891-4a95-52ff-b140-5b80b13d4fc5",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-enc-004",
+    "category": "cloud_misconfig.encryption",
+    "severity": "soft",
+    "pattern": "(?i)(?:min_tls_version\\s*[:=]\\s*[\"']?TLS1_[01]\\b|enable_https_traffic_only\\s*[:=]\\s*false\\b)",
+    "flags": null,
+    "description": "Storage or service permits weak TLS (1.0/1.1) or cleartext HTTP transport.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:azure",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "77f6dc60-3da7-5c33-bd1b-e0f36800e901",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rs-002",
+    "category": "malware.reverse_shell",
+    "severity": "hard",
+    "pattern": "(?i)\\bnc(?:at)?\\b[^\\n]{0,40}\\s-[a-z]*e[a-z]*\\s+(?:/bin/(?:ba)?sh|cmd(?:\\.exe)?|/bin/zsh)\\b",
+    "flags": null,
+    "description": "Netcat -e command-execution (classic reverse/bind shell).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:reverse-shell",
       "severity:restricted"
     ]
   },
@@ -750,6 +2785,21 @@
     ]
   },
   {
+    "id": "79a147cf-93de-5cb8-b2a5-b163b769511f",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-ref-003",
+    "category": "dlp.internal_ref",
+    "severity": "warn",
+    "pattern": "(?i)\\b[a-z][a-z0-9]{1,9}-\\d{1,6}\\b[^\\n]{0,60}(?:confidential|do not (?:share|distribute)|internal only|restricted|embargo)",
+    "flags": null,
+    "description": "Issue-tracker key in a confidential/restricted context.",
+    "labels": [
+      "detector:data-loss",
+      "marker:ticket-confidential",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "7a1921f2-d37d-4b59-affd-4a147d2a8276",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-sh-001",
@@ -762,6 +2812,36 @@
       "detector:tool-call-safety",
       "risk:destructive",
       "severity:restricted"
+    ]
+  },
+  {
+    "id": "7a5faa25-8b92-53e7-88e4-1375e59c670f",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-c2-201",
+    "category": "malware.c2",
+    "severity": "soft",
+    "pattern": "(?i)\\b(stratum\\+tcp://|xmrig|minergate|nanopool|supportxmr)\\b",
+    "flags": null,
+    "description": "Crypto-miner pool / miner binary indicator.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:cryptomining",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "7b552770-bad7-5591-afc9-59228f7e9bac",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-gdpr-006",
+    "category": "compliance.gdpr",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:special categor(?:y|ies) of (?:personal )?data|data subject(?:'s)? rights?|right to rectification|right to data portability|racial or ethnic origin data|political opinions data|biometric data for (?:the purpose of )?(?:unique )?identification)\\b",
+    "flags": null,
+    "description": "GDPR Article 9 special-category data / extended data-subject-rights markers.",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:confidential"
     ]
   },
   {
@@ -780,6 +2860,36 @@
     ]
   },
   {
+    "id": "7d15df1b-2b31-5674-94b1-a8d4f7dfc6c8",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-dok-003",
+    "category": "cloud_misconfig.container",
+    "severity": "soft",
+    "pattern": "(?i)(?:--net(?:work)?[\\s=]+host\\b|\\bnetwork_mode\\s*:\\s*[\"']?host\\b)",
+    "flags": null,
+    "description": "Docker container shares the host network namespace (--network host or network_mode host); removes network isolation from the host.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:docker",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "7d94f74d-c97d-51e8-87aa-29a2c0e314db",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-006",
+    "category": "pii.financial",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:cvv|cvc|cvv2|cvc2|cid|security\\s+code|card\\s+verification(?:\\s+(?:value|code))?)\\b\\s*[:#]?\\s*[0-9]{3,4}\\b",
+    "flags": null,
+    "description": "Card verification value (3-4 digits) under a CVV/CVC label.",
+    "labels": [
+      "detector:pii",
+      "finance:cvv",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "7e3736e5-9a9f-42bc-ad5c-cb695cd512fa",
     "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
     "ruleId": "jb-hs-001",
@@ -791,6 +2901,110 @@
     "labels": [
       "detector:jailbreak",
       "attack:hypothetical"
+    ]
+  },
+  {
+    "id": "7e93b074-dcc4-5a7e-b02f-7ea9d58970b1",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-hipaa-001",
+    "category": "compliance.hipaa",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:protected health information|electronic protected health information|\\be?PHI\\b)\\b",
+    "flags": null,
+    "description": "HIPAA protected-health-information (PHI / ePHI) handling reference.",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "7e93d9e3-9f68-59ea-894f-dd71423ad419",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-token-001",
+    "category": "jailbreak.token_smuggling",
+    "severity": "soft",
+    "pattern": "(?i)(respond\\s+with\\s+(only\\s+)?the\\s+first\\s+letter|answer\\s+using\\s+the\\s+first\\s+character\\s+of\\s+each|spell\\s+(it\\s+)?out\\s+one\\s+(letter|character)\\s+(at\\s+a\\s+time|per))",
+    "flags": null,
+    "description": "Token-smuggling / character-at-a-time evasion.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:token-smuggling"
+    ]
+  },
+  {
+    "id": "7efa2241-cb76-5d8a-9665-7b87ac4717d9",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-c2-002",
+    "category": "malware.c2",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:cobalt\\s*strike|beacon\\.(?:dll|exe|x64)|teamserver)\\b",
+    "flags": null,
+    "description": "Cobalt Strike beacon / team-server marker.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:c2-framework",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "7f1ae3cd-4e93-56d5-835a-2db7bd435019",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-cls-001",
+    "category": "dlp.classification",
+    "severity": "warn",
+    "pattern": "(?im)^[\\t >*#-]{0,6}CONFIDENTIAL\\b[ \\t]{0,4}(?:[-:][ \\t]{0,4}[A-Z][A-Za-z ]{0,30})?[\\t .*#-]{0,8}$",
+    "flags": null,
+    "description": "CONFIDENTIAL document banner line.",
+    "labels": [
+      "detector:data-loss",
+      "marker:confidential-banner",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "7f4a6281-74b8-56e0-bb9c-20248daa5023",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-eval-001",
+    "category": "insecure_code.code_injection",
+    "severity": "soft",
+    "pattern": "(?i)\\beval\\s*\\(\\s*(?:request|input\\s*\\(|sys\\.argv|os\\.environ|params|req\\.(?:body|query|params)|user_?input|untrusted|flask\\.request)",
+    "flags": null,
+    "description": "eval() applied to request/input/argv-derived untrusted data executes arbitrary code (CWE-95).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:95",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "7f7de436-7cd0-5574-85d3-2fc4e2168b5f",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-datadog-app",
+    "category": "secret_leak.datadog",
+    "severity": "soft",
+    "pattern": "(?i)\\bdd[_-]?app(?:lication)?[_-]?key\\s*[:=]\\s*[\"']?[a-f0-9]{40}\\b",
+    "flags": null,
+    "description": "Datadog application key in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:datadog",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "7fac2a74-f3f4-503f-bc17-ba4d83f4d0ae",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-soc2-001",
+    "category": "compliance.soc2",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:SOC[ ]?2 (?:type [12]|report|audit|controls?)|service organization control|trust services criteria|SOC[ ]?2 readiness|control objective(?:s)? (?:for|over)|audit evidence (?:request|package)|management assertion letter)\\b",
+    "flags": null,
+    "description": "SOC 2 / service-organization-control audit and trust-services-criteria markers.",
+    "labels": [
+      "detector:compliance",
+      "framework:soc2",
+      "severity:internal"
     ]
   },
   {
@@ -822,6 +3036,36 @@
     ]
   },
   {
+    "id": "8043eac4-f11f-53b6-a10b-69b4451f54be",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-005",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:national\\s+id|tax\\s+id|tin|ein)\\b\\s*[:#]?\\s*(?:[0-9][A-Z0-9-]{5,14}|[A-Z0-9-]{5,14}[0-9])\\b",
+    "flags": null,
+    "description": "Generic national / tax identifier (6-15 alnum incl. dash, must contain a digit) under a label word.",
+    "labels": [
+      "detector:pii",
+      "gov:national-id",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "813b0bed-9fd4-5362-9b85-60a80cec0630",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ex-003",
+    "category": "malware.exploit",
+    "severity": "warn",
+    "pattern": "(?:\\\\x[0-9a-fA-F]{2}){20,}",
+    "flags": null,
+    "description": "Long hex-escaped byte string (>=20 bytes) — likely shellcode / packed payload.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:shellcode",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "8178a374-c098-432b-836c-0933bdef9798",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-x-005",
@@ -837,6 +3081,21 @@
     ]
   },
   {
+    "id": "81bf25ee-0581-54b2-9288-2ee89da1b841",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-proto-001",
+    "category": "tool_call.prototype_pollution",
+    "severity": "soft",
+    "pattern": "(?i)(?:\\[\\s*[\"']__proto__[\"']\\s*\\]|\\.__proto__\\b|constructor\\s*\\.\\s*prototype\\b|[\"']__proto__[\"']\\s*:)",
+    "flags": null,
+    "description": "Prototype pollution via __proto__ or constructor.prototype assignment.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:prototype-pollution",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "82164f09-e64c-4981-a030-a207220bcd3e",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-db-001",
@@ -848,6 +3107,51 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:destructive",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "82aabdfb-4447-59ed-ae6c-45b992faf4f0",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-adv-004",
+    "category": "compliance.regulated_advice",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:how (?:do|can|should) I (?:avoid|reduce|minimize|lower|defer) (?:my |paying )?tax(?:es)?|can I (?:deduct|write off|claim) (?:this|my|the)|is (?:this|that) tax[- ]deductible|should I (?:file|claim) (?:as )?(?:exempt|head of household|married))\\b",
+    "flags": null,
+    "description": "Tax advice-seeking that requires a licensed tax professional.",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "831c7960-22d4-5c97-9365-c78dc8661899",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-gql-001",
+    "category": "tool_call.graphql",
+    "severity": "soft",
+    "pattern": "(?i)\\b__schema\\b|\\b__type\\s*\\(|query\\s+IntrospectionQuery\\b",
+    "flags": null,
+    "description": "GraphQL introspection abuse (__schema / __type enumeration).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:disclosure",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "83d3aad3-030c-56d6-b5c9-fc610c0c7f3c",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rw-002",
+    "category": "malware.ransomware",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:wbadmin\\s+delete\\s+(?:catalog|systemstatebackup)|bcdedit\\b[^\\n]{0,40}recoveryenabled\\s+no)\\b",
+    "flags": null,
+    "description": "Backup-catalog / recovery destruction (ransomware inhibit-recovery).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:inhibit-recovery",
       "severity:restricted"
     ]
   },
@@ -867,6 +3171,21 @@
     ]
   },
   {
+    "id": "853dc9a6-5cf4-5c4a-8c04-b5e6b52d18a0",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-008",
+    "category": "pii.financial",
+    "severity": "soft",
+    "pattern": "\\b(?:3(?:0[0-5]|[68][0-9])[0-9]{11}|35[0-9]{14}|62[0-9]{14,17})\\b",
+    "flags": null,
+    "description": "Payment-card number for Diners Club (14-digit 30-05/36/38 prefix), JCB (16-digit 35 prefix), and UnionPay (16-19 digit 62 prefix). Shape only — Luhn check is the hook's job.",
+    "labels": [
+      "detector:pii",
+      "finance:card-number",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "868843cd-baa6-46ca-b624-b7be3a292f71",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-openai",
@@ -882,6 +3201,21 @@
     ]
   },
   {
+    "id": "881c4799-1d76-594a-b660-5508d8b8d3ca",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-fw-001",
+    "category": "tool_call.firewall",
+    "severity": "hard",
+    "pattern": "(?i)(?:iptables|ip6tables|nft)\\s+(?:-[a-z]*\\s+)*(?:-F\\b|--flush\\b|flush\\s+ruleset\\b)",
+    "flags": null,
+    "description": "Firewall ruleset flush (iptables -F) removing all network filtering.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:tampering",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "88599127-926f-4514-b77f-066f940ddc22",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-i-004",
@@ -893,6 +3227,66 @@
     "labels": [
       "detector:content-safety",
       "category:illegal",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "892bff35-ab8a-5c3f-9027-1fba89ef6463",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-iam-004",
+    "category": "cloud_misconfig.iam",
+    "severity": "soft",
+    "pattern": "(?i)arn:aws:iam::aws:policy/(?:AdministratorAccess|IAMFullAccess|PowerUserAccess)\\b",
+    "flags": null,
+    "description": "Attaches an AWS-managed administrator-tier policy (AdministratorAccess / IAMFullAccess / PowerUserAccess).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "8988083d-df63-5bbc-b59f-9255ec2785a1",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-ref-004",
+    "category": "dlp.internal_ref",
+    "severity": "soft",
+    "pattern": "arn:aws:[a-z][a-z0-9-]{1,30}:[a-z0-9-]{0,20}:\\d{0,12}:[A-Za-z0-9_./:*-]{1,200}",
+    "flags": null,
+    "description": "AWS ARN naming a cloud resource (literal anchor 'arn:aws:').",
+    "labels": [
+      "detector:data-loss",
+      "marker:aws-arn",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "89a7e17b-98e3-57c8-964b-7c636985fd37",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-enc-001",
+    "category": "cloud_misconfig.encryption",
+    "severity": "soft",
+    "pattern": "(?i)\\bencrypted\\s*[:=]\\s*false\\b",
+    "flags": null,
+    "description": "Encryption-at-rest disabled (encrypted = false) on a volume, snapshot, or database.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "89fc3f43-02c7-5f95-affa-717f0aad8a7e",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-c2-001",
+    "category": "malware.c2",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:meterpreter|metasploit|msfconsole)\\b",
+    "flags": null,
+    "description": "Metasploit / Meterpreter framework reference.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:c2-framework",
       "severity:restricted"
     ]
   },
@@ -925,6 +3319,35 @@
     ]
   },
   {
+    "id": "8beb82b9-3ce1-57aa-bfd1-aad80e4c38c3",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-io-201",
+    "category": "prompt_injection.instruction_override",
+    "severity": "hard",
+    "pattern": "(?i)(disregard|forget|override)\\s+(the\\s+)?(system\\s+(prompt|message|instructions?)|everything\\s+(above|before))",
+    "flags": null,
+    "description": "Disregard/override the system prompt.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:instruction-override"
+    ]
+  },
+  {
+    "id": "8bec275c-24ae-5fa2-b177-3e87fd2545d6",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-dr-001",
+    "category": "malware.dropper",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:curl|wget)\\b[^\\n|]{0,120}\\|\\s*(?:sudo\\s+)?(?:ba)?sh\\b",
+    "flags": null,
+    "description": "Download piped directly to a shell interpreter (payload dropper).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:dropper",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "8c4ddfce-8640-4f9e-bff0-c9848ddb39b9",
     "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
     "ruleId": "jb-re-002",
@@ -936,6 +3359,36 @@
     "labels": [
       "detector:jailbreak",
       "attack:research-pretext"
+    ]
+  },
+  {
+    "id": "8ce09a43-bb47-5373-9e6f-0bd4720b861d",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-xxe-002",
+    "category": "insecure_code.xxe",
+    "severity": "warn",
+    "pattern": "(?i)etree\\.(?:parse|fromstring)\\s*\\(\\s*[^\\n)]{0,80},\\s*[A-Za-z_]{0,20}parser",
+    "flags": null,
+    "description": "lxml etree parse with a custom parser; if resolve_entities is left enabled it is XXE-prone (CWE-611).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:611",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "8ddd1e38-2a93-51fb-bae5-8e11dfc5109a",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-disk-003",
+    "category": "tool_call.disk",
+    "severity": "hard",
+    "pattern": "(?i)>\\s*/dev/(?:sd[a-z]|nvme\\d|vd[a-z]|hd[a-z]|disk\\d|mmcblk\\d)",
+    "flags": null,
+    "description": "Shell redirect overwriting a raw block device node (> /dev/sda).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
+      "severity:restricted"
     ]
   },
   {
@@ -954,6 +3407,51 @@
     ]
   },
   {
+    "id": "8e8740b5-2ccb-5f28-9cf4-2ca1ef88b7fa",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-crypto-005",
+    "category": "insecure_code.weak_crypto",
+    "severity": "warn",
+    "pattern": "(?i)(?:\\biv\\s*=\\s*b?[\"'][A-Za-z0-9+/=]{8,64}[\"']|IvParameterSpec\\s*\\(\\s*new\\s+byte\\s*\\[)",
+    "flags": null,
+    "description": "Hardcoded / zero initialization vector defeats CBC/CTR secrecy (CWE-327).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:327",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "8e8aefed-0e98-5c60-87db-2445c3e8aa5e",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-003",
+    "category": "cloud_misconfig.public_access",
+    "severity": "hard",
+    "pattern": "(?i)(?:acs\\.amazonaws\\.com/groups/global/(?:AllUsers|AuthenticatedUsers)|[\"']all(?:Users|AuthenticatedUsers)[\"'])",
+    "flags": null,
+    "description": "IAM/ACL grant to the AllUsers or AllAuthenticatedUsers global group exposes the resource to the public internet.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "8eaccfa1-182c-5d80-be9f-66f567a56071",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-install-005",
+    "category": "supply_chain.install_script",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:curl|wget)\\b[^\\n]{0,160}\\bhttps?://[^\\s]{0,200}\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh|dash|python[23]?|node|ruby|perl)\\b",
+    "flags": null,
+    "description": "Remote download piped straight to a shell interpreter (classic curl|sh dropper) anywhere in a script or install step.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:install-rce",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "8ec092d5-24df-4733-a10f-296b3623ffca",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-ii-001",
@@ -965,6 +3463,65 @@
     "labels": [
       "detector:prompt-injection",
       "attack:indirect"
+    ]
+  },
+  {
+    "id": "8efcd960-10b1-5a99-9b02-49d60b888a9a",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-adv-005",
+    "category": "compliance.regulated_advice",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:is (?:this|that|it) covered (?:by|under) (?:my )?(?:insurance|policy|medicare|medicaid|plan)|does (?:my|the) (?:insurance|policy|plan|coverage) cover|will (?:my )?insurance (?:cover|pay for|reimburse))\\b",
+    "flags": null,
+    "description": "Insurance-coverage determination that requires the carrier or a licensed agent.",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "8f2f145c-98cb-56e2-8fea-f0acb066a8ef",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-secret-001",
+    "category": "insecure_code.hardcoded_secret",
+    "severity": "soft",
+    "pattern": "(?i)(?:password|passwd|pwd)\\s*[:=]\\s*[\"'][A-Za-z0-9._/+@!?#-]{4,}[\"']",
+    "flags": null,
+    "description": "Password assigned a string literal in source (CWE-798).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:798",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "905f5a74-cd1a-5710-a141-7316afa98be1",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-path-002",
+    "category": "insecure_code.path_traversal",
+    "severity": "soft",
+    "pattern": "(?i)(?:os\\.path\\.join|filepath\\.join|path\\.join)\\s*\\(\\s*[^\\n)]{0,80}(?:req\\.(?:body|query|params)|request\\.(?:args|form|json)|params\\[|user_?input)",
+    "flags": null,
+    "description": "Filesystem path joined directly with request/user-supplied input without sanitization; path-traversal prone (CWE-22).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:22",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9080e0fc-8f49-5897-8b52-dec0a322a3bc",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-simulate-001",
+    "category": "jailbreak.simulation",
+    "severity": "soft",
+    "pattern": "(?i)simulate\\s+(an?\\s+)?(ai|assistant|chatbot|language\\s+model)\\s+(with\\s+no|without\\s+(any\\s+)?)(restrictions?|filters?|rules?|guidelines?)",
+    "flags": null,
+    "description": "Simulate-an-unrestricted-AI framing.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:simulation"
     ]
   },
   {
@@ -996,6 +3553,36 @@
     ]
   },
   {
+    "id": "915967d2-590d-5594-8d6d-8640c03d0769",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-enc-005",
+    "category": "cloud_misconfig.encryption",
+    "severity": "soft",
+    "pattern": "(?i)\\binsecure_skip_verify\\s*[:=]\\s*true\\b",
+    "flags": null,
+    "description": "TLS certificate verification disabled (insecure_skip_verify = true); enables man-in-the-middle interception of the connection.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:iac",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "92cfa37a-665d-5c22-b77a-1764a43f568d",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rs-004",
+    "category": "malware.reverse_shell",
+    "severity": "hard",
+    "pattern": "(?i)New-Object\\s+System\\.Net\\.Sockets\\.TCPClient\\b",
+    "flags": null,
+    "description": "PowerShell TCPClient reverse-shell primitive.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:reverse-shell",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "92d19f55-0990-4a83-bdb2-1967fa9cc4c4",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-gh-classic",
@@ -1007,6 +3594,66 @@
     "labels": [
       "detector:secret-leak",
       "provider:github",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "93818608-0abe-5f32-9925-40869eeb2fb2",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-telegram-bot",
+    "category": "secret_leak.telegram",
+    "severity": "soft",
+    "pattern": "\\b[0-9]{8,10}:A[A-Za-z0-9_-]{34,35}\\b",
+    "flags": null,
+    "description": "Telegram bot API token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:telegram",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "93fa55d0-dbb4-5697-85e1-870514aa92bb",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-k8s-003",
+    "category": "cloud_misconfig.k8s",
+    "severity": "soft",
+    "pattern": "(?i)\\bhostPath\\s*:[\\s\\S]{0,40}\\bpath\\s*:",
+    "flags": null,
+    "description": "Pod mounts a hostPath volume from the node filesystem; enables container escape.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:k8s",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "940487d4-2763-596e-8fe5-faec361763bf",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-google-oauth",
+    "category": "secret_leak.google",
+    "severity": "hard",
+    "pattern": "\\bGOCSPX-[A-Za-z0-9_-]{28}\\b",
+    "flags": null,
+    "description": "Google OAuth 2.0 client secret.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:google",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "94260c5d-6a88-5ada-85e5-dee007a0f678",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-xxe-001",
+    "category": "insecure_code.xxe",
+    "severity": "warn",
+    "pattern": "(?i)DocumentBuilderFactory\\.newInstance\\s*\\(",
+    "flags": null,
+    "description": "Java DocumentBuilderFactory in use; disable DOCTYPE/external entities or it is XXE-prone (CWE-611).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:611",
       "severity:restricted"
     ]
   },
@@ -1026,6 +3673,21 @@
     ]
   },
   {
+    "id": "951b68fd-0570-58ae-b96c-dcbe9c57c6fb",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-linear",
+    "category": "secret_leak.linear",
+    "severity": "hard",
+    "pattern": "\\blin_(?:api|oauth)_[A-Za-z0-9]{40}\\b",
+    "flags": null,
+    "description": "Linear API or OAuth token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:linear",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "9568058e-a05e-4e35-9176-59c537b93ed1",
     "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
     "ruleId": "jb-fm-001",
@@ -1037,6 +3699,111 @@
     "labels": [
       "detector:jailbreak",
       "attack:format-override"
+    ]
+  },
+  {
+    "id": "95936af2-9b78-5267-bc01-fd74d6c4f459",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-discord-bot",
+    "category": "secret_leak.discord",
+    "severity": "soft",
+    "pattern": "\\b[MNO][A-Za-z0-9_-]{23,25}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,38}\\b",
+    "flags": null,
+    "description": "Discord bot token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:discord",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "96b3519c-c515-5e40-b7cb-5213477a5b66",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-confusion-005",
+    "category": "supply_chain.dependency_confusion",
+    "severity": "soft",
+    "pattern": "(?i)(?m)^\\s*(?:-e\\s+)?git\\+https?://[^\\s]{3,200}(?:#egg=|\\.git\\b|/)",
+    "flags": null,
+    "description": "requirements.txt git+http(s) dependency, bypassing index integrity / hash pinning.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:dependency-confusion",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "96cbca32-3473-5445-8744-5f2207b06c47",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-terraform-cloud",
+    "category": "secret_leak.terraform",
+    "severity": "hard",
+    "pattern": "\\b[a-z0-9]{14}\\.atlasv1\\.[A-Za-z0-9_=-]{60,70}",
+    "flags": null,
+    "description": "Terraform Cloud / Enterprise API token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:terraform",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "96e21e52-5f28-55e0-a2a7-3779edf6cd0a",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-exp-002",
+    "category": "compliance.export_control",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:export control classification number|\\bECCN\\b[ -]?[0-9][A-E][0-9]{3}|commerce control list|munitions list|denied (?:persons|parties) list|entity list (?:designation|screening)|restricted party screening)\\b",
+    "flags": null,
+    "description": "Export-control classification / screening markers (ECCN / CCL / USML / denied-party / entity-list).",
+    "labels": [
+      "detector:compliance",
+      "framework:export-control",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "971d7840-1128-5c48-b9e3-a0f5d09ab98d",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-xss-003",
+    "category": "insecure_code.xss",
+    "severity": "soft",
+    "pattern": "(?i)document\\.write\\s*\\(\\s*(?:[A-Za-z_$][\\w.$]{0,60}\\s*\\+|[\"'][^\"']{0,120}[\"']\\s*\\+|location\\.|document\\.)",
+    "flags": null,
+    "description": "document.write() given concatenated or location/document-derived data; DOM-based XSS sink (CWE-79).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:79",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "971ef138-3d89-56a6-8782-36c7e9e35b94",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-notion-secret",
+    "category": "secret_leak.notion",
+    "severity": "hard",
+    "pattern": "\\bsecret_[A-Za-z0-9]{43}\\b",
+    "flags": null,
+    "description": "Notion legacy integration token (secret_ prefix).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:notion",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9747f115-36c7-559c-b17a-259740268921",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-malpkg-001",
+    "category": "supply_chain.malicious_pkg",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:crossenv|cross-env\\.js|babelcli|jeilyfish|python3-dateutil|colourama|djanga|requets|urlib3|nodemailer-js|nodemailer\\.js|nodesqlite|mongose|opencv\\.js|openssl\\.js|node-opensl|noderequest|shadowsock|fabric-js|gruntcli|http-proxy\\.js|jquery\\.js|mssql-node|nodefabric|node-fabric|sqliteproxy)\\b",
+    "flags": null,
+    "description": "Reference to a documented npm / PyPI typosquat / malicious package name.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:malicious-package",
+      "severity:confidential"
     ]
   },
   {
@@ -1055,6 +3822,126 @@
     ]
   },
   {
+    "id": "985e7cab-0ac7-5bc7-9681-d7143a6c7b6a",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-pci-002",
+    "category": "compliance.pci",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:stor(?:e|ing|ed)|sav(?:e|ing|ed)|retain(?:ed|ing)?|keep(?:ing)?|persist(?:ed|ing)?)\\b[^.\\n]{0,30}\\b(?:CVV2?|CVC2?|CAV2|card verification (?:value|code)|sensitive authentication data|full track data|track[ -]?[12] data|PIN block)\\b",
+    "flags": null,
+    "description": "Storing prohibited sensitive authentication data (CVV / track / PIN block) — PCI-DSS Requirement 3.2 violation.",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "98d07c35-136c-543b-9127-080619639a8f",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-005",
+    "category": "pii.financial",
+    "severity": "soft",
+    "pattern": "\\b(?i:swift|bic)(?:\\s+code)?\\s*[:#]?\\s*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\\b",
+    "flags": null,
+    "description": "SWIFT / BIC code (8 or 11 chars) under a label word; code stays uppercase to cut prose FP.",
+    "labels": [
+      "detector:pii",
+      "finance:swift-bic",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "994cb5af-1686-55b9-97bf-9542998dd73e",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-miner-003",
+    "category": "supply_chain.cryptominer",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:pool\\.minexmr\\.com|supportxmr\\.com|nanopool\\.org|xmrpool\\.eu|miningpoolhub\\.com|moneroocean\\.stream|hashvault\\.pro|2miners\\.com)\\b",
+    "flags": null,
+    "description": "Reference to a known cryptocurrency mining-pool host.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:cryptominer",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "9a4166ee-d675-5f71-8941-7d86efd96c12",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-perm-001",
+    "category": "tool_call.permissions",
+    "severity": "hard",
+    "pattern": "(?i)\\bchmod\\s+-[a-z]*R[a-z]*\\s+777\\s+/(?:\\s|\\s*$|etc|usr|bin|var|root|home|boot)",
+    "flags": null,
+    "description": "Recursive chmod 777 against the filesystem root or a system directory.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:tampering",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9ab6345c-6352-565e-a787-e59f8e46d9fb",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-sh-005",
+    "category": "tool_call.shell",
+    "severity": "hard",
+    "pattern": "(?i)(?:curl|wget)\\s+[^\\n]{0,120}\\bchmod\\s+\\+x\\b",
+    "flags": null,
+    "description": "Download-then-chmod +x staging of a remote payload for execution.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:rce",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9ad3b13e-b2dd-5dca-9dc5-a2666522a707",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-databricks",
+    "category": "secret_leak.databricks",
+    "severity": "hard",
+    "pattern": "\\bdapi[a-f0-9]{32}(?:-[0-9]+)?\\b",
+    "flags": null,
+    "description": "Databricks personal access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:databricks",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9b1bf60a-55df-5e93-ae3a-04f5e1a29449",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-atlassian",
+    "category": "secret_leak.atlassian",
+    "severity": "hard",
+    "pattern": "\\bAT(?:ATT3|CTT3)[A-Za-z0-9_=-]{180,256}\\b",
+    "flags": null,
+    "description": "Atlassian Cloud API token (ATATT3 / ATCTT3 prefix).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:atlassian",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9b6115d7-1e17-5ea7-a48b-aece04833e7c",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-pci-004",
+    "category": "compliance.pci",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:PCI[- ]?DSS|payment card industry data security|self[- ]assessment questionnaire|\\bSAQ[- ]?[A-D]\\b|attestation of compliance|qualified security assessor)\\b",
+    "flags": null,
+    "description": "PCI-DSS compliance-scope reference (SAQ / AOC / QSA).",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:internal"
+    ]
+  },
+  {
     "id": "9bb534c7-2a0f-428a-a9bb-1dae2436f81b",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-square",
@@ -1067,6 +3954,109 @@
       "detector:secret-leak",
       "provider:square",
       "severity:restricted"
+    ]
+  },
+  {
+    "id": "9bdb4af7-85db-5ebf-9444-33ea53d4f519",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-zip-001",
+    "category": "tool_call.archive",
+    "severity": "soft",
+    "pattern": "(?i)(?:extractall|zipfile|tarfile|unzip|untar)[^\\n]{0,60}\\.\\.[/\\\\]|(?:filename|entryname|name)\\s*[:=]\\s*[\"']\\.\\.[/\\\\]",
+    "flags": null,
+    "description": "Archive extraction traversal (zip-slip) via ../ in an entry name.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:traversal",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "9c397736-d3e6-5323-95b6-13184a465f9d",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-stripe-webhook",
+    "category": "secret_leak.stripe",
+    "severity": "hard",
+    "pattern": "\\bwhsec_[A-Za-z0-9]{32,}\\b",
+    "flags": null,
+    "description": "Stripe webhook signing secret.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:stripe",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9c7cf49e-8ee7-52e1-b1db-252decdfab3b",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-pci-001",
+    "category": "compliance.pci",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:cardholder data environment|cardholder data|account data environment)\\b",
+    "flags": null,
+    "description": "PCI cardholder-data-environment (CDE) marker.",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "9d19e2d4-d795-525d-9dcc-69ba7798113f",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-sl-003",
+    "category": "prompt_injection.system_leak",
+    "severity": "hard",
+    "pattern": "(?i)(reveal|expose|leak|show\\s+me|tell\\s+me)\\s+(your|the)\\s+(system\\s+(prompt|message)|initial\\s+(prompt|instructions?)|original\\s+instructions?)",
+    "flags": null,
+    "description": "Direct system-prompt extraction request (strong leak verbs only; excludes benign \"print the system prompt to logs\").",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:system-leak"
+    ]
+  },
+  {
+    "id": "9d220928-48de-516f-827c-56fc7bb52f1b",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-xxe-001",
+    "category": "tool_call.xxe",
+    "severity": "hard",
+    "pattern": "(?i)<!ENTITY\\s+%?\\s*\\w{1,40}\\s+(?:SYSTEM|PUBLIC)\\b",
+    "flags": null,
+    "description": "XML external entity declaration referencing a SYSTEM/PUBLIC resource.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:xxe",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9e0549af-134a-5ae2-a705-0bab682de010",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ob-003",
+    "category": "malware.obfuscation",
+    "severity": "hard",
+    "pattern": "(?i)(?:IEX|Invoke-Expression)\\s*\\(\\s*New-Object\\s+(?:System\\.)?Net\\.WebClient",
+    "flags": null,
+    "description": "PowerShell download-and-execute (IEX + WebClient).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:obfuscation",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "9e94a772-9022-503c-aed9-1dfcd7ab6f64",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-ii-004",
+    "category": "prompt_injection.indirect",
+    "severity": "hard",
+    "pattern": "(?i)(assistant\\s*:\\s*(sure|certainly|of\\s+course)|AI\\s*:\\s*I\\s+will\\s+(now\\s+)?(ignore|comply))",
+    "flags": null,
+    "description": "Injected fake-assistant turn priming compliance.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:indirect"
     ]
   },
   {
@@ -1084,6 +4074,156 @@
     ]
   },
   {
+    "id": "9f9f5609-4d59-55b3-8b6f-0efe29595f81",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rw-003",
+    "category": "malware.ransomware",
+    "severity": "warn",
+    "pattern": "(?i)\\byour\\s+(?:files|documents|data|network)\\s+(?:have|has)\\s+been\\s+(?:encrypted|locked)\\b",
+    "flags": null,
+    "description": "Ransom-note phrasing (files have been encrypted).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:ransom-note",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "a015c94c-fe41-56b1-8e98-d0fdb54de51a",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-004",
+    "category": "cloud_misconfig.public_access",
+    "severity": "soft",
+    "pattern": "(?i)(?:ingress|source_ranges|source_address_prefix)[\\s\\S]{0,60}(?:0\\.0\\.0\\.0/0|::/0)",
+    "flags": null,
+    "description": "Security-group or firewall ingress rule open to the entire internet (0.0.0.0/0 or ::/0).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:iac",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "a0ad8665-994f-5eaf-a267-b7096b211f75",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-exfil-003",
+    "category": "supply_chain.exfil_in_build",
+    "severity": "hard",
+    "pattern": "(?i)(?:curl|wget|nc|ncat|scp|base64)\\b[^\\n]{0,140}(?:~|\\$HOME|/root|/home/[a-z0-9_-]{1,32})/\\.(?:npmrc|aws/credentials|aws/config|docker/config\\.json|netrc|ssh/id_(?:rsa|ed25519|ecdsa)|kube/config|config/gcloud)\\b",
+    "flags": null,
+    "description": "Credential file (.npmrc / .aws / .docker / .ssh) sent to a network or encoding tool during install / build.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:build-exfil",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a176e93e-58da-5ae1-8f5a-7e45e936cba6",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-inj-004",
+    "category": "insecure_code.injection",
+    "severity": "soft",
+    "pattern": "(?i)(?:os\\.system|os\\.popen)\\s*\\(\\s*(?:f[\"']|[\"'][^\"']{0,160}[\"']{1,2}\\s*\\+|[A-Za-z_][\\w.]{0,40}\\s*\\+)",
+    "flags": null,
+    "description": "os.system / os.popen invoked with a concatenated or interpolated command (CWE-78).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:78",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a1c407cb-9ce2-530e-8adf-9d7f71f333a4",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-k8s-007",
+    "category": "cloud_misconfig.k8s",
+    "severity": "warn",
+    "pattern": "(?i)\\bautomountServiceAccountToken\\s*:\\s*true\\b",
+    "flags": null,
+    "description": "Pod or service account automounts the Kubernetes API token (automountServiceAccountToken true); exposes cluster credentials to a compromised container.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:k8s",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "a2a7f9b9-8189-5e78-804c-41000fc17f82",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-tls-004",
+    "category": "insecure_code.disabled_tls",
+    "severity": "hard",
+    "pattern": "(?i)CURLOPT_SSL_VERIFY(?:PEER|HOST)\\s*,\\s*(?:0|false)\\b",
+    "flags": null,
+    "description": "libcurl peer/host TLS verification disabled (CWE-295).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:295",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a2d03eb4-a9c3-557d-a719-00d9d2eb4ed7",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-ref-002",
+    "category": "dlp.internal_ref",
+    "severity": "soft",
+    "pattern": "(?i)\\bhttps?://[\\w.-]{1,60}(?:\\.sharepoint\\.com/(?:sites|teams|personal)/|\\.atlassian\\.net/wiki/spaces/|/confluence/(?:display|spaces|pages)/|/wiki/spaces/)[\\w%./~-]{1,160}",
+    "flags": null,
+    "description": "Tenant SharePoint / Confluence internal document URL.",
+    "labels": [
+      "detector:data-loss",
+      "marker:internal-doc-url",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "a3509744-fea8-519e-8f13-4d7c822f1e7b",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-hist-001",
+    "category": "tool_call.audit_evasion",
+    "severity": "soft",
+    "pattern": "(?i)(?:history\\s+-c\\b|>\\s*~?/?\\.bash_history\\b|unset\\s+HISTFILE\\b)",
+    "flags": null,
+    "description": "Shell-history wipe to cover command tracks (history -c / clear .bash_history).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:audit-evasion",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a4170c5c-a7a9-5f2d-8d74-bce128f54b8b",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-airtable",
+    "category": "secret_leak.airtable",
+    "severity": "hard",
+    "pattern": "\\bpat[A-Za-z0-9]{14}\\.[A-Za-z0-9]{64}\\b",
+    "flags": null,
+    "description": "Airtable personal access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:airtable",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a469b294-8c82-5e1d-9ea1-1e544f9d5bcf",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-generic-secret-assign",
+    "category": "secret_leak.generic",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:secret|token|passwd|password|credential|private[_-]?key)\\s*[:=]\\s*[\"'][A-Za-z0-9+/=._-]{32,}[\"']",
+    "flags": null,
+    "description": "Quoted secret / token / password assignment with a 32+ char opaque value.",
+    "labels": [
+      "detector:secret-leak",
+      "format:secret",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "a4b8d963-94a0-4795-9c07-15de8a034c66",
     "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
     "ruleId": "jb-dan-003",
@@ -1095,6 +4235,95 @@
     "labels": [
       "detector:jailbreak",
       "attack:dan"
+    ]
+  },
+  {
+    "id": "a4bdf48c-0508-553a-afe7-d767ead3cdd6",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-dc-201",
+    "category": "prompt_injection.delimiter",
+    "severity": "soft",
+    "pattern": "(?i)(```|---|###)\\s*(system|end\\s+of\\s+(prompt|context)|assistant)\\s*(```|---|###|:)",
+    "flags": null,
+    "description": "Fenced delimiter spoofing a system/role boundary.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:delimiter"
+    ]
+  },
+  {
+    "id": "a51701d7-9cee-5f08-a27e-c6228a89a4e5",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-004",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:driver'?s?\\s+licen[sc]e|dln)(?:\\s+(?:number|no\\.?|#))?\\s*[:#]?\\s*(?:[0-9][A-Z0-9]{4,14}|[A-Z0-9]{4,14}[0-9])\\b",
+    "flags": null,
+    "description": "Driver-license number (5-15 alnum, must contain a digit) under a DL label word.",
+    "labels": [
+      "detector:pii",
+      "gov:driver-license",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a5a1cb8c-bc65-574c-a158-36bc015dda14",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-class-001",
+    "category": "compliance.classified",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:classification:?\\s*(?:top secret|secret|confidential)|\\bCONFIDENTIAL\\b[ -]{0,3}(?:noforn|//|do not distribute|attorney|internal only)|controlled unclassified information|\\bCUI\\b//|distribution statement [a-f]|not for (?:public )?(?:release|distribution))\\b",
+    "flags": null,
+    "description": "Classified / restricted-distribution banner markers (classification line, CUI, NOFORN, distribution statement) — CONFIDENTIAL requires a second anchor to bound false-positives.",
+    "labels": [
+      "detector:compliance",
+      "framework:classification",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a5a7c7b1-7b82-54bd-980e-10cdf0e95f75",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-twilio-apikey",
+    "category": "secret_leak.twilio",
+    "severity": "hard",
+    "pattern": "\\bSK[a-f0-9]{32}\\b",
+    "flags": null,
+    "description": "Twilio API key SID (paired with a secret in practice).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:twilio",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a5f28432-e0d5-5aeb-a591-60f1a592c63a",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-install-004",
+    "category": "supply_chain.install_script",
+    "severity": "soft",
+    "pattern": "(?i)(?:os\\.system|subprocess\\.(?:call|run|Popen|check_output)|check_output)\\s*\\(\\s*[^)]{0,160}\\b(?:curl|wget|certutil|powershell|bitsadmin|iwr|Invoke-WebRequest)\\b",
+    "flags": null,
+    "description": "setup.py / build code shells out to a downloader at install time (PyPI install-time fetch).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:install-rce",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "a5fca093-868f-592e-9386-23e576a129f6",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-hipaa-003",
+    "category": "compliance.hipaa",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:HIPAA|health insurance portability and accountability act|covered entit(?:y|ies)|HIPAA[- ]covered)\\b",
+    "flags": null,
+    "description": "HIPAA regulation / covered-entity reference.",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:internal"
     ]
   },
   {
@@ -1113,6 +4342,81 @@
     ]
   },
   {
+    "id": "a8324a0d-0447-5483-b7e6-a0bf802a5a8f",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-tls-003",
+    "category": "insecure_code.disabled_tls",
+    "severity": "hard",
+    "pattern": "\\bInsecureSkipVerify\\s*:\\s*true\\b",
+    "flags": null,
+    "description": "Go TLS verification disabled (InsecureSkipVerify true) (CWE-295).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:295",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "a84b0a27-db83-5cbc-a2aa-da811738a863",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-ssti-001",
+    "category": "tool_call.ssti",
+    "severity": "soft",
+    "pattern": "(?:\\{\\{|\\$\\{|#\\{)\\s*\\d{1,5}\\s*\\*\\s*\\d{1,5}",
+    "flags": null,
+    "description": "Server-side template injection arithmetic probe such as {{7*7}}.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:ssti",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "a90fd8c5-eaa8-526c-a1a9-1988fc70c634",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-k8s-005",
+    "category": "cloud_misconfig.k8s",
+    "severity": "soft",
+    "pattern": "(?i)\\ballowPrivilegeEscalation\\s*:\\s*true\\b",
+    "flags": null,
+    "description": "Container permits privilege escalation (allowPrivilegeEscalation true).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:k8s",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "aa493014-8547-52ce-87a5-08a482d35af4",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-xss-002",
+    "category": "insecure_code.xss",
+    "severity": "soft",
+    "pattern": "dangerouslySetInnerHTML\\s*=\\s*\\{\\{",
+    "flags": null,
+    "description": "React dangerouslySetInnerHTML bypasses JSX escaping; XSS sink if the HTML is untrusted (CWE-79).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:79",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "ab785ee5-8df4-58bf-9f44-6d8e24266fda",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-gdpr-004",
+    "category": "compliance.gdpr",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:standard contractual clauses|\\bSCCs\\b|adequacy decision|cross[- ]border (?:personal )?data transfer|international (?:personal )?data transfer|EU[- ]US data privacy framework|binding corporate rules)\\b",
+    "flags": null,
+    "description": "GDPR Chapter V cross-border transfer mechanism markers (SCCs / adequacy / DPF / BCRs).",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "abc813ec-3bdf-4483-86af-1eae66c7c749",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-dc-002",
@@ -1127,6 +4431,36 @@
     ]
   },
   {
+    "id": "ac06f548-ec3d-530b-a2ca-60896287c114",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-011",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:vin)\\b\\s*[:#]?\\s*[A-HJ-NPR-Z0-9]{17}\\b",
+    "flags": null,
+    "description": "Vehicle Identification Number (VIN), 17 chars excluding I/O/Q, under a VIN label word.",
+    "labels": [
+      "detector:pii",
+      "gov:vin",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "aca59a17-37b0-5084-a06b-3998a2fbc15c",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-disk-001",
+    "category": "tool_call.disk",
+    "severity": "hard",
+    "pattern": "(?i)\\bdd\\s+[^\\n]{0,60}\\bof=/dev/(?:sd[a-z]|nvme\\d|vd[a-z]|hd[a-z]|disk\\d|mmcblk\\d)",
+    "flags": null,
+    "description": "dd writing directly to a raw block device, destroying its contents.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "adc36534-ad83-4ddb-bbec-1afef3016d64",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-ev-002",
@@ -1138,6 +4472,66 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:deserialization",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "ae15bb3a-39ca-57e9-ab91-1f288ff7353b",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-dok-002",
+    "category": "cloud_misconfig.container",
+    "severity": "hard",
+    "pattern": "(?i)--cap-add[\\s=]+[\"']?(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|SYS_MODULE|ALL)\\b",
+    "flags": null,
+    "description": "Docker --cap-add grants a dangerous Linux capability (SYS_ADMIN, NET_ADMIN, ALL, etc.); near-root kernel privileges inside the container.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:docker",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "ae47a227-2af2-51e4-8370-59c14f00ee52",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-sec-006",
+    "category": "cloud_misconfig.iac_secret",
+    "severity": "hard",
+    "pattern": "(?i)\"type\"\\s*:\\s*\"service_account\"[\\s\\S]{0,200}\"private_key\"\\s*:",
+    "flags": null,
+    "description": "Inline GCP service-account key JSON (type service_account with an embedded private_key) hardcoded in an IaC manifest.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:gcp",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "af1338ff-c835-51f3-99d5-adf10d1372ba",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-001",
+    "category": "pii.financial",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:4[0-9]{3}(?:[ -]?[0-9]{4}){3}|5[1-5][0-9]{2}(?:[ -]?[0-9]{4}){3}|6(?:011|5[0-9]{2})(?:[ -]?[0-9]{4}){3}|3[47][0-9]{2}[ -]?[0-9]{6}[ -]?[0-9]{5})\\b",
+    "flags": null,
+    "description": "Payment-card number by major-brand prefix (Visa/MC/Discover 16-digit, Amex 15-digit), spaces or dashes allowed. Shape only — Luhn check is the hook's job.",
+    "labels": [
+      "detector:pii",
+      "finance:card-number",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "b134014d-8db7-5cdb-8630-b13bd818baaf",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-install-006",
+    "category": "supply_chain.install_script",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:curl|wget)\\b[^\\n]{0,160}https?://(?:gist\\.githubusercontent\\.com|raw\\.githubusercontent\\.com|gist\\.github\\.com)/[^\\s]{0,200}\\|\\s*(?:sudo\\s+)?(?:sh|bash|python[23]?|node)\\b",
+    "flags": null,
+    "description": "Raw GitHub gist / raw content downloaded and piped to an interpreter (untrusted out-of-band code).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:install-rce",
       "severity:restricted"
     ]
   },
@@ -1157,6 +4551,96 @@
     ]
   },
   {
+    "id": "b2fce92e-6dd4-507a-be59-93f2705b34f9",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rs-003",
+    "category": "malware.reverse_shell",
+    "severity": "hard",
+    "pattern": "(?i)(?:import\\s+socket\\s*,\\s*subprocess\\s*,\\s*os|pty\\.spawn\\s*\\(\\s*[\"'](?:/bin/)?(?:ba)?sh)",
+    "flags": null,
+    "description": "Python socket+subprocess / pty.spawn reverse-shell scaffold.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:reverse-shell",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "b30325f6-d800-5e72-8d81-c694cc943b4e",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-rand-002",
+    "category": "insecure_code.insecure_random",
+    "severity": "soft",
+    "pattern": "(?i)(?:token|secret|api[_-]?key|password|nonce|salt|otp|session[_-]?id)\\w{0,8}\\s*[:=]\\s*[^\\n;]{0,40}\\bMath\\.random\\s*\\(",
+    "flags": null,
+    "description": "JavaScript `Math.random()` used to derive a token/key/secret (CWE-330).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:330",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "b36dba2a-a72e-5422-a12d-f3ec382a5177",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-hipaa-004",
+    "category": "compliance.hipaa",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:minimum necessary (?:standard|rule|requirement)|safe harbor de[- ]identification|de[- ]identif(?:y|ied|ication) of (?:PHI|protected health information)|limited data set)\\b",
+    "flags": null,
+    "description": "HIPAA minimum-necessary / Safe-Harbor de-identification handling language.",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "b3b788b4-9dcd-526c-8433-b4d6083959c3",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-sec-002",
+    "category": "cloud_misconfig.iac_secret",
+    "severity": "hard",
+    "pattern": "(?i)\\bsecret_key\\s*[:=]\\s*[\"'][A-Za-z0-9/+=]{40}[\"']",
+    "flags": null,
+    "description": "Hardcoded AWS secret access key literal in an IaC manifest or template.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "b3df3b0a-7c45-5e9d-9356-7457b2109783",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-cls-002",
+    "category": "dlp.classification",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:INTERNAL USE ONLY|COMPANY (?:PROPRIETARY|CONFIDENTIAL)|PROPRIETARY (?:AND|&) CONFIDENTIAL|TRADE SECRET)\\b",
+    "flags": null,
+    "description": "Internal-use / proprietary / trade-secret handling marker.",
+    "labels": [
+      "detector:data-loss",
+      "marker:internal-proprietary",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "b51e38b0-dcb3-5b7a-8027-0e25bb202d8a",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-dok-001",
+    "category": "cloud_misconfig.container",
+    "severity": "hard",
+    "pattern": "(?i)(?:--privileged\\b|\\bprivileged\\s*[:=]\\s*true\\b)",
+    "flags": null,
+    "description": "Docker container run with --privileged (or compose privileged true); disables container isolation and grants full host device access.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:docker",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "b60be980-e8e0-4c92-a9d4-4377c1cb8b32",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-sh-003",
@@ -1172,6 +4656,126 @@
     ]
   },
   {
+    "id": "b705e26f-690f-57c9-95eb-e73db20ee38d",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-nosql-001",
+    "category": "tool_call.nosqli",
+    "severity": "soft",
+    "pattern": "(?i)[\"'{,]\\s*\\$(?:ne|gt|gte|lt|lte|regex|nin|in|exists)\\b",
+    "flags": null,
+    "description": "MongoDB operator injection ($ne/$gt/$regex) embedded in a JSON query object.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:nosqli",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "b755b01e-4d0d-5d27-93ff-3c04d5257c84",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-src-001",
+    "category": "dlp.source_code",
+    "severity": "warn",
+    "pattern": "(?m)^(?:diff --git a/\\S{1,200} b/\\S{1,200}|@@ -\\d{1,7}(?:,\\d{1,7})? \\+\\d{1,7}(?:,\\d{1,7})? @@)",
+    "flags": null,
+    "description": "Unified-diff git header / hunk header (source patch leakage).",
+    "labels": [
+      "detector:data-loss",
+      "vector:diff-leak",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "b7762a93-5b44-585f-a6aa-448b89ec580e",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-secret-002",
+    "category": "insecure_code.hardcoded_secret",
+    "severity": "soft",
+    "pattern": "(?i)(?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|client[_-]?secret)\\s*[:=]\\s*[\"'][A-Za-z0-9._/+=-]{8,}[\"']",
+    "flags": null,
+    "description": "API key / token / client secret assigned a string literal in source (CWE-798).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:798",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "b7c07211-96ae-5620-bc2f-71428fd37b2b",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-con-001",
+    "category": "compliance.consent",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:I (?:consent|do not consent) to|opt[- ]?in to (?:receive|the|marketing|processing)|explicit consent|informed consent|consent to (?:the )?(?:processing|collection|use|sharing) of (?:my )?(?:personal )?data)\\b",
+    "flags": null,
+    "description": "Affirmative consent / opt-in language for personal-data processing.",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "b83a1926-49e3-518c-8770-3bbcfd7b3fc8",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-007",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:nino|national\\s+insurance(?:\\s+(?:number|no\\.?|#))?)\\b\\s*[:#]?\\s*[ABCEGHJ-PRSTW-Z][ABCEGHJ-NPRSTW-Z][ ]?[0-9]{2}[ ]?[0-9]{2}[ ]?[0-9]{2}[ ]?[A-D]\\b",
+    "flags": null,
+    "description": "UK National Insurance Number (NINO) under a NINO / national-insurance label word; 2 prefix letters + 6 digits + suffix A-D.",
+    "labels": [
+      "detector:pii",
+      "gov:uk-nino",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "b93a79bb-fe1b-529e-bbdd-276221578dc3",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-cloud-002",
+    "category": "tool_call.cloud",
+    "severity": "hard",
+    "pattern": "(?i)\\bterraform\\s+destroy\\b",
+    "flags": null,
+    "description": "Terraform destroy tearing down managed infrastructure.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "bae2a1a6-6ec0-592a-8337-69119f6e25e9",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-power-001",
+    "category": "tool_call.power",
+    "severity": "hard",
+    "pattern": "(?i)(?:^|;|&&|\\|\\||\\bsudo\\s+)\\s*(?:shutdown\\b|reboot\\b|halt\\b|poweroff\\b|init\\s+0\\b)",
+    "flags": null,
+    "description": "System power-state change (shutdown / reboot / halt / poweroff).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:availability",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "bae4454f-913e-5850-a41f-922c8651036e",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-git-001",
+    "category": "tool_call.git",
+    "severity": "hard",
+    "pattern": "(?i)(?:git\\s+filter-branch\\b|git\\s+filter-repo\\b|rm\\s+-rf\\s+[^\\n]{0,30}\\.git\\b|git\\s+reflog\\s+expire[^\\n]{0,40}--all)",
+    "flags": null,
+    "description": "Git history destruction (filter-branch / filter-repo / rm -rf .git).",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "bc0ea724-9d32-42aa-823b-4756250a24e4",
     "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
     "ruleId": "jb-gm-001",
@@ -1183,6 +4787,21 @@
     "labels": [
       "detector:jailbreak",
       "attack:grandma"
+    ]
+  },
+  {
+    "id": "bcaf4b3b-41cb-5d2a-8614-bab3204ea0e1",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-006",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:itin)\\b\\s*[:#]?\\s*9[0-9]{2}[ -]?(?:7[0-9]|8[0-8]|9[0-2])[ -]?[0-9]{4}\\b",
+    "flags": null,
+    "description": "US Individual Taxpayer Identification Number (ITIN) — 9-prefixed 9-digit, group 70-92, under an ITIN label word.",
+    "labels": [
+      "detector:pii",
+      "gov:us-itin",
+      "severity:restricted"
     ]
   },
   {
@@ -1214,6 +4833,125 @@
     ]
   },
   {
+    "id": "bf1baf65-1991-5b66-83fe-97ed844207a0",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-inj-006",
+    "category": "insecure_code.injection",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:check_output|check_call|Popen)\\s*\\(\\s*(?:f[\"']|[\"'][^\"']{0,160}[\"']{1,2}\\s*(?:\\+|%|\\.format\\s*\\())",
+    "flags": null,
+    "description": "subprocess check_output/check_call/Popen given an f-string / concatenated / formatted command string; command-injection prone (CWE-78).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:78",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c131e5b2-ca90-53e5-9fea-e93ef47be9ff",
+    "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
+    "ruleId": "cs-w-001",
+    "category": "content_safety.weapons",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|step[-\\s]?by[-\\s]?step|instructions?\\s+(?:to|for))\\s+(?:synthesi[sz]e|culture|weaponi[sz]e|aerosoli[sz]e)\\s+(?:anthrax|ricin|sarin|vx\\s+(?:nerve\\s+)?agent|botulinum|nerve\\s+agent|a\\s+bioweapon)\\b",
+    "flags": null,
+    "description": "CBRN agent synthesis/weaponization how-to (does NOT match defensive/medical discussion).",
+    "labels": [
+      "detector:content-safety",
+      "category:weapons",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c17e78e7-cfb5-5035-9880-a9d8eb72b9db",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-sl-005",
+    "category": "prompt_injection.system_leak",
+    "severity": "soft",
+    "pattern": "(?i)what\\s+(are|were)\\s+your\\s+(exact\\s+)?(instructions?|system\\s+prompt|initial\\s+(prompt|directives?))",
+    "flags": null,
+    "description": "System-prompt interrogation.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:system-leak"
+    ]
+  },
+  {
+    "id": "c1837afb-86bf-50c5-adfb-da94ad4f8a2e",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-hlt-002",
+    "category": "pii.health",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:npi(?:\\s+(?:number|no\\.?|#))?)\\b\\s*[:#]?\\s*[0-9]{10}\\b",
+    "flags": null,
+    "description": "US National Provider Identifier (10 digits) under an NPI label word.",
+    "labels": [
+      "detector:pii",
+      "health:npi",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c203cd60-7cdb-57fa-84c4-fd5d60be5769",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-integrity-001",
+    "category": "supply_chain.build_integrity",
+    "severity": "soft",
+    "pattern": "(?i)<script\\b[^>]{0,200}\\bsrc\\s*=\\s*['\"]https?://[^'\">]{3,200}['\"][^>]{0,80}>",
+    "flags": null,
+    "description": "Remote <script src> with no Subresource Integrity attribute nearby (CDN tag without integrity pinning; review for SRI).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:missing-sri",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "c244a9ca-1b8a-5b5d-95a2-0eb3608daa34",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-sec-001",
+    "category": "cloud_misconfig.iac_secret",
+    "severity": "hard",
+    "pattern": "(?i)\\baccess_key\\s*[:=]\\s*[\"']AKIA[0-9A-Z]{16}[\"']",
+    "flags": null,
+    "description": "Hardcoded AWS access key ID (AKIA prefix) in an IaC manifest or template.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c3a05ba1-a409-5613-8991-074314e5b9a0",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-vault",
+    "category": "secret_leak.vault",
+    "severity": "hard",
+    "pattern": "\\bhv[bsr]\\.[A-Za-z0-9]{24,}\\b",
+    "flags": null,
+    "description": "HashiCorp Vault service / batch / recovery token (hvs. hvb. hvr.).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:vault",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c44dbae7-8e0d-520a-b038-87e753de3cdb",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-005",
+    "category": "cloud_misconfig.public_access",
+    "severity": "soft",
+    "pattern": "(?i)\\bpublicly_accessible\\s*[:=]\\s*true\\b",
+    "flags": null,
+    "description": "RDS or database instance marked publicly_accessible = true; reachable from the public internet.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "c4574303-4958-452a-8ed8-78bde04d9497",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-sp-002",
@@ -1225,6 +4963,213 @@
     "labels": [
       "detector:prompt-injection",
       "attack:system-leak"
+    ]
+  },
+  {
+    "id": "c51ae1ac-f14a-58a8-a1ae-714179c71bd6",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-deser-002",
+    "category": "insecure_code.deserialization",
+    "severity": "soft",
+    "pattern": "(?i)\\byaml\\.load\\s*\\(\\s*[^,)]{1,80},\\s*Loader\\s*=\\s*yaml\\.(?:Unsafe|Full)Loader",
+    "flags": null,
+    "description": "PyYAML yaml.load with UnsafeLoader/FullLoader executes arbitrary tags; use SafeLoader (CWE-502).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:502",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c5c03b30-0569-5e88-9ba9-e0999edeff64",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-rs-001",
+    "category": "malware.reverse_shell",
+    "severity": "hard",
+    "pattern": "(?i)\\bbash\\s+-[a-z]*i[a-z]*\\s+>&?\\s*/dev/(?:tcp|udp)/",
+    "flags": null,
+    "description": "Bash /dev/tcp reverse-shell one-liner.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:reverse-shell",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c5db5701-9317-55db-bf88-0d9b7173db65",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-ii-003",
+    "category": "prompt_injection.indirect",
+    "severity": "hard",
+    "pattern": "(?i)(ignore\\s+the\\s+(document|text|content)\\s+(above|below)\\s+and\\s+instead|when\\s+(summarizing|reading)\\s+this,?\\s+also\\s+(execute|run|send|email))",
+    "flags": null,
+    "description": "Indirect injection embedded in retrieved/document content.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:indirect"
+    ]
+  },
+  {
+    "id": "c63ce47f-025b-5074-9f25-f554dcda6b31",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-sec-005",
+    "category": "cloud_misconfig.iac_secret",
+    "severity": "hard",
+    "pattern": "(?i)\\bprovider\\s+[\"']aws[\"'][\\s\\S]{0,120}\\b(?:access_key|secret_key)\\s*=\\s*[\"'][^\"'${}\\s]{8,}[\"']",
+    "flags": null,
+    "description": "Terraform aws provider block with a hardcoded access_key or secret_key literal; credentials must come from env or a credential file, not the manifest.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c6fd3d12-bfb2-5f4a-a153-f7be0ee10b56",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-malpkg-006",
+    "category": "supply_chain.malicious_pkg",
+    "severity": "soft",
+    "pattern": "(?i)\"(?:dependencies|devDependencies)\"\\s*:[^}]{0,400}\"@[a-z0-9._-]{1,40}/[a-z0-9._-]{1,60}\"\\s*:\\s*\"(?:git\\+https?://|https?://|file:)",
+    "flags": null,
+    "description": "Scoped npm dependency resolved from a git / URL / file source, shadowing a registry-scoped package.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:malicious-package",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "c751aaa3-546e-510c-a266-174452f879a4",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-dan-201",
+    "category": "jailbreak.dan",
+    "severity": "hard",
+    "pattern": "(?i)\\b(STAN|DUDE|Mongo\\s+Tom|AIM|Niccolo)\\b.{0,80}(no\\s+restrictions?|without\\s+(any\\s+)?(filters?|rules?|morals?)|do\\s+anything)",
+    "flags": null,
+    "description": "Named DAN-derivative jailbreak personas (STAN/DUDE/AIM/Mongo Tom).",
+    "labels": [
+      "detector:jailbreak",
+      "attack:persona"
+    ]
+  },
+  {
+    "id": "c79aa27c-ad59-5868-a0f0-6f466f13c8a2",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-009",
+    "category": "cloud_misconfig.public_access",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:block_public_acls|block_public_policy|ignore_public_acls|restrict_public_buckets)\\s*[:=]\\s*false\\b",
+    "flags": null,
+    "description": "S3 public access block control disabled (block_public_acls / restrict_public_buckets = false); removes the account/bucket guard against public exposure.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "c7b53b83-2353-59ce-8004-41135d6d0865",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-cls-005",
+    "category": "dlp.classification",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:EXPORT[ -]CONTROLLED|ITAR[ -](?:CONTROLLED|RESTRICTED)|NOFORN|EAR99|CUI//[A-Z]{2,6})\\b",
+    "flags": null,
+    "description": "Export-controlled / ITAR / NOFORN / EAR99 / CUI dissemination marker.",
+    "labels": [
+      "detector:data-loss",
+      "marker:export-control",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c7d1b3a5-8ae9-5cd3-b157-d24f84c65749",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-obf-004",
+    "category": "malware.obfuscation",
+    "severity": "hard",
+    "pattern": "(?i)powershell(\\.exe)?\\s+.{0,40}-(enc(odedcommand)?|e)\\s+[A-Za-z0-9+/]{40,}",
+    "flags": null,
+    "description": "PowerShell encoded-command (base64) execution.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:obfuscation",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c825ac17-5a8c-5883-bf9c-31dcf9bc04a8",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-tool-001",
+    "category": "malware.tooling",
+    "severity": "hard",
+    "pattern": "(?i)\\b(mimikatz|sekurlsa::logonpasswords|lsadump::sam)\\b",
+    "flags": null,
+    "description": "Mimikatz credential-dumping invocation.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:credential-access",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "c94638ef-7da5-501f-8f2d-87d228fecd66",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-shopify",
+    "category": "secret_leak.shopify",
+    "severity": "hard",
+    "pattern": "\\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\\b",
+    "flags": null,
+    "description": "Shopify access / custom-app / private-app / shared-secret token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:shopify",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "ca1b3eef-e803-5a15-bb0e-412a80505707",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-deser-001",
+    "category": "insecure_code.deserialization",
+    "severity": "soft",
+    "pattern": "(?i)(?:\\bpickle\\.loads?\\s*\\(|\\bcpickle\\.loads?\\s*\\(|\\byaml\\.load\\s*\\(\\s*[^,)]{1,60}\\)|\\bmarshal\\.load\\s*\\(|\\bObjectInputStream\\s*\\()",
+    "flags": null,
+    "description": "Unsafe deserialization of untrusted data (pickle / default yaml.load / Marshal / ObjectInputStream) (CWE-502).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:502",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "cad8f949-c1fe-5ce3-8347-868a096f30eb",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-noguard-001",
+    "category": "jailbreak.no_guardrails",
+    "severity": "hard",
+    "pattern": "(?i)(you\\s+have\\s+no\\s+(guidelines?|guardrails?|filters?)|your\\s+(filters?|guardrails?|safety)\\s+(are|is)\\s+(off|disabled)|ignore\\s+your\\s+(safety\\s+)?guidelines?)",
+    "flags": null,
+    "description": "Guardrail-disable assertion.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:no-guardrails"
+    ]
+  },
+  {
+    "id": "cbb250c2-1da0-5fb4-9521-de0721e45ade",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-ref-001",
+    "category": "dlp.internal_ref",
+    "severity": "warn",
+    "pattern": "(?i)\\b[a-z0-9][a-z0-9-]{0,40}\\.(?:corp|internal|intranet|intra|lan|local)\\b",
+    "flags": null,
+    "description": "Internal corporate hostname suffix.",
+    "labels": [
+      "detector:data-loss",
+      "marker:internal-host",
+      "severity:internal"
     ]
   },
   {
@@ -1243,6 +5188,50 @@
     ]
   },
   {
+    "id": "cc3f940e-6f6e-5c77-a92a-885b71dcb641",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-dump-005",
+    "category": "dlp.bulk_dump",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:mongodb(?:\\+srv)?|postgres(?:ql)?|mysql|redis|amqp|mariadb)://[^\\s:/@]{1,60}:[^\\s:/@]{1,80}@[\\w.-]{1,80}",
+    "flags": null,
+    "description": "Connection string carrying inline username:password credentials.",
+    "labels": [
+      "detector:data-loss",
+      "vector:db-conn-creds",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "ccb90d14-153b-5d53-86a0-487281588a8c",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-cls-004",
+    "category": "dlp.classification",
+    "severity": "soft",
+    "pattern": "(?i)\\bTLP[:\\s]?(?:RED|AMBER(?:\\+STRICT)?)\\b",
+    "flags": null,
+    "description": "TLP:RED / TLP:AMBER sharing-restriction marker.",
+    "labels": [
+      "detector:data-loss",
+      "marker:tlp",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "cd5bc522-38da-5e3d-931f-32b1e4f5c97b",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-dc-003",
+    "category": "prompt_injection.delimiter",
+    "severity": "soft",
+    "pattern": "(?i)<\\s*(/?\\s*(system|im_start|im_end|s)\\s*)>",
+    "flags": null,
+    "description": "Chat-template control-token spoofing.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:delimiter"
+    ]
+  },
+  {
     "id": "cd9c729e-f5f6-46f9-ae55-31b9aba38543",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-i-002",
@@ -1254,6 +5243,126 @@
     "labels": [
       "detector:content-safety",
       "category:illegal",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "cd9e8fd1-681e-5c57-b8a0-0d7cfa39d022",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-docker-hub",
+    "category": "secret_leak.docker",
+    "severity": "hard",
+    "pattern": "\\bdckr_pat_[A-Za-z0-9_-]{27}\\b",
+    "flags": null,
+    "description": "Docker Hub personal access token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:docker",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "cea71dae-0d4e-527b-b8bf-d5a9ad6f036b",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ran-002",
+    "category": "malware.ransomware",
+    "severity": "soft",
+    "pattern": "(?i)(your\\s+files\\s+have\\s+been\\s+encrypted|all\\s+your\\s+(files|data)\\s+(are|is)\\s+encrypted|pay\\s+.{0,30}bitcoin\\s+to\\s+(decrypt|recover)\\s+your\\s+files)",
+    "flags": null,
+    "description": "Ransomware ransom-note text.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:ransomware",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "cecec826-a086-5987-8a2c-95319104d61a",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-sec-004",
+    "category": "cloud_misconfig.iac_secret",
+    "severity": "hard",
+    "pattern": "(?i)-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
+    "flags": null,
+    "description": "Private key PEM block embedded directly in an IaC manifest or template.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:iac",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "cf0993eb-ede1-5a55-843b-11c45fb27a69",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-hipaa-002",
+    "category": "compliance.hipaa",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:business associate agreement|business associate contract|business associate addendum|\\bBAA\\b)\\b",
+    "flags": null,
+    "description": "HIPAA business-associate agreement (BAA) reference.",
+    "labels": [
+      "detector:compliance",
+      "framework:hipaa",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "cfeabce0-efb2-59d1-a54f-4b01cb64bf33",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-con-002",
+    "category": "pii.contact",
+    "severity": "warn",
+    "pattern": "(?:\\+[1-9][0-9]{7,14}|\\(?[0-9]{3}\\)?[-. ][0-9]{3}[-. ][0-9]{4})",
+    "flags": null,
+    "description": "Phone number — E.164 (+ and 8-15 digits) OR US format requiring separators to cut numeric FP.",
+    "labels": [
+      "detector:pii",
+      "contact:phone",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "d087d010-67f1-5e2b-bf5f-fc2fdc09faee",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-openai-svc",
+    "category": "secret_leak.openai",
+    "severity": "hard",
+    "pattern": "\\bsk-(?:svcacct|admin)-[A-Za-z0-9_-]{20,}",
+    "flags": null,
+    "description": "OpenAI service-account and admin API keys.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:openai",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "d3e67566-72fd-550c-b7b9-315ea5c41ccb",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-hlt-003",
+    "category": "pii.health",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:icd[- ]?10|diagnos(?:is|ed)(?:\\s+code)?|dx)\\b[^A-Za-z0-9]{0,10}[A-TV-Z][0-9][0-9A-Z](?:\\.[0-9A-Z]{1,4})?\\b",
+    "flags": null,
+    "description": "ICD-10 diagnosis code (letter + 2 + optional .subcode) under a diagnosis label word.",
+    "labels": [
+      "detector:pii",
+      "health:icd10",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "d4867cf2-f4b6-58d6-a0ca-cfe1d425fbf7",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-k8s-006",
+    "category": "cloud_misconfig.k8s",
+    "severity": "hard",
+    "pattern": "(?i)(?:[-\"']\\s*(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH)\\b|\\badd\\b[\\s\\S]{0,30}[\"']?ALL[\"']?\\b)",
+    "flags": null,
+    "description": "Linux capability add of SYS_ADMIN, NET_ADMIN, ALL, or similar; grants near-root kernel privileges.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:k8s",
       "severity:restricted"
     ]
   },
@@ -1273,6 +5382,51 @@
     ]
   },
   {
+    "id": "d529db01-39c8-52ca-b62e-fc357e2428df",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-004",
+    "category": "pii.financial",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:account|acct|a/c)\\s*(?:number|no\\.?|#)?\\s*[:#]?\\s*[0-9]{6,17}\\b",
+    "flags": null,
+    "description": "Bank account number (6-17 digits) under an account-label word.",
+    "labels": [
+      "detector:pii",
+      "finance:account-number",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "d5afe642-7546-5cef-8b5a-47d108a54039",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-adv-002",
+    "category": "compliance.regulated_advice",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:should I (?:sue|countersue|plead|settle|sign this|appeal)|do I have a (?:legal )?(?:case|claim|cause of action)|can I (?:sue|be sued|press charges)|is (?:this|that) (?:legally )?(?:enforceable|binding)|will I (?:win|lose) (?:my|the|this) (?:case|lawsuit|in court))\\b",
+    "flags": null,
+    "description": "Legal advice-seeking that requires a licensed attorney.",
+    "labels": [
+      "detector:compliance",
+      "framework:gdpr",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "d726b442-3483-57ac-82ad-2cca76417dd0",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-pci-005",
+    "category": "compliance.pci",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:card verification (?:value|code|number)|cardholder name|cardholder data|\\bCVV2?\\b|\\bCVC2?\\b|\\bCAV2\\b)\\b",
+    "flags": null,
+    "description": "PCI cardholder-data context markers (CVV / CVC / cardholder name).",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "d8adfd81-0ca5-4be4-a9d6-54be6d4ee134",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-pem-cert",
@@ -1288,6 +5442,51 @@
     ]
   },
   {
+    "id": "d8b5a4ce-6813-5967-b724-68b0b74979e7",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-notion",
+    "category": "secret_leak.notion",
+    "severity": "hard",
+    "pattern": "\\bntn_[A-Za-z0-9]{40,}\\b",
+    "flags": null,
+    "description": "Notion integration token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:notion",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "d9a1af83-fb19-5f1e-a15e-5defef2acd9e",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-newrelic-ingest",
+    "category": "secret_leak.newrelic",
+    "severity": "hard",
+    "pattern": "\\bNR(?:JS|II)-[A-Za-z0-9]{19}\\b",
+    "flags": null,
+    "description": "New Relic ingest browser / license key.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:newrelic",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "da23a2c8-a750-5eb9-8830-bb3ffae108e8",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-crypto-004",
+    "category": "insecure_code.weak_crypto",
+    "severity": "soft",
+    "pattern": "(?i)(?:\\bMODE_ECB\\b|aes/ecb|[\"']aes[-/][\\w-]{0,12}ecb)",
+    "flags": null,
+    "description": "AES in ECB mode; leaks plaintext structure (CWE-327).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:327",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "dab15ed2-97e8-4bdd-9e80-6419f9cdb953",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-ssrf-001",
@@ -1299,6 +5498,81 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:ssrf",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "db188782-17f2-59e3-a836-f264a8fcd6e2",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-mnpi-001",
+    "category": "compliance.mnpi",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:material non-?public information|\\bMNPI\\b|inside information (?:about|regarding|on)|insider (?:trading|information) (?:about|policy|window)|blackout (?:period|window) (?:for|on) trading|tipper or tippee|selective disclosure of)\\b",
+    "flags": null,
+    "description": "Financial material-non-public-information (MNPI) / insider-trading markers.",
+    "labels": [
+      "detector:compliance",
+      "framework:sec",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "db9b3c3c-18cd-5c09-9b80-54bef759a5df",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-003",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:passport(?:\\s+(?:number|no\\.?|#))?)\\b\\s*[:#]?\\s*(?:[0-9][A-Z0-9]{5,8}|[A-Z0-9]{5,8}[0-9])\\b",
+    "flags": null,
+    "description": "Passport number (6-9 alnum, must contain a digit) under a passport label word.",
+    "labels": [
+      "detector:pii",
+      "gov:passport",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "dba4cb98-4895-544a-84bd-2ead3367374b",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-enc-002",
+    "category": "cloud_misconfig.encryption",
+    "severity": "soft",
+    "pattern": "(?i)(?:server_side_encryption|encrypt_at_rest|storage_encrypted|encryption_enabled|enable_encryption)\\s*[:=]\\s*false\\b",
+    "flags": null,
+    "description": "Server-side or at-rest encryption explicitly disabled on a storage or database resource.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "dc1cd42b-93fa-5fdb-81eb-0b22c40fa31a",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-eval-003",
+    "category": "insecure_code.code_injection",
+    "severity": "soft",
+    "pattern": "(?i)new\\s+Function\\s*\\(\\s*(?:req\\.|request|params|user_?input|location\\.|document\\.)",
+    "flags": null,
+    "description": "JavaScript new Function() built from request/DOM-derived untrusted data executes arbitrary code (CWE-95).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:95",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "dce0fdb5-2c5d-5d11-9f98-d9ac8e0c8150",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-cloud-003",
+    "category": "tool_call.cloud",
+    "severity": "hard",
+    "pattern": "(?i)\\bterraform\\s+destroy\\b[^\\n]{0,40}-auto-approve\\b",
+    "flags": null,
+    "description": "terraform destroy -auto-approve tearing down infrastructure without confirmation.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
       "severity:restricted"
     ]
   },
@@ -1346,6 +5620,66 @@
     ]
   },
   {
+    "id": "de7a7523-7bd7-567a-ab5c-88b9f1d5144f",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ob-004",
+    "category": "malware.obfuscation",
+    "severity": "soft",
+    "pattern": "(?i)\\bcertutil(?:\\.exe)?\\b[^\\n]{0,30}\\s-(?:decode|urlcache)\\b",
+    "flags": null,
+    "description": "certutil abused to decode / download a payload (living-off-the-land).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:obfuscation",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "dfb645ac-8033-5312-a188-7c9986483e55",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-k8s-002",
+    "category": "cloud_misconfig.k8s",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:hostNetwork|hostPID|hostIPC)\\s*:\\s*true\\b",
+    "flags": null,
+    "description": "Pod shares the host network, PID, or IPC namespace (hostNetwork/hostPID/hostIPC true).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:k8s",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "dfc7d409-a6a1-5cb4-bd81-99192f8eb3b8",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-007",
+    "category": "cloud_misconfig.public_access",
+    "severity": "hard",
+    "pattern": "(?i)(?:0\\.0\\.0\\.0/0|::/0)[\\s\\S]{0,80}(?:\\bto_port\\s*[:=]\\s*(?:22|23|3389|3306|5432|6379|27017|9200|1433|5984)\\b|\\bports?\\s*[:=]\\s*\\[?\\s*[\"']?(?:22|3389|3306|5432|6379|27017|9200|1433)\\b)",
+    "flags": null,
+    "description": "Ingress rule opens a sensitive admin/database port (SSH 22, RDP 3389, MySQL 3306, Postgres 5432, Redis 6379, Mongo 27017, etc.) to the entire internet (0.0.0.0/0).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:iac",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "e10884f5-5aa3-531a-b50c-755b2cc9c0dc",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-obf-005",
+    "category": "malware.obfuscation",
+    "severity": "soft",
+    "pattern": "(?i)(frombase64string|iex\\s*\\(|invoke-expression)\\s*.{0,40}(downloadstring|webclient|net\\.webrequest)",
+    "flags": null,
+    "description": "PowerShell download-and-execute (IEX + WebClient) one-liner.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:dropper",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "e121a089-1864-4733-9f3e-8a58def4dc5d",
     "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
     "ruleId": "pi-tr-002",
@@ -1360,6 +5694,21 @@
     ]
   },
   {
+    "id": "e1cb8abb-4d6f-5cf8-a056-e4aa3bd4914c",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ob-002",
+    "category": "malware.obfuscation",
+    "severity": "soft",
+    "pattern": "(?i)\\beval\\s*\\(\\s*(?:atob|base64_decode|fromCharCode)\\s*\\(",
+    "flags": null,
+    "description": "eval of a decoded payload (atob / base64_decode / fromCharCode).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:obfuscation",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "e20ffc39-e8df-4f87-a89e-b3de69d23321",
     "packId": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "ruleId": "cs-x-003",
@@ -1371,6 +5720,21 @@
     "labels": [
       "detector:content-safety",
       "category:sexual",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "e25ae934-6509-50fc-8c39-33e9401d7822",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-nosql-002",
+    "category": "tool_call.nosqli",
+    "severity": "hard",
+    "pattern": "(?i)\\$where\\b\\s*[:=]",
+    "flags": null,
+    "description": "MongoDB $where server-side JavaScript evaluation in a query.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:nosqli",
       "severity:restricted"
     ]
   },
@@ -1390,6 +5754,200 @@
     ]
   },
   {
+    "id": "e3fcc124-4ca7-572a-b6bf-7e9e727d6bc6",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-pub-008",
+    "category": "cloud_misconfig.public_access",
+    "severity": "hard",
+    "pattern": "(?i)[\"'](?:allUsers|allAuthenticatedUsers)[\"']",
+    "flags": null,
+    "description": "GCP IAM binding grants a role to allUsers or allAuthenticatedUsers; exposes the resource to anonymous or any-Google-account access.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:gcp",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "e49cc574-548b-5e57-8981-cfeed3ce9b88",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-doppler",
+    "category": "secret_leak.doppler",
+    "severity": "hard",
+    "pattern": "\\bdp\\.(?:pt|st|ct|sa|scim|audit)\\.[A-Za-z0-9]{40,44}\\b",
+    "flags": null,
+    "description": "Doppler service / personal / CLI / service-account token.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:doppler",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "e4bf1923-72eb-5d9f-bdc3-78724a8f7795",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-policy-001",
+    "category": "jailbreak.policy_bypass",
+    "severity": "hard",
+    "pattern": "(?i)(not\\s+bound\\s+by|ignore|bypass|forget)\\s+(openai|anthropic|the\\s+company)('?s)?\\s+(policy|policies|content\\s+policy|usage\\s+policy|guidelines)",
+    "flags": null,
+    "description": "Vendor-policy bypass assertion.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:policy-bypass"
+    ]
+  },
+  {
+    "id": "e513d74c-1502-5276-b220-502fa2e71c87",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-eval-002",
+    "category": "insecure_code.code_injection",
+    "severity": "soft",
+    "pattern": "(?i)\\bexec\\s*\\(\\s*(?:request|input\\s*\\(|sys\\.argv|os\\.environ|params|req\\.(?:body|query|params)|user_?input|untrusted|flask\\.request)",
+    "flags": null,
+    "description": "exec() applied to request/input/argv-derived untrusted data executes arbitrary code (CWE-95).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:95",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "e537cdf8-9c07-5a7e-8bd4-290fc9beb6d4",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-ex-001",
+    "category": "malware.exploit",
+    "severity": "soft",
+    "pattern": "(?i)\\bmsfvenom\\b[^\\n]{0,40}\\s-p\\s+",
+    "flags": null,
+    "description": "msfvenom payload generation invocation.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:payload-gen",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "e60a23d8-a7b3-5aef-8010-516ac1d2b10e",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-012",
+    "category": "pii.government_id",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:dob|date\\s+of\\s+birth|d\\.o\\.b\\.?|birth\\s*date)\\b\\s*[:#]?\\s*(?:[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4}|[0-9]{4}[-/.][0-9]{1,2}[-/.][0-9]{1,2})\\b",
+    "flags": null,
+    "description": "Date of birth under a DOB / date-of-birth label word (numeric DMY/MDY/ISO forms).",
+    "labels": [
+      "detector:pii",
+      "gov:date-of-birth",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "e6934942-caab-5872-b3de-11bacba03362",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-confusion-003",
+    "category": "supply_chain.dependency_confusion",
+    "severity": "soft",
+    "pattern": "(?i)(?:\\b(?:npm|yarn|pnpm)\\b[^\\n]{0,80}--registry[=\\s]\\s{0,4}https?://|@[a-z0-9-]{1,40}:registry\\s*=\\s*https?://)",
+    "flags": null,
+    "description": "npm / yarn / pnpm registry override (CLI flag or scoped .npmrc) repointing package resolution.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:dependency-confusion",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "e82855c1-0468-5a89-8ea2-19d2b99aabcb",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-tls-001",
+    "category": "insecure_code.disabled_tls",
+    "severity": "hard",
+    "pattern": "(?i)\\bverify\\s*=\\s*False\\b",
+    "flags": null,
+    "description": "TLS certificate verification disabled (requests verify=False) (CWE-295).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:295",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "e8e7d476-2fbf-57e4-959b-29e97320a998",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-enc-003",
+    "category": "dlp.encoded",
+    "severity": "soft",
+    "pattern": "(?i)\\bdata:application/(?:pdf|zip|x-[a-z0-9.+-]{1,30}|vnd\\.[a-z0-9.+-]{1,40}|octet-stream);base64,[A-Za-z0-9+/]{40,}={0,2}",
+    "flags": null,
+    "description": "data: URI embedding a base64 document/archive payload (application/*).",
+    "labels": [
+      "detector:data-loss",
+      "vector:data-uri-document",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "e8e8abe5-32f4-5cab-86a5-b154343c337d",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-fastly",
+    "category": "secret_leak.fastly",
+    "severity": "soft",
+    "pattern": "(?i)fastly[a-z0-9_-]*(?:token|key)\\s*[:=]\\s*[\"']?[A-Za-z0-9_-]{32}",
+    "flags": null,
+    "description": "Fastly API token in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:fastly",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "e93999e6-1f94-5fe5-b848-cdab24621c7b",
+    "packId": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "ruleId": "ic-secret-003",
+    "category": "insecure_code.hardcoded_secret",
+    "severity": "soft",
+    "pattern": "(?i)(?:mongodb|postgres(?:ql)?|mysql|redis|amqp)://[A-Za-z0-9._-]{1,40}:[^@\\s/\"']{3,40}@",
+    "flags": null,
+    "description": "Database/broker URI with inline user:password credentials (CWE-798).",
+    "labels": [
+      "detector:insecure-code",
+      "cwe:798",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "ea6de843-4d06-544a-89bf-7db2c0759c6b",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-sec-003",
+    "category": "cloud_misconfig.iac_secret",
+    "severity": "hard",
+    "pattern": "(?i)\\b(?:password|master_password|admin_password|root_password)\\s*[:=]\\s*[\"'][^\"'${}\\s]{6,64}[\"']",
+    "flags": null,
+    "description": "Hardcoded password literal in an IaC manifest or template (not a variable reference).",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:iac",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "ea7c5f85-9d0f-5acc-a79d-d6e0e317e52a",
+    "packId": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "ruleId": "dlp-dump-003",
+    "category": "dlp.bulk_dump",
+    "severity": "soft",
+    "pattern": "(?im)^[ \\t]{0,4}(?:\"?(?:email|e-mail|ssn|social_security|phone|first_name|last_name|full_name|dob|date_of_birth|address|credit_card|card_number)\"?[ \\t]{0,2},[ \\t]{0,2}){2,}\"?(?:email|e-mail|ssn|social_security|phone|first_name|last_name|full_name|dob|date_of_birth|address|credit_card|card_number)\"?",
+    "flags": null,
+    "description": "CSV header row with 3+ PII-style column names.",
+    "labels": [
+      "detector:data-loss",
+      "vector:pii-csv",
+      "severity:restricted"
+    ]
+  },
+  {
     "id": "ece9aa28-4437-4838-8a44-255b0e30fa0b",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-fs-002",
@@ -1401,6 +5959,36 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:traversal",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "ee0b4678-836c-5bc2-ad17-b62610486904",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-fin-007",
+    "category": "pii.financial",
+    "severity": "soft",
+    "pattern": "(?i)\\bIBAN\\b\\s*[:#]?\\s*[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\\b",
+    "flags": null,
+    "description": "IBAN under an explicit ''IBAN'' label word (country + 2 check digits + up to 30 alnum). Labeled companion to the structural IBAN rule for lower false-positive contexts.",
+    "labels": [
+      "detector:pii",
+      "finance:iban",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "eeb894b5-3165-50fa-8202-d0fee1e0367f",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-okta",
+    "category": "secret_leak.okta",
+    "severity": "soft",
+    "pattern": "(?i)\\bokta[a-z0-9_-]*(?:token|key|ssws)\\s*[:=]\\s*[\"']?00[A-Za-z0-9_-]{40}\\b",
+    "flags": null,
+    "description": "Okta API token in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:okta",
       "severity:confidential"
     ]
   },
@@ -1419,6 +6007,66 @@
     ]
   },
   {
+    "id": "effcad09-fcfb-5b4a-85cb-83940b75d151",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-malpkg-005",
+    "category": "supply_chain.malicious_pkg",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:pip\\d?\\s+install|python[23]?\\s+-m\\s+pip\\s+install)\\b[^\\n]{0,80}/tmp/[^\\s]{3,120}\\.whl\\b",
+    "flags": null,
+    "description": "pip install of a local wheel from /tmp (unvetted artifact dropped before build).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:malicious-package",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "f243dbf6-da7f-5bae-ad79-3b95eebce73e",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-pci-006",
+    "category": "compliance.pci",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:full track data|track[ -]?[12] data|magnetic[- ]stripe data|magstripe (?:data|dump)|service code on (?:the )?track|equivalent data on (?:the )?(?:chip|track))\\b",
+    "flags": null,
+    "description": "PCI prohibited track / magnetic-stripe data marker — sensitive authentication data.",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "f2eb8f33-95c4-5828-a34a-5e9e0089d15f",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-exfil-004",
+    "category": "supply_chain.exfil_in_build",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:curl|wget|http|nc|ncat)\\b[^\\n]{0,140}\\$\\{?(?:NPM_TOKEN|GITHUB_TOKEN|GH_TOKEN|CI_JOB_TOKEN|NODE_AUTH_TOKEN|PYPI_TOKEN|TWINE_PASSWORD|GITLAB_TOKEN|VAULT_TOKEN)\\b",
+    "flags": null,
+    "description": "CI / registry token environment variable sent to a network endpoint.",
+    "labels": [
+      "detector:supply-chain",
+      "risk:build-exfil",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "f47eb437-62a2-5bd9-a459-ad962b3bad6c",
+    "packId": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "ruleId": "sc-install-007",
+    "category": "supply_chain.install_script",
+    "severity": "soft",
+    "pattern": "(?i)\"(?:pre|post)?install\"\\s*:\\s*\"[^\"]{0,200}\\bnode\\s+-e\\b[^\"]{0,160}\\b(?:require\\(\\s*['\"]?(?:https?|http|net|child_process|dns)|fetch\\(|XMLHttpRequest|\\.connect\\()",
+    "flags": null,
+    "description": "package.json install hook runs node -e with an inline network / process call (drive-by install fetch).",
+    "labels": [
+      "detector:supply-chain",
+      "risk:install-rce",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "f50d68ab-c05d-477c-bd8f-9513d2fbf71c",
     "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "ruleId": "tc-sh-002",
@@ -1430,6 +6078,51 @@
     "labels": [
       "detector:tool-call-safety",
       "risk:rce",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "f5bb6b5f-c211-5f82-a877-0fc1f17cf171",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-dr-002",
+    "category": "malware.dropper",
+    "severity": "soft",
+    "pattern": "(?i)\\bbitsadmin(?:\\.exe)?\\b[^\\n]{0,40}\\s/transfer\\b",
+    "flags": null,
+    "description": "bitsadmin /transfer used to fetch a remote payload (LOLBin).",
+    "labels": [
+      "detector:malware-threat",
+      "technique:dropper",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "f6e35ca2-e1c3-5d64-9ac5-979841259d1a",
+    "packId": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
+    "ruleId": "tc-disk-002",
+    "category": "tool_call.disk",
+    "severity": "hard",
+    "pattern": "(?i)\\bmkfs(?:\\.[a-z0-9]+)?\\s+[^\\n]{0,40}/dev/(?:sd[a-z]|nvme\\d|vd[a-z]|hd[a-z]|disk\\d|mmcblk\\d)",
+    "flags": null,
+    "description": "mkfs formatting a raw block device, erasing the existing filesystem.",
+    "labels": [
+      "detector:tool-call-safety",
+      "risk:destructive",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "f761190d-d480-59c5-8575-cf198018af41",
+    "packId": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "ruleId": "pii-gov-010",
+    "category": "pii.government_id",
+    "severity": "soft",
+    "pattern": "(?i)\\b(?:aadhaar|aadhar|uidai)\\b\\s*[:#]?\\s*[2-9][0-9]{3}[ -]?[0-9]{4}[ -]?[0-9]{4}\\b",
+    "flags": null,
+    "description": "India Aadhaar number (12 digits, first digit 2-9) in 4-4-4 groups, under an Aadhaar / UIDAI label word.",
+    "labels": [
+      "detector:pii",
+      "gov:in-aadhaar",
       "severity:restricted"
     ]
   },
@@ -1449,6 +6142,65 @@
     ]
   },
   {
+    "id": "f8aa28d7-3212-5a1f-a8fb-1d8b403efbb0",
+    "packId": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "ruleId": "cmp-adv-003",
+    "category": "compliance.regulated_advice",
+    "severity": "warn",
+    "pattern": "(?i)\\b(?:what (?:stock|stocks|crypto|coin|shares?|fund) should I (?:buy|sell|invest in)|should I (?:buy|sell|short|invest in) (?:this )?(?:stock|crypto|bitcoin|shares?)|is (?:now|it) a good time to (?:buy|sell|invest)|will (?:the )?(?:stock|market|price|bitcoin) (?:go up|go down|crash|rise|moon))\\b",
+    "flags": null,
+    "description": "Investment / securities advice-seeking that requires a licensed advisor.",
+    "labels": [
+      "detector:compliance",
+      "framework:pci",
+      "severity:internal"
+    ]
+  },
+  {
+    "id": "f952d4ed-b972-52fe-a5ca-a6a172990621",
+    "packId": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
+    "ruleId": "jb-persona-001",
+    "category": "jailbreak.persona",
+    "severity": "hard",
+    "pattern": "(?i)(you\\s+are|act\\s+as|pretend\\s+to\\s+be)\\s+(my\\s+)?(evil\\s+(confidant|trusted)|unfiltered\\s+(ai|assistant)|amoral\\s+(ai|chatbot))",
+    "flags": null,
+    "description": "Evil-confidant / unfiltered-persona role assignment.",
+    "labels": [
+      "detector:jailbreak",
+      "attack:persona"
+    ]
+  },
+  {
+    "id": "fa8c86c3-e846-5207-97e3-7a048724bbd2",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-azure-ad-secret",
+    "category": "secret_leak.azure",
+    "severity": "hard",
+    "pattern": "[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{31,34}",
+    "flags": null,
+    "description": "Azure AD application client secret.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:azure",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "fad0c855-180e-5311-aed5-b68b382a1da2",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-pagerduty",
+    "category": "secret_leak.pagerduty",
+    "severity": "soft",
+    "pattern": "(?i)pager[_-]?duty[a-z0-9_-]*(?:token|key)\\s*[:=]\\s*[\"']?[A-Za-z0-9+/=_-]{20,}",
+    "flags": null,
+    "description": "PagerDuty API token in a labeled assignment.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:pagerduty",
+      "severity:confidential"
+    ]
+  },
+  {
     "id": "fb327582-675f-4c80-b150-7c71a204051c",
     "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
     "ruleId": "sl-aws-access",
@@ -1460,6 +6212,80 @@
     "labels": [
       "detector:secret-leak",
       "provider:aws",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "fbef0462-5fdd-5ca2-8597-2566654b6960",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-pypi",
+    "category": "secret_leak.pypi",
+    "severity": "hard",
+    "pattern": "\\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,1000}",
+    "flags": null,
+    "description": "PyPI upload API token (macaroon).",
+    "labels": [
+      "detector:secret-leak",
+      "provider:pypi",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "fe1b883b-b4b8-5dc0-92c0-4a5674bbdc2e",
+    "packId": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "ruleId": "mal-tool-002",
+    "category": "malware.tooling",
+    "severity": "hard",
+    "pattern": "(?i)\\b(cobalt\\s*strike|beacon\\.(dll|exe)|teamserver|malleable\\s+c2)\\b",
+    "flags": null,
+    "description": "Cobalt Strike beacon / C2 framework reference.",
+    "labels": [
+      "detector:malware-threat",
+      "technique:c2",
+      "severity:restricted"
+    ]
+  },
+  {
+    "id": "fe6f155f-0038-5b34-b351-f5e30960c083",
+    "packId": "e63b835a-3b39-42be-8e7d-2d258d26f3f3",
+    "ruleId": "pi-io-202",
+    "category": "prompt_injection.instruction_override",
+    "severity": "hard",
+    "pattern": "(?i)(new\\s+(instructions?|rules?)\\s+(follow|below|start\\s+now)|from\\s+now\\s+on\\s+(you\\s+(will|must)|ignore))",
+    "flags": null,
+    "description": "New-instructions takeover phrasing.",
+    "labels": [
+      "detector:prompt-injection",
+      "attack:instruction-override"
+    ]
+  },
+  {
+    "id": "fe94e853-322d-582c-bc37-ed861422a144",
+    "packId": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "ruleId": "cm-iam-005",
+    "category": "cloud_misconfig.iam",
+    "severity": "soft",
+    "pattern": "(?i)[\"'](?:iam|s3|ec2|sts|kms|lambda|secretsmanager|dynamodb):\\*[\"']",
+    "flags": null,
+    "description": "IAM policy grants a service-wide wildcard action (for example s3:*); prefer least-privilege specific actions.",
+    "labels": [
+      "detector:cloud-misconfig",
+      "cloud:aws",
+      "severity:confidential"
+    ]
+  },
+  {
+    "id": "ff729307-5f96-54b4-944f-aa5427de990a",
+    "packId": "d4143067-6079-486e-aca2-c61fd0d34335",
+    "ruleId": "sl-mailchimp",
+    "category": "secret_leak.mailchimp",
+    "severity": "hard",
+    "pattern": "\\b[a-f0-9]{32}-us[0-9]{1,2}\\b",
+    "flags": null,
+    "description": "Mailchimp API key with datacenter suffix.",
+    "labels": [
+      "detector:secret-leak",
+      "provider:mailchimp",
       "severity:restricted"
     ]
   }

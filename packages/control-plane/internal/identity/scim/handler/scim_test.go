@@ -3,8 +3,8 @@ package scim
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -39,7 +39,7 @@ func makeUser(id, email, status string) *userstore.NexusUserSafe {
 		Email:       &e,
 		Status:      status,
 		// SCIM-managed test users are source="scim"; the per-user ownership guard
-		// (SEC-M6-04) rejects mutation of non-scim (admin-managed) accounts.
+		// rejects mutation of non-scim (admin-managed) accounts.
 		Source:    "scim",
 		CreatedAt: nowTime(),
 		UpdatedAt: nowTime(),
@@ -79,7 +79,7 @@ type stubUserStore struct {
 	defaultOrgID  string
 	defaultOrgErr error
 	// lastListParams captures the params of the most recent ListNexusUsers call
-	// so the SEC-M6-04 IdP-scoping test can assert the filter was applied.
+	// so the IdP-scoping test can assert the filter was applied.
 	lastListParams userstore.NexusUserListParams
 }
 
@@ -534,7 +534,7 @@ func TestReplaceUser_NotFound_Returns404(t *testing.T) {
 
 func TestReplaceUser_Success_Returns200(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "active")
-	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	active := true
 	body, _ := json.Marshal(map[string]any{"userName": "u1@example.com", "active": active})
@@ -566,7 +566,7 @@ func TestReplaceUser_StoreError_Returns500(t *testing.T) {
 
 func TestPatchUser_ActiveFalse_SuspendsUser(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
-	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	body, _ := json.Marshal(map[string]any{
 		"schemas": []string{scimSchemaPatch},
@@ -605,7 +605,7 @@ func TestPatchUser_NotFound_Returns404(t *testing.T) {
 
 func TestDeleteUser_Success_Returns204(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
-	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	c, rec := echoCtxWithToken(http.MethodDelete, "/Users/u1", nil, &scimstore.ScimToken{ID: "t1"})
 	c.SetParamNames("id")
@@ -1195,7 +1195,7 @@ func TestCreateUser_WithIdPToken_NoExternalID_UsesUserName(t *testing.T) {
 func TestReplaceUser_ActiveNilTreatedAsActive(t *testing.T) {
 	// active=nil → treated as true, status="active"
 	updated := makeUser("u1", "u1@example.com", "active")
-	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	// No "active" field in the body → body.Active == nil
 	body, _ := json.Marshal(map[string]any{"userName": "u1@example.com"})
@@ -1212,7 +1212,7 @@ func TestReplaceUser_ActiveNilTreatedAsActive(t *testing.T) {
 
 func TestReplaceUser_ActiveFalse_Suspends(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
-	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	activeFalse := false
 	body, _ := json.Marshal(map[string]any{"userName": "u1@example.com", "active": activeFalse})
@@ -1229,7 +1229,7 @@ func TestReplaceUser_ActiveFalse_Suspends(t *testing.T) {
 
 func TestPatchUser_AddOp_AppliesUpdate(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "active")
-	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	body, _ := json.Marshal(map[string]any{
 		"schemas": []string{scimSchemaPatch},
@@ -1653,7 +1653,7 @@ func TestCreateGroup_NewGroupWithMembers(t *testing.T) {
 	}
 }
 
-// --- SEC-M6-04: SCIM per-IdP user ownership scoping regression ---
+// --- SCIM per-IdP user ownership scoping regression ---
 
 func idpToken(idpID string) *scimstore.ScimToken {
 	return &scimstore.ScimToken{ID: "tok-1", IdentityProviderID: &idpID}

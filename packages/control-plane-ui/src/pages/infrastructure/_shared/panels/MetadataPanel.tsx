@@ -75,10 +75,6 @@ export function MetadataPanel({ metadata }: MetadataPanelProps) {
 
   return (
     <div>
-      <h2 className={styles.title}>
-        {t('pages:infrastructure.overview.metadata.title')}
-      </h2>
-
       {isEmpty && (
         <p className={styles.empty}>
           {t('pages:infrastructure.overview.metadata.empty')}

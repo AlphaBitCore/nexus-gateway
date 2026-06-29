@@ -4,9 +4,8 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // Record holds all fields for a single audit log entry.
@@ -287,6 +286,30 @@ type Record struct {
 	ResponseBody      []byte
 	ResponseTruncated bool
 
+	// reqBodyHandle is the pool handle when RequestBody points at a POOLED
+	// buffer (set via AttachPooledRequestBody). The writer returns it to the
+	// request-body pool at the record's terminal resolution (reclaimRecordBody);
+	// nil means RequestBody is an ordinary GC-managed slice.
+	reqBodyHandle *[]byte
+
+	// respBodyHandle is the analogous pool handle when ResponseBody points at a
+	// POOLED buffer (the streaming capture tee's backing array, set via
+	// AttachPooledResponseBody). Returned to the response-body pool at the
+	// record's terminal resolution; nil means ResponseBody is an ordinary
+	// GC-managed slice (non-stream paths, or a stream whose body was not stored).
+	respBodyHandle *[]byte
+
+	// marshaled, when non-nil, is this record's already-encoded wire bytes, set
+	// when a publish failure re-buffers the record for retry. The pooled request/
+	// response body buffers are reclaimed the MOMENT a record is marshaled (the
+	// marshaled bytes already hold a full copy — see marshalRecord), so the pool
+	// working set is O(in-flight marshals) instead of O(queue depth). A re-buffered
+	// record can therefore no longer be re-marshaled from its (reclaimed) body; the
+	// retry unit is these bytes. marshalRecord returns them directly when set, and
+	// the re-Normalize/recordToMessage path is never reached for such a record.
+	// In-process only — never serialized.
+	marshaled []byte
+
 	// RequestContentType / ResponseContentType travel with the captured
 	// bytes onto traffic_event_payload.{request,response}_content_type.
 	// Empty when not detected; consumers default to inferring from the
@@ -315,37 +338,21 @@ type Record struct {
 	// requests that were not rejected by a rule pack.
 	BlockingRule *rulepack.BlockingRule `json:"blockingRule,omitempty"`
 
-	// TransformSpan + storage policy carried from the compliance pipeline
-	// to recordToMessage. Populated by the proxy handler when a
-	// content-touching hook returned MODIFY (or matched with a storage
-	// policy set). recordToMessage applies the storage policy to the
-	// persisted NormalizedPayload before MQ send.
-	RequestTransformSpans  []normcore.TransformSpan
-	ResponseTransformSpans []normcore.TransformSpan
-	RequestStorageAction   string // "" | "keep" | "redact" | "drop-content"
-	ResponseStorageAction  string
-	// RequestRedactRuleIDs lists the rule IDs that triggered redaction
-	// on the request side. Used to populate the drop-content placeholder
-	// {redacted:true, kind, ruleIds}. Same shape for response.
-	RequestRedactRuleIDs  []string
-	ResponseRedactRuleIDs []string
-	// RequestRedetect / ResponseRedetect carry the per-stage pipeline's
-	// pattern re-scanning closure (CompliancePipelineResult.Redetect) from
-	// hook execution to recordToMessage, where the storage rewrite uses it
-	// to re-locate spans whose hook-time addresses do not resolve on the
-	// storage-time normalized payload. In-process only — never serialized.
-	RequestRedetect  redact.Redetector `json:"-"`
-	ResponseRedetect redact.Redetector `json:"-"`
+	// RequestAction / ResponseAction carry the single hook action from the
+	// compliance pipeline to recordToMessage, governing what raw body is
+	// persisted: approve stores the captured bytes, redact/block store the
+	// redacted copy (below), anything else stores nothing.
+	RequestAction  decision.Action
+	ResponseAction decision.Action
 
 	// RequestBodyRedacted / ResponseBodyRedacted carry the redacted
 	// wire-shape copy of the body — the adapter Rewrite*Body output the
 	// proxy produced when a hook's redaction was applied inflight. The
-	// writer persists the RAW payload copy under the storage policy:
-	// "keep" stores the captured (pre-hook) bytes, "redact" stores ONLY
-	// this redacted copy (absent → the raw copy is dropped, because
-	// persisting bytes we could not redact would make the audit store
-	// itself the leak; the redacted normalized payload + spans still
-	// carry the content), "drop-content" never stores raw bytes.
+	// writer persists the RAW payload copy under the action: approve stores
+	// the captured (pre-hook) bytes, redact/block store ONLY this redacted
+	// copy (absent → the raw copy is dropped, because persisting bytes we
+	// could not redact would make the audit store itself the leak — the
+	// rule-ID / category metadata on the row still records what tripped).
 	RequestBodyRedacted  []byte
 	ResponseBodyRedacted []byte
 }
@@ -387,96 +394,4 @@ func (r *Record) ApplyVKMeta(meta *vkauth.VKMeta) {
 	// can render in jurisdiction-local time even though the
 	// timestamp column is a UTC instant.
 	r.OriginTZ = meta.OrganizationTimezone
-}
-
-// filterHookStage returns a fresh slice of HookExecRecord rows whose Stage
-// matches one of `stages`. Used by recordToMessage to split the combined
-// rec.HooksPipeline into the dual `request_hooks_pipeline` /
-// `response_hooks_pipeline` columns on the wire.
-func filterHookStage(in []HookExecRecord, stages ...string) []HookExecRecord {
-	if len(in) == 0 || len(stages) == 0 {
-		return nil
-	}
-	want := make(map[string]struct{}, len(stages))
-	for _, s := range stages {
-		want[s] = struct{}{}
-	}
-	out := make([]HookExecRecord, 0, len(in))
-	for _, r := range in {
-		if _, ok := want[r.Stage]; ok {
-			out = append(out, r)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// nilIfEmpty returns nil for an empty string and a pointer to s otherwise.
-// Used by recordToMessage to map zero-value fields to SQL NULL.
-func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// firstNonNil returns the first non-nil int pointer from the arguments.
-// Used by recordToMessage to prefer an explicit Record field when set and
-// fall back to a derived aggregate otherwise (e.g. RequestHooksMs derived
-// from HooksPipeline if the proxy handler hasn't set it explicitly).
-func firstNonNil(ps ...*int) *int {
-	for _, p := range ps {
-		if p != nil {
-			return p
-		}
-	}
-	return nil
-}
-
-// sumHookLatenciesMs returns the aggregate per-hook latency (ms) for the
-// hook rows whose Stage matches one of `stages`. Returns nil when no hook
-// in the requested stages ran — distinguished from zero so the resulting
-// `request_hooks_ms` / `response_hooks_ms` columns stay NULL for bypass /
-// no-hook requests (P95 queries should not count those as 0ms).
-//
-// Used by recordToMessage to populate the hook-aggregate columns from
-// the existing per-hook latency data already in rec.HooksPipeline.
-func sumHookLatenciesMs(in []HookExecRecord, stages ...string) *int {
-	if len(in) == 0 || len(stages) == 0 {
-		return nil
-	}
-	want := make(map[string]struct{}, len(stages))
-	for _, s := range stages {
-		want[s] = struct{}{}
-	}
-	var (
-		total int
-		ran   bool
-	)
-	for _, r := range in {
-		if _, ok := want[r.Stage]; !ok {
-			continue
-		}
-		ran = true
-		if r.LatencyMs > 0 {
-			total += r.LatencyMs
-		}
-	}
-	if !ran {
-		return nil
-	}
-	return &total
-}
-
-// firstNonEmptyStr returns a if non-empty, else b. Used for
-// target_method / target_path stamping to fall back to the request-side
-// value when the gateway didn't set a distinct target (transparent path
-// or no cross-format routing).
-func firstNonEmptyStr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }

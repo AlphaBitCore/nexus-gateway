@@ -2,6 +2,7 @@
 package wiring
 
 import (
+	"context"
 	"log/slog"
 
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
@@ -14,6 +15,15 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/llm"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/strategies"
 )
+
+// the production Router must implement the optional content-rule probe
+// the proxy gate gives the lazy-canonical decision through (Handler.needCanonical
+// type-asserts this interface). Assert it at compile time so a future refactor
+// that drops Resolver.RequestNeedsCanonical fails the build instead of silently
+// reverting to always-compute (which would mask the optimization in prod).
+var _ interface {
+	RequestNeedsCanonical(context.Context, string) bool
+} = (*routing.Resolver)(nil)
 
 // InitRouter builds the strategy registry, health ranker, and resolver.
 // Returns (strategyReg, healthRanker, resolver, capCache).

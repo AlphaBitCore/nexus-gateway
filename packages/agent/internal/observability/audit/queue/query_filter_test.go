@@ -7,12 +7,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/event"
 )
 
-// TestQueryEventsFiltered_AIOnly_FiltersToInspect verifies the #88
+// TestQueryEventsFiltered_AIOnly_FiltersToInspect verifies the
 // AI-only branch matches rows where action=inspect (the primary
 // AI signal) or domain_rule_id is non-empty. Non-AI rows (passthrough
-// without a domain rule) are excluded — fixes the pre-#88 UI bug where
-// "AI only" over-fetched + JS-filtered with broken pagination + wrong
-// total.
+// without a domain rule) are excluded, so "AI only" does not
+// over-fetch + JS-filter with broken pagination + wrong total.
 func TestQueryEventsFiltered_AIOnly_FiltersToInspect(t *testing.T) {
 	q := newTestQueue(t)
 	now := time.Now().UTC()

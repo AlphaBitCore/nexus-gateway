@@ -30,3 +30,9 @@
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
+
+.tableCard :global([class*='iconButtonDanger']),
+.tableCard :global([class*='iconButtonDanger'] svg) {
+  color: var(--color-danger) !important;
+  stroke: var(--color-danger) !important;
+}

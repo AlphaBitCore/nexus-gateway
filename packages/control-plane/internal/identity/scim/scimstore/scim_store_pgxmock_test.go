@@ -329,7 +329,7 @@ func TestLinkUserToIdP(t *testing.T) {
 	}
 }
 
-// TestUserOwnedByIdP covers the SEC-M6-04 ownership reader: it reports whether a
+// TestUserOwnedByIdP covers the ownership reader: it reports whether a
 // UserFederatedIdentity row links the user to the given IdP.
 func TestUserOwnedByIdP(t *testing.T) {
 	s, m := newMock(t)

@@ -61,7 +61,7 @@ func getSharedTestThingClient(t *testing.T) *thingclient.Client {
 func TestMountRuntimeAPI_withThingClient(t *testing.T) {
 	tc := getSharedTestThingClient(t)
 	mux := http.NewServeMux()
-	// F-0243: /runtime/* gated on internal-service token.
+	// /runtime/* is gated on the internal-service token.
 	MountRuntimeAPI(tc, testInternalToken, mux)
 
 	// /runtime/config is registered; without a valid token → 401.

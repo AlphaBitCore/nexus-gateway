@@ -9,7 +9,7 @@ import { useZodForm, FormInput, FormSelect, FormTextarea } from '@/lib/forms';
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import { z } from 'zod';
 import {
-  PageHeader, Badge, statusToVariant, DataTable, AlertDialog, Breadcrumb,
+  Badge, statusToVariant, DataTable, AlertDialog,
   Skeleton, ErrorBanner, Tooltip,
   Button, Stack, Card, Tabs, TabsList, TabsTrigger, TabsContent,
 } from '@/components/ui';
@@ -119,16 +119,26 @@ export function ProjectDetail() {
 
   return (
     <Stack gap="md">
-      <Breadcrumb items={[
-        { label: t('pages:projects.title'), to: '/iam/projects' },
-        { label: project.name },
-      ]} />
-
-      <PageHeader
-        title={project.name}
-        subtitle={project.description || `Code: ${project.code}`}
-        action={
-          <Stack direction="horizontal" gap="sm">
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/iam/projects" className={styles.backLink} aria-label={t('common:back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{project.name}</h1>
+            {project.description && (
+              <p className={styles.headerDescription}>{project.description}</p>
+            )}
+            <div className={styles.headerMeta}>
+              <Badge variant="outline">{project.code}</Badge>
+              {project.organization && <Badge variant="outline">{project.organization.name}</Badge>}
+              <Badge variant={statusToVariant(project.status)}>{project.status}</Badge>
+            </div>
+          </div>
+          <Stack direction="horizontal" gap="sm" className={styles.headerActions}>
             {!isEditing && (
               <Button variant="secondary" onClick={startEditing}>{t('pages:projects.edit')}</Button>
             )}
@@ -156,8 +166,8 @@ export function ProjectDetail() {
               );
             })() : null}
           </Stack>
-        }
-      />
+        </div>
+      </section>
 
       <Tabs defaultValue="info">
         <TabsList>
@@ -168,72 +178,68 @@ export function ProjectDetail() {
         {/* Info Tab — Read */}
         <TabsContent value="info">
           {!isEditing && (
-            <Card>
+            <section className={styles.contentSection}>
               <h2 className={styles.widgetTitle}>{t('pages:projects.projectInformation')}</h2>
-              <div className={styles.kvGrid}>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:projects.name')}</div>
-                  <div className={styles.kvValue}>{project.name}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:projects.code')}</span>
-                    <Tooltip content={t('pages:projects.codeTooltip')}>
-                      <span className={styles.tooltipHelpIcon}>?</span>
-                    </Tooltip>
+              <Card>
+                <div className={styles.kvGrid}>
+                  <div>
+                    <div className={styles.kvLabel}>{t('pages:projects.name')}</div>
+                    <div className={styles.kvValue}>{project.name}</div>
                   </div>
-                  <div className={`${styles.kvValue} ${styles.monoCode}`}>{project.code}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:projects.organization')}</span>
-                    <Tooltip content={t('pages:projects.organizationTooltip')}>
-                      <span className={styles.tooltipHelpIcon}>?</span>
-                    </Tooltip>
+                  <div>
+                    <div className={styles.kvLabelRow}>
+                      <span className={styles.kvLabel}>{t('pages:projects.code')}</span>
+                      <Tooltip content={t('pages:projects.codeTooltip')}>
+                        <span className={styles.tooltipHelpIcon}>?</span>
+                      </Tooltip>
+                    </div>
+                    <div className={`${styles.kvValue} ${styles.monoCode}`}>{project.code}</div>
                   </div>
-                  <div className={styles.kvValue}>
-                    {project.organization ? (
-                      <Link to={`/iam/organizations/${project.organization?.id}`} className={styles.linkStyle}>
-                        {project.organization?.name}
-                      </Link>
-                    ) : (
-                      <span className={styles.textMuted}>--</span>
-                    )}
+                  <div>
+                    <div className={styles.kvLabelRow}>
+                      <span className={styles.kvLabel}>{t('pages:projects.organization')}</span>
+                      <Tooltip content={t('pages:projects.organizationTooltip')}>
+                        <span className={styles.tooltipHelpIcon}>?</span>
+                      </Tooltip>
+                    </div>
+                    <div className={styles.kvValue}>
+                      {project.organization ? (
+                        <Link to={`/iam/organizations/${project.organization?.id}`} className={styles.linkStyle}>
+                          {project.organization?.name}
+                        </Link>
+                      ) : (
+                        <span className={styles.textMuted}>--</span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.kvLabelRow}>
+                      <span className={styles.kvLabel}>{t('pages:projects.status')}</span>
+                      <Tooltip content={t('pages:projects.statusTooltip')}>
+                        <span className={styles.tooltipHelpIcon}>?</span>
+                      </Tooltip>
+                    </div>
+                    <div className={styles.badgeOffset}>
+                      <Badge variant={statusToVariant(project.status)}>{project.status}</Badge>
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.kvLabel}>{t('pages:projects.contactName')}</div>
+                    <div className={styles.kvValue}>{project.contactName || '--'}</div>
+                  </div>
+                  <div>
+                    <div className={styles.kvLabel}>{t('pages:projects.contactEmail')}</div>
+                    <div className={styles.kvValue}>{project.contactEmail || '--'}</div>
+                  </div>
+                  <div>
+                    <div className={styles.kvLabel}>{t('pages:projects.created')}</div>
+                    <div className={styles.kvValue}>
+                      {formatDate(project.createdAt)}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:projects.status')}</span>
-                    <Tooltip content={t('pages:projects.statusTooltip')}>
-                      <span className={styles.tooltipHelpIcon}>?</span>
-                    </Tooltip>
-                  </div>
-                  <div className={styles.badgeOffset}>
-                    <Badge variant={statusToVariant(project.status)}>{project.status}</Badge>
-                  </div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:projects.contactName')}</div>
-                  <div className={styles.kvValue}>{project.contactName || '--'}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:projects.contactEmail')}</div>
-                  <div className={styles.kvValue}>{project.contactEmail || '--'}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:projects.created')}</div>
-                  <div className={styles.kvValue}>
-                    {formatDate(project.createdAt)}
-                  </div>
-                </div>
-                {project.description && (
-                  <div className={styles.gridFullSpan}>
-                    <div className={styles.kvLabel}>{t('pages:projects.description')}</div>
-                    <div className={styles.kvValue}>{project.description}</div>
-                  </div>
-                )}
-              </div>
-            </Card>
+              </Card>
+            </section>
           )}
 
           {/* Info Tab — Edit Mode */}
@@ -261,7 +267,7 @@ export function ProjectDetail() {
 
         {/* Virtual Keys Tab */}
         <TabsContent value="virtualKeys">
-          <Card>
+          <section className={styles.contentSection}>
             <h2 className={styles.widgetTitle}>{t('pages:projects.virtualKeys')}</h2>
             {virtualKeys.length === 0 ? (
               <div className={styles.emptySection}>
@@ -274,7 +280,7 @@ export function ProjectDetail() {
                 emptyMessage={t('pages:projects.noVirtualKeysShort')}
               />
             )}
-          </Card>
+          </section>
         </TabsContent>
       </Tabs>
 

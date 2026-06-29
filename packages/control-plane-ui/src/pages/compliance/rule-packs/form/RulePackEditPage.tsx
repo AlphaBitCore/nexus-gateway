@@ -1,6 +1,6 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import {
   rulePacksApi,
@@ -19,6 +19,7 @@ import {
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 
+import { RuleDraftsEditor } from './RulePackEditPage.RuleDraftsEditor';
 import styles from './RulePackCreatePage.module.css';
 import {
   draftsToRules,
@@ -40,6 +41,7 @@ export function RulePackEditPage() {
   const [rulesMode, setRulesMode] = useState<'json' | 'form'>('json');
   const [ruleDrafts, setRuleDrafts] = useState<RuleDraft[]>([emptyRuleDraft()]);
   const [formError, setFormError] = useState<string | null>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
 
   const { data, loading, error, refetch } = useApi<RulePack>(
     () => rulePacksApi.get(id),
@@ -56,6 +58,13 @@ export function RulePackEditPage() {
     setRuleDrafts(data.rules.length > 0 ? rulesToDrafts(data.rules) : [emptyRuleDraft()]);
     setFormError(null);
   }, [data]);
+
+  useEffect(() => {
+    const textarea = descriptionRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 400)}px`;
+  }, [description]);
 
   const parsedJson = useMemo(() => parseRules(rulesRaw), [rulesRaw]);
   const parsedForm = useMemo(() => draftsToRules(ruleDrafts), [ruleDrafts]);
@@ -143,18 +152,32 @@ export function RulePackEditPage() {
 
   return (
     <Stack gap="lg">
-      <div className={styles.header}>
-        <h1 className={styles.title}>{t('pages:hooks.rulePacks.editTitle', 'Edit Rule Pack')}</h1>
-        <p className={styles.subtitle}>
-          {t(
-            'pages:hooks.rulePacks.editSubtitle',
-            'Update maintainer metadata and rule definitions. Name and version are immutable.',
-          )}
-        </p>
-      </div>
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link
+            to={`/compliance/rule-packs/${id}`}
+            className={styles.backLink}
+            aria-label={t('common:back', 'Back')}
+          >
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.title}>{t('pages:hooks.rulePacks.editTitle', 'Edit Rule Pack')}</h1>
+            <p className={styles.subtitle}>
+              {t(
+                'pages:hooks.rulePacks.editSubtitle',
+                'Update maintainer metadata and rule definitions. Name and version are immutable.',
+              )}
+            </p>
+          </div>
+        </div>
+      </section>
 
-      <Card>
-        <form onSubmit={onFormSubmit}>
+      <form className={styles.form} onSubmit={onFormSubmit}>
+        <Card>
           <Stack gap="md">
           <div className={styles.row}>
             <FormField label={t('pages:hooks.rulePacks.colName', 'Name')}>
@@ -173,26 +196,39 @@ export function RulePackEditPage() {
             </FormField>
           </div>
           <FormField label={t('pages:hooks.rulePacks.colDescription', 'Description')}>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+            <Textarea
+              ref={descriptionRef}
+              className={styles.autoGrowTextarea}
+              value={description}
+              rows={1}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </FormField>
 
-          <div className={styles.modeSwitch}>
-            <Button
-              variant={rulesMode === 'form' ? 'primary' : 'secondary'}
-              size="sm"
-              type="button"
-              onClick={() => switchRulesMode('form')}
-            >
-              {t('pages:hooks.rulePacks.formMode', 'Form mode')}
-            </Button>
-            <Button
-              variant={rulesMode === 'json' ? 'primary' : 'secondary'}
-              size="sm"
-              type="button"
-              onClick={() => switchRulesMode('json')}
-            >
-              {t('pages:hooks.rulePacks.jsonMode', 'JSON mode')}
-            </Button>
+          <div className={styles.rulesToolbar}>
+            <div className={styles.modeSwitch}>
+              <Button
+                variant={rulesMode === 'form' ? 'primary' : 'secondary'}
+                size="sm"
+                type="button"
+                onClick={() => switchRulesMode('form')}
+              >
+                {t('pages:hooks.rulePacks.formMode', 'Form mode')}
+              </Button>
+              <Button
+                variant={rulesMode === 'json' ? 'primary' : 'secondary'}
+                size="sm"
+                type="button"
+                onClick={() => switchRulesMode('json')}
+              >
+                {t('pages:hooks.rulePacks.jsonMode', 'JSON mode')}
+              </Button>
+            </div>
+            {rulesMode === 'form' && (
+              <button type="button" onClick={addRule} className={styles.addRuleButton}>
+                + {t('pages:hooks.rulePacks.addRule', 'Add rule')}
+              </button>
+            )}
           </div>
 
           {rulesMode === 'json' && (
@@ -201,7 +237,7 @@ export function RulePackEditPage() {
               error={parsedJson.error ?? undefined}
               helpText={t(
                 'pages:hooks.rulePacks.createRulesHelp',
-                'Each rule requires ruleId, category, severity (hard|soft|info), pattern. Optional: flags, description, labels.',
+                'Each rule requires ruleId, category, severity (hard|soft|warn), pattern. Optional: flags, description, labels.',
               )}
             >
               <Textarea
@@ -214,80 +250,25 @@ export function RulePackEditPage() {
           )}
 
           {rulesMode === 'form' && (
-            <Stack gap="md">
-              {ruleDrafts.map((rule, index) => (
-                <div key={`draft-${index + 1}`} className={styles.ruleCard}>
-                  <div className={styles.ruleCardHeader}>
-                    <strong>{t('pages:hooks.rulePacks.ruleItemTitle', 'Rule')} #{index + 1}</strong>
-                    <Button variant="ghost" size="sm" type="button" onClick={() => removeRule(index)}>
-                      {t('common:delete', 'Delete')}
-                    </Button>
-                  </div>
-                  <div className={styles.row}>
-                    <FormField label={t('pages:hooks.rulePacks.colRuleId', 'Rule ID')} required>
-                      <Input
-                        value={rule.ruleId}
-                        onChange={(e) => updateDraft(index, 'ruleId', e.target.value)}
-                      />
-                    </FormField>
-                    <FormField label={t('pages:hooks.rulePacks.colCategory', 'Category')} required>
-                      <Input
-                        value={rule.category}
-                        onChange={(e) => updateDraft(index, 'category', e.target.value)}
-                      />
-                    </FormField>
-                  </div>
-                  <div className={styles.row}>
-                    <FormField label={t('pages:hooks.rulePacks.colSeverity', 'Severity')} required>
-                      <Input
-                        value={rule.severity}
-                        onChange={(e) => updateDraft(index, 'severity', e.target.value)}
-                      />
-                    </FormField>
-                    <FormField label={t('pages:hooks.rulePacks.colPattern', 'Pattern')} required>
-                      <Input
-                        value={rule.pattern}
-                        onChange={(e) => updateDraft(index, 'pattern', e.target.value)}
-                      />
-                    </FormField>
-                  </div>
-                  <div className={styles.row}>
-                    <FormField label={t('pages:hooks.rulePacks.colFlags', 'Flags')}>
-                      <Input value={rule.flags} onChange={(e) => updateDraft(index, 'flags', e.target.value)} />
-                    </FormField>
-                    <FormField label={t('pages:hooks.rulePacks.colLabels', 'Labels (comma-separated)')}>
-                      <Input value={rule.labels} onChange={(e) => updateDraft(index, 'labels', e.target.value)} />
-                    </FormField>
-                  </div>
-                  <FormField label={t('pages:hooks.rulePacks.colDescription', 'Description')}>
-                    <Input
-                      value={rule.description}
-                      onChange={(e) => updateDraft(index, 'description', e.target.value)}
-                    />
-                  </FormField>
-                </div>
-              ))}
-              <div>
-                <Button variant="secondary" type="button" onClick={addRule}>
-                  {t('pages:hooks.rulePacks.addRule', 'Add rule')}
-                </Button>
-              </div>
-            </Stack>
+            <RuleDraftsEditor
+              ruleDrafts={ruleDrafts}
+              updateDraft={updateDraft}
+              removeRule={removeRule}
+            />
           )}
 
           {formError && <ErrorBanner message={formError} />}
-
-          <div className={styles.actions}>
-            <Button variant="secondary" type="button" onClick={() => navigate(`/compliance/rule-packs/${id}`)}>
-              {t('common:cancel', 'Cancel')}
-            </Button>
-            <Button type="submit" loading={saving} disabled={!canSubmit}>
-              {t('common:save', 'Save')}
-            </Button>
-          </div>
           </Stack>
-        </form>
-      </Card>
+        </Card>
+        <div className={styles.actions}>
+          <Button variant="secondary" type="button" onClick={() => navigate(`/compliance/rule-packs/${id}`)}>
+            {t('common:cancel', 'Cancel')}
+          </Button>
+          <Button type="submit" loading={saving} disabled={!canSubmit}>
+            {t('common:save', 'Save')}
+          </Button>
+        </div>
+      </form>
     </Stack>
   );
 }

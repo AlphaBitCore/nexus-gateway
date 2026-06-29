@@ -4,8 +4,8 @@ package darwin
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net"
 	"os"

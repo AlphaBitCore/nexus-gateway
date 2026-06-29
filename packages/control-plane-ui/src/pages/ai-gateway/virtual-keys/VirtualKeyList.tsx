@@ -248,6 +248,7 @@ export function VirtualKeyListPage() {
 
       <ListFilterToolbar
         variant="boxed"
+        hideClearButton
         searchPlaceholder={t('pages:virtualKeys.searchPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}

@@ -6,8 +6,8 @@ package providers
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"

@@ -297,3 +297,83 @@ func TestNewChatCompletionsStreamEncoder(t *testing.T) {
 		t.Errorf("chat-completions encoder did not emit chat.completion.chunk envelope; got %q", string(b))
 	}
 }
+
+// TestStreamEncoders_PreserveFinishReason proves every wire encoder maps the
+// canonical finish_reason on the terminal frame (HIGH-2) so buffer mode does
+// not collapse it to the encoder's hardcoded default.
+func TestStreamEncoders_PreserveFinishReason(t *testing.T) {
+	ctx := context.Background()
+	done := provcore.Chunk{Done: true, FinishReason: "length"}
+
+	oai := newOpenAIStreamEncoder("m")
+	_, _ = oai.Write(ctx, textChunk("hi"))
+	if b, _ := oai.Write(ctx, done); !strings.Contains(string(b), `"finish_reason":"length"`) {
+		t.Errorf("openai: want finish_reason=length, got %s", b)
+	}
+
+	ant := newAnthropicStreamEncoder()
+	_, _ = ant.Write(ctx, textChunk("hi"))
+	if b, _ := ant.Write(ctx, done); !strings.Contains(string(b), `"stop_reason":"max_tokens"`) {
+		t.Errorf("anthropic: want stop_reason=max_tokens, got %s", b)
+	}
+
+	gem := &geminiStreamEncoder{}
+	if b, _ := gem.Write(ctx, done); !strings.Contains(string(b), `"finishReason":"MAX_TOKENS"`) {
+		t.Errorf("gemini: want finishReason=MAX_TOKENS, got %s", b)
+	}
+
+	coh := &cohereStreamEncoder{}
+	_, _ = coh.Write(ctx, textChunk("hi"))
+	if b, _ := coh.Write(ctx, done); !strings.Contains(string(b), `"finish_reason":"MAX_TOKENS"`) {
+		t.Errorf("cohere: want finish_reason=MAX_TOKENS, got %s", b)
+	}
+}
+
+// TestStreamEncoders_FinishReasonDefault proves an empty FinishReason preserves
+// each encoder's historical default — the live cross-format path (whose Done
+// chunk carries no captured finish_reason) is unchanged.
+func TestStreamEncoders_FinishReasonDefault(t *testing.T) {
+	ctx := context.Background()
+	done := provcore.Chunk{Done: true}
+
+	oai := newOpenAIStreamEncoder("m")
+	_, _ = oai.Write(ctx, textChunk("hi"))
+	if b, _ := oai.Write(ctx, done); !strings.Contains(string(b), `"finish_reason":"stop"`) {
+		t.Errorf("openai default: want stop, got %s", b)
+	}
+	ant := newAnthropicStreamEncoder()
+	_, _ = ant.Write(ctx, textChunk("hi"))
+	if b, _ := ant.Write(ctx, done); !strings.Contains(string(b), `"stop_reason":"end_turn"`) {
+		t.Errorf("anthropic default: want end_turn, got %s", b)
+	}
+	gem := &geminiStreamEncoder{}
+	if b, _ := gem.Write(ctx, done); !strings.Contains(string(b), `"finishReason":"STOP"`) {
+		t.Errorf("gemini default: want STOP, got %s", b)
+	}
+	coh := &cohereStreamEncoder{}
+	_, _ = coh.Write(ctx, textChunk("hi"))
+	if b, _ := coh.Write(ctx, done); !strings.Contains(string(b), `"finish_reason":"COMPLETE"`) {
+		t.Errorf("cohere default: want COMPLETE, got %s", b)
+	}
+}
+
+// TestCanonicalFinishMappers exercises the non-default arms of each reverse map.
+func TestCanonicalFinishMappers(t *testing.T) {
+	if finishReasonOrStop("") != "stop" || finishReasonOrStop("tool_calls") != "tool_calls" {
+		t.Error("finishReasonOrStop")
+	}
+	if canonicalFinishToAnthropicStop("tool_calls") != "tool_use" ||
+		canonicalFinishToAnthropicStop("content_filter") != "stop_sequence" ||
+		canonicalFinishToAnthropicStop("weird") != "weird" {
+		t.Error("canonicalFinishToAnthropicStop")
+	}
+	if canonicalFinishToGemini("tool_calls") != "STOP" ||
+		canonicalFinishToGemini("content_filter") != "SAFETY" ||
+		canonicalFinishToGemini("weird") != "OTHER" {
+		t.Error("canonicalFinishToGemini")
+	}
+	if canonicalFinishToCohere("tool_calls") != "TOOL_CALL" ||
+		canonicalFinishToCohere("stop") != "COMPLETE" {
+		t.Error("canonicalFinishToCohere")
+	}
+}

@@ -6,7 +6,7 @@
 //
 // Coverage:
 //   - `anthropic.*` model ids → delegated to the anthropic adapter
-//     (current spec: text + tool_use + thinking + Extra). The bulk of
+//     (current spec: text + tool_use + thinking). The bulk of
 //     enterprise usage.
 //   - `meta.llama*` model ids → native Llama-on-Bedrock parsing
 //     (single-prompt request / single-generation response, stream
@@ -96,19 +96,6 @@ func (a *Adapter) ExtractStreamChunk(ctx context.Context, chunk []byte, path str
 	return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 }
 
-// llamaRequestKnownKeys lists known top-level fields in a Bedrock
-// Llama request body. Anything else lands in Extra.
-var llamaRequestKnownKeys = []string{
-	"prompt", "max_gen_len", "temperature", "top_p",
-}
-
-// llamaResponseKnownKeys lists known top-level fields in a Bedrock
-// Llama non-streaming response.
-var llamaResponseKnownKeys = []string{
-	"generation", "prompt_token_count", "generation_token_count",
-	"stop_reason",
-}
-
 // extractLlamaRequest parses a Meta-Llama-on-Bedrock request body. The
 // shape is minimal: a single `prompt` string plus generation params.
 // The prompt is the entire user-facing input (Llama on Bedrock has no
@@ -128,7 +115,6 @@ func extractLlamaRequest(body []byte, _ string) (traffic.NormalizedContent, erro
 	}
 	return traffic.NormalizedContent{
 		Segments: segments,
-		Extra:    traffic.CollectExtra(body, llamaRequestKnownKeys),
 	}, nil
 }
 
@@ -155,7 +141,6 @@ func extractLlamaResponse(body []byte) (traffic.NormalizedContent, error) {
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, llamaResponseKnownKeys),
 	}, nil
 }
 

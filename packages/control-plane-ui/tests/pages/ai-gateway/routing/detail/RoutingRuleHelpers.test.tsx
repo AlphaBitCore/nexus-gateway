@@ -2,8 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
+import { useStrategyOptions } from '@/pages/ai-gateway/routing/_shared/useStrategyOptions';
 import {
-  useStrategyOptions, KvRow, MatchModelSelector, ProviderModelSelect, formatProviderMatchLine,
+  KvRow, MatchModelSelector, ProviderModelSelect, formatProviderMatchLine,
 } from '@/pages/ai-gateway/routing/detail/RoutingRuleHelpers';
 
 const groups = [

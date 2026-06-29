@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/identity"

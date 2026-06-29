@@ -104,7 +104,7 @@ func TestSnapshot_3TierMerge_FlagsOrAcrossTiers(t *testing.T) {
 }
 
 // TestSnapshot_AdditiveMerge_SpecificFalseCannotVetoGlobalTrue is the
-// F-0137 invariant: merge is strictly additive (union of bypasses). A more
+// invariant: merge is strictly additive (union of bypasses). A more
 // specific tier setting a bypass flag to false MUST NOT subtract a bypass a
 // broader tier turned on. A global BypassCache=true plus a provider tier
 // that leaves BypassCache=false still yields BypassCache=true for that

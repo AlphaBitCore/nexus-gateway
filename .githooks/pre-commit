@@ -183,6 +183,13 @@ if echo "$staged" | grep -qE '\.go$'; then
   run_hard "no prod-code TODOs" node scripts/check-no-prod-todos.mjs --staged --strict
 fi
 
+# 13b-refs. No development-program tracking references in committed comments
+# (binding; CLAUDE.md → "No archaeology in code comments"). Scoped to staged
+# Go/TS files.
+if echo "$staged" | grep -qE '\.(go|ts|tsx)$'; then
+  run_hard "no program refs in comments" node scripts/check-comment-program-refs.mjs --staged --strict
+fi
+
 # 13b. gofmt on staged Go files (binding; gofmt gate — CI enforces repo-wide in
 # the Workspace integrity job). gofmt -l lists files differing from canonical
 # formatting; it exits 0 even when it finds some, so check the output directly.

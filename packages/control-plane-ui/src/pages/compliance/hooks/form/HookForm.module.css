@@ -16,9 +16,43 @@
 }
 
 .sectionTitle {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   margin-bottom: var(--g-space-3);
+}
+
+.configSection {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--g-space-4);
+}
+
+.basicFieldsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.configTopGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.basicFieldsGrid > *,
+.configTopGrid > * {
+  min-width: 0;
+}
+
+.basicFieldsGrid :global(input),
+.basicFieldsGrid :global(button[role="combobox"]),
+.configTopGrid :global(input),
+.configTopGrid :global(button[role="combobox"]) {
+  min-height: 36px;
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
 }
 
 .monoTextarea {
@@ -26,6 +60,7 @@
   padding: var(--g-space-2) var(--g-space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
+  background: var(--color-bg);
   font-size: var(--g-font-size-sm);
   font-family: monospace;
   resize: vertical;
@@ -42,8 +77,25 @@
 }
 
 .classificationTitle {
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   margin-bottom: 6px;
+}
+
+.classificationGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+.classificationGrid > div {
+  min-width: 0;
+  padding: 0 var(--g-space-3);
+  border-left: 1px solid var(--color-border);
+}
+
+.classificationGrid > div:first-child {
+  padding-left: 0;
+  border-left: none;
 }
 
 .classificationNote {
@@ -66,18 +118,39 @@
 }
 
 .footerActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   gap: 12px;
-  justify-content: flex-end;
-  margin-top: var(--g-space-6);
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 80px;
+  margin-top: var(--g-space-4);
+  padding: var(--g-space-4) 0;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: 0 -12px 18px color-mix(in srgb, var(--color-surface) 88%, transparent);
+}
+
+.footerActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .enabledRow {
   align-items: center;
 }
 
+.switchField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+}
+
 .enabledLabel {
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-size: var(--g-font-size-sm);
 }
 
@@ -85,7 +158,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 .registryError {
@@ -104,6 +177,17 @@
   margin-bottom: var(--g-space-2);
 }
 
+.applicableIngressSelect :global(label) {
+  display: none;
+}
+
+.applicableIngressSelect :global(button) {
+  min-height: 36px;
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
 .categorySourceHint {
   color: var(--color-text-muted);
   margin-left: 8px;
@@ -112,4 +196,31 @@
 .sectionTitleNoMargin {
   composes: sectionTitle;
   margin-top: 0;
+}
+
+@media (max-width: 1100px) {
+  .basicFieldsGrid,
+  .configTopGrid,
+  .classificationGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .basicFieldsGrid,
+  .configTopGrid,
+  .classificationGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .classificationGrid > div {
+    padding: var(--g-space-2) 0 0;
+    border-left: none;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .classificationGrid > div:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
 }

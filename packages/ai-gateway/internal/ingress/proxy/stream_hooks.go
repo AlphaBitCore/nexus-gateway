@@ -1,7 +1,7 @@
 // stream_hooks.go — the response-hooks stage of the streaming stage
-// chain: builds the per-checkpoint compliance pipeline runner and
-// decides whether assistant deltas are held back until the first
-// checkpoint approves. Owns streamState.hookRunner / holdBack.
+// chain: builds the per-checkpoint compliance pipeline runner and the
+// scope-derived enforcement posture (block/redact) that routes the stream.
+// Owns streamState.hookRunner.
 package proxy
 
 import (
@@ -61,22 +61,14 @@ func (st streamHooksStage) run() bool {
 		return pipeline.Execute(ctx, input)
 	}
 
-	// HoldBack accumulates assistant deltas server-side until the first
-	// compliance checkpoint approves. With FirstInspectChars=400 a
-	// short response (e.g. Claude Code's "say hi" → ~5 tokens) never
-	// hits the checkpoint mid-stream, so every chunk waits for the
-	// final flush at end-of-stream — and the client sees a buffered
-	// (Content-Length-bounded) body instead of a real SSE stream,
-	// breaking Anthropic SDK / Claude Code's streaming UI rendering.
-	//
-	// Trade-off: HoldBack is ONLY useful when a response-stage hook
-	// pipeline can actually reject content. If the response stage has
-	// no rules wired (BuildPipeline returns nil), there is nothing to
-	// gate on — we should pass chunks through live. Probe the resolver
-	// once at stream entry; if the pipeline is nil we drop HoldBack so
-	// the client sees real-time deltas. If a rule pack is configured
-	// later, the next request rebuilds and re-enters HoldBack.
-	holdBack := true
+	// Probe the response-stage resolver once at stream entry to decide whether the
+	// live pipeline installs the Registry-normalize PreHook: assume a response hook
+	// may run (so hooks see structured chat content) and lower to false only when
+	// the probe proves there are no response-stage rules. The live path is
+	// audit-only (B1) — it never holds back or rewrites deltas — so this probe no
+	// longer gates delivery; it only skips the normalize cost on rule-free streams.
+	responseHooksActive := true
+	var enforcingBlock, enforcingRedact bool
 	if h.deps != nil && h.deps.HookConfigCache != nil {
 		probe, probeErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
 			"response", "AI_GATEWAY",
@@ -84,17 +76,32 @@ func (st streamHooksStage) run() bool {
 			streamModalities,
 			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
 		)
-		// Best-effort probe: this only decides whether to drop HoldBack for a
-		// snappier UI when no response-stage rules exist. On a build error
-		// (probeErr != nil) we deliberately keep holdBack=true — the actual
-		// refusal is enforced by hookRunner above when the stream pipeline is
-		// built per-checkpoint; the probe must not Approve-or-refuse on its own.
-		if probeErr == nil && probe == nil {
-			holdBack = false
+		// The probe decides whether to skip the PreHook normalize when no
+		// response-stage rules exist, plus the scope-derived enforcement posture
+		// that stream_shape.go reads to pick the streaming mode upfront.
+		switch {
+		case probeErr == nil && probe == nil:
+			responseHooksActive = false
+		case probeErr == nil && probe != nil:
+			// Scope-derived enforcement posture is content-independent (it reads the
+			// bound hooks' onMatch actions, not the body), so it is safe to read off
+			// the probe here.
+			enforcingBlock = probe.MayBlock()
+			enforcingRedact = probe.MayRedact()
+		default:
+			// probeErr != nil → a FAIL-CLOSED response hook is unbuildable (the only
+			// condition under which BuildPipeline errors). The live path is audit-only
+			// and can no longer enforce in-stream, so force the request to BUFFER
+			// (enforcingBlock=true): redactCanonicalBuffer re-runs the build, hits the
+			// same error, and fails closed with an in-band error frame. Without this a
+			// fail-closed hook would silently fail OPEN on a live/passthrough stream.
+			enforcingBlock = true
 		}
 	}
 
 	s.hookRunner = hookRunner
-	s.holdBack = holdBack
+	s.responseHooksActive = responseHooksActive
+	s.responseEnforcingBlock = enforcingBlock
+	s.responseEnforcingRedact = enforcingRedact
 	return true
 }

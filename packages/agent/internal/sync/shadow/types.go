@@ -25,7 +25,7 @@ package shadow
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 // ConfigState mirrors thingclient.ConfigState for shadow config

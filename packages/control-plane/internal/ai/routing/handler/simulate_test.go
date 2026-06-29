@@ -1,7 +1,7 @@
 package routing
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -118,7 +118,7 @@ func TestRoutingSimulate_UpstreamUnreachable(t *testing.T) {
 }
 
 // TestRoutingSimulate_AttachesBearer verifies the routing-simulate forwarder
-// carries Authorization: Bearer <token> on the CP→ai-gateway call (F-0001).
+// carries Authorization: Bearer <token> on the CP→ai-gateway call.
 func TestRoutingSimulate_AttachesBearer(t *testing.T) {
 	const tok = "cp-internal-token"
 	var gotAuth string

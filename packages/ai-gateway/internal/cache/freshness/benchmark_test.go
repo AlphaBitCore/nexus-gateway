@@ -1,8 +1,8 @@
 package freshness
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -105,7 +105,7 @@ func BenchmarkDetector_IsTimeSensitive_50Rules_200Words(b *testing.B) {
 
 // BenchmarkDetector_IsTimeSensitive_200Rules benchmarks 200-rule detection on
 // a ~100-character no-match prompt. Verifies that the upper rule-count bound
-// from NFR-2 still stays within budget.
+// still stays within budget.
 func BenchmarkDetector_IsTimeSensitive_200Rules(b *testing.B) {
 	d := buildBenchmarkDetector(b, 200)
 	m := msgs(benchmarkPrompt)

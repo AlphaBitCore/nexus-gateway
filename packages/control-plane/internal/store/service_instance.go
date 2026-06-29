@@ -6,8 +6,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 )
 

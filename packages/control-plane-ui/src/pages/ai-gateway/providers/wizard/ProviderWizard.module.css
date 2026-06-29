@@ -696,6 +696,8 @@
 
 .modelTableWrapper {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: min(60vh, 480px);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-lg);
 }
@@ -778,4 +780,38 @@
   color: var(--color-danger);
   font-size: var(--g-font-size-xs);
   margin-top: var(--g-space-1);
+}
+
+/* Fetch-from-/v1/models section on the custom-provider models step. */
+.fetchModelsSection {
+  margin-bottom: var(--g-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.fetchModelsHint {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.fetchModelsUnsupported {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-warning, var(--color-text-muted));
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-2) var(--g-space-3);
+  margin: 0;
+}
+
+.fetchModelsError {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-2) var(--g-space-3);
+  margin: 0;
 }

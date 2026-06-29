@@ -3,8 +3,8 @@ package senders
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"time"
 
@@ -20,7 +20,7 @@ func NewWebhook(c *http.Client) *Webhook {
 			Caller:         "hub-alert-webhook",
 			Timeout:        10 * time.Second,
 			PropagateReqID: true,
-			// F-0370: the URL is admin-supplied and external by nature, so this
+			// The URL is admin-supplied and external by nature, so this
 			// is an SSRF primitive. Block every non-public address (loopback /
 			// RFC-1918 / link-local / metadata) at dial time; the guard runs on
 			// the resolved IP so it also defeats DNS-rebinding.

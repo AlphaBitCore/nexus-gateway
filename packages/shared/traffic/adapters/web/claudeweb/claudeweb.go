@@ -47,19 +47,6 @@ import (
 
 const adapterID = "claude-web"
 
-// requestKnownKeys lists fields in the claude.ai conversation completion
-// request body that the adapter recognises. Anything else lands in
-// Extra so a future protocol revision (a brand-new field carrying user
-// data) reaches compliance hooks.
-var requestKnownKeys = []string{
-	"prompt", "parent_message_uuid", "timezone", "personalized_styles",
-	"locale", "tools", "attachments", "files", "sync_sources",
-	"rendering_mode", "render_to_format", "max_tokens",
-	"completion", "model", "conversation_uuid", "organization_uuid",
-	"client_metadata", "stream", "stop_sequences",
-	"streaming_mode", "input_metadata",
-}
-
 // Adapter implements claude-web extraction.
 type Adapter struct{}
 
@@ -152,7 +139,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 

@@ -1,7 +1,7 @@
 .outlineBtn {
   padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   background: transparent;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
@@ -9,20 +9,74 @@
   transition: all var(--g-transition-fast);
 }
 
+.basicFieldsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.limitFieldsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.basicFieldsGrid > *,
+.limitFieldsGrid > * {
+  min-width: 0;
+}
+
+.modelSearchBox {
+  position: relative;
+  width: min(480px, 100%);
+  flex: 0 0 min(480px, 100%);
+}
+
+.modelSearchIcon {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  border: 1.8px solid var(--color-text-muted);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.modelSearchIcon::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  width: 7px;
+  height: 1.8px;
+  border-radius: var(--g-radius-xs);
+  background: var(--color-text-muted);
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+
 .modelSearchInput {
-  flex: 1;
-  height: 32px;
-  padding: 0 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px 0 40px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   font-size: var(--g-font-size-sm);
   outline: none;
+  background: var(--color-bg);
 }
 
 .modelSelectAllBtn {
-  padding: 4px 10px;
+  height: 36px;
+  padding: 0 10px;
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
@@ -35,7 +89,8 @@
   overflow-y: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  padding: var(--g-space-2);
+  padding: 0;
+  background: var(--color-bg);
 }
 
 .providerHeader {
@@ -43,24 +98,32 @@
   align-items: center;
   gap: 6px;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0;
-  padding: 4px 8px;
-  background: var(--color-bg);
-  border-radius: var(--g-radius-sm);
+  min-height: 36px;
+  padding: 8px 12px;
+  background: transparent;
+  border-bottom: 1px solid var(--color-border-light);
+  border-radius: 0;
   cursor: pointer;
   user-select: none;
+}
+
+.providerGroupWrapper:last-child .providerHeader {
+  border-bottom: none;
 }
 
 .modelLabel {
   display: flex;
   align-items: center;
   gap: var(--g-space-2);
-  padding: 4px 8px 4px 16px;
+  min-height: 34px;
+  padding: 6px 12px 6px 24px;
   cursor: pointer;
   font-size: var(--g-font-size-sm);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .filterSelect {
@@ -95,11 +158,12 @@
   gap: 4px;
   font-size: var(--g-font-size-sm);
   white-space: nowrap;
+  margin-top: 8px;
 }
 
 .secretKeyContainer {
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   padding: 12px 16px;
   background: var(--color-surface);
   border-radius: var(--g-radius-md);
@@ -116,8 +180,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   margin-bottom: 6px;
 }
@@ -125,6 +189,7 @@
 .modelSearchRow {
   margin-bottom: var(--g-space-2);
   align-items: center;
+  flex-wrap: nowrap;
 }
 
 .emptyModelHint {
@@ -134,11 +199,11 @@
 }
 
 .providerGroupWrapper {
-  margin-bottom: var(--g-space-2);
+  margin-bottom: 0;
 }
 
 .providerCounter {
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   color: var(--color-text-muted);
 }
 
@@ -163,19 +228,19 @@
 }
 
 .successTitle {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-success-dark);
 }
 
 .secretKeyLabel {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
 .keyWarning {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-warning-dark);
 }
 
@@ -183,14 +248,15 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   margin-bottom: 6px;
 }
 
 .projectSelect {
   width: 100%;
-  height: 40px;
+  height: 36px;
+  background: var(--color-bg);
 }
 
 .enabledRow {
@@ -198,8 +264,46 @@
 }
 
 .formActions {
-  justify-content: flex-end;
-  margin-top: var(--g-space-2);
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  width: 100%;
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 80px;
+  margin-top: var(--g-space-4);
+  padding: var(--g-space-4) 0;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: 0 -12px 18px color-mix(in srgb, var(--color-surface) 88%, transparent);
+}
+
+.formActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+@media (max-width: 1100px) {
+  .basicFieldsGrid,
+  .limitFieldsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .basicFieldsGrid,
+  .limitFieldsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .modelSearchRow {
+    flex-wrap: wrap;
+  }
+
+  .modelSearchBox {
+    flex-basis: 100%;
+    width: 100%;
+  }
 }
 
 /* ── Extracted from inline styles ────────────────────────────────────── */

@@ -7,11 +7,23 @@ import type { CreatePersonalApiKeyInput } from '@/api/services/iam/personalApiKe
 import {
   Card, Stack, Button, Badge, statusToVariant,
   DataTable, AlertDialog, Dialog, SecretDialog, Skeleton, ErrorBanner,
+  RowActions, RowActionIconButton, RowDeleteAction,
 } from '@/components/ui';
 import { useTheme } from '@/theme/useTheme';
 import type { DataTableColumn } from '@/components/ui';
 import type { AdminApiKey } from '@/api/types';
 import styles from './AccountApiKeysTab.module.css';
+
+function RegenerateActionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 12a9 9 0 0 1-15.3 6.36" />
+      <path d="M3 12A9 9 0 0 1 18.3 5.64" />
+      <path d="M18 3v4h-4" />
+      <path d="M6 21v-4h4" />
+    </svg>
+  );
+}
 
 export function AccountApiKeysTab() {
   const { t } = useTranslation();
@@ -101,24 +113,12 @@ export function AccountApiKeysTab() {
       key: 'actions',
       label: t('pages:account.keyActions'),
       render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={(e) => e.stopPropagation()}>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); regenerateKey(r.id); }}
-          >
-            {t('pages:account.keyRegenerate')}
-          </Button>
-          <Button
-            type="button"
-            variant="danger"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); setDeleting(r); }}
-          >
-            {t('common:delete')}
-          </Button>
-        </Stack>
+        <RowActions>
+          <RowActionIconButton label={t('pages:account.keyRegenerate')} onAction={() => regenerateKey(r.id)}>
+            <RegenerateActionIcon />
+          </RowActionIconButton>
+          <RowDeleteAction label={t('common:delete')} onAction={() => setDeleting(r)} />
+        </RowActions>
       ),
     },
   ];
@@ -131,7 +131,7 @@ export function AccountApiKeysTab() {
             <h2 style={{ fontSize: 'var(--g-font-size-md)', fontWeight: 'var(--g-font-weight-semibold)', marginBottom: 'var(--g-space-1)' }}>{t('pages:account.apiKeysTitle')}</h2>
             <p className={styles.descriptionText}>{t('pages:account.apiKeysDescription', { productName: brand.productName })}</p>
           </div>
-          <Button type="button" onClick={() => setShowCreateDialog(true)}>
+          <Button type="button" className={styles.createKeyButton} onClick={() => setShowCreateDialog(true)}>
             {t('pages:account.createKey')}
           </Button>
         </Stack>

@@ -114,7 +114,16 @@ func (f *fireAggregator) Sources() []EventSource { return f.sources }
 func (f *fireAggregator) OnEvent(_ *Runtime, evt *Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.events = append(f.events, evt)
+	// The Engine hands a transient Event whose Traffic pointer is pooled/reused
+	// across records (real aggregators copy the scalars they need in OnEvent and
+	// never retain it). To retain events for later assertions, take a shallow
+	// copy of the Event and its Traffic struct here.
+	ev := *evt
+	if evt.Traffic != nil {
+		tc := *evt.Traffic
+		ev.Traffic = &tc
+	}
+	f.events = append(f.events, &ev)
 }
 
 func (f *fireAggregator) MinWarmupSec(_ map[string]any) int { return f.warmupSec }
@@ -426,6 +435,79 @@ func TestHandleMQMessage_TrafficEventDispatched(t *testing.T) {
 	}
 	if other.eventCount() != 0 {
 		t.Errorf("agent-source aggregator should have received 0 events, got %d", other.eventCount())
+	}
+}
+
+// handleMQMessage — a multi-record NDJSON frame (the shape the gateway
+// actually publishes under load: N records separated by '\n') must dispatch
+// EVERY record to the matching aggregator. The pre-fix handler decoded the
+// whole frame as one JSON value and dropped the entire frame on the second
+// record's '{' ("invalid character '{' after top-level value"), so threshold
+// alerting on batched traffic was effectively non-functional.
+
+func TestHandleMQMessage_MultiRecordNDJSONFrameDispatchesEvery(t *testing.T) {
+	e := newEngineForTest(t, &fakeRuleLister{}, &fakeAlertSink{}, &stubMQConsumer{})
+	agg := &fireAggregator{id: "rule.x", sources: []EventSource{SourceAITraffic}}
+	e.Register(agg)
+
+	// Three compact single-line records joined by '\n' — exactly the NDJSON
+	// frame the db-writer's splitFrame handles. A trailing newline (blank final
+	// segment) is included to confirm empty lines are skipped, not dispatched.
+	// entityId (a view field) is the per-record marker; AlertView intentionally
+	// omits the producer's id, so the test distinguishes records by a field the
+	// alert path actually decodes.
+	frame := []byte(
+		`{"entityId":"e1","timestamp":"2026-05-16T00:00:00Z"}` + "\n" +
+			`{"entityId":"e2","timestamp":"2026-05-16T00:00:01Z"}` + "\n" +
+			`{"entityId":"e3","timestamp":"2026-05-16T00:00:02Z"}` + "\n",
+	)
+	if err := e.handleMQMessage(trafficSubjects[SourceAITraffic], &mq.Message{Data: frame}); err != nil {
+		t.Fatalf("handleMQMessage: %v", err)
+	}
+
+	if agg.eventCount() != 3 {
+		t.Fatalf("multi-record frame must dispatch every record: got %d, want 3", agg.eventCount())
+	}
+	for i, want := range []string{"e1", "e2", "e3"} {
+		got := ""
+		if ev := agg.events[i].Traffic; ev != nil && ev.EntityID != nil {
+			got = *ev.EntityID
+		}
+		if got != want {
+			t.Errorf("record %d EntityID = %q, want %q", i, got, want)
+		}
+	}
+}
+
+// handleMQMessage — one poison record in a multi-record frame skips only that
+// record; its siblings still dispatch. The pre-fix handler would have dropped
+// the entire frame.
+
+func TestHandleMQMessage_MultiRecordFrameSkipsOnlyBadRecord(t *testing.T) {
+	e := newEngineForTest(t, &fakeRuleLister{}, &fakeAlertSink{}, &stubMQConsumer{})
+	agg := &fireAggregator{id: "rule.x", sources: []EventSource{SourceAITraffic}}
+	e.Register(agg)
+
+	frame := []byte(
+		`{"entityId":"e1","timestamp":"2026-05-16T00:00:00Z"}` + "\n" +
+			`not json` + "\n" +
+			`{"entityId":"e3","timestamp":"2026-05-16T00:00:02Z"}`,
+	)
+	if err := e.handleMQMessage(trafficSubjects[SourceAITraffic], &mq.Message{Data: frame}); err != nil {
+		t.Fatalf("a bad record must not fail the frame (would redeliver forever): %v", err)
+	}
+
+	if agg.eventCount() != 2 {
+		t.Fatalf("bad record must skip only itself: got %d good records, want 2", agg.eventCount())
+	}
+	survivor := func(i int) string {
+		if ev := agg.events[i].Traffic; ev != nil && ev.EntityID != nil {
+			return *ev.EntityID
+		}
+		return ""
+	}
+	if survivor(0) != "e1" || survivor(1) != "e3" {
+		t.Errorf("surviving records = %q,%q; want e1,e3", survivor(0), survivor(1))
 	}
 }
 

@@ -14,7 +14,7 @@ import (
 // list. The agent consumes 10 shadow keys (diag_mode is a per-thing Cat A
 // override carrying the diagnostic-mode window). A future edit that silently
 // drops a known key would degrade the agent back to "ignore unknown" and Hub
-// would never see it apply — historically the #91 incident.
+// would never see it apply.
 func TestBuildConfigLoader_AllKeysRegistered(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	tracker := thingclient.NewOutcomeTracker()

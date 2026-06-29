@@ -62,7 +62,8 @@ HandleHello(_In_ WDFREQUEST Request)
     out->driverProtocolVersion = NEXUS_WFP_PROTOCOL_VERSION;
     out->capabilities = NEXUS_CAP_IPV6_REDIRECT
                       | NEXUS_CAP_UDP_REDIRECT
-                      | NEXUS_CAP_KILL_SWITCH;
+                      | NEXUS_CAP_KILL_SWITCH
+                      | NEXUS_CAP_QUIC_FALLBACK;
     out->driverBuildId = 0;
 
     WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, sizeof(*out));

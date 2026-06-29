@@ -81,7 +81,7 @@ func TestHashKey_HMAC(t *testing.T) {
 	a := NewAuthenticator(nil, mustKeyring("test-secret"), quietLogger())
 
 	// The authenticator derives the VK-domain sub-key per keyring version
-	// (SEC-W2-01) — NOT the raw master. Verify hashKeyWith under the stored
+	// — NOT the raw master. Verify hashKeyWith under the stored
 	// current-version sub-key matches an independent derivation.
 	sub := keyderive.DeriveSubkey([]byte("test-secret"), keyderive.ClassAPIKeyVirtualKey)
 	mac := hmac.New(sha256.New, sub[:])

@@ -1,19 +1,32 @@
-.platformRow {
-  display: flex;
-  gap: var(--g-space-2);
-  align-items: center;
-  flex-wrap: wrap;
+.platformTabs {
+  margin-top: -12px;
+  margin-bottom: calc(16px - var(--g-space-6));
+}
+
+.platformTabsList {
+  width: 100%;
+}
+
+.installCard :global(p),
+.installCard .steps,
+.installCard .steps li {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.installCard :global(p) {
+  margin: 0;
 }
 
 .sectionHeading {
   font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0 0 var(--g-space-2) 0;
 }
 
 .subHeading {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   margin: var(--g-space-2) 0 var(--g-space-1) 0;
   text-transform: uppercase;
@@ -79,7 +92,7 @@
   color: var(--color-warning-text);
   border-radius: var(--g-radius-sm);
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 /* ─── Troubleshooting card ─────────────────────────────────────── */
@@ -120,7 +133,7 @@
   gap: var(--g-space-1);
   padding: var(--g-space-1) var(--g-space-3);
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--g-radius-full);
   background: var(--color-surface);
   color: var(--color-text);
   font-size: var(--g-font-size-xs);
@@ -137,7 +150,7 @@
   background: var(--color-accent-bg);
   border-color: var(--color-accent);
   color: var(--color-accent-text);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .faqChipClear {
@@ -155,7 +168,7 @@
 
 .faqSubheading {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   margin: 0 0 var(--g-space-2) 0;
   display: flex;
@@ -165,7 +178,7 @@
 
 .faqCount {
   color: var(--color-text-muted);
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   font-size: var(--g-font-size-xs);
 }
 
@@ -184,7 +197,7 @@
 .faqSummary {
   padding: var(--g-space-2) var(--g-space-3);
   cursor: pointer;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   list-style: none;
   display: flex;
   align-items: center;
@@ -222,7 +235,7 @@
   padding: 2px var(--g-space-2);
   border-radius: var(--g-radius-sm);
   font-size: var(--g-font-size-xs);
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   text-transform: uppercase;
   letter-spacing: 0;
 }
@@ -274,7 +287,7 @@
   padding: var(--g-space-2) var(--g-space-3);
   background: var(--color-bg-subtle);
   color: var(--color-text-muted);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-size: var(--g-font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -291,7 +304,7 @@
 }
 
 .verifyHostname {
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .verifyMono {
@@ -307,7 +320,7 @@
   padding: 2px var(--g-space-2);
   border-radius: var(--g-radius-sm);
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .verifyBadgeOk {
@@ -349,7 +362,7 @@
 }
 
 .verifyPanelEmptyTitle {
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-size: var(--g-font-size-sm);
   color: var(--color-text);
   margin-bottom: var(--g-space-1);

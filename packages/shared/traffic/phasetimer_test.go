@@ -117,6 +117,31 @@ func TestPhaseTimer_SnapshotDetail_FloorsSubMs(t *testing.T) {
 	}
 }
 
+// TestPhaseTimer_MicrosecondPhasesKeepResolution pins the F2 fix: phases whose
+// key ends in `_us` (the sub-ms hook framing segments) record their actual
+// microsecond value instead of being floored to 0/1 by millisecond truncation.
+// A 700µs hook_pipeline phase must surface as 700, not be dropped (plain) or
+// floored to 1 (detail) the way a millisecond-keyed phase would be.
+func TestPhaseTimer_MicrosecondPhasesKeepResolution(t *testing.T) {
+	pt := NewPhaseTimer()
+	pt.MarkBetween(PhaseHookPipeline, 700*time.Microsecond) // sub-ms, `_us` key
+	pt.MarkBetween(PhaseHookExtract, 1500*time.Microsecond) // 1.5ms, `_us` key
+	pt.MarkBetween(PhaseAuth, 700*time.Microsecond)         // sub-ms, `_ms` key — control
+
+	plain := pt.Snapshot()
+	if plain[string(PhaseHookPipeline)] != 700 {
+		t.Errorf("hook_pipeline_us (700µs) must record 700, got %d", plain[string(PhaseHookPipeline)])
+	}
+	if plain[string(PhaseHookExtract)] != 1500 {
+		t.Errorf("hook_extract_us (1500µs) must record 1500, got %d", plain[string(PhaseHookExtract)])
+	}
+	// The `_ms` control phase still drops sub-ms in plain mode — proving the unit
+	// switch is keyed on the suffix, not global.
+	if _, ok := plain["auth_ms"]; ok {
+		t.Errorf("auth_ms (700µs, ms-keyed) must still drop in plain Snapshot: %v", plain)
+	}
+}
+
 func TestPhaseTimer_SnapshotDetail_ZeroStillDropped(t *testing.T) {
 	pt := NewPhaseTimer()
 	pt.MarkBetween(PhaseAuth, 0) // exactly zero — drop even in detail mode

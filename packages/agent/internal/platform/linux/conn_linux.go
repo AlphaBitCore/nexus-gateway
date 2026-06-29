@@ -112,7 +112,7 @@ func (p *LinuxPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
 	case api.DecisionPassthrough:
 		serverAddr := net.JoinHostPort(dstIP, strconv.Itoa(dstPort))
 		// SO_MARK-stamped dialer so this upstream connection is
-		// excluded from our own REDIRECT rule (FR-L4).
+		// excluded from our own REDIRECT rule.
 		interceptDoneAt = time.Now()
 		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		serverConn, err := p.upstreamDialer.DialContext(dialCtx, "tcp", serverAddr)
@@ -138,7 +138,7 @@ func (p *LinuxPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
 			// server-speaks-first protocol). Fail open to passthrough so
 			// the user's flow still works.
 			serverAddr := net.JoinHostPort(dstIP, strconv.Itoa(dstPort))
-			// SO_MARK-stamped (FR-L4) — same reasoning as the
+			// SO_MARK-stamped — same reasoning as the
 			// passthrough path above.
 			interceptDoneAt = time.Now()
 			dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

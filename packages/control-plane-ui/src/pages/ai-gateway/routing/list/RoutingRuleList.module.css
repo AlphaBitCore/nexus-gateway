@@ -1,18 +1,165 @@
-.filterSelect {
+.filterToolbar {
+  display: flex;
+  flex-direction: column;
+}
+
+.pageStack > .filterToolbar + * {
+  margin-top: calc(8px - var(--g-space-6));
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  width: min(100%, 420px);
+  max-width: 100%;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-surface);
+}
+
+.searchIcon {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin: 0 8px 0 17px;
+  border: 1.8px solid var(--color-text-muted);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.searchIcon::after {
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  width: 7px;
+  height: 1.8px;
+  border-radius: var(--g-radius-xs);
+  background: var(--color-text-muted);
+  content: '';
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+
+.searchInput {
+  min-width: 0;
+  min-height: 36px;
   height: 36px;
-  padding: 0 var(--g-space-3);
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
+.searchInput:focus,
+.searchInput:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.searchBox:focus-within {
+  border-color: var(--color-link);
+}
+
+.clearSearchButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--g-space-2);
+  border: 0;
+  border-radius: var(--g-radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.clearSearchButton:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.clearSearchButton span,
+.clearSearchButton span::after {
+  position: absolute;
+  width: 12px;
+  height: 1.5px;
+  border-radius: var(--g-radius-full);
+  background: currentColor;
+  content: '';
+}
+
+.clearSearchButton span {
+  transform: rotate(45deg);
+}
+
+.clearSearchButton span::after {
+  left: 0;
+  top: 0;
+  transform: rotate(90deg);
+}
+
+.filterSelect {
+  appearance: none;
+  width: 220px;
+  height: 38px;
+  padding: 0 36px 0 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  background: var(--color-surface);
-  color: var(--color-text);
+  background-color: var(--color-surface);
+  background-image: url('/icons/chevron-down.svg');
+  background-position: calc(100% - 12px) 50%;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+  color: var(--color-text-secondary);
   font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
   cursor: pointer;
 }
 
+.filterSelect:focus,
 .filterSelect:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  border-color: var(--color-border);
+  outline: none;
+  box-shadow: none;
+}
+
+.filterMeta {
+  margin-top: 20px;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+}
+
+@media (max-width: 720px) {
+  .filterRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .searchBox,
+  .filterSelect {
+    width: 100%;
+  }
 }
 
 .retryPolicyBadge {

@@ -6,8 +6,8 @@ package drift
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"testing"
@@ -264,7 +264,7 @@ func TestDriftDetector_Run_ExhaustedRetries_UpdateStatusError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// F-0112 content-reconcile pass
+// content-reconcile pass
 // ---------------------------------------------------------------------------
 
 // getThingCols mirrors store.GetThing's SELECT column order (thing_registry.go).
@@ -335,7 +335,7 @@ func TestContentConverged(t *testing.T) {
 	if contentConverged(diverged) {
 		t.Error("one unsynced desired key must be NOT converged")
 	}
-	// BLOCKER regression (F-0112 review): a reported-only key (InDesired=false)
+	// A reported-only key (InDesired=false)
 	// is a stale key the Hub no longer desires — the reported map never prunes,
 	// so it lingers forever. It is reported as unsynced (desired=nil != reported)
 	// but is NOT actionable drift (ForceResyncAll can't clear it). It must be
@@ -380,7 +380,7 @@ func TestDriftDetector_runContentPassDue(t *testing.T) {
 }
 
 // TestDriftDetector_ContentPass_HealsDivergentLeavesConverged is the core
-// F-0112 assertion: two online Things at EQUAL versions, one with divergent
+// assertion: two online Things at EQUAL versions, one with divergent
 // reported content and one converged. The content pass force-resyncs the
 // divergent one (full bump-and-push DB chain) and leaves the converged one
 // untouched (no heal, no version bump).

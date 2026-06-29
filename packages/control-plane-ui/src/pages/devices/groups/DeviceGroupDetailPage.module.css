@@ -1,0 +1,150 @@
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+}
+
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--g-space-4);
+  min-width: 0;
+}
+
+.headerAside {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--g-space-3);
+}
+
+.headerMeta {
+  display: flex;
+  min-width: 360px;
+  gap: var(--g-space-4);
+  justify-content: flex-end;
+}
+
+.headerMetaItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.headerMetaItem strong {
+  color: inherit;
+  font-weight: var(--g-font-weight-medium);
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.detailTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
+}
+
+.detailSubtitle {
+  margin: 4px 0 0;
+  max-width: 760px;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+}
+
+.headerTitleRow :global(button),
+.headerTitleRow :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.membersSection {
+  display: block;
+}
+
+.membersTitle {
+  flex: 1;
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 24px;
+}
+
+.addDeviceButton,
+.addDeviceButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.actionButtonText,
+.actionButtonText :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.membersSection :global(table th:last-child),
+.membersSection :global(table td:last-child) {
+  width: 96px;
+  min-width: 96px;
+}
+
+@media (max-width: 720px) {
+  .headerTitleRow {
+    flex-direction: column;
+  }
+
+  .headerAside {
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .headerMeta {
+    min-width: 0;
+    width: 100%;
+  }
+}

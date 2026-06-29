@@ -71,13 +71,13 @@ func TestKeywordFilter_NoMatch(t *testing.T) {
 	}
 }
 
-func TestKeywordFilter_SoftReject(t *testing.T) {
-	// Per-pattern severity is gone; operators express block-soft
-	// via onMatch.inflightAction.
+func TestKeywordFilter_RedactAction(t *testing.T) {
+	// Per-pattern severity is gone; operators set the single onMatch.action.
+	// action=redact yields a Modify decision and stamps the redact action.
 	cfg := makeKeywordConfig([]map[string]any{
 		{"pattern": "maybe-bad", "category": "review"},
 	}, false)
-	cfg.Config["onMatch"] = map[string]any{"inflightAction": "block-soft"}
+	cfg.Config["onMatch"] = map[string]any{"action": "redact"}
 
 	hook, err := NewKeywordFilter(cfg)
 	if err != nil {
@@ -91,8 +91,45 @@ func TestKeywordFilter_SoftReject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result.Decision != BlockSoft {
-		t.Errorf("expected BLOCK_SOFT, got %s", result.Decision)
+	if result.Decision != Modify {
+		t.Errorf("expected MODIFY (action=redact), got %s", result.Decision)
+	}
+	if result.Action != ActionRedact {
+		t.Errorf("result.Action = %q, want redact", result.Action)
+	}
+	// Keyword matches carry no spans (the audit writer degrades to a
+	// placeholder); the hook itself emits none.
+	if len(result.TransformSpans) != 0 {
+		t.Errorf("keyword-filter produces no spans, got %d", len(result.TransformSpans))
+	}
+}
+
+func TestKeywordFilter_ApproveAction(t *testing.T) {
+	// action=approve: the match is recorded (reason/reasonCode/action stamped)
+	// but the request flows through unchanged.
+	cfg := makeKeywordConfig([]map[string]any{
+		{"pattern": "watch-me", "category": "monitor"},
+	}, false)
+	cfg.Config["onMatch"] = map[string]any{"action": "approve"}
+
+	hook, err := NewKeywordFilter(cfg)
+	if err != nil {
+		t.Fatalf("NewKeywordFilter: %v", err)
+	}
+	result, err := hook.Execute(context.Background(), &HookInput{
+		Normalized: PayloadFromTextSegments([]string{"please watch-me closely"}),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Decision != Approve {
+		t.Errorf("expected APPROVE (action=approve), got %s", result.Decision)
+	}
+	if result.Action != ActionApprove {
+		t.Errorf("result.Action = %q, want approve", result.Action)
+	}
+	if result.ReasonCode != "KEYWORD_BLOCKED" {
+		t.Errorf("match must still record reasonCode, got %q", result.ReasonCode)
 	}
 }
 
@@ -212,13 +249,12 @@ func TestFlagsForCaseSensitive(t *testing.T) {
 	}
 }
 
-// TestKeywordFilter_StampsStorageActionOnMatch: a keyword match must carry
-// the hook's storageAction even when the inflight decision is approve — the
-// pipeline stamps storage policy only for non-Approve decisions, and without
-// the stamp an "approve inflight, redact/drop storage" policy would persist
-// the matched content. Keyword matches carry no spans, so the audit writer
-// degrades a redact storage policy to the drop-content placeholder.
-func TestKeywordFilter_StampsStorageActionOnMatch(t *testing.T) {
+// TestKeywordFilter_LegacyOnMatchKeysMapToAction locks the back-compat
+// deprecation window: a config written with the legacy inflightAction /
+// storageAction pair is folded to the single action via ActionFromLegacy.
+// approve-inflight + redacting-storage upgrades to redact, so the matched
+// request becomes a Modify with action=redact. A clean input stamps nothing.
+func TestKeywordFilter_LegacyOnMatchKeysMapToAction(t *testing.T) {
 	cfg := makeKeywordConfig([]map[string]any{
 		{"pattern": "project-aurora", "category": "confidential", "severity": "hard"},
 	}, false)
@@ -232,11 +268,11 @@ func TestKeywordFilter_StampsStorageActionOnMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result.Decision != Approve {
-		t.Errorf("decision = %s, want APPROVE (inflight untouched)", result.Decision)
+	if result.Decision != Modify {
+		t.Errorf("decision = %s, want MODIFY (approve+redact storage → redact)", result.Decision)
 	}
-	if string(result.StorageAction) != "redact" {
-		t.Errorf("storageAction = %q, want self-stamped redact", result.StorageAction)
+	if result.Action != ActionRedact {
+		t.Errorf("result.Action = %q, want redact", result.Action)
 	}
 
 	// A clean input must stamp nothing.
@@ -244,7 +280,36 @@ func TestKeywordFilter_StampsStorageActionOnMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute clean: %v", err)
 	}
-	if clean.StorageAction != "" {
-		t.Errorf("clean input stamped storageAction %q", clean.StorageAction)
+	if clean.Action != "" {
+		t.Errorf("clean input stamped action %q", clean.Action)
+	}
+	if clean.Decision != Approve {
+		t.Errorf("clean input decision = %s, want APPROVE", clean.Decision)
+	}
+}
+
+// TestKeywordFilter_LegacyBlockHardMapsToBlock locks that a legacy
+// inflightAction=block-hard config maps to the single block action
+// (Decision=RejectHard).
+func TestKeywordFilter_LegacyBlockHardMapsToBlock(t *testing.T) {
+	cfg := makeKeywordConfig([]map[string]any{
+		{"pattern": "forbidden", "category": "blocked"},
+	}, false)
+	cfg.Config["onMatch"] = map[string]any{"inflightAction": "block-hard"}
+	hook, err := NewKeywordFilter(cfg)
+	if err != nil {
+		t.Fatalf("NewKeywordFilter: %v", err)
+	}
+	result, err := hook.Execute(context.Background(), &HookInput{
+		Normalized: PayloadFromTextSegments([]string{"this is forbidden"}),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Decision != RejectHard {
+		t.Errorf("decision = %s, want REJECT_HARD (block-hard → block)", result.Decision)
+	}
+	if result.Action != ActionBlock {
+		t.Errorf("result.Action = %q, want block", result.Action)
 	}
 }

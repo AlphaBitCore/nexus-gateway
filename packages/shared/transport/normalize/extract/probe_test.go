@@ -11,7 +11,7 @@ import (
 // Request-side probe
 
 func TestDetectChatShape_ChatGPTWebRequest(t *testing.T) {
-	// Real-shape ChatGPT-web request body (subset of baa07c15 capture).
+	// Real-shape ChatGPT-web request body (subset of a real captured request).
 	body := []byte(`{
 		"model": "gpt-5-5",
 		"messages": [{

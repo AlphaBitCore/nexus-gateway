@@ -1,14 +1,15 @@
-import React from 'react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import {
-  Input, Select as UiSelect, Switch,
+  Card, Input, Select as UiSelect, Switch,
   FormField, Tooltip, Stack, Grid, Button,
 } from '@/components/ui';
 import { FormInput } from '@/lib/forms';
-import type { AdminModelsByProvider } from '@/api/types';
 import {
+  buildConditionalApiConfig,
+  emptyConditionalFormState,
   hydrateConditionalEditorState,
+  tryParseConditionalFormFromConfig,
   type StrategyType,
 } from '../_shared/routing-rule-config';
 import { ConditionalRoutingEditor } from '../editor/ConditionalRoutingEditor';
@@ -19,115 +20,13 @@ import {
   RoutingStrategyTypesHelp,
   strategyConfigHelpBody,
 } from '../_shared/routing-rule-field-help';
-import { useStrategyOptions, ProviderModelSelect, MatchModelSelector } from './RoutingRuleHelpers';
+import { ProviderModelSelect, MatchModelSelector } from './RoutingRuleHelpers';
+import { useStrategyOptions } from '../_shared/useStrategyOptions';
 import { RetryPolicySection } from '../form/RetryPolicySection';
 import type { RoutingRuleDetailState } from './useRoutingRuleDetail';
 import styles from './RoutingRuleDetail.module.css';
-import { HelpIconButton, IconButton } from "@nexus-gateway/ui-shared";
-
-function EditPolicyModelSelect({
-  selected,
-  onChange,
-  providerGroups,
-  label,
-}: {
-  selected: string[];
-  onChange: (v: string[]) => void;
-  providerGroups: AdminModelsByProvider[];
-  label: string;
-}) {
-  const { t } = useTranslation();
-  const handleAdd = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    if (val && !selected.includes(val)) {
-      onChange([...selected, val]);
-    }
-    e.target.value = '';
-  };
-
-  const handleRemove = (id: string) => {
-    onChange(selected.filter(m => m !== id));
-  };
-
-  const labelMap = new Map<string, string>();
-  for (const g of providerGroups) {
-    for (const m of g.models) {
-      labelMap.set(m.id, `${g.provider?.displayName?.trim() || g.provider?.name} / ${m.name}`);
-    }
-  }
-
-  return (
-    <div>
-      <label className={styles.fieldLabel}>{label}</label>
-      {selected.length > 0 && (
-        <div className={`${styles.tagContainer} ${styles.tagContainerVisible}`}>
-          {selected.map(id => (
-            <span key={id} className={styles.tag}>
-              {labelMap.get(id) ?? id}
-              <IconButton size="sm" aria-label={t('pages:routing.removeAria')} onClick={() => handleRemove(id)}>×</IconButton>
-            </span>
-          ))}
-        </div>
-      )}
-      <select onChange={handleAdd} value="" className={styles.nativeSelect}>
-        <option value="">{t('pages:routing.addModelToPolicy')}</option>
-        {providerGroups.map(g => {
-          const available = g?.models?.filter(m => !selected.includes(m.id));
-          if (!available || available.length === 0) return null;
-          return (
-            <optgroup key={g.provider?.id} label={g.provider?.displayName?.trim() || g.provider?.name}>
-              {available.map(m => (
-                <option key={m.id} value={m.id}>
-                  {m.name} ({m.providerModelId})
-                </option>
-              ))}
-            </optgroup>
-          );
-        })}
-      </select>
-    </div>
-  );
-}
-
-function EditPolicyProviderCheckboxes({
-  selected,
-  onChange,
-  providerGroups,
-  label,
-}: {
-  selected: string[];
-  onChange: (v: string[]) => void;
-  providerGroups: AdminModelsByProvider[];
-  label: string;
-}) {
-  const toggle = (id: string) => {
-    if (selected.includes(id)) {
-      onChange(selected.filter(x => x !== id));
-    } else {
-      onChange([...selected, id]);
-    }
-  };
-
-  return (
-    <div>
-      <label className={styles.fieldLabel}>{label}</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--g-space-2) var(--g-space-4)', marginTop: 'var(--g-space-1)' }}>
-        {providerGroups
-          .filter(g => g.provider?.enabled)
-          .map(g => (
-            <label key={g.provider?.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-1)', fontSize: 'var(--g-font-size-sm)' }}>
-              <input
-                type="checkbox"
-                checked={selected.includes(g.provider?.id)}
-                onChange={() => toggle(g.provider?.id)}
-              />
-              {g.provider?.displayName?.trim() || g.provider?.name}
-            </label>
-          ))}
-      </div>
-    </div>
-  );
-}
+import { HelpIconButton } from "@nexus-gateway/ui-shared";
+import { EditPolicyModelSelect, EditPolicyProviderCheckboxes } from './RoutingRuleEditForm.PolicyFields';
 
 export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState }) {
   const { t } = useTranslation();
@@ -177,55 +76,87 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
 
   const weightLabel = editStrategyType === 'ab_split' ? t('pages:routing.splitPercent') : t('pages:routing.weight');
 
+  const switchConditionalToJson = () => {
+    if (conditionalUi.mode === 'json') return;
+    const built = buildConditionalApiConfig(conditionalUi.form, providerGroups);
+    const obj = built.ok
+      ? built.config
+      : { type: 'conditional' as const, conditions: [] as unknown[], default: { type: 'single' as const } };
+    setConditionalUi({ mode: 'json', text: JSON.stringify(obj, null, 2) });
+  };
+
+  const switchConditionalToForm = () => {
+    if (conditionalUi.mode === 'form') return;
+    try {
+      const parsed: unknown = JSON.parse(conditionalUi.text);
+      const form = tryParseConditionalFormFromConfig(parsed, providerGroups);
+      setConditionalUi({ mode: 'form', form: form ?? emptyConditionalFormState() });
+    } catch {
+      setConditionalUi({ mode: 'form', form: emptyConditionalFormState() });
+    }
+  };
+
   return (
     <Stack gap="md">
-      {editPipelineStage === '1' && <RoutingPrimaryWinnerCallout />}
-      <FormInput form={editForm} name="editName" label={t('pages:routing.name')} required />
-      <FormInput form={editForm} name="editDescription" label={t('pages:routing.description')} />
-      {/* pipelineStage hidden — always stage 1 (route). Stage 0 (policy) is API-only. */}
-      {editPipelineStage === '1' && (
-        <div>
-          <Stack direction="horizontal" gap="xs" align="center" className={styles.strategyLabelRow}>
-            <label
-              htmlFor="editStrategyType"
-              className={styles.strategyLabel}
-            >
-              {t('pages:routing.strategyType')}
-              <span className={styles.requiredAsterisk} aria-hidden="true">*</span>
-            </label>
-            <RoutingStrategyTypesHelp />
-          </Stack>
-          <UiSelect
-            value={editStrategyType}
-            onValueChange={(v) => {
-              const next = v as StrategyType;
-              if (editStrategyType !== 'conditional' && next === 'conditional') {
-                setConditionalUi(hydrateConditionalEditorState(null, providerGroups));
-              }
-              editForm.setValue('editStrategyType', next);
-            }}
-            options={strategyOptions}
-          />
-          {editStrategyType === 'fallback' && (
-            <div className={styles.warningCallout} role="status">
-              {ROUTING_RULE_FIELD_HELP.strategyFallbackRecoveryOnly}
+      <h2 className={`${styles.widgetTitle} ${styles.editTopTitle}`}>{t('pages:routing.routingRuleInfo')}</h2>
+      <Card>
+        <Stack gap="md">
+          {editPipelineStage === '1' && <RoutingPrimaryWinnerCallout />}
+          <div className={styles.basicInfoGrid}>
+            <FormInput form={editForm} name="editName" label={t('pages:routing.name')} required />
+            <FormInput form={editForm} name="editDescription" label={t('pages:routing.description')} />
+            {/* pipelineStage hidden — always stage 1 (route). Stage 0 (policy) is API-only. */}
+            {editPipelineStage === '1' && (
+              <div>
+                <Stack direction="horizontal" gap="xs" align="center" className={styles.strategyLabelRow}>
+                  <label
+                    htmlFor="editStrategyType"
+                    className={styles.strategyLabel}
+                  >
+                    {t('pages:routing.strategyType')}
+                    <span className={styles.requiredAsterisk} aria-hidden="true">*</span>
+                  </label>
+                  <RoutingStrategyTypesHelp />
+                </Stack>
+                <UiSelect
+                  value={editStrategyType}
+                  onValueChange={(v) => {
+                    const next = v as StrategyType;
+                    if (editStrategyType !== 'conditional' && next === 'conditional') {
+                      setConditionalUi(hydrateConditionalEditorState(null, providerGroups));
+                    }
+                    editForm.setValue('editStrategyType', next);
+                  }}
+                  options={strategyOptions}
+                />
+                {editStrategyType === 'fallback' && (
+                  <div className={styles.warningCallout} role="status">
+                    {ROUTING_RULE_FIELD_HELP.strategyFallbackRecoveryOnly}
+                  </div>
+                )}
+              </div>
+            )}
+            <FormInput form={editForm} name="editPriority" label={t('pages:routing.priority')} type="number" tooltip={ROUTING_RULE_FIELD_HELP.priority} />
+            <div className={styles.enabledSwitchField}>
+              <Stack direction="horizontal" gap="xs" align="center" className={styles.labelRow}>
+                <span className={`${styles.fieldLabel} ${styles.fieldLabelNoMargin}`}>{t('pages:routing.enabled')}</span>
+                <Tooltip content={ROUTING_RULE_FIELD_HELP.enabled}>
+                  <HelpIconButton aria-label={t('pages:routing.ariaHelpEnabled')} />
+                </Tooltip>
+              </Stack>
+              <Switch checked={editEnabled} onCheckedChange={(v) => editForm.setValue('editEnabled', v)} />
             </div>
-          )}
-        </div>
-      )}
-      <FormInput form={editForm} name="editPriority" label={t('pages:routing.priority')} type="number" helpText={typeof ROUTING_RULE_FIELD_HELP.priority === 'string' ? ROUTING_RULE_FIELD_HELP.priority : undefined} />
-      <Stack direction="horizontal" gap="sm" align="center">
-        <Switch checked={editEnabled} onCheckedChange={(v) => editForm.setValue('editEnabled', v)} />
-        <span className={styles.enabledLabel}>
-          {t('pages:routing.enabled')}
-        </span>
-        <Tooltip content={ROUTING_RULE_FIELD_HELP.enabled}>
-          <HelpIconButton aria-label={t('pages:routing.ariaHelpEnabled')} />
-        </Tooltip>
-      </Stack>
+          </div>
+        </Stack>
+      </Card>
       {/* Strategy or policy configuration */}
-      <div className={styles.editSection}>
-        <Stack direction="horizontal" gap="sm" align="center" className={styles.sectionTitleRow}>
+      <Stack
+        direction="horizontal"
+        gap="sm"
+        align="center"
+        className={clsx(styles.editSectionTitleOutside, editStrategyType === 'conditional' && styles.titleActionRow)}
+      >
+        <Stack direction="horizontal" gap="sm" align="center">
           <div className={styles.editSectionTitleInline}>
             {editPipelineStage === '0' && t('pages:routing.policyNarrowing')}
             {editPipelineStage === '1' && editStrategyType === 'single' && t('pages:routing.providerConfiguration')}
@@ -239,7 +170,17 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
             <HelpIconButton aria-label={t('pages:routing.ariaHelpRoutingConfig')} />
           </Tooltip>
         </Stack>
-
+        {editPipelineStage === '1' && editStrategyType === 'conditional' && (
+          <button
+            type="button"
+            onClick={conditionalUi.mode === 'json' ? switchConditionalToForm : switchConditionalToJson}
+            className={styles.addInlineTextButton}
+          >
+            {conditionalUi.mode === 'json' ? t('pages:routing.useStructuredEditor') : t('pages:routing.editAsRawJson')}
+          </button>
+        )}
+      </Stack>
+      <div className={clsx(styles.editSection, editStrategyType === 'conditional' && styles.conditionalEditSection)}>
         {editPipelineStage === '0' && (
           <Stack gap="md">
             <EditPolicyModelSelect
@@ -284,12 +225,13 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
             value={conditionalUi}
             onChange={setConditionalUi}
             providerGroups={providerGroups}
+            hideModeToggle
           />
         )}
 
         {editPipelineStage === '1' && editStrategyType === 'smart' && (
           <Stack gap="md">
-            <div className={styles.mutedLabel}>{t('pages:routing.routerModel')}</div>
+            <div className={styles.smartFieldTitle}>{t('pages:routing.routerModel')}</div>
             <ProviderModelSelect
               providerValue={smartState.routerProvider}
               modelValue={smartState.routerModel}
@@ -322,7 +264,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
                 <Input type="number" value={smartState.timeoutMs} onChange={(e) => updateSmart({ timeoutMs: e.target.value })} />
               </FormField>
             </Grid>
-            <div className={styles.mutedLabel}>{t('pages:routing.defaultModelFallback')}</div>
+            <div className={styles.smartFieldTitle}>{t('pages:routing.defaultModelFallback')}</div>
             <ProviderModelSelect
               providerValue={smartState.defaultProvider}
               modelValue={smartState.defaultModel}
@@ -360,13 +302,16 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
       </div>
 
       {/* Fallback Chain */}
-      <div className={styles.editSection}>
-        <Stack direction="horizontal" gap="sm" align="center" className={styles.sectionTitleRow}>
+      <Stack direction="horizontal" gap="sm" align="center" className={`${styles.editSectionTitleOutside} ${styles.titleActionRow}`}>
+        <Stack direction="horizontal" gap="sm" align="center">
           <div className={styles.editSectionTitleInline}>{t('pages:routing.fallbackChainTitle')}</div>
           <Tooltip content={t('pages:routing.fallbackChainTooltipShort')}>
             <HelpIconButton aria-label={t('pages:routing.ariaHelpFallbackChain')} />
           </Tooltip>
         </Stack>
+        <button type="button" onClick={addFallback} className={styles.addInlineTextButton}>{t('pages:routing.addFallback')}</button>
+      </Stack>
+      <div className={clsx(styles.editSection, styles.matchConditionsSection)}>
         {fallbackEntries.length === 0 ? (
           <div className={styles.emptyMessage}>
             {t('pages:routing.noFallbackModels')}
@@ -387,68 +332,76 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
             </div>
           ))
         )}
-        <button type="button" onClick={addFallback} className={styles.smallBtn}>{t('pages:routing.addFallback')}</button>
       </div>
 
       {/* Retry Policy */}
       {editPipelineStage === '1' && (
-        <RetryPolicySection
-          mode={retryPolicyMode}
-          onModeChange={setRetryPolicyMode}
-          maxAttempts={retryMaxAttempts}
-          onMaxAttemptsChange={setRetryMaxAttempts}
-          retryOn={retryOn}
-          onRetryOnChange={setRetryOn}
-        />
+        <>
+          <Stack direction="horizontal" gap="sm" align="center" className={styles.editSectionTitleOutside}>
+            <div className={styles.editSectionTitleInline}>{t('pages:routing.retryPolicy.title')}</div>
+          </Stack>
+          <RetryPolicySection
+            mode={retryPolicyMode}
+            onModeChange={setRetryPolicyMode}
+            maxAttempts={retryMaxAttempts}
+            onMaxAttemptsChange={setRetryMaxAttempts}
+            retryOn={retryOn}
+            onRetryOnChange={setRetryOn}
+            hideTitle
+          />
+        </>
       )}
 
       {/* Match Conditions */}
-      <div className={styles.editSection}>
-        <Stack direction="horizontal" gap="sm" align="center" className={styles.sectionTitleRow}>
-          <div className={styles.editSectionTitleInline}>{t('pages:routing.matchConditions')}</div>
-          <Tooltip content={ROUTING_RULE_FIELD_HELP.matchConditions}>
-            <HelpIconButton aria-label={t('pages:routing.ariaHelpMatchConditions')} />
-          </Tooltip>
-        </Stack>
-        <div className={styles.matchFieldGroup}>
-          <Stack direction="horizontal" gap="xs" align="center" className={styles.labelRow}>
-            <label className={`${styles.fieldLabel} ${styles.fieldLabelNoMargin}`}>
-              {t('pages:routing.matchModelsLabel')}
-            </label>
-            <Tooltip content={ROUTING_RULE_FIELD_HELP.matchModelsLabel}>
-              <HelpIconButton aria-label={t('pages:routing.ariaHelpMatchModels')} />
-            </Tooltip>
-          </Stack>
-          <MatchModelSelector
-            selected={models}
-            onChange={setModels}
+      <Stack direction="horizontal" gap="sm" align="center" className={styles.editSectionTitleOutside}>
+        <div className={styles.editSectionTitleInline}>{t('pages:routing.matchConditions')}</div>
+        <Tooltip content={ROUTING_RULE_FIELD_HELP.matchConditions}>
+          <HelpIconButton aria-label={t('pages:routing.ariaHelpMatchConditions')} />
+        </Tooltip>
+      </Stack>
+      <div className={clsx(styles.editSection, styles.matchConditionsSection)}>
+        <div className={styles.threeColumnInputGrid}>
+          <div className={styles.matchFieldGroup}>
+            <Stack direction="horizontal" gap="xs" align="center" className={styles.labelRow}>
+              <label className={`${styles.fieldLabel} ${styles.fieldLabelNoMargin}`}>
+                {t('pages:routing.matchModelsLabel')}
+              </label>
+              <Tooltip content={ROUTING_RULE_FIELD_HELP.matchModelsLabel}>
+                <HelpIconButton aria-label={t('pages:routing.ariaHelpMatchModels')} />
+              </Tooltip>
+            </Stack>
+            <MatchModelSelector
+              selected={models}
+              onChange={setModels}
+              providerGroups={providerGroups}
+              excludeModels={configModelIds}
+              className={styles.matchControlField}
+            />
+          </div>
+          <MatchConditionExtraFields
             providerGroups={providerGroups}
-            excludeModels={configModelIds}
+            selectedProviderIds={matchProviders}
+            onChangeProviders={setMatchProviders}
+            projectIds={matchProjectIds ?? []}
+            onChangeProjectIds={(v) => editForm.setValue('matchProjectIds', v)}
+            requestedModelLiterals={matchRequestedModelLiterals}
+            onChangeRequestedModelLiterals={setMatchRequestedModelLiterals}
+            modelTypes={matchModelTypes}
+            onChangeModelTypes={setMatchModelTypes}
+            virtualKeys={matchVirtualKeys}
+            onChangeVirtualKeys={setMatchVirtualKeys}
           />
         </div>
-        <MatchConditionExtraFields
-          providerGroups={providerGroups}
-          selectedProviderIds={matchProviders}
-          onChangeProviders={setMatchProviders}
-          projectIds={matchProjectIds ?? []}
-          onChangeProjectIds={(v) => editForm.setValue('matchProjectIds', v)}
-          requestedModelLiterals={matchRequestedModelLiterals}
-          onChangeRequestedModelLiterals={setMatchRequestedModelLiterals}
-          modelTypes={matchModelTypes}
-          onChangeModelTypes={setMatchModelTypes}
-          virtualKeys={matchVirtualKeys}
-          onChangeVirtualKeys={setMatchVirtualKeys}
-        />
       </div>
 
-      <Stack direction="horizontal" gap="sm" justify="end">
-        <Button variant="secondary" onClick={() => setIsEditing(false)}>{t('common:cancel')}</Button>
+      <Stack direction="horizontal" gap="sm" className={styles.routingEditActions}>
         <Button
           onClick={handleSave}
           disabled={saveLoading || !editName || retryPolicyInvalid}
         >
           {saveLoading ? t('pages:routing.saving') : t('common:save')}
         </Button>
+        <Button variant="secondary" onClick={() => setIsEditing(false)}>{t('common:cancel')}</Button>
       </Stack>
     </Stack>
   );

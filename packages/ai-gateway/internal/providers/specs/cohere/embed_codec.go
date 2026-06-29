@@ -14,8 +14,8 @@
 package cohere
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"regexp"
 

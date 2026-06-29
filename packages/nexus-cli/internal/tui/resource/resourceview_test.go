@@ -1,8 +1,8 @@
 package resource
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 

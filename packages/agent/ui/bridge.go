@@ -5,13 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
 )
 
 // AgentBridge is the Wails-bound Go object the React frontend talks
@@ -43,23 +41,14 @@ func NewAgentBridge() *AgentBridge {
 	}
 }
 
-// defaultSocketPath mirrors the agent's guiSocketPath() in
-// packages/agent/cmd/agent/main.go. Must stay in sync — the daemon
-// LISTENS where we CONNECT.
+// defaultSocketPath resolves the IPC endpoint the daemon listens on for
+// status queries. Single source of truth: paths.DefaultPaths().SocketPath —
+// the same value the daemon's guiSocketPath() and the tray's trayipc client
+// resolve (Unix socket on macOS/Linux, named pipe on Windows). The daemon
+// LISTENS where we CONNECT; deriving both from paths.DefaultPaths() keeps
+// them in lockstep across platforms instead of duplicating the path logic.
 func defaultSocketPath() string {
-	if runtime.GOOS == "darwin" {
-		// macOS: system-wide /var/run/ path (daemon=root, Dashboard=user;
-		// neither's $HOME is shared).
-		return "/var/run/nexus-agent-status.sock"
-	}
-	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
-		return filepath.Join(xdg, "nexus-agent-status.sock")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "/tmp/nexus-agent-status.sock"
-	}
-	return filepath.Join(home, ".nexus/agent-status.sock")
+	return paths.DefaultPaths().SocketPath
 }
 
 func (b *AgentBridge) onShutdown(ctx context.Context) {
@@ -87,10 +76,10 @@ func (b *AgentBridge) GetStatus() (map[string]any, error) {
 
 // QueryEvents returns a page of audit events. `filter` mirrors the
 // daemon's QUERY_EVENTS parameters: q, action, ai_only, since (Unix
-// milliseconds), offset, limit. ai_only and since are #88 additions
-// that move the AI filter + time window from client-side over-fetch
-// into the daemon's SQL WHERE — fixes broken pagination + wrong total
-// for the Traffic page's "Show AI Only" + time-range selector.
+// milliseconds), offset, limit. ai_only and since move the AI filter +
+// time window from client-side over-fetch into the daemon's SQL WHERE,
+// which keeps pagination + total correct for the Traffic page's
+// "Show AI Only" + time-range selector.
 func (b *AgentBridge) QueryEvents(filter EventFilter) (map[string]any, error) {
 	params := []string{
 		"offset=" + intToStr(filter.Offset),
@@ -123,8 +112,8 @@ func (b *AgentBridge) EventByID(id string) (map[string]any, error) {
 // EventFilter mirrors the daemon's QUERY_EVENTS params. The Search
 // and Action fields are forwarded verbatim; empty strings are
 // dropped from the query string so the daemon receives "no filter"
-// rather than "filter on empty". AIOnly + SinceUnixMillis added in
-// #88 to push the AI filter and time-window selector down to SQL.
+// rather than "filter on empty". AIOnly + SinceUnixMillis push the
+// AI filter and time-window selector down to SQL.
 type EventFilter struct {
 	Search          string `json:"search"`
 	Action          string `json:"action"`
@@ -347,8 +336,11 @@ func (b *AgentBridge) sendJSONWith(command string, timeout time.Duration) (map[s
 	if dialTimeout > 2*time.Second {
 		dialTimeout = 2 * time.Second
 	}
-	dialer := net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.Dial("unix", b.socketPath)
+	// Platform-aware dial: Unix socket on macOS/Linux, Windows named pipe
+	// on Windows (see dial_windows.go / dial_other.go). The previous
+	// hardcoded net.Dial("unix", …) could never reach the daemon's named
+	// pipe on Windows, which surfaced as a false "agent not running".
+	conn, err := dialStatus(b.socketPath, dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("dial agent socket: %w", err)
 	}

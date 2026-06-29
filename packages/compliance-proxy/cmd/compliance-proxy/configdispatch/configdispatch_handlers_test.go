@@ -9,8 +9,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"strings"
@@ -123,7 +123,7 @@ func TestKillSwitch_DisengageWhenAlreadyMatching(t *testing.T) {
 	}
 }
 
-// TestKillSwitch_BlankTickPayloads exercises the F-0123 presence-based parser
+// TestKillSwitch_BlankTickPayloads exercises the presence-based parser
 // invariant: empty / null / `{}` (no "engaged" field) payloads must NEVER toggle
 // the kill-switch — they are no-ops that preserve the current brake state.
 func TestKillSwitch_BlankTickPayloads(t *testing.T) {

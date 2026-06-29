@@ -2,9 +2,12 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
+	"math"
+	"os"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,11 +22,72 @@ import (
 type TrafficEventWriterConfig struct {
 	BatchSize     int           `yaml:"batchSize"`
 	FlushInterval time.Duration `yaml:"flushInterval"`
+
+	// DrainDutyCycle controls how the audit drain yields CPU to a co-located
+	// AI-gateway's core request path. After each batch flush the drain sleeps in
+	// proportion to how long the flush took, so a duty cycle d means "drain at most
+	// d of wall-clock, idle the rest"; the NATS file store (local disk, effectively
+	// unbounded) absorbs the backlog while idle and the Hub catches up when the
+	// gateway is quiet. Audit is delay-tolerant; no-loss is preserved by NATS
+	// retention, not by racing the gateway.
+	//
+	// Three modes by value (the shipped config default is 0.3 — see the Hub
+	// config defaults / yaml `consumers.trafficDrainDutyCycle`):
+	//   - in (0,1) → FIXED throttle at that duty cycle. 0.3 is the single-box
+	//     default: it reliably yields the box's memory bandwidth / loopback /
+	//     Postgres to the gateway core path (the CPU probe below cannot see
+	//     memory-bandwidth contention on a core-rich box).
+	//   - 0 → ADAPTIVE: a real-time CPU-pressure probe (timer overshoot) sets the
+	//     duty dynamically — full-speed when the box has spare CPU, throttling only
+	//     under measured core contention. Best on a small/CPU-bound box.
+	//   - >= 1 → OFF: always full-speed, no probe, no throttle (dedicated Hub box).
+	//
+	// Measured on the single-box perf rig (gateway saturating the box): the drain
+	// throttling lifted gateway 200-VU RPS ~5150 -> ~6290 with no loss. yaml
+	// drainDutyCycle / env NEXUS_HUB_AUDIT_DRAIN_DUTY_CYCLE.
+	DrainDutyCycle float64 `yaml:"drainDutyCycle"`
 }
+
+// maxDrainPaceSleep caps a single post-flush pacing sleep so a pathologically
+// slow flush (e.g. a Postgres stall) cannot park the drain for an unbounded time
+// and let the NATS backlog grow without bound.
+const maxDrainPaceSleep = 250 * time.Millisecond
+
+// backlogDutyOverride is the NATS-stream fill fraction (used bytes / MaxBytes) at
+// or above which the drain abandons its CPU-yield throttle and runs FULL-SPEED,
+// regardless of the configured/adaptive duty cycle. The duty throttle assumes the
+// gateway has quiet windows for the drain to catch up; under sustained saturation
+// there are none, so a fixed/adaptive throttle lets the backlog grow until the
+// stream hits MaxBytes and DiscardNew starts rejecting publishes (the gateway then
+// spills to disk). Overriding to full-speed once the stream is half-full turns that
+// "wedge then shed" failure mode into bounded catch-up: the drain prioritises
+// emptying the backlog over yielding CPU exactly when the backlog is dangerous.
+const backlogDutyOverride = 0.5
+
+// backlogSampleInterval / backlogSampleTimeout bound the live stream-fill probe:
+// a low-frequency refresh (the override only needs to react within a couple
+// seconds of the backlog climbing) with a short per-query timeout so a stalled
+// broker never blocks the sampler goroutine.
+const (
+	backlogSampleInterval = 2 * time.Second
+	backlogSampleTimeout  = 1 * time.Second
+)
 
 type pendingTrafficMessage struct {
 	event TrafficEventMessage
-	msg   *mq.Message
+	msg   *mq.Message // shared NATS message — metadata only (Subject, NumDelivered)
+	raw   []byte      // THIS record's own bytes (DLQ payload); == msg.Data for a legacy single-record message
+	frame *frameAck   // resolves the shared msg once every record in the frame is durably handled
+}
+
+// payloadBytes returns the bytes to persist for THIS record in a DLQ sink: the
+// per-record frame line when set, falling back to the whole message data for a
+// directly-constructed (unframed) record.
+func (pm pendingTrafficMessage) payloadBytes() []byte {
+	if pm.raw != nil {
+		return pm.raw
+	}
+	return pm.msg.Data
 }
 
 // PgxPool is the minimum pgx pool surface the writers in this package need
@@ -70,6 +134,75 @@ type TrafficEventWriter struct {
 	// the DB-backed insertDLQ itself fails (DB unreachable). Never nil after
 	// construction.
 	diskDLQ *diskDLQ
+
+	// pacer drives the adaptive drain duty cycle from a real-time CPU-pressure
+	// probe; non-nil only in adaptive mode (cfg.DrainDutyCycle == 0). nil for the
+	// fixed-throttle and off modes.
+	pacer *adaptiveDrainPacer
+
+	// backlogProbe, when set, reports the NEXUS_EVENTS stream fill fraction
+	// (used bytes / MaxBytes, 0..1) and whether the reading is valid. drainDuty
+	// uses it to override the throttle to full-speed once the backlog is dangerous
+	// (>= backlogDutyOverride), turning the sustained-saturation wedge into bounded
+	// catch-up. nil → no override (the pre-existing throttle behaviour). Set
+	// directly via WithBacklogProbe (tests), or built from a sampler by Start.
+	backlogProbe func() (float64, bool)
+
+	// backlogSampleFn, when set, is a LIVE (network) query of the stream fill
+	// fraction. Start wraps it in a low-frequency cached sampler so drainDuty
+	// (called per flush) reads a cheap atomic, not a broker round-trip. Set via
+	// WithBacklogSampler. Ignored if backlogProbe is already set.
+	backlogSampleFn func(context.Context) (float64, bool)
+}
+
+// WithBacklogProbe wires a cheap, already-cached fill-fraction reader directly
+// (used in tests). Production uses WithBacklogSampler. Call before Start.
+func (w *TrafficEventWriter) WithBacklogProbe(p func() (float64, bool)) *TrafficEventWriter {
+	w.backlogProbe = p
+	return w
+}
+
+// WithBacklogSampler wires a LIVE stream fill-fraction query; Start caches it
+// behind a low-frequency sampler so the per-flush drainDuty stays cheap. Call
+// before Start. Returns the receiver for chaining.
+func (w *TrafficEventWriter) WithBacklogSampler(fn func(context.Context) (float64, bool)) *TrafficEventWriter {
+	w.backlogSampleFn = fn
+	return w
+}
+
+// startBacklogSampler launches the goroutine that periodically refreshes the
+// cached backlog fill fraction from the live sampler, and points backlogProbe at
+// the cache. A nil sampler (or an already-set probe) is a no-op.
+func (w *TrafficEventWriter) startBacklogSampler(ctx context.Context) {
+	if w.backlogSampleFn == nil || w.backlogProbe != nil {
+		return
+	}
+	var fracBits atomic.Uint64
+	var valid atomic.Bool
+	w.backlogProbe = func() (float64, bool) {
+		return math.Float64frombits(fracBits.Load()), valid.Load()
+	}
+	sample := func() {
+		cctx, cancel := context.WithTimeout(ctx, backlogSampleTimeout)
+		defer cancel()
+		if f, ok := w.backlogSampleFn(cctx); ok {
+			fracBits.Store(math.Float64bits(f))
+			valid.Store(true)
+		}
+	}
+	go func() {
+		t := time.NewTicker(backlogSampleInterval)
+		defer t.Stop()
+		sample() // prime immediately so the override can engage on the first flush
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				sample()
+			}
+		}
+	}()
 }
 
 // TrafficQueues lists the 3 MQ queues this consumer reads from.
@@ -123,6 +256,13 @@ func newTrafficEventWriter(
 	if cfg.FlushInterval <= 0 {
 		cfg.FlushInterval = 5 * time.Second
 	}
+	// Env override for the drain duty cycle (co-located perf knob); yaml is the
+	// declarative default, env wins for a redeploy-free flip on the perf rig.
+	if v := os.Getenv("NEXUS_HUB_AUDIT_DRAIN_DUTY_CYCLE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.DrainDutyCycle = f
+		}
+	}
 
 	w := &TrafficEventWriter{
 		pool:    pool,
@@ -130,6 +270,10 @@ func newTrafficEventWriter(
 		cfg:     cfg,
 		logger:  logger.With("component", "traffic-event-writer"),
 		diskDLQ: newDiskDLQ(""),
+	}
+	// Adaptive mode (duty cycle 0): a CPU-pressure probe sets the duty dynamically.
+	if cfg.DrainDutyCycle == 0 {
+		w.pacer = newAdaptiveDrainPacer()
 	}
 	if reg != nil {
 		w.consumedTotal = reg.NewCounter("mq.processed_total", []string{"queue"})
@@ -145,213 +289,54 @@ func newTrafficEventWriter(
 // Start begins consuming from all 3 event queues in parallel goroutines.
 // Blocks until ctx is cancelled.
 func (w *TrafficEventWriter) Start(ctx context.Context) error {
+	// In adaptive mode, run the CPU-pressure probe that drives the drain duty cycle.
+	if w.pacer != nil {
+		go w.pacer.run(ctx)
+	}
+	// Cache the NATS backlog fill fraction so drainDuty can override the throttle
+	// to full-speed when the stream nears MaxBytes (the sustained-saturation guard).
+	w.startBacklogSampler(ctx)
+	workers := drainWorkersPerQueue()
 	for _, queue := range TrafficQueues {
 		q := queue
 		batch := NewBatchAccumulator[pendingTrafficMessage](w.cfg.BatchSize, w.cfg.FlushInterval, func(items []pendingTrafficMessage) error {
-			return w.flush(ctx, items)
+			start := time.Now()
+			err := w.flush(ctx, items)
+			// Yield CPU to the gateway's core path in proportion to the flush cost
+			// (no-op when the duty cycle is disabled). The sleep blocks this consume
+			// goroutine, which paces the next Fetch — the NATS store holds the
+			// backlog meanwhile.
+			w.paceDrain(ctx, time.Since(start))
+			return err
 		})
 
-		go func() {
-			defer batch.Stop() //nolint:errcheck
-
-			err := w.mqc.Consume(ctx, q, dbWriterGroup, func(_ context.Context, msg *mq.Message) error {
-				return w.handleMessage(q, batch, msg)
-			})
-
-			if err != nil && ctx.Err() == nil {
-				w.logger.Error("consumer exited with error", "queue", q, "error", err)
-			}
-		}()
+		// N parallel drain workers per queue share ONE BatchAccumulator. The drain
+		// was single-goroutine-per-queue, so the synchronous PG flush stalled the
+		// NATS fetch loop on every batch — the hub sat at ~5% CPU, NATS backed up,
+		// and the audit pipeline overflowed (lossy under load) even though the box
+		// had ample disk + CPU. With multiple workers, while one is flushing to
+		// PostgreSQL the others keep fetching and filling the next batch, so fetch
+		// pipelines against PG-write. BatchAccumulator.flushLocked releases its lock
+		// across flushFn precisely so concurrent fill-to-maxSize Adds each enter
+		// flushFn on their own goroutine + tx; w.flush opens its own tx per call, so
+		// concurrent flushes are independent. batch.Stop() runs once, after all this
+		// queue's workers exit.
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := w.mqc.Consume(ctx, q, dbWriterGroup, func(_ context.Context, msg *mq.Message) error {
+					return w.handleMessage(q, batch, msg)
+				})
+				if err != nil && ctx.Err() == nil {
+					w.logger.Error("consumer exited with error", "queue", q, "error", err)
+				}
+			}()
+		}
+		go func() { wg.Wait(); _ = batch.Stop() }()
 	}
 
 	<-ctx.Done()
 	return nil
-}
-
-// handleMessage is the per-message handler passed to mq.Consumer.Consume.
-// Returns nil if the message is a poison pill (already acked inline); returns
-// mq.ErrDeferAck if the message is buffered and will be acked after the batch
-// flush; returns a non-sentinel error to trigger auto-nak by the MQ driver.
-func (w *TrafficEventWriter) handleMessage(queue string, batch *BatchAccumulator[pendingTrafficMessage], msg *mq.Message) error {
-	if w.consumedTotal != nil {
-		w.consumedTotal.With(queue).Inc()
-	}
-
-	var evt TrafficEventMessage
-	if err := json.Unmarshal(msg.Data, &evt); err != nil {
-		w.logger.Error("deserialize failed, dropping message",
-			"queue", queue, "error", err)
-		if w.errorsTotal != nil {
-			w.errorsTotal.With("deserialize").Inc()
-		}
-		return msg.Ack()
-	}
-
-	if err := batch.Add(pendingTrafficMessage{event: evt, msg: msg}); err != nil {
-		// Synchronous flush failure (batch hit maxSize and flush errored).
-		// flush already invoked nakAll on this item; returning the error lets
-		// the driver log it. The driver's auto-nak is idempotent on NATS/Redis.
-		return err
-	}
-	// Hand ack/nak off to the batch flush path (ackAll / nakAll).
-	return mq.ErrDeferAck
-}
-
-// flush attempts the whole batch in one tx (the fast path); if that tx fails as
-// a unit it falls back to per-item reprocessing so a single bad row cannot drop
-// up to 99 healthy events. flush itself returns nil because every item
-// is fully resolved (acked / nak'd / dead-lettered) by one of the two paths —
-// returning a non-nil error would make the MQ driver redundantly nak a message
-// the per-item path already handled.
-func (w *TrafficEventWriter) flush(ctx context.Context, items []pendingTrafficMessage) error {
-	if w.batchSizeHist != nil {
-		w.batchSizeHist.With().Observe(float64(len(items)))
-	}
-
-	if err := w.flushBatch(ctx, items); err != nil {
-		// One poison/oversize row aborts the whole pgx.Batch tx, so the batch is
-		// rolled back un-acked. Re-run each item in its own tx: healthy rows
-		// commit + ack, the offending row is isolated (poison → ack-to-skip;
-		// transient → nak/DLQ) instead of taking the batch down with it.
-		w.logger.Warn("flush: batch insert failed, isolating per-item",
-			"error", err, "count", len(items))
-		for i := range items {
-			w.flushItem(ctx, items[i])
-		}
-	}
-	return nil
-}
-
-// flushBatch runs the batched fast path in a single transaction. On any fatal
-// failure it returns the wrapped error WITHOUT acking or naking — the caller
-// (flush) falls back to per-item reprocessing which owns the ack/nak decision.
-// On success it acks the whole batch.
-func (w *TrafficEventWriter) flushBatch(ctx context.Context, items []pendingTrafficMessage) error {
-	tx, err := w.pool.Begin(ctx)
-	if err != nil {
-		w.countFlushErr("db_begin")
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	if err := w.insertTrafficEvents(ctx, tx, items); err != nil {
-		w.countFlushErr("db_insert")
-		return fmt.Errorf("insert traffic_event: %w", err)
-	}
-
-	if err := w.insertPayloads(ctx, tx, items); err != nil {
-		w.countFlushErr("db_insert_payload")
-		return fmt.Errorf("insert traffic_event_payload: %w", err)
-	}
-
-	// Normalized payloads are an independent sidecar. Each sidecar row runs
-	// inside its OWN savepoint (see insertNormalizedPayloads), so a failure
-	// here — including a jsonb encoding error (22P05) — rolls back only that
-	// savepoint and leaves the outer tx committable. The raw traffic_event +
-	// traffic_event_payload rows therefore survive even when normalization
-	// fails. A returned error is a non-poison sidecar failure: it is logged +
-	// counted (the normalize-backfill job heals the gap) but never rolls the
-	// raw batch.
-	if err := w.insertNormalizedPayloads(ctx, tx, items); err != nil {
-		w.logger.Warn("flush: insert traffic_event_normalized failed (raw rows still committed)",
-			"error", err, "count", len(items))
-		if w.errorsTotal != nil {
-			w.errorsTotal.With("db_insert_normalized").Inc()
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		w.countFlushErr("db_commit")
-		return fmt.Errorf("commit tx: %w", err)
-	}
-
-	w.ackAll(items)
-	if w.flushTotal != nil {
-		w.flushTotal.With("success").Inc()
-	}
-
-	w.logger.Debug("flushed traffic events", "count", len(items))
-	return nil
-}
-
-// flushItem reprocesses a single message in its own transaction, used only when
-// the batched fast path failed. It guarantees the message is resolved exactly
-// once: a permanent encoding poison (typed SQLSTATE 22021 / 22P05) is acked to
-// skip; any other failure is nak'd / dead-lettered; success commits + acks.
-func (w *TrafficEventWriter) flushItem(ctx context.Context, pm pendingTrafficMessage) {
-	single := []pendingTrafficMessage{pm}
-
-	tx, err := w.pool.Begin(ctx)
-	if err != nil {
-		w.countFlushErr("db_begin")
-		w.nakOrDLQ(ctx, single, fmt.Errorf("begin tx: %w", err))
-		return
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	if err := w.insertTrafficEvents(ctx, tx, single); err != nil {
-		w.countFlushErr("db_insert")
-		w.resolveItemInsertErr(ctx, single, fmt.Errorf("insert traffic_event: %w", err))
-		return
-	}
-
-	if err := w.insertPayloads(ctx, tx, single); err != nil {
-		w.countFlushErr("db_insert_payload")
-		w.resolveItemInsertErr(ctx, single, fmt.Errorf("insert traffic_event_payload: %w", err))
-		return
-	}
-
-	if err := w.insertNormalizedPayloads(ctx, tx, single); err != nil {
-		w.logger.Warn("flush: insert traffic_event_normalized failed (raw row still committed)",
-			"error", err, "id", pm.event.ID)
-		if w.errorsTotal != nil {
-			w.errorsTotal.With("db_insert_normalized").Inc()
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		w.countFlushErr("db_commit")
-		w.nakOrDLQ(ctx, single, fmt.Errorf("commit tx: %w", err))
-		return
-	}
-
-	w.ackAll(single)
-	if w.flushTotal != nil {
-		w.flushTotal.With("success").Inc()
-	}
-}
-
-// resolveItemInsertErr decides the fate of a single row whose insert failed in
-// the per-item path. A permanent NUL/encoding error (typed 22021 / 22P05) can
-// never succeed on retry, so the row is acked to skip (the error log is the
-// audit trail); every other error is nak'd / dead-lettered for redelivery.
-func (w *TrafficEventWriter) resolveItemInsertErr(ctx context.Context, single []pendingTrafficMessage, err error) {
-	if isJSONNulPoison(err) {
-		w.logger.Warn("flush: permanent encoding error, acking to skip poison row",
-			"id", single[0].event.ID, "error", err)
-		if w.errorsTotal != nil {
-			w.errorsTotal.With("db_insert_poison").Inc()
-		}
-		w.ackAll(single)
-		return
-	}
-	w.nakOrDLQ(ctx, single, err)
-}
-
-// countFlushErr increments the flush error counters for the given error_type.
-func (w *TrafficEventWriter) countFlushErr(errorType string) {
-	if w.flushTotal != nil {
-		w.flushTotal.With("error").Inc()
-	}
-	if w.errorsTotal != nil {
-		w.errorsTotal.With(errorType).Inc()
-	}
-}
-
-func (w *TrafficEventWriter) ackAll(items []pendingTrafficMessage) {
-	for _, pm := range items {
-		if err := pm.msg.Ack(); err != nil {
-			w.logger.Warn("ack failed", "error", err)
-		}
-	}
 }

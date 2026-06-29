@@ -1,12 +1,104 @@
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+}
+
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.detailTitle {
+  margin: var(--g-space-0);
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
+}
+
+.headerDescription {
+  margin: 2px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: var(--g-line-height-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.headerActions {
+  flex-shrink: 0;
+}
+
+.headerActions :global(button),
+.headerActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .kvGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--g-space-4);
 }
 
 .kvLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -21,7 +113,7 @@
 
 .kvValue {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   word-break: break-all;
 }
@@ -29,16 +121,16 @@
 .widgetTitle {
   font-size: var(--g-font-size-md);
   font-family: var(--g-font-display);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   letter-spacing: 0;
   color: var(--color-text);
-  margin-bottom: var(--g-space-4);
+  margin: 0;
 }
 
 .linkStyle {
   color: var(--color-primary);
   text-decoration: none;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .tip {
@@ -49,8 +141,8 @@
   color: var(--color-text-inverse);
   padding: var(--g-space-1-5) var(--g-space-3);
   border-radius: var(--g-radius-md);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   max-width: 280px;
   box-shadow: 0 4px 12px var(--shadow-md);
   pointer-events: none;
@@ -66,7 +158,7 @@
 
 .monoCode {
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
 }
 
 .tooltipHelpIcon {
@@ -97,4 +189,16 @@
   color: var(--color-text-muted);
   padding: var(--g-space-6);
   font-size: var(--g-font-size-sm);
+}
+
+@media (max-width: 1200px) {
+  .kvGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .kvGrid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -1,0 +1,194 @@
+name: nexus/supply-chain
+version: v1.0.0
+maintainer: nexus
+description: >-
+  Software-supply-chain risk detection for code and shell snippets flowing
+  through the gateway. Five subcategories: install-script abuse (postinstall /
+  preinstall hooks that pipe a remote download to a shell, base64-decode-and-run,
+  or eval inline at install time), dependency confusion (package-manager registry
+  / index-url repointed at an attacker host or raw IP), malicious packages
+  (documented npm / PyPI typosquats, installs from unvetted git / URL / archive
+  sources, root-privileged install scripts), cryptominers (miner binaries, the
+  stratum pool protocol, Monero wallet addresses, known mining-pool hosts), and
+  build-time exfiltration (environment dumps or credential files shipped to a
+  remote host inside an install / CI step). Distinct from nexus/tool-call-safety
+  (runtime tool-call abuse) and nexus/insecure-code (code-quality weaknesses):
+  this pack targets the dependency / build supply chain. Grounded in real
+  incidents (crossenv / jeIlyfish / python3-dateutil typosquats, npm postinstall
+  malware, dependency-confusion research, OWASP CI/CD Top 10). Every rule emits
+  `detector:supply-chain` plus a finer `risk:` label and a `severity:<tier>`
+  label so downstream policies can filter by supply-chain class. Severities are
+  hard for install-time pipe-to-shell and build exfiltration; soft for
+  name / source heuristics.
+rules:
+  # --- Install-script abuse (npm pre/postinstall, PyPI setup.py) ---
+  - id: sc-install-001
+    category: supply_chain.install_script
+    severity: hard
+    pattern: '(?i)"(?:pre|post)?install"\s*:\s*"[^"]{0,200}(?:curl|wget|fetch)\b[^"]{0,160}\|\s*(?:sudo\s+)?(?:sh|bash|zsh|node|python[23]?)\b'
+    description: 'package.json install hook pipes a remote download straight to a shell interpreter.'
+    labels: [detector:supply-chain, risk:install-rce, severity:restricted]
+  - id: sc-install-002
+    category: supply_chain.install_script
+    severity: hard
+    pattern: '(?i)"(?:pre|post)?install"\s*:\s*"[^"]{0,240}(?:base64\b[^"]{0,40}(?:-d|--decode)\b[^"]{0,120}\|\s*(?:sh|bash)|Buffer\.from\([^"]{0,80}base64[^"]{0,80}(?:eval|exec|child_process|spawn))'
+    description: 'package.json install hook base64-decodes a payload and executes it (obfuscated dropper).'
+    labels: [detector:supply-chain, risk:install-rce, severity:restricted]
+  - id: sc-install-003
+    category: supply_chain.install_script
+    severity: soft
+    pattern: '(?i)"(?:pre|post)?install"\s*:\s*"[^"]{0,200}(?:node\s+-e|python[23]?\s+-c|ruby\s+-e|perl\s+-e|eval)\b'
+    description: 'package.json install hook runs an inline interpreter eval at install time.'
+    labels: [detector:supply-chain, risk:install-rce, severity:confidential]
+  - id: sc-install-004
+    category: supply_chain.install_script
+    severity: soft
+    pattern: '(?i)(?:os\.system|subprocess\.(?:call|run|Popen|check_output)|check_output)\s*\(\s*[^)]{0,160}\b(?:curl|wget|certutil|powershell|bitsadmin|iwr|Invoke-WebRequest)\b'
+    description: 'setup.py / build code shells out to a downloader at install time (PyPI install-time fetch).'
+    labels: [detector:supply-chain, risk:install-rce, severity:confidential]
+  # --- Dependency confusion (registry / index repointing) ---
+  - id: sc-confusion-001
+    category: supply_chain.dependency_confusion
+    severity: hard
+    pattern: '(?i)--(?:registry|index-url|extra-index-url)[=\s]\s{0,4}https?://(?:\d{1,3}\.){3}\d{1,3}\b'
+    description: 'Package-manager registry / index-url pinned to a raw IP address (attacker-controlled feed).'
+    labels: [detector:supply-chain, risk:dependency-confusion, severity:restricted]
+  - id: sc-confusion-002
+    category: supply_chain.dependency_confusion
+    severity: soft
+    pattern: '(?i)\bpip\d?\s+install\b[^\n]{0,120}--(?:index-url|extra-index-url)[=\s]'
+    description: 'pip install points at a custom package index (non-PyPI feed can shadow internal names).'
+    labels: [detector:supply-chain, risk:dependency-confusion, severity:confidential]
+  - id: sc-confusion-003
+    category: supply_chain.dependency_confusion
+    severity: soft
+    pattern: '(?i)(?:\b(?:npm|yarn|pnpm)\b[^\n]{0,80}--registry[=\s]\s{0,4}https?://|@[a-z0-9-]{1,40}:registry\s*=\s*https?://)'
+    description: 'npm / yarn / pnpm registry override (CLI flag or scoped .npmrc) repointing package resolution.'
+    labels: [detector:supply-chain, risk:dependency-confusion, severity:confidential]
+  # --- Malicious packages (typosquats, unvetted sources, root scripts) ---
+  - id: sc-malpkg-001
+    category: supply_chain.malicious_pkg
+    severity: soft
+    pattern: '(?i)\b(?:crossenv|cross-env\.js|babelcli|jeilyfish|python3-dateutil|colourama|djanga|requets|urlib3|nodemailer-js|nodemailer\.js|nodesqlite|mongose|opencv\.js|openssl\.js|node-opensl|noderequest|shadowsock|fabric-js|gruntcli|http-proxy\.js|jquery\.js|mssql-node|nodefabric|node-fabric|sqliteproxy)\b'
+    description: 'Reference to a documented npm / PyPI typosquat / malicious package name.'
+    labels: [detector:supply-chain, risk:malicious-package, severity:confidential]
+  - id: sc-malpkg-002
+    category: supply_chain.malicious_pkg
+    severity: soft
+    pattern: '(?i)\bpip\d?\s+install\b[^\n]{0,40}(?:git\+(?:https?|ssh)://|https?://[^\s]{1,120}\.(?:zip|tar\.gz|tgz|whl)\b)'
+    description: 'pip install from a direct git / URL / archive source, bypassing index vetting.'
+    labels: [detector:supply-chain, risk:malicious-package, severity:confidential]
+  - id: sc-malpkg-003
+    category: supply_chain.malicious_pkg
+    severity: soft
+    pattern: '(?i)\bnpm\s+(?:install|i|add|ci)\b[^\n]{0,80}--unsafe-perm\b'
+    description: 'npm install with --unsafe-perm, running package install scripts as root.'
+    labels: [detector:supply-chain, risk:malicious-package, severity:confidential]
+  # --- Cryptominers ---
+  - id: sc-miner-001
+    category: supply_chain.cryptominer
+    severity: hard
+    pattern: '(?i)(?:\b(?:xmrig|coinhive|cryptonight|cryptoloot|minerd|cgminer|ccminer|ethminer|nicehash|jsecoin|webminepool|deepminer)\b|stratum\+(?:tcp|ssl|udp)://)'
+    description: 'Cryptominer binary name or stratum mining-pool protocol scheme.'
+    labels: [detector:supply-chain, risk:cryptominer, severity:restricted]
+  - id: sc-miner-002
+    category: supply_chain.cryptominer
+    severity: soft
+    pattern: '\b[48][0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b'
+    description: 'Monero (XMR) wallet address embedded in code or config (miner payout target).'
+    labels: [detector:supply-chain, risk:cryptominer, severity:confidential]
+  - id: sc-miner-003
+    category: supply_chain.cryptominer
+    severity: soft
+    pattern: '(?i)\b(?:pool\.minexmr\.com|supportxmr\.com|nanopool\.org|xmrpool\.eu|miningpoolhub\.com|moneroocean\.stream|hashvault\.pro|2miners\.com)\b'
+    description: 'Reference to a known cryptocurrency mining-pool host.'
+    labels: [detector:supply-chain, risk:cryptominer, severity:confidential]
+  # --- Build-time exfiltration (env / credential file leak in install / CI) ---
+  - id: sc-exfil-001
+    category: supply_chain.exfil_in_build
+    severity: hard
+    pattern: '(?i)\b(?:env|printenv|export\s+-p)\b\s*\|\s*(?:curl|wget|nc|ncat|netcat|telnet)\b'
+    description: 'Environment-variable dump piped to a network client (secret exfiltration in a build step).'
+    labels: [detector:supply-chain, risk:build-exfil, severity:restricted]
+  - id: sc-exfil-002
+    category: supply_chain.exfil_in_build
+    severity: hard
+    pattern: '(?i)\b(?:curl|wget|http|https)\b[^\n]{0,160}(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form|--upload-file|-T)\b[^\n]{0,40}\$\((?:env|printenv|cat\s+[^)]{0,60})'
+    description: 'Network client posting $(env) or a piped file as a request body (build-step exfiltration).'
+    labels: [detector:supply-chain, risk:build-exfil, severity:restricted]
+  - id: sc-exfil-003
+    category: supply_chain.exfil_in_build
+    severity: hard
+    pattern: '(?i)(?:curl|wget|nc|ncat|scp|base64)\b[^\n]{0,140}(?:~|\$HOME|/root|/home/[a-z0-9_-]{1,32})/\.(?:npmrc|aws/credentials|aws/config|docker/config\.json|netrc|ssh/id_(?:rsa|ed25519|ecdsa)|kube/config|config/gcloud)\b'
+    description: 'Credential file (.npmrc / .aws / .docker / .ssh) sent to a network or encoding tool during install / build.'
+    labels: [detector:supply-chain, risk:build-exfil, severity:restricted]
+  - id: sc-exfil-004
+    category: supply_chain.exfil_in_build
+    severity: soft
+    pattern: '(?i)\b(?:curl|wget|http|nc|ncat)\b[^\n]{0,140}\$\{?(?:NPM_TOKEN|GITHUB_TOKEN|GH_TOKEN|CI_JOB_TOKEN|NODE_AUTH_TOKEN|PYPI_TOKEN|TWINE_PASSWORD|GITLAB_TOKEN|VAULT_TOKEN)\b'
+    description: 'CI / registry token environment variable sent to a network endpoint.'
+    labels: [detector:supply-chain, risk:build-exfil, severity:confidential]
+  # --- Install-script remote pipe-to-shell (npm / pip hooks, gist droppers) ---
+  - id: sc-install-005
+    category: supply_chain.install_script
+    severity: hard
+    pattern: '(?i)\b(?:curl|wget)\b[^\n]{0,160}\bhttps?://[^\s]{0,200}\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash|python[23]?|node|ruby|perl)\b'
+    description: 'Remote download piped straight to a shell interpreter (classic curl|sh dropper) anywhere in a script or install step.'
+    labels: [detector:supply-chain, risk:install-rce, severity:restricted]
+  - id: sc-install-006
+    category: supply_chain.install_script
+    severity: hard
+    pattern: '(?i)\b(?:curl|wget)\b[^\n]{0,160}https?://(?:gist\.githubusercontent\.com|raw\.githubusercontent\.com|gist\.github\.com)/[^\s]{0,200}\|\s*(?:sudo\s+)?(?:sh|bash|python[23]?|node)\b'
+    description: 'Raw GitHub gist / raw content downloaded and piped to an interpreter (untrusted out-of-band code).'
+    labels: [detector:supply-chain, risk:install-rce, severity:restricted]
+  - id: sc-install-007
+    category: supply_chain.install_script
+    severity: soft
+    pattern: '(?i)"(?:pre|post)?install"\s*:\s*"[^"]{0,200}\bnode\s+-e\b[^"]{0,160}\b(?:require\(\s*[''"]?(?:https?|http|net|child_process|dns)|fetch\(|XMLHttpRequest|\.connect\()'
+    description: 'package.json install hook runs node -e with an inline network / process call (drive-by install fetch).'
+    labels: [detector:supply-chain, risk:install-rce, severity:confidential]
+  # --- Dependency confusion (off-PyPI index, git+http deps) ---
+  - id: sc-confusion-004
+    category: supply_chain.dependency_confusion
+    severity: soft
+    pattern: '(?i)--extra-index-url[=\s]\s{0,4}https?://(?:(?:\d{1,3}\.){3}\d{1,3}|[a-z0-9-]{1,60}\.(?:io|dev|xyz|top|cc|ru|cn|me|app|cloud|ngrok\.io|herokuapp\.com))\b'
+    description: 'pip --extra-index-url pointing at a raw IP or a non-PyPI host (the canonical dependency-confusion install vector).'
+    labels: [detector:supply-chain, risk:dependency-confusion, severity:confidential]
+  - id: sc-confusion-005
+    category: supply_chain.dependency_confusion
+    severity: soft
+    pattern: '(?i)(?m)^\s*(?:-e\s+)?git\+https?://[^\s]{3,200}(?:#egg=|\.git\b|/)'
+    description: 'requirements.txt git+http(s) dependency, bypassing index integrity / hash pinning.'
+    labels: [detector:supply-chain, risk:dependency-confusion, severity:confidential]
+  # --- Malicious package sources (npm git+http, scoped shadowing, local wheel) ---
+  - id: sc-malpkg-004
+    category: supply_chain.malicious_pkg
+    severity: soft
+    pattern: '(?i)\bnpm\s+(?:install|i|add)\b[^\n]{0,80}\bgit\+https?://[^\s]{3,200}'
+    description: 'npm install from a git+http(s) URL, fetching a package outside the registry.'
+    labels: [detector:supply-chain, risk:malicious-package, severity:confidential]
+  - id: sc-malpkg-005
+    category: supply_chain.malicious_pkg
+    severity: soft
+    pattern: '(?i)\b(?:pip\d?\s+install|python[23]?\s+-m\s+pip\s+install)\b[^\n]{0,80}/tmp/[^\s]{3,120}\.whl\b'
+    description: 'pip install of a local wheel from /tmp (unvetted artifact dropped before build).'
+    labels: [detector:supply-chain, risk:malicious-package, severity:confidential]
+  - id: sc-malpkg-006
+    category: supply_chain.malicious_pkg
+    severity: soft
+    pattern: '(?i)"(?:dependencies|devDependencies)"\s*:[^}]{0,400}"@[a-z0-9._-]{1,40}/[a-z0-9._-]{1,60}"\s*:\s*"(?:git\+https?://|https?://|file:)'
+    description: 'Scoped npm dependency resolved from a git / URL / file source, shadowing a registry-scoped package.'
+    labels: [detector:supply-chain, risk:malicious-package, severity:confidential]
+  # --- Build / container integrity (missing SRI, unpinned base image) ---
+  - id: sc-integrity-001
+    category: supply_chain.build_integrity
+    severity: soft
+    pattern: '(?i)<script\b[^>]{0,200}\bsrc\s*=\s*[''"]https?://[^''">]{3,200}[''"][^>]{0,80}>'
+    description: 'Remote <script src> with no Subresource Integrity attribute nearby (CDN tag without integrity pinning; review for SRI).'
+    labels: [detector:supply-chain, risk:missing-sri, severity:confidential]
+  - id: sc-integrity-002
+    category: supply_chain.build_integrity
+    severity: soft
+    pattern: '(?i)(?m)^\s*FROM\s+[^\s]{3,160}:latest\b'
+    description: 'Dockerfile FROM uses an unpinned :latest tag (non-reproducible, mutable base image).'
+    labels: [detector:supply-chain, risk:unpinned-base-image, severity:confidential]

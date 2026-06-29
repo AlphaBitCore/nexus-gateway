@@ -497,7 +497,7 @@ func embeddingsWireShapeForFormat(f provcore.Format) typology.WireShape {
 //     helper detects on body shape (presence of "requests": batch path;
 //     otherwise single).
 //
-// Per S2 T2 the ingress bridge is a pure translation step — capability
+// The ingress bridge is a pure translation step — capability
 // checks (dimensions / batch size) belong to the routing pre-filter and
 // codec safety net.
 func (b *Bridge) IngressEmbeddingsToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error) {
@@ -531,7 +531,7 @@ func (b *Bridge) IngressEmbeddingsToCanonical(ingress provcore.Format, body []by
 // codec (it inspects the canonical `input` cardinality), so it MUST be returned
 // to the caller and threaded onto the dispatched URL; dropping it sends the
 // batch body ({"requests":[…]}) to the single-embed URL, which Gemini rejects
-// with `Unknown name "requests": Cannot find field` (audit F-0053).
+// with `Unknown name "requests": Cannot find field`.
 // urlOverride is "" on the same-format passthrough and for codecs that do not
 // switch endpoints (OpenAI/Cohere embeddings).
 func (b *Bridge) IngressEmbeddingsToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) (wireBody []byte, urlOverride string, err error) {

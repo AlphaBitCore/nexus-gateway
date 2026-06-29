@@ -83,6 +83,21 @@ The usage extractor delegates to the shared normalize codecs (`packages/shared/t
 - **Reasoning tokens**: a wire-explicit count (`output_tokens_details.thinking_tokens` on Anthropic; `completion_tokens_details.reasoning_tokens` on OpenAI-compatible wires) always wins; the character-based derivation is only a fallback when the wire omits the count. The OpenAI-compatible `reasoning` field is an accepted wire alias of `reasoning_content` and feeds the same reasoning text accounting.
  See [`sse-streaming-compliance-architecture.md`](../../cross-cutting/safety/sse-streaming-compliance-architecture.md) for the streaming dispatch contract.
 
+### Normalized projection is not on the cost path — cost/field neutral
+
+The normalized projection (`request_normalized` / `response_normalized`) is
+**not stamped on the audit write path**: no producer ships it, and the Control
+Plane recomputes it at view time from the stored (already-redacted) body. This is
+cost-neutral by construction — cost and token counts are extracted into dedicated
+`traffic_event` columns (`estimated_cost_usd`, `prompt_tokens`,
+`completion_tokens`, `reasoning_cost_usd`, …) from the response usage block, not
+re-derived from the normalized projection. Because the row's cost/token/cache
+fields do not depend on the projection, the absence of a write-path stamp is
+field-neutral, and the audit path carries no normalize compute on the request
+goroutine. The usage extractor and pricing path above are untouched.
+See [`normalization-architecture.md`](normalization-architecture.md) §5.2 and
+[`audit-pipeline-architecture.md`](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2.
+
 ## References
 
 - `packages/ai-gateway/internal/execution/estimator/` — cost formula registry + heuristic tokenizer.

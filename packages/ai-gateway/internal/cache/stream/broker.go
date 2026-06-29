@@ -2,8 +2,8 @@ package streamcache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync"
@@ -37,11 +37,27 @@ type Registry struct {
 	cache   *cache.Cache
 	log     *slog.Logger
 	metrics *Metrics
+	// dedup controls same-cache-key in-flight coalescing. When true (default)
+	// concurrent same-key callers share one upstream leader (1-leader-N-joiners)
+	// — fewer upstream calls, but same-key concurrency serialises behind one
+	// leaderFn. When false each caller runs its own leader (independent upstream
+	// calls, low p99 under bursty same-key load) but STILL fills the cache on
+	// terminal frame, so an enabled L1 tier fills regardless of this knob. The
+	// cache write itself is identical on both paths; only fan-out differs.
+	dedup bool
 	// wg tracks in-flight pump goroutines so Wait can drain them — for
 	// graceful shutdown, and so tests can let async cache writes finish
 	// before tearing down the backing redis client.
 	wg sync.WaitGroup
 }
+
+// Option customises a Registry at construction.
+type Option func(*Registry)
+
+// WithDedup sets whether same-cache-key concurrent callers coalesce onto one
+// upstream leader. Default (no option) is true. Pass WithDedup(false) to give
+// every MISS its own upstream call while still filling the cache.
+func WithDedup(dedup bool) Option { return func(r *Registry) { r.dedup = dedup } }
 
 // pendingBroker tracks an in-flight leaderFn call so other Subscribe
 // calls for the same key can wait without blocking different-key
@@ -56,17 +72,22 @@ type pendingBroker struct {
 // NewRegistry constructs an empty Registry. c may be nil to disable
 // cache writes (the broker becomes pure fan-out). m may be nil to
 // disable Prometheus instrumentation.
-func NewRegistry(c *cache.Cache, log *slog.Logger, m *Metrics) *Registry {
+func NewRegistry(c *cache.Cache, log *slog.Logger, m *Metrics, opts ...Option) *Registry {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Registry{
+	r := &Registry{
 		brokers: make(map[string]*Broker),
 		pending: make(map[string]*pendingBroker),
 		cache:   c,
 		log:     log,
 		metrics: m,
+		dedup:   true,
 	}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
 }
 
 // Subscribe returns a ChunkSubscription for the given key plus
@@ -91,6 +112,31 @@ func NewRegistry(c *cache.Cache, log *slog.Logger, m *Metrics) *Registry {
 // registry closes the session and returns an error rather than store
 // a malformed broker.
 func (r *Registry) Subscribe(ctx context.Context, key string, leaderFn LeaderFn) (ChunkSubscription, bool, error) {
+	if !r.dedup {
+		// No-dedup mode: every caller is its own leader. Skip the
+		// brokers/pending maps entirely so same-key callers never join — each
+		// opens its own upstream session (the low-p99 trade-off) — but the
+		// broker still pumps + writes the cache on terminal frame, so an
+		// enabled L1 tier fills regardless of coalescing. Each broker is
+		// unregistered (onClose is a no-op) so concurrent same-key brokers do
+		// not evict one another; they write the same key last-wins with
+		// equivalent responses.
+		sess, meta, err := leaderFn(ctx)
+		if err != nil {
+			return nil, true, err
+		}
+		if meta == nil {
+			_ = sess.Close()
+			return nil, true, errors.New("streamcache: leaderFn returned nil CacheMeta")
+		}
+		b := newBroker(context.Background(), key, *meta, r.cache, r.log, r.metrics, func() {})
+		r.wg.Add(1)
+		go func() {
+			defer r.wg.Done()
+			b.pump(sess)
+		}()
+		return b.subscribe(), true, nil
+	}
 	for {
 		r.mu.Lock()
 

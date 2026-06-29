@@ -15,7 +15,7 @@ import (
 // TestChatStreamEmitsFileEvent drives a turn where the model calls write_file; the
 // handler must surface a structured `file` SSE event (id + download path) sourced
 // from the tool's own output — so the browser's download button no longer depends on
-// the model echoing the URL into its prose (e90-s7 follow-up b).
+// the model echoing the URL into its prose.
 func TestChatStreamEmitsFileEvent(t *testing.T) {
 	var round int32
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

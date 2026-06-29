@@ -3,7 +3,7 @@
 .filterShell {
   position: relative;
   z-index: 5;
-  margin-bottom: var(--g-space-4);
+  margin-bottom: 0;
 }
 
 .searchBar {
@@ -12,7 +12,7 @@
   width: min(100%, 420px);
   height: 38px;
   border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   background: var(--color-surface);
   overflow: hidden;
 }
@@ -38,7 +38,7 @@
   bottom: -2px;
   width: 7px;
   height: 1.8px;
-  border-radius: 2px;
+  border-radius: var(--g-radius-xs);
   background: var(--color-text-muted);
   transform: rotate(45deg);
   transform-origin: center;
@@ -116,7 +116,7 @@
   min-height: 20px;
   padding: 0;
   color: var(--color-text-secondary);
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   line-height: 1;
 }
 
@@ -145,7 +145,7 @@
 .panelTitle {
   margin: 0;
   font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   font-family: var(--g-font-display);
 }
 
@@ -207,7 +207,7 @@
   height: 32px;
   padding: 0 12px;
   border-radius: var(--g-radius-md);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   line-height: 30px;
 }
 
@@ -223,7 +223,7 @@
   border-radius: 0;
   box-shadow: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
 }
 
 .timeRangeInputEmpty {
@@ -252,7 +252,7 @@
   background: var(--color-surface);
   color: var(--color-text-secondary);
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   cursor: pointer;
   font-family: var(--g-font-sans);
   transition: all var(--g-transition-fast);
@@ -286,7 +286,7 @@
   padding: 0 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   font-family: var(--g-font-sans);
   color: var(--color-text);
   background: var(--color-surface);
@@ -304,7 +304,7 @@
 .dtInputMono {
   composes: dtInput;
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 .nativeSelect {
@@ -360,7 +360,7 @@
 
 .stepBadge {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
@@ -369,7 +369,7 @@
 
 .advGroupTitle {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-secondary);
@@ -384,7 +384,7 @@
 
 .scopeDescription {
   margin: 0 0 var(--g-space-3);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
   line-height: 1.5;
 }
@@ -410,11 +410,11 @@
   height: 32px;
   padding: 4px 16px;
   border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   background: var(--color-surface);
   color: var(--color-text-secondary);
-  font-size: 14px;
-  font-weight: 400;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
   line-height: 22px;
 }
 
@@ -422,12 +422,12 @@
   height: 32px;
   min-width: 158px;
   padding: 5px 16px;
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   border-color: var(--color-primary);
   background: var(--color-primary);
   color: var(--color-primary-foreground);
-  font-size: 14px;
-  font-weight: 400;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
   line-height: 22px;
 }
 
@@ -452,7 +452,7 @@
 }
 
 .fieldCompactLabel {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
 }

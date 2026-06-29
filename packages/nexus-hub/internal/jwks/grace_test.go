@@ -4,8 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -108,7 +108,7 @@ func TestHandleFetchFailure_ClearsCacheAfterGrace(t *testing.T) {
 	t.Errorf("cache should have been cleared after grace expired; Get still returns a key")
 }
 
-// TestRefresh_ZeroKey200RetainsStaleCache covers F-0248: a 200 response
+// TestRefresh_ZeroKey200RetainsStaleCache covers the case where a 200 response
 // carrying an empty "keys" array must be treated as a soft fetch failure —
 // the previously-installed key must survive (stale-grace), NOT be wiped, and
 // fetchedAt must NOT advance (otherwise the grace window would reset on every

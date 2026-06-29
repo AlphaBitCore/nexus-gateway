@@ -1,7 +1,7 @@
 package registry
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 	"time"

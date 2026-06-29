@@ -475,7 +475,7 @@
     "certPath": "证书文件",
     "interceptionMode": {
       "label": "拦截模式",
-      "fallbackWarning": "WinDivert 内核驱动未加载，正在使用系统代理回退模式。某些忽略系统代理的应用可能绕过过滤。请联系技术支持。"
+      "fallbackWarning": "NexusWFP 内核驱动未加载，正在使用系统代理回退模式。某些忽略系统代理的应用可能绕过过滤。请联系技术支持。"
     },
     "actions": {
       "title": "恢复操作",

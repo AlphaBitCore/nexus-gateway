@@ -4,7 +4,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -45,7 +44,9 @@ const (
 	InflightRedact    = decision.InflightRedact
 )
 
-// StorageAction — aliased from decision.
+// StorageAction — aliased from decision. Retained only so ActionFromLegacy
+// and the deprecation-window parser can name the legacy storage vocabulary;
+// new code uses Action.
 type StorageAction = decision.StorageAction
 
 const (
@@ -54,12 +55,21 @@ const (
 	StorageDropContent = decision.StorageDropContent
 )
 
+// Action — the single hook match-outcome axis, aliased from decision.
+type Action = decision.Action
+
+const (
+	ActionApprove = decision.ActionApprove
+	ActionRedact  = decision.ActionRedact
+	ActionBlock   = decision.ActionBlock
+)
+
 // OnMatchConfig is the unified shape every content-touching hook reads
-// from cfg.Config["onMatch"].
+// from cfg.Config["onMatch"]. A single Action governs both the inflight
+// disposition and what is stored.
 type OnMatchConfig struct {
-	InflightAction InflightAction `yaml:"inflightAction" json:"inflightAction"`
-	StorageAction  StorageAction  `yaml:"storageAction"  json:"storageAction"`
-	Replacement    string         `yaml:"replacement"    json:"replacement,omitempty"`
+	Action      Action `yaml:"action"      json:"action"`
+	Replacement string `yaml:"replacement" json:"replacement,omitempty"`
 }
 
 // CompliancePipelineResult — aliased from decision.
@@ -166,8 +176,8 @@ func (i *HookInput) TextSegments() []string {
 // also typically stamps the audit info's ResponseNormalized field so
 // the audit row carries the same payload.
 //
-// nil-safe / panic-safe is the caller's responsibility (see #97 for
-// the recover wrappers in the pipeline impls).
+// nil-safe / panic-safe is the caller's responsibility (the pipeline
+// impls wrap the callback in recover()).
 type PreHookCallback func(rawBody []byte, ci *HookInput)
 
 // TextSegmentsWith is the scope-aware sibling of TextSegments.
@@ -189,74 +199,6 @@ func (c *HookConfig) ProjectionOptions() normalize.TextProjectionOptions {
 		opts.IncludeReasoning = true
 	}
 	return opts
-}
-
-// PayloadFromTextSegments is a convenience used by test fixtures and
-// transitional adapter paths to construct a NormalizedPayload from a
-// flat list of user-role text segments.
-func PayloadFromTextSegments(segments []string) *normalize.NormalizedPayload {
-	if len(segments) == 0 {
-		return &normalize.NormalizedPayload{Kind: normalize.KindAIChat, NormalizeVersion: normalize.SchemaVersion}
-	}
-	content := make([]normalize.ContentBlock, 0, len(segments))
-	for _, s := range segments {
-		content = append(content, normalize.ContentBlock{Type: normalize.ContentText, Text: s})
-	}
-	return &normalize.NormalizedPayload{
-		Kind:             normalize.KindAIChat,
-		NormalizeVersion: normalize.SchemaVersion,
-		Protocol:         "synthetic",
-		Messages:         []normalize.Message{{Role: normalize.RoleUser, Content: content}},
-	}
-}
-
-// SpansFromModifiedContent computes TransformSpans for a transitional
-// hook implementation that still produces ModifiedContent as a flat
-// projection of the input.TextSegments.
-func SpansFromModifiedContent(input *HookInput, modified []ContentBlock, source normalize.TransformSource, sourceID string, action normalize.TransformAction) []normalize.TransformSpan {
-	if input == nil || input.Normalized == nil || len(modified) == 0 {
-		return nil
-	}
-	original := input.TextSegments()
-	if len(original) == 0 {
-		return nil
-	}
-	limit := len(modified)
-	if len(original) < limit {
-		limit = len(original)
-	}
-	spans := make([]normalize.TransformSpan, 0, limit)
-	idx := 0
-	for mi, m := range input.Normalized.Messages {
-		for ci, b := range m.Content {
-			if b.Type != normalize.ContentText && b.Type != normalize.ContentToolResult {
-				continue
-			}
-			if idx >= limit {
-				return spans
-			}
-			origText := original[idx]
-			newText := modified[idx].Text
-			idx++
-			if origText == newText {
-				continue
-			}
-			addr := fmt.Sprintf("messages.%d.content.%d", mi, ci)
-			if b.Type == normalize.ContentToolResult {
-				addr = fmt.Sprintf("messages.%d.content.%d.toolResult", mi, ci)
-			}
-			spans = append(spans, normalize.TransformSpan{
-				Source:         source,
-				SourceID:       sourceID,
-				Action:         action,
-				ContentAddress: addr,
-				Start:          0,
-				End:            len(origText),
-				Replacement:    newText,
-			})
-		}
-	}
-	return spans
 }
 
 // HookConfig is the declarative configuration for a hook instance.
@@ -281,7 +223,7 @@ type HookConfig struct {
 // String constants match Prometheus label values and Postgres column
 // values; no translation layer is needed.
 //
-// Type-aliased to typology.EndpointKind (E87-S2) so the entire codebase
+// Type-aliased to typology.EndpointKind so the entire codebase
 // shares one canonical Axis-1 enum. The EndpointType* constants below
 // are forwarded to typology.EndpointKind* — same underlying values, same
 // wire format.
@@ -326,6 +268,30 @@ type Hook interface {
 	// the modalities present in the request/response. An empty Modality ("")
 	// must return true for the same backward-compatibility reason.
 	SupportsModality(Modality) bool
+}
+
+// RawContentPrescanner is the optional capability that lets the proxy skip the
+// expensive structured request-body extraction on benign traffic. A
+// content-scanning hook implements it to answer, from the RAW request bytes
+// alone, "could any of my rules match the content this body carries?".
+//
+// Soundness contract (the proxy relies on it): MayMatchRaw MUST return true
+// whenever the hook's normal scan over the extracted content could fire — i.e.
+// it scans an anchor-stripped SUPERSET of its rules over the whole raw buffer,
+// so a false (no-match) provably means the structured scan would also find
+// nothing. When the hook cannot guarantee that (a pattern it could not turn into
+// a superset prefilter), it MUST return true. The proxy only trusts a false
+// result for bodies with no JSON backslash escape, so the extracted content
+// bytes appear verbatim and contiguously inside the raw buffer.
+//
+// ScansContent separates content hooks from metadata hooks (rate limit, IP,
+// size) whose verdict does not depend on extracted content: a metadata hook
+// reports false so its presence never forces an extraction. A hook that does
+// not implement this interface at all is treated by the proxy as "may match"
+// (extraction is never skipped when an unaccounted hook is present).
+type RawContentPrescanner interface {
+	ScansContent() bool
+	MayMatchRaw(body []byte) bool
 }
 
 // ChatOnly is the applicability helper for hooks that exclusively apply to

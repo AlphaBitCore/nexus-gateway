@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import { providerApi, credentialApi, systemApi } from '@/api/services';
 import type {
   CreateCredentialInput,
@@ -156,6 +157,7 @@ export function useProviderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation('pages');
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab>('info');
   const [isEditing, setIsEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -251,14 +253,26 @@ export function useProviderDetail() {
   );
 
   // ── Mutations ──
+  const syncProviderDetail = (updated: Provider) => {
+    queryClient.setQueryData(['api', 'providers', 'detail', id], updated);
+    refetch();
+  };
+
   const { mutate: toggleEnabled, loading: toggleLoading } = useMutation(
     (enabled: boolean) => providerApi.update(id!, { enabled }),
-    { onSuccess: () => refetch(), successMessage: t('providers.providerUpdated') },
+    { onSuccess: syncProviderDetail, successMessage: t('providers.providerUpdated') },
   );
 
   const { mutate: saveProvider, loading: saveLoading } = useMutation(
     (data: unknown) => providerApi.update(id!, data as UpdateProviderInput),
-    { onSuccess: () => { showSyncFeedback('ai-gateway'); setIsEditing(false); refetch(); }, successMessage: t('providers.providerUpdated') },
+    {
+      onSuccess: (updated) => {
+        showSyncFeedback('ai-gateway');
+        setIsEditing(false);
+        syncProviderDetail(updated);
+      },
+      successMessage: t('providers.providerUpdated'),
+    },
   );
 
   const { mutate: deleteProvider, loading: deleteLoading } = useMutation(

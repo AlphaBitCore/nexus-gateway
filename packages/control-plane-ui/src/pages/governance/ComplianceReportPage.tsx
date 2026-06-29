@@ -8,7 +8,7 @@ import {
 } from '@/components/ui';
 
 /**
- * S43 — Compliance report viewer with browser print-to-PDF.
+ * Compliance report viewer with browser print-to-PDF.
  *
  * No server-side PDF generation. The compliance officer picks a time
  * window, the BFF aggregates the report data, and this page renders it

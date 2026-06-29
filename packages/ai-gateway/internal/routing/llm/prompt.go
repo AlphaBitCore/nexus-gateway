@@ -1,8 +1,8 @@
 package llm
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"regexp"
 	"strings"

@@ -529,9 +529,12 @@ func TestExecute_RecordsHealth_SuccessAndFailure(t *testing.T) {
 		result := exec.Execute(context.Background(),
 			[]routingcore.RoutingTarget{tgt},
 			baseReq(),
-			configtypes.DefaultRetryPolicy(),
+			// max=1: a single 5xx on the only target exhausts immediately with one
+			// failure sample. (The platform default now retries once, which would
+			// record two samples — this subtest pins the single-sample case.)
+			fastBackoffPolicy(1),
 		)
-		// 5xx with default policy + single target -> ErrAllTargetsExhausted.
+		// 5xx + single target, no same-target retry -> ErrAllTargetsExhausted.
 		if !errors.Is(result.Error, ErrAllTargetsExhausted) {
 			t.Fatalf("expected ErrAllTargetsExhausted, got %v", result.Error)
 		}
@@ -744,7 +747,7 @@ func TestExecute_EmbeddingsBridgeTranslate_SkipsToNextTarget(t *testing.T) {
 }
 
 // TestExecute_EmbeddingsBridgeURLOverride_ReachesAdapter is the executor-seam
-// regression for Bug F-0053. A cross-format embeddings request (OpenAI ingress
+// regression. A cross-format embeddings request (OpenAI ingress
 // → Gemini target) is translated by the bridge, which emits the codec's
 // endpoint-selection URLOverride (:embedContent vs :batchEmbedContents). The
 // executor MUST hand that override to adapter.ExecuteWithBody — previously it
@@ -813,7 +816,7 @@ func TestExecute_EmbeddingsBridgeURLOverride_ReachesAdapter(t *testing.T) {
 	}
 }
 
-// TestExecute_ResponsesNative_KeepsResponsesWireShape covers the E56 fix
+// TestExecute_ResponsesNative_KeepsResponsesWireShape covers the fix
 // (executor.go executeInner): a /v1/responses request whose target NATIVELY
 // serves the Responses API must keep WireShape=openai-responses (so BuildURL
 // targets /v1/responses) and forward the verbatim Responses body — NOT be

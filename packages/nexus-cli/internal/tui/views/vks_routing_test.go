@@ -2,10 +2,10 @@ package views
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"encoding/json"
 	"errors"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/kit"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 )

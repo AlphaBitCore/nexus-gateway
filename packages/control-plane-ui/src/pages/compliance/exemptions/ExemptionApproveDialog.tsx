@@ -2,7 +2,7 @@
  * ExemptionApproveDialog — confirmation AlertDialog for approving a PENDING
  * exemption request. Controlled by useExemptionDialogs (the page owns the
  * selected row, busy flag, and approve handler); this component is a thin
- * render of that state, preserving the original page markup verbatim.
+ * render of that state.
  */
 import { useTranslation } from 'react-i18next';
 import { AlertDialog } from '@/components/ui';

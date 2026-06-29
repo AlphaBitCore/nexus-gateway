@@ -426,7 +426,7 @@ func TestMapAnthropicStreamError_invalidRequestError(t *testing.T) {
 }
 
 func TestMapAnthropicStreamError_notFoundError(t *testing.T) {
-	// F-0227: not_found_error maps to invalid_request, unified with the unary
+	// not_found_error maps to invalid_request, unified with the unary
 	// HTTP normaliser (a 404 is a client error, not a retryable upstream one).
 	err := antstream.MapAnthropicStreamError("not_found_error", "not found")
 	pe := func() *provcore.ProviderError {
@@ -549,5 +549,28 @@ func TestStreamDecoder_messageStop_carriesAccumulatedUsage(t *testing.T) {
 	}
 	if done.Usage.CompletionTokens == nil || *done.Usage.CompletionTokens != 123 {
 		t.Errorf("Done CompletionTokens: got %v, want 123 (final output_tokens from message_delta)", done.Usage.CompletionTokens)
+	}
+}
+
+// TestStreamDecoder_finishReason_fromStopReason proves the Anthropic decoder
+// maps message_delta.stop_reason into the canonical finish_reason vocabulary so
+// a re-encoder (buffer mode) can preserve it instead of collapsing to "stop".
+func TestStreamDecoder_finishReason_fromStopReason(t *testing.T) {
+	cases := map[string]string{
+		"max_tokens":    "length",
+		"tool_use":      "tool_calls",
+		"end_turn":      "stop",
+		"stop_sequence": "stop",
+		"refusal":       "refusal", // unmapped value passes through (forward-compat)
+	}
+	for wire, want := range cases {
+		sess := openSession(t, sseFrame("message_delta", `{"type":"message_delta","delta":{"stop_reason":"`+wire+`"},"usage":{"output_tokens":3}}`))
+		chunk, err := sess.Next(context.Background())
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if chunk.FinishReason != want {
+			t.Errorf("stop_reason %q → FinishReason %q, want %q", wire, chunk.FinishReason, want)
+		}
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 // setHMAC installs an injected single-version HMAC keyring for the duration of a
 // test, restoring the prior keyring afterwards. Mirrors the boot-time
-// auth.InitHMACKeyring injection (SEC-W2-01 Layer A / SEC-W2-03 Layer C) — the
+// auth.InitHMACKeyring injection — the
 // hashing layer keys under the keyring's current version, never os.Getenv at
 // point-of-use.
 func setHMAC(t *testing.T, secret string) {
@@ -53,7 +53,7 @@ func TestHashAPIKeyHonorsInjectedSecret(t *testing.T) {
 	}
 }
 
-// TestHashAPIKey_DomainSeparatedFromVirtualKey is the SEC-W2-01 regression: the
+// TestHashAPIKey_DomainSeparatedFromVirtualKey is the domain-separation regression: the
 // SAME raw key hashed as an admin API key vs a virtual key must yield DIFFERENT
 // digests, because they key the HMAC with distinct HKDF-derived sub-keys. This is
 // what prevents a forgery oracle / leak scoped to one trust domain from minting a

@@ -1,5 +1,6 @@
 .form {
-  padding-bottom: var(--g-space-4);
+  padding-bottom: 0;
+  width: 100%;
 }
 
 .section {
@@ -15,31 +16,76 @@
 .sectionHeader {
   font-size: var(--g-font-size-sm);
   font-weight: var(--g-font-weight-semibold);
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   margin: 0 0 var(--g-space-2);
 }
 
 .grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--g-space-3);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--g-space-3) var(--g-space-4);
+  width: 100%;
 }
 
 .field {
   display: flex;
   flex-direction: column;
   gap: var(--g-space-1);
-  flex: 1 1 var(--g-size-input-md);
-  min-width: var(--g-size-input-sm);
+  min-width: 0;
 }
 
 .fieldFull {
-  flex: 1 1 100%;
+  grid-column: 1 / -1;
 }
 
 .label {
   font-size: var(--g-font-size-xs);
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+}
+
+.field :global(input),
+.field :global(button[role='combobox']) {
+  width: 100%;
+}
+
+.section :global(button[role='combobox']) {
+  width: 100%;
+}
+
+.section :global(button[aria-haspopup='listbox']) {
+  width: 100%;
+  min-height: 36px;
+  background: var(--color-bg-input);
+}
+
+.featureSelect > :global(label) {
+  display: none;
+}
+
+.field select {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--g-transition-fast),
+    box-shadow var(--g-transition-fast);
+}
+
+.field select:hover {
+  border-color: var(--color-border-strong);
+}
+
+.field select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
 }
 
 .collapseSummary {
@@ -61,18 +107,29 @@
 }
 
 .footer {
-  position: sticky;
-  bottom: 0;
   display: flex;
+  align-items: center;
   gap: var(--g-space-2);
   justify-content: flex-end;
-  padding-top: var(--g-space-3);
-  margin-top: var(--g-space-2);
+  min-height: 80px;
+  padding: 0 var(--g-space-6);
+  margin: var(--g-space-4) calc(var(--g-space-6) * -1) calc(var(--g-space-6) * -1);
   background: var(--color-surface-raised);
   border-top: 1px solid var(--color-border);
+}
+
+.footer :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .fieldError {
   font-size: var(--g-font-size-xs);
   color: var(--color-danger);
+}
+
+@media (max-width: 640px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
 }

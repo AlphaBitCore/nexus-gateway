@@ -639,7 +639,7 @@ func TestRollupCorrection_Run_1hBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 
-	// 288 × 5m processBucket (empty traffic_event) — no watermark INSERT (F-0165).
+	// 288 × 5m processBucket (empty traffic_event) — no watermark INSERT.
 	for range 288 {
 		mock.ExpectBegin()
 		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).
@@ -679,7 +679,7 @@ func TestRollupCorrection_Run_1dBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 
-	// 288 × 5m processBucket — no watermark INSERT (F-0165).
+	// 288 × 5m processBucket — no watermark INSERT.
 	for range 288 {
 		mock.ExpectBegin()
 		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).

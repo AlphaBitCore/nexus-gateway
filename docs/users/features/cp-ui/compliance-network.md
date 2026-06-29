@@ -32,9 +32,15 @@ This document covers the network-interception part of the COMPLIANCE sidebar sec
 
 **What you see.** A single settings form.
 
-**Controls.** A default mode select; numeric inputs for chunk bytes, hook timeout (ms), and max buffer bytes; a fail-behavior select; and switches for capture-request-body, capture-response-body, and raw-body-spill-enabled. The form renders any backend warnings plus a local advisory that the buffer-full-block mode ignores a Modify decision.
+**Controls.** A default mode select; numeric inputs for chunk bytes, hook timeout (ms), and max buffer bytes; a fail-behavior select; and switches for capture-request-body, capture-response-body, and raw-body-spill-enabled. An always-visible per-mode disclosure note states, in one plain sentence each, exactly what compliance enforcement every mode performs — including the wire risk an admin must see before choosing a real-time mode over buffering.
 
-**Key concepts.** The default mode is `passthrough` (stream straight through), `buffer_full_block` (buffer the whole response before deciding), or `chunked_async` (inspect chunks as they flow). The fail behavior is `fail_open` or `fail_close`. A stream larger than the max buffer bytes spills to the spill store when raw-body-spill is enabled, or is truncated otherwise.
+**Key concepts.** The default mode picks the enforcement-versus-latency trade-off for streamed responses:
+
+- `passthrough` — streamed in real time; compliance scanning runs at storage time only, with no inflight redaction. Lowest latency, no inflight enforcement.
+- `chunked_async` — real-time streaming with best-effort inflight redaction. High performance, but it carries a bounded-fragment risk: a complete sensitive value is never delivered, yet a short leading fragment may reach the client before redaction engages. Choose `buffer_full_block` for guaranteed redaction.
+- `buffer_full_block` — the full response is buffered and scanned before any byte is delivered; redaction and hard-block are guaranteed (strong compliance), at the cost of higher time-to-first-byte.
+
+The fail behavior is `fail_open` (continue on a hook error or timeout) or `fail_close` (block under `buffer_full_block`, audit-flag under `chunked_async`). A stream larger than the max buffer bytes spills to the spill store when raw-body-spill is enabled, or is truncated otherwise.
 
 **Where the data comes from.** `systemApi` — `getStreamingComplianceConfig`, `updateStreamingComplianceConfig`.
 

@@ -188,3 +188,54 @@ rules:
     pattern: '(?i)\b(?:dark[-\s]?(?:web|net)|silk\s+road|dread\s+forum|alphabay)\s+(?:market(?:place)?|listing|vendor|onion\s+(?:link|url|address)|drug\s+market)\b'
     description: Dark-web marketplace / vendor lookup.
     labels: [detector:content-safety, category:illegal, severity:restricted]
+  # =====================================================================
+  # CBRN / weapons (cs-w-001 .. cs-w-004) — contextual how-to framing only
+  # =====================================================================
+  - id: cs-w-001
+    category: content_safety.weapons
+    severity: hard
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|step[-\s]?by[-\s]?step|instructions?\s+(?:to|for))\s+(?:synthesi[sz]e|culture|weaponi[sz]e|aerosoli[sz]e)\s+(?:anthrax|ricin|sarin|vx\s+(?:nerve\s+)?agent|botulinum|nerve\s+agent|a\s+bioweapon)\b'
+    description: CBRN agent synthesis/weaponization how-to (does NOT match defensive/medical discussion).
+    labels: [detector:content-safety, category:weapons, severity:restricted]
+  - id: cs-w-002
+    category: content_safety.weapons
+    severity: hard
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|step[-\s]?by[-\s]?step|recipe\s+for)\s+(?:build|make|construct|assemble)\s+(?:a\s+)?(?:pipe\s+bomb|pressure[-\s]cooker\s+bomb|ied|improvised\s+explosive|nail\s+bomb|fertili[sz]er\s+bomb)\b'
+    description: Improvised-explosive construction how-to.
+    labels: [detector:content-safety, category:weapons, severity:restricted]
+  - id: cs-w-003
+    category: content_safety.weapons
+    severity: hard
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|step[-\s]?by[-\s]?step)\s+(?:synthesi[sz]e|make|prepare)\s+(?:tatp|hmtd|nitroglycerin|c-?4|semtex|thermite)\b'
+    description: High-explosive synthesis how-to.
+    labels: [detector:content-safety, category:weapons, severity:restricted]
+  - id: cs-w-004
+    category: content_safety.weapons
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|guide\s+(?:to|for))\s+(?:convert|modify)\s+(?:a\s+)?(?:semi[-\s]?auto(?:matic)?|ar-?15|glock)\s+(?:to\s+(?:full[-\s]?auto(?:matic)?|fully\s+automatic)|with\s+a\s+(?:bump\s+stock|auto\s+sear))\b'
+    description: Illegal firearm full-auto conversion how-to.
+    labels: [detector:content-safety, category:weapons, severity:restricted]
+  # =====================================================================
+  # Cyber-harassment / doxxing (cs-h-001 .. cs-h-002)
+  # =====================================================================
+  - id: cs-har-001
+    category: content_safety.harassment
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|help\s+me)\s+(?:dox|doxx)\s+(?:someone|this\s+person|him|her|them)\b'
+    description: Doxxing assistance request.
+    labels: [detector:content-safety, category:harassment, severity:restricted]
+  - id: cs-har-002
+    category: content_safety.harassment
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|best\s+way\s+to)\s+(?:stalk|track\s+the\s+location\s+of|secretly\s+monitor)\s+(?:my\s+ex|someone|a\s+person)\b'
+    description: Stalking / covert-tracking assistance request.
+    labels: [detector:content-safety, category:harassment, severity:restricted]
+  # =====================================================================
+  # Self-harm methods (cs-sh-001) — method-seeking framing only
+  # =====================================================================
+  - id: cs-sh-008
+    category: content_safety.self_harm
+    severity: hard
+    pattern: '(?i)\b(?:most\s+(?:effective|lethal|painless)\s+(?:way|method)\s+to\s+(?:kill\s+myself|end\s+my\s+life|commit\s+suicide)|how\s+(?:much|many)\s+\w+\s+(?:to\s+overdose|is\s+a\s+lethal\s+dose))\b'
+    description: Suicide/self-harm method-seeking (routes to crisis-safe handling; not awareness/support text).
+    labels: [detector:content-safety, category:self_harm, severity:restricted]

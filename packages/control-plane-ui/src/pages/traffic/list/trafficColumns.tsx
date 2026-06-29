@@ -159,7 +159,7 @@ export function getColumnsForSource(source: TrafficSourceFilter, t: (key: string
       latencyCol,
       { key: 'totalTokens', label: t('pages:traffic.colTokens'), render: (r: TrafficEvent) => r.totalTokens != null ? formatTokens(r.totalTokens) : '-' },
       { key: 'upstreamCostUsd', label: t('pages:traffic.colCost'), render: (r: TrafficEvent) => {
-          // E58-S5: upstream cost is derived from per-component math (the
+          // Upstream cost is derived from per-component math (the
           // same decomposition the audit drawer's Costs panel renders).
           // The dropped `estimated_cost_usd` column was the gateway's pre-
           // computed total; we now recompute from tokens × per-million

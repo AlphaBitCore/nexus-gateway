@@ -129,7 +129,7 @@ func TestNewCommandEncryptor_DefaultTimeout(t *testing.T) {
 func TestCommandEncryptor_WrapRoundTrip(t *testing.T) {
 	// CommandEncryptor.Encrypt uses runCommandStdin — the command reads plaintext
 	// from STDIN; {file} is NOT substituted on the encrypt path (the plaintext
-	// is a secret that must never touch disk, F-0299).
+	// is a secret that must never touch disk).
 	enc, err := NewCommandEncryptor([]string{"cat"}, 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewCommandEncryptor: %v", err)

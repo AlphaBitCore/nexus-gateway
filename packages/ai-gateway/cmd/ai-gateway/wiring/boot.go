@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -70,7 +71,7 @@ type BootDeps struct {
 	MqProducer      mq.Producer
 	PayloadCapture  *payloadcapture.Store
 	// StreamingPolicy is the hot-swappable streaming compliance policy
-	// Store (#115). proxy_cache.go reads Store.Get() per-request to
+	// Store. proxy_cache.go reads Store.Get() per-request to
 	// dispatch SSE handler between live (chunked_async) and buffer
 	// (buffer_full_block) modes. Hot-reloaded via configdispatch's
 	// streaming_compliance shadow handler.
@@ -116,8 +117,12 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 		IdleConnTimeout:     time.Duration(cfg.Upstream.IdleConnTimeoutSec) * time.Second,
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
+		MaxConnsPerHost:     cfg.Upstream.MaxConnsPerHost,
 	})
 	d.UpstreamClient = proxy.NewUpstreamClient()
+	// Size the request-body read scratch from config (server.requestReadBufKb).
+	// Set once before serving — the pool's New is not called until the first request.
+	proxy.SetReadBufPreGrow(cfg.Server.RequestReadBufKB * 1024)
 
 	// Forward-header allowlist.
 	fhCfg := cfg.ForwardHeaders
@@ -187,6 +192,16 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 
 	credStatsMetrics := credstats.NewMetrics(prometheus.DefaultRegisterer)
 	credStatsBuf := credstats.New(d.Rdb, logger, d.Reliability.Resolve, credStatsMetrics)
+	// Defer the per-attempt success-stats Redis pipeline off the request hot path
+	// (accumulate in-process, flush on an interval). Circuit transitions stay
+	// synchronous. ON by default; final flush on ctx cancel so shutdown loses
+	// nothing. NEXUS_CREDSTATS_WRITE_BEHIND=0 opts back out (synchronous per-attempt
+	// stats).
+	if os.Getenv("NEXUS_CREDSTATS_WRITE_BEHIND") != "0" {
+		credStatsBuf.EnableWriteBehind()
+		go credStatsBuf.RunFlusher(ctx, 250*time.Millisecond)
+		logger.Info("credstats write-behind enabled", "flush_interval", "250ms")
+	}
 	d.FormatBridge, d.TargetExecutor = InitExecutor(d.AdapterReg, d.PtResolver, d.HealthTracker, credStatsBuf, logger)
 	quotaMetrics := quota.NewMetrics("nexus", prometheus.DefaultRegisterer)
 	d.QuotaEngine, d.PolicyCache = InitQuota(ctx, d.DB, d.Rdb, logger, quotaMetrics)
@@ -217,13 +232,19 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 		if d.Rdb != nil {
 			_ = d.Rdb.Close()
 		}
+		// Close the audit writer BEFORE the MQ producer: AuditWriter.Close() waits
+		// (wg) for the consumer + spill-recovery workers to stop, so neither
+		// publishes to a closed producer. Closing the producer first would leave the
+		// recovery sweeper mid-flush publishing on a dead connection (it errs safe —
+		// leaves the spool file — but the clean ordering avoids the spurious failure
+		// and lets a final spool fsync+drain complete).
+		d.AuditWriter.Close()
 		if d.MqProducer != nil {
 			_ = d.MqProducer.Close()
 		}
 		if d.Tp != nil {
 			_ = d.Tp.Shutdown(context.Background())
 		}
-		d.AuditWriter.Close()
 	}
 	return d, cleanup, nil
 }

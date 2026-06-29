@@ -2,8 +2,8 @@ package payloadcapture
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"sync/atomic"
 )
 

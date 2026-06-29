@@ -5,9 +5,10 @@
 package proxy
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
@@ -200,11 +201,22 @@ type Deps struct {
 // Handler orchestrates the proxy request pipeline.
 type Handler struct {
 	deps *Deps
+	// lazyCanonical is the lazy-canonical gate. Default ON: the request-path
+	// canonical is computed only when a synchronous consumer (smart routing or the
+	// response cache) needs it; otherwise it is left nil. The audit path never
+	// consumes it — normalized is recomputed at view time from the stored raw
+	// body — so on the clean path (hooks-off, simple routing, cache-off) this
+	// skips the eager request-body Normalize entirely (~29% of request-path CPU
+	// on a 50 KB body). Set NEXUS_LAZY_CANONICAL=0 to force always-compute.
+	lazyCanonical bool
 }
 
 // NewHandler creates a Handler with the given dependencies.
 func NewHandler(deps *Deps) *Handler {
-	return &Handler{deps: deps}
+	return &Handler{
+		deps:          deps,
+		lazyCanonical: os.Getenv("NEXUS_LAZY_CANONICAL") != "0",
+	}
 }
 
 // payloadCaptureConfig returns the active payload-capture snapshot for

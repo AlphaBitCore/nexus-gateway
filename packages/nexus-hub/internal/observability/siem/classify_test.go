@@ -67,7 +67,7 @@ func TestClassifyAdminEvent(t *testing.T) {
 	}
 }
 
-// TestClassifyAdminEvent_LoginAndOverrideAreCataloged is the F-0192 regression.
+// TestClassifyAdminEvent_LoginAndOverrideAreCataloged is the regression test.
 // Before the fix, a login-failure row (Action="admin.login.failed", no
 // EntityType) classified to "" and an override row (EntityType="thing",
 // Action="thing_override_set") classified to the non-cataloged
@@ -107,7 +107,7 @@ func TestClassifyAdminEvent_LoginAndOverrideAreCataloged(t *testing.T) {
 }
 
 // TestClassifyAdminEvent_CatalogedEventsSurviveWhitelist proves the end-to-end
-// F-0192 outcome: once classified, login + override events match an
+// outcome: once classified, login + override events match an
 // explicit SIEM whitelist instead of being silently dropped. The whitelist uses
 // the same canonical strings the admin picker now offers.
 func TestClassifyAdminEvent_CatalogedEventsSurviveWhitelist(t *testing.T) {

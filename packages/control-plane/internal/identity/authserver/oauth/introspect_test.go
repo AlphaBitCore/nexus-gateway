@@ -3,7 +3,7 @@ package oauth_test
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"

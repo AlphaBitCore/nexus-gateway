@@ -123,6 +123,10 @@ install -o root -g root -m 0755 "$STAGING_DIR/scripts/first-boot.sh"          "$
 install -o root -g root -m 0755 "$STAGING_DIR/scripts/first-boot-secrets.sh" "$SCRIPT_DIR/nexus-first-boot-secrets"
 install -o root -g root -m 0755 "$STAGING_DIR/scripts/first-boot-ca.sh"      "$SCRIPT_DIR/nexus-first-boot-ca"
 install -o root -g root -m 0755 "$STAGING_DIR/scripts/first-boot-db.sh"      "$SCRIPT_DIR/nexus-first-boot-db"
+# Every-boot reconcile + manual command (nexus-reconcile-url) — re-syncs all
+# IP-derived config (publicURL / issuer / OAuth redirect / TLS cert SAN) to the
+# instance's current public IP after a stop/start or Elastic IP change.
+install -o root -g root -m 0755 "$STAGING_DIR/scripts/reconcile-public-url.sh" "$SCRIPT_DIR/nexus-reconcile-url"
 
 # ─── 10. Install runtime dependencies (Postgres / Valkey / NATS / Node) ─────
 
@@ -152,6 +156,7 @@ systemctl enable postgresql
 systemctl enable valkey
 systemctl enable nats
 systemctl enable nexus-first-boot.service
+systemctl enable nexus-reconcile-url.service
 systemctl enable nexus-hub.service
 systemctl enable nexus-control-plane.service
 systemctl enable nexus-gateway.service

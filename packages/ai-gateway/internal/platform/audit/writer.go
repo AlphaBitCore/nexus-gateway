@@ -1,10 +1,12 @@
 package audit
 
 import (
-	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
@@ -20,6 +22,28 @@ type Writer struct {
 	logger   *slog.Logger
 	queue    string
 	metrics  *auditMetrics
+
+	// frameMaxBytes, when > 0, packs marshaled records into newline-delimited
+	// NDJSON frames bounded by this many bytes and publishes one NATS message
+	// per frame — instead of one PublishAsync per record. The per-record op
+	// count is the measured audit-drain bottleneck (records-per-frame× fewer
+	// publishes recovers ~1.5× request RPS under load); the Hub splits each
+	// frame back into records. 0 keeps the legacy one-message-per-record path.
+	// Bound below the deployment's NATS max_payload and the Hub frame cap. Set
+	// via WithFramePublish; gated OFF by default so it only engages once the
+	// Hub is known to support framed messages (the consumer is backward-
+	// compatible: a legacy 1-record message is just a 1-line frame).
+	frameMaxBytes int
+
+	// wireBinary selects the binary TLV audit wire (shared/transport/mq/binwire.go)
+	// over the legacy NDJSON-of-JSON form. Set from NEXUS_AUDIT_WIRE=binary at
+	// construction. Binary removes the gw-side JSON marshal + body base64 and the
+	// Hub-side key matching + body base64 decode, and shrinks the message ~25–50%.
+	// The Hub dual-reads (peeks the frame magic), so this can flip per-process. The
+	// binary frame is length-prefixed records under a 1-byte magic, so it ALSO needs
+	// frameMaxBytes>0 to engage the framed publish; the per-record fallback path
+	// stays JSON regardless (it predates framing and is test/transport-only).
+	wireBinary bool
 
 	// Thing identity of the emitting ai-gateway instance. Stamped onto
 	// every TrafficEventMessage so traffic_event.thing_id / thing_name
@@ -59,34 +83,105 @@ type Writer struct {
 	// the wire message without normalized fields (test / fallback).
 	normalize NormalizeFn
 
-	mu  sync.Mutex
-	buf []*Record
+	// recCh is the bounded producer→consumer queue (cap = maxQueued). Enqueue is
+	// the producer; N publishWorkers are the consumers. This IS the standard
+	// bounded producer/multi-consumer pattern: a blocking send (block mode) is the
+	// no-loss back-pressure, a non-blocking send (spill/drop modes) is the lossy
+	// opt-out. Each queued record pins its pooled ~50 KB body until a worker
+	// marshals it, so the cap bounds the audit body-pool working set.
+	recCh chan *Record
 
-	// flushSignal carries a size-triggered flush request from Enqueue to
-	// the flush loop. Buffered (cap 1) and sent non-blocking, so a burst
-	// of Enqueues coalesces into at most one pending wakeup and never
-	// blocks the request path.
-	flushSignal chan struct{}
+	// maxQueued is recCh's capacity (the bounded-queue depth). Defaults to
+	// maxQueueSize; set per deployment via WithMaxQueuedRecords. Read once at
+	// NewWriter to size recCh.
+	maxQueued int
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	// lossMode selects the overflow policy when recCh is full (lossModeBlock
+	// default | Spill | Drop). block = no-loss back-pressure (compliance default);
+	// spill/drop = lossy opt-in. Set via WithLossMode from AuditConfig.LossMode.
+	lossMode string
+
+	// workers is the number of consumer goroutines draining recCh — one per
+	// producer connection-pool member, so each worker publishes on its own NATS
+	// connection with an independent ack barrier (the publishes pipeline instead of
+	// serialising on a single flush loop). Set at NewWriter from the producer's
+	// PoolSize.
+	workers int
+
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
+	startOnce sync.Once
+
+	// batchPathLogOnce logs (once) that the async-batch publish path engaged,
+	// so prod logs prove the optimization is active.
+	batchPathLogOnce sync.Once
+
+	// dropLogCount rate-limits the overflow-drop log (one line per dropLogEvery
+	// drops; dropped_total stays exact) — a stack-trace Error per dropped record
+	// was itself a top allocator under the overload it reports.
+	dropLogCount atomic.Uint64
+
+	// spillLogCount rate-limits the spill-failure log, for the same reason: under
+	// a spool-quota-full burst a per-failure Error (with its stack trace) is itself
+	// a top allocator + CPU cost on the request path it was meant to protect.
+	spillLogCount atomic.Uint64
+
+	// spillCh hands overflow records from the request path to the async spill
+	// worker. On a full in-heap buffer, Enqueue does a NON-BLOCKING send here and
+	// returns immediately — the expensive marshal + NDJSON write happens on the
+	// spill worker, never on the request goroutine. Buffered + non-blocking, so a
+	// saturated spill worker degrades to a bounded, counted drop (the audit
+	// side-path's last resort) without ever stalling a request. Drained on Close.
+	spillCh chan *Record
+
+	// spillRecoveryInterval, when > 0 (and ndjsonSpill + a batch producer are
+	// wired), starts the background sweeper that replays sealed spool files back
+	// into the MQ queue — the drain half of the spill-defer architecture, so a
+	// record that overflowed to disk still reaches the queryable store. 0 disables
+	// recovery (the spool is then a pure durable safety net drained out-of-band).
+	// spillRecoveryPace throttles the sweep between files to yield the box to the
+	// gateway's core request path. Both set via WithSpillRecovery.
+	spillRecoveryInterval time.Duration
+	spillRecoveryPace     time.Duration
+
+	// spillFlush adapts the spill worker's flush size to measured disk-write
+	// latency (replacing a fixed flush-bytes magic number). Set in NewWriter.
+	spillFlush *adaptiveSpillFlush
 }
 
 // NewWriter creates an audit writer that publishes to the given MQ producer.
 // If producer is nil, records are enqueued but discarded on flush (no-op mode).
 // If reg is nil, MQ-pipeline metrics are silently skipped (test-only path).
 func NewWriter(producer mq.Producer, queue string, reg *opsmetrics.Registry, logger *slog.Logger) *Writer {
-	w := &Writer{
-		producer:    producer,
-		queue:       queue,
-		logger:      logger,
-		metrics:     newAuditMetrics(reg),
-		buf:         make([]*Record, 0, defaultBatchSize),
-		flushSignal: make(chan struct{}, 1),
-		stopCh:      make(chan struct{}),
+	workers := 1
+	if pooled, ok := producer.(pooledBatchProducer); ok {
+		if n := pooled.PoolSize(); n > workers {
+			workers = n
+		}
 	}
-	w.wg.Add(1)
-	go w.flushLoop()
+	// Buffer capacities adapt to AVAILABLE MEMORY rather than fixed magic numbers,
+	// so a bigger box automatically absorbs deeper bursts and a smaller box scales
+	// down — no config, and a machine swap can't silently collapse throughput.
+	// WithMaxQueuedRecords still overrides the in-heap cap for an explicit operator
+	// choice.
+	recChCap, spillChCap := adaptiveBufferCaps()
+	w := &Writer{
+		producer:   producer,
+		queue:      queue,
+		logger:     logger,
+		metrics:    newAuditMetrics(reg),
+		maxQueued:  recChCap,
+		lossMode:   lossModeBlock,
+		workers:    workers,
+		spillCh:    make(chan *Record, spillChCap),
+		spillFlush: newAdaptiveSpillFlush(),
+		stopCh:     make(chan struct{}),
+		// Binary TLV wire is the proven-optimal default (eliminates the Hub-side JSON
+		// decode + gw base64/marshal, shrinks the NATS message 25–50%); the Hub
+		// dual-reads, so this is safe to default on. NEXUS_AUDIT_WIRE=json opts back
+		// out (the legacy path, kept until it is deleted).
+		wireBinary: !strings.EqualFold(strings.TrimSpace(os.Getenv("NEXUS_AUDIT_WIRE")), "json"),
+	}
 	return w
 }
 
@@ -121,13 +216,14 @@ func (w *Writer) WithThingIdentity(id, name string) *Writer {
 	return w
 }
 
-// NormalizeFn is the closure ai-gateway main wires to invoke
-// shared/normalize on captured request/response bodies. Returns the
-// marshalled NormalizedPayload (or nil on protocol-mismatch), the
-// status ("ok" / "partial" / "failed"), and an error reason for the
-// failed/partial path. The audit Writer is intentionally agnostic
-// about the normalize package — it accepts bytes in and produces wire
-// bytes out, so this package keeps building when shared/normalize is
+// NormalizeFn is the normalize-closure type the audit Writer accepts to invoke
+// shared/normalize on captured request/response bodies. Returns the marshalled
+// NormalizedPayload (or nil on protocol-mismatch), the status ("ok" / "partial" /
+// "failed"), and an error reason for the failed/partial path. No production caller
+// wires it — the normalized projection is recomputed at view time — so the type
+// serves as the test-injection seam for the write-time guarantee. The audit Writer
+// is intentionally agnostic about the normalize package — it accepts bytes in and
+// produces wire bytes out, so this package keeps building when shared/normalize is
 // not wired (tests, no-op deployments).
 //
 // adapterType is the wire-format key ("openai", "anthropic", "gemini",
@@ -136,151 +232,13 @@ func (w *Writer) WithThingIdentity(id, name string) *Writer {
 // names are intentionally NOT used as the routing key.
 type NormalizeFn func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (raw json.RawMessage, status, errReason string)
 
-// WithNormalizer wires a normalize closure. When set, recordToMessage
-// invokes it for each captured (RequestBody / ResponseBody) direction
-// and persists the result onto the TrafficEventMessage.
+// WithNormalizer wires a normalize closure onto the writer. The audit write path
+// does NOT persist a normalized projection — the control plane recomputes it at
+// view time from the action-governed raw body — and recordToMessage never invokes
+// the closure. No production caller wires it; the seam exists only so tests can
+// inject a fatal-on-call normalizer and assert it is never run at write time,
+// pinning the view-time-only guarantee against regression.
 func (w *Writer) WithNormalizer(fn NormalizeFn) *Writer {
 	w.normalize = fn
 	return w
-}
-
-// closeShutdownDeadline bounds how long Close() spends draining the
-// in-memory buffer through a transiently failing producer. Each
-// flush() inside the loop is itself bounded by the per-record 5s
-// producer.Enqueue timeout, so this is the outer wall on the whole
-// drain attempt. 15s is long enough to ride out a typical NATS
-// reconnect (sub-second) but short enough that an operator running
-// `kubectl rollout restart` does not perceive a hang.
-const closeShutdownDeadline = 15 * time.Second
-
-// closeRetryBackoff is the cooldown between flush attempts during
-// Close. Short enough that a fast NATS reconnect is observed promptly,
-// long enough that we do not spin on a producer that is permanently
-// unavailable.
-const closeRetryBackoff = 200 * time.Millisecond
-
-// Close flushes remaining records and stops the background goroutine.
-// On a transient MQ failure flush() re-buffers the failed records, so
-// Close loops flush() (with backoff) until either the buffer is empty
-// or closeShutdownDeadline is reached. Records still in the buffer at
-// the deadline are counted on the dropped metric and logged so a
-// sustained MQ outage at shutdown surfaces in monitoring instead of
-// disappearing silently.
-func (w *Writer) Close() {
-	close(w.stopCh)
-	w.wg.Wait()
-	w.drainBuffer(time.Now().Add(closeShutdownDeadline), closeRetryBackoff)
-}
-
-// drainBuffer is the deadline-bounded retry loop used by Close. Split
-// out so tests can drive it with a small deadline + backoff without
-// paying the production wall time. Re-buffered records on flush
-// failure get retried until the buffer empties or the deadline trips;
-// at the deadline any remaining records are counted on the dropped
-// metric so a sustained MQ outage at shutdown is observable instead of
-// silently invisible.
-func (w *Writer) drainBuffer(deadline time.Time, backoff time.Duration) {
-	for {
-		w.flush()
-		w.mu.Lock()
-		remaining := len(w.buf)
-		w.mu.Unlock()
-		if remaining == 0 {
-			return
-		}
-		if !time.Now().Before(deadline) {
-			w.logger.Warn("audit writer Close: buffer not fully drained at deadline; records dropped",
-				"remaining", remaining,
-			)
-			for range remaining {
-				w.metrics.incDropped()
-			}
-			return
-		}
-		time.Sleep(backoff)
-	}
-}
-
-func (w *Writer) flushLoop() {
-	defer w.wg.Done()
-	ticker := time.NewTicker(defaultFlushInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			w.flush()
-		case <-w.flushSignal:
-			w.flush()
-		case <-w.stopCh:
-			return
-		}
-	}
-}
-
-func (w *Writer) flush() {
-	w.mu.Lock()
-	if len(w.buf) == 0 {
-		w.mu.Unlock()
-		return
-	}
-	batch := w.buf
-	w.buf = make([]*Record, 0, defaultBatchSize)
-	w.mu.Unlock()
-
-	if w.producer == nil {
-		return
-	}
-
-	// Fan the per-record work (normalize + spill + marshal + one
-	// JetStream publish-and-ack) across a bounded pool: the per-record
-	// cost is the drain ceiling, and these records are independent.
-	// flush() is only ever called from the single flush loop (or from
-	// Close after that loop has stopped), so there is never more than one
-	// flush in flight — the pool here is the only concurrency.
-	sem := make(chan struct{}, publishConcurrency)
-	var wg sync.WaitGroup
-	for _, rec := range batch {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(rec *Record) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			w.publishRecord(rec)
-		}(rec)
-	}
-	wg.Wait()
-}
-
-// publishRecord normalizes, marshals and publishes one audit record. On a
-// transient producer failure the record is re-buffered (bounded by
-// maxQueueSize) so the next flush retries it; if the buffer is already full it
-// spills to the durable NDJSON sink rather than dropping. On a hard marshal
-// failure it is dropped (it can never succeed). Safe for concurrent use across
-// the flush worker pool — buffer mutation is under w.mu and the metrics pins +
-// producer are concurrency-safe.
-func (w *Writer) publishRecord(rec *Record) {
-	msg := w.recordToMessage(rec)
-	data, err := json.Marshal(msg)
-	if err != nil {
-		w.logger.Error("audit: marshal failed", "requestId", rec.RequestID, "error", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := w.producer.Enqueue(ctx, w.queue, data); err != nil {
-		w.logger.Error("audit: MQ enqueue failed", "requestId", rec.RequestID, "error", err)
-		w.metrics.incEnqueueErrors()
-		w.mu.Lock()
-		reBuffered := len(w.buf) < maxQueueSize
-		if reBuffered {
-			w.buf = append(w.buf, rec)
-		}
-		w.mu.Unlock()
-		if !reBuffered && !w.spillRecord(rec) {
-			w.metrics.incDropped()
-		}
-		return
-	}
-	w.metrics.incEnqueueTotal()
 }

@@ -46,7 +46,7 @@ func newEmptyRequestStageHookCache(t *testing.T) *compliance.HookConfigCache {
 // NOT record a rewrite phase (no Modify decision occurred).
 func TestRunRequestHooks_RecordsSubPhaseBreakdown(t *testing.T) {
 	h := &Handler{deps: &Deps{
-		HookConfigCache: newRequestStageHookCache(t, storagePolicyHook{}),
+		HookConfigCache: buildApprovePipeline(t),
 		TrafficAdapter:  &openai.Adapter{},
 		Logger:          slog.Default(),
 	}}
@@ -75,7 +75,7 @@ func TestRunRequestHooks_RecordsSubPhaseBreakdown(t *testing.T) {
 		}
 	}
 	if _, ok := snap[string(traffic.PhaseHookRewrite)]; ok {
-		t.Errorf("hook_rewrite_ms must be absent without a Modify decision; got %v", snap)
+		t.Errorf("hook_rewrite_us must be absent without a Modify decision; got %v", snap)
 	}
 }
 
@@ -105,16 +105,18 @@ func TestRunRequestHooks_RecordsRewritePhase_OnModify(t *testing.T) {
 
 	snap := pt.SnapshotDetail(true)
 	if _, ok := snap[string(traffic.PhaseHookRewrite)]; !ok {
-		t.Errorf("hook_rewrite_ms must be recorded on the Modify path; got %v", snap)
+		t.Errorf("hook_rewrite_us must be recorded on the Modify path; got %v", snap)
 	}
 }
 
-// TestRunRequestHooks_NoHooksConfigured_RecordsExtractBuildOnly pins the
-// no-hooks path: extraction and pipeline-build still run (and are timed)
-// before the nil-pipeline early return, but no pipeline-execute or rewrite
-// phase is recorded. This also documents the ordering cost — a request with
-// zero configured hooks still pays content extraction.
-func TestRunRequestHooks_NoHooksConfigured_RecordsExtractBuildOnly(t *testing.T) {
+// TestRunRequestHooks_NoHooksConfigured_RecordsBuildOnly pins the no-hooks path
+// AFTER the [perf A6] reorder: the pipeline is built first, and because it is
+// nil (no hooks configured) the request returns BEFORE content extraction — so
+// only hook_build_us is timed; hook_extract_us is absent (the extraction, and
+// its gjson allocation, is skipped entirely). pipeline-execute and rewrite
+// phases remain absent. This documents the win: a request with zero configured
+// hooks no longer pays content extraction.
+func TestRunRequestHooks_NoHooksConfigured_RecordsBuildOnly(t *testing.T) {
 	h := &Handler{deps: &Deps{
 		HookConfigCache: newEmptyRequestStageHookCache(t),
 		TrafficAdapter:  &openai.Adapter{},
@@ -136,14 +138,18 @@ func TestRunRequestHooks_NoHooksConfigured_RecordsExtractBuildOnly(t *testing.T)
 	}
 
 	snap := pt.SnapshotDetail(true)
-	for _, key := range []string{string(traffic.PhaseHookExtract), string(traffic.PhaseHookBuild)} {
-		if _, ok := snap[key]; !ok {
-			t.Errorf("expected %q recorded even with no hooks configured; got %v", key, snap)
-		}
+	if _, ok := snap[string(traffic.PhaseHookBuild)]; !ok {
+		t.Errorf("expected %q recorded (pipeline build always runs); got %v", traffic.PhaseHookBuild, snap)
 	}
-	for _, key := range []string{string(traffic.PhaseHookPipeline), string(traffic.PhaseHookRewrite)} {
+	// [perf A6] extraction is now skipped when no pipeline is built, so its phase
+	// must be ABSENT on the no-hooks path (alongside execute + rewrite).
+	for _, key := range []string{
+		string(traffic.PhaseHookExtract),
+		string(traffic.PhaseHookPipeline),
+		string(traffic.PhaseHookRewrite),
+	} {
 		if _, ok := snap[key]; ok {
-			t.Errorf("%q must be absent when no pipeline executed; got %v", key, snap)
+			t.Errorf("%q must be absent when no pipeline is built (extraction skipped); got %v", key, snap)
 		}
 	}
 }
@@ -153,7 +159,7 @@ func TestRunRequestHooks_NoHooksConfigured_RecordsExtractBuildOnly(t *testing.T)
 // but seams and tests may not) must not panic.
 func TestRunRequestHooks_NilPhaseTimer_NoPanic(t *testing.T) {
 	h := &Handler{deps: &Deps{
-		HookConfigCache: newRequestStageHookCache(t, storagePolicyHook{}),
+		HookConfigCache: buildApprovePipeline(t),
 		TrafficAdapter:  &openai.Adapter{},
 		Logger:          slog.Default(),
 	}}

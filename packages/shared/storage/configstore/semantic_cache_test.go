@@ -12,8 +12,8 @@ package configstore_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 	"time"
@@ -649,7 +649,7 @@ func TestSemanticSave_RejectsUnsupportedDimension(t *testing.T) {
 }
 
 // WireState is the contract the admin push AND the configreconcile drift loader
-// both depend on (F-0102/F-0345): it must zero ONLY the wall-clock bookkeeping
+// both depend on: it must zero ONLY the wall-clock bookkeeping
 // columns (UpdatedAt/UpdatedBy, which Save stamps from the Go clock and Get from
 // DB NOW(), so they never byte-match) while preserving every functional field —
 // else the watch would spuriously heal on each save (bookkeeping zeroed) or

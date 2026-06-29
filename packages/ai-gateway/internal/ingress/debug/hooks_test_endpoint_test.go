@@ -2,7 +2,7 @@ package debug
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -159,9 +159,10 @@ func TestHooksTestHandler_ContentSafety_RulePackEnrichMatches(t *testing.T) {
 			"timeoutMs":        500,
 			"config": map[string]any{
 				"categories": map[string]any{"sexual": true},
-				// Canonical onMatch shape — inflightAction=block-soft
-				// maps to BLOCK_SOFT decision (the rule-pack enrichment then
-				// produces the BLOCK_SOFT outcome this test asserts on).
+				// Legacy onMatch shape (backward-compat parse): the deprecated
+				// block-soft inflightAction now folds into the single block
+				// action, which maps to a REJECT_HARD decision (soft-block was
+				// merged into block).
 				"onMatch": map[string]any{
 					"inflightAction": "block-soft",
 					"storageAction":  "redact",
@@ -180,20 +181,21 @@ func TestHooksTestHandler_ContentSafety_RulePackEnrichMatches(t *testing.T) {
 	if !ok {
 		t.Fatalf("output is not an object: %v", out)
 	}
-	if output["decision"] != "BLOCK_SOFT" {
-		t.Errorf("decision: want BLOCK_SOFT from pack rule, got %v (output=%v)", output["decision"], output)
+	if output["decision"] != "REJECT_HARD" {
+		t.Errorf("decision: want REJECT_HARD from pack rule (block-soft folded into block), got %v (output=%v)", output["decision"], output)
 	}
 }
 
 // TestHooksTestHandler_QualityChecker_Flags_Short verifies that the factory
 // resolves against gwHookRegistry (not the shared registry) and executes,
-// returning a valid BLOCK_SOFT response for a known builtin implementationId.
+// returning a valid block (REJECT_HARD) response for a known builtin
+// implementationId.
 func TestHooksTestHandler_QualityChecker_Flags_Short(t *testing.T) {
 	h := HooksTestHandler(buildTestRegistry(t), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// QualityChecker treats a very short assistant response as anomalous.
-	// The canonical lever is onMatch.inflightAction=block-soft →
-	// BLOCK_SOFT decision with reasonCode=QUALITY_ANOMALY.
+	// The legacy lever onMatch.inflightAction=block-soft now folds into the
+	// single block action → REJECT_HARD decision with reasonCode=QUALITY_ANOMALY.
 	body := map[string]any{
 		"hookConfig": map[string]any{
 			"id":               "hc-qc",
@@ -231,8 +233,8 @@ func TestHooksTestHandler_QualityChecker_Flags_Short(t *testing.T) {
 	// assert on the fields the checker actually sets — and rely on the
 	// fact that we got here at all as proof the factory was resolved
 	// through gwHookRegistry (regression guard).
-	if output["decision"] != "BLOCK_SOFT" {
-		t.Errorf("decision: want BLOCK_SOFT for short response, got %v (output=%v)", output["decision"], output)
+	if output["decision"] != "REJECT_HARD" {
+		t.Errorf("decision: want REJECT_HARD for short response (block-soft folded into block), got %v (output=%v)", output["decision"], output)
 	}
 	if output["reasonCode"] != "QUALITY_ANOMALY" {
 		t.Errorf("reasonCode: want QUALITY_ANOMALY, got %v", output["reasonCode"])

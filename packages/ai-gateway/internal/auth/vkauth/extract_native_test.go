@@ -52,7 +52,7 @@ func TestExtractVKToken_Gemini_Header(t *testing.T) {
 	}
 }
 
-// SEC-M3-02: the Gemini `?key=<vk>` URL-query carrier is NOT accepted — a
+// The Gemini `?key=<vk>` URL-query carrier is NOT accepted — a
 // bearer credential must never be read from the URL (it leaks into logs /
 // history / Referer). Only the x-goog-api-key header carries the VK.
 func TestExtractVKToken_Gemini_QueryParam_NotAccepted(t *testing.T) {

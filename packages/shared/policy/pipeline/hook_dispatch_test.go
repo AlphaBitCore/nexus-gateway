@@ -8,7 +8,6 @@ package pipeline
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,14 +18,12 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -59,6 +56,44 @@ func modifiedNormalizedFixture() *normalize.NormalizedPayload {
 				},
 			},
 		},
+	}
+}
+
+func TestApplyModifiedContentToNormalized_SkipsToolUseEntriesInIndexSpace(t *testing.T) {
+	// A ContentToolUse block PRECEDES a ContentText block in one message. The
+	// flat ModifiedContent space includes the tool-use leaf entry tagged
+	// "tool_use" before the text entry. The positional text walk must SKIP the
+	// tool_use entry so the text block receives the text modification — not the
+	// tool-use leaf's masked value (the off-by-one this guard closes).
+	p := &normalize.NormalizedPayload{
+		Kind: normalize.KindAIChat,
+		Messages: []normalize.Message{{
+			Role: normalize.RoleAssistant,
+			Content: []normalize.ContentBlock{
+				{Type: normalize.ContentToolUse, ToolUse: &normalize.ToolUse{
+					CallID: "c", Name: "f", Input: map[string]any{"q": "leaf-pii"}}},
+				{Type: normalize.ContentText, Text: "orig-text"},
+			},
+		}},
+	}
+	modified := []core.ContentBlock{
+		{Type: "tool_use", Text: "[LEAF-MASKED]"}, // tool-use leaf entry, must be skipped
+		{Type: "text", Text: "NEW-TEXT"},          // the actual text modification
+	}
+	got := applyModifiedContentToNormalized(p, modified)
+	if got == nil {
+		t.Fatal("got nil")
+	}
+	// content[0] is the tool_use block — its structured Input is untouched by
+	// this text walk (tool-arg redaction flows through TransformSpans).
+	if got.Messages[0].Content[0].Type != normalize.ContentToolUse {
+		t.Fatalf("tool_use block clobbered: %+v", got.Messages[0].Content[0])
+	}
+	// content[1] is the text block — it must receive NEW-TEXT, NOT the masked
+	// tool-leaf value.
+	if got.Messages[0].Content[1].Text != "NEW-TEXT" {
+		t.Fatalf("text block got %q, want NEW-TEXT (tool_use entry not skipped → index skew)",
+			got.Messages[0].Content[1].Text)
 	}
 }
 
@@ -511,7 +546,7 @@ func TestBuildPipeline_NoApplicableHooksReturnsNilNilNoError(t *testing.T) {
 }
 
 func TestBuildPipeline_SkipsIncompatibleHookToNilPipeline(t *testing.T) {
-	// Availability-first (F-0274): when the ONLY candidate is a
+	// Availability-first: when the ONLY candidate is a
 	// connection-stage config bound to a non-ConnectionStageCompatible impl,
 	// resolve() skips it (no error) and BuildPipeline returns (nil, nil) — the
 	// caller treats nil as "no pipeline to run". A single misconfigured hook
@@ -535,7 +570,7 @@ func TestBuildPipeline_SkipsIncompatibleHookToNilPipeline(t *testing.T) {
 }
 
 func TestResolve_FactoryError_SkipsHookNoAbort(t *testing.T) {
-	// F-0274: a hook whose factory returns an error is skipped+logged, and a
+	// A hook whose factory returns an error is skipped+logged, and a
 	// healthy hook in the same config set still resolves. This is the core
 	// "one bad rule degrades to that rule off, not all compliance off" fix.
 	registry := core.NewHookRegistry()
@@ -666,11 +701,13 @@ func TestBuildEvent_DualPipelineStampsBothStagesAndMergesTags(t *testing.T) {
 
 	req := &core.CompliancePipelineResult{
 		Decision:    core.Approve,
+		Action:      core.ActionApprove,
 		HookResults: []core.HookResult{{HookID: "h1", HookName: "k1", LatencyMs: 3}},
 		Tags:        []string{"compliance:ok"},
 	}
 	resp := &core.CompliancePipelineResult{
 		Decision:    core.BlockSoft,
+		Action:      core.ActionBlock,
 		Reason:      "post-flagged",
 		ReasonCode:  "POST",
 		HookResults: []core.HookResult{{HookID: "h2", HookName: "k2", LatencyMs: 7}},
@@ -870,7 +907,7 @@ func TestBuildEvent_LargeBodyWithSpillStoreYieldsSpillBody(t *testing.T) {
 		WithSpillStore(nopSpill{}).
 		WithPayloadCaptureStore(store)
 	big := bytes.Repeat([]byte("x"), 16)
-	e.Emit(&core.HookInput{}, AuditInfo{}, &core.CompliancePipelineResult{Decision: core.Approve},
+	e.Emit(&core.HookInput{}, AuditInfo{}, &core.CompliancePipelineResult{Decision: core.Approve, Action: core.ActionApprove},
 		"BUMP_SUCCESS", 200, 1, big, big, traffic.UsageMeta{})
 	ev := w.events[0]
 	if ev.RequestBody.Kind != audit.BodySpill {
@@ -1073,61 +1110,10 @@ func TestRegisterMetrics_RegistersAllVectorsUnderNamespace(t *testing.T) {
 	}
 }
 
-func TestRegisterMetrics_WiresRedactStorageOutcomeCounter(t *testing.T) {
-	// RegisterMetrics must wire redact.OnStorageOutcome so that real
-	// ApplyStorageAction outcomes increment
-	// <ns>_redact_storage_outcome_total{outcome,cause}. metricsOnce may
-	// have fired in an earlier test of this package, in which case the
-	// callback feeds the first-registered counter — so assert delta-style
-	// via the package-level convenience var the callback reads.
-	RegisterMetrics(prometheus.NewRegistry(), "unit_test_redact_outcome")
-	if redact.OnStorageOutcome == nil {
-		t.Fatal("RegisterMetrics must wire redact.OnStorageOutcome")
-	}
-
-	degraded := RedactStorageOutcomeTotal.WithLabelValues(redact.StorageOutcomeDegraded, normalize.DegradeCauseNoSpans)
-	rescued := RedactStorageOutcomeTotal.WithLabelValues(redact.StorageOutcomeRescued, normalize.DegradeCauseSpansUnresolved)
-	degradedBefore := testutil.ToFloat64(degraded)
-	rescuedBefore := testutil.ToFloat64(rescued)
-
-	// Degradation: a redact policy with no spans drops the content.
-	raw, err := json.Marshal(normalize.NormalizedPayload{
-		Kind: normalize.KindAIChat,
-		Messages: []normalize.Message{
-			{Role: normalize.RoleUser, Content: []normalize.ContentBlock{{Type: normalize.ContentText, Text: "mail alice@example.com"}}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	redact.ApplyStorageAction(raw, "redact", nil, []string{"email"}, nil)
-
-	// Rescue: the span's address fails to resolve but re-detection
-	// re-locates the content.
-	failing := []normalize.TransformSpan{
-		{Source: normalize.SourceHook, SourceID: "email", Action: normalize.ActionRedact, ContentAddress: "messages.6.content.0", Start: 0, End: 5, Replacement: "[REDACTED_email]"},
-	}
-	redetect := func(text string, ruleIDs []string) []redact.Match {
-		if i := strings.Index(text, "alice@example.com"); i >= 0 {
-			return []redact.Match{{RuleID: "email", Start: i, End: i + len("alice@example.com"), Replacement: "[REDACTED_email]"}}
-		}
-		return nil
-	}
-	redact.ApplyStorageAction(raw, "redact", failing, []string{"email"}, redetect)
-
-	if got := testutil.ToFloat64(degraded); got != degradedBefore+1 {
-		t.Errorf("degraded counter = %v, want %v", got, degradedBefore+1)
-	}
-	if got := testutil.ToFloat64(rescued); got != rescuedBefore+1 {
-		t.Errorf("rescued counter = %v, want %v", got, rescuedBefore+1)
-	}
-}
-
-func TestRegisterDefaultMetrics_IdempotentAndWiresCallback(t *testing.T) {
+func TestRegisterDefaultMetrics_Idempotent(t *testing.T) {
 	// The boot-time entry point must tolerate being reached from multiple
 	// wiring paths: a second call must not re-register on the default
-	// registerer (promauto panics on duplicate registration) and the
-	// redact outcome callback must be wired afterwards.
+	// registerer (promauto panics on duplicate registration).
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("repeated RegisterDefaultMetrics panicked: %v", r)
@@ -1135,9 +1121,6 @@ func TestRegisterDefaultMetrics_IdempotentAndWiresCallback(t *testing.T) {
 	}()
 	RegisterDefaultMetrics("nexus")
 	RegisterDefaultMetrics("nexus")
-	if redact.OnStorageOutcome == nil {
-		t.Fatal("RegisterDefaultMetrics must leave redact.OnStorageOutcome wired")
-	}
 }
 
 func TestRegisterMetrics_NilRegistererFallsBackToDefault(t *testing.T) {
@@ -1633,7 +1616,7 @@ func TestResolve_IngressMismatchIsSkipped(t *testing.T) {
 }
 
 func TestResolve_FactoryError_DegradesToHookOff(t *testing.T) {
-	// F-0274 availability-first: when a factory returns an error, resolve()
+	// Availability-first: when a factory returns an error, resolve()
 	// skips+logs that hook and continues — it does NOT abort the whole
 	// pipeline build. A single broken hook config must degrade to "that hook
 	// off", never "all compliance off" (which a propagated error would cause

@@ -11,7 +11,7 @@
 package codec
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -268,8 +268,7 @@ func TestEncodeRequest_parallelToolCallsDisabled_noTools_omitsToolChoice(t *test
 	// parallel_tool_calls=false WITHOUT tools must NOT synthesise a
 	// tool_choice — Anthropic 400s ("tool_choice may only be specified while
 	// providing tools") for any tool_choice on a no-tools request, and an
-	// OpenAI SDK can legitimately send parallel_tool_calls:false here
-	// (audit F-0226).
+	// OpenAI SDK can legitimately send parallel_tool_calls:false here.
 	var c Codec
 	body := []byte(`{
 		"model":"claude-sonnet-4-6",

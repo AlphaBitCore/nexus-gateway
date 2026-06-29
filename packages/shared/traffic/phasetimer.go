@@ -11,6 +11,7 @@
 package traffic
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -79,10 +80,17 @@ const (
 	//	                   in-pipeline framework overhead between hooks).
 	//	PhaseHookRewrite — adapter.RewriteRequestBody reverse-encode on a
 	//	                   Modify decision (0 when no rewrite occurs).
-	PhaseHookExtract  Phase = "hook_extract_ms"
-	PhaseHookBuild    Phase = "hook_build_ms"
-	PhaseHookPipeline Phase = "hook_pipeline_ms"
-	PhaseHookRewrite  Phase = "hook_rewrite_ms"
+	// Recorded in MICROSECONDS (`_us` suffix), not milliseconds: for normal-sized
+	// prompts these framing segments are sub-millisecond, so a millisecond column
+	// floored them to 0 (dropped) or 1 — making per-request hook timing
+	// unreadable. Microsecond resolution makes them accurately attributable. The
+	// JSONB value stays an integer (Hub deserialises latency_breakdown as
+	// map[string]int; CP-UI reads Record<string, number>), so this is additive —
+	// no existing `_ms` consumer is affected.
+	PhaseHookExtract  Phase = "hook_extract_us"
+	PhaseHookBuild    Phase = "hook_build_us"
+	PhaseHookPipeline Phase = "hook_pipeline_us"
+	PhaseHookRewrite  Phase = "hook_rewrite_us"
 
 	// compliance-proxy phases.
 	PhaseConnSetup    Phase = "conn_setup_ms"
@@ -224,15 +232,21 @@ func (p *PhaseTimer) SnapshotDetail(detail bool) map[string]int {
 	}
 	out := make(map[string]int, len(p.phases))
 	for k, d := range p.phases {
-		ms := int(d / time.Millisecond)
+		// Unit is encoded in the phase-name suffix: `_us` phases (the sub-ms
+		// hook framing segments) emit microseconds; all others emit milliseconds.
+		var v int
+		if strings.HasSuffix(string(k), "_us") {
+			v = int(d / time.Microsecond)
+		} else {
+			v = int(d / time.Millisecond)
+		}
 		switch {
-		case ms > 0:
-			out[string(k)] = ms
+		case v > 0:
+			out[string(k)] = v
 		case detail && d > 0:
-			// Floor sub-ms phases to 1 so the JSONB row carries the
-			// fact they ran, even though the resolution is too coarse
-			// to show their actual duration. Sub-microsecond noise
-			// (d <= 0) still drops.
+			// Floor sub-resolution phases to 1 so the JSONB row carries the
+			// fact they ran, even though the resolution is too coarse to show
+			// their actual duration. Sub-unit noise (d <= 0) still drops.
 			out[string(k)] = 1
 		}
 	}

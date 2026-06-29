@@ -17,9 +17,9 @@
 package spool
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"path/filepath"

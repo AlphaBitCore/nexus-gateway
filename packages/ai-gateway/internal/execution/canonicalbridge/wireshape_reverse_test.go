@@ -21,7 +21,7 @@ var forwardEgressChatFormats = []provcore.Format{
 	provcore.FormatOpenAIResponses,
 }
 
-// TestWireShapeToFormatEndpoint_CoversForwardEgressMap is the F-0055 parity
+// TestWireShapeToFormatEndpoint_CoversForwardEgressMap is the parity
 // guard: every chat wire shape that the forward egress map
 // (ResponseCanonicalToIngress) can produce must be reversible by
 // wireShapeToFormatEndpoint, and the reverse must round-trip back to the

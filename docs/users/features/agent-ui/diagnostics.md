@@ -14,7 +14,7 @@ Reinstalling the network extension is not offered here — it lives on the menu-
 
 ## Health table
 
-Three rows: whether the Hub is reachable, the certificate path, and the active interception mechanism — `NETransparentProxy` on macOS, `iptables` on Linux, `WinDivert` on Windows, or `SystemProxyFallback` (a degraded Windows fallback, flagged with a warning).
+Three rows: whether the Hub is reachable, the certificate path, and the active interception mechanism — `NETransparentProxy` on macOS, `iptables` on Linux, `NexusWFP` on Windows, or `SystemProxyFallback` (a degraded Windows fallback, flagged with a warning).
 
 ## Log tail
 

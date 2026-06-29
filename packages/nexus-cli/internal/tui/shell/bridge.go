@@ -2,7 +2,7 @@ package shell
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"sync/atomic"
 	"time"
 

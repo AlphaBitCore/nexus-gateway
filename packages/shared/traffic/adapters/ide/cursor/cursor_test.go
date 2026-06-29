@@ -12,7 +12,7 @@ import (
 
 // Cursor's wire format is heavily proprietary; the adapter is
 // defensive (see package doc). Tests cover JSON shapes the adapter
-// recognises plus the binary-preview safety net for protobuf bodies.
+// recognises plus ErrUnknownSchema for unparseable protobuf bodies.
 
 func TestAdapter_ID(t *testing.T) {
 	a := &Adapter{}
@@ -108,31 +108,15 @@ func TestExtractRequest_AuthorTextShape(t *testing.T) {
 	}
 }
 
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{"prompt":"hi","x_cursor_field":{"sensitive":"trace"}}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/chat")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if x, ok := nc.Extra["x_cursor_field"]; !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_cursor_field", nc.Extra)
-	}
-}
-
 // Defensive paths
 
 func TestExtractRequest_BinaryProtobufBody(t *testing.T) {
 	// Simulated protobuf-style body: starts with a binary length prefix.
 	body := []byte{0x00, 0x00, 0x00, 0x00, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f}
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/aiserver.v1.AiService/StreamChat")
+	_, err := a.ExtractRequest(context.Background(), body, "/aiserver.v1.AiService/StreamChat")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v want ErrUnknownSchema", err)
-	}
-	// Binary preview must be captured for offline analysis.
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("Extra=%v missing binary_preview safety net", nc.Extra)
 	}
 }
 
@@ -305,7 +289,7 @@ func TestRewriteResponseBody_Unsupported(t *testing.T) {
 	}
 }
 
-// looksLikeJSON / preview helpers
+// looksLikeJSON helper
 
 func TestLooksLikeJSON(t *testing.T) {
 	cases := []struct {
@@ -325,33 +309,6 @@ func TestLooksLikeJSON(t *testing.T) {
 			t.Errorf("looksLikeJSON(%q)=%v want %v", c.in, got, c.want)
 		}
 	}
-}
-
-func TestPreview_Truncates(t *testing.T) {
-	body := bytesRepeat('a', 1024)
-	p := preview(body)
-	if len(p) > 256 {
-		t.Errorf("preview length=%d > 256", len(p))
-	}
-}
-
-func TestPreview_StripsControlChars(t *testing.T) {
-	body := []byte{'a', 0x00, 'b', 0x01, 'c'}
-	p := preview(body)
-	for _, ch := range p {
-		if ch < 0x20 && ch != '\n' && ch != '\t' {
-			t.Errorf("preview contains control char: %q", p)
-			break
-		}
-	}
-}
-
-func bytesRepeat(b byte, n int) []byte {
-	out := make([]byte, n)
-	for i := range out {
-		out[i] = b
-	}
-	return out
 }
 
 // TestExtractStreamChunk_PathGatesProtobuf pins that a raw protobuf frame is

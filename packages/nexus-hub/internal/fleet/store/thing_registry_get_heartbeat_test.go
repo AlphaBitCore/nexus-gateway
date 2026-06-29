@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 	"time"
@@ -223,7 +223,7 @@ func TestHeartbeat(t *testing.T) {
 			t.Errorf("missing prefix: %v", err)
 		}
 	})
-	// F-0208: the HTTP heartbeat must only promote offline→online and otherwise
+	// the HTTP heartbeat must only promote offline→online and otherwise
 	// leave the status untouched — writing $2 unconditionally clobbered
 	// drift→online (premature drift clear) and revoked→online (revocation
 	// bypass). The SQL-text expectation fails if anyone reverts the gate to the

@@ -1,8 +1,8 @@
 package voyage_test
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 	"testing"
@@ -108,7 +108,7 @@ func TestEmbedRequestToCanonical_Extensions(t *testing.T) {
 }
 
 func TestEmbedRequestToCanonical_TruncationFalse_Stamped(t *testing.T) {
-	// F-0221: the truncation guard must stamp BOTH true and false. The
+	// the truncation guard must stamp BOTH true and false. The
 	// false case is the one the old boolean-precedence smell relied on
 	// gjson-Null to handle; assert it explicitly round-trips false.
 	body := []byte(`{"model":"voyage-3","input":"hello","truncation":false}`)
@@ -126,7 +126,7 @@ func TestEmbedRequestToCanonical_TruncationFalse_Stamped(t *testing.T) {
 }
 
 func TestEmbedRequestToCanonical_TruncationAbsent_NotStamped(t *testing.T) {
-	// F-0221: when truncation is omitted entirely, no extension is stamped
+	// when truncation is omitted entirely, no extension is stamped
 	// (the guard must not fire on a missing/Null field).
 	body := []byte(`{"model":"voyage-3","input":"hello"}`)
 	canonical, err := voyage.EmbedRequestToCanonical(body, "")

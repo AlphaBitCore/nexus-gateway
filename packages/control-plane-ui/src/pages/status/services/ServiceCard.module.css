@@ -32,7 +32,7 @@
 }
 
 .serviceName {
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   font-size: 15px;
   color: var(--color-text);
 }
@@ -45,7 +45,7 @@
 
 .viewLink {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-primary);
   text-decoration: none;
 }
@@ -67,14 +67,14 @@
 }
 
 .metricValue {
-  font-size: 16px;
-  font-weight: 700;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text);
 }
 
 .metricLabel {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -93,7 +93,7 @@
   background: transparent;
   color: var(--color-text-muted);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   cursor: pointer;
@@ -145,7 +145,7 @@
 
 .table th {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;

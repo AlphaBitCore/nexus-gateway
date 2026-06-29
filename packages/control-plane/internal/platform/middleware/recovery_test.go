@@ -2,8 +2,8 @@ package middleware_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"

@@ -3,8 +3,8 @@ package aiguard_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -194,7 +194,7 @@ func TestPutConfig_RejectsMissingURLInExternalMode(t *testing.T) {
 	}
 }
 
-// TestPutConfig_RejectsNonHttpsExternalURL locks the SEC-M2-01 defence-in-depth
+// TestPutConfig_RejectsNonHttpsExternalURL locks the defence-in-depth
 // rule: the external judge URL must be https. A plaintext http:// URL (which
 // would leak the operator's CustomHeaders auth on the wire) and an SSRF-shaped
 // internal target are both rejected as 400 before the store is touched.

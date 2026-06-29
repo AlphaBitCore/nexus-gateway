@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { rulePacksApi, type RulePack, type RulePackMatch } from '@/api/services';
 import { Button, Card, ErrorBanner, FormField, Stack, Textarea } from '@/components/ui';
@@ -113,9 +113,27 @@ export function RulePackDetail() {
 
   return (
     <Stack gap="lg">
-      <div className={styles.header}>
-        <div className={styles.headerRow}>
-          <h1 className={styles.title}>{data.name}</h1>
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link
+            to="/compliance/rule-packs"
+            className={styles.backLink}
+            aria-label={t('common:back', 'Back')}
+          >
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.title}>{data.name}</h1>
+            <p className={styles.subtitle}>
+              {t(
+                'pages:hooks.rulePacks.detailSubtitle',
+                'Inspect authored rules, metadata, and test sample content before binding this pack to a hook.',
+              )}
+            </p>
+          </div>
           <div className={styles.headerActions}>
             <Button variant="secondary" onClick={() => navigate(`/compliance/rule-packs/${data.id}/edit`)}>
               {t('common:edit', 'Edit')}
@@ -125,13 +143,7 @@ export function RulePackDetail() {
             </Button>
           </div>
         </div>
-        <p className={styles.subtitle}>
-          {t(
-            'pages:hooks.rulePacks.detailSubtitle',
-            'Inspect authored rules, metadata, and test sample content before binding this pack to a hook.',
-          )}
-        </p>
-      </div>
+      </section>
 
       <Card>
         <div className={styles.metaGrid}>
@@ -154,7 +166,7 @@ export function RulePackDetail() {
         </div>
       </Card>
 
-      <Card>
+      <section className={styles.flatSection}>
         <div className={styles.sectionHeader}>
           <h2 className={styles.sectionTitle}>{t('pages:hooks.rulePacks.rulesTitle', 'Rules')}</h2>
           <div className={styles.sortHint}>
@@ -195,11 +207,11 @@ export function RulePackDetail() {
             </tbody>
           </table>
         </div>
-      </Card>
+      </section>
 
-      <Card>
-        <Stack gap="md">
-          <div className={styles.sectionHeader}>
+      <section className={styles.flatSection}>
+        <Stack gap="md" className={styles.dryRunStack}>
+          <div className={`${styles.sectionHeader} ${styles.dryRunHeader}`}>
             <h2 className={styles.sectionTitle}>{t('pages:hooks.rulePacks.dryRunTitle', 'Try Content')}</h2>
             <div className={styles.sortHint}>
               {t('pages:hooks.rulePacks.dryRunSubtitle', 'Run sample text through this pack without persisting anything.')}
@@ -254,7 +266,7 @@ export function RulePackDetail() {
             </div>
           )}
         </Stack>
-      </Card>
+      </section>
     </Stack>
   );
 }

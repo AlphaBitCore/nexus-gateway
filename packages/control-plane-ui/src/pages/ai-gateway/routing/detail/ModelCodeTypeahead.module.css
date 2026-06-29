@@ -50,7 +50,7 @@
 
 .code {
   font-family: var(--g-font-mono);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -65,7 +65,7 @@
 
 .provider {
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

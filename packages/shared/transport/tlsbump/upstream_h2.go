@@ -58,8 +58,8 @@ func (d *fingerprintDialer) dial(ctx context.Context, network, addr string) (net
 // Why this exists: the MITM upstream dials with a custom uTLS DialTLSContext so
 // the upstream sees the client's real JA3. Go's standard http.Transport cannot
 // upgrade a custom-dialed *utls.UConn to HTTP/2 — it only auto-detects h2 on a
-// *tls.Conn it dialed itself — so forcing http/1.1 ALPN used to be the only
-// option. That downgrade breaks clients whose protocol needs h2 end-to-end:
+// *tls.Conn it dialed itself — so forcing http/1.1 ALPN would be the only
+// stdlib option. That downgrade breaks clients whose protocol needs h2 end-to-end:
 // connect-RPC bidi/streaming plus h2 PING keepalive (e.g. an IDE agent service)
 // cancel ~30s in when their stream is forced onto HTTP/1.1.
 //

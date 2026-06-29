@@ -20,7 +20,7 @@ Three properties only MQ gives us:
 
 2. **Kafka-style fan-out from one producer to multiple independent consumer groups.** A single traffic event must reach the `hub-db-writer` (persistence) and `hub-alerting` (real-time rule evaluation) groups, each at its own rate, with independent retry semantics. JetStream's `InterestPolicy` retention does exactly that: the message is retained until *all* defined consumers have acked. Adding a new consumer group is configuration, not a producer change.
 
-3. **At-least-once durability across consumer restarts.** Hub deploys, restarts, pgxpool blips — the events queued during a multi-minute outage replay automatically on reconnect. JetStream file storage + `DiscardOld` cap means a wedged consumer cannot pin the stream forever, but a healthy consumer that briefly disconnects loses nothing.
+3. **At-least-once durability across consumer restarts.** Hub deploys, restarts, pgxpool blips — the events queued during a multi-minute outage replay automatically on reconnect. A healthy consumer that briefly disconnects loses nothing, because JetStream retains the un-acked messages until the consumer comes back and acks. `NEXUS_EVENTS` uses `DiscardNew` + a large cap so a wedge never silently drops audit (the producer spills to its own durable on-disk store instead — see below). The default storage tier is **memory** (see §3), so this consumer-restart replay holds, but a **broker-process restart** drops published-but-undrained events that are still only in RAM; operators who need durability across a broker bounce set `NEXUS_EVENTS_STORAGE=file`.
 
 Why not the alternatives:
 
@@ -35,7 +35,7 @@ Why not the alternatives:
 | Producer call | Consumer call | Backing | Persistence | Delivery |
 |---|---|---|---|---|
 | `Publish(ctx, topic, data)` | `Subscribe(ctx, topic, handler)` | Core NATS | None — fire-and-forget | Best-effort broadcast to all live subscribers |
-| `Enqueue(ctx, queue, data)` | `Consume(ctx, queue, group, handler)` | NATS JetStream | File-backed, durable per stream | At-least-once, distributed across the group |
+| `Enqueue(ctx, queue, data)` | `Consume(ctx, queue, group, handler)` | NATS JetStream | Per-stream storage tier (see §3): `NEXUS_EVENTS` memory by default with a durable producer-side spill, `NEXUS_AUTH` file-backed | At-least-once, distributed across the group |
 
 Choosing the right pair is the most consequential decision in any new MQ wiring:
 
@@ -62,18 +62,20 @@ Consumers that do not recognise `ErrDeferAck` (Redis driver, memory driver in te
 
 | Stream | Subjects | Retention | Max age | Max bytes | Storage |
 |---|---|---|---|---|---|
-| `NEXUS_EVENTS` | `nexus.event.>` | `InterestPolicy` | 6 hours | 8 GiB | File |
+| `NEXUS_EVENTS` | `nexus.event.>` | `InterestPolicy` | 6 hours | auto (≈15% RAM) | Memory (default; `file` opt-in) |
 | `NEXUS_AUTH` | `nexus.auth.>` | `InterestPolicy` | 24 hours | 256 MiB | File |
 
-The capacity envelopes are calibrated to the production single-node deployment (~7.6 GiB host RAM) so file storage does not pressure the kernel page cache against PostgreSQL and the Go heap. The matching server-level cap is `js_max_file_store: 32GB` in `/etc/nats/nats-server.conf` — the streams stay well under that.
+`NEXUS_EVENTS` defaults to **memory** storage because the audit stream is a delay-tolerant burst buffer (the producer publishes full-speed, the Hub drains lazily to PostgreSQL): on a single box whose data-disk write bandwidth is the bottleneck, keeping the buffer in RAM frees the disk for the durable PostgreSQL + WAL writes — the single largest single-box throughput lever — instead of writing every audit message to the volume twice. Its `MaxBytes` defaults to **`auto` = 15% of total RAM** (read from `/proc/meminfo` `MemTotal`, with a 1 GiB floor and an 8 GiB fallback when RAM cannot be read); at boot the Hub logs a WARN with the chosen byte value and how to pin it. Override with `NEXUS_EVENTS_MAX_BYTES=<size>` (e.g. `32GB`; alias `NEXUS_STREAM_MAX_BYTES`) for the cap and `NEXUS_EVENTS_STORAGE=file` for the durable file-backed tier. Because the memory-tier cap is committed to RAM rather than disk, on a large box `auto` reserves a large RAM share (e.g. ~38 GiB on a 256 GiB host) — size `GOMEMLIMIT` / the cgroup memory limit with that reservation in mind, or pin `NEXUS_EVENTS_MAX_BYTES` to a fixed value. `NEXUS_AUTH` stays file-backed (durable token-revocation coordination, low volume). The matching server-level cap `js_max_file_store: 32GB` in `/etc/nats/nats-server.conf` bounds the file-backed tier; for the memory default, the relevant server-level cap is `js_max_memory_store`.
 
 ### Why `InterestPolicy` rather than `WorkQueuePolicy`
 
 `InterestPolicy` retains every message until *all defined consumers* have acked. `WorkQueuePolicy` deletes a message as soon as any consumer acks. The choice is what enables Kafka-style fan-out: `hub-db-writer` and `hub-alerting` are two independent consumer groups that each must receive every traffic event. With `WorkQueuePolicy`, whichever group fetched first would delete the message for the others.
 
-### Why `DiscardOld` rather than `DiscardNew`
+### Why `DiscardNew` rather than `DiscardOld`
 
-A stalled consumer is a known failure mode (DB hung, alert evaluator wedged). `DiscardOld` means a stall trims the oldest messages from the stream and the producer keeps publishing — no `insufficient_resources` publish errors backing up onto user-facing request paths. The 6-hour `MaxAge` keeps the worst-case backlog bounded even if no consumer drains: events older than 6 h are already written to `traffic_event` / `admin_audit` by a healthy `hub-db-writer`, so the loss surface during a *truly* wedged consumer is the events written during the wedge itself.
+A stalled consumer is a known failure mode (DB hung, alert evaluator wedged), so `NEXUS_EVENTS` uses `DiscardNew`: at the cap, NEW publishes fail with `insufficient_resources` and the producer routes the rejected record to its **durable on-disk spill** (`handlePublishFailure`), rather than `DiscardOld` silently trimming the oldest un-acked audit rows. This does not back up onto user-facing request paths — the publish + spill run on the audit Writer's async drain, never the request goroutine — and the stream is sized large (`MaxBytes` = `NEXUS_EVENTS_MAX_BYTES`, default `auto` ≈ 15% of RAM) so the spill fallback is reached only under a genuine sustained wedge. The 6-hour `MaxAge` still bounds the worst-case backlog (events older than 6 h are already written to `traffic_event` / `admin_audit` by a healthy `hub-db-writer`). (`NEXUS_AUTH` keeps `DiscardOld` — auth-coordination events are transient, not an audit record.)
+
+**No-loss scope (important with the memory default).** The no-loss guarantee is precise, not blanket. It holds for two cases: (1) **consumer restart** — JetStream retains un-acked messages until the `hub-db-writer` reconnects and acks; and (2) **stream-full overflow** — `DiscardNew` rejects the publish and the producer reclaims the record into its durable on-disk spill, which the spill-recovery sweeper later replays to PostgreSQL. It does **not** hold for a **NATS broker-process restart/crash on the memory-backed stream**: events the producer has already published (and reclaimed as durable from its own perspective) but the Hub has not yet drained to PostgreSQL live only in the broker's RAM, so they are lost on a broker bounce — they are not in the producer spill (that only catches *rejected* publishes). For strict durability across a broker restart, set `NEXUS_EVENTS_STORAGE=file`, which trades the steady-state disk writes for on-disk persistence of the in-flight buffer. PostgreSQL remains the durable system of record regardless; only the transient in-flight window is exposed.
 
 ### `streamName` and the `NEXUS_DEFAULT` fallback
 
@@ -111,7 +113,7 @@ One group string, many worker instances inside the group. JetStream distributes 
 
 **Live example: `dbWriterGroup = "hub-db-writer"`** (`packages/nexus-hub/internal/observability/consumer/traffic.go`). All three Hub-side DB writers — `TrafficEventWriter` (three traffic subjects), `AdminAuditWriter` (admin-audit), `ExemptionConsumer` (exemption) — share this group string. If we ran two Hub instances, each subject would still be processed by exactly one Hub at a time per subject; the other Hub's writer for that subject is a hot spare.
 
-Why a shared group across different writers is safe here: each writer uses a distinct `FilterSubject`, and `jetstreamDurableName(group, queue)` (`consumer.go`) builds the JetStream durable as `"hub-db-writer__nexus_event_admin-audit"` etc. — one durable per (group, subject) pair. Sharing `group` without per-subject sanitisation would clobber `FilterSubject` and silently route admin-audit messages into the traffic writer. This was discovered the hard way; the sanitiser is the load-bearing line.
+Why a shared group across different writers is safe here: each writer uses a distinct `FilterSubject`, and `jetstreamDurableName(group, queue)` (`consumer.go`) builds the JetStream durable as `"hub-db-writer__nexus_event_admin-audit"` etc. — one durable per (group, subject) pair. Sharing `group` without per-subject sanitisation would clobber `FilterSubject` and silently route admin-audit messages into the traffic writer; the sanitiser is the load-bearing line.
 
 ### Pattern B — Kafka-style fan-out: multiple independent groups, each reads everything
 
@@ -125,7 +127,7 @@ Each group is a *role*; messages on a subject are delivered to one worker per gr
 
 The group name embeds an instance identifier so each instance gets its own durable consumer. Every instance receives every message. Use this when each instance needs to update local state (revocation bloom filter, in-memory shadow cache) from the same event stream.
 
-**Live example: `cp-revocation-<sanitized-thingID>`** (`packages/control-plane/cmd/control-plane/wiring/jwt.go`). Every CP instance subscribes to `nexus.auth.revocation` under a unique group; each instance independently applies revocations to its in-memory bloom filter + JTI set (`packages/control-plane/internal/identity/jwt/mqrevocation.go`). The same pattern is what the prior single-group design got wrong: with one shared group, instance A would steal a revocation event from instance B and B's bloom filter would silently miss it.
+**Live example: `cp-revocation-<sanitized-thingID>`** (`packages/control-plane/cmd/control-plane/wiring/jwt.go`). Every CP instance subscribes to `nexus.auth.revocation` under a unique group; each instance independently applies revocations to its in-memory bloom filter + JTI set (`packages/control-plane/internal/identity/jwt/mqrevocation.go`). A single shared group would be wrong here: instance A would steal a revocation event from instance B and B's bloom filter would silently miss it.
 
 `nexus.hub.signal` is the Core-NATS analogue of this pattern: a `Subscribe` (not `Consume`) per Hub instance, no durable, no retention. Each Hub's WS bridge receives every signal and broadcasts `config_changed` to its locally-attached WebSocket Things. The subscriber filters out signals where `sig.SourceHub == hubID` to avoid loopback in the publisher's own pool.
 
@@ -165,10 +167,7 @@ A recurring confusion is "should X go on MQ?". The default answer is **no**. Fou
 | Kill switch + every config change | Hub shadow (Cat A inline) + Hub WS push (Cat B loader pull). Reasons: every Thing needs to see every config change, the receiver list is dynamic (Things come and go), the message is authoritative-state not an event, and the Hub-as-source-of-truth model means a Thing that misses a push catches up on next pull. MQ does not improve any of these properties. |
 | Inter-service direct calls (CP → Hub HTTP API for shadow writes, AI Gateway → Hub for credential lookups) | Synchronous HTTP — the caller needs the result or the error code. MQ would force every call site into a request-reply pattern with timeout handling, with no offsetting benefit. |
 
-Two formerly-existed-now-removed MQ subjects, removed for cause:
-
-- `nexus.event.alert` — Hub used to enqueue this from the alert raiser; no consumer was ever wired in any service. Removed 2026-05-24 (MQ-C3); alerts already flow through the HTTP raise path above.
-- `nexus.event.diag` — Hub used to enqueue this from the diag-event writer; no consumer was ever wired. Removed 2026-05-24 (MQ-C3); diag events are persisted directly to `thing_diag_event` and read via the runtime-introspection HTTP surface.
+There is no MQ subject for alerts or diag events: alerts flow through the HTTP raise path above, and diag events are persisted directly to `thing_diag_event` and read via the runtime-introspection HTTP surface.
 
 ## 8. Operations
 
@@ -184,7 +183,12 @@ The invariant: any new consumer group string must be safe to embed in a durable 
 
 ### Migration / capacity changes
 
-Stream re-sizing (raising `MaxBytes`, adjusting `MaxAge`) is a Hub-restart operation: `EnsureStreams` calls `CreateOrUpdateStream`, JetStream applies the new config in-place without dropping messages. Switching `Retention` from `InterestPolicy` to `WorkQueuePolicy` is **not** a hot-update — JetStream will reject the update with `cannot change retention` and the stream must be torn down and re-created. There is no live production case for switching retention; the doc-anchored choice is `InterestPolicy` for both streams.
+Stream re-sizing (raising `MaxBytes`, adjusting `MaxAge`) is a Hub-restart operation: `EnsureStreams` calls `CreateOrUpdateStream`, and JetStream applies these mutable changes in-place without dropping messages.
+
+Two fields are **immutable** in JetStream and cannot be changed by an in-place `CreateOrUpdateStream`:
+
+- **`Retention`** — switching `InterestPolicy` ↔ `WorkQueuePolicy` is rejected with `cannot change retention`; the stream must be torn down and re-created. There is no live production case for switching retention; the doc-anchored choice is `InterestPolicy` for both streams.
+- **`Storage`** — switching `NEXUS_EVENTS` between `memory` and `file` (i.e. toggling `NEXUS_EVENTS_STORAGE`) is rejected with err `10052` "stream configuration update can not change storage type". Because an in-place update cannot apply a storage-type change, `EnsureStreams` detects a storage-type mismatch against the existing stream and **deletes + recreates** the stream (logging a WARN) rather than failing boot. This drops the transient in-flight buffer at that moment, which is acceptable because PostgreSQL and the producer-side spill are the durable stores; the consumer simply resumes against the freshly-created stream. So flipping `NEXUS_EVENTS_STORAGE` is a delete-and-recreate, **not** a hot in-place update — plan the flip for a low-traffic window so the dropped in-flight buffer is minimal.
 
 ### Reading the stream during incidents
 

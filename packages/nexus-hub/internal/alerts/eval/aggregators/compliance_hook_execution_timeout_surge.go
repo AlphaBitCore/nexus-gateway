@@ -1,8 +1,9 @@
 package aggregators
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 
@@ -54,11 +55,21 @@ func walkHookTimeoutsByID(rawA, rawB any) map[string]int {
 			if len(v) == 0 {
 				continue
 			}
+			// Fast path: no '{' → no hook-record object → empty/error unmarshal → no
+			// timeouts. Skip the parse for the common empty/"[]" pipeline.
+			if bytes.IndexByte(v, '{') < 0 {
+				continue
+			}
 			if err := json.Unmarshal(v, &arr); err != nil {
 				continue
 			}
 		case json.RawMessage:
 			if len(v) == 0 {
+				continue
+			}
+			// Fast path: no '{' → no hook-record object → empty/error unmarshal → no
+			// timeouts. Skip the parse for the common empty/"[]" pipeline.
+			if bytes.IndexByte(v, '{') < 0 {
 				continue
 			}
 			if err := json.Unmarshal(v, &arr); err != nil {

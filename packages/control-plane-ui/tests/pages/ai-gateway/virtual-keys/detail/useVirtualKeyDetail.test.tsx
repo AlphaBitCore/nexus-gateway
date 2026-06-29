@@ -41,23 +41,28 @@ describe('useVirtualKeyDetail', () => {
     expect(result.current.editRateLimitRpm).toBe(''); // null → ''
   });
 
-  it('handleSave maps blank rate-limit → undefined and a set expiry', () => {
+  it('handleSave stamps expiry as RFC3339 end-of-day and maps blank rate-limit → undefined', () => {
     const { result } = renderHook(() => useVirtualKeyDetail());
     act(() => result.current.startEditing());
     act(() => result.current.handleSave());
     const call = mutateCalls[0] as { id: string; body: Record<string, unknown> };
     expect(call.id).toBe('vk-1');
-    expect(call.body).toMatchObject({ projectId: 'pr1', enabled: true, rateLimitRpm: undefined, expiresAt: '2026-12-31' });
+    // Expiry is now stamped to end-of-day UTC (not bare YYYY-MM-DD) so the
+    // backend RFC3339 parser accepts it without a 400.
+    expect(call.body).toMatchObject({ projectId: 'pr1', enabled: true, rateLimitRpm: undefined, expiresAt: '2026-12-31T23:59:59Z' });
   });
 
-  it('handleSave sends a numeric rate limit + null expiry when never-expires', () => {
+  it('handleSave sends a numeric rate limit and stamps the expiry (application VKs never send null)', () => {
     const { result } = renderHook(() => useVirtualKeyDetail());
     act(() => result.current.startEditing());
-    act(() => { result.current.setEditRateLimitRpm('120'); result.current.setEditNeverExpires(true); });
+    act(() => { result.current.setEditRateLimitRpm('120'); });
     act(() => result.current.handleSave());
     const call = mutateCalls.at(-1) as { body: Record<string, unknown> };
     expect(call.body.rateLimitRpm).toBe(120);
-    expect(call.body.expiresAt).toBeNull();
+    // Application VKs cannot never-expire: expiresAt is always a stamped
+    // RFC3339 string, never null (null is rejected by the backend for app VKs).
+    expect(call.body.expiresAt).toBe('2026-12-31T23:59:59Z');
+    expect(call.body.expiresAt).not.toBeNull();
   });
 
   it('copyNewKey is a no-op without a regenerated key; dismissNewKey clears it', () => {

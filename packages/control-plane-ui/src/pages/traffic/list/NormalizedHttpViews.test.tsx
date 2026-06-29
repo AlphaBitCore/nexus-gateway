@@ -1,5 +1,5 @@
-// Renderer tests for the normalized payload views (Task 2.3, amendments
-// A3/A7): http-sse frame list + expander + truncation note, the
+// Renderer tests for the normalized payload views: http-sse frame list +
+// expander + truncation note, the
 // generic-http structural provenance badge, unescaped multi-line
 // tool_use input rendering, and the reasoningTokens usage entry.
 //

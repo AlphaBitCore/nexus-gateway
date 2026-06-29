@@ -1,7 +1,7 @@
 package siem
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 )
@@ -92,7 +92,7 @@ func TestSyslogFormatter(t *testing.T) {
 	}
 }
 
-// TestFormatters_RejectControlCharInjection is the F-0190 regression: an
+// TestFormatters_RejectControlCharInjection is the regression test: an
 // attacker-controlled field (e.g. the unauthenticated email on admin.login.failed,
 // surfaced as actorLabel) must not be able to forge a second SIEM record by
 // embedding CR/LF, nor smuggle other control bytes into the audit stream.

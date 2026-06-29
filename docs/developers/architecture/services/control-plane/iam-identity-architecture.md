@@ -115,7 +115,7 @@ catalog), and `NexusIncidentResponse`. The catalog documents which service each
 role owns — the provider-admin role owns the gateway service, the security-admin
 role owns compliance and agent, and the viewer role reads across the catalog.
 
-The `agent-device` resource (service: `agent`) exposes fleet-management verbs: `create`, `read`, `update`, `delete`, and `force-resync`. Note: `admin:agent-device.rotate` (certificate rotation) was removed when Hub-issued P-256 mTLS device certificates were deprecated in favour of agent self-signed identity; agents no longer request certificate renewal through the Hub.
+The `agent-device` resource (service: `agent`) exposes fleet-management verbs: `create`, `read`, `update`, `delete`, and `force-resync`.
 
 ### Grant ceiling (no privilege escalation)
 
@@ -124,7 +124,7 @@ group, or adding a principal to a group) is bounded by the **caller's own**
 permissions: a principal may never grant a permission it does not itself hold.
 Without this, a delegated "IAM operator" holding only `iam-policy.*` /
 `iam-group.*` could author or attach an `admin:*` policy to itself (or a group it
-belongs to) and silently become super-admin (SEC-M6-02 / SEC-M6-03).
+belongs to) and silently become super-admin.
 
 The boundary is enforced at the five privilege-conferring chokepoints —
 `CreateIAMPolicy`, `UpdateIAMPolicy` (when the document changes),
@@ -144,10 +144,9 @@ and an uncovered permission returns `403` with code `PRIVILEGE_ESCALATION_BLOCKE
 
 The conferring routes remain gated on the existing `iam-policy` / `iam-group`
 verbs; the ceiling is an **independent** subset check layered on top, so it closes
-the escalation regardless of which verb a delegated policy granted. A dedicated
-higher "grant" verb was considered and deliberately not added — it would not close
-any attack surface the ceiling does not already close, while adding catalog, seed,
-and UI surface (less-is-more).
+the escalation regardless of which verb a delegated policy granted. There is no
+dedicated higher "grant" verb — it would not close any attack surface the ceiling
+does not already close, while adding catalog, seed, and UI surface (less-is-more).
 
 The `assistant` resource (service: `iam`) exposes two actions: `admin:assistant.read`
 (required to issue chat/models/sessions GET requests and open the SSE stream)

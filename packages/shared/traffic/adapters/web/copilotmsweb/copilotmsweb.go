@@ -36,21 +36,6 @@ import (
 
 const adapterID = "copilot-ms-web"
 
-// requestKnownKeys lists known top-level fields across the three
-// shapes; anything else lands in Extra.
-var requestKnownKeys = []string{
-	// Modern shape:
-	"messages", "session_id", "conversationId", "conversation_id",
-	"model", "settings", "stream", "isStartOfSession",
-	// Legacy Sydney shape:
-	"arguments", "invocationId", "target", "type",
-	// OpenAI-compat shape extras:
-	"max_tokens", "temperature", "top_p", "tools", "tool_choice",
-	"function_call", "functions", "stop", "user",
-	// Common metadata:
-	"locale", "market", "region", "client_metadata",
-}
-
 // Adapter implements copilot-ms-web extraction.
 type Adapter struct{}
 
@@ -139,13 +124,11 @@ func extractMessagesShape(body []byte, messages gjson.Result) (traffic.Normalize
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
 // extractLegacySydneyShape handles the legacy Bing/Sydney request
-// envelope: arguments[].message.{author,text} for the new prompt; the
-// optionsSets and other fields land in Extra.
+// envelope: arguments[].message.{author,text} for the new prompt.
 func extractLegacySydneyShape(body []byte, arguments gjson.Result) (traffic.NormalizedContent, error) {
 	var segments []string
 	arguments.ForEach(func(_, arg gjson.Result) bool {
@@ -175,7 +158,6 @@ func extractLegacySydneyShape(body []byte, arguments gjson.Result) (traffic.Norm
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
