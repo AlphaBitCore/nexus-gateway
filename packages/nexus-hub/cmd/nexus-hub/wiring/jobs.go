@@ -29,7 +29,6 @@ import (
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
 )
 
 // InitConsumerManager wires the MQ consumer manager (traffic + admin-audit +
@@ -136,12 +135,6 @@ func InitScheduler(
 	// Catches the silent-stall failure class (INSERT fails after consumer pull).
 	sched.Register(defjobs_audit.NewAuditFreshnessCheck(pool, 60*time.Second, 5*time.Minute, opsReg, logger))
 
-	// Normalize backfill — re-runs normalize against raw bytes when the
-	// consumer's insertNormalizedPayloads partially failed and left
-	// traffic_event_normalized rows with NULL request/response_normalized.
-	// 5-min interval matches the consumer-recovery cadence: a one-time
-	// hiccup recovers before the operator opens the Traffic drawer.
-	sched.Register(defjobs_audit.NewNormalizeBackfill(pool, normalize.BuildRegistry(), spill, 5*time.Minute, opsReg, logger))
 	sched.Register(defjobs_drift.NewIdentityEnricher(st, cfg.Scheduler.IdentityEnrichInterval, opsReg, logger))
 	sched.Register(defjobs_expiry.NewAuthCleanup(st.AuthStore(), time.Hour, logger))
 	sched.Register(defjobs_expiry.NewEnrollmentTokenCleanup(st, time.Hour, logger))

@@ -273,13 +273,18 @@ paths:
     /api/admin/traffic/{id}/normalized:
         get:
             operationId: getTrafficEventNormalized
-            summary: Get the normalized sidecar for a traffic event
+            summary: Get the normalized projection for a traffic event
             description: |-
-                Returns the normalized payload sidecar for a traffic event — the canonical
-                normalized request/response plus normalize status, error reason, and redaction
-                spans. Returns 404 when the traffic event does not exist or no normalize row
-                was produced (for example, payload capture was off or the protocol could not
-                be mapped). Gated by the same read action as the traffic event itself.
+                Returns the normalized projection for a traffic event — the canonical
+                normalized request/response plus normalize status and error reason. The
+                projection is recomputed at view time from the stored (already-redacted)
+                request/response body, so it does NOT include redaction spans: the recompute
+                reads an already-redacted body, so inline span highlighting is not
+                reconstructed. Returns 404 when the traffic event does not exist or the
+                normalized projection is unavailable — there is no stored body to recompute
+                from (payload capture was off, or a spilled body has aged out of retention)
+                and no stored sidecar fallback. Gated by the same read action as the traffic
+                event itself.
             x-nexus-iam-action: iam.ResourceTrafficLog.Action(iam.VerbRead)
             x-nexus-tier: auto
             parameters:

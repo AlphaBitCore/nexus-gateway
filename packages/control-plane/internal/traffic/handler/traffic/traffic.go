@@ -40,15 +40,25 @@ func (h *Handler) RegisterTrafficRoutes(g *echo.Group, iamMW func(action string)
 
 // GetTrafficEventNormalized returns the canonical normalized payload for the
 // given traffic event id, COMPUTED ON THE FLY from the captured request /
-// response bodies (it does not read the stored traffic_event_normalized
-// sidecar). Recomputing at view time means the normalized form is never
-// persisted — the write path stays thin and the drawer always reflects the
-// current normalize version. The captured bodies are decoded from their column
-// form (text / base64 / zstd) and are already redaction-safe (the storage
-// governance pass redacts every persisted copy), so recompute never exposes
-// redacted content. Falls back to the stored sidecar when no inline body is
-// available (capture off, or a body spilled out-of-band). Returns 404 when the
-// traffic event does not exist or has no normalizable payload.
+// response bodies. View-time recompute is the primary source for every row that
+// still has a recoverable body — it does not read the stored
+// traffic_event_normalized sidecar except as a last resort. Recomputing at view
+// time means the normalized form is never persisted: the write path stays thin
+// and the drawer always reflects the current normalize version. The captured
+// bodies are decoded from their column form (text / base64 / zstd) and are
+// already redaction-safe (the storage governance pass redacts every persisted
+// copy), so recompute never exposes redacted content.
+//
+// Resolution is a 4-tier ladder, evaluated per direction for (a)+(b):
+//
+//	(a) inline body present       → recompute from the inline bytes
+//	(b) else a spill ref present  → fetch the RAW spilled bytes and recompute
+//	(c) else stored sidecar       → return whatever was historically persisted
+//	(d) else                      → 404 "normalized payload not found" (unavailable)
+//
+// A spill fetch that fails (object aged out to retention, integrity mismatch)
+// degrades that direction to empty and the row falls through to (c)/(d); a missing
+// spill object never errors the endpoint.
 func (h *Handler) GetTrafficEventNormalized(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -62,19 +72,27 @@ func (h *Handler) GetTrafficEventNormalized(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, errJSON("Traffic event not found", "not_found", ""))
 	}
 
-	// Compute when we have at least one captured body and a normalizer is wired.
-	if h.normalize != nil && (len(in.RequestBody) > 0 || len(in.ResponseBody) > 0) {
-		return c.JSON(http.StatusOK, h.computeNormalized(id, in))
+	// Tiers (a)+(b): recompute from the captured body. Inline is preferred; a
+	// direction whose body spilled out-of-band is recovered by fetching the RAW
+	// spilled bytes (fail-graceful — a gone/tampered blob leaves that direction
+	// empty and falls through to the sidecar tier).
+	if h.normalize != nil {
+		h.fillSpilledBodies(ctx, id, in)
+		if len(in.RequestBody) > 0 || len(in.ResponseBody) > 0 {
+			return c.JSON(http.StatusOK, h.computeNormalized(id, in))
+		}
 	}
 
-	// No inline body to recompute from (capture off / spilled): fall back to the
-	// stored sidecar so the drawer still shows whatever was persisted.
+	// Tier (c): no recoverable body (capture off, or every spilled body gone to
+	// retention) — fall back to the stored sidecar so historical rows stay
+	// visible in the drawer.
 	row, err := h.traffic.GetTrafficEventNormalized(ctx, id)
 	if err != nil {
 		h.logger.Error("get traffic event normalized (fallback)", "trafficEventId", id, "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
 	}
 	if row == nil {
+		// Tier (d): nothing inline, nothing spilled, no sidecar → unavailable.
 		return c.JSON(http.StatusNotFound, errJSON("Normalized payload not found", "not_found", ""))
 	}
 	return c.JSON(http.StatusOK, row)

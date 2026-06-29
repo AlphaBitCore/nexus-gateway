@@ -28,7 +28,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillupload"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // EchoConfig carries all the wired subsystems the Echo setup needs.
@@ -53,7 +52,6 @@ type EchoConfig struct {
 	SpillStore   spillstore.SpillStore
 	SpillSecrets *spillupload.SecretStore
 	SpillDedup   spillupload.Dedup
-	NormalizeFn  normalizecore.AuditFn
 	SelfShadow   SelfShadowResult
 	Logger       *slog.Logger
 }
@@ -104,35 +102,34 @@ func InitEcho(ec EchoConfig) *echo.Echo {
 // Echo instance. Returns the enroll API handle (may be nil) so main.go can close it.
 func MountRoutes(e *echo.Echo, ec EchoConfig) *enroll.EnrollmentAPI {
 	return handler.SetupRoutes(handler.RouteConfig{
-		Echo:                e,
-		Mgr:                 ec.Mgr,
-		WSServer:            ec.WSServer,
-		Scheduler:           ec.Sched,
-		Enrollment:          ec.EnrollSvc,
-		MQProducer:          ec.MQProducer,
-		ServiceToken:        ec.Cfg.Auth.InternalServiceToken,
-		HubConfigToken:      ec.Cfg.Auth.HubConfigToken,
-		Store:               ec.Store,
-		AgentCA:             ec.AgentCA,
-		JWKSCache:           ec.JWKSCache,
-		CpIssuer:            ec.Cfg.AuthServer.Issuer,
-		CpURL:               ec.Cfg.AuthServer.URL,
-		DBPool:              ec.DBPool,
-		Raiser:              ec.AlertRaiser,
-		AlertStore:          ec.AlertStore,
-		AlertRules:          ec.AlertsRes.RulesReg,
-		AlertSenders:        ec.AlertsRes.SenderReg,
-		CatB:                ec.CatBRegistry,
-		SpillStore:          ec.SpillStore,
-		SpillBackend:        ec.Cfg.Spill.Backend,
-		SpillPerObjectCap:   ec.Cfg.Spill.PerObjectCap(),
-		SpillSecrets:        ec.SpillSecrets,
-		SpillDedup:          ec.SpillDedup,
-		OpsDiagPool:         ec.DBPool,
-		OpsLogger:           ec.Logger,
-		HubID:               ec.Cfg.Hub.ID,
-		HubLocalURL:         fmt.Sprintf("http://localhost:%d", ec.Cfg.Server.Port),
-		NormalizeAgentAudit: ec.NormalizeFn,
+		Echo:              e,
+		Mgr:               ec.Mgr,
+		WSServer:          ec.WSServer,
+		Scheduler:         ec.Sched,
+		Enrollment:        ec.EnrollSvc,
+		MQProducer:        ec.MQProducer,
+		ServiceToken:      ec.Cfg.Auth.InternalServiceToken,
+		HubConfigToken:    ec.Cfg.Auth.HubConfigToken,
+		Store:             ec.Store,
+		AgentCA:           ec.AgentCA,
+		JWKSCache:         ec.JWKSCache,
+		CpIssuer:          ec.Cfg.AuthServer.Issuer,
+		CpURL:             ec.Cfg.AuthServer.URL,
+		DBPool:            ec.DBPool,
+		Raiser:            ec.AlertRaiser,
+		AlertStore:        ec.AlertStore,
+		AlertRules:        ec.AlertsRes.RulesReg,
+		AlertSenders:      ec.AlertsRes.SenderReg,
+		CatB:              ec.CatBRegistry,
+		SpillStore:        ec.SpillStore,
+		SpillBackend:      ec.Cfg.Spill.Backend,
+		SpillPerObjectCap: ec.Cfg.Spill.PerObjectCap(),
+		SpillSecrets:      ec.SpillSecrets,
+		SpillDedup:        ec.SpillDedup,
+		OpsDiagPool:       ec.DBPool,
+		OpsLogger:         ec.Logger,
+		HubID:             ec.Cfg.Hub.ID,
+		HubLocalURL:       fmt.Sprintf("http://localhost:%d", ec.Cfg.Server.Port),
 	})
 }
 
@@ -196,7 +193,6 @@ func BuildEchoConfig(
 	tmRes FleetResult,
 	alertsRes AlertsResult,
 	selfShadowRes SelfShadowResult,
-	normalizeFn normalizecore.AuditFn,
 	sched *scheduler.Scheduler,
 	logger *slog.Logger,
 ) EchoConfig {
@@ -221,7 +217,6 @@ func BuildEchoConfig(
 		SpillStore:   storageRes.SpillStore,
 		SpillSecrets: storageRes.SpillSecrets,
 		SpillDedup:   storageRes.SpillDedup,
-		NormalizeFn:  normalizeFn,
 		SelfShadow:   selfShadowRes,
 		Logger:       logger,
 	}

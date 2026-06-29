@@ -130,79 +130,11 @@ func TestBufferPipeline_MaxBufferExceeded(t *testing.T) {
 	}
 }
 
-// TestBufferPipeline_ModifyDegradesToApprove — buffer mode has no
-// Modify branch in Phase 3; the body must replay unchanged AND the
-// pipeline must surface the degradation via WARN log +
-// nexus_streaming_modify_degraded_total{reason="buffer_mode"} so
-// admin sees the silent ignore. Three
-// data planes share this pipeline, so this single test covers all.
-func TestBufferPipeline_ModifyDegradesToApprove(t *testing.T) {
-	mp := &mockPipeline{
-		decideFn: func(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
-			return &core.CompliancePipelineResult{
-				Decision: core.Modify,
-				Reason:   "rewrite requested",
-				// Modified body is irrelevant — buffer mode ignores it.
-			}
-		},
-	}
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	bp := NewBufferPipeline(BufferConfig{}, mp, logger)
-
-	// Reset the global counter timeseries before snapshot
-	// so this test is stable under `go test -parallel`. modifyDegraded
-	// Total is a promauto-registered package var (shared across all
-	// tests in this package); without a Reset another test bumping the
-	// same {reason=buffer_mode} label concurrently would race the
-	// before/after delta. DeleteLabelValues removes the timeseries;
-	// the next access via WithLabelValues creates a fresh zero entry,
-	// scoping the +1 assertion to this test's call only.
-	modifyDegradedTotal.DeleteLabelValues("buffer_mode")
-
-	input := makeOpenAISSE("verbatim", " bytes")
-	baseTx := &core.HookInput{
-		Stage:       "response",
-		IngressType: "COMPLIANCE_PROXY",
-		RequestID:   "buf-modify-1",
-	}
-
-	var output bytes.Buffer
-	result, err := bp.Process(context.Background(), strings.NewReader(input), &output, baseTx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil || result.Decision != core.Modify {
-		t.Fatalf("expected pipeline to return underlying Modify result; got %+v", result)
-	}
-
-	// Body MUST replay verbatim (Modify is ignored in buffer mode).
-	if !strings.Contains(output.String(), "verbatim") || !strings.Contains(output.String(), "bytes") {
-		t.Errorf("expected verbatim replay (Modify ignored), got: %q", output.String())
-	}
-	if !strings.Contains(output.String(), "[DONE]") {
-		t.Error("expected [DONE] terminator in replayed output")
-	}
-
-	// WARN log MUST surface the degradation with requestId. This is an
-	// intra-package contract assertion (the test owns the package that
-	// owns the log), so substring coupling is local; the structured
-	// requestId check below pins the load-bearing field.
-	if !strings.Contains(logBuf.String(), "Modify decision degraded to Approve") {
-		t.Errorf("expected WARN log about Modify degradation, got: %s", logBuf.String())
-	}
-	if !strings.Contains(logBuf.String(), "buf-modify-1") {
-		t.Errorf("expected requestId in degradation log, got: %s", logBuf.String())
-	}
-
-	// Counter MUST be exactly 1 after the single Modify decision (we
-	// reset above, so absolute == delta).
-	got := readCounter(t, "buffer_mode")
-	if got != 1 {
-		t.Errorf("expected nexus_streaming_modify_degraded_total{reason=buffer_mode} == 1 after reset+single-Modify, got %v", got)
-	}
-}
+// Modify-decision behavior in buffer mode is covered by the
+// FrameRedactor tests in frame_redactor_test.go:
+//   - ModifyWithRedactor_ReplaysMasked   (supported redaction)
+//   - ModifyRedactorUnsupported_FailsClosed (fail-closed wire)
+//   - ModifyNoRedactor_LegacyDegrade      (backward-compat degrade)
 
 // readCounter reads the current value of
 // modifyDegradedTotal{reason=label} for assertion deltas. testutil

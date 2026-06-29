@@ -62,6 +62,52 @@ func drainSub(t *testing.T, sub ChunkSubscription) []string {
 	return got
 }
 
+// TestRegistry_NoDedup_EachCallerLeadsAndStillFills verifies the WithDedup(false)
+// path (cache.broker=false): same-key concurrent callers do NOT coalesce — each
+// is its own leader (leaderFn runs per caller) — yet the cache is STILL filled.
+// This is the #7 fix: broker=false previously meant the response was never
+// written, so an admin-enabled L1 tier silently never filled. Contrast
+// TestRegistry_ConcurrentSecondSubscriberJoins (dedup=true: one leader, joiners).
+func TestRegistry_NoDedup_EachCallerLeadsAndStillFills(t *testing.T) {
+	c, _ := newTestCacheForStreamcache(t)
+	reg := NewRegistry(c, discardLogger(), nil, WithDedup(false))
+
+	var leaderCalls atomic.Int32
+	leaderFn := func(ctx context.Context) (provcore.StreamSession, *CacheMeta, error) {
+		leaderCalls.Add(1)
+		return &fakeSession{chunks: []provcore.Chunk{
+			{Delta: "hi"},
+			{Done: true},
+		}}, &CacheMeta{Provider: "openai", Model: "gpt-4o", IsStream: true}, nil
+	}
+
+	s1, first1, err := reg.Subscribe(context.Background(), "k-nodedup", leaderFn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2, first2, err := reg.Subscribe(context.Background(), "k-nodedup", leaderFn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !first1 || !first2 {
+		t.Fatalf("no-dedup: every caller must be its own leader; got first1=%v first2=%v", first1, first2)
+	}
+	if n := leaderCalls.Load(); n != 2 {
+		t.Fatalf("no-dedup: leaderFn must run per caller; got %d, want 2", n)
+	}
+
+	drainSub(t, s1)
+	drainSub(t, s2)
+	_ = s1.Close()
+	_ = s2.Close()
+	reg.Wait() // let both pump goroutines flush writeCache
+
+	if entry := c.LookupStream(context.Background(), "k-nodedup"); entry == nil {
+		t.Fatal("no-dedup must still fill the cache; LookupStream returned nil")
+	}
+}
+
 // TestBroker_WriteCache_StreamEntry_PersistsTimeline drives a real
 // miniredis-backed cache so writeCache walks the StoreStream path on
 // normal termination. Observable behaviour:

@@ -176,22 +176,17 @@ func TestUploadAgentAudit_HeaderThingFallbackAndEmptyID(t *testing.T) {
 	}
 }
 
-func TestUploadAgentAudit_NormalizeStamping(t *testing.T) {
-	var gotDirections []string
+func TestUploadAgentAudit_NoNormalizedUploadNoStamp(t *testing.T) {
+	// The Hub no longer re-derives the normalized projection at ingest. When the
+	// agent uploads only raw payloads (no governed normalized copies), the
+	// envelope carries NO requestNormalized / responseNormalized / normalizeVersion —
+	// the control plane recomputes the projection at view time from the stored
+	// (already-redacted) body.
 	mp := &mockProducer{}
-	h := &AgentAuditAPI{
-		MQProducer: mp,
-		Normalize: func(direction, contentType, adapter, model, path string, stream bool, body []byte) (json.RawMessage, string, string) {
-			gotDirections = append(gotDirections, direction)
-			if direction == "response" && !stream {
-				t.Fatalf("response with event-stream content type should set stream=true")
-			}
-			return json.RawMessage(`{"normalized":true}`), "ok", ""
-		},
-	}
+	h := &AgentAuditAPI{MQProducer: mp}
 	evs := []AgentAuditEvent{{
 		ID:                         "e1",
-		ProviderName:               "OpenAI", // upper → lowercased to adapter
+		ProviderName:               "openai",
 		ModelName:                  "gpt-4o",
 		PayloadRequest:             []byte(`{"q":1}`),
 		PayloadResponse:            []byte(`data: {}`),
@@ -201,89 +196,16 @@ func TestUploadAgentAudit_NormalizeStamping(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if len(gotDirections) != 2 || gotDirections[0] != "request" || gotDirections[1] != "response" {
-		t.Fatalf("normalize should run for request+response: %v", gotDirections)
-	}
 	var env map[string]any
 	_ = json.Unmarshal(mp.enqueued[0], &env)
-	// normalizeVersion must equal the shared schema constant, not a
-	// hardcoded literal, so a future schema bump propagates automatically.
-	if env["requestNormalized"] == nil || env["responseNormalized"] == nil || env["normalizeVersion"] != normcore.SchemaVersion {
-		t.Fatalf("normalize fields not stamped with normcore.SchemaVersion (%q): %v", normcore.SchemaVersion, env)
+	if _, ok := env["requestNormalized"]; ok {
+		t.Errorf("requestNormalized must be absent when the agent uploaded none: %v", env["requestNormalized"])
 	}
-}
-
-func TestUploadAgentAudit_NormalizeResponseDefaultContentType(t *testing.T) {
-	// Response payload with empty content type → defaults to application/json,
-	// stream=false (no event-stream marker). Exercises the response-side
-	// content-type default + non-stream branch.
-	var sawResponse bool
-	mp := &mockProducer{}
-	h := &AgentAuditAPI{
-		MQProducer: mp,
-		Normalize: func(direction, contentType, _, _, _ string, stream bool, _ []byte) (json.RawMessage, string, string) {
-			if direction == "response" {
-				sawResponse = true
-				if contentType != "application/json" || stream {
-					t.Fatalf("response default ct/stream wrong: ct=%q stream=%v", contentType, stream)
-				}
-			}
-			return json.RawMessage(`{}`), "ok", ""
-		},
+	if _, ok := env["responseNormalized"]; ok {
+		t.Errorf("responseNormalized must be absent when the agent uploaded none: %v", env["responseNormalized"])
 	}
-	evs := []AgentAuditEvent{{
-		ID:              "e1",
-		ProviderName:    "gemini",
-		PayloadResponse: []byte(`{"text":"hi"}`),
-		// PayloadResponseContentType intentionally empty.
-	}}
-	post(t, h, mustEvents(t, evs), true, "")
-	if !sawResponse {
-		t.Fatal("normalize should have run for the response direction")
-	}
-}
-
-func TestUploadAgentAudit_NormalizeSkippedAndNoStamp(t *testing.T) {
-	// Normalize returns empty raw + empty status → not stamped (stamped stays false,
-	// no normalizeVersion). Provider present so the block is entered.
-	mp := &mockProducer{}
-	h := &AgentAuditAPI{
-		MQProducer: mp,
-		Normalize: func(_, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-			return nil, "", ""
-		},
-	}
-	evs := []AgentAuditEvent{{
-		ID:             "e1",
-		ProviderName:   "anthropic",
-		PayloadRequest: []byte(`{"q":1}`),
-	}}
-	rec := post(t, h, mustEvents(t, evs), true, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	var env map[string]any
-	_ = json.Unmarshal(mp.enqueued[0], &env)
 	if _, ok := env["normalizeVersion"]; ok {
-		t.Fatalf("normalizeVersion must be absent when nothing stamped: %v", env)
-	}
-}
-
-func TestUploadAgentAudit_NormalizeNilProviderEmpty(t *testing.T) {
-	// Normalize non-nil but ProviderName empty → normalize block skipped entirely.
-	called := false
-	mp := &mockProducer{}
-	h := &AgentAuditAPI{
-		MQProducer: mp,
-		Normalize: func(_, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-			called = true
-			return nil, "", ""
-		},
-	}
-	evs := []AgentAuditEvent{{ID: "e1", PayloadRequest: []byte(`{"q":1}`)}}
-	post(t, h, mustEvents(t, evs), true, "")
-	if called {
-		t.Fatal("normalize must not run when providerName is empty")
+		t.Errorf("normalizeVersion must be absent when nothing stamped: %v", env["normalizeVersion"])
 	}
 }
 
@@ -378,19 +300,12 @@ func assertJSONEqual(t *testing.T, field string, got any, want string) {
 
 // TestUploadAgentAudit_GovernedNormalizedPreferred — when the agent
 // uploads its storage-governed normalized copies (span-redacted or
-// drop-content placeholder) plus redaction spans, the Hub must forward
-// them verbatim and must NOT re-normalize the raw bytes for those
-// directions: re-deriving would discard the storage governance, and
-// under a redact policy the raw copy may be absent entirely.
+// drop-content placeholder) plus redaction spans, the Hub forwards them
+// verbatim. The Hub never re-derives from raw bytes, so these uploaded
+// copies are the only source of the normalized projection on this path.
 func TestUploadAgentAudit_GovernedNormalizedPreferred(t *testing.T) {
 	mp := &mockProducer{}
-	h := &AgentAuditAPI{
-		MQProducer: mp,
-		Normalize: func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-			t.Errorf("normalize must not run for direction %q — governed copies uploaded", direction)
-			return nil, "", ""
-		},
-	}
+	h := &AgentAuditAPI{MQProducer: mp}
 	governedReq := `{"kind":"ai-chat","messages":[{"role":"user","content":[{"type":"text","text":"[EMAIL-REDACTED]"}]}]}`
 	governedResp := `{"kind":"ai-chat","redacted":true,"ruleIds":["pii-email"]}`
 	reqSpans := `[{"start":0,"end":16,"replacement":"[EMAIL-REDACTED]","contentAddress":"messages.0.content.0"}]`
@@ -423,19 +338,14 @@ func TestUploadAgentAudit_GovernedNormalizedPreferred(t *testing.T) {
 	}
 }
 
-// TestUploadAgentAudit_GovernedCopyPerDirectionFallback — a direction
-// with an uploaded governed copy keeps it; the other direction falls
-// back to Hub-side normalization of its raw bytes.
-func TestUploadAgentAudit_GovernedCopyPerDirectionFallback(t *testing.T) {
-	var gotDirections []string
+// TestUploadAgentAudit_GovernedCopyOneDirectionOnly — a direction with an
+// uploaded governed copy is forwarded; the other direction is left unstamped.
+// The Hub no longer re-derives raw bytes, so the un-uploaded direction carries
+// no normalized projection. normalizeVersion is still stamped because at least
+// one direction was stamped.
+func TestUploadAgentAudit_GovernedCopyOneDirectionOnly(t *testing.T) {
 	mp := &mockProducer{}
-	h := &AgentAuditAPI{
-		MQProducer: mp,
-		Normalize: func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
-			gotDirections = append(gotDirections, direction)
-			return json.RawMessage(`{"derived":true}`), "ok", ""
-		},
-	}
+	h := &AgentAuditAPI{MQProducer: mp}
 	governedReq := `{"kind":"ai-chat","redacted":true}`
 	evs := []AgentAuditEvent{{
 		ID:                "e1",
@@ -445,11 +355,13 @@ func TestUploadAgentAudit_GovernedCopyPerDirectionFallback(t *testing.T) {
 		NormalizedRequest: json.RawMessage(governedReq),
 	}}
 	post(t, h, mustEvents(t, evs), true, "")
-	if len(gotDirections) != 1 || gotDirections[0] != "response" {
-		t.Fatalf("only the response direction lacks a governed copy; normalize ran for %v", gotDirections)
-	}
 	var env map[string]any
 	_ = json.Unmarshal(mp.enqueued[0], &env)
 	assertJSONEqual(t, "requestNormalized", env["requestNormalized"], governedReq)
-	assertJSONEqual(t, "responseNormalized", env["responseNormalized"], `{"derived":true}`)
+	if _, ok := env["responseNormalized"]; ok {
+		t.Errorf("responseNormalized must be absent — the Hub does not re-derive raw bytes: %v", env["responseNormalized"])
+	}
+	if env["normalizeVersion"] != normcore.SchemaVersion {
+		t.Errorf("normalizeVersion = %v, want %q", env["normalizeVersion"], normcore.SchemaVersion)
+	}
 }

@@ -115,6 +115,60 @@ func TestResponsesStreamDecoder_functionCallArgumentsDelta(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamDecoder_completedAfterToolCall_finishReasonToolCalls(t *testing.T) {
+	// A function_call_arguments.delta followed by response.completed must report
+	// finish_reason "tool_calls" (not "stop"), matching the non-stream
+	// mapResponsesStatusToFinishReason hadToolCalls path — so buffer-mode and
+	// cross-format re-encoding preserve it instead of collapsing to "stop".
+	tcData := `{"type":"response.function_call_arguments.delta","output_index":1,"item_id":"call_abc","delta":"{\"q\":1}"}`
+	completedData := `{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`
+	body := responsesBody(
+		responsesEvent("response.function_call_arguments.delta", tcData) +
+			responsesEvent("response.completed", completedData),
+	)
+	d := ostream.NewResponsesStreamDecoder(slog.Default())
+	sess, _ := d.Open(body, typology.WireShapeOpenAIResponses)
+	defer sess.Close()
+
+	if _, err := sess.Next(context.Background()); err != nil {
+		t.Fatalf("Next (tool delta): %v", err)
+	}
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatalf("Next (completed): %v", err)
+	}
+	if !chunk.Done {
+		t.Fatalf("expected Done=true, got %+v", chunk)
+	}
+	if chunk.FinishReason != "tool_calls" {
+		t.Errorf("FinishReason: got %q, want tool_calls (completed after a function call)", chunk.FinishReason)
+	}
+}
+
+func TestResponsesStreamDecoder_completedNoToolCall_finishReasonStop(t *testing.T) {
+	// A plain text completion (no function call) still reports "stop".
+	txtData := `{"type":"response.output_text.delta","output_index":0,"item_id":"item_1","delta":"hi"}`
+	completedData := `{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}`
+	body := responsesBody(
+		responsesEvent("response.output_text.delta", txtData) +
+			responsesEvent("response.completed", completedData),
+	)
+	d := ostream.NewResponsesStreamDecoder(slog.Default())
+	sess, _ := d.Open(body, typology.WireShapeOpenAIResponses)
+	defer sess.Close()
+
+	if _, err := sess.Next(context.Background()); err != nil {
+		t.Fatalf("Next (text): %v", err)
+	}
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatalf("Next (completed): %v", err)
+	}
+	if chunk.FinishReason != "stop" {
+		t.Errorf("FinishReason: got %q, want stop (no tool call)", chunk.FinishReason)
+	}
+}
+
 func TestResponsesStreamDecoder_reasoningSummaryTextDelta(t *testing.T) {
 	data := `{"type":"response.reasoning_summary_text.delta","output_index":0,"item_id":"item_1","delta":"step1"}`
 	body := responsesBody(responsesEvent("response.reasoning_summary_text.delta", data))
@@ -411,4 +465,47 @@ func TestResponsesStreamDecoder_contextCancelled_returnsCtxErr(t *testing.T) {
 	if err == nil {
 		t.Error("cancelled context: expected non-nil error")
 	}
+}
+
+// TestResponsesStreamDecoder_finishReason proves the Responses decoder maps the
+// terminal status to a canonical finish_reason: completed→stop, incomplete with
+// max_output_tokens→length, incomplete with content_filter→content_filter.
+func TestResponsesStreamDecoder_finishReason(t *testing.T) {
+	cases := []struct{ data, want string }{
+		{`{"type":"response.completed","response":{}}`, "stop"},
+		{`{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}`, "length"},
+		{`{"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"}}}`, "content_filter"},
+	}
+	for _, c := range cases {
+		evType := gjsonType(c.data)
+		body := io.NopCloser(strings.NewReader(responsesEvent(evType, c.data)))
+		d := ostream.NewResponsesStreamDecoder(slog.Default())
+		sess, err := d.Open(body, typology.WireShapeOpenAIResponses)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		chunk, err := sess.Next(context.Background())
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if chunk.FinishReason != c.want {
+			t.Errorf("FinishReason = %q, want %q (data %s)", chunk.FinishReason, c.want, c.data)
+		}
+		_ = sess.Close()
+	}
+}
+
+// gjsonType extracts the event type from a Responses SSE data payload.
+func gjsonType(data string) string {
+	const k = `"type":"`
+	i := strings.Index(data, k)
+	if i < 0 {
+		return ""
+	}
+	rest := data[i+len(k):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
 }

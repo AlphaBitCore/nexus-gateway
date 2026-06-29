@@ -3,6 +3,7 @@ package proxy
 import (
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // contentBlocksToNormalized converts the hook pipeline's ModifiedContent
@@ -25,4 +26,19 @@ func contentBlocksToNormalized(blocks []hookcore.ContentBlock) traffic.Normalize
 		segments = append(segments, b.Text)
 	}
 	return traffic.NormalizedContent{Segments: segments}
+}
+
+// rewriteContentWithToolArgs builds the NormalizedContent the traffic adapter
+// rewrites from, combining the flat text Segments (from ModifiedContent) with
+// the compliance-masked tool-call arguments. ToolCallArgs is computed by
+// applying the pipeline's TransformSpans to the canonical payload and
+// re-marshaling each ContentToolUse block's Input, in block order — which
+// matches the wire tool_calls[] order, so the adapter zips them on by index.
+// A nil payload or no tool-use spans leaves ToolCallArgs nil (zero churn).
+func rewriteContentWithToolArgs(modified []hookcore.ContentBlock, payload *normcore.NormalizedPayload, spans []normcore.TransformSpan) traffic.NormalizedContent {
+	nc := contentBlocksToNormalized(modified)
+	if payload != nil {
+		nc.ToolCallArgs = normcore.ToolCallArgsFromPayload(*payload, spans)
+	}
+	return nc
 }

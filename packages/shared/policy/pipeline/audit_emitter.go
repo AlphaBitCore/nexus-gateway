@@ -97,15 +97,22 @@ type AuditInfo struct {
 	// SourceUser is the OS user owning the source process (agent only).
 	SourceUser string
 
-	// RequestNormalized / ResponseNormalized — V2 pre-normalized
-	// payload JSON, stamped by forward_handler after runtimeNormalize
-	// runs for the hook pipeline. Forwarded through buildEvent to the
-	// AuditEvent so agent SQLite can persist the normalized shape and
-	// the Agent UI Event Details Normalized tab can render without a
-	// Hub round-trip. Empty json.RawMessage = no AI adapter matched.
-	// buildEvent applies the stage result's StorageAction to these bytes
-	// before they reach the AuditEvent — consumers always receive the
-	// storage-governed copy.
+	// IngressFormat is the domain-matched adapter id (interception_domain.
+	// adapter_id) the request body was captured in. Stamped by tlsbump's
+	// forward_request_phase when a domain rule resolved an adapter. buildEvent
+	// copies it onto the AuditEvent so it lands on traffic_event.ingress_format
+	// and the view-time normalize recompute keys on it as the authoritative
+	// adapter. Empty when no adapter matched → recompute falls back to
+	// path/sniff.
+	IngressFormat string
+
+	// RequestNormalized / ResponseNormalized are retained on the wire/struct
+	// for backward compatibility but are no longer populated on the write path:
+	// the normalized projection is recomputed at view time from the stored
+	// (already-redacted) raw body, so producers leave these empty and buildEvent
+	// forwards them empty. Kept so an older shipped agent that still uploads its
+	// governed copy continues to persist (the sole forensic record under a
+	// redact/block policy that dropped the raw body).
 	RequestNormalized  json.RawMessage
 	ResponseNormalized json.RawMessage
 
@@ -366,19 +373,23 @@ func (e *AuditEmitter) buildEvent(
 		APIKeyClass:            apiKeyClass,
 		APIKeyFingerprint:      apiKeyFP,
 		UsageExtractionStatus:  usageStatus,
-		RequestBody:            requestBodyContainer,
-		ResponseBody:           responseBodyContainer,
-		ErrorCode:              errorCode,
-		ErrorReason:            errorReason,
-		UpstreamTtfbMs:         upstreamTtfb,
-		UpstreamTotalMs:        upstreamTotal,
-		RequestHooksMs:         requestHooksMs,
-		ResponseHooksMs:        responseHooksMs,
-		LatencyBreakdown:       latencyBreakdown,
-		DomainRuleID:           info.DomainRuleID,
-		PathAction:             info.PathAction,
-		SourceProcess:          info.SourceProcess,
-		SourceProcessBundle:    info.SourceProcessBundle,
+		// Domain-matched adapter id → traffic_event.ingress_format. The
+		// view-time normalize recompute keys on this as the authoritative
+		// adapter; empty falls back to path/sniff.
+		IngressFormat:       info.IngressFormat,
+		RequestBody:         requestBodyContainer,
+		ResponseBody:        responseBodyContainer,
+		ErrorCode:           errorCode,
+		ErrorReason:         errorReason,
+		UpstreamTtfbMs:      upstreamTtfb,
+		UpstreamTotalMs:     upstreamTotal,
+		RequestHooksMs:      requestHooksMs,
+		ResponseHooksMs:     responseHooksMs,
+		LatencyBreakdown:    latencyBreakdown,
+		DomainRuleID:        info.DomainRuleID,
+		PathAction:          info.PathAction,
+		SourceProcess:       info.SourceProcess,
+		SourceProcessBundle: info.SourceProcessBundle,
 		// The normalized projection is never persisted: every service
 		// recomputes it at view time from the action-governed raw body, so
 		// these fields stay nil. The columns remain on the event for the

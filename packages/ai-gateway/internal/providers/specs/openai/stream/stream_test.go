@@ -301,3 +301,25 @@ func TestStreamDecoder_rawBytesForwardedVerbatim(t *testing.T) {
 		t.Errorf("RawBytes: got %q, want %q", chunk.RawBytes, expected)
 	}
 }
+
+// TestStreamDecoder_finishReason_populated proves the OpenAI decoder surfaces
+// the canonical finish_reason from the trailing delta-empty chunk so a
+// re-encoder (buffer mode) can preserve it instead of collapsing to "stop".
+func TestStreamDecoder_finishReason_populated(t *testing.T) {
+	for _, fr := range []string{"tool_calls", "length", "content_filter"} {
+		d := ostream.NewStreamDecoder(slog.Default())
+		body := sseBody(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"` + fr + `"}]}` + "\n\n")
+		sess, err := d.Open(body, typology.WireShapeOpenAIChat)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		chunk, err := sess.Next(context.Background())
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if chunk.FinishReason != fr {
+			t.Errorf("FinishReason = %q, want %q", chunk.FinishReason, fr)
+		}
+		_ = sess.Close()
+	}
+}

@@ -59,6 +59,44 @@ func modifiedNormalizedFixture() *normalize.NormalizedPayload {
 	}
 }
 
+func TestApplyModifiedContentToNormalized_SkipsToolUseEntriesInIndexSpace(t *testing.T) {
+	// A ContentToolUse block PRECEDES a ContentText block in one message. The
+	// flat ModifiedContent space includes the tool-use leaf entry tagged
+	// "tool_use" before the text entry. The positional text walk must SKIP the
+	// tool_use entry so the text block receives the text modification — not the
+	// tool-use leaf's masked value (the off-by-one this guard closes).
+	p := &normalize.NormalizedPayload{
+		Kind: normalize.KindAIChat,
+		Messages: []normalize.Message{{
+			Role: normalize.RoleAssistant,
+			Content: []normalize.ContentBlock{
+				{Type: normalize.ContentToolUse, ToolUse: &normalize.ToolUse{
+					CallID: "c", Name: "f", Input: map[string]any{"q": "leaf-pii"}}},
+				{Type: normalize.ContentText, Text: "orig-text"},
+			},
+		}},
+	}
+	modified := []core.ContentBlock{
+		{Type: "tool_use", Text: "[LEAF-MASKED]"}, // tool-use leaf entry, must be skipped
+		{Type: "text", Text: "NEW-TEXT"},          // the actual text modification
+	}
+	got := applyModifiedContentToNormalized(p, modified)
+	if got == nil {
+		t.Fatal("got nil")
+	}
+	// content[0] is the tool_use block — its structured Input is untouched by
+	// this text walk (tool-arg redaction flows through TransformSpans).
+	if got.Messages[0].Content[0].Type != normalize.ContentToolUse {
+		t.Fatalf("tool_use block clobbered: %+v", got.Messages[0].Content[0])
+	}
+	// content[1] is the text block — it must receive NEW-TEXT, NOT the masked
+	// tool-leaf value.
+	if got.Messages[0].Content[1].Text != "NEW-TEXT" {
+		t.Fatalf("text block got %q, want NEW-TEXT (tool_use entry not skipped → index skew)",
+			got.Messages[0].Content[1].Text)
+	}
+}
+
 func TestApplyModifiedContentToNormalized_NilPayloadReturnsNil(t *testing.T) {
 	// The transitional helper must be safe to call with a nil payload —
 	// callers in the pipeline pass input.Normalized which can be nil for

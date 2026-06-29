@@ -342,6 +342,7 @@ func TestAuditEventToMap_BasicFields(t *testing.T) {
 		Method:        "POST",
 		Path:          "/v1/chat/completions",
 		Action:        "inspect",
+		IngressFormat: "anthropic",
 	}
 	m := AuditEventToMap(e)
 
@@ -363,6 +364,10 @@ func TestAuditEventToMap_BasicFields(t *testing.T) {
 	checkStr("targetMethod", "POST")
 	checkStr("targetPath", "/v1/chat/completions")
 	checkStr("action", "inspect")
+	// The domain-matched adapter must ride the upload payload so it reaches
+	// traffic_event.ingress_format for the CP view-time recompute (regression
+	// guard: this map is the agent→Hub serializer, not the Event struct).
+	checkStr("ingressFormat", "anthropic")
 }
 
 func TestAuditEventToMap_IdentityEmpty(t *testing.T) {

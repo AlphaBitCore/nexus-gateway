@@ -21,6 +21,14 @@ func (a *Adapter) ID() string { return "openai-compat" }
 // Configure is a no-op for the openai-compat adapter (no custom config needed).
 func (a *Adapter) Configure(_ map[string]any) error { return nil }
 
+// MasksToolCallArgs reports that this adapter reconstructs compliance-masked
+// NormalizedContent.ToolCallArgs onto its wire (chat/completions
+// `message.tool_calls[].function.arguments` and responses-API function_call
+// `arguments`). It is the only adapter that does, so callers consult
+// traffic.GuardToolArgMasking to fail closed on every other adapter rather than
+// forward tool-arg PII unmasked. Implements traffic.ToolArgMasker.
+func (a *Adapter) MasksToolCallArgs() bool { return true }
+
 // ExtractRequest routes to the appropriate extractor based on path.
 func (a *Adapter) ExtractRequest(_ context.Context, body []byte, path string) (traffic.NormalizedContent, error) {
 	switch {

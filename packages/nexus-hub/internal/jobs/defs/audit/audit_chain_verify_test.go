@@ -133,6 +133,37 @@ func orphanChainWithReanchor() (rows []fakeChainRow, orphanSeq int64) {
 	return rows, orphanSeq
 }
 
+// TestAuditChainVerify_LoadAckedOrphansError pins the DB-failure path: a
+// non-ErrNoRows error reading the acked-orphans checkpoint must surface as a
+// job error (Run returns it) rather than silently falling through to a full
+// verify — an unreadable ack set is ambiguous, and erroring is louder than
+// silently re-alerting on a chain that may already be acknowledged.
+func TestAuditChainVerify_LoadAckedOrphansError(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery(`FROM system_metadata`).
+		WithArgs(ackedOrphansKey).
+		WillReturnError(errors.New("connection refused"))
+
+	job := NewAuditChainVerify(nil, 1*time.Hour, nil, testLogger())
+	job.pool = mock
+
+	err = job.Run(context.Background())
+	if err == nil {
+		t.Fatal("Run: want error when the acked-orphans read fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("Run error = %v, want it to surface the DB read failure", err)
+	}
+	if e := mock.ExpectationsWereMet(); e != nil {
+		t.Errorf("unmet expectations: %v", e)
+	}
+}
+
 func TestAuditChainVerify_Identity(t *testing.T) {
 	job := NewAuditChainVerify(nil, 17*time.Minute, nil, testLogger())
 	if job.ID() != "audit-chain-verify" {
@@ -438,5 +469,55 @@ func TestAuditChainVerify_AckLoadError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "db down") {
 		t.Errorf("Run error = %q, want it to carry the underlying 'db down'", err.Error())
+	}
+}
+
+// TestAuditChainVerify_ChainQueryError locks the job-failure contract for a DB
+// error during the chain walk itself: with a readable (empty) ack set, a failure
+// reading AdminAuditLog is surfaced to the scheduler as an error so the run
+// retries next tick rather than silently reporting the chain intact.
+func TestAuditChainVerify_ChainQueryError(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	expectNoAckedOrphans(mock)
+	dbErr := errors.New("admin audit log unreadable")
+	mock.ExpectQuery(`FROM "AdminAuditLog"`).WillReturnError(dbErr)
+
+	job := NewAuditChainVerify(nil, 1*time.Hour, nil, testLogger())
+	job.pool = mock
+
+	if runErr := job.Run(context.Background()); !errors.Is(runErr, dbErr) {
+		t.Fatalf("Run must surface the chain-query error, got %v", runErr)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations: %v", err)
+	}
+}
+
+// TestAuditChainVerify_EmptyAckedOrphansVerifiesFullChain locks that an empty
+// acked-orphans blob ("[]") is treated as "no acknowledgements" — the full
+// chain is verified, not skipped — and an intact chain reports success.
+func TestAuditChainVerify_EmptyAckedOrphansVerifiesFullChain(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	expectAckedOrphans(mock, "[]")
+	expectChainQuery(mock, buildIntactChain(1, 3))
+
+	job := NewAuditChainVerify(nil, 1*time.Hour, nil, testLogger())
+	job.pool = mock
+
+	if runErr := job.Run(context.Background()); runErr != nil {
+		t.Fatalf("Run with empty ack set must verify the full chain without error, got %v", runErr)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations: %v", err)
 	}
 }

@@ -46,7 +46,6 @@ func TestLivePipeline_HoldBackFalse_StillRunsHooksAndPreHook(t *testing.T) {
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars:  10,
 		ReinspectStepChars: 10,
-		HoldBack:           false, // key under test
 	}, hookRun, nil, nil)
 
 	lp.WithPreHook(func(_ []byte, _ *hookcore.HookInput) {

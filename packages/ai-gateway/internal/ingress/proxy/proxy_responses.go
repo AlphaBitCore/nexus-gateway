@@ -26,15 +26,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
-	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // handleStreamWithSubscription is the unified streaming pipeline used
@@ -178,9 +174,18 @@ func (h *Handler) handleNonStreamWithSubscription(
 			logger,
 		)
 	}
+	// Response compliance runs on the CANONICAL body BEFORE egress reshape (B0):
+	// redaction rewrites canonical, then the egress codec forward-encodes it —
+	// always supported, so the reverse-encode fail-closed / leak path is gone.
+	redacted, _, blocked := h.runResponseHooksOnCanonical(w, r, rec, ingress, target, respBody, int64(usageInt(usage.TotalTokens)), requestID, logger)
+	if blocked {
+		return
+	}
+	respBody = redacted
+
 	// Egress reshape — broker MISS / HIT_LIVE non-stream. respBody is the
-	// canonical body; funnel through the single egress helper so the broker
-	// path obeys "B→canonical→A" for EVERY ingress (the prior
+	// (possibly redacted) canonical body; funnel through the single egress helper
+	// so the broker path obeys "B→canonical→A" for EVERY ingress (the prior
 	// WireShape==OpenAIChat-only guard silently returned canonical OpenAI for
 	// anthropic /v1/messages + gemini /v1beta — this is the prod path that
 	// produced the wrong-envelope responses).
@@ -190,6 +195,11 @@ func (h *Handler) handleNonStreamWithSubscription(
 		return
 	} else {
 		respBody = shaped
+	}
+	// The reshaped wire body is the redacted, client-consistent copy under a
+	// rewrite; persist it as ResponseBodyRedacted (wire-shaped) for the audit copy.
+	if rec.ResponseHookRewritten {
+		rec.ResponseBodyRedacted = respBody
 	}
 
 	usageMet := metrics.Usage{
@@ -274,87 +284,6 @@ func (h *Handler) handleNonStreamWithSubscription(
 	// Update embedding dimension from the canonical response body.
 	if rec.EndpointType == "embeddings" {
 		rec.Metadata = updateEmbeddingDimension(rec.Metadata, respBody)
-	}
-
-	// Response-stage hooks — same code as handleNonStream.
-	{
-		extractor := h.trafficAdapterFor(ingress.BodyFormat)
-		ingressFormat := string(ingress.BodyFormat)
-		respContent, respModel, respFinish := h.extractResponseForHooks(ctx, extractor, ingressFormat, respBody, r.URL.Path, logger)
-		brokerEpType := typology.KindFromWireShape(ingress.WireShape)
-		respInput := &hookcore.HookInput{
-			RequestID:      requestID,
-			Stage:          "response",
-			Normalized:     respContent,
-			IngressType:    "AI_GATEWAY",
-			Path:           r.URL.Path,
-			Model:          respModel,
-			FinishReason:   respFinish,
-			TokenCount:     int(usageMet.TotalTokens),
-			SourceIP:       middleware.ClientIP(r),
-			ProviderRegion: target.Region,
-			EndpointType:   brokerEpType,
-			OutputModality: []hookcore.Modality{hookcore.ModalityText},
-		}
-		pipeline, pErr := h.deps.HookConfigCache.Resolver(ctx).BuildPipeline(
-			"response", "AI_GATEWAY",
-			brokerEpType,
-			respInput.OutputModality,
-			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
-		)
-		if pErr != nil {
-			logger.Error("failed to build response hook pipeline (broker non-stream)", "error", pErr)
-			h.writeError(w, rec, http.StatusInternalServerError, "hook pipeline error")
-			return
-		}
-		if pipeline != nil {
-			pipeline.SetAllowModify(true)
-			pipeline.SetClearSoftOnApprove(true)
-			hookResult := pipeline.Execute(ctx, respInput)
-			rec.ResponseHookDecision = string(hookResult.Decision)
-			rec.ResponseHookReason = hookResult.Reason
-			rec.ResponseHookReasonCode = hookResult.ReasonCode
-			rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, hookResult.Tags)
-			rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "response", hookResult.HookResults)
-			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
-				rec.BlockingRule = br
-			}
-			// Carry the single hook action so the audit writer persists the
-			// redacted response copy under redact/block. Derived from the
-			// Decision so a no-match approve still stamps ActionApprove.
-			rec.ResponseAction = hookcore.ActionFromDecision(hookResult.Decision)
-			if h.deps.Metrics != nil {
-				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
-			}
-			switch hookResult.Decision {
-			case hookcore.RejectHard:
-				h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
-				return
-			case hookcore.Modify:
-				if len(hookResult.ModifiedContent) > 0 {
-					rewritten, n, rErr := extractor.RewriteResponseBody(ctx, respBody, r.URL.Path, contentBlocksToNormalized(hookResult.ModifiedContent))
-					switch {
-					case errors.Is(rErr, traffic.ErrRewriteUnsupported):
-						logger.Warn("hook produced Modify on response but adapter does not support rewrite; returning original body",
-							slog.String("adapter", extractor.ID()),
-							slog.String("path", r.URL.Path),
-						)
-					case rErr != nil:
-						logger.Error("hook response rewrite failed (broker non-stream)",
-							slog.String("adapter", extractor.ID()),
-							slog.String("path", r.URL.Path),
-							slog.String("error", rErr.Error()),
-						)
-						h.writeError(w, rec, http.StatusInternalServerError, "response rewrite failed")
-						return
-					default:
-						respBody = rewritten
-						rec.ResponseHookRewriteCount = n
-						rec.ResponseHookRewritten = true
-					}
-				}
-			}
-		}
 	}
 
 	pcCfg := h.payloadCaptureConfig()

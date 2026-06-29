@@ -81,6 +81,22 @@ func aiTextProjection(p *NormalizedPayload, opts TextProjectionOptions) []string
 				if b.ToolResult != nil && b.ToolResult.Output != "" {
 					out = append(out, b.ToolResult.Output)
 				}
+			case ContentToolUse:
+				// Tool-call arguments carry caller-supplied values (search
+				// queries, email bodies, addresses) that are as PII-laden as
+				// any user message but were historically never scanned. Emit
+				// each STRING leaf of the structured Input individually — one
+				// projection entry per leaf — so label-adjacent regex patterns
+				// (e.g. "ssn: <digits>" inside one argument value) stay intact
+				// and the entries line up by ordinal with the redaction
+				// addressing walk (see ToolUseStringLeaves).
+				if b.ToolUse != nil {
+					for _, lf := range ToolUseStringLeaves(b.ToolUse.Input) {
+						if lf.Value != "" {
+							out = append(out, lf.Value)
+						}
+					}
+				}
 			case ContentReasoning:
 				if opts.IncludeReasoning && b.Text != "" {
 					out = append(out, b.Text)

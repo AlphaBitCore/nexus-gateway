@@ -73,6 +73,16 @@ type AuditEvent struct {
 	APIKeyFingerprint     string
 	UsageExtractionStatus string
 
+	// IngressFormat is the wire-shape key the stored body was captured in.
+	// For agent + compliance-proxy this is the domain-matched adapter id
+	// (interception_domain.adapter_id, e.g. "openai" / "anthropic"), which
+	// the view-time normalize recompute (Control Plane + Agent UI) keys on as
+	// the authoritative adapter instead of resolving by path + content sniff.
+	// Persisted onto traffic_event.ingress_format. Empty when no domain
+	// adapter matched — recompute then falls back to path/sniff (old-row
+	// behaviour preserved).
+	IngressFormat string
+
 	// Failure-reason classification. Populate when this audit row
 	// represents a Nexus-side classified failure (e.g. blocking rule
 	// rejection, bump-failed passthrough chosen by policy, internal

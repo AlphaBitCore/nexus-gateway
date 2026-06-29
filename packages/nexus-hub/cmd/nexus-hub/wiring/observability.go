@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/config"
 	selfreg "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/self/reg"
@@ -14,8 +13,6 @@ import (
 	sharedopsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
-	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // InitDiagSink wires the Hub SlogSink so Hub's own ERROR+ slog records are
@@ -143,16 +140,4 @@ func InitSelfInstrumentation(
 			}
 		}
 	}()
-}
-
-// InitNormalizeRegistry builds the shared/normalize registry for agent-audit
-// traffic. Projects agent-uploaded request/response bytes into the canonical
-// NormalizedPayload shape before publishing to MQ. The registry is the
-// canonical normalize.BuildRegistry assembly — Tier 1 AI builtins +
-// per-host adapters + Tier 1.5 sniffers + Tier 2 pattern probe + Tier 3
-// verbatim fallback, frozen — so Hub-side agent-audit rows normalize
-// identically to every other data-plane service.
-func InitNormalizeRegistry() normalizecore.AuditFn {
-	agentNormMetrics := normalizecore.MustRegisterPrometheus(prometheus.DefaultRegisterer, "nexus_hub_agent")
-	return normalizecore.BuildAuditFn(normalize.BuildRegistry(), agentNormMetrics)
 }

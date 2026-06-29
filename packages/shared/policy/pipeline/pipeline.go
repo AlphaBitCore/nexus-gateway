@@ -13,45 +13,6 @@ import (
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// applyModifiedContentToNormalized walks the first text fragments of the
-// payload and replaces them with the hook-produced modified text, in order.
-// Retained for hooks that still emit ModifiedContent; prefer TransformSpan
-// application via normalize.ApplySpans for new hook implementations.
-func applyModifiedContentToNormalized(p *normalize.NormalizedPayload, modified []core.ContentBlock) *normalize.NormalizedPayload {
-	if p == nil || len(modified) == 0 {
-		return p
-	}
-	out := *p
-	out.Messages = make([]normalize.Message, len(p.Messages))
-	mi := 0
-	for i, m := range p.Messages {
-		nm := m
-		nm.Content = make([]normalize.ContentBlock, len(m.Content))
-		copy(nm.Content, m.Content)
-		for j, b := range nm.Content {
-			if b.Type != normalize.ContentText {
-				continue
-			}
-			if mi >= len(modified) {
-				break
-			}
-			nm.Content[j].Text = modified[mi].Text
-			mi++
-		}
-		out.Messages[i] = nm
-		if mi >= len(modified) {
-			// Copy remaining messages unchanged.
-			if i+1 < len(p.Messages) {
-				rest := make([]normalize.Message, len(p.Messages)-i-1)
-				copy(rest, p.Messages[i+1:])
-				out.Messages = append(out.Messages[:i+1], rest...)
-			}
-			break
-		}
-	}
-	return &out
-}
-
 // safeHookExecute calls hook.Execute and converts a panic into an error so
 // the fail-policy decides what to do. Without this guard a single panicking
 // third-party hook would crash the entire data-plane process.
@@ -80,6 +41,17 @@ type Pipeline struct {
 	allowModify        bool // when true, MODIFY decisions pass through (for ai-gateway)
 	clearSoftOnApprove bool // when true, APPROVE clears pending BLOCK_SOFT (for ai-gateway)
 	logger             *slog.Logger
+
+	// strictFailClosed is the per-service fail posture threaded from BuildPipeline
+	// (the same flag that makes an UNBUILDABLE fail-closed hook refuse rather than
+	// skip). When true, a hook that ERRORS/TIMES-OUT/PANICS and is ENFORCING (its
+	// onMatch action is redact or block) FAILS CLOSED even when its FailBehavior
+	// was never seeded "fail-closed" — a transient error on an enforcing hook
+	// breaks the guaranteed-execution contract, so on the non-packet path it must
+	// reject rather than leak. false (the host-network packet-path callers: agent
+	// NE proxy / tlsbump / compliance packet path) preserves availability-first
+	// fail-open — closing those paths would take down host DNS/DHCP/outbound.
+	strictFailClosed bool
 
 	// unionPrescan, when non-nil, is a single matcher folding every content
 	// hook's anchor-stripped prefilter (built+cached per resolved hook set by the
@@ -373,23 +345,17 @@ func (p *Pipeline) executeOneHook(ctx context.Context, bh *boundHook, input *cor
 			Error:            err.Error(),
 		}
 
-		// Fail-posture on hook ERROR / TIMEOUT / PANIC is a single documented
-		// decision: AVAILABILITY-FIRST (fail-open) by default. A hook that
-		// errors, times out, or panics yields APPROVE so one broken hook
-		// cannot take the gateway's traffic path offline (a fail-closed
-		// default would turn any hook bug into a full outage / 500-storm).
-		// The strict posture is opt-in per hook via FailBehavior=="fail-closed":
-		// security-critical hooks (block-on-PII, block-on-secret) that MUST NOT
-		// let traffic through on failure should be seeded fail-closed in their
-		// HookConfig so an error rejects rather than approves. This mirrors the
-		// per-hook graceful-degradation posture in resolve()/NewRulePackEngine:
-		// one bad rule degrades to "that rule off", not "all compliance off".
-		if bh.config.FailBehavior == "fail-closed" {
+		// Fail-posture on hook ERROR / TIMEOUT / PANIC. See failClosedOnError
+		// (enforcement.go) for the precedence: explicit fail-closed/fail-open
+		// win; otherwise a strict (non-packet-path) caller fails an ENFORCING
+		// hook closed so a transient error cannot leak PII/secrets on the very
+		// rule meant to stop them, while packet-path callers stay fail-open.
+		if failClosedOnError(p.strictFailClosed, bh.config) {
 			hr.Decision = core.RejectHard
 			hr.Reason = fmt.Sprintf("hook error (fail-closed): %v", err)
 			hr.ReasonCode = "HOOK_ERROR_FAIL_CLOSED"
 		} else {
-			// Default: fail-open (availability-first; see comment above).
+			// Fail-open (availability-first; see comment above).
 			// A sustained nonzero rate on this counter means a hook is silently
 			// degraded — the traffic path is unprotected by that hook while the
 			// gateway keeps serving. Operators alert on hook_fail_open_total.

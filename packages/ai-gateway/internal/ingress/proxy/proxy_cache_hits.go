@@ -7,7 +7,6 @@
 package proxy
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -17,13 +16,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/estimator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
 
@@ -206,6 +203,17 @@ func (h *Handler) handleNonStreamHit(
 	// This replaced the prior verbatim-on-same-shape gate, which returned
 	// canonical chat (`choices[]`) to a same-ingress anthropic/gemini reader
 	// instead of `content[]`/`candidates[]`.
+	//
+	// Response compliance runs on the CANONICAL cached body BEFORE the reshape
+	// below (B0): redaction rewrites canonical, then the reshape forward-encodes
+	// it to the reader's ingress shape — always supported, so the prior
+	// reverse-encode fail-closed / leak path is gone.
+	redacted, _, blocked := h.runResponseHooksOnCanonical(w, r, rec, ingress, target, respBody, rec.TotalTokens, requestID, logger)
+	if blocked {
+		return
+	}
+	respBody = redacted
+
 	if h.deps.CanonicalBridge != nil {
 		switch {
 		case gjson.GetBytes(respBody, "choices").Exists():
@@ -240,6 +248,11 @@ func (h *Handler) handleNonStreamHit(
 		// else: same-shape non-canonical body (responses-native → responses
 		// reader) → serve verbatim.
 	}
+	// The reshaped wire body is the redacted, client-consistent copy under a
+	// rewrite; persist it as ResponseBodyRedacted (wire-shaped) for the audit copy.
+	if rec.ResponseHookRewritten {
+		rec.ResponseBodyRedacted = respBody
+	}
 
 	usage := metrics.Usage{
 		PromptTokens:     rec.PromptTokens,
@@ -247,101 +260,10 @@ func (h *Handler) handleNonStreamHit(
 		TotalTokens:      rec.TotalTokens,
 	}
 
-	// Response-stage hooks: identical to handleNonStream's response
-	// hook block. On Reject we write the rejection and return; on
-	// Modify we swap respBody.
-	// Pre-rewrite snapshot for the audit record under action=redact
-	// (span offsets address the original text; see handleNonStream).
-	origRespBody := respBody
-	{
-		extractor := h.trafficAdapterFor(ingress.BodyFormat)
-		ingressFormat := string(ingress.BodyFormat)
-		respContent, respModel, respFinish := h.extractResponseForHooks(ctx, extractor, ingressFormat, respBody, r.URL.Path, logger)
-		cacheHitEpType := typology.KindFromWireShape(ingress.WireShape)
-		respInput := &hookcore.HookInput{
-			RequestID:      requestID,
-			Stage:          "response",
-			Normalized:     respContent,
-			IngressType:    "AI_GATEWAY",
-			Path:           r.URL.Path,
-			Model:          respModel,
-			FinishReason:   respFinish,
-			TokenCount:     int(usage.TotalTokens),
-			SourceIP:       middleware.ClientIP(r),
-			ProviderRegion: target.Region,
-			EndpointType:   cacheHitEpType,
-			OutputModality: []hookcore.Modality{hookcore.ModalityText},
-		}
-		pipeline, pErr := h.deps.HookConfigCache.Resolver(ctx).BuildPipeline(
-			"response", "AI_GATEWAY",
-			cacheHitEpType,
-			respInput.OutputModality,
-			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
-		)
-		if pErr != nil {
-			logger.Error("failed to build response hook pipeline (cache HIT)", "error", pErr)
-			h.writeError(w, rec, http.StatusInternalServerError, "hook pipeline error")
-			return
-		}
-		if pipeline != nil {
-			pipeline.SetAllowModify(true)
-			pipeline.SetClearSoftOnApprove(true)
-			hookResult := pipeline.Execute(ctx, respInput)
-			rec.ResponseHookDecision = string(hookResult.Decision)
-			rec.ResponseHookReason = hookResult.Reason
-			rec.ResponseHookReasonCode = hookResult.ReasonCode
-			rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, hookResult.Tags)
-			rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "response", hookResult.HookResults)
-			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
-				rec.BlockingRule = br
-			}
-			// Carry the single hook action so the audit writer persists the
-			// redacted response copy under redact/block. Derived from the
-			// Decision so a no-match approve still stamps ActionApprove.
-			rec.ResponseAction = hookcore.ActionFromDecision(hookResult.Decision)
-			if h.deps.Metrics != nil {
-				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
-			}
-			switch hookResult.Decision {
-			case hookcore.RejectHard:
-				h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
-				return
-			case hookcore.Modify:
-				if len(hookResult.ModifiedContent) > 0 {
-					rewritten, n, rErr := extractor.RewriteResponseBody(ctx, respBody, r.URL.Path, contentBlocksToNormalized(hookResult.ModifiedContent))
-					switch {
-					case errors.Is(rErr, traffic.ErrRewriteUnsupported):
-						logger.Warn("cache HIT: hook Modify but adapter does not support rewrite; returning original body",
-							slog.String("adapter", extractor.ID()),
-							slog.String("path", r.URL.Path),
-						)
-					case rErr != nil:
-						logger.Error("cache HIT: hook response rewrite failed",
-							slog.String("adapter", extractor.ID()),
-							slog.String("path", r.URL.Path),
-							slog.String("error", rErr.Error()),
-						)
-						h.writeError(w, rec, http.StatusInternalServerError, "response rewrite failed")
-						return
-					default:
-						// Storage-safe raw copy under a redact/block action.
-						rec.ResponseBodyRedacted = rewritten
-						respBody = rewritten
-						rec.ResponseHookRewriteCount = n
-						rec.ResponseHookRewritten = true
-					}
-				}
-			}
-		}
-	}
-
-	// Under a redact/block action the audit record carries the pre-rewrite
-	// bytes (raw storage comes from ResponseBodyRedacted via the writer's
-	// StorageRawBody) — otherwise it mirrors the client bytes.
+	// respBody is the reshaped wire body (redacted under a rewrite);
+	// StorageRawBody persists ResponseBodyRedacted under redact/block and this
+	// captured copy otherwise.
 	respBodyForAudit := respBody
-	if rec.ResponseAction == hookcore.ActionRedact || rec.ResponseAction == hookcore.ActionBlock {
-		respBodyForAudit = origRespBody
-	}
 	pcCfg := h.payloadCaptureConfig()
 	if pcCfg.StoreResponseBody && len(respBodyForAudit) > 0 {
 		rec.ResponseBody = respBodyForAudit

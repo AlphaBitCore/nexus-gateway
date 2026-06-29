@@ -146,6 +146,11 @@ func (s *streamSession) Next(ctx context.Context) (provcore.Chunk, error) {
 		// Cohere finish_reason values: COMPLETE, MAX_TOKENS, STOP_SEQUENCE,
 		// TOOL_CALL, ERROR. Normalise to OpenAI lowercase strings.
 		finishReason = mapFinishReason(finishReason)
+		// Surface on the canonical Chunk so a re-encoder (buffer mode) preserves
+		// the real finish_reason instead of collapsing to "stop".
+		if finishReason != "" {
+			chunk.FinishReason = finishReason
+		}
 		usagePayload := gjson.GetBytes(ev.Data, "usage")
 		var u *provcore.Usage
 		if usagePayload.Exists() {

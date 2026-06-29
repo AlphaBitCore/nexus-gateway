@@ -210,6 +210,29 @@ func TestCohere_Stream_MessageEnd(t *testing.T) {
 	if !strings.Contains(string(c.RawBytes), `"finish_reason":"stop"`) {
 		t.Errorf("expected canonical finish_reason=stop in RawBytes: %s", c.RawBytes)
 	}
+	if c.FinishReason != "stop" {
+		t.Errorf("FinishReason=%q, want stop (mapped from COMPLETE)", c.FinishReason)
+	}
+}
+
+// TestCohere_Stream_FinishReason_MaxTokens proves the Cohere decoder surfaces
+// the mapped canonical finish_reason on the Chunk so a re-encoder (buffer mode)
+// can preserve it instead of collapsing to "stop".
+func TestCohere_Stream_FinishReason_MaxTokens(t *testing.T) {
+	s := NewSpec(slog.Default())
+	raw := `data: {"type":"message-end","delta":{"finish_reason":"MAX_TOKENS"}}` + "\n\n"
+	sess, err := s.StreamDecoder.Open(io.NopCloser(strings.NewReader(raw)), typology.WireShapeCohereChat)
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	defer sess.Close() //nolint:errcheck
+	c, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if c.FinishReason != "length" {
+		t.Errorf("FinishReason=%q, want length", c.FinishReason)
+	}
 }
 
 func TestCohere_ErrorNormalizer(t *testing.T) {

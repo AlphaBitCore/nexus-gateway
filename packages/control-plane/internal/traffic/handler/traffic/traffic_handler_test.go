@@ -129,6 +129,7 @@ type testSpillStore struct {
 	data        []byte
 	contentType string
 	getErr      error
+	readErr     error // when set, Get returns a reader that fails mid-read
 }
 
 func (s *testSpillStore) Backend() string { return "test" }
@@ -139,8 +140,17 @@ func (s *testSpillStore) Get(_ context.Context, ref sharedaudit.SpillRef) (io.Re
 	if s.getErr != nil {
 		return nil, s.getErr
 	}
+	if s.readErr != nil {
+		return io.NopCloser(errReader{err: s.readErr}), nil
+	}
 	return io.NopCloser(strings.NewReader(string(s.data))), nil
 }
+
+// errReader fails on the first Read — exercises the io.ReadAll error path in
+// rawSpillBody (a spill object that resolves but whose stream is truncated).
+type errReader struct{ err error }
+
+func (r errReader) Read(_ []byte) (int, error)                                   { return 0, r.err }
 func (s *testSpillStore) Delete(_ context.Context, _ sharedaudit.SpillRef) error { return nil }
 func (s *testSpillStore) Sweep(_ context.Context, _ time.Time) (int, error)      { return 0, nil }
 func (s *testSpillStore) Stat(_ context.Context) (spillstore.Stats, error) {
@@ -1165,6 +1175,7 @@ func TestGetTrafficEventNormalized_NotFound_Returns404(t *testing.T) {
 			"inline_request_body", "inline_request_encoding",
 			"inline_response_body", "inline_response_encoding",
 			"request_content_type", "response_content_type",
+			"request_spill_ref", "response_spill_ref",
 		}))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/abc/normalized")
@@ -2322,11 +2333,13 @@ func TestGetTrafficEventNormalized_Success_Returns200(t *testing.T) {
 			"inline_request_body", "inline_request_encoding",
 			"inline_response_body", "inline_response_encoding",
 			"request_content_type", "response_content_type",
+			"request_spill_ref", "response_spill_ref",
 		}).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			[]byte(reqBody), "text",
 			nil, "",
 			"application/json", "",
+			nil, nil,
 		))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-norm-1/normalized")

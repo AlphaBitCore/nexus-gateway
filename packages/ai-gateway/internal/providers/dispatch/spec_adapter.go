@@ -508,6 +508,18 @@ func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any
 	// would silently target the wrong model — a correctness bug, not a client
 	// error.
 	if !needsMap && bytes.Count(body, []byte(`"model"`)) <= 1 {
+		// Only rewrite when the body is a JSON object. sjson.SetBytes on a
+		// non-object body (malformed garbage, empty, a bare scalar/array) does
+		// NOT forward the client's bytes — it FABRICATES a synthetic
+		// {"model":X}. We would then send that invented request upstream on the
+		// shared credential while the audit row stored the client's original
+		// bytes (wire ≠ audit). cd3164876's intent was to FORWARD the malformed
+		// body and let the upstream return the error; honour that by forwarding
+		// non-object bodies unchanged. The check is a leading-byte scan (no full
+		// parse), so the json.Valid-removal perf win is preserved.
+		if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 || t[0] != '{' {
+			return body, nil, nil
+		}
 		// Skip the rewrite entirely when the body already carries the provider's
 		// model id (the common case where the client requests the upstream model
 		// name directly, e.g. no alias). sjson.SetBytes would otherwise rebuild

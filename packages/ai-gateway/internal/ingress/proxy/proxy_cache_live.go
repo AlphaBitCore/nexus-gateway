@@ -7,29 +7,24 @@ import (
 )
 
 // runLiveStream wires ai-gateway.LivePipeline (chunked_async) against
-// the SSE handler's deps. Symmetric with runBufferStream — both are
-// dispatched from the streaming relay stage (stream_relay.go) based
-// on the admin streaming-policy mode.
+// the SSE handler's deps. Dispatched from the streaming relay stage
+// (stream_relay.go) via dispatchStreamMode for the wire-consuming
+// streaming modes, based on the admin streaming-policy mode (#115).
 //
 // Live-mode specifics:
-//   - HoldBack (admin-driven via response-pipeline probe at the caller)
-//     buffers assistant deltas server-side until the first compliance
-//     checkpoint approves.
 //   - EmitOpenAIDone appends the `data: [DONE]\n\n` terminator for
 //     OpenAI-shape ingress clients (Anthropic / Gemini SDKs choke on
 //     stray [DONE] frames).
-//   - PreHook callback fires per checkpoint with cumulative bytes,
-//     same Registry pipeline as buffer + tlsbump paths.
+//   - PreHook callback fires per checkpoint with cumulative bytes (#91),
+//     same Registry normalize the canonical buffer + tlsbump paths use.
 func runLiveStream(ctx context.Context, d runStreamDeps) {
-	// Production always wires SSEReader +
-	// Tee; defensive nil-guard symmetric with runPassthroughStream /
-	// runBufferStream so a malformed runStreamDeps doesn't nil-deref
-	// into a 502.
+	// Production always wires SSEReader + Tee; this defensive nil-guard is
+	// symmetric with runPassthroughStream so a malformed runStreamDeps doesn't
+	// nil-deref into a 502.
 	if d.SSEReader == nil || d.Tee == nil {
 		return
 	}
 	lp := streaming.NewLivePipeline(streaming.LiveConfig{
-		HoldBack:       d.HoldBack,
 		EmitOpenAIDone: d.EmitDone,
 		MaxBufferSize:  d.MaxBufferBytes,
 	}, d.HookRunner, nil, d.Logger)

@@ -462,6 +462,10 @@ func (r *PolicyResolver) BuildPipeline(
 		return nil, nil
 	}
 	p := NewPipeline(filtered, perHookTimeout, totalTimeout, parallel, logger)
+	// Thread the same strict posture forwarded to ResolveHooks onto the runtime
+	// pipeline so an enforcing hook's ERROR/TIMEOUT/PANIC fails closed on strict
+	// (non-packet-path) callers — matching the build-time UNBUILDABLE posture.
+	p.SetStrictFailClosed(strictFailClosed)
 	// Fold every content hook's raw-body prefilter into one shared scan for this
 	// resolved set (cached per generation). nil => use the per-hook loop.
 	p.unionPrescan = r.unionPrescanFor(filtered)

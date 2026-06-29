@@ -5868,9 +5868,13 @@
     "title": "Cumplimiento de streaming",
     "subtitle": "Valor predeterminado global para el manejo de respuestas SSE. Las anulaciones por host están en Dominios de Intercepción; las de por proveedor en Proveedores.",
     "defaultMode": "Modo predeterminado",
-    "defaultModeHelp": "passthrough: solo retransmisión. buffer_full_block: retiene la respuesta + ejecuta hook + puede bloquear. chunked_async: retransmisión en tiempo real + hook de solo auditoría.",
+    "defaultModeHelp": "El modo stream es de alto rendimiento pero de mejor esfuerzo en el cable; para una redacción/bloqueo garantizados elija Buffer.",
+    "disclosureTitle": "Cómo gestiona el cumplimiento cada modo",
+    "disclosurePassthrough": "Se retransmite en tiempo real; el análisis de cumplimiento se ejecuta solo al momento de almacenar — sin redacción en vuelo. Latencia mínima, sin aplicación en vuelo.",
+    "disclosureStream": "Streaming en tiempo real con redacción en vuelo en modo de mejor esfuerzo. Alto rendimiento, pero conlleva un riesgo de fragmento acotado: nunca se entrega un valor sensible completo, pero un breve fragmento inicial puede llegar al cliente antes de que se active la redacción. Elija buffer_full_block para una redacción garantizada.",
+    "disclosureBuffer": "La respuesta completa se almacena en búfer y se analiza antes de entregar cualquier byte — la redacción y el bloqueo estricto están garantizados (cumplimiento fuerte), a costa de un mayor tiempo hasta el primer byte.",
     "chunkBytes": "Bytes por fragmento",
-    "chunkBytesHelp": "chunked_async: bytes por punto de control. Se adapta hacia arriba cuando total/chunk_bytes > 64.",
+    "chunkBytesHelp": "chunked_async: bytes analizados por punto de control. Se adapta hacia arriba para respuestas grandes.",
     "hookTimeoutMs": "Tiempo de espera del hook (ms)",
     "hookTimeoutMsHelp": "Presupuesto de ejecución por hook. Excederlo activa fail_behavior.",
     "maxBufferBytes": "Búfer máximo (bytes)",
@@ -5879,8 +5883,7 @@
     "failBehaviorHelp": "fail_open: continúa ante error/tiempo de espera del hook. fail_close: bloquea (buffer_full_block) o marca auditoría (chunked_async).",
     "captureRequest": "Capturar cuerpo de solicitud (predeterminado; el host puede anular)",
     "captureResponse": "Capturar cuerpo de respuesta (predeterminado; el host puede anular)",
-    "rawSpillEnabled": "Derramar cuerpos más grandes que el umbral en línea a SpillStore (predeterminado: localfs).",
-    "bufferModifyWarning": "Aviso: buffer_full_block ignora silenciosamente las decisiones Modify de los hooks de respuesta (el cuerpo original se reproduce sin cambios). Use chunked_async si necesita reescritura."
+    "rawSpillEnabled": "Derramar cuerpos más grandes que el umbral en línea a SpillStore (predeterminado: localfs)."
   },
   "identityProvider": {
     "title": "Identity Provider",

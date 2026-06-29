@@ -284,6 +284,17 @@ type Chunk struct {
 	Done           bool            // terminal chunk (equivalent to provider's "[DONE]" / message_stop)
 	RawBytes       []byte          // provider-native bytes (SSE frame incl. "data: " prefix, or NDJSON line)
 	NativeEvent    string          // optional provider event name (e.g. "message_delta")
+	// FinishReason carries the canonical OpenAI finish_reason ("stop",
+	// "length", "tool_calls", "content_filter", ...) once the provider's
+	// stream signals completion. Each stream decoder maps its wire's
+	// stop/finish token into this canonical vocabulary on the frame that
+	// carries it (often NOT the terminal Done frame — OpenAI reports it on a
+	// trailing delta-empty chunk, Anthropic on message_delta). Empty until
+	// observed. Canonical re-encoders (buffer mode, cross-format transcode)
+	// read it so a reconstructed stream preserves the real finish_reason
+	// instead of collapsing to "stop"; an empty value defaults to "stop" at
+	// the encoder for backward compatibility.
+	FinishReason string
 	// Truncated rides on the single terminal chunk that the broker
 	// non-stream leader synthesises from a buffered ExecutionResult: it
 	// propagates Response.Truncated so a leader whose response body was

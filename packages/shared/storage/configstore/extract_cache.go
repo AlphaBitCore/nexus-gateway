@@ -78,12 +78,18 @@ func NewExtractCacheStoreWithPgxPool(pool PgxPool) *ExtractCacheStore {
 
 // defaultExtractCacheRow returns the schema-default singleton row used as the
 // no-row fallback. Mirrors the Prisma defaults declared on the model.
+//
+// ApplyFreshnessRules defaults ON to match the Prisma @default(true): freshness
+// protection is intrinsic to caching, so a gateway that enables a cache tier
+// without an explicit admin choice must not replay stale time-sensitive
+// answers. The detector only runs when a cache tier is active, so a cache-off
+// gateway still pays nothing and stays a lean passthrough.
 func defaultExtractCacheRow() *ExtractCacheConfigRow {
 	return &ExtractCacheConfigRow{
 		ID:                  "singleton",
 		Enabled:             false,
 		TTLSeconds:          extractCacheDefaultTTLSeconds,
-		ApplyFreshnessRules: false,
+		ApplyFreshnessRules: true,
 		UpdatedAt:           time.Time{},
 		UpdatedBy:           nil,
 	}

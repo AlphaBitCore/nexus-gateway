@@ -47,6 +47,37 @@
   font-size: 0.875rem;
 }
 
+.disclosure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  padding: var(--g-space-3);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--g-radius-sm);
+  background: var(--color-warning-light);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 20px;
+}
+
+.disclosureTitle {
+  color: var(--color-text);
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.disclosureRow {
+  display: grid;
+  grid-template-columns: minmax(0, 9rem) 1fr;
+  gap: var(--g-space-3);
+  align-items: baseline;
+}
+
+.disclosureMode {
+  color: var(--color-text);
+  font-weight: var(--g-font-weight-medium);
+  font-family: var(--g-font-family-mono);
+}
+
 .switchGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -98,5 +129,10 @@
   .formGrid,
   .switchGrid {
     grid-template-columns: 1fr;
+  }
+
+  .disclosureRow {
+    grid-template-columns: 1fr;
+    gap: var(--g-space-1);
   }
 }

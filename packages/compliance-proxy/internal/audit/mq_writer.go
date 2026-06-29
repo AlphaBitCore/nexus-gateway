@@ -31,13 +31,6 @@ type MQBatchWriter struct {
 	thingID   string
 	thingName string
 
-	// normalize is the closure wired by cmd/compliance-proxy/main.go from
-	// shared/normalize. When non-nil, toMessage invokes it to populate the
-	// TrafficEventMessage.RequestNormalized / ResponseNormalized columns so
-	// cp traffic appears in the traffic_event_normalized sidecar table.
-	// Nil keeps the wire fields empty.
-	normalize NormalizeFn
-
 	ch        chan AuditEvent
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -58,19 +51,6 @@ type MQBatchWriter struct {
 type flushRequest struct {
 	ctx context.Context
 	ack chan error
-}
-
-// NormalizeFn matches shared/normalize.AuditFn but is declared here so
-// this package keeps building without a shared/normalize dependency.
-// Wired by cp main via WithNormalizer.
-type NormalizeFn func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (raw json.RawMessage, status, errReason string)
-
-// WithNormalizer wires the normalize closure. Returns the receiver for
-// chaining. Safe to call before NewMQBatchWriter's goroutine begins
-// dequeuing events.
-func (w *MQBatchWriter) WithNormalizer(fn NormalizeFn) *MQBatchWriter {
-	w.normalize = fn
-	return w
 }
 
 // WithThingIdentity stamps the proxy's Thing ID and human-readable name onto
@@ -314,7 +294,6 @@ func (w *MQBatchWriter) flushBatch(ctx context.Context, events []AuditEvent) err
 
 	for _, e := range events {
 		msg := toMessage(e, w.thingID, w.thingName)
-		applyNormalize(&msg, e, w.normalize)
 		data, err := json.Marshal(msg)
 		if err != nil {
 			w.logger.Error("audit/mq_writer: marshal failed", "eventId", e.ID, "error", err)

@@ -31,6 +31,16 @@ func ApplySpans(p NormalizedPayload, spans []TransformSpan) (NormalizedPayload, 
 		return out, nil
 	}
 
+	// Deferred write-backs are accumulated in a LOCAL writeCtx owned by this
+	// one ApplySpans call and threaded through applyToAddress →
+	// resolveTextRef → toolLeafRef/mapEntryRef. ApplySpans runs concurrently
+	// per request (pipeline join + ToolCallArgsFromPayload), so the pending
+	// closures MUST NOT live on a package global: two goroutines appending to
+	// and truncating one shared slice would race and one flush could drop the
+	// other's masking closure, forwarding unmasked PII. A per-call value has
+	// no shared state and needs no lock (keeping the hot path serial-free).
+	wc := &writeCtx{}
+
 	// Group spans by ContentAddress so we can sort offsets per block.
 	type byAddr struct {
 		addr  string
@@ -52,30 +62,58 @@ func ApplySpans(p NormalizedPayload, spans []TransformSpan) (NormalizedPayload, 
 		// Sort by start descending so applying later spans does not shift
 		// offsets of earlier spans.
 		sortSpansDescending(g.spans)
-		applied := applyToAddress(&out, addr, g.spans)
+		applied := applyToAddress(&out, addr, g.spans, wc)
 		for _, s := range g.spans {
 			if !applied[spanKey(s)] {
 				skipped = append(skipped, s)
 			}
 		}
 	}
-	// Commit any deferred map writes accumulated by mapEntryRef during
-	// the per-address apply loop. Map entries aren't addressable, so
-	// resolveTextRef returns a *string view of a local cell; without
-	// this flush, mutations to http.bodyView.form[<key>] would be lost.
-	flushMapWrites()
+	// Commit the deferred writes this call accumulated. Map entries
+	// (http.bodyView.form[<key>]) and tool-use leaves
+	// (messages.<i>.content.<j>.toolUse.input.<n>) aren't directly
+	// addressable, so resolveTextRef returns a *string view of a boxed local
+	// cell; without this flush those mutations would be lost.
+	wc.flush()
 	if len(skipped) == 0 {
 		return out, nil
 	}
 	return out, skipped
 }
 
+// writeCtx accumulates the deferred write-back closures produced while
+// applying spans to content that yields no directly addressable *string:
+// Go map entries (http.bodyView.form[<key>]) and string leaves buried in a
+// ToolUse.Input map/slice tree (messages.<i>.content.<j>.toolUse.input.<n>).
+// resolveTextRef hands back a *string view of a boxed local cell and records
+// the corresponding write-back here; ApplySpans calls flush after the
+// per-address apply loop.
+//
+// The accumulator is OWNED by a single ApplySpans invocation — a local value
+// threaded through applyToAddress → resolveTextRef → toolLeafRef/mapEntryRef.
+// Two concurrent ApplySpans calls therefore never share write state, so there
+// is no package-global slice to race on and no need for a mutex that would
+// serialize the hot path.
+type writeCtx struct {
+	mapWrites  []mapWriteEntry
+	treeWrites []func()
+}
+
+func (w *writeCtx) flush() {
+	for _, e := range w.mapWrites {
+		e.m[e.key] = *e.ptr
+	}
+	for _, fn := range w.treeWrites {
+		fn()
+	}
+}
+
 // applyToAddress walks the addressed content block in `p` and applies
 // the spans to its underlying text. Returns a set of span keys that
 // were successfully applied.
-func applyToAddress(p *NormalizedPayload, addr string, spans []TransformSpan) map[string]bool {
+func applyToAddress(p *NormalizedPayload, addr string, spans []TransformSpan, wc *writeCtx) map[string]bool {
 	applied := map[string]bool{}
-	ref, ok := resolveTextRef(p, addr)
+	ref, ok := resolveTextRef(p, addr, wc)
 	if !ok {
 		return applied
 	}
@@ -104,7 +142,7 @@ func applyToAddress(p *NormalizedPayload, addr string, spans []TransformSpan) ma
 // resolveTextRef walks p to the *string addressed by addr and returns
 // a pointer to it for in-place mutation. The bool reports whether the
 // path resolved.
-func resolveTextRef(p *NormalizedPayload, addr string) (*string, bool) {
+func resolveTextRef(p *NormalizedPayload, addr string, wc *writeCtx) (*string, bool) {
 	// strings.Split always yields at least one element, so parts[0] is
 	// safe to switch on even for an empty addr (it dispatches to the
 	// default not-resolved arm).
@@ -125,13 +163,33 @@ func resolveTextRef(p *NormalizedPayload, addr string) (*string, bool) {
 		}
 		block := &p.Messages[i].Content[j]
 		if len(parts) > 4 {
-			if parts[4] != "toolResult" {
+			switch parts[4] {
+			case "toolResult":
+				if block.ToolResult == nil {
+					return nil, false
+				}
+				return &block.ToolResult.Output, true
+			case "toolUse":
+				// messages.<i>.content.<j>.toolUse.input.<ordinal> — addresses
+				// the ordinal-th STRING leaf of the structured tool-call Input,
+				// re-walked via ToolUseStringLeaves so the ordinal resolves to
+				// the same leaf detection/addressing chose. The returned *string
+				// is a boxed copy with a deferred write-back into the live nested
+				// map/slice (committed by writeCtx.flush in ApplySpans).
+				if len(parts) != 7 || parts[5] != "input" {
+					return nil, false
+				}
+				ord, err := parseInt(parts[6])
+				if err != nil {
+					return nil, false
+				}
+				if block.ToolUse == nil {
+					return nil, false
+				}
+				return toolLeafRef(block.ToolUse.Input, ord, wc)
+			default:
 				return nil, false
 			}
-			if block.ToolResult == nil {
-				return nil, false
-			}
-			return &block.ToolResult.Output, true
 		}
 		return &block.Text, true
 	case "inputs":
@@ -164,56 +222,28 @@ func resolveTextRef(p *NormalizedPayload, addr string) (*string, bool) {
 			}
 			// Maps don't yield addressable pointers; rebuild the entry.
 			p.HTTP.BodyView.Form[key] = v
-			return mapEntryRef(p.HTTP.BodyView.Form, key), true
+			return mapEntryRef(p.HTTP.BodyView.Form, key, wc), true
 		}
 	}
 	return nil, false
 }
 
-// mapEntryRef returns a *string view of a map entry by temporarily
-// boxing the value behind a small auxiliary struct. Maps in Go cannot
-// be addressed directly, so we synthesize a pointer that, when mutated
-// by ApplyToAddress, writes back via the closure on return.
-//
-// To keep ApplySpans pure-ish, we use a sentinel storage slot keyed in
-// a side table tied to the map identity. Simpler approach: hand back a
-// *string that holds the current value; callers write through it and
-// we re-insert into the map after the apply loop completes. Since the
-// caller pattern is `*ref = text` immediately after the loop, we
-// emulate it with a tiny adapter type below.
-func mapEntryRef(m map[string]string, key string) *string {
-	// Read-modify-write via local var; reader callers in ApplySpans do
-	// `*ref = text` once at the end, so a single write-back is enough.
+// mapEntryRef returns a *string view of a map entry by boxing the value in
+// a local cell. Maps in Go cannot be addressed directly, so we hand back a
+// *string that holds the current value; the caller in applyToAddress writes
+// through it once, and the write-back into the map is recorded on the
+// per-call writeCtx and committed by ApplySpans after the apply loop.
+func mapEntryRef(m map[string]string, key string, wc *writeCtx) *string {
 	cell := m[key]
 	ptr := &cell
-	// Schedule a write-back when the slot is finalized. ApplyToAddress
-	// reads *ref once and writes *ref once; we install the write-back
-	// inside a finalizer attached to the pointer via the package-level
-	// pendingMapWrites.
-	registerMapWrite(m, key, ptr)
+	wc.mapWrites = append(wc.mapWrites, mapWriteEntry{m: m, key: key, ptr: ptr})
 	return ptr
 }
-
-// pendingMapWrites tracks (map, key, ptr) tuples so ApplySpans can
-// flush map writes back at the end of its loop. Single-threaded use
-// pattern matches the call site.
-var pendingMapWrites []mapWriteEntry
 
 type mapWriteEntry struct {
 	m   map[string]string
 	key string
 	ptr *string
-}
-
-func registerMapWrite(m map[string]string, key string, ptr *string) {
-	pendingMapWrites = append(pendingMapWrites, mapWriteEntry{m: m, key: key, ptr: ptr})
-}
-
-func flushMapWrites() {
-	for _, e := range pendingMapWrites {
-		e.m[e.key] = *e.ptr
-	}
-	pendingMapWrites = pendingMapWrites[:0]
 }
 
 func sortSpansDescending(spans []TransformSpan) {
@@ -231,126 +261,6 @@ func sortSpansAscending(spans []TransformSpan) {
 			spans[j], spans[j-1] = spans[j-1], spans[j]
 		}
 	}
-}
-
-// AppliedSpanOffsets relocates each span's [Start, End) to its position in
-// the text AFTER ApplySpans has run, so a consumer reading the stored
-// (post-redact) payload can locate each Replacement. ApplySpans keeps the
-// original (pre-redact) offsets, which only coincide with the post-redact
-// positions when a block has a single span or every replacement preserves
-// length; for multiple length-changing spans in one block the later ones
-// drift. This returns spans whose Start/End bracket the Replacement in the
-// redacted text (End = Start + len(Replacement)).
-//
-// Only spans ApplySpans would actually apply are returned — address must
-// resolve and the range must be valid — so the result never carries a
-// phantom badge for a span that left the text untouched. Offsets are
-// computed per ContentAddress assuming non-overlapping spans, the same
-// assumption ApplySpans relies on. p is not mutated.
-func AppliedSpanOffsets(p NormalizedPayload, spans []TransformSpan) []TransformSpan {
-	if len(spans) == 0 {
-		return nil
-	}
-	groups := map[string][]TransformSpan{}
-	order := []string{}
-	for _, s := range spans {
-		if _, ok := groups[s.ContentAddress]; !ok {
-			order = append(order, s.ContentAddress)
-		}
-		groups[s.ContentAddress] = append(groups[s.ContentAddress], s)
-	}
-	out := []TransformSpan{}
-	for _, addr := range order {
-		textLen, ok := resolveTextLen(&p, addr)
-		if !ok {
-			continue // span did not apply — no badge
-		}
-		g := append([]TransformSpan(nil), groups[addr]...)
-		sortSpansAscending(g)
-		delta := 0
-		for _, s := range g {
-			start, end := s.Start, s.End
-			if start < 0 {
-				start = 0
-			}
-			if end > textLen {
-				end = textLen
-			}
-			if start > textLen || start > end {
-				continue // skipped by ApplySpans
-			}
-			adj := s
-			adj.Start = start + delta
-			adj.End = adj.Start + len(s.Replacement)
-			out = append(out, adj)
-			delta += len(s.Replacement) - (end - start)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// resolveTextLen returns the byte length of the text addressed by addr,
-// read-only — unlike resolveTextRef it does not synthesize map pointers or
-// schedule map write-backs, so it is safe to call outside the ApplySpans
-// flush cycle.
-func resolveTextLen(p *NormalizedPayload, addr string) (int, bool) {
-	parts := strings.Split(addr, ".")
-	if len(parts) == 0 {
-		return 0, false
-	}
-	switch parts[0] {
-	case "messages":
-		if len(parts) < 4 || parts[2] != "content" {
-			return 0, false
-		}
-		i, err := parseInt(parts[1])
-		if err != nil || i < 0 || i >= len(p.Messages) {
-			return 0, false
-		}
-		j, err := parseInt(parts[3])
-		if err != nil || j < 0 || j >= len(p.Messages[i].Content) {
-			return 0, false
-		}
-		block := &p.Messages[i].Content[j]
-		if len(parts) > 4 {
-			if parts[4] != "toolResult" || block.ToolResult == nil {
-				return 0, false
-			}
-			return len(block.ToolResult.Output), true
-		}
-		return len(block.Text), true
-	case "inputs":
-		// inputs.<i> — see resolveTextRef.
-		if len(parts) != 2 {
-			return 0, false
-		}
-		i, err := parseInt(parts[1])
-		if err != nil || i < 0 || i >= len(p.Inputs) {
-			return 0, false
-		}
-		return len(p.Inputs[i]), true
-	case "http":
-		if p.HTTP == nil || p.HTTP.BodyView == nil {
-			return 0, false
-		}
-		if len(parts) == 2 && parts[1] == "bodyView" {
-			return len(p.HTTP.BodyView.Text), true
-		}
-		if len(parts) == 4 && parts[1] == "bodyView" && parts[2] == "form" {
-			if p.HTTP.BodyView.Form == nil {
-				return 0, false
-			}
-			v, ok := p.HTTP.BodyView.Form[parts[3]]
-			if !ok {
-				return 0, false
-			}
-			return len(v), true
-		}
-	}
-	return 0, false
 }
 
 func spanKey(s TransformSpan) string {
@@ -395,6 +305,15 @@ func clonePayload(p NormalizedPayload) NormalizedPayload {
 					if b.ToolResult != nil {
 						tr := *b.ToolResult
 						cs[j].ToolResult = &tr
+					}
+					if b.ToolUse != nil {
+						// Deep-copy the ToolUse and its Input tree so masking
+						// a leaf in the clone never mutates the caller's map
+						// (map[string]any is a reference type; a shallow copy
+						// would alias the original's nested values).
+						tu := *b.ToolUse
+						tu.Input = deepCopyJSONMap(b.ToolUse.Input)
+						cs[j].ToolUse = &tu
 					}
 				}
 				msgs[i].Content = cs

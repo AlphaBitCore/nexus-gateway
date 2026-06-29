@@ -163,7 +163,6 @@ func TestLivePipeline_NilHookResultTreatedAsApprove(t *testing.T) {
 	}
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 5,
-		HoldBack:          true,
 	}, nilHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
@@ -211,9 +210,10 @@ func TestLivePipeline_OnCheckpointCallbackInvoked(t *testing.T) {
 	}
 }
 
-// OnStreamRewrite callback must fire exactly once with the rewritten
-// slot count when Modify successfully rewrites the held buffer.
-func TestLivePipeline_OnStreamRewriteFiresOnSuccessfulModify(t *testing.T) {
+// AUDIT-ONLY (B1): a Modify decision NEVER rewrites the live wire — the original
+// content is delivered as-is and the off-path redaction governs storage only. The
+// live path carries only non-enforcing traffic; redact scopes route to Model A.
+func TestLivePipeline_ModifyDeliversOriginalAuditOnly(t *testing.T) {
 	input := makeSSEStream(
 		`{"choices":[{"delta":{"content":"card "}}]}`,
 		`{"choices":[{"delta":{"content":"4111111111111111"}}]}`,
@@ -232,29 +232,20 @@ func TestLivePipeline_OnStreamRewriteFiresOnSuccessfulModify(t *testing.T) {
 			},
 		}
 	}
-	var (
-		mu        sync.Mutex
-		writtenCt []int
-	)
-	lp := NewLivePipeline(LiveConfig{
-		FirstInspectChars: 20,
-		HoldBack:          true,
-	}, modifyHook, nil, slog.Default())
+	lp := NewLivePipeline(LiveConfig{FirstInspectChars: 20}, modifyHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
-	hookCtx := &StreamHookContext{
-		IngressType: "AI_GATEWAY",
-		Path:        "/v1/chat/completions",
-		OnStreamRewrite: func(n int) {
-			mu.Lock()
-			writtenCt = append(writtenCt, n)
-			mu.Unlock()
-		},
+	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
+
+	blocked := lp.Process(context.Background(), strings.NewReader(input), rec, hookCtx)
+	if blocked {
+		t.Error("audit-only live never blocks")
 	}
-	lp.Process(context.Background(), strings.NewReader(input), rec, hookCtx)
-	mu.Lock()
-	defer mu.Unlock()
-	if len(writtenCt) != 1 || writtenCt[0] != 1 {
-		t.Errorf("OnStreamRewrite expected to fire once with n=1, got %v", writtenCt)
+	body := rec.Body.String()
+	if !strings.Contains(body, "4111111111111111") {
+		t.Errorf("audit-only: the original content must reach the wire (redaction is off-path), got %q", body)
+	}
+	if strings.Contains(body, "[REDACTED]") {
+		t.Errorf("audit-only: the live wire must NOT be rewritten, got %q", body)
 	}
 }
 
@@ -270,7 +261,6 @@ func TestLivePipeline_BlockSoftContinuesWithFlush(t *testing.T) {
 	}
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 5,
-		HoldBack:          true,
 	}, softHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
@@ -295,7 +285,6 @@ func TestLivePipeline_UnknownDecisionDefaultsToContinue(t *testing.T) {
 	}
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 5,
-		HoldBack:          true,
 	}, weirdHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
@@ -324,7 +313,6 @@ func TestLivePipeline_ModifyWithoutContentSkipsRewrite(t *testing.T) {
 	}
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 5,
-		HoldBack:          true,
 	}, emptyModifyHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
@@ -356,7 +344,6 @@ func TestLivePipeline_ModifyEmptyJoinedTextSkipsRewrite(t *testing.T) {
 	}
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 5,
-		HoldBack:          true,
 	}, nonTextModifyHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
@@ -393,7 +380,6 @@ func TestLivePipeline_ModifyAfterReleasedSkipsRewrite(t *testing.T) {
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars:  5,
 		ReinspectStepChars: 5,
-		HoldBack:           true,
 	}, mixedHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
@@ -411,79 +397,11 @@ func TestLivePipeline_ModifyAfterReleasedSkipsRewrite(t *testing.T) {
 	}
 }
 
-// closableBlockingReader is an io.Reader + io.Closer that yields
-// `first` on the first Read then BLOCKS until Close. Drives the
-// CloseUpstreamOnExit invocation on ai-gateway LivePipeline's
-// error / reject branches (a strings.Reader has no Close method, so
-// the type-assertion branch never fires in the ai-gateway call sites
-// without a closer like this).
-type closableBlockingReader struct {
-	first   []byte
-	yielded bool
-	closed  chan struct{}
-	closeN  int
-}
-
-func newClosableBlockingReader(first []byte) *closableBlockingReader {
-	return &closableBlockingReader{first: first, closed: make(chan struct{})}
-}
-
-func (b *closableBlockingReader) Read(p []byte) (int, error) {
-	if !b.yielded {
-		b.yielded = true
-		return copy(p, b.first), nil
-	}
-	<-b.closed
-	return 0, io.EOF
-}
-
-func (b *closableBlockingReader) Close() error {
-	b.closeN++
-	select {
-	case <-b.closed:
-	default:
-		close(b.closed)
-	}
-	return nil
-}
-
-// TestLivePipeline_RejectHard_ClosesUpstream pins the behavior:
-// ai-gateway's CloseUpstreamOnExit invocation at the RejectHard
-// branch was previously code-covered (count=1) but the
-// inner Close call inside CloseUpstreamOnExit never fired because
-// every test upstream was strings.Reader (not an io.Closer). This
-// test passes a closableBlockingReader so the type-assertion branch
-// DOES fire; the reader's blocked Read unblocks on Close and Process
-// returns within the 2-second deadline. Without the close-on-reject
-// fix the test would time out — pinning both code coverage and the
-// behavioral wedge-prevention guarantee.
-func TestLivePipeline_RejectHard_ClosesUpstream(t *testing.T) {
-	rejectHook := func(_ context.Context, _ *goHooks.HookInput) *goHooks.CompliancePipelineResult {
-		return &goHooks.CompliancePipelineResult{Decision: goHooks.RejectHard, Reason: "test reject"}
-	}
-	upstream := newClosableBlockingReader([]byte(makeSSEStream(
-		`{"choices":[{"delta":{"content":"long enough to trigger checkpoint"}}]}`,
-	)))
-	lp := NewLivePipeline(LiveConfig{FirstInspectChars: 5}, rejectHook, nil, slog.Default())
-	rec := httptest.NewRecorder()
-	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
-
-	done := make(chan bool)
-	go func() {
-		done <- lp.Process(context.Background(), upstream, rec, hookCtx)
-	}()
-	select {
-	case blocked := <-done:
-		if !blocked {
-			t.Errorf("RejectHard must report blocked=true")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Process did not return within 2s after RejectHard on blocking upstream — wedge regression")
-	}
-	if upstream.closeN == 0 {
-		t.Errorf("expected upstream.Close on RejectHard (R-3 coverage fix); got 0")
-	}
-}
+// (closableBlockingReader + TestLivePipeline_RejectHard_ClosesUpstream removed: the
+// live path is audit-only and a RejectHard no longer cuts the wire or closes
+// upstream, so the reject-close path that helper pinned is gone. The
+// MaxBufferSize-overflow path still closes upstream and is covered by the overflow
+// tests below.)
 
 // flushCountingWriter is an http.ResponseWriter + http.Flusher that
 // tracks the order of Write and Flush calls. Used to assert the
@@ -594,7 +512,6 @@ func TestLivePipeline_FinalCheckpointFiresOnLeftover(t *testing.T) {
 	}
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 9999,
-		HoldBack:          true,
 	}, countingHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
@@ -608,25 +525,25 @@ func TestLivePipeline_FinalCheckpointFiresOnLeftover(t *testing.T) {
 	}
 }
 
-// Final-flush rejecting must set blocked=true and trip the
-// `if runCheckpoint() { blocked = true }` arm at L315-317.
-func TestLivePipeline_FinalCheckpointRejectBlocks(t *testing.T) {
+// AUDIT-ONLY (B1): a RejectHard at the final (EOF) checkpoint does NOT block — the
+// content was already delivered in real time; the decision is recorded for audit
+// only (the authoritative redacted copy is produced off the hot path).
+func TestLivePipeline_FinalCheckpointRejectAuditOnly(t *testing.T) {
 	input := makeSSEStream(
 		`{"choices":[{"delta":{"content":"abc"}}]}`,
 	)
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 9999,
-		HoldBack:          true,
 	}, rejectStreamHook, nil, slog.Default())
 	rec := httptest.NewRecorder()
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
 
 	blocked := lp.Process(context.Background(), strings.NewReader(input), rec, hookCtx)
-	if !blocked {
-		t.Fatal("final-flush reject must set blocked=true")
+	if blocked {
+		t.Fatal("audit-only: a final-checkpoint RejectHard must NOT block")
 	}
-	if !strings.Contains(rec.Body.String(), "blocked by compliance policy") {
-		t.Errorf("client must receive the reject error frame: %q", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "abc") {
+		t.Errorf("audit-only: content must be delivered, got %q", rec.Body.String())
 	}
 }
 

@@ -100,6 +100,19 @@ func contentBlocksToNormalized(blocks []core.ContentBlock) traffic.NormalizedCon
 	return traffic.NormalizedContent{Segments: segments}
 }
 
+// rewriteContentWithToolArgs augments contentBlocksToNormalized with the
+// compliance-masked tool-call arguments — applying the pipeline's
+// TransformSpans to the canonical request payload and re-marshaling each
+// ContentToolUse block's Input in block order (the wire tool_calls[] order).
+// nil payload or no tool-use spans → ToolCallArgs nil (zero churn).
+func rewriteContentWithToolArgs(blocks []core.ContentBlock, payload *normalize.NormalizedPayload, spans []normalize.TransformSpan) traffic.NormalizedContent {
+	nc := contentBlocksToNormalized(blocks)
+	if payload != nil {
+		nc.ToolCallArgs = normalize.ToolCallArgsFromPayload(*payload, spans)
+	}
+	return nc
+}
+
 // copyHeadersStrippingAuth builds a copy of headers with auth-related keys removed.
 // Deep-copies slices so hook mutations cannot corrupt the live request.
 func copyHeadersStrippingAuth(src http.Header) map[string][]string {

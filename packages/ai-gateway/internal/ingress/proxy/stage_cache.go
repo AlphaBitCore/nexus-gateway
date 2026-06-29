@@ -56,10 +56,22 @@ func (st cacheStage) run() bool {
 	// can run L2 with L1 off (or the reverse) and the stage no longer
 	// short-circuits on L1 alone. freshness rules (apply_freshness_rules) apply
 	// across both tiers; a freshness match skips ALL cache operations.
-	l1Enabled := h.deps.Cache != nil && h.deps.Cache.IsEnabled()
+	// L1 also fails closed until the fleet semantic config has loaded once:
+	// resolveL1CacheScope folds that config's VaryBy into the L1 key for tenant
+	// isolation, and the pre-first-push zero value ("") means fleet-wide. Serving
+	// or writing L1 entries in that boot window would let a later VK read another
+	// VK's response. ScopeReady() is true once the first push lands (or when no
+	// semantic ConfigCache is wired at all — then fleet-wide is the real config,
+	// not a transient window).
+	l1Enabled := h.deps.Cache != nil && h.deps.Cache.IsEnabled() &&
+		h.deps.SemanticConfigCache.ScopeReady()
 	l2Enabled := h.deps.SemanticReader != nil &&
 		h.deps.SemanticConfigCache != nil && h.deps.SemanticConfigCache.EffectiveEnabled()
-	cacheEnabled := l1Enabled || l2Enabled
+	// Emergency master kill switch (cache shadow blob global.cache_master_kill_switch):
+	// when active it disables ALL gateway response caching regardless of either
+	// tier's own enable flag. One nil-safe atomic read; forces the lean
+	// (cache-off) path below so no lookup, key build, or freshness projection runs.
+	cacheEnabled := (l1Enabled || l2Enabled) && !h.deps.Cache.MasterKilled()
 	// Project canonical NormalizedPayload messages → freshness.ChatMessage
 	// for the time-sensitivity detector. Computed ONLY when a cache tier is
 	// active — pulling rctxFull.Normalized() materializes the lazy canonical,
@@ -122,7 +134,14 @@ func (st cacheStage) run() bool {
 		// straight to L2.
 		s.gatewayCacheStatus = audit.GatewayCacheMiss
 
-		if l1Enabled {
+		if h.deps.Cache != nil {
+			// Build the scoped cache key whenever the cache core is wired —
+			// even when L1 lookup/store is disabled. The key doubles as the
+			// in-flight broker dedup key (stage_execute); an empty key would
+			// collapse DISTINCT concurrent requests onto one upstream answer
+			// (L1-off + L2-on + broker is the shipped default). L1 lookup/store
+			// stays gated on l1Enabled below.
+			//
 			// L0: key normalisation — strip volatile fields (e.g. cch=
 			// billing nonce) from the body ONLY for cache key computation.
 			// Never mutates cachePreparedBody; fail-open.
@@ -130,13 +149,15 @@ func (st cacheStage) run() bool {
 			if h.deps.Normaliser != nil {
 				keyBody = h.deps.Normaliser.NormalizeKey(primary.AdapterType, s.cachePreparedBody)
 			}
-			// L1 tenant isolation: fold the same vary_by
-			// scope the L2 semantic tier uses into the L1 exact-match key.
-			// Empty scope (vary_by=none / unset) preserves fleet-wide dedup.
+			// L1 isolation: fold the same vary_by scope the L2 semantic tier
+			// uses into the L1 exact-match key. Empty scope (vary_by=none /
+			// unset) preserves fleet-wide dedup.
 			l1Scope := resolveL1CacheScope(h.deps.SemanticConfigCache, s.rec)
 			s.cacheKey = h.deps.Cache.BuildScopedKey(primary.ProviderName, primary.ProviderModelID, keyBody, allowlistVersionFromDeps(h.deps), l1Scope)
 			s.rec.CacheKey = s.cacheKey
+		}
 
+		if l1Enabled {
 			if s.isStream {
 				if entry := h.deps.Cache.LookupStream(s.r.Context(), s.cacheKey); entry != nil {
 					s.rec.GatewayCacheStatus = audit.GatewayCacheHit

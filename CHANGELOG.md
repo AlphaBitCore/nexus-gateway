@@ -6,7 +6,92 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed (BREAKING — major version bump)
+- **Hook `onMatch` collapses to a single `action` (approve | redact | block).**
+  The orthogonal `onMatch.inflightAction` (approve / block-hard / block-soft /
+  redact) × `onMatch.storageAction` (keep / redact / drop-content) pair is
+  replaced by one `action` field across the AI Gateway, Compliance Proxy, and
+  Agent. `redact` rewrites the payload (the same masked body is forwarded,
+  returned, and stored); `block` rejects and stores the policy attribution
+  (matched rule, reason, compliance tags) — not a content body, since a blocked
+  request never produces a masked wire copy; `approve` forwards and stores as-is.
+  A redact whose adapter cannot reverse-encode the masked content onto the wire
+  (`ErrRewriteUnsupported`) fails **closed** (the request/response is rejected,
+  not forwarded unredacted). Soft-block (HTTP 246) is removed — block-soft folds
+  into block (HTTP 403). The canonical normalized projection is **no longer
+  persisted** for audit; the control plane recomputes it at view time from the
+  (already-redacted) raw body, so `request_normalized` / `response_normalized`
+  and `request_redaction_spans` / `response_redaction_spans` are no longer
+  emitted.
+  **Migration:** the config reader maps the legacy keys for a deprecation window
+  (one-shot warning); a one-off data migration
+  (`tools/db-migrate/manual-scripts/migrate_hook_onmatch_action_2026_06_22.sql`)
+  rewrites stored `HookConfig.config.onMatch` rows:
+  `block-hard|block-soft → block`, `redact → redact`,
+  `approve + keep → approve`, `approve + redact|drop-content → redact`.
+  Runtime enforcement is unchanged by the mapping: `block-soft` already **rejected**
+  the request — it returned an error response (previously with the non-standard
+  status 246, now 403) and never forwarded the traffic, so this is a status-code
+  change, not an allow→deny change. The only data-level behavior change is
+  `approve + redact|drop-content → redact`, which upgrades a storage-only redact to
+  a full redact (the compliance-safe direction, never less masked than before) and
+  occurs in no current row, so the live migration is lossless. Client note: any SDK
+  that branched on the soft-block status 246 must now treat such a rule's response
+  as a 403 reject. The Agent signals a block by dropping the
+  connection (no rich error body); the proxies return an attributed 403 whose
+  response-stage reason carries rule-ID labels only, never the upstream value.
+### Changed — normalized projection is now fully view-time (no migration required)
+
+- **The normalized traffic projection is no longer written on the hot path; it is
+  recomputed at view time.** Building on 1.1.0 (where the producers stopped
+  stamping it), this completes the move end-to-end: the Hub no longer
+  self-derives the projection from agent uploads, and the periodic
+  **normalize-backfill job is retired**. The Control Plane (and the Agent
+  dashboard) recompute the normalized request/response on demand — when an
+  operator opens a Traffic detail drawer — from the stored, already-redacted
+  body, so the rendered projection always reflects the current decoder version
+  with no scheduled job and no stored copy to drift.
+  - **`traffic_event_normalized` and `traffic_event_normalize_skip` are retained,
+    write-frozen.** No schema change and **no migration is required.** The
+    `traffic_event_normalized` sidecar still receives a row only when an older
+    shipped agent uploads its own governed normalized copy — for a block/redact
+    row whose raw body was dropped, that uploaded copy is the sole forensic
+    record. The `traffic_event_normalize_skip` ledger is now inert (the job that
+    wrote it is gone). Dropping both tables is a planned deprecation-window
+    follow-up, not part of this change.
+  - **`GET /api/admin/traffic/{id}/normalized`** now returns the recompute and no
+    longer includes redaction spans (the recompute reads an already-redacted
+    body). It returns `404` when the projection is unavailable — no stored body
+    to recompute from (payload capture was off, or a spilled body has aged out of
+    retention) and no stored sidecar fallback.
+  - **Operators:** the `nexus_normalize_backfill_*` counters are no longer
+    emitted. A missing/NULL `traffic_event_normalized` sidecar is now the normal
+    state for current traffic, not a gap to heal.
+
+### Changed — streaming-compliance enforcement (config-compatible, no migration)
+
+- **Streaming response compliance is scope-routed, and the real-time path is
+  audit-only.** A response hook's enforcement scope decides how a streamed (SSE)
+  response is handled, overriding the admin streaming-mode default wherever that
+  default cannot enforce:
+  - A **block** scope buffers the full response before any byte is delivered
+    (zero-leak hard block).
+  - A **redact** scope under `chunked_async` streams in real time behind a prescan
+    gate that holds a bounded trailing window and escalates to buffered redaction on
+    a confirmed match — best-effort on the wire: a complete sensitive value is never
+    delivered, but a leading fragment of a value longer than the window may reach the
+    client before redaction engages, while the persisted audit copy stays fully
+    masked within that window. A redact scope under `passthrough` falls back to
+    buffering rather than forwarding raw.
+  - A **non-enforcing** pipeline streams in real time, audit-only: it scans and tags
+    every checkpoint but never blocks or rewrites the wire.
+  - An **unbuildable fail-closed** response hook forces buffering, which fails closed
+    with an in-band error frame — never a silent fail-open on the real-time path.
+- **The streamed `finish_reason` is preserved** across the canonical re-encode
+  instead of collapsing to `stop`.
+- The `streaming_compliance.config` mode enum (`passthrough` / `buffer_full_block` /
+  `chunked_async`) is unchanged; no migration. The Control Plane UI shows an
+  always-visible per-mode disclosure of exactly what each mode enforces.
 
 ## [1.1.0] — 2026-06-28
 
@@ -74,6 +159,45 @@ target.
 
 ### Changed — defaults (overridable, no migration required)
 
+### Changed (defaults — overridable, no migration required)
+These flip shipped behavior toward higher throughput; each is overridable by env
+or yaml and an upgrade silently inherits the new default. Operators relying on the
+prior strictness should set the opt-out shown.
+- **Quota enforcement is soft by default (`NEXUS_QUOTA_WRITE_BEHIND` ON).** Per-
+  request quota cost is accumulated in-process and flushed to Redis on a 250ms
+  interval behind a 1s read cache, instead of a synchronous per-request Redis
+  round-trip. Overshoot per instance ≤ ~1.25s of spend; across an N-instance fleet
+  the blind-spend window is that × N, and a hard kill loses un-flushed increments
+  (graceful shutdown drains). Opt out: `NEXUS_QUOTA_WRITE_BEHIND=0` (strict
+  synchronous per-request accounting).
+- **Credential-stats write-behind ON by default (`NEXUS_CREDSTATS_WRITE_BEHIND`).**
+  Credential usage counters defer off the request path; circuit-breaker
+  transitions stay synchronous. Opt out: `NEXUS_CREDSTATS_WRITE_BEHIND=0`.
+- **Audit overflow default `AI_GATEWAY_AUDIT_LOSS_MODE=spill`.** The request path no
+  longer back-pressures on a full audit pipeline; overflow spills to a durable
+  on-disk spool replayed to Postgres. No loss until the spill channel + disk
+  saturate; sustained overload past that drops records, counted on `dropped_total`.
+  Opt out for strict no-drop back-pressure: `AI_GATEWAY_AUDIT_LOSS_MODE=block`.
+- **`NEXUS_EVENTS` audit stream is in-memory by default (`NEXUS_EVENTS_STORAGE=memory`,
+  `DiscardNew`, cap `NEXUS_EVENTS_MAX_BYTES=auto` = 15% RAM).** Keeps the
+  delay-tolerant burst buffer off the data disk. A NATS broker restart/crash drops
+  published-but-undrained events (the overflow→disk no-loss path covers only the
+  stream-full case). Opt out for a durable file-backed stream:
+  `NEXUS_EVENTS_STORAGE=file`.
+- **`GOMEMLIMIT` auto-set from the cgroup limit when unset.** Each service, if
+  `GOMEMLIMIT` is not provided, reads the cgroup memory limit at boot and sets the
+  Go soft limit to ~70% of it (logging a WARN with the value), leaving it unset
+  when no cgroup limit is detectable. Pin explicitly to override.
+- **Cache freshness protection defaults ON (`extract_cache_config.apply_freshness_rules`
+  default `false → true`).** Freshness protection is intrinsic to caching: enabling a
+  cache tier should not silently replay a stale time-sensitive answer (today's date,
+  "latest" prices, live status). The freshness detector only runs when a cache tier is
+  active, so a cache-off gateway still pays nothing and stays a lean passthrough. The
+  flip applies to fresh installs and the no-row default; an existing deployment that
+  already saved an `extract_cache_config` row keeps its stored value, so **no migration
+  runs and no admin choice is overwritten**. Operators who already enabled L1/L2 and
+  want freshness should re-save the extract-cache config (or toggle the Freshness rules
+  card) once; operators who want maximum hit-rate can leave it off explicitly.
 Each default below flips shipped behavior toward higher throughput. An upgrade
 silently inherits the new value; the opt-out to restore prior behavior is shown.
 
@@ -170,6 +294,29 @@ silently inherits the new value; the opt-out to restore prior behavior is shown.
 
 - The in-tree load generator (`tools/loadtest`) was extracted to the standalone
   `nexus-loadtest` repository.
+
+### Fixed (gateway response cache correctness)
+- **Emergency cache master kill switch is now wired into the data plane.**
+  `cache_master_kill_switch` (the Tier-1 global cache config) was parsed but never
+  consulted by the AI Gateway, so flipping it did nothing. It now gates both gateway
+  response cache tiers — L1 exact-match and L2 semantic — at the cache stage
+  (`cacheEnabled = (l1||l2) && !cache_master_kill_switch`). It does not disable
+  provider-side prompt caching (Anthropic markers / Gemini context cache), which only
+  makes the upstream cache and never serves a stored gateway response.
+- **L1 exact-match cache fills regardless of the `cache.broker` flag.** With
+  `cache.broker=false` (the default) the broker registry was never constructed and the
+  broker pump is the cache's sole writer, so an admin-enabled L1 tier silently never
+  filled (0% hit rate). The registry is now always constructed; `cache.broker` controls
+  only same-key in-flight dedup (coalesce concurrent same-key MISSes onto one upstream
+  call vs. independent calls) — either way the cache fills.
+- **L1 cache no longer serves cross-VK entries during the boot window or on
+  Sentinel/Cluster Redis.** L1 folds the fleet `vary_by` isolation scope into its cache
+  key, but that scope arrives on the semantic-cache config push. Before the first push
+  the scope was unset (fleet-wide), so an entry written in that window could be read by
+  a different virtual key; and on Sentinel/Cluster Redis the semantic config was never
+  delivered to the gateway at all. L1 now fails closed (no lookup/store) until the fleet
+  config has loaded, and the config snapshot (including `vary_by`) is delivered on every
+  Redis topology — decoupled from the `*redis.Client`-only index lifecycle.
 
 ## [1.0.0] — 2026-06-14
 

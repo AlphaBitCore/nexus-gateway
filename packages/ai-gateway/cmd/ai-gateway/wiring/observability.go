@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	epMetrics "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
@@ -165,13 +163,7 @@ func InitAuditWriter(
 	// compliance-proxy — one builder so every data-plane service runs the
 	// identical normalize chain (returned frozen).
 	normalizeRegistry := sharednormalize.BuildRegistry()
-	normalizeMetrics := normcore.NewMetrics(prometheus.DefaultRegisterer, "nexus")
-	auditWriter.WithNormalizer(audit.NormalizeFn(normcore.BuildAuditFn(normalizeRegistry, normalizeMetrics)))
-	// reuse path emits the same normalize metrics the bridge would,
-	// so the series keep moving when the audit writer reuses the request-path
-	// canonical instead of re-Normalizing.
-	auditWriter.WithReuseMetric(audit.ReuseMetricFn(normcore.BuildReuseMetricFn(normalizeMetrics)))
-	slog.Info("normalize registry wired", "adapters", normalizeRegistry.All())
+	slog.Info("normalize registry built", "adapters", normalizeRegistry.All())
 
 	auditWriter.WithPayloadCaptureStore(payloadCaptureStore)
 	return auditWriter, normalizeRegistry, nil

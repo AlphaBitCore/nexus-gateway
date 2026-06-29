@@ -1615,30 +1615,32 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookModifies(t *testing.T) {
 
 // handleNonStream Modify + RewriteResponseBody ErrRewriteUnsupported
 
-// stubAdapterRegistry returns a single TrafficAdapter that returns
-// ErrRewriteUnsupported on RewriteResponseBody. Drives the
-// "modify but adapter does not support rewrite" arm in handleNonStream /
-// handleNonStreamWithSubscription / handleNonStreamHit.
-type stubRewriteUnsupportedAdapter struct{ stubTrafficAdapter }
+// TestServeProxy_Fake_Direct_NonStream_ModifyUnsupportedFailsClosed
+// exercises the ErrRewriteUnsupported arm in handleNonStream's Modify path.
+// The stub traffic adapter signals that rewrite is not supported; a redact
+// that cannot be applied must fail CLOSED — the handler returns 502 and must
+// NOT serve the unredacted upstream body to the client.
+// stubRewriteRedactsAdapter succeeds RewriteResponseBody with a recognizably
+// redacted body — it models the canonical (OpenAI) adapter that B0 always uses
+// for response redaction, so a Modify decision produces a redacted 200 rather
+// than the old reverse-encode fail-closed.
+type stubRewriteRedactsAdapter struct{ stubTrafficAdapter }
 
-func (s *stubRewriteUnsupportedAdapter) RewriteResponseBody(_ context.Context, body []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
-	return body, 0, traffic.ErrRewriteUnsupported
+func (s *stubRewriteRedactsAdapter) RewriteResponseBody(_ context.Context, _ []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
+	return []byte(`{"choices":[{"message":{"content":"[REDACTED]"}}]}`), 1, nil
 }
 
-// TestServeProxy_Fake_Direct_NonStream_ModifyUnsupportedReturnsOriginal
-// exercises the ErrRewriteUnsupported warn branch in handleNonStream's
-// Modify arm. The stub traffic adapter signals that rewrite is not
-// supported; the handler must log a warning, leave the body unchanged,
-// and still serve 200.
-func TestServeProxy_Fake_Direct_NonStream_ModifyUnsupportedReturnsOriginal(t *testing.T) {
+// B0: response redaction runs on the CANONICAL body via the OpenAI adapter, which
+// always supports the rewrite — so a Modify decision on the direct non-stream
+// path produces a redacted 200, not the old ErrRewriteUnsupported fail-closed
+// (which only happened because redaction used the ingress-format adapter).
+func TestServeProxy_Fake_Direct_NonStream_RedactRewritesOnCanonical(t *testing.T) {
 	fexec := &fakeExecutor{Result: fakeBrokerSuccessResult()}
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
 	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
-	// Override TrafficAdapters with a registry whose default adapter
-	// always returns ErrRewriteUnsupported.
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteUnsupportedAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-unsupported"}}
+	deps.TrafficAdapter = &stubRewriteRedactsAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-redacts"}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
 		WireShape:  typology.WireShapeOpenAIChat,
@@ -1649,11 +1651,14 @@ func TestServeProxy_Fake_Direct_NonStream_ModifyUnsupportedReturnsOriginal(t *te
 	h(w, freshChatRequest(t, body))
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d want 200 (ErrRewriteUnsupported warns, not aborts); body=%s", w.Code, w.Body.String())
+		t.Fatalf("status=%d want 200 (canonical redact rewrites, no fail-closed); body=%s", w.Code, w.Body.String())
 	}
-	// The original (un-rewritten) body must still be served.
-	if !strings.Contains(w.Body.String(), "broker hi") {
-		t.Errorf("body=%s want original content (rewrite skipped)", w.Body.String())
+	if !strings.Contains(w.Body.String(), "[REDACTED]") {
+		t.Errorf("body=%s want redacted content from the canonical rewrite", w.Body.String())
+	}
+	// The original (un-redacted) upstream content must NOT leak to the client.
+	if strings.Contains(w.Body.String(), "broker hi") {
+		t.Errorf("body=%s leaked unredacted upstream content", w.Body.String())
 	}
 }
 
@@ -1665,16 +1670,16 @@ func (s *stubRewriteFailAdapter) RewriteResponseBody(_ context.Context, _ []byte
 	return nil, 0, errors.New("synthesised rewrite failure")
 }
 
-// TestServeProxy_Fake_BrokerLeader_ModifyUnsupportedReturnsOriginal —
-// same as the Direct test above but takes the broker MISS path so the
-// handleNonStreamWithSubscription ErrRewriteUnsupported arm fires.
-func TestServeProxy_Fake_BrokerLeader_ModifyUnsupportedReturnsOriginal(t *testing.T) {
+// B0: the broker non-stream path also runs response redaction on the CANONICAL
+// body (handleNonStreamWithSubscription → runResponseHooksOnCanonical), so a
+// Modify produces a redacted 200, not the old reverse-encode fail-closed.
+func TestServeProxy_Fake_BrokerLeader_RedactRewritesOnCanonical(t *testing.T) {
 	fexec := &fakeExecutor{Result: fakeBrokerSuccessResult()}
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
 	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteUnsupportedAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-unsupported"}}
+	deps.TrafficAdapter = &stubRewriteRedactsAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-redacts"}}
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
 	cacheOpt(deps)
@@ -1689,10 +1694,13 @@ func TestServeProxy_Fake_BrokerLeader_ModifyUnsupportedReturnsOriginal(t *testin
 	h(w, freshChatRequest(t, body))
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d want 200 (ErrRewriteUnsupported warns on broker path too); body=%s", w.Code, w.Body.String())
+		t.Fatalf("status=%d want 200 (broker canonical redact rewrites); body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "broker hi") {
-		t.Errorf("body=%s want original content (rewrite skipped)", w.Body.String())
+	if !strings.Contains(w.Body.String(), "[REDACTED]") {
+		t.Errorf("body=%s want redacted content from the canonical rewrite (broker path)", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "broker hi") {
+		t.Errorf("body=%s leaked unredacted upstream content (broker path)", w.Body.String())
 	}
 }
 
@@ -1721,14 +1729,16 @@ func TestServeProxy_Fake_BrokerLeader_ModifyRewriteFails500(t *testing.T) {
 	}
 }
 
-// Same modify-unsupported / fail arms but on the cache-HIT path.
-func TestServeProxy_Fake_CacheHIT_ModifyUnsupportedReturnsOriginal(t *testing.T) {
+// B0: the cache-HIT non-stream path also runs response redaction on the CANONICAL
+// cached body (handleNonStreamHit → runResponseHooksOnCanonical), so a Modify
+// produces a redacted 200, not the old reverse-encode fail-closed.
+func TestServeProxy_Fake_CacheHIT_RedactRewritesOnCanonical(t *testing.T) {
 	fexec := &fakeExecutor{} // must NOT be invoked on a HIT
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
 	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteUnsupportedAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-unsupported"}}
+	deps.TrafficAdapter = &stubRewriteRedactsAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-redacts"}}
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
 	cacheOpt(deps)
@@ -1754,10 +1764,13 @@ func TestServeProxy_Fake_CacheHIT_ModifyUnsupportedReturnsOriginal(t *testing.T)
 	h(w, freshChatRequest(t, string(body)))
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d want 200 (cache HIT + ErrRewriteUnsupported warns); body=%s", w.Code, w.Body.String())
+		t.Fatalf("status=%d want 200 (cache HIT canonical redact rewrites); body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "cached hi") {
-		t.Errorf("body=%s want cached content (rewrite skipped)", w.Body.String())
+	if !strings.Contains(w.Body.String(), "[REDACTED]") {
+		t.Errorf("body=%s want redacted content from the canonical rewrite (cache HIT path)", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "cached hi") {
+		t.Errorf("body=%s leaked unredacted cached content (cache HIT path)", w.Body.String())
 	}
 }
 

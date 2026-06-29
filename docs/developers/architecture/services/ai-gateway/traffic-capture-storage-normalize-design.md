@@ -1,11 +1,13 @@
 # Traffic Capture / Storage / View-Time Normalize — Storage-Frame Design
 
 Scope: AI Gateway audit capture · `traffic_event` storage · Control-Plane view-time normalize (Traffic drawer)
-Related: [normalization-architecture.md](./normalization-architecture.md) · [hook-architecture.md](./hook-architecture.md) · [provider-adapter-architecture.md](./provider-adapter-architecture.md)
+Related: [normalization-architecture.md](./normalization-architecture.md) · [hook-architecture.md](./hook-architecture.md) · [provider-adapter-architecture.md](./provider-adapter-architecture.md) · [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md)
+
+> **Status: implemented.** The design below is shipped. `ingress_format` is persisted on `traffic_event` (the AI Gateway stamps `rec.IngressFormat` onto the audit message → Hub insert; agent / compliance-proxy rows carry the domain-matched adapter id). The `traffic_event_normalized` sidecar is **not written on the audit write path** (write-frozen — retained for historical rows and older-agent uploads), and the Control Plane recomputes the normalized projection at view time from the stored (already-redacted) body, keyed on `ingress_format` (empty ⇒ path/sniff fallback). See [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2.
 
 ## 1. Problem
 
-The Traffic drawer's normalized view is recomputed **at view time** from the captured request/response bodies (the `traffic_event_normalized` sidecar is not persisted — see normalization-architecture.md "Lazy compute"). On a fresh prod data set, **~294 / 588 (50%) of 200-status events render raw JSON with the wrong detected protocol** (`generic-http`) instead of the canonical `ai-chat` projection.
+The Traffic drawer's normalized view is recomputed **at view time** from the captured request/response bodies (the `traffic_event_normalized` sidecar is not written on the write path — see [normalization-architecture.md](./normalization-architecture.md) §5.2 and [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2). The problem this design solved: on a fresh prod data set before the fix, **~294 / 588 (50%) of 200-status events rendered raw JSON with the wrong detected protocol** (`generic-http`) instead of the canonical `ai-chat` projection.
 
 The break is **exactly** the set of events where the **ingress wire protocol differs from the upstream provider's adapter** — i.e. cross-protocol transcoding (client speaks Anthropic `/v1/messages`, routed to an OpenAI provider; client speaks Gemini `/v1beta`, routed to Anthropic; etc.).
 
@@ -61,11 +63,11 @@ This is an invariant in the data plane, not a coincidence:
 3. **Cost/tokens are unaffected** — they are extracted into dedicated columns from usage fields, not re-derived from the body.
 4. The **canonical projection is provider-agnostic** — normalizing the ingress body yields the same OpenAI-shape canonical regardless of ingress protocol, so the drawer renders consistently.
 
-## 5. The enabler the gateway already has but discards
+## 5. The enabler — `rec.IngressFormat` (now persisted)
 
-`rec.IngressFormat` (set from `resolved.BodyFormat`) already carries the **authoritative ingress wire format** — `openai` / `openai-responses` / `anthropic` / `gemini` / … — and `writeIngressError` already relies on it. **It is not persisted to `traffic_event`.** That is why the view-time path is forced to re-derive (wrongly) from the provider adapter.
+`rec.IngressFormat` (set from `resolved.BodyFormat`) carries the **authoritative ingress wire format** — `openai` / `openai-responses` / `anthropic` / `gemini` / … — and `writeIngressError` relies on it. It is now **persisted to `traffic_event.ingress_format`** (the fix below); before that, the view-time path was forced to re-derive (wrongly) from the provider adapter.
 
-`resolved.BodyFormat` is known from **route registration** (which ingress endpoint was hit) + the optional `x-nexus-aigw-body-format` override — available at `newProxyState`, *before* VK auth. `rec.IngressFormat` is **already stamped there** (`stage_context.go:185`, in the Record literal built by `newProxyState` before any stage runs), so even early-rejection rows (VK-invalid, rate-limited, malformed body) already carry it **in memory**. The gap is purely that the field is **never persisted** to `traffic_event` — so the view-time path cannot read it and re-derives (wrongly) from the provider adapter.
+`resolved.BodyFormat` is known from **route registration** (which ingress endpoint was hit) + the optional `x-nexus-aigw-body-format` override — available at `newProxyState`, *before* VK auth. `rec.IngressFormat` is **already stamped there** (in the Record literal built by `newProxyState` before any stage runs), so even early-rejection rows (VK-invalid, rate-limited, malformed body) carry it. The original gap was purely that the field was never persisted to `traffic_event`; persisting it (carried through the audit→mq message and the Hub insert) is what lets the view-time recompute read it.
 
 ## 6. Pipeline-position determines what is stored
 

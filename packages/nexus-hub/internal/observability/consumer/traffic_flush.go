@@ -154,8 +154,9 @@ func (w *TrafficEventWriter) flushBatch(ctx context.Context, items []pendingTraf
 	// savepoint and leaves the outer tx committable. The raw traffic_event +
 	// traffic_event_payload rows therefore survive even when normalization
 	// fails. A returned error is a non-poison sidecar failure: it is logged +
-	// counted (the normalize-backfill job heals the gap) but never rolls the
-	// raw batch.
+	// counted but never rolls the raw batch — the control plane recomputes the
+	// normalized projection at view time from the surviving raw body, so a
+	// missing sidecar row does not lose the normalized view.
 	if err := w.insertNormalizedPayloads(ctx, tx, items); err != nil {
 		w.logger.Warn("flush: insert traffic_event_normalized failed (raw rows still committed)",
 			"error", err, "count", len(items))

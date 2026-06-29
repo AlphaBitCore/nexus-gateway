@@ -52,6 +52,27 @@ func (st streamShapeStage) run() bool {
 		streamMaxBufferBytes = snapshot.MaxBufferBytes
 	}
 
+	// Enforcement routing (B2): an enforcing response scope OVERRIDES the admin
+	// streaming-mode knob (a UX/perf preference) — the live path is audit-only and
+	// can never enforce, so an enforcing hook must never land on it. A hard-block
+	// scope must BUFFER (zero-leak by contract, never best-effort streamed). A
+	// redact scope under chunked_async ARMS Model A: real-time streaming with a
+	// bounded tail + prescan gate that escalates to the canonical buffer on a
+	// confirmed hit (runModelAStream); redact streaming is best-effort-wire by
+	// design (see the streaming-compliance disclosure). A redact scope under
+	// passthrough (raw forwarding — the boot default) cannot be honored on the
+	// wire, so it falls back to BUFFER rather than streaming raw PII. An explicit
+	// admin buffer_full_block already redacts in the buffer path for both scopes.
+	if s.responseEnforcingBlock {
+		streamMode = streampolicy.ModeBufferFullBlock
+	} else if s.responseEnforcingRedact {
+		if streamMode == streampolicy.ModeChunkedAsync {
+			s.modelAArmed = true
+		} else if streamMode != streampolicy.ModeBufferFullBlock {
+			streamMode = streampolicy.ModeBufferFullBlock
+		}
+	}
+
 	// Build a cross-format stream transcoder when the ingress and target wire
 	// shapes differ. The transcoder converts canonical provider.Chunk fields
 	// into ingress-native SSE frames so the client always receives the format

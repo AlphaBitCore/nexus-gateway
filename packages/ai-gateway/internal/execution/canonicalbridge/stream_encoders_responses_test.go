@@ -216,3 +216,40 @@ func TestResponsesStreamEncoder_EmptyChunkAfterHeader(t *testing.T) {
 		t.Errorf("empty chunk produced bytes: %s", string(out))
 	}
 }
+
+// TestResponsesEncoder_FinishReasonToIncomplete proves the Responses encoder
+// maps the canonical finish_reason onto the terminal event (HIGH-2): length /
+// content_filter become response.incomplete with an incomplete_details.reason;
+// empty / stop stay response.completed.
+func TestResponsesEncoder_FinishReasonToIncomplete(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		fr         string
+		wantEvent  string
+		wantReason string
+	}{
+		{"", "response.completed", ""},
+		{"stop", "response.completed", ""},
+		{"length", "response.incomplete", "max_output_tokens"},
+		{"content_filter", "response.incomplete", "content_filter"},
+	}
+	for _, c := range cases {
+		enc := newResponsesStreamEncoder("m")
+		out := string(mustWrite(t, enc, ctx, provcore.Chunk{Done: true, FinishReason: c.fr}))
+		if !strings.Contains(out, c.wantEvent) {
+			t.Errorf("fr=%q: want event %s, got %s", c.fr, c.wantEvent, out)
+		}
+		if c.wantReason != "" && !strings.Contains(out, `"reason":"`+c.wantReason+`"`) {
+			t.Errorf("fr=%q: want incomplete reason %s, got %s", c.fr, c.wantReason, out)
+		}
+	}
+}
+
+func mustWrite(t *testing.T, enc StreamTranscoder, ctx context.Context, c provcore.Chunk) []byte {
+	t.Helper()
+	b, err := enc.Write(ctx, c)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	return b
+}

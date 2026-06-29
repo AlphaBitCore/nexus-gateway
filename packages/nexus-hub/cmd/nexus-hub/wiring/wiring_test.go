@@ -697,7 +697,7 @@ func TestBuildEchoConfig_FieldMapping(t *testing.T) {
 		nil, nil, MQResult{},
 		StorageResult{Store: store.New(nil), CatBRegistry: store.NewCatBRegistry()},
 		nil, IdentityResult{}, FleetResult{}, AlertsResult{},
-		SelfShadowResult{}, nil, nil, logger,
+		SelfShadowResult{}, nil, logger,
 	)
 
 	if ec.Cfg != cfg {
@@ -865,38 +865,6 @@ func TestGracefulShutdown_WithOpsRes(t *testing.T) {
 	e := echo.New()
 	// GracefulShutdown with non-nil opsRes writers exercises the Writer.Stop paths.
 	GracefulShutdown(ctx, e, nil, nil, nil, nil, opsRes, testLogger())
-}
-
-// InitNormalizeRegistry — canonical BuildRegistry assembly
-
-func TestInitNormalizeRegistry_KeyMissedAnthropicSSELandsAIChat(t *testing.T) {
-	fn := InitNormalizeRegistry()
-	if fn == nil {
-		t.Fatal("expected non-nil AuditFn")
-	}
-	// Key-missed capture shape: AdapterType carries a host name, no
-	// endpoint path. The hub registry must be the full BuildRegistry
-	// assembly, whose Tier-1.5 sniff pass lands this on the anthropic
-	// codec — not a Tier-3 verbatim dump.
-	body := []byte("event: message_start\n" +
-		`data: {"type":"message_start","message":{"model":"claude-test","role":"assistant","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}` + "\n\n" +
-		"event: content_block_start\n" +
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
-		"event: content_block_delta\n" +
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}` + "\n\n" +
-		"event: content_block_stop\n" +
-		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
-		"event: message_delta\n" +
-		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}` + "\n\n" +
-		"event: message_stop\n" +
-		`data: {"type":"message_stop"}` + "\n\n")
-	raw, status, errReason := fn("response", "", "api.anthropic.com", "", "", true, body)
-	if status != "ok" || errReason != "" {
-		t.Fatalf("status=%q errReason=%q, want ok with no error", status, errReason)
-	}
-	if !bytes.Contains(raw, []byte(`"kind":"ai-chat"`)) || !bytes.Contains(raw, []byte(`"detectedSpec":"anthropic-messages"`)) {
-		t.Fatalf("normalized payload missing sniff-pass markers: %s", raw)
-	}
 }
 
 // InitOTEL — returns InitialCfg regardless of enabled state

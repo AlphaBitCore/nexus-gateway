@@ -276,13 +276,18 @@ model traffic_event {
   // Relations
   payload                    traffic_event_payload?
   /// E46 — canonical normalized representation of the captured request/response.
-  /// Populated at capture time by the shared/normalize layer; NULL when capture
-  /// was disabled, the body was unsupported, or normalize ran but failed
-  /// (the row itself records the failure with status='failed').
+  /// WRITE-FROZEN for current producers: no service stamps it on the audit write
+  /// path, and the Hub no longer self-derives or backfills it. The Control Plane
+  /// recomputes the projection at view time from the stored (already-redacted)
+  /// body. The sidecar is retained for historical rows and for an older shipped
+  /// agent that still uploads its own governed normalized copy (the Hub
+  /// MQ-consumer writer persists those). Table DROP is a deprecation-window
+  /// follow-up. See traffic-capture-storage-normalize-design.md +
+  /// audit-pipeline-architecture.md §10.2.
   normalized                 traffic_event_normalized?
-  /// Terminal marker written by the normalize-backfill job when a row can
-  /// never be filled (spilled body / no payload produced), so the job stops
-  /// re-scanning it. Backfill-internal; not read by the CP store or UI.
+  /// INERT — the normalize-backfill job that wrote this ledger has been retired,
+  /// so no current path writes it. Retained for historical rows; DROP is a
+  /// deprecation-window follow-up.
   normalizeSkip              traffic_event_normalize_skip?
 
   // Secondary indexes on this high-write-rate ingest table are deliberately
@@ -369,6 +374,16 @@ model traffic_event_payload {
 /// stays stable, normalized JSON can be cold-tiered independently, and
 /// schema versioning is per-row.
 ///
+/// WRITE-FROZEN (1.0 GA persisted contract): the normalized projection is no
+/// longer written on the audit write path. No producer stamps it, the Hub no
+/// longer self-derives or backfills it, and the Control Plane recomputes the
+/// projection at view time from the stored (already-redacted) body. The only
+/// writer that remains is the Hub MQ-consumer path, which persists a copy ONLY
+/// when an older shipped agent uploads its own governed normalized copy — the
+/// sole forensic record for a block/redact row whose raw body was dropped.
+/// The table is retained for those rows + historical data; DROP is a
+/// deprecation-window follow-up. See audit-pipeline-architecture.md §10.2.
+///
 /// `request_status` and `response_status` are one of `ok` / `partial` /
 /// `failed`. When `failed`, the corresponding *_normalized column is
 /// NULL and `*_error_reason` carries the reason. The parent traffic_event
@@ -376,7 +391,7 @@ model traffic_event_payload {
 ///
 /// Masking provenance is carried on the parent traffic_event
 /// (`compliance_tags`) and inside the normalized payload itself (redacted
-/// markers + rule ids). The TransformSpan records persist in the redaction-span sidecar columns below.
+/// markers + rule ids).
 model traffic_event_normalized {
   traffic_event_id      String   @id
   request_normalized    Json?    @map("request_normalized")
@@ -386,8 +401,10 @@ model traffic_event_normalized {
   request_error_reason  String?  @map("request_error_reason")
   response_error_reason String?  @map("response_error_reason")
   normalize_version     String   @default("1") @map("normalize_version")
-  // Post-redact transform spans for inline audit-UI marking; set only when
-  // storageAction=="redact", NULL otherwise.
+  // Post-redact transform spans for inline audit-UI marking. WRITE-FROZEN:
+  // left NULL for current producers (the projection they annotated is no longer
+  // persisted; view-time recompute reads an already-redacted body and drops
+  // spans). Retained for historical rows.
   request_redaction_spans  Json? @map("request_redaction_spans")
   response_redaction_spans Json? @map("response_redaction_spans")
   created_at            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -399,23 +416,21 @@ model traffic_event_normalized {
   @@map("traffic_event_normalized")
 }
 
-/// normalize-backfill skip ledger — the terminal marker for traffic_event
-/// rows the backfill job can never fill (spilled body / no payload / capture
-/// failure). The job LEFT JOINs this and excludes recorded rows so a few
-/// unfillable rows can no longer starve the newest-first LIMIT batch.
-/// Deliberately separate from traffic_event_normalized (whose status fields
-/// the CP store + admin Traffic drawer render) — only the backfill job
-/// touches this. reason ∈ {'spill_ref_only','no_payload_produced'}.
+/// normalize-backfill skip ledger — historically the terminal marker for
+/// traffic_event rows the backfill job could never fill (spilled body / no
+/// payload / capture failure). INERT: the normalize-backfill job has been
+/// retired, so no current path reads or writes this ledger. Retained
+/// write-frozen for historical rows; DROP is a deprecation-window follow-up.
+/// reason ∈ {'spill_ref_only','no_payload_produced'}.
 model traffic_event_normalize_skip {
   traffic_event_id String   @id
   reason           String   @map("reason")
   attempted_at     DateTime @default(now()) @map("attempted_at") @db.Timestamptz(3)
-  /// Schema version the failed attempt ran under. The scan re-admits a
-  /// skip-marked row whenever this differs from the current
-  /// normcore.SchemaVersion, so a version bump retries every previously
-  /// unfillable row exactly once with the new decoders (the P4
-  /// "bump heals everything" invariant). NULL = marked before the
-  /// column existed, re-admitted on the first post-upgrade scan.
+  /// Schema version the failed attempt ran under. Historically the backfill
+  /// scan re-admitted a skip-marked row whenever this differed from the current
+  /// normcore.SchemaVersion (a version bump retried every previously unfillable
+  /// row once). INERT now — the backfill job is retired; the column is retained
+  /// for historical rows.
   normalize_version String? @map("normalize_version")
 
   traffic_event traffic_event @relation(fields: [traffic_event_id], references: [id], onDelete: Cascade)

@@ -90,6 +90,7 @@ func run() int {
 				AIGuardConfigCache: func() *aiguard.ConfigCache { return d.AiguardConfigCache },
 				NormEngine:         d.NormEngine, PassthroughCache: d.PassthroughCache,
 				SemanticIndexLifecycle: d.Semantic.IndexLifecycle,
+				SemanticConfigCache:    d.Semantic.ConfigCache,
 				FreshnessDetector:      d.Semantic.Detector,
 				ResponseCache:          d.ResponseCache,
 				OnModelsReloaded: func(models []store.Model) {

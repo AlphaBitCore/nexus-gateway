@@ -303,3 +303,27 @@ func TestFormatSSE_noEvent(t *testing.T) {
 		t.Errorf("FormatSSE no event: got %q, want %q", out, expected)
 	}
 }
+
+// TestStreamDecoder_finishReason_mapped proves the Gemini decoder maps the
+// candidate finishReason into the canonical finish_reason vocabulary so a
+// re-encoder (buffer mode) can preserve it instead of collapsing to "stop".
+func TestStreamDecoder_finishReason_mapped(t *testing.T) {
+	cases := map[string]string{
+		"MAX_TOKENS":              "length",
+		"SAFETY":                  "content_filter",
+		"STOP":                    "stop",
+		"MALFORMED_FUNCTION_CALL": "tool_calls",
+		"OTHER":                   "stop",
+		"FUTURE_UNKNOWN_VALUE":    "FUTURE_UNKNOWN_VALUE", // default arm passes through
+	}
+	for wire, want := range cases {
+		sess := openSession(t, sseData(`{"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"`+wire+`"}]}`))
+		chunk, err := sess.Next(context.Background())
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if chunk.FinishReason != want {
+			t.Errorf("finishReason %q → FinishReason %q, want %q", wire, chunk.FinishReason, want)
+		}
+	}
+}

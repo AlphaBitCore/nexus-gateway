@@ -227,18 +227,40 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	// inconsistency and surfaces as 500.
 	if hookResult.Decision == hookcore.Modify && len(hookResult.ModifiedContent) > 0 {
 		rewriteStart := time.Now()
-		rewritten, n, rErr := trafficAdapter.RewriteRequestBody(r.Context(), body, r.URL.Path, contentBlocksToNormalized(hookResult.ModifiedContent))
+		rewriteContent := rewriteContentWithToolArgs(hookResult.ModifiedContent, normalized, hookResult.TransformSpans)
+		rewritten, n, rErr := trafficAdapter.RewriteRequestBody(r.Context(), body, r.URL.Path, rewriteContent)
 		if pt != nil {
 			pt.MarkBetween(traffic.PhaseHookRewrite, time.Since(rewriteStart))
 		}
+		// Guard: only the OpenAI adapter reconstructs masked tool-call arguments
+		// onto its wire (traffic.ToolArgMasker). A non-masker ingress adapter
+		// (anthropic/gemini) masks text but silently drops ToolCallArgs — so a
+		// successful (nil) rewrite that carried masked tool args would forward the
+		// tool-arg PII UNMASKED upstream while the audit stamps it redacted. Fail
+		// closed instead, mirroring the tlsbump path. No-op when no tool arg was
+		// masked or the adapter is a masker.
+		if rErr == nil {
+			rErr = traffic.GuardToolArgMasking(trafficAdapter, rewriteContent)
+		}
 		switch {
 		case errors.Is(rErr, traffic.ErrRewriteUnsupported):
-			logger.Warn("hook produced Modify but adapter does not support rewrite; forwarding original body",
+			// Redaction was required (Modify) but this adapter cannot reverse-
+			// encode the masked content onto the wire. Fail CLOSED: forwarding
+			// the original body would leak the unredacted content upstream, and
+			// persisting it raw would store the leak. Reject instead — the policy
+			// attribution (rule / reason / tags) was already stamped above.
+			logger.Warn("hook produced Modify but adapter does not support rewrite; failing closed",
 				slog.String("adapter", trafficAdapter.ID()),
 				slog.String("path", r.URL.Path),
 			)
-			// Record the degraded path on the audit row.
+			rec.RequestAction = hookcore.ActionBlock
 			rec.HookReasonCode = hookcore.ReasonRedactInflightUnsupported
+			traffic.PrependVia(w.Header(), "ai-gateway")
+			w.Header().Set("X-Nexus-Hook", traffic.FormatHookOutcome(aigwHookOutcomeFromResult(hookResult)))
+			w.Header().Set("X-Nexus-Mode", "")
+			traffic.SetExposeHeaders(w.Header())
+			h.writeError(w, rec, http.StatusForbidden, "redaction required but not supported for this provider")
+			return nil, hookResult, true
 		case rErr != nil:
 			logger.Error("hook request rewrite failed",
 				slog.String("adapter", trafficAdapter.ID()),

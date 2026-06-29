@@ -62,6 +62,11 @@ type BufferPipeline struct {
 	// preHook runs between Phase 1 and Phase 2 with the raw buffered
 	// body bytes. See PreHookCallback godoc.
 	preHook PreHookCallback
+	// frameRedactor, when non-nil, turns a Modify decision into a real
+	// redaction of the buffered timeline instead of degrading it to a
+	// verbatim replay. See FrameRedactor godoc. Nil preserves the
+	// backward-compatible degrade-and-replay-original behavior.
+	frameRedactor FrameRedactor
 }
 
 // WithPreHook installs a callback that runs between Phase 1 (read full
@@ -69,6 +74,15 @@ type BufferPipeline struct {
 // contract. Nil disables the hook (default).
 func (b *BufferPipeline) WithPreHook(fn PreHookCallback) *BufferPipeline {
 	b.preHook = fn
+	return b
+}
+
+// WithFrameRedactor installs the per-service redactor that rewrites the
+// buffered SSE timeline when the response pipeline returns Modify. See
+// FrameRedactor godoc for the seam contract. Nil (default) keeps the
+// backward-compatible Modify-degrade behavior. Mirrors WithPreHook.
+func (b *BufferPipeline) WithFrameRedactor(fr FrameRedactor) *BufferPipeline {
+	b.frameRedactor = fr
 	return b
 }
 
@@ -191,23 +205,7 @@ func (b *BufferPipeline) Process(
 		}
 	}
 
-	// Modify is not supported in buffer mode. The Phase 3
-	// switch below has no Modify case; the body replays unchanged. Log +
-	// bump the shared counter so admin sees the silent degradation
-	// (without this signal a misconfigured hook stays invisible until
-	// someone notices their rewrite never took effect). The counter
-	// fires from inside BufferPipeline so all three data planes
-	// (ai-gateway, compliance-proxy, agent) get the same signal via a
-	// single registration.
-	if result.Decision == core.Modify {
-		b.logger.Warn("buffer mode: Modify decision degraded to Approve (rewrite ignored)",
-			"requestId", baseInput.RequestID,
-			"reason", result.Reason,
-		)
-		RecordModifyDegraded("buffer_mode")
-	}
-
-	// Phase 3: Replay or reject.
+	// Phase 3: Replay, redact, or reject.
 	switch result.Decision {
 	case core.RejectHard:
 		b.logger.Info("buffer pipeline: content rejected",
@@ -223,26 +221,73 @@ func (b *BufferPipeline) Process(
 		}
 		return result, nil
 
-	default:
-		// Approve or Abstain — replay all buffered events.
-		// Resolve flusher BEFORE wrapping in MultiWriter (interface
-		// satisfactions don't pass through MultiWriter).
-		flusher, canFlush := client.(http.Flusher)
-		writer := client
-		if b.captureBuf != nil {
-			writer = io.MultiWriter(client, b.captureBuf)
+	case core.Modify:
+		// Modify = inflight redact. With a FrameRedactor wired, rewrite the
+		// buffered timeline so the masked frames (not the original) reach the
+		// client. Without one, preserve the backward-compatible degrade: the
+		// rewrite is silently ignored and the body replays verbatim, surfaced
+		// via WARN + nexus_streaming_modify_degraded_total{reason="buffer_mode"}
+		// so a misconfigured hook is visible to admins.
+		if b.frameRedactor == nil {
+			b.logger.Warn("buffer mode: Modify decision degraded to Approve (no frame redactor; rewrite ignored)",
+				"requestId", baseInput.RequestID,
+				"reason", result.Reason,
+			)
+			RecordModifyDegraded("buffer_mode")
+			return result, b.replay(ctx, client, events)
 		}
-		for _, evt := range events {
-			if ctx.Err() != nil {
-				return result, ctx.Err()
+		redacted, rErr := b.frameRedactor.RedactReplay(events, result)
+		if rErr != nil {
+			// Genuinely non-reconstructable wire (or an internal redactor
+			// error) — FAIL CLOSED. The original (unredacted) frames are
+			// never replayed; emit the policy error frame so zero
+			// unredacted content reaches the client, and bump the counter
+			// under the distinct unsupported reason. ResponseBodyRedacted
+			// stays unset (caller's stream-relay guard stores NULL).
+			b.logger.Warn("buffer mode: Modify redaction unsupported; failing closed (no original replay)",
+				"requestId", baseInput.RequestID,
+				"reason", result.Reason,
+				"error", rErr,
+			)
+			RecordModifyDegraded(reasonRedactInflightUnsupported)
+			if err := writeErrorAndDone(client); err != nil {
+				return result, fmt.Errorf("buffer pipeline: write error response: %w", err)
 			}
-			if err := WriteSSEEvent(writer, evt); err != nil {
-				return result, fmt.Errorf("buffer pipeline: write event: %w", err)
-			}
-			if canFlush {
+			if flusher, ok := client.(http.Flusher); ok {
 				flusher.Flush()
 			}
+			return result, nil
 		}
-		return result, nil
+		// Supported redaction — replay the masked timeline. No degrade
+		// counter: the rewrite was honored.
+		return result, b.replay(ctx, client, redacted)
+
+	default:
+		// Approve or Abstain — replay all buffered events unchanged.
+		return result, b.replay(ctx, client, events)
 	}
+}
+
+// replay writes the given SSE events to the client, teeing into the
+// capture buffer when WithBodyCapture is enabled and flushing after each
+// frame for incremental delivery. Resolves the flusher BEFORE wrapping
+// in MultiWriter — interface satisfactions don't pass through it.
+func (b *BufferPipeline) replay(ctx context.Context, client io.Writer, events []*SSEEvent) error {
+	flusher, canFlush := client.(http.Flusher)
+	writer := client
+	if b.captureBuf != nil {
+		writer = io.MultiWriter(client, b.captureBuf)
+	}
+	for _, evt := range events {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := WriteSSEEvent(writer, evt); err != nil {
+			return fmt.Errorf("buffer pipeline: write event: %w", err)
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+	}
+	return nil
 }

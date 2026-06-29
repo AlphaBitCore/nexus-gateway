@@ -15,6 +15,14 @@ import (
 type addressedText struct {
 	address string
 	text    string
+	// blockType tags the flat ModifiedContent block this segment produces.
+	// "text" (default) for message content / reasoning / tool-result text;
+	// "tool_use" for a tool-call argument leaf, so the positional consumers
+	// (contentBlocksToNormalized, applyModifiedContentToNormalized,
+	// SpansFromModifiedContent) SKIP it — the structured TransformSpan carries
+	// the masking and the flat text list stays aligned with the wire's text
+	// slots (R1/R5: tool_use must never enter the flat list as text).
+	blockType string
 }
 
 // addressedSegments walks the Normalized payload in projection order and returns
@@ -39,14 +47,31 @@ func (e *RulePackEngine) addressedSegments(input *core.HookInput) []addressedTex
 		for ci, b := range m.Content {
 			switch b.Type {
 			case normalize.ContentText:
-				out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d", mi, ci), text: b.Text})
+				out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d", mi, ci), text: b.Text, blockType: "text"})
 			case normalize.ContentReasoning:
 				if projOpts.IncludeReasoning && b.Text != "" {
-					out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d", mi, ci), text: b.Text})
+					out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d", mi, ci), text: b.Text, blockType: "text"})
 				}
 			case normalize.ContentToolResult:
 				if b.ToolResult != nil {
-					out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d.toolResult", mi, ci), text: b.ToolResult.Output})
+					out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d.toolResult", mi, ci), text: b.ToolResult.Output, blockType: "text"})
+				}
+			case normalize.ContentToolUse:
+				// One addressed segment per STRING leaf of the structured
+				// tool-call Input, ordinal-addressed so resolveTextRef can
+				// re-walk to the same leaf. Mirrors the projection order
+				// exactly (both derive from ToolUseStringLeaves).
+				if b.ToolUse != nil {
+					for _, lf := range normalize.ToolUseStringLeaves(b.ToolUse.Input) {
+						if lf.Value == "" {
+							continue // mirrors projection's non-empty filter
+						}
+						out = append(out, addressedText{
+							address:   fmt.Sprintf("messages.%d.content.%d.toolUse.input.%d", mi, ci, lf.Ordinal),
+							text:      lf.Value,
+							blockType: "tool_use",
+						})
+					}
 				}
 			}
 		}
@@ -170,7 +195,11 @@ func (e *RulePackEngine) executeRedact(input *core.HookInput, result *core.HookR
 					text = text[:r.start] + r.replacement + text[r.end:]
 				}
 			}
-			modified[si] = core.ContentBlock{Role: "user", Type: "text", Text: text}
+			bt := addressed[si].blockType
+			if bt == "" {
+				bt = "text"
+			}
+			modified[si] = core.ContentBlock{Role: "user", Type: bt, Text: text}
 		}
 		result.Decision = core.Modify
 		result.Action = core.ActionRedact
