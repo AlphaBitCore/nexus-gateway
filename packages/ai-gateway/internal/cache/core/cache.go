@@ -159,6 +159,11 @@ type Cache struct {
 	enabled             atomic.Bool
 	ttlNs               atomic.Int64 // nanoseconds
 	applyFreshnessRules atomic.Bool
+	// masterKill is the emergency cache kill switch (cache shadow blob's
+	// global.cache_master_kill_switch); read once at the cache stage to gate
+	// BOTH response cache tiers (L1 here + L2). Lives here for wiring reasons;
+	// invariant "L2 active ⟹ this != nil" documented in cache-multi-tier-architecture.md.
+	masterKill atomic.Bool
 }
 
 // New creates a Cache backed by the given Redis client. Returns nil (cache
@@ -227,6 +232,25 @@ func (c *Cache) ApplyFreshnessRules() bool {
 		return false
 	}
 	return c.applyFreshnessRules.Load()
+}
+
+// SetMasterKill atomically updates the emergency kill switch (driven by the
+// cache shadow blob on each Hub push). Safe on a nil receiver (no-op).
+func (c *Cache) SetMasterKill(killed bool) {
+	if c == nil {
+		return
+	}
+	c.masterKill.Store(killed)
+}
+
+// MasterKilled reports whether the emergency switch has disabled ALL gateway
+// response caching (L1 + L2). The cache stage reads it once per request. Safe
+// on nil (returns false — no Cache means caching is already off).
+func (c *Cache) MasterKilled() bool {
+	if c == nil {
+		return false
+	}
+	return c.masterKill.Load()
 }
 
 // ttl returns the current runtime TTL as a time.Duration.

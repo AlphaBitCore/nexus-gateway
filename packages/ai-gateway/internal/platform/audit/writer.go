@@ -83,13 +83,6 @@ type Writer struct {
 	// the wire message without normalized fields (test / fallback).
 	normalize NormalizeFn
 
-	// reuseMetric, when non-nil, records the request-direction normalize
-	// metrics for a payload reused from the request path without
-	// re-running Normalize, so the normalize_total / payload_bytes series keep
-	// moving on the reuse path (which bypasses the normalize bridge). Wired by
-	// ai-gateway main via normcore.BuildReuseMetricFn. Nil = no-op.
-	reuseMetric ReuseMetricFn
-
 	// recCh is the bounded producer→consumer queue (cap = maxQueued). Enqueue is
 	// the producer; N publishWorkers are the consumers. This IS the standard
 	// bounded producer/multi-consumer pattern: a blocking send (block mode) is the
@@ -223,13 +216,14 @@ func (w *Writer) WithThingIdentity(id, name string) *Writer {
 	return w
 }
 
-// NormalizeFn is the closure ai-gateway main wires to invoke
-// shared/normalize on captured request/response bodies. Returns the
-// marshalled NormalizedPayload (or nil on protocol-mismatch), the
-// status ("ok" / "partial" / "failed"), and an error reason for the
-// failed/partial path. The audit Writer is intentionally agnostic
-// about the normalize package — it accepts bytes in and produces wire
-// bytes out, so this package keeps building when shared/normalize is
+// NormalizeFn is the normalize-closure type the audit Writer accepts to invoke
+// shared/normalize on captured request/response bodies. Returns the marshalled
+// NormalizedPayload (or nil on protocol-mismatch), the status ("ok" / "partial" /
+// "failed"), and an error reason for the failed/partial path. No production caller
+// wires it — the normalized projection is recomputed at view time — so the type
+// serves as the test-injection seam for the write-time guarantee. The audit Writer
+// is intentionally agnostic about the normalize package — it accepts bytes in and
+// produces wire bytes out, so this package keeps building when shared/normalize is
 // not wired (tests, no-op deployments).
 //
 // adapterType is the wire-format key ("openai", "anthropic", "gemini",
@@ -238,27 +232,13 @@ func (w *Writer) WithThingIdentity(id, name string) *Writer {
 // names are intentionally NOT used as the routing key.
 type NormalizeFn func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (raw json.RawMessage, status, errReason string)
 
-// WithNormalizer wires a normalize closure. The audit write path no longer
-// persists a normalized projection (the control plane recomputes it at view
-// time from the action-governed raw body), so the closure is retained only
-// as the seam ai-gateway main uses to keep the normalize metrics series wired;
-// recordToMessage does not invoke it.
+// WithNormalizer wires a normalize closure onto the writer. The audit write path
+// does NOT persist a normalized projection — the control plane recomputes it at
+// view time from the action-governed raw body — and recordToMessage never invokes
+// the closure. No production caller wires it; the seam exists only so tests can
+// inject a fatal-on-call normalizer and assert it is never run at write time,
+// pinning the view-time-only guarantee against regression.
 func (w *Writer) WithNormalizer(fn NormalizeFn) *Writer {
 	w.normalize = fn
-	return w
-}
-
-// ReuseMetricFn records the request-direction normalize metrics for a payload
-// reused verbatim from the request goroutine (no re-Normalize). The Writer stays
-// agnostic of the normalize package; the concrete is wired from
-// normcore.BuildReuseMetricFn. protocol/kind/payloadLen come from the reused
-// payload; the status is always "ok" (a failed/partial normalize leaves no reuse
-// bytes and falls back to re-Normalize).
-type ReuseMetricFn func(protocol, kind, direction string, payloadLen int)
-
-// WithReuseMetric wires the reuse-metric closure so recordToMessage keeps the
-// normalize metric series moving on the reuse path (which bypasses the bridge).
-func (w *Writer) WithReuseMetric(fn ReuseMetricFn) *Writer {
-	w.reuseMetric = fn
 	return w
 }

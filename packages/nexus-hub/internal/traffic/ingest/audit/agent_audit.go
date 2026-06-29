@@ -3,7 +3,6 @@ package audit
 import (
 	"github.com/goccy/go-json"
 	"net/http"
-	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -30,14 +29,6 @@ const maxAuditBatchSize = 500
 // requestBody / responseBody Body discriminator.
 type AgentAuditAPI struct {
 	MQProducer mq.Producer
-	// Normalize, when non-nil, projects agent-captured request/response
-	// bytes into the canonical NormalizedPayload shape and stamps the
-	// result on the outbound MQ envelope (requestNormalized /
-	// responseNormalized / normalizeStatus / normalizeError /
-	// normalizeVersion). Wired from cmd/nexus-hub via shared/normalize so
-	// agent traffic populates traffic_event_normalized alongside ai-gateway
-	// and compliance-proxy. Nil keeps the sidecar row empty for agent traffic.
-	Normalize func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (raw json.RawMessage, status, errReason string)
 }
 
 // AgentAuditEvent is the event format uploaded by the Agent.
@@ -67,7 +58,13 @@ type AgentAuditEvent struct {
 	// Request-side LLM signals from the agent's traffic adapter.
 	ProviderName string `json:"providerName,omitempty"`
 	ModelName    string `json:"modelName,omitempty"`
-	ApiKeyClass  string `json:"apiKeyClass,omitempty"`
+	// IngressFormat is the domain-matched adapter id (interception_domain.
+	// adapter_id) the agent resolved at capture time. Persisted onto
+	// traffic_event.ingress_format so the control plane's view-time normalize
+	// recompute keys on the authoritative adapter for agent rows (empty ⇒
+	// path/sniff fallback).
+	IngressFormat string `json:"ingressFormat,omitempty"`
+	ApiKeyClass   string `json:"apiKeyClass,omitempty"`
 	// The node-asserted attribution fields (apiKeyFingerprint,
 	// entityType/entityId/entityName/orgId/orgName, identity) are intentionally
 	// NOT decoded here. They drove per-VK/per-org billing, analytics, and SIEM,
@@ -204,6 +201,7 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 			"complianceTags":        evt.ComplianceTags,
 			"providerName":          evt.ProviderName,
 			"modelName":             evt.ModelName,
+			"ingressFormat":         evt.IngressFormat,
 			"apiKeyClass":           evt.ApiKeyClass,
 			"promptTokens":          evt.PromptTokens,
 			"completionTokens":      evt.CompletionTokens,
@@ -291,42 +289,11 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 			envelope["responseRedactionSpans"] = evt.ResponseRedactionSpans
 		}
 
-		// Directions without an uploaded copy: project agent-captured bytes
-		// into the canonical NormalizedPayload shape. Adapter-type routing
-		// uses the agent traffic adapter's stable Provider identifier
-		// (RequestMeta.Provider) — e.g. "openai" / "anthropic" / "gemini" —
-		// which is what the registry expects. Spilled bodies are skipped;
-		// Hub does not re-fetch from spill for normalize purposes.
-		if h.Normalize != nil && evt.ProviderName != "" {
-			adapter := strings.ToLower(evt.ProviderName)
-			if len(evt.NormalizedRequest) == 0 && len(evt.PayloadRequest) > 0 {
-				ct := evt.PayloadRequestContentType
-				if ct == "" {
-					ct = "application/json"
-				}
-				raw, status, errReason := h.Normalize("request", ct, adapter, evt.ModelName, evt.Path, false, evt.PayloadRequest)
-				if raw != nil || status != "" {
-					envelope["requestNormalized"] = raw
-					envelope["requestNormalizeStatus"] = status
-					envelope["requestNormalizeError"] = errReason
-					stamped = true
-				}
-			}
-			if len(evt.NormalizedResponse) == 0 && len(evt.PayloadResponse) > 0 {
-				ct := evt.PayloadResponseContentType
-				if ct == "" {
-					ct = "application/json"
-				}
-				stream := strings.Contains(strings.ToLower(ct), "event-stream")
-				raw, status, errReason := h.Normalize("response", ct, adapter, evt.ModelName, evt.Path, stream, evt.PayloadResponse)
-				if raw != nil || status != "" {
-					envelope["responseNormalized"] = raw
-					envelope["responseNormalizeStatus"] = status
-					envelope["responseNormalizeError"] = errReason
-					stamped = true
-				}
-			}
-		}
+		// Directions the agent did NOT upload are left unstamped: the control
+		// plane recomputes normalized at view time from the stored, already-
+		// redacted body. The Hub no longer re-derives the projection at ingest —
+		// doing so was pure write-path cost on the agent-upload request goroutine
+		// for a projection nothing reads on the write path.
 		if stamped {
 			envelope["normalizeVersion"] = normcore.SchemaVersion
 		}

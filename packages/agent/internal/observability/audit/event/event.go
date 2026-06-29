@@ -47,6 +47,14 @@ type Event struct {
 	ApiKeyClass       string `json:"apiKeyClass,omitempty"`
 	ApiKeyFingerprint string `json:"apiKeyFingerprint,omitempty"`
 
+	// IngressFormat is the domain-matched adapter id (interception_domain.
+	// adapter_id, e.g. "openai" / "anthropic") the captured body is in.
+	// Stored as TEXT in the SQLite queue, uploaded to Hub, and used by the
+	// detail drawer's view-time recompute as the authoritative normalize
+	// adapter. Empty when no domain adapter matched → recompute falls back to
+	// path + content sniff.
+	IngressFormat string `json:"ingressFormat,omitempty"`
+
 	// Response-side usage populated by the agent's MITM relay after the
 	// adapter's DetectResponseUsage (non-streaming) or UsageAccumulator (SSE).
 	// Token pointers are nil when usage was unavailable; UsageExtractionStatus

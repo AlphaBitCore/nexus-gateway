@@ -42,7 +42,6 @@ func TestLivePipeline_WithPreHook_FiresWithCumulativeBytes(t *testing.T) {
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars:  10, // tiny so checkpoint fires fast
 		ReinspectStepChars: 10,
-		HoldBack:           true,
 	}, hookRun, nil, nil)
 
 	lp.WithPreHook(func(rawBody []byte, ci *hookcore.HookInput) {

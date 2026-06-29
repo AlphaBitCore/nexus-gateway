@@ -24,12 +24,12 @@ type RequestContext struct {
 	// Lazy canonical seam. The request canonical is a pure derivative of the
 	// raw body; computing it eagerly on every request is the dominant hot-path
 	// allocator when no consumer needs it. It is therefore computed on first
-	// Normalized() call from normalizeFn and memoized. The only request-time
-	// consumers are smart routing and the response cache; both pull it via
-	// Normalized(). The audit writer must NOT trigger the compute — it reads
-	// NormalizedIfComputed() and defers to view-time when nothing materialized
-	// it (lazy-audit-normalize). WithNormalized(p) pins an already-computed
-	// payload (eager path / tests): normalizeFn nil + computed true.
+	// Normalized() call from normalizeFn and memoized. The only consumers are
+	// smart routing and the response cache; both pull it via Normalized(). The
+	// audit path never reads the canonical — normalized is recomputed at view
+	// time from the stored raw body — so it never triggers this compute.
+	// WithNormalized(p) pins an already-computed payload (eager path / tests):
+	// normalizeFn nil + computed true.
 	mu          sync.Mutex
 	normalizeFn func() *normcore.NormalizedPayload
 	normalized  *normcore.NormalizedPayload
@@ -51,8 +51,9 @@ func (rc *RequestContext) Identity() *vkauth.VKMeta {
 // result. Returns nil when the receiver is nil, no seam was attached (empty
 // body), or normalize failed (the compute fn elides the payload). Safe for
 // concurrent callers. Triggering this is what materializes the canonical — call
-// it only when a consumer genuinely needs the canonical (smart routing, cache);
-// the audit path must use NormalizedIfComputed instead.
+// it only when a consumer genuinely needs the canonical (smart routing, cache).
+// The audit path never reads it: normalized is recomputed at view time from the
+// stored raw body, so there is no audit-side reuse seam.
 func (rc *RequestContext) Normalized() *normcore.NormalizedPayload {
 	if rc == nil {
 		return nil
@@ -66,21 +67,6 @@ func (rc *RequestContext) Normalized() *normcore.NormalizedPayload {
 		rc.computed = true
 	}
 	return rc.normalized
-}
-
-// NormalizedIfComputed returns the memoized canonical and whether it was already
-// materialized, WITHOUT triggering the lazy compute. The audit writer uses this
-// to reuse the canonical iff a request-time consumer (smart routing / cache)
-// already produced it; when ok is false the audit direction is deferred to
-// view-time recompute (lazy-audit-normalize) rather than computing it on the
-// hot path. Nil-safe.
-func (rc *RequestContext) NormalizedIfComputed() (*normcore.NormalizedPayload, bool) {
-	if rc == nil {
-		return nil, false
-	}
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-	return rc.normalized, rc.computed && rc.normalized != nil
 }
 
 // Endpoint returns the endpoint family for this request

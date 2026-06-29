@@ -52,6 +52,30 @@ func newTestCacheWithRedis(t *testing.T) *Cache {
 	return c
 }
 
+// TestCache_MasterKill verifies the emergency master kill switch: default off,
+// settable on/off, nil-safe both ways. The cache stage reads MasterKilled() to
+// force cacheEnabled=false for L1 + L2 regardless of either tier's own flag.
+func TestCache_MasterKill(t *testing.T) {
+	var nilCache *Cache
+	if nilCache.MasterKilled() {
+		t.Fatal("nil cache must report MasterKilled=false (no cache = nothing to kill)")
+	}
+	nilCache.SetMasterKill(true) // must not panic on nil
+
+	c := newTestCache("test:")
+	if c.MasterKilled() {
+		t.Fatal("MasterKilled must default false (kill switch off)")
+	}
+	c.SetMasterKill(true)
+	if !c.MasterKilled() {
+		t.Fatal("MasterKilled must be true after SetMasterKill(true)")
+	}
+	c.SetMasterKill(false)
+	if c.MasterKilled() {
+		t.Fatal("MasterKilled must be false again after SetMasterKill(false)")
+	}
+}
+
 // BuildKey tests (pre-existing, kept verbatim)
 
 func TestBuildKey_Deterministic(t *testing.T) {

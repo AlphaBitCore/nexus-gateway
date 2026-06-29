@@ -1,62 +1,30 @@
 package tlsbump
 
 import (
-	"context"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
 )
 
-// stampSSEResponseNormalized runs the SSE response body through the
-// Registry's Tier 1+2+3 normalize chain (same path the non-SSE response
-// at forward_handler.go:692 uses) and stamps the result onto
-// info.ResponseNormalized so the audit_event.normalized_response column
-// lands populated. Previously this never happened for SSE — the bytes
-// were captured, written to client, captured to body buffer for inline
-// audit, but no Normalize call ran at end-of-stream. Result: every
-// SSE audit row at agent + cp + ai-gateway shipped normalized_response
-// = NULL. Cover all three streamingMode values: passthrough (when
-// capture is on we have the body too), live (chunked_async), buffer
-// (buffer_full_block) — each branch in handleSSEResponse calls this
-// before emitAudit.
-//
-// Best-effort: nil body / nil reg / Normalize hard error are silently
-// dropped (already debug-logged inside runtimeNormalize). Hot path —
-// never abort the audit emit because normalize hit a snag.
-func stampSSEResponseNormalized(
-	ctx context.Context,
-	bo *bumpOptions,
-	audCtx *requestAuditCtx,
-	info *compliance.AuditInfo,
-	respInput *core.HookInput,
-	body []byte,
-	contentType string,
-	logger *slog.Logger,
-) {
-	if info == nil || len(body) == 0 || bo.normalizeRegistry == nil {
+// stampSpliceRedactedBody records the masked SSE transcript as the audit's
+// redacted copy on a SUCCESSFUL buffer-mode splice — a Modify the redactor
+// honored: the redactor was wired AND the disclosed REDACT_INFLIGHT_UNSUPPORTED
+// fail-open was NOT taken. The captured bytes are then the masked stream the
+// client received, so StorageRawBody persists it instead of dropping to NULL.
+// Excluded by design (left nil → storage NULL, never a leak): the fail-open
+// path (original forwarded → capture holds unredacted PII) and the no-adapter
+// degrade (no redactor wired).
+func stampSpliceRedactedBody(info *compliance.AuditInfo, result *core.CompliancePipelineResult, spliceWired bool, bufPipeline *streaming.BufferPipeline) {
+	if info == nil || !spliceWired || result == nil ||
+		result.Decision != core.Modify ||
+		result.ReasonCode == core.ReasonRedactInflightUnsupported {
 		return
 	}
-	var adapter traffic.Adapter
-	if audCtx != nil {
-		adapter = audCtx.adapter
-	}
-	path := ""
-	if respInput != nil {
-		path = respInput.Path
-	}
-	txID := info.TransactionID
-	payload := runtimeNormalize(ctx, bo.normalizeRegistry, adapter, body, path, contentType, normalize.DirectionResponse, logger, txID)
-	if payload == nil {
-		return
-	}
-	if b, err := json.Marshal(payload); err == nil {
-		info.ResponseNormalized = b
-	}
+	info.ResponseBodyRedacted = bufPipeline.CapturedBytes()
 }
 
 // emitAudit emits an audit event for the SSE response path. The historical

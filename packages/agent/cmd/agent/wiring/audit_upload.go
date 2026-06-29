@@ -49,6 +49,10 @@ func AuditEventToMap(e auditevent.Event) map[string]any {
 		"complianceTags":        e.ComplianceTags,
 		"providerName":          e.ProviderName,
 		"modelName":             e.ModelName,
+		// Domain-matched adapter id → traffic_event.ingress_format so the
+		// control plane's view-time normalize recompute keys on the
+		// authoritative adapter for this agent row (empty ⇒ path/sniff).
+		"ingressFormat":         e.IngressFormat,
 		"apiKeyClass":           e.ApiKeyClass,
 		"apiKeyFingerprint":     e.ApiKeyFingerprint,
 		"usageExtractionStatus": e.UsageExtractionStatus,

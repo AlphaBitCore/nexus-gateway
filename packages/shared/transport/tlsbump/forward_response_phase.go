@@ -2,7 +2,6 @@ package tlsbump
 
 import (
 	"bytes"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"time"
@@ -34,7 +33,7 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 	// now that the upstream has drained it into the tee capture, normalize it so
 	// the audit row carries a structured request (e.g. openai-responses) instead
 	// of tier3 generic-http. No-op on the buffered path.
-	x.normalizeStreamingRequest(audCtx)
+	x.refineStreamingRequestMeta(audCtx)
 	contentType := resp.Header.Get("Content-Type")
 	// Stamp the upstream response Content-Type onto the shared
 	// audit info so every downstream Emit / EmitDual call in
@@ -266,15 +265,6 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 				// Reuse the already-decompressed body; calling
 				// decompressForCapture again would be redundant.
 				captureBody := decompressedBody
-				// Stamp response-side normalize result onto
-				// audCtx.info before emit so agent SQLite + Hub
-				// MQ wire both carry the pre-computed response
-				// NormalizedPayload (mirrors the request-side stamp).
-				if respContent != nil {
-					if b, err := json.Marshal(respContent); err == nil {
-						audCtx.info.ResponseNormalized = b
-					}
-				}
 				// EmitDual: the response pipeline's decision belongs in the
 				// RESPONSE-stage columns; the request-stage result rides
 				// alongside. The single-stage Emit previously used here put a

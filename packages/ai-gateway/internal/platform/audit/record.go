@@ -317,30 +317,6 @@ type Record struct {
 	RequestContentType  string
 	ResponseContentType string
 
-	// RequestNormalizedReuse, when non-nil, is the canonical request payload
-	// already marshaled on the request goroutine from the computed
-	// RequestContext.Normalized(). recordToMessage uses it directly
-	// as request_normalized instead of re-Normalizing RequestBody — eliminating
-	// the async re-decode + re-marshal. Marshaled synchronously to bytes (the
-	// live payload is NOT retained across the async boundary, avoiding aliasing
-	// races and heap retention). RequestNormalizedProtocol / Kind carry the
-	// payload's protocol + kind so the normalize metrics series keep moving on
-	// the reuse path (which bypasses the normalize bridge). All three are zero
-	// when the canonical was not computed (gate skipped it / parse failure) —
-	// recordToMessage then falls back to the re-Normalize path.
-	RequestNormalizedReuse    []byte
-	RequestNormalizedProtocol string
-	RequestNormalizedKind     string
-
-	// SkipRequestNormalize / SkipResponseNormalize defer the per-direction audit
-	// normalize (lazy-audit-normalize): set by the proxy when the flag is on AND
-	// no write-time consumer needs that direction's projection, so recordToMessage
-	// leaves the column null and the Traffic view recomputes it from raw on demand.
-	// Default false ⇒ any unstamped path (flag off, non-proxy emitter) normalizes
-	// as before, byte-identical to the legacy path.
-	SkipRequestNormalize  bool
-	SkipResponseNormalize bool
-
 	// InternalPurpose mirrors TrafficEventMessage.InternalPurpose. Set to
 	// "ai-guard" for classify calls issued by internal subsystems so the
 	// admin UI can hide those rows from customer billing views by default.

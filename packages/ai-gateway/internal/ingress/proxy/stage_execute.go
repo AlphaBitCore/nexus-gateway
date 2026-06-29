@@ -83,7 +83,12 @@ func (st executeStage) run() bool {
 	// upstream out through the broker so concurrent requests with the
 	// same key share one call. Joiners stamp HIT_LIVE.
 	// On any other status (DISABLED / SKIP_NO_CACHE) we go direct.
-	if s.gatewayCacheStatus == audit.GatewayCacheMiss && h.deps.BrokerRegistry != nil {
+	// Defense-in-depth: never fan out on an empty cache key. An empty key would
+	// make the broker collapse DISTINCT concurrent requests onto one leader's
+	// upstream answer (joiners would receive another request's bytes). The key
+	// is built whenever the cache core is wired (stage_cache); if it is still
+	// empty here (cache core not wired) go direct with no dedup.
+	if s.gatewayCacheStatus == audit.GatewayCacheMiss && s.cacheKey != "" && h.deps.BrokerRegistry != nil {
 		// canonicalMsgs feeds the broker-path L2 write-back —
 		// without this thread-through the broker leg silently
 		// skipped scheduleL2Write and L2 stayed empty.

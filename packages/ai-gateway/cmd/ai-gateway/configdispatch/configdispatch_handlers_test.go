@@ -456,6 +456,41 @@ func TestHandler_SemanticCacheConfig_NilLifecycle_NoOp(t *testing.T) {
 	}
 }
 
+// TestHandler_SemanticCacheConfig_NilLifecycle_StillSetsConfigCache covers the
+// Sentinel/Cluster degraded path: there is no *redis.Client index lifecycle, but
+// the in-process ConfigCache must still receive the fleet snapshot so L1's
+// ScopeReady() flips and vary_by reaches the hot path. Without this fix L1
+// fails closed (never caches) on Sentinel/Cluster.
+func TestHandler_SemanticCacheConfig_NilLifecycle_StillSetsConfigCache(t *testing.T) {
+	d := newTestDeps(t)
+	d.SemanticIndexLifecycle = nil // Sentinel/Cluster: index management unavailable
+	cc := semantic.NewConfigCache()
+	d.SemanticConfigCache = cc
+
+	if cc.ScopeReady() {
+		t.Fatal("precondition: a fresh ConfigCache must start not-ready")
+	}
+	raw, _ := json.Marshal(semanticCacheConfigBlob{Enabled: true, VaryBy: "vk"})
+	if err := applyKey(t, d, "semantic_cache.config", raw); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cc.ScopeReady() {
+		t.Fatal("nil-lifecycle path must still Set the ConfigCache so L1 ScopeReady flips")
+	}
+	if got := cc.Get().VaryBy; got != "vk" {
+		t.Fatalf("VaryBy got %q, want vk (must reach the hot path on Sentinel)", got)
+	}
+	// An empty payload on the same path must also flip loaded (disabled but ready).
+	cc2 := semantic.NewConfigCache()
+	d.SemanticConfigCache = cc2
+	if err := applyKey(t, d, "semantic_cache.config", nil); err != nil {
+		t.Fatalf("empty payload unexpected error: %v", err)
+	}
+	if !cc2.ScopeReady() {
+		t.Fatal("empty payload on nil-lifecycle path must still flip ScopeReady")
+	}
+}
+
 func TestHandler_SemanticCacheConfig_EmptyPayload_DisablesCache(t *testing.T) {
 	d := newTestDeps(t)
 	cc := semantic.NewConfigCache()

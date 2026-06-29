@@ -355,10 +355,10 @@ func TestWithPayloadCaptureStore_FallbackToDefault(t *testing.T) {
 }
 
 func TestWithNormalizer_WiredButNotInvokedAtWriteTime(t *testing.T) {
-	// The normalize seam stays wireable (it keeps the normalize metrics
-	// series alive for ai-gateway main) but recordToMessage no longer invokes
-	// it: the normalized projection is recomputed at view time, so the wire
-	// envelope's normalized columns + NormalizeVersion stay empty.
+	// The normalize seam stays wireable for tests like this one, but
+	// recordToMessage never invokes it: the normalized projection is recomputed at
+	// view time, so the wire envelope's normalized columns + NormalizeVersion stay
+	// empty.
 	fn := NormalizeFn(func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (json.RawMessage, string, string) {
 		t.Fatalf("normalize bridge must never run at write time (direction=%s)", direction)
 		return nil, "", ""

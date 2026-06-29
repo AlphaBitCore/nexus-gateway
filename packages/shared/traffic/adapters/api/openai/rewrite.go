@@ -67,16 +67,17 @@ func rewriteChatRequest(body []byte, content traffic.NormalizedContent) ([]byte,
 		}
 		switch {
 		case c.Type == gjson.String:
-			if segIdx >= len(content.Segments) {
-				return out, written, nil
+			// Guard-and-continue (rather than early-return) so an exhausted
+			// Segments slice still lets the tool-call pass below run.
+			if segIdx < len(content.Segments) {
+				p := fmt.Sprintf("messages.%d.content", mIdx)
+				out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
+				if err != nil {
+					return nil, written, fmt.Errorf("openai: rewrite %s: %w", p, err)
+				}
+				segIdx++
+				written++
 			}
-			p := fmt.Sprintf("messages.%d.content", mIdx)
-			out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
-			if err != nil {
-				return nil, written, fmt.Errorf("openai: rewrite %s: %w", p, err)
-			}
-			segIdx++
-			written++
 		case c.IsArray():
 			parts := c.Array()
 			for pIdx := range parts {
@@ -84,7 +85,7 @@ func rewriteChatRequest(body []byte, content traffic.NormalizedContent) ([]byte,
 					continue
 				}
 				if segIdx >= len(content.Segments) {
-					return out, written, nil
+					break
 				}
 				p := fmt.Sprintf("messages.%d.content.%d.text", mIdx, pIdx)
 				out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
@@ -96,6 +97,15 @@ func rewriteChatRequest(body []byte, content traffic.NormalizedContent) ([]byte,
 			}
 		}
 	}
+
+	// Tool-call arguments echoed in assistant history (multi-turn). Walks
+	// messages[].tool_calls[] (function-type) in canonical order. Decoupled
+	// from the text pass so exhausted Segments never starves tool redaction.
+	out, n2, err := rewriteToolCallArgsItems(out, msgList, "messages", "tool_calls", content.ToolCallArgs)
+	if err != nil {
+		return nil, written, err
+	}
+	written += n2
 	return out, written, nil
 }
 
@@ -132,16 +142,17 @@ func rewriteResponsesCreate(body []byte, content traffic.NormalizedContent) ([]b
 			c := items[iIdx].Get("content")
 			switch {
 			case c.Type == gjson.String:
-				if segIdx >= len(content.Segments) {
-					return out, written, nil
+				// Guard-and-continue so an exhausted Segments slice still lets
+				// the tool-call pass below run.
+				if segIdx < len(content.Segments) {
+					p := fmt.Sprintf("input.%d.content", iIdx)
+					out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
+					if err != nil {
+						return nil, written, fmt.Errorf("openai: rewrite %s: %w", p, err)
+					}
+					segIdx++
+					written++
 				}
-				p := fmt.Sprintf("input.%d.content", iIdx)
-				out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
-				if err != nil {
-					return nil, written, fmt.Errorf("openai: rewrite %s: %w", p, err)
-				}
-				segIdx++
-				written++
 			case c.IsArray():
 				parts := c.Array()
 				for pIdx := range parts {
@@ -150,7 +161,7 @@ func rewriteResponsesCreate(body []byte, content traffic.NormalizedContent) ([]b
 						continue
 					}
 					if segIdx >= len(content.Segments) {
-						return out, written, nil
+						break
 					}
 					p := fmt.Sprintf("input.%d.content.%d.text", iIdx, pIdx)
 					out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
@@ -162,6 +173,14 @@ func rewriteResponsesCreate(body []byte, content traffic.NormalizedContent) ([]b
 				}
 			}
 		}
+		// Function-call echo items in the input list — mask their `arguments`
+		// in document order (mirrors extractResponsesCreate's toolCalls walk).
+		var n2 int
+		out, n2, err = rewriteResponsesToolArgs(out, items, "input", content.ToolCallArgs)
+		if err != nil {
+			return nil, written, err
+		}
+		written += n2
 	}
 	return out, written, nil
 }
@@ -203,7 +222,7 @@ func rewriteChatResponseBody(body []byte, content traffic.NormalizedContent) ([]
 		// from segments[].
 		if msgContent := choiceList[cIdx].Get("message.content"); msgContent.Exists() && msgContent.Type == gjson.String {
 			if segIdx >= len(content.Segments) {
-				return out, written, nil
+				break
 			}
 			p := fmt.Sprintf("choices.%d.message.content", cIdx)
 			out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
@@ -215,7 +234,7 @@ func rewriteChatResponseBody(body []byte, content traffic.NormalizedContent) ([]
 		}
 		if r := choiceList[cIdx].Get("message.refusal"); r.Exists() && r.Type == gjson.String && r.Str != "" {
 			if segIdx >= len(content.Segments) {
-				return out, written, nil
+				break
 			}
 			p := fmt.Sprintf("choices.%d.message.refusal", cIdx)
 			out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
@@ -226,6 +245,19 @@ func rewriteChatResponseBody(body []byte, content traffic.NormalizedContent) ([]
 			written++
 		}
 	}
+
+	// Second pass: tool-call arguments. Decoupled from the content/refusal
+	// pass so an exhausted Segments slice never starves tool redaction (a
+	// tool-only response carries zero text segments). Walks choices then
+	// function-type tool_calls in the SAME order the canonical codec emits
+	// ContentToolUse blocks (decodeOpenAIContent skips non-function calls), so
+	// ToolCallArgs[i] — built by ToolCallArgsFromPayload over those blocks —
+	// zips onto the i-th call. ToolCallArgs==nil means no tool redaction.
+	out, n2, err := rewriteToolCallArgsItems(out, choices.Array(), "choices", "message.tool_calls", content.ToolCallArgs)
+	if err != nil {
+		return nil, written, err
+	}
+	written += n2
 	return out, written, nil
 }
 
@@ -254,7 +286,7 @@ func rewriteResponsesResponseBody(body []byte, content traffic.NormalizedContent
 				continue
 			}
 			if segIdx >= len(content.Segments) {
-				return out, written, nil
+				break
 			}
 			p := fmt.Sprintf("output.%d.content.%d.text", oIdx, pIdx)
 			out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
@@ -265,5 +297,11 @@ func rewriteResponsesResponseBody(body []byte, content traffic.NormalizedContent
 			written++
 		}
 	}
+	// Function-call output items — mask their `arguments` in document order.
+	out, n2, err := rewriteResponsesToolArgs(out, items, "output", content.ToolCallArgs)
+	if err != nil {
+		return nil, written, err
+	}
+	written += n2
 	return out, written, nil
 }

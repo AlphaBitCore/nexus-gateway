@@ -130,6 +130,13 @@ func (s *openaiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 				return true
 			})
 		}
+		// finish_reason rides a trailing chunk (delta empty) and is already in
+		// the canonical OpenAI vocabulary (stop / length / tool_calls /
+		// content_filter). Surface it on the canonical Chunk so a re-encoder
+		// (buffer mode) preserves the real value instead of collapsing to "stop".
+		if fr := choice0.Get("finish_reason"); fr.Type == gjson.String && fr.Str != "" {
+			chunk.FinishReason = fr.Str
+		}
 	}
 
 	if usage := gjson.GetBytes(ev.Data, "usage"); usage.IsObject() {

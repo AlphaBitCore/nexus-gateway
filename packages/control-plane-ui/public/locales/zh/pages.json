@@ -5868,9 +5868,13 @@
     "title": "流式合规",
     "subtitle": "SSE 响应处理的全局默认配置。主机级覆盖在拦截域中配置，提供商级覆盖在提供商中配置。",
     "defaultMode": "默认模式",
-    "defaultModeHelp": "passthrough：仅中继。buffer_full_block：保留响应并执行 hook，可阻断请求（会破坏 SSE 实时性）。chunked_async：实时中继 + 仅审计 hook。",
+    "defaultModeHelp": "stream 模式性能高，但在传输链路上仅尽力而为；如需保证脱敏/阻断，请选择 Buffer。",
+    "disclosureTitle": "各模式如何执行合规",
+    "disclosurePassthrough": "实时转发；合规扫描仅在落盘存储时执行——传输途中不做脱敏。延迟最低，传输途中不做强制执行。",
+    "disclosureStream": "实时流式转发，并在传输途中尽力而为地脱敏。性能高，但存在有界片段风险：完整的敏感值绝不会被送达，但在脱敏生效前，一小段开头片段可能先到达客户端。如需保证脱敏，请选择 buffer_full_block。",
+    "disclosureBuffer": "在送出任何字节之前先缓冲并扫描整个响应——脱敏与硬阻断均有保证（强合规），代价是首字节时间更高。",
     "chunkBytes": "分块字节数",
-    "chunkBytesHelp": "chunked_async 模式每个检查点的字节数，当 total/chunk_bytes > 64 时自动向上调整。",
+    "chunkBytesHelp": "chunked_async 模式每个检查点扫描的字节数，响应较大时自动向上调整。",
     "hookTimeoutMs": "Hook 超时（毫秒）",
     "hookTimeoutMsHelp": "每个 hook 的执行时间预算，超出后触发 fail_behavior。",
     "maxBufferBytes": "最大缓冲区（字节）",
@@ -5879,8 +5883,7 @@
     "failBehaviorHelp": "fail_open：hook 报错/超时时继续执行；fail_close：阻断（buffer_full_block 模式）或标记审计（chunked_async 模式）。",
     "captureRequest": "捕获请求体（默认值，可按主机覆盖）",
     "captureResponse": "捕获响应体（默认值，可按主机覆盖）",
-    "rawSpillEnabled": "将超过内联阈值的响应体写入 SpillStore（默认：localfs）。",
-    "bufferModifyWarning": "注意：buffer_full_block 会静默忽略响应钩子的 Modify 决策（原始响应体原样回放）。若需要改写响应，请改用 chunked_async。"
+    "rawSpillEnabled": "将超过内联阈值的响应体写入 SpillStore（默认：localfs）。"
   },
   "identityProvider": {
     "title": "Identity Provider",

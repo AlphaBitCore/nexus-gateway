@@ -58,6 +58,13 @@ type ConfigSnapshot struct {
 // The Hub shadow callback calls Set() to push a fresh snapshot.
 type ConfigCache struct {
 	snap atomic.Pointer[ConfigSnapshot]
+	// loaded flips true the first time Set runs (the first Hub shadow push).
+	// Until then Get() returns a zero-valued snapshot whose VaryBy is "",
+	// i.e. fleet-wide / no isolation. The L1 exact-match tier folds VaryBy
+	// into its cache key for tenant isolation; honouring the "" boot-window
+	// value would write fleet-wide-scoped entries that any VK could read,
+	// so the L1 stage fails closed (no lookup, no store) until loaded is true.
+	loaded atomic.Bool
 }
 
 // NewConfigCache returns an empty ConfigCache. Get() returns a
@@ -91,6 +98,10 @@ func (c *ConfigCache) Set(snap ConfigSnapshot) {
 		snap.EmbedStrategy = "system_plus_last_user"
 	}
 	c.snap.Store(&snap)
+	// Mark the cache loaded so the L1 tier can stop failing closed: from here
+	// on VaryBy carries a real fleet value (defaulted to "vk" above when the
+	// push left it empty) instead of the zero-value "" that means fleet-wide.
+	c.loaded.Store(true)
 }
 
 // Get returns the current snapshot. Returns a zero-valued ConfigSnapshot
@@ -101,6 +112,22 @@ func (c *ConfigCache) Get() ConfigSnapshot {
 		return *p
 	}
 	return ConfigSnapshot{}
+}
+
+// ScopeReady reports whether the fleet semantic config has been pushed at
+// least once, so VaryBy carries the admin's real isolation choice rather than
+// the zero-value "" (fleet-wide) seen during the boot window before the first
+// Hub push. The L1 exact-match tier gates its lookup/store on this: it folds
+// VaryBy into the cache key for tenant isolation, so honouring "" before the
+// real value arrives would write fleet-wide entries any VK could read. Nil
+// receiver returns true — a deployment wired without a semantic ConfigCache
+// has no VaryBy source at all, which is the documented fleet-wide default, not
+// a transient boot window. Safe on nil.
+func (c *ConfigCache) ScopeReady() bool {
+	if c == nil {
+		return true
+	}
+	return c.loaded.Load()
 }
 
 // EffectiveEnabled returns true iff the L2 semantic cache is fully

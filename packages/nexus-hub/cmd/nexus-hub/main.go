@@ -139,7 +139,7 @@ func run() int {
 	}
 
 	ec := wiring.BuildEchoConfig(cfg, buildVersion, dbPool, redisClient, mqRes, storageRes,
-		consumerMgr, identityRes, tmRes, alertsRes, selfShadowRes, wiring.InitNormalizeRegistry(), sched, logger)
+		consumerMgr, identityRes, tmRes, alertsRes, selfShadowRes, sched, logger)
 	e := wiring.InitEcho(ec)
 	enrollAPI := wiring.MountRoutes(e, ec)
 	go func() {

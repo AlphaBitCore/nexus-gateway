@@ -263,6 +263,51 @@ func TestSpansFromModifiedContent_NonTextContentSkipped(t *testing.T) {
 	}
 }
 
+func TestSpansFromModifiedContent_ToolUsePrecedingTextStaysAligned(t *testing.T) {
+	// A ContentToolUse block (two string leaves) PRECEDES a ContentText block.
+	// The flat projection (original/modified) is [leafA, leafB, realtext]; the
+	// tool-use leaves occupy index slots 0 and 1. The walk must advance the
+	// index past those leaves so the text block diffs against original[2]/
+	// modified[2] — not original[0]. Without the skip, the text change is
+	// compared against a leaf value and either missed or misaddressed.
+	in := &HookInput{Normalized: &normalize.NormalizedPayload{
+		Kind:             normalize.KindAIChat,
+		NormalizeVersion: normalize.SchemaVersion,
+		Messages: []normalize.Message{{
+			Role: normalize.RoleAssistant,
+			Content: []normalize.ContentBlock{
+				{Type: normalize.ContentToolUse, ToolUse: &normalize.ToolUse{
+					CallID: "c", Name: "f",
+					// sorted keys → leaf order: a="leafA", b="leafB"
+					Input: map[string]any{"a": "leafA", "b": "leafB"}}},
+				{Type: normalize.ContentText, Text: "realtext"},
+			},
+		}},
+	}}
+	// Sanity: projection is exactly [leafA, leafB, realtext].
+	if got := in.TextSegments(); len(got) != 3 || got[0] != "leafA" || got[1] != "leafB" || got[2] != "realtext" {
+		t.Fatalf("projection = %v, want [leafA leafB realtext]", got)
+	}
+	// Modified keeps the two leaves unchanged and changes ONLY the text. The
+	// skew bug would compare realtext against original[0]=leafA and miss it.
+	modified := []ContentBlock{
+		{Text: "leafA"},
+		{Text: "leafB"},
+		{Text: "REDACTED-TEXT"},
+	}
+	spans := SpansFromModifiedContent(in, modified,
+		normalize.SourceHook, "rule", normalize.ActionRedact)
+	if len(spans) != 1 {
+		t.Fatalf("len(spans) = %d, want 1 (only the text block changed)", len(spans))
+	}
+	if spans[0].ContentAddress != "messages.0.content.1" {
+		t.Fatalf("address = %q want messages.0.content.1 (text block after tool_use)", spans[0].ContentAddress)
+	}
+	if spans[0].Replacement != "REDACTED-TEXT" || spans[0].Start != 0 || spans[0].End != len("realtext") {
+		t.Fatalf("span = %+v, want replace [0,%d) with REDACTED-TEXT", spans[0], len("realtext"))
+	}
+}
+
 func TestSpansFromModifiedContent_OriginalLongerThanModifiedClamps(t *testing.T) {
 	// If original has more text blocks than modified, walk stops at limit
 	// (= len(modified)) without panicking and without emitting extra spans.

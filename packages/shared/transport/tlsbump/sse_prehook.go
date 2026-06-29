@@ -2,10 +2,8 @@ package tlsbump
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/responseprehook"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
@@ -13,20 +11,15 @@ import (
 
 // buildSSEPreHookCallback returns a streaming.PreHookCallback that
 // runs the supplied raw SSE body through the Registry's Tier 1+2+3
-// normalize chain, then stamps both:
-//
-//	(1) checkpointInput.Normalized — so the hook executor sees rich
-//	    structured chat content (model name, tool_calls, reasoning
-//	    segments) instead of buildCheckpointInput's flat-text fallback
-//	(2) auditInfo.ResponseNormalized — so the audit row's
-//	    normalized_response column lands populated even on the
-//	    streaming path
+// normalize chain and stamps checkpointInput.Normalized — so the hook
+// executor sees rich structured chat content (model name, tool_calls,
+// reasoning segments) instead of buildCheckpointInput's flat-text
+// fallback.
 //
 // The implementation delegates to shared
 // transport/normalize/responseprehook.Build so all three ingress
 // services (agent / compliance-proxy / ai-gateway) wire the same
-// PreHookCallback shape. The audit-row stamp (#2) is service-specific
-// and rides through the OnPayload option.
+// PreHookCallback shape.
 //
 // Used by BOTH BufferPipeline (fires once between read + hooks) and
 // LivePipeline (fires at every checkpoint with cumulative body bytes).
@@ -37,7 +30,6 @@ func buildSSEPreHookCallback(
 	ctx context.Context,
 	bo *bumpOptions,
 	audCtx *requestAuditCtx,
-	auditInfo *compliance.AuditInfo,
 	respInput *core.HookInput,
 	respContentType string,
 ) streaming.PreHookCallback {
@@ -59,13 +51,5 @@ func buildSSEPreHookCallback(
 		EndpointPath: endpointPath,
 		ContentType:  respContentType,
 		Direction:    normalize.DirectionResponse,
-		OnPayload: func(payload *normalize.NormalizedPayload, _ []byte) {
-			if auditInfo == nil || payload == nil {
-				return
-			}
-			if b, err := json.Marshal(payload); err == nil {
-				auditInfo.ResponseNormalized = b
-			}
-		},
 	})
 }

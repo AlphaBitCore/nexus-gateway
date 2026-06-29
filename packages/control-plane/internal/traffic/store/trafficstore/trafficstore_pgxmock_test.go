@@ -63,12 +63,13 @@ func trafficEventRow(extra int) *pgxmock.Rows {
 // routes and renders raw generic-http JSON. This pins that mapping.
 func TestGetTrafficEventForNormalize(t *testing.T) {
 	s, m := newMock(t)
-	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct"}
+	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct", "req_spill", "resp_spill"}
+	reqSpill := []byte(`{"backend":"localfs","key":"req-k","sha256":"abc"}`)
 	m.ExpectQuery(`COALESCE\(a.ingress_format`).WithArgs("evt1").
 		WillReturnRows(pgxmock.NewRows(cols).AddRow(
 			"anthropic", "claude-opus-4-7", "/v1/messages",
 			[]byte(`{"contents":1}`), "", []byte(`{"content":[]}`), "",
-			"application/json", "application/json"))
+			"application/json", "application/json", reqSpill, nil))
 
 	in, err := s.GetTrafficEventForNormalize(context.Background(), "evt1")
 	if err != nil {
@@ -88,6 +89,14 @@ func TestGetTrafficEventForNormalize(t *testing.T) {
 	}
 	if string(in.RequestBody) != `{"contents":1}` || string(in.ResponseBody) != `{"content":[]}` {
 		t.Errorf("bodies decoded wrong: req=%q resp=%q", in.RequestBody, in.ResponseBody)
+	}
+	// The spill refs must ride along so the view-time handler can fetch a
+	// spilled body and recompute from it. A NULL ref scans to nil (no spill).
+	if string(in.RequestSpillRef) != string(reqSpill) {
+		t.Errorf("RequestSpillRef = %q, want %q", in.RequestSpillRef, reqSpill)
+	}
+	if in.ResponseSpillRef != nil {
+		t.Errorf("ResponseSpillRef = %q, want nil (NULL spill_ref)", in.ResponseSpillRef)
 	}
 	if err := m.ExpectationsWereMet(); err != nil {
 		t.Errorf("expectations: %v", err)

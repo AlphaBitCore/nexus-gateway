@@ -100,30 +100,6 @@ func BuildAuditFn(reg *Registry, metrics *Metrics) AuditFn {
 	}
 }
 
-// BuildReuseMetricFn returns a closure that records the normalize metrics for a
-// direction whose payload was produced on the request goroutine and reused
-// verbatim, so the normalize_total / payload_bytes series keep moving
-// on the reuse path that bypasses BuildAuditFn. The emission mirrors
-// BuildAuditFn's status-"ok" branch exactly (same adapter/kind fallback, same
-// series). Returns a no-op when metrics is nil.
-func BuildReuseMetricFn(metrics *Metrics) func(protocol, kind, direction string, payloadLen int) {
-	return func(protocol, kind, direction string, payloadLen int) {
-		if metrics == nil {
-			return
-		}
-		if protocol == "" {
-			protocol = "unsupported"
-		}
-		if kind == "" {
-			kind = string(KindUnsupported)
-		}
-		metrics.Total.WithLabelValues(protocol, kind, direction, "ok").Inc()
-		if payloadLen > 0 {
-			metrics.PayloadBytes.WithLabelValues(protocol, direction).Observe(float64(payloadLen))
-		}
-	}
-}
-
 // StripContentTypeParams removes "; charset=utf-8" etc. so registry
 // keys ("application/json:/v1/chat/completions") stay stable.
 // Exported so the codecs and tests sub-packages can reuse the same logic.

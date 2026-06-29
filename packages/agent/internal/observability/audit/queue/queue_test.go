@@ -343,6 +343,7 @@ func TestEventByID_FullDetail(t *testing.T) {
 	e.StatusCode = 200
 	e.ProviderName = "openai"
 	e.ModelName = "gpt-4o"
+	e.IngressFormat = "anthropic"
 	e.ApiKeyClass = "personal"
 	e.ApiKeyFingerprint = "fp-1"
 	e.UsageExtractionStatus = "ok"
@@ -388,6 +389,9 @@ func TestEventByID_FullDetail(t *testing.T) {
 	}
 	if got.DomainRuleID != "dom-1" || got.PathAction != "PROCESS" {
 		t.Errorf("classification inputs lost: %s %s", got.DomainRuleID, got.PathAction)
+	}
+	if got.IngressFormat != "anthropic" {
+		t.Errorf("ingress_format (domain-matched adapter) lost on detail roundtrip: %q", got.IngressFormat)
 	}
 	if string(got.PayloadRequest) != "inline req body" {
 		t.Errorf("inline body mismatch: %q", got.PayloadRequest)

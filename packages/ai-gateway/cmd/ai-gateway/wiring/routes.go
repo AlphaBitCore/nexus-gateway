@@ -110,14 +110,16 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	adapters.RegisterBuiltins(trafficReg)
 	trafficReg.Freeze()
 
-	// `cache.broker` yaml flag gates same-key in-flight dedupe. When false,
-	// BrokerRegistry stays nil and every MISS goes direct to upstream
-	// (no joiner wait, no cache fill).
+	// The broker registry is ALWAYS constructed so an enabled cache tier always
+	// has a fill path (the broker pump is the sole cache writer). The
+	// `cache.broker` yaml flag now controls only same-key in-flight DEDUP:
+	// true → 1-leader-N-joiners (fewer upstream calls); false → every MISS its
+	// own upstream call (low p99) but still cache-filling. A MISS only reaches
+	// the broker when a tier is active; cache-off traffic stays on the direct
+	// path with zero broker overhead.
 	cacheMetrics := streamcache.NewMetrics(prometheus.DefaultRegisterer)
-	var brokerRegistry *streamcache.Registry
-	if deps.Config.Cache.Broker {
-		brokerRegistry = streamcache.NewRegistry(deps.ResponseCache, deps.Logger, cacheMetrics)
-	}
+	brokerRegistry := streamcache.NewRegistry(deps.ResponseCache, deps.Logger, cacheMetrics,
+		streamcache.WithDedup(deps.Config.Cache.Broker))
 
 	// Rulepack lister for hooks-test endpoint.
 	var rulePackLister rulepack.InstallLister

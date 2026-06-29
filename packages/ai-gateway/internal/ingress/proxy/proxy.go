@@ -203,31 +203,19 @@ type Handler struct {
 	deps *Deps
 	// lazyCanonical is the lazy-canonical gate. Default ON: the request-path
 	// canonical is computed only when a synchronous consumer (smart routing or the
-	// response cache) needs it; otherwise it is left nil and the async audit writer
-	// derives it off the latency path. On the clean path (hooks-off, simple
-	// routing, cache-off) this skips the eager request-body Normalize entirely —
-	// measured ~29% of request-path CPU on a 50 KB body. Set NEXUS_LAZY_CANONICAL=0
-	// to force always-compute (the legacy byte-identical kill-switch).
+	// response cache) needs it; otherwise it is left nil. The audit path never
+	// consumes it — normalized is recomputed at view time from the stored raw
+	// body — so on the clean path (hooks-off, simple routing, cache-off) this
+	// skips the eager request-body Normalize entirely (~29% of request-path CPU
+	// on a 50 KB body). Set NEXUS_LAZY_CANONICAL=0 to force always-compute.
 	lazyCanonical bool
-
-	// lazyAuditNormalize is the lazy-audit-normalize gate. Default OFF (today's
-	// behavior: the async audit writer always produces request_normalized /
-	// response_normalized). When NEXUS_LAZY_AUDIT_NORMALIZE=1 the writer skips
-	// the per-direction normalize when no write-time consumer needs it
-	// (request: stage-request hooks OR cache OR smart-routing; response:
-	// stage-response hooks OR cache). Skipped directions leave the normalized
-	// column null and are recomputed on-view from the stored raw payload.
-	// Unset/!=1 is the kill-switch — forces always-normalize, byte-identical to
-	// the legacy path.
-	lazyAuditNormalize bool
 }
 
 // NewHandler creates a Handler with the given dependencies.
 func NewHandler(deps *Deps) *Handler {
 	return &Handler{
-		deps:               deps,
-		lazyCanonical:      os.Getenv("NEXUS_LAZY_CANONICAL") != "0",
-		lazyAuditNormalize: os.Getenv("NEXUS_LAZY_AUDIT_NORMALIZE") == "1",
+		deps:          deps,
+		lazyCanonical: os.Getenv("NEXUS_LAZY_CANONICAL") != "0",
 	}
 }
 

@@ -185,15 +185,17 @@ type CacheConfig struct {
 	Enabled bool          `yaml:"enabled"`
 	TTL     time.Duration `yaml:"ttl"`
 	Prefix  string        `yaml:"prefix"`
-	// Broker controls in-flight dedupe of same-cache-key MISS calls.
-	// When false (default), every MISS opens its own upstream session
-	// even if a same-key call is already running — optimised for low p99
-	// under bursty parallel load. Trade-off: N concurrent same-key MISS
-	// callers fire N upstream calls instead of sharing one, and the MISS
-	// response is NOT written to the response cache (fills via the broker
-	// pump only). Flip to true to restore 1-leader-N-joiners semantics +
-	// cache fill at the cost of serialising same-key concurrency over a
-	// single leaderFn (~upstream TTFB per request).
+	// Broker controls in-flight dedupe of same-cache-key MISS calls. The
+	// broker registry is always constructed (it is the cache's sole fill
+	// path), so this flag no longer affects whether an enabled cache tier
+	// fills — only how concurrent same-key MISSes coalesce.
+	// When false (default), every MISS opens its own upstream session even if
+	// a same-key call is already running — optimised for low p99 under bursty
+	// parallel load (N concurrent same-key MISSes fire N upstream calls) — but
+	// the response is still written to the cache. Flip to true for
+	// 1-leader-N-joiners coalescing (fewer upstream calls) at the cost of
+	// serialising same-key concurrency over a single leaderFn (~upstream TTFB
+	// per request).
 	Broker bool `yaml:"broker"`
 }
 

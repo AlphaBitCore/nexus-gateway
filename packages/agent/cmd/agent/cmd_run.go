@@ -422,20 +422,27 @@ func cmdRun(args []string) int {
 		AgentVersion: version,
 	})
 
+	// Build the shared Tier 1+2+3 normalize Registry once (shared with
+	// Hub agent_audit / ai-gateway / compliance-proxy). Built here so both the
+	// status server's view-time normalize recompute and the interception
+	// bridges below share the same frozen registry instance.
+	normalizeRegistry := wiring.InitNormalizeRegistry()
+
 	// Status server.
 	statusSocketPath := guiSocketPath()
 	statusServer := wiring.InitStatusServer(wiring.StatusServerDeps{
-		SocketPath:  statusSocketPath,
-		Collector:   statusCollector,
-		HubClient:   hubClient,
-		Ctx:         ctx,
-		Cancel:      cancel,
-		Version:     version,
-		Emitter:     lifecycleEmitter,
-		AuditQueue:  auditQueue,
-		ConfigMgr:   cfgMgr,
-		Auth:        authState,
-		SpillReader: spillReader,
+		SocketPath:        statusSocketPath,
+		Collector:         statusCollector,
+		HubClient:         hubClient,
+		Ctx:               ctx,
+		Cancel:            cancel,
+		Version:           version,
+		Emitter:           lifecycleEmitter,
+		AuditQueue:        auditQueue,
+		ConfigMgr:         cfgMgr,
+		Auth:              authState,
+		SpillReader:       spillReader,
+		NormalizeRegistry: normalizeRegistry,
 	})
 
 	// Wire IPC handlers onto the status server.
@@ -479,10 +486,6 @@ func cmdRun(args []string) int {
 	// Interception-mode publication + darwin backpressure + health +
 	// diagnostics IPC.
 	wirePlatformReporting(plat, backpressureStore, statusCollector, statusServer, cfg)
-
-	// Build the shared Tier 1+2+3 normalize Registry once (shared with
-	// Hub agent_audit / ai-gateway / compliance-proxy).
-	normalizeRegistry := wiring.InitNormalizeRegistry()
 
 	// Linux/Windows: wire the shared/tlsbump bridge deps onto the platform
 	// BEFORE Start launches the accept loop (no-op on macOS, which wires its

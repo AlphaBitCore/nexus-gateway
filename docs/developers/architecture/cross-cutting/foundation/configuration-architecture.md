@@ -166,7 +166,7 @@ Type A = `state` is the config payload (callback applies directly). Type B = `st
 | `payload_capture` | A (agent) / B (ai-gateway, compliance-proxy) | ai-gateway, compliance-proxy, agent | agent: `{enabled: bool}`; server: null (receivers re-read from `system_metadata['payload_capture.config']`) |
 | `observability` | B (everywhere) | nexus-hub, control-plane, ai-gateway, compliance-proxy | null (receivers re-read from `system_metadata['observability.config']`) |
 | `response_cache.time_sensitive_patterns` | A | ai-gateway | Cluster-wide freshness rule list |
-| `semantic_cache.config` | A | ai-gateway | Fleet-wide L1 embedding singleton config |
+| `semantic_cache.config` | A | ai-gateway | Fleet-wide L1 embedding singleton config (`vary_by` / `enabled` / `threshold`), hot-swapped into the in-process `SemanticConfigCache` independently of semantic-index lifecycle so the fleet config applies even when the index is not yet ready |
 | `response_cache.extract_config` | A | ai-gateway | L1 extract cache fleet config (atomic.Pointer hot-swap) |
 | `providers` | B | ai-gateway | null — receiver reloads provider snapshot |
 | `models` | B | ai-gateway | null — receiver reloads model catalog |

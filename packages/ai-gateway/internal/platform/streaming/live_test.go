@@ -106,7 +106,6 @@ func TestLivePipeline_HoldBack(t *testing.T) {
 
 	lp := NewLivePipeline(LiveConfig{
 		FirstInspectChars: 5,
-		HoldBack:          true,
 	}, approveStreamHook, nil, slog.Default())
 
 	rec := httptest.NewRecorder()
@@ -124,8 +123,12 @@ func TestLivePipeline_HoldBack(t *testing.T) {
 }
 
 func TestLivePipeline_Reject(t *testing.T) {
+	// AUDIT-ONLY (B1): a RejectHard at a live checkpoint does NOT cut the wire —
+	// the live path carries only non-enforcing traffic (block scopes route to
+	// buffer upfront), so the decision is recorded for audit but the content is
+	// delivered, never blocked.
 	input := makeSSEStream(
-		`{"choices":[{"delta":{"content":"This will be blocked by compliance"}}]}`,
+		`{"choices":[{"delta":{"content":"content is delivered; block routes to buffer"}}]}`,
 	)
 
 	lp := NewLivePipeline(LiveConfig{
@@ -136,13 +139,13 @@ func TestLivePipeline_Reject(t *testing.T) {
 	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
 
 	blocked := lp.Process(context.Background(), strings.NewReader(input), rec, hookCtx)
-	if !blocked {
-		t.Error("should be blocked")
+	if blocked {
+		t.Error("audit-only live must NOT block on RejectHard (block scopes route to buffer)")
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "blocked by compliance") {
-		t.Error("should contain error message")
+	if !strings.Contains(body, "content is delivered") {
+		t.Errorf("audit-only: content must be delivered, got %q", body)
 	}
 }
 
@@ -192,46 +195,9 @@ func TestLivePipeline_SkipNilTransform(t *testing.T) {
 	}
 }
 
-func TestLivePipeline_ModifyRewritesHeldBuffer(t *testing.T) {
-	input := makeSSEStream(
-		`{"choices":[{"delta":{"content":"card "}}]}`,
-		`{"choices":[{"delta":{"content":"4111111111111111"}}]}`,
-	)
-	modifyHook := func(_ context.Context, input *goHooks.HookInput) *goHooks.CompliancePipelineResult {
-		segs := input.TextSegments()
-		full := ""
-		if len(segs) > 0 {
-			full = segs[0]
-		}
-		redacted := strings.ReplaceAll(full, "4111111111111111", "[REDACTED]")
-		return &goHooks.CompliancePipelineResult{
-			Decision: goHooks.Modify,
-			Reason:   "test",
-			ModifiedContent: []goHooks.ContentBlock{
-				{Role: "assistant", Type: "text", Text: redacted},
-			},
-		}
-	}
-	lp := NewLivePipeline(LiveConfig{
-		FirstInspectChars: 20,
-		HoldBack:          true,
-	}, modifyHook, nil, slog.Default())
-
-	rec := httptest.NewRecorder()
-	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
-
-	blocked := lp.Process(context.Background(), strings.NewReader(input), rec, hookCtx)
-	if blocked {
-		t.Fatal("should not be blocked")
-	}
-	body := rec.Body.String()
-	if strings.Contains(body, "4111111111111111") {
-		t.Errorf("PAN should have been redacted from streamed output:\n%s", body)
-	}
-	if !strings.Contains(body, "[REDACTED]") {
-		t.Errorf("expected redacted token in output:\n%s", body)
-	}
-}
+// (TestLivePipeline_ModifyRewritesHeldBuffer removed — the live path is audit-only
+// (B1); a Modify never rewrites the wire. The audit-only Modify behavior is pinned
+// by TestLivePipeline_ModifyDeliversOriginalAuditOnly in live_pipeline_decisions_test.go.)
 
 // Ensure httptest.ResponseRecorder implements http.Flusher for our tests.
 var _ http.Flusher = httptest.NewRecorder()

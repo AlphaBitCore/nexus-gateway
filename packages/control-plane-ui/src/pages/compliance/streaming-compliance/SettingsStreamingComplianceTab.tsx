@@ -24,12 +24,14 @@ import {
 // agent) and Provider (ai-gateway) and reuse the existing edit panels for
 // those resources — this tab only owns the global default knob.
 //
-// Mode legend:
-//   passthrough        — relay only, no hook, no body capture.
-//   buffer_full_block  — hold full response, run hook at end, can HTTP-451.
-//                        Trades real-time UX for the ability to block.
-//   chunked_async      — relay bytes in real time + accumulate + run hook
-//                        per chunk. Audit-only; cannot stop sent bytes.
+// Mode legend (see the in-panel disclosure for the user-facing wording):
+//   passthrough        — relay only; compliance scans at storage time, no
+//                        inflight redaction. Lowest latency.
+//   buffer_full_block  — hold the full response, scan before any byte ships;
+//                        redaction + hard-block guaranteed. Higher TTFB.
+//   chunked_async      — real-time stream with best-effort inflight redaction;
+//                        bounded-fragment wire risk (a short leading fragment
+//                        may reach the client before redaction engages).
 export function SettingsStreamingComplianceTab() {
   const { t } = useTranslation();
 
@@ -99,7 +101,7 @@ export function SettingsStreamingComplianceTab() {
               label={t('pages:settingsStreamingCompliance.defaultMode', 'Default Mode')}
               helpText={t(
                 'pages:settingsStreamingCompliance.defaultModeHelp',
-                'passthrough: relay only. buffer_full_block: hold response + run hook + can block (breaks SSE realtime). chunked_async: real-time relay + audit-only hook.',
+                'Stream mode is high-performance but best-effort on the wire; for guaranteed redaction/blocking choose Buffer.',
               )}
             >
               <select
@@ -117,7 +119,7 @@ export function SettingsStreamingComplianceTab() {
               label={t('pages:settingsStreamingCompliance.chunkBytes', 'Chunk Bytes')}
               helpText={t(
                 'pages:settingsStreamingCompliance.chunkBytesHelp',
-                'chunked_async: bytes per checkpoint. Adapts upward when total/chunk_bytes > 64.',
+                'chunked_async: bytes scanned per checkpoint. Adapts upward for large responses.',
               )}
             >
               <Input type="number" value={chunkBytes} onChange={(e) => setChunkBytes(e.target.value)} min={0} step={1024} />
@@ -160,48 +162,43 @@ export function SettingsStreamingComplianceTab() {
           </div>
 
         {/*
-          Mode advisories. Two sources:
-          (a) data.warnings — what the backend returned for the persisted
-              mode. Single source of truth — modeWarnings() in Go.
-          (b) localModeWarning — fired when admin has picked a different
-              mode in the dropdown but hasn't saved yet. Same text the
-              backend would return; surfacing pre-save so they aren't
-              surprised after Save.
-          We render unconditionally when present (no extra hover/tooltip
-          chrome) — these are constraints admins MUST see, not optional
-          help. Style follows the existing subtitle muted text.
+          Honest per-mode disclosure (user-binding). One plain sentence per
+          mode stating exactly what compliance enforcement it does — and, for
+          stream mode, the bounded-fragment wire risk admins MUST see before
+          choosing it over Buffer. Informational, always visible; not a knob.
         */}
-        {(() => {
-          const persistedWarnings = data?.warnings ?? [];
-          const localWarning =
-            defaultMode === 'buffer_full_block' &&
-            data?.default_mode !== 'buffer_full_block'
-              ? t(
-                  'pages:settingsStreamingCompliance.bufferModifyWarning',
-                  'Heads up: buffer_full_block silently ignores response-hook Modify decisions (the original body replays unchanged). Use chunked_async if rewrite is required.',
-                )
-              : null;
-          const lines = [...persistedWarnings];
-          if (localWarning) lines.push(localWarning);
-          if (lines.length === 0) return null;
-          return (
-            <div
-              role="note"
-              style={{
-                padding: 'var(--g-space-3)',
-                border: '1px solid var(--color-border-warning, var(--color-border))',
-                borderRadius: 'var(--g-radius-sm)',
-                background: 'var(--color-background-warning-subtle, transparent)',
-                fontSize: 'var(--g-font-size-sm)',
-                color: 'var(--color-text-secondary)',
-              }}
-            >
-              {lines.map((w, i) => (
-                <div key={i}>{w}</div>
-              ))}
-            </div>
-          );
-        })()}
+        <div role="note" className={styles.disclosure}>
+          <div className={styles.disclosureTitle}>
+            {t('pages:settingsStreamingCompliance.disclosureTitle', 'How each mode handles compliance')}
+          </div>
+          <div className={styles.disclosureRow}>
+            <span className={styles.disclosureMode}>passthrough</span>
+            <span>
+              {t(
+                'pages:settingsStreamingCompliance.disclosurePassthrough',
+                'Streamed in real time; compliance scanning runs at storage time only — no inflight redaction. Lowest latency, no inflight enforcement.',
+              )}
+            </span>
+          </div>
+          <div className={styles.disclosureRow}>
+            <span className={styles.disclosureMode}>chunked_async</span>
+            <span>
+              {t(
+                'pages:settingsStreamingCompliance.disclosureStream',
+                'Real-time streaming with inflight redaction on a best-effort basis. High performance, but carries a bounded-fragment risk: a complete sensitive value is never delivered, yet a short leading fragment may reach the client before redaction engages. Choose buffer_full_block for guaranteed redaction.',
+              )}
+            </span>
+          </div>
+          <div className={styles.disclosureRow}>
+            <span className={styles.disclosureMode}>buffer_full_block</span>
+            <span>
+              {t(
+                'pages:settingsStreamingCompliance.disclosureBuffer',
+                'The full response is buffered and scanned before any byte is delivered — redaction and hard-block are guaranteed (strong compliance), at the cost of higher time-to-first-byte.',
+              )}
+            </span>
+          </div>
+        </div>
 
         <div className={styles.switchGrid}>
           <div className={styles.switchField}>

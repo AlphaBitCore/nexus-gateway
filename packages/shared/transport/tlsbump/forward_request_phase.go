@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"time"
@@ -132,14 +131,13 @@ func (x *bumpedExchange) runRequestPhase() bool {
 		SourceProcessBundle: bo.procBundle,
 		SourceUser:          bo.procUser,
 	}
-	// Stamp request-side normalize result (computed above by
-	// runtimeNormalize) so agent SQLite + Hub MQ wire both
-	// carry the pre-computed NormalizedPayload. Falls back to
-	// empty when content is nil (non-AI adapter / parse miss).
-	if content != nil {
-		if b, err := json.Marshal(content); err == nil {
-			auditInfo.RequestNormalized = b
-		}
+	// Persist the domain-matched adapter id as ingress_format so the
+	// view-time normalize recompute (Control Plane + Agent UI) keys on the
+	// authoritative adapter instead of resolving by path + content sniff.
+	// Guarded: empty when no domain rule matched an adapter → recompute
+	// falls back to path/sniff (preserves old-row behaviour).
+	if x.matchedDomain != nil && x.matchedDomain.AdapterID != "" {
+		auditInfo.IngressFormat = x.matchedDomain.AdapterID
 	}
 
 	// Build and run request pipeline. Pass endpointType so
@@ -207,8 +205,19 @@ func (x *bumpedExchange) runRequestPhase() bool {
 			// stamp REDACT_INFLIGHT_UNSUPPORTED on the result so the
 			// audit trail reflects the degraded path.
 			if resolvedAdapter != nil && len(result.ModifiedContent) > 0 {
-				rewriteContent := contentBlocksToNormalized(result.ModifiedContent)
+				rewriteContent := rewriteContentWithToolArgs(result.ModifiedContent, content, result.TransformSpans)
 				rewritten, _, rErr := resolvedAdapter.RewriteRequestBody(x.flow.ctx, bodyBytes, x.r.URL.Path, rewriteContent)
+				if rErr == nil {
+					// Fail closed when tool-call args were masked but this
+					// per-host adapter cannot put them back on its native wire
+					// (only the OpenAI canonical adapter implements
+					// traffic.ToolArgMasker). Without this guard a non-OpenAI
+					// upstream would receive UNMASKED tool-arg PII while the audit
+					// recorded it redacted — a silent divergence. Routing to the
+					// disclosed REDACT_INFLIGHT_UNSUPPORTED path makes the gap
+					// honest instead of silent.
+					rErr = traffic.GuardToolArgMasking(resolvedAdapter, rewriteContent)
+				}
 				switch {
 				case errors.Is(rErr, traffic.ErrRewriteUnsupported):
 					logger.Warn("inflight rewrite unsupported; forwarding original body",

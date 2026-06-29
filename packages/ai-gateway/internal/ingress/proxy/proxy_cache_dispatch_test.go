@@ -16,28 +16,26 @@ import (
 )
 
 // TestDispatchStreamMode_RoutesEachKnownMode pins which run* function
-// each streampolicy.Mode dispatches to. The dispatch surface is the
-// three-service alignment boundary — agent / compliance-proxy /
+// each WIRE-consuming streampolicy.Mode dispatches to. The dispatch surface is
+// the three-service alignment boundary — agent / compliance-proxy /
 // ai-gateway must agree on the mode→pipeline mapping. A wiring
-// regression that routes buffer→live or live→passthrough would silently
+// regression that routes live→passthrough would silently
 // flip admin policy semantics on prod traffic; this table-driven test
 // catches it at unit-test time.
+//
+// Buffer mode (ModeBufferFullBlock) is NOT covered here: it is the canonical
+// S-canon LOCUS handled directly by the relay stage (runCanonicalBufferStream),
+// not through this wire dispatcher — see proxy_cache_buffer_test.go.
 func TestDispatchStreamMode_RoutesEachKnownMode(t *testing.T) {
 	body := "data: hello\n\ndata: [DONE]\n\n"
 
 	cases := []struct {
 		name           string
 		mode           streampolicy.Mode
-		wantHookCalls  int32  // ≥1 if pipeline runs hooks, 0 if passthrough/buffer-non-modify
+		wantHookCalls  int32  // ≥1 if pipeline runs hooks, 0 if passthrough
 		wantBodyPart   string // must appear in tee output
 		wantNoHookCall bool   // when true assert hookRunner is NEVER called
 	}{
-		{
-			name:           "buffer_full_block runs buffer pipeline",
-			mode:           streampolicy.ModeBufferFullBlock,
-			wantBodyPart:   "hello", // body replays after Approve
-			wantNoHookCall: false,   // buffer pipeline DOES call hookRunner once
-		},
 		{
 			name:           "passthrough runs passthrough relay",
 			mode:           streampolicy.ModePassThrough,

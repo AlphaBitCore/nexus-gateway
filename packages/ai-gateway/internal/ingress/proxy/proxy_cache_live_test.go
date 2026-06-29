@@ -54,7 +54,6 @@ func TestRunLiveStream_HappyPath_FlowsThroughLivePipeline(t *testing.T) {
 		SSEReader:    body,
 		Tee:          tee,
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		HoldBack:     false,
 		EmitDone:     true,
 	})
 

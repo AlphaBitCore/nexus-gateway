@@ -46,18 +46,29 @@ type streamState struct {
 	logger       *slog.Logger
 
 	// Response-hooks outputs (stream_hooks.go): the per-checkpoint
-	// pipeline runner and whether assistant deltas are held back until
-	// the first compliance checkpoint approves.
+	// pipeline runner. The live path is audit-only (B1), so there is no
+	// hold-back of assistant deltas.
 	hookRunner func(ctx context.Context, input *hookcore.HookInput) *hookcore.CompliancePipelineResult
-	holdBack   bool
 
 	// responseHooksActive is false only when the stream-entry probe proved
 	// there are NO response-stage rules wired. The live pipeline uses it to
 	// skip installing the per-checkpoint Registry-normalize PreHook (and the
 	// raw-accumulating TeeReader it requires): with no response hook to consume
 	// the normalized payload, that work is pure waste. Same probe + same
-	// staleness window as the holdBack decision.
+	// staleness window as the prehook decision.
 	responseHooksActive bool
+
+	// Model-A routing inputs (B2), derived in stream_hooks.go from the same
+	// scope-derived response probe and read by stream_shape.go's routing:
+	//   - responseEnforcingBlock: the probe MAY hard-block → force buffer mode
+	//     (zero-leak; a hard block is never best-effort streamed).
+	//   - responseEnforcingRedact: the probe MAY redact → under chunked_async,
+	//     arm Model A (prescan-gated streaming + escalate-to-buffer on a
+	//     confirmed hit). modelAArmed is the resolved decision the relay reads
+	//     to dispatch runModelAStream.
+	responseEnforcingBlock  bool
+	responseEnforcingRedact bool
+	modelAArmed             bool
 
 	// Wire-shape outputs (stream_shape.go): the `[DONE]` sentinel
 	// decision, the admin streaming mode + buffer cap, and the

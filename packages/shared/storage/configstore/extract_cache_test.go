@@ -100,8 +100,13 @@ func TestExtractCacheStore_Get_noRow_returnsDefaults(t *testing.T) {
 	if row.TTLSeconds != extractCacheDefaultTTLSeconds {
 		t.Errorf("default TTLSeconds = %d, want %d", row.TTLSeconds, extractCacheDefaultTTLSeconds)
 	}
-	if row.ApplyFreshnessRules {
-		t.Errorf("default ApplyFreshnessRules = true, want false (freshness off until cache enabled)")
+	// Freshness protection defaults ON: it is intrinsic to caching, so enabling
+	// a cache tier without an explicit admin choice must not replay stale
+	// time-sensitive answers. It costs nothing while the cache is off (the
+	// gateway gates the detector on a cache tier being active), so the lean
+	// passthrough above is preserved.
+	if !row.ApplyFreshnessRules {
+		t.Errorf("default ApplyFreshnessRules = false, want true (freshness is intrinsic to caching)")
 	}
 }
 

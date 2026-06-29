@@ -27,7 +27,14 @@ type NormalizeInput struct {
 	ResponseBody        []byte
 	RequestContentType  string
 	ResponseContentType string
-	Found               bool // false when the traffic_event row does not exist
+	// Request/ResponseSpillRef carry the JSONB spill_ref for a direction whose
+	// body was stored out-of-band (large payload). They are nil when the body
+	// is inline or absent. The view-time handler fetches the RAW spilled bytes
+	// via the spill store and recomputes from them — so a spilled row normalizes
+	// exactly like a captured-inline row, not just falls back to the sidecar.
+	RequestSpillRef  json.RawMessage
+	ResponseSpillRef json.RawMessage
+	Found            bool // false when the traffic_event row does not exist
 }
 
 // GetTrafficEventForNormalize fetches the raw captured request/response bodies
@@ -46,13 +53,18 @@ func (store *Store) GetTrafficEventForNormalize(ctx context.Context, id string) 
 	// compliance-proxy / agent rows leave it '' → the registry's path-only
 	// fallback + content sniffers resolve them exactly as before.
 	// See traffic-capture-storage-normalize-design.md.
+	// The spill refs (request_spill_ref / response_spill_ref) ride alongside the
+	// inline bodies so the view-time handler can fetch the RAW spilled bytes for a
+	// direction whose body was stored out-of-band and recompute from them, instead
+	// of only falling back to the stored sidecar.
 	const q = `
 		SELECT COALESCE(a.ingress_format, ''),
 		       COALESCE(a.model_name, a.routed_model_name, ''),
 		       COALESCE(a.path, ''),
 		       p.inline_request_body,  COALESCE(p.inline_request_encoding, ''),
 		       p.inline_response_body, COALESCE(p.inline_response_encoding, ''),
-		       COALESCE(p.request_content_type, ''), COALESCE(p.response_content_type, '')
+		       COALESCE(p.request_content_type, ''), COALESCE(p.response_content_type, ''),
+		       p.request_spill_ref, p.response_spill_ref
 		FROM   traffic_event a
 		LEFT JOIN traffic_event_payload p ON p.traffic_event_id = a.id
 		WHERE  a.id = $1
@@ -66,6 +78,7 @@ func (store *Store) GetTrafficEventForNormalize(ctx context.Context, id string) 
 		&out.AdapterType, &out.Model, &out.Path,
 		&reqCol, &reqEncoding, &respCol, &respEnc,
 		&out.RequestContentType, &out.ResponseContentType,
+		&out.RequestSpillRef, &out.ResponseSpillRef,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &NormalizeInput{Found: false}, nil

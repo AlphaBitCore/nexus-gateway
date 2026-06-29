@@ -160,6 +160,8 @@ before invoking the codec. Skipping canonicalization makes the OpenAI identity c
 
 A codec rule that strips `temperature` from a non-streaming request must strip it from the streaming variant too — the upstream rejects both. Both paths construct their pre-dispatch body through the same `PrepareBody`, so parity normally falls out for free. For OpenAI-family streams, `applyStreamUsageOption` sets `stream_options.include_usage` so usage accounting survives the stream.
 
+Parity also covers the response stream's terminal reason. The canonical `Chunk` carries a `FinishReason` field (`packages/ai-gateway/internal/providers/core/types.go`), so the reason a provider reports mid-stream — typically on the frame that carries the wire's stop token, not the closing `[DONE]`/terminal event — survives the canonical→wire re-encode instead of collapsing to a default `stop`. Each stream decoder stamps it from its wire's stop signal and each stream encoder re-emits it on the terminal frame, keeping the streamed `finish_reason` at parity with the non-streaming response's.
+
 ### Rule 7 — every prefix-list rule cites an observed 400
 
 Each "model X rejects param Y" list is backed by an **observed** upstream 400, not speculation. The comment above each prefix-list switch records the upstream error message and the traffic trace it was seen on:

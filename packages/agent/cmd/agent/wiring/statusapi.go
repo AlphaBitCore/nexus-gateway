@@ -1,6 +1,7 @@
 package wiring
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/status"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	sharedintro "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
+	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
@@ -147,6 +149,12 @@ type StatusServerDeps struct {
 	// SpillReader hydrates locally-spilled oversize bodies for the detail
 	// drawer; nil leaves spilled bodies ref-only.
 	SpillReader LocalSpillReader
+	// NormalizeRegistry is the shared Tier 1+2+3 chain used to recompute the
+	// normalized projection at view time from the stored (already-redacted)
+	// body. The write path no longer persists normalized, so the detail drawer
+	// reconstructs it on demand — the same model the control plane uses. Nil
+	// disables recompute (the drawer then shows only what an old row stored).
+	NormalizeRegistry *normalizecore.Registry
 }
 
 // InitStatusServer builds the status IPC server with the core command set:
@@ -201,9 +209,61 @@ func InitStatusServer(d StatusServerDeps) *status.Server {
 			return ev, err
 		}
 		HydrateLocalSpill(ev, d.SpillReader)
+		recomputeNormalizedForView(ev, d.NormalizeRegistry)
 		return ev, nil
 	})
 	return statusServer
+}
+
+// recomputeNormalizedForView reconstructs the detail event's normalized
+// projections at view time from the stored, already-redacted inline bodies —
+// the same model the control plane uses. The agent write path no longer
+// persists the normalized projection (it is redundant: the redacted body is the
+// source of truth), so the columns are empty for current rows and the drawer
+// recomputes here on demand. A row that still carries a stored projection (an
+// upload from an older agent build) is left untouched. Best-effort: an empty
+// registry, empty body, or a normalize miss leaves the direction empty.
+func recomputeNormalizedForView(ev *auditevent.Event, reg *normalizecore.Registry) {
+	if ev == nil || reg == nil {
+		return
+	}
+	audit := normalizecore.BuildAuditFn(reg, nil)
+	if audit == nil {
+		return
+	}
+	// ev.IngressFormat is the domain-matched adapter id (interception_domain.
+	// adapter_id) persisted as the authoritative normalize adapter — the same
+	// value traffic_event.ingress_format carries, so the agent-UI and CP-UI
+	// recompute resolve via the identical key and agree byte-for-byte. When it
+	// is empty (an older row captured before this field, or a flow that matched
+	// no domain adapter) the registry falls back to request path + content
+	// sniff, preserving the prior behaviour. The agent never keys on a provider:
+	// ev.ProviderName is a best-effort body-sniff guess, not the wire shape.
+	adapter := ev.IngressFormat
+	if len(ev.NormalizedRequest) == 0 && len(ev.PayloadRequest) > 0 {
+		if raw, _, _ := audit("request", "application/json", adapter, ev.ModelName, ev.Path, false, ev.PayloadRequest); len(raw) > 0 {
+			ev.NormalizedRequest = raw
+		}
+	}
+	if len(ev.NormalizedResponse) == 0 && len(ev.PayloadResponse) > 0 {
+		contentType, stream := "application/json", false
+		if looksLikeSSE(ev.PayloadResponse) {
+			contentType, stream = "text/event-stream", true
+		}
+		if raw, _, _ := audit("response", contentType, adapter, ev.ModelName, ev.Path, stream, ev.PayloadResponse); len(raw) > 0 {
+			ev.NormalizedResponse = raw
+		}
+	}
+}
+
+// looksLikeSSE reports whether a captured response body is a Server-Sent Events
+// stream, so the view-time recompute selects the streaming decoder. The agent
+// audit row does not store the response content type, so the body is sniffed:
+// SSE frames begin with a "data:" or "event:" field after optional leading
+// whitespace.
+func looksLikeSSE(body []byte) bool {
+	b := bytes.TrimLeft(body, " \t\r\n")
+	return bytes.HasPrefix(b, []byte("data:")) || bytes.HasPrefix(b, []byte("event:"))
 }
 
 // StartStatusAPI wires the open-browser helper (allowed hosts resolved from

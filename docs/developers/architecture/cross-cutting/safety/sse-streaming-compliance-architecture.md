@@ -32,7 +32,13 @@ through every match rule — making it impossible to:
 - Block tool-call traffic by tool name.
 - PII-redact assistant deltas that reference specific schema fields.
 - Cost-classify cached-reasoning streams.
-- Stamp `traffic_event.normalized_response` for SSE rows.
+
+The PreHook normalize is therefore an **enforcement** input — it feeds the hook
+executor's `HookInput.Normalized`. It does **not** stamp any audit-row normalized
+projection: the normalized form is recomputed at view time by the Control Plane
+from the stored (already-redacted) body, so SSE audit rows carry no
+`normalized_response` on the write path, exactly like non-stream rows. See
+[audit-pipeline-architecture.md](../observability/audit-pipeline-architecture.md) §10.2.
 
 ## Streaming modes
 
@@ -64,7 +70,7 @@ three modes via `shared/transport/streaming/policy.Resolve`:
 
 | Mode | Behavior | Implemented by |
 |---|---|---|
-| `passthrough` | Bytes copied through without parsing; no hook executor, no audit normalize stamp (audit row carries empty `normalized_response`). Used for non-AI SSE / cert-pinned clients where compliance can't introspect. | `shared/transport/tlsbump/sse.go::handleSSEResponse case "passthrough"` (agent + compliance-proxy); `ai-gateway/internal/ingress/proxy/proxy_cache_passthrough.go::runPassthroughStream` (ai-gateway) — three-service consistent. |
+| `passthrough` | Bytes copied through without parsing; no hook executor (no compliance inspection). Used for non-AI SSE / cert-pinned clients where compliance can't introspect. | `shared/transport/tlsbump/sse.go::handleSSEResponse case "passthrough"` (agent + compliance-proxy); `ai-gateway/internal/ingress/proxy/proxy_cache_passthrough.go::runPassthroughStream` (ai-gateway) — three-service consistent. |
 | `chunked_async` (live) | Bytes copied through immediately; LivePipeline runs hook executor at every checkpoint (cumulative bytes hit `FirstInspectChars`, then every `ReinspectStepChars`). PreHook callback stamps `ci.Normalized` BEFORE each hook run. Low-latency + full compliance. | **Two implementations on purpose** — see "Two LivePipeline implementations" below. `shared/transport/streaming/live.go` (tlsbump-driven: agent + compliance-proxy transparent-forwarder shape); `ai-gateway/internal/platform/streaming/live.go` (cache-replay path with format transform + hold-back + Modify-rewrite + OpenAI-DONE toggle). |
 | `buffer_full_block` (buffer) | Read full body into memory; run hook executor ONCE on complete content; replay to client only on Approve / Abstain; on a `block` (RejectHard) decision write a single error event. PreHook callback stamps `ci.Normalized` between Phase 1 (read) and Phase 2 (run hooks). Strongest enforcement; highest latency. | `shared/transport/streaming/buffer.go` — tlsbump callers (agent + compliance-proxy) + ai-gateway (`proxy_cache_buffer.go::runBufferStream`). Three-service consistent. **Limitation**: Modify (`redact`) decisions are not supported by this pipeline (no rewrite arm in Phase 3); ai-gateway logs WARN + treats as Approve. |
 
@@ -73,10 +79,12 @@ The two adjacent fast-paths:
 - **ConnectRPC** (`application/connect+proto`, Cursor / api2.cursor.sh):
   binary 5-byte framed payloads. SSE pipelines cannot parse; tlsbump
   routes to `streaming.PassthroughWithConnectRPCExtract` which tees
-  payload bytes through the adapter's `ExtractStreamChunk` for audit
-  while raw-relaying the wire. PreHook does NOT fire on this path
-  (audit stamp uses `stampSSEResponseNormalized` at end-of-stream
-  instead).
+  payload bytes through the adapter's `ExtractStreamChunk` for the
+  flat-text audit projection while raw-relaying the wire. PreHook does
+  NOT fire on this path, and no normalized projection is stamped — the
+  extracted segments populate `respInput.Normalized` for enforcement
+  only, and the drawer recomputes the view-time projection from the
+  captured body.
 - **Cache replay** (ai-gateway): SSE bodies served from
   `cache/stream/subscription.go` flow through the same LivePipeline
   as upstream responses, with the cached canonical chunks re-encoded
@@ -108,8 +116,8 @@ responsibilities:
 2. Strip Content-Type parameters (`text/event-stream; charset=utf-8` → `text/event-stream`); Registry routes by bare media type.
 3. Derive `Stream = (Direction==DirectionResponse && bareCT startswith text/event-stream)`.
 4. Call `Registry.Normalize(ctx, rawBody, meta)`.
-5. On success, stamp `ci.Normalized = &payload`.
-6. Fire optional `OnPayload(payload, rawBody)` for service-specific side-effects.
+5. On success, stamp `ci.Normalized = &payload` (the enforcement input).
+6. Fire optional `OnPayload(payload, rawBody)` for service-specific side-effects. The Option remains as an extension point, but **no production caller wires it** — neither ingress side stamps an audit-row normalized projection (it is recomputed at view time); the Option is exercised only in the cross-service consistency test as a representative side-effect.
 
 Returns `nil` when `Options.Registry == nil` — callers treat that as
 "no normalize layer wired; keep the flat-text fallback".
@@ -130,7 +138,7 @@ bodies no tier claims.
 
 Both the inner `Registry.Normalize` call and the `OnPayload` callback
 are wrapped in `recover()`. A panicking Tier 1/2/3 normalizer or
-audit-stamp closure logs a WARN and drops the pre-hook; the SSE
+`OnPayload` closure logs a WARN and drops the pre-hook; the SSE
 pipeline continues normally. Rationale: losing one stream's
 normalized payload is recoverable; losing the entire connection is
 not.
@@ -155,27 +163,29 @@ LivePipeline:
 
 LivePipeline fires PreHook at **every** checkpoint with the
 **cumulative** bytes — so by end-of-stream the callback has seen the
-full body and `ci.Normalized` reflects the latest claim. tlsbump
-relies on this incremental stamping to keep
-`auditInfo.ResponseNormalized` fresh without a separate end-of-
-stream pass.
+full body and `ci.Normalized` reflects the latest claim, which is what
+the per-checkpoint hook executor needs.
 
 ### Service-side closures
 
-tlsbump and ai-gateway differ in their `OnPayload` use:
+Neither ingress side wires an `OnPayload` closure — the PreHook's
+sole job in both is to stamp `ci.Normalized` so the hook executor sees rich
+structured chat content (model name, tool_calls, reasoning segments) instead
+of `buildCheckpointInput`'s flat-text fallback. Both call shapes delegate to
+the same `responseprehook.Build`:
 
 - **tlsbump** (`packages/shared/transport/tlsbump/sse.go::buildSSEPreHookCallback`):
-  `OnPayload` JSON-marshals the payload into `auditInfo.ResponseNormalized`
-  so the audit row's `normalized_response` column lands populated.
+  agent + compliance-proxy. No audit-row stamp — the normalized projection is
+  recomputed at view time by the Control Plane from the stored body.
 - **ai-gateway** (`packages/ai-gateway/internal/ingress/proxy/sse_prehook.go::buildStreamPreHookCallback`):
-  No `OnPayload`. Audit stamping happens elsewhere in the ai-gateway
-  hot path; the PreHook only needs to make hooks see the right
+  same — no audit-row stamp; the PreHook only makes hooks see the right
   Normalized.
 
 The cross-service consistency test
 (`packages/shared/transport/normalize/responseprehook/cross_service_consistency_test.go`)
 asserts that both call shapes produce a bit-identical
-`ci.Normalized` JSON for the same body × adapter × content-type.
+`ci.Normalized` JSON for the same body × adapter × content-type (it still
+exercises an `OnPayload` closure to prove the option fires after the stamp).
 
 ## Two LivePipeline implementations (intentional, not drift)
 
@@ -342,12 +352,15 @@ Two compile-time consistency tests pin this surface:
   references" reads `Normalized.PromptCacheID` — flat-text fallback
   has none, so the rule never fired on streamed responses. PreHook
   fix: the rich Registry payload exposes the field.
-- **NULL `normalized_response` on SSE rows.** Without the PreHook
-  stamp, an SSE audit row lands with `normalized_response=NULL`
-  because the runtime stamp runs only on non-stream responses.
-  tlsbump's `OnPayload` closure stamps it incrementally as PreHook
-  fires; ai-gateway stamps elsewhere in its audit hot path. Verified
-  by the cross-service consistency test.
+- **Flat-text enforcement on SSE rows.** Without the PreHook stamp the
+  hook executor would see only `buildCheckpointInput`'s flat-text
+  concat, so AI-scoped rules (model / tool-call / reasoning) would
+  never fire on streamed responses. The PreHook makes the executor see
+  the same rich Registry payload the non-stream path gets. (The audit
+  row carries no `normalized_response` on the write path for stream or
+  non-stream — the Control Plane recomputes the projection at view time
+  from the stored body.) Cross-service `ci.Normalized` parity is
+  verified by the cross-service consistency test.
 - **Silent fallback to Tier 3.** A Tier 1 normalizer that
   hard-errors on a wire shape (e.g. voyage on SSE bytes) makes the
   service silently fall to GenericHTTP. Tests assert no Tier 1 codec
@@ -375,7 +388,7 @@ Two compile-time consistency tests pin this surface:
   `packages/shared/transport/normalize/responseprehook/responseprehook.go::Build`
 - tlsbump pipeline (agent + compliance-proxy):
   `packages/shared/transport/tlsbump/sse.go` (`handleSSEResponse`,
-  `buildSSEPreHookCallback`, `stampSSEResponseNormalized`)
+  `buildSSEPreHookCallback`)
 - shared streaming primitives:
   `packages/shared/transport/streaming/{buffer.go,live.go,locked_buffer.go}`
 - ai-gateway pipeline:
