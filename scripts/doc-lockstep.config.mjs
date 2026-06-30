@@ -274,6 +274,17 @@ export default [
             'packages/shared/transport/streaming/policy/**',
             'packages/shared/transport/tlsbump/sse.go',
             'packages/shared/transport/tlsbump/bump.go',
+            // Substrate-agnostic Model A engine + the per-host wire redactor, the
+            // scope-routing predicate, and both substrate adapters (canonical + wire)
+            // that drive the engine — three-end hooks/compliance parity.
+            'packages/shared/transport/streaming/modela/**',
+            'packages/shared/transport/streaming/frame_redactor.go',
+            'packages/shared/transport/streaming/frame_redactor_splice.go',
+            'packages/shared/transport/tlsbump/sse_modela.go',
+            'packages/shared/transport/tlsbump/sse_frame_redactor.go',
+            'packages/shared/policy/pipeline/enforcement.go',
+            'packages/ai-gateway/internal/ingress/proxy/proxy_cache_modela.go',
+            'packages/ai-gateway/internal/ingress/proxy/proxy_cache_modela_substrate.go',
             // ai-gateway streaming format + ingress dispatch (R1/R3 fixes)
             'packages/ai-gateway/internal/platform/streaming/live.go',
             'packages/ai-gateway/internal/platform/streaming/format/**',

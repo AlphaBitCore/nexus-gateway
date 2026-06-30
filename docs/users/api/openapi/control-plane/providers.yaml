@@ -131,6 +131,18 @@ paths:
                                         - boolean
                                         - "null"
                                     description: Whether the provider is active. Defaults to true when omitted.
+                                servesResponsesApi:
+                                    type:
+                                        - boolean
+                                        - "null"
+                                    description: >-
+                                        Whether this provider's endpoint serves the OpenAI Responses
+                                        API (/v1/responses). null (or omitted) uses the adapter
+                                        type's default; false forces a downgrade to
+                                        /v1/chat/completions for OpenAI-compatible endpoints that only
+                                        implement chat completions. Downgrade-only: a true value
+                                        cannot exceed the wire adapter's actual capabilities.
+                                    example: false
                                 headers:
                                     description: Optional arbitrary JSON of extra upstream headers.
                                 models:
@@ -320,6 +332,15 @@ paths:
                                         - boolean
                                         - "null"
                                     description: New enabled state.
+                                servesResponsesApi:
+                                    type:
+                                        - boolean
+                                        - "null"
+                                    description: >-
+                                        New OpenAI Responses API (/v1/responses) capability override.
+                                        null clears the override back to the adapter type's default;
+                                        false forces a downgrade to /v1/chat/completions. Downgrade-only:
+                                        a true value cannot exceed the wire adapter's actual capabilities.
                         example:
                             displayName: OpenAI (Prod)
                             enabled: false
@@ -1103,6 +1124,14 @@ components:
                         - "null"
                 enabled:
                     type: boolean
+                servesResponsesApi:
+                    type:
+                        - boolean
+                        - "null"
+                    description: >-
+                        Whether this provider's endpoint serves the OpenAI Responses API
+                        (/v1/responses). null means "use the adapter type's default"; false
+                        downgrades to /v1/chat/completions. Downgrade-only.
                 headers:
                     description: arbitrary JSON value
                 createdAt:

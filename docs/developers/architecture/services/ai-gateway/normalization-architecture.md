@@ -15,6 +15,8 @@ type Normalizer interface {
 
 `Meta` carries the call context: `AdapterType` (the wire key), `Model`, `ContentType`, `Direction` (`DirectionRequest` / `DirectionResponse`), `EndpointPath`, and `Stream`. `NormalizedPayload` is the canonical output — `Kind` (`ai-chat` / `ai-embedding` / `http-json` / …), `Protocol`, `Model`, `Stream`, `Messages[]`, `Tools[]`, `Params`, `Usage`, `FinishReason`, `Inputs[]` (embeddings), `Confidence`, and `DetectedSpec`. A normalizer that does not recognize the bytes returns `ErrUnsupported`, which the coordinator uses to fall through to the next candidate.
 
+A `TransformSpan` describes one byte-level modification against a `NormalizedPayload` (a hook redaction, AI-Guard suggestion, cache-normaliser strip, or cache_control inject); `ApplySpans` reconstructs the wire body from the payload + its spans. A span's `ContentAddress` indexes the modified content (e.g. `messages.<i>.content.<j>`, `http.bodyView`). The reserved address `AddressAuditOnlySentinel` (`"webhook.flat"`) marks an **audit-only** span: it records *what* a subsystem flagged but addresses a flat projection the gateway never reconstructs, so `ApplySpans` drops it — it lands in the audit record only and never mutates delivered or stored bytes. `IsAuditOnlySentinelAddress` is the single recogniser; compliance consumers use its negation as a denylist to tell an applicable redaction from an advisory audit-only span (see `hook-architecture.md` §5, `CarriesRedaction`).
+
 ## 2. The tiered dispatch model
 
 `core.Registry` is the coordinator. `BuildRegistry` (`packages/shared/transport/normalize/buildregistry.go`) assembles it once per service and freezes it. `Registry.Normalize` dispatches in tiers:

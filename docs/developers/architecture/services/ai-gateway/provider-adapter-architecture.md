@@ -82,11 +82,52 @@ On an upstream error response the adapter's `ErrorNormalizer.Normalize` produces
 
 The caller's wire shape is preserved end-to-end: whatever ingress a client calls — `/v1/chat/completions`, `/v1/messages`, gemini `:generateContent`, `/v1/responses`, `/v1/embeddings`, plus the Azure and GLM native ingresses — receives a response in that same shape. The upstream target wire is an internal concern resolved at the call site, not the caller's:
 
-- **Request.** The ingress body is canonicalized once (`IngressChatToCanonical` for chat-kind, `IngressEmbeddingsToCanonical` for embeddings), then `TargetExecutor` sets the call-time `WireShape` from the *target* format — `ChatWireShapeForTarget` for chat-kind, `EmbeddingsWireShapeForTarget` for embeddings — so `Transport.BuildURL` and `SchemaCodec.EncodeRequest` target the correct wire for the primary target and every failover target. The per-request `Ingress.WireShape` is not mutated to the target shape; the `/v1/responses` → chat-completions downgrade is the one exception, because Responses canonicalizes to chat before dispatch.
+- **Request.** The ingress body is canonicalized once (`IngressChatToCanonical` for chat-kind, `IngressEmbeddingsToCanonical` for embeddings), then `TargetExecutor` sets the call-time `WireShape` from the *target* format — `ChatWireShapeForTarget` for chat-kind, `EmbeddingsWireShapeForTarget` for embeddings — so `Transport.BuildURL` and `SchemaCodec.EncodeRequest` target the correct wire for the primary target and every failover target. The per-request `Ingress.WireShape` is not mutated to the target shape; the `/v1/responses` → chat-completions downgrade is the one exception, and it is **capability-driven** — applied only when the resolved target does *not* serve the Responses API, in which case Responses canonicalizes to chat before dispatch (see *Responses egress: two signals*, below).
   - **Embeddings endpoint selection (single vs batch).** A codec may serve two upstream endpoints from one `WireShape`. Gemini's `WireShapeGeminiEmbedContent` covers both `:embedContent` (single string `input`) and `:batchEmbedContents` (array `input`); the choice is encoded only by the embeddings codec, which inspects the canonical `input` cardinality and returns an `EncodeResult.URLOverride` of `:embedContent` or `:batchEmbedContents`. Because embeddings always skip the gateway cache, the cross-format request is translated by `IngressEmbeddingsToWire`, which now **surfaces that override** alongside the wire body; `TargetExecutor` threads it into `Adapter.ExecuteWithBody`, where `applyURLOverride` swaps the action suffix on the `Transport.BuildURL` result. Dropping the override sends the batch body (`{"requests":[…]}`) to the single-embed URL and Gemini rejects it with `Unknown name "requests": Cannot find field` (regression guard: `TestIngressEmbeddingsToWire_GeminiEndpointSelection`, `TestExecute_EmbeddingsBridgeURLOverride_ReachesAdapter`). No Gemini-native embeddings *ingress* exists, so an embeddings request to a Gemini target is always cross-format and always flows through this path.
 - **Response.** The upstream wire body is decoded to canonical, then reshaped back to the caller's format with `ResponseCanonicalToIngress` (chat) / `ResponseCanonicalToIngressEmbeddings` (embeddings), keyed on the ingress read from the request context (not the mutable per-request copy). The reshape fires when the ingress format differs from the target and is an identity no-op for same-format native routes.
 
-The cross-format decision is driven by `typology.KindFromWireShape` (chat / embeddings) plus the responses-native rule rather than a hardcoded ingress list, so a new chat or embeddings ingress is covered without changing the dispatch gates.
+The cross-format decision is driven by `typology.KindFromWireShape` (chat / embeddings) plus the per-provider Responses capability (see *Responses egress: two signals*, below) rather than a hardcoded ingress list or a Format-level guess, so a new chat or embeddings ingress is covered without changing the dispatch gates.
+
+### Responses egress: two signals (capability + content)
+
+The `/v1/responses` ingress is not a codec on top of chat — it is a co-equal OpenAI standard with strictly greater expressive power (typed `output[]` items, reasoning items, built-in tools, audio streaming, stateful `previous_response_id`). Routing it correctly uses **two independent signals**, never a single Format guess. The **request side** decides what wire to send upstream from a per-provider capability; the **response side** decides how to decode/encode from the actual bytes that came back. The two are deliberately separate: the request-side capability can be wrong (a provider may mis-declare or change behaviour), and the content signal is what makes the egress bulletproof regardless.
+
+**Request side — capability-driven.** Whether a target receives a Responses-shape body or the downgraded chat-completions body is the per-provider capability `servesResponsesAPI`, resolved by `canonicalbridge.Bridge.ServesResponses(target, override)`:
+
+```
+/v1/responses ingress, resolved target T:
+  ServesResponses(T)?
+    yes → send Responses-shape body to T's /v1/responses   (built-in tools preserved)
+    no  → responses → canonical(chat) → T's native chat wire (the downgrade)
+```
+
+Resolution order: the per-provider override (`Provider.serves_responses_api`, a nullable Boolean column) is **downgrade-only** — it can turn the capability *off* for a chat-only OpenAI-compatible endpoint, but cannot claim a capability the adapter lacks; with no override (the common case) the default comes from the adapter's `RequestShapes` (`RequestShapes ⊇ WireShapeOpenAIResponses`; today only `FormatOpenAI`). A lockstep test pins the Format default against the OpenAI adapter's declared `RequestShapes`. The capability is resolved per-target from the hydrated routing snapshot inside the failover loop — never a per-request DB read — and rides the already-threaded `CallTarget`. The request-side wire decision consults it at the same value everywhere: the executor's `nativeResponses` decision, `stage_routing.go`, `stage_cache_body.go`, and `bridge.IngressChatToWire`. This keeps real OpenAI / Azure working out of the box (default true) while letting a mock or chat-only endpoint opt out, so the gateway never POSTs a Responses body to an endpoint that would 404 it.
+
+**Response side — content-driven (authoritative).** The decode/encode decision is driven by the **actual upstream bytes**, not by Format and not by the request-side capability. `specs/openai/responses/classify.go` performs exactly one classification:
+
+```
+Non-stream (ClassifyNonStreamBody — top-level "object"):
+  "response"        → verbatim passthrough              (no re-encode; built-in tools preserved)
+  "chat.completion" → canonical → EncodeResponsesResponse
+  else              → fail closed (502 — never verbatim)
+
+Stream (ClassifyFirstSSEFrame — first decoded SSE frame):
+  event: response.* / data {"type":"response.*"}  → copier mode (verbatim frames)
+  data {"object":"chat.completion.chunk"}          → chat mode → responsesStreamEncoder
+  else                                             → fail closed (canonical chat lane — never verbatim)
+```
+
+The streaming classification happens **exactly once**, lazily on the first decoded frame at the raw-byte boundary (`specs/openai/stream/stream_responses_egress.go`), reusing the shared `SSEScanner` buffer — one per-stream hold, zero per-chunk allocation. The resolved wire shape is carried forward on the stream; the proxy layer does not sniff a second time. Trusting the bytes (not the declared Format) is what keeps a chat-shaped reply from being forwarded to a `/v1/responses` client: even a provider that mis-declares its capability cannot leak `chat.completion.chunk` frames, because the encoder follows the sniffed shape. Content authority is **wire-shape only**, never a compliance signal; the sniffed shape is cross-checked against the resolved capability.
+
+**Raw-byte copier (non-enforced native path).** On the verbatim path the copier forwards each upstream SSE frame byte-for-byte (`Chunk.Verbatim` + `RawBytes`) so built-in-tool / audio events reach the client unparsed, while a usage tee decodes the canonical `Delta` / tool-call / reasoning / usage fields onto the **same** chunk so token and cost accounting survive. "Preserved" here means no re-encode through the canonical waist — not zero-cost.
+
+**Precedence: enforcement > passthrough.** An enforcing response scope (redact / hard-block) forces canonical **buffer** mode, which rewrites the canonical body and therefore cannot also forward verbatim frames. Verbatim passthrough is allowed **only** on the non-enforced `/v1/responses` live lane (`allowVerbatim` in `stream_shape.go` requires `FormatOpenAIResponses` ingress AND no enforcing block/redact AND not the chat-ingress auto-upgrade). When an enforcing scope applies, built-in-tool / audio fidelity is **forfeited** — an accepted, documented blind spot. The enforcement and Model-A re-emit fallback is ingress-shape-aware: for `FormatOpenAIResponses` ingress it builds `NewResponsesStreamEncoder` (never `chat.completion.chunk`), so an enforced `/v1/responses` stream still emits `event: response.*` with a terminal `response.completed`. A second blind spot: built-in-tool content forwarded on the raw-byte path is absent from normalized text and compliance scanning.
+
+**Fail closed.** An unclassifiable / empty / keep-alive-only first frame is **never** forwarded verbatim — the non-stream path returns 502 and the stream path falls back to the canonical chat (or enforced) lane. SSE comments and keep-alives are skipped via the shared `SSEScanner` before classification.
+
+**Cache-HIT scope.** Content-peek runs only on the LIVE / cache-MISS lane. Cache-HIT replay chunks carry no `RawBytes`, so the origin-tag override (`StreamHitOrigin`) stays the authoritative wire-shape selector on a hit.
+
+**Parity holds (§3a Rule 6).** Streaming and non-streaming `/v1/responses` egress stay at parity: both start `response.created`, end `response.completed`, carry a terminal event, and report the same `finish_reason`.
 
 ### Round-trip equivalence standard (the shape-conversion test of record)
 
