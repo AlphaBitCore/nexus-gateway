@@ -13,7 +13,180 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/openai"
 )
+
+// bodyCapturingRoundTripper records the BODY of each outbound upstream request so a test
+// can assert exactly what bytes the upstream provider received (the masked request body on
+// the redact path, never the original).
+type bodyCapturingRoundTripper struct {
+	mu       sync.Mutex
+	bodies   [][]byte
+	makeResp func() *http.Response
+}
+
+func (rt *bodyCapturingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	var b []byte
+	if r.Body != nil {
+		b, _ = io.ReadAll(r.Body)
+	}
+	rt.mu.Lock()
+	rt.bodies = append(rt.bodies, b)
+	rt.mu.Unlock()
+	return rt.makeResp(), nil
+}
+
+func (rt *bodyCapturingRoundTripper) lastBody() string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if len(rt.bodies) == 0 {
+		return ""
+	}
+	return string(rt.bodies[len(rt.bodies)-1])
+}
+
+func (rt *bodyCapturingRoundTripper) calls() int {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return len(rt.bodies)
+}
+
+// softBlockReqHook always returns a soft-block decision — the co-firing partner of a redact
+// hook on the request stage.
+type softBlockReqHook struct{}
+
+func (softBlockReqHook) Execute(context.Context, *core.HookInput) (*core.HookResult, error) {
+	return &core.HookResult{HookID: "h-sb", HookName: "softblock-req", Decision: core.BlockSoft, Reason: "content flagged (soft)", ReasonCode: "SOFT_FLAG"}, nil
+}
+func (softBlockReqHook) SupportsEndpoint(core.EndpointType) bool { return true }
+func (softBlockReqHook) SupportsModality(core.Modality) bool     { return true }
+
+// coFiringRequestResolver wires a request-stage redact hook (fixedModifyHook, returning the
+// masked ModifiedContent) AND a request-stage soft-block hook. mergeResults ranks BlockSoft
+// above Modify (Decision→BlockSoft) while carrying the redact's ModifiedContent — the
+// co-firing shape that, pre-#13, forwarded the ORIGINAL request body upstream because the
+// rewrite arm gated on Decision==Modify.
+func coFiringRequestResolver(modified []core.ContentBlock) *compliance.PolicyResolver {
+	reg := core.NewHookRegistry()
+	reg.Register("req-redact", func(_ *core.HookConfig) (core.Hook, error) {
+		return fixedModifyHook{modified: modified}, nil
+	})
+	reg.Register("req-softblock", func(_ *core.HookConfig) (core.Hook, error) {
+		return softBlockReqHook{}, nil
+	})
+	redactCfg := map[string]any{"onMatch": map[string]any{"action": "redact"}}
+	return compliance.NewPolicyResolver([]core.HookConfig{
+		{ID: "r-redact", ImplementationID: "req-redact", Name: "req-redact", Stage: "request", Enabled: true, FailBehavior: "fail-open", ApplicableIngress: []string{"ALL"}, Config: redactCfg},
+		{ID: "r-softblock", ImplementationID: "req-softblock", Name: "req-softblock", Stage: "request", Enabled: true, FailBehavior: "fail-open", ApplicableIngress: []string{"ALL"}, Config: redactCfg},
+	}, reg, discardSlog())
+}
+
+// adapterDomainEngine matches api.example.com with a PROCESS path action and the given
+// adapter id, so runRequestPhase resolves a concrete adapter for the request rewrite.
+func adapterDomainEngine(t *testing.T, adapterID string) *domain.Engine {
+	t.Helper()
+	eng := domain.NewEngine()
+	if err := eng.Swap([]domain.InterceptionDomain{{
+		ID: "dom-adapter", Name: "example", HostPattern: "api.example.com",
+		HostMatchType: domain.HostMatchExact, DefaultPathAction: domain.PathActionProcess,
+		AdapterID: adapterID, Enabled: true, Priority: 10,
+	}}); err != nil {
+		t.Fatalf("engine swap: %v", err)
+	}
+	return eng
+}
+
+// TestForwardHandler_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream pins #13 leak
+// #4 on the tlsbump REQUEST path (forward_request_phase, previously ZERO-coverage): a redact
+// hook co-firing with a soft-block aggregates to Decision=BLOCK_SOFT while carrying the
+// redact's ModifiedContent. The pre-#13 `case Modify` gate skipped the rewrite and forwarded
+// the ORIGINAL body upstream; the CarriesRedaction() gate now rewrites it, so the upstream
+// provider receives the MASKED body and never the original email. The audit row records the
+// aggregate BLOCK_SOFT decision (the redact is the disposition, not the ceiling).
+func TestForwardHandler_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream(t *testing.T) {
+	writer := &recordingAuditWriter{}
+	rt := &bodyCapturingRoundTripper{makeResp: jsonUpstream}
+	areg := traffic.NewAdapterRegistry("test")
+	if err := areg.Register("openai-compat", func() traffic.Adapter { return &openai.Adapter{} }); err != nil {
+		t.Fatalf("adapter register: %v", err)
+	}
+	bo := &bumpOptions{
+		policyResolver:  coFiringRequestResolver([]core.ContentBlock{{Type: "text", Text: "ping [REDACTED_EMAIL]"}}),
+		auditEmitter:    compliance.NewAuditEmitter(writer, discardSlog()),
+		domainEngine:    adapterDomainEngine(t, "openai-compat"),
+		adapterRegistry: areg,
+	}
+	h := buildForwardHandler(context.Background(), "api.example.com:443", &UpstreamTransport{transport: rt}, discardSlog(), bo)
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"ping alice@example.com"}]}`
+	req := httptest.NewRequest(http.MethodPost, "https://api.example.com/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := rt.calls(); got != 1 {
+		t.Fatalf("upstream forwards = %d, want 1 (co-firing soft-block+redact must redact-and-forward, not reject)", got)
+	}
+	up := rt.lastBody()
+	if !strings.Contains(up, "[REDACTED_EMAIL]") {
+		t.Fatalf("upstream body = %q, want the masked email forwarded", up)
+	}
+	if strings.Contains(up, "alice@example.com") {
+		t.Fatalf("upstream body = %q, must NOT carry the original email (the request-side co-firing leak)", up)
+	}
+	events := writer.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want 1", len(events))
+	}
+	if events[0].RequestHookDecision != string(core.BlockSoft) {
+		t.Fatalf("RequestHookDecision = %q, want %q (aggregate ceiling; the redact is the disposition)", events[0].RequestHookDecision, core.BlockSoft)
+	}
+}
+
+// standaloneSoftBlockResolver wires ONLY a request-stage soft-block hook (no co-firing
+// redact), so the aggregate is a standalone BlockSoft carrying no applicable redaction.
+func standaloneSoftBlockResolver() *compliance.PolicyResolver {
+	reg := core.NewHookRegistry()
+	reg.Register("req-softblock", func(_ *core.HookConfig) (core.Hook, error) { return softBlockReqHook{}, nil })
+	return compliance.NewPolicyResolver([]core.HookConfig{
+		{ID: "r-softblock", ImplementationID: "req-softblock", Name: "req-softblock", Stage: "request", Enabled: true, FailBehavior: "fail-open", ApplicableIngress: []string{"ALL"}, Config: map[string]any{"onMatch": map[string]any{"action": "block"}}},
+	}, reg, discardSlog())
+}
+
+// TestForwardHandler_StandaloneRequestBlockSoft_Refuses pins the #15 fold-to-block fix on
+// the tlsbump request path: a standalone soft-block (no co-firing redact → no applicable
+// redaction) folds to the block action and REFUSES the request (403), never forwarding it
+// upstream. Before the fix the switch keyed on Decision==RejectHard only, so a BlockSoft
+// fell through and forwarded the original unredacted body — a request-side leak on the
+// dormant BlockSoft path. The agent fail-open path (richReject=false) returns a bare 403.
+func TestForwardHandler_StandaloneRequestBlockSoft_Refuses(t *testing.T) {
+	writer := &recordingAuditWriter{}
+	rt := &bodyCapturingRoundTripper{makeResp: jsonUpstream}
+	bo := &bumpOptions{
+		policyResolver: standaloneSoftBlockResolver(),
+		auditEmitter:   compliance.NewAuditEmitter(writer, discardSlog()),
+		domainEngine:   adapterDomainEngine(t, "openai-compat"),
+	}
+	h := buildForwardHandler(context.Background(), "api.example.com:443", &UpstreamTransport{transport: rt}, discardSlog(), bo)
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"flag me"}]}`
+	req := httptest.NewRequest(http.MethodPost, "https://api.example.com/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (standalone request BlockSoft folds to block)", rec.Code)
+	}
+	if got := rt.calls(); got != 0 {
+		t.Fatalf("upstream forwards = %d, want 0 (a folded block must NOT reach upstream)", got)
+	}
+	events := writer.snapshot()
+	if len(events) != 1 || events[0].RequestHookDecision != string(core.BlockSoft) {
+		t.Fatalf("audit: want 1 event with RequestHookDecision=BLOCK_SOFT, got %+v", events)
+	}
+}
 
 // These tests pin the forward handler's observable per-phase contract:
 // attestation passthrough, domain path-policy (BLOCK / PASSTHROUGH),

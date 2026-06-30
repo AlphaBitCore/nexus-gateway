@@ -244,10 +244,11 @@ func StrictestAction(a, b decision.Action) decision.Action {
 //
 // Rationale: Approve lets traffic through unchanged; Modify rewrites
 // content inflight (the request still completes, just with a modified
-// body); BlockSoft stops the request from reaching the upstream but
-// returns a soft-block response to the caller (more disruptive than a
-// silent rewrite — the caller sees the block); RejectHard stops the
-// request entirely. Abstain ranks at 0 so Strictest(Abstain, X) == X.
+// body); BlockSoft ranks above Modify as a stricter ceiling, but at the
+// dispatch sites ActionFromDecision folds it to the block action, so it
+// stops the request exactly like RejectHard (a hard refuse — there is no
+// distinct soft-block client response); RejectHard stops the request
+// entirely. Abstain ranks at 0 so Strictest(Abstain, X) == X.
 //
 // The BlockSoft > Modify ordering matches the pipeline aggregator in
 // packages/shared/policy/pipeline/pipeline.go (its mergeResults prefers

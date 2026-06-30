@@ -14,9 +14,11 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/modela"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
@@ -58,6 +60,94 @@ func containsPrescan(marker string) func([]byte) bool {
 	return func(b []byte) bool { return bytes.Contains(b, []byte(marker)) }
 }
 
+// softBlockHook always returns a BlockSoft decision with no spans — a content-safety
+// "soft flag" that, when co-firing with a redact hook, makes the pipeline aggregate
+// report BlockSoft (it outranks Modify) while still carrying the redact's spans.
+type softBlockHook struct{ goHooks.AnyEndpointAnyModality }
+
+func (softBlockHook) Execute(_ context.Context, _ *goHooks.HookInput) (*goHooks.HookResult, error) {
+	return &goHooks.HookResult{Decision: goHooks.BlockSoft, Reason: "content flagged (soft)", ReasonCode: "SOFT_FLAG"}, nil
+}
+
+// newBlockSoftPlusRedactResponseHookCache wires TWO response-stage hooks: a
+// PII-redact (email → [REDACTED_EMAIL], Modify) and an always-on soft-block. On a
+// response carrying an email the aggregate Decision is BlockSoft (soft-block
+// outranks Modify) while TransformSpans still carries the email redaction — the
+// masked-redact case redactCanonicalBuffer must still apply.
+func newBlockSoftPlusRedactResponseHookCache(t *testing.T) *compliance.HookConfigCache {
+	t.Helper()
+	reg := builtins.Registry.Clone()
+	reg.Register("softblock-resp-hook", func(_ *goHooks.HookConfig) (goHooks.Hook, error) {
+		return softBlockHook{}, nil
+	})
+	reg.Freeze()
+	loader := func(_ context.Context) ([]goHooks.HookConfig, error) {
+		return []goHooks.HookConfig{
+			{
+				ID: "pii-resp-1", ImplementationID: "pii-detector", Name: "pii-detect-response",
+				Priority: 10, Enabled: true, Stage: "response", FailBehavior: "fail-closed", TimeoutMs: 1000,
+				ApplicableIngress: []string{"ALL"},
+				Config: map[string]any{
+					"onMatch": map[string]any{"inflightAction": "redact", "storageAction": "redact"},
+					"patternDefinitions": []any{
+						map[string]any{"id": "email", "regex": `[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}`, "flags": "i", "replacement": "[REDACTED_EMAIL]"},
+					},
+				},
+			},
+			{
+				ID: "softblock-resp-1", ImplementationID: "softblock-resp-hook", Name: "softblock-response",
+				Priority: 5, Enabled: true, Stage: "response", FailBehavior: "fail-closed", TimeoutMs: 1000,
+				ApplicableIngress: []string{"ALL"}, Config: map[string]any{},
+			},
+		}, nil
+	}
+	cache := compliance.NewHookConfigCache(loader, reg, 0, noopLogger())
+	if err := cache.Start(context.Background()); err != nil {
+		t.Fatalf("cache.Start: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	return cache
+}
+
+// TestModelAStream_BlockSoftMaskedRedact_RedactDelivers is the end-to-end guard for the
+// #13 security fix: when a soft-block hook co-fires with a redact hook, the aggregate
+// Decision is BlockSoft but mergeResults now carries the redact's ModifiedContent (and
+// spans). The engine escalates on the enforcing action, and redactCanonicalBuffer keys
+// on CarriesRedaction() (not Decision==Modify), so the redaction is APPLIED and the
+// masked body ([REDACTED_EMAIL]) is delivered — the complete email never reaches the
+// wire AND the stream is not blocked. Before the #13 fix mergeResults dropped the
+// ModifiedContent, producing a no-op rewrite that (on this canonical path) failed closed
+// and (on the wire/buffer paths) leaked the original raw.
+func TestModelAStream_BlockSoftMaskedRedact_RedactDelivers(t *testing.T) {
+	cache := newBlockSoftPlusRedactResponseHookCache(t)
+	chunks := []provcore.Chunk{
+		{Delta: "reach me at "},
+		{Delta: "alice@example.com", Done: true},
+	}
+	s, w, usage := bufferTestState(t, cache, openAIChatIngress, nil, chunks)
+	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
+	s.hookRunner = runner
+
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
+
+	out := w.String()
+	if strings.Contains(out, "alice@example.com") {
+		t.Fatalf("BlockSoft-masked redact leaked the complete PII raw: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED_EMAIL]") {
+		t.Fatalf("BlockSoft-masked redact must DELIVER the masked content, got %q", out)
+	}
+	if strings.Contains(out, `"error"`) {
+		t.Fatalf("a co-firing redact must redact-deliver, not fail closed, got %q", out)
+	}
+	if !s.rec.ResponseHookRewritten {
+		t.Error("a redact-delivered stream must stamp ResponseHookRewritten")
+	}
+	if s.rec.ResponseAction != goHooks.ActionRedact {
+		t.Errorf("rec.ResponseAction = %q, want redact (Decision=BlockSoft but disposition is redact-deliver)", s.rec.ResponseAction)
+	}
+}
+
 // TestModelAStream_PrescanMiss_RealTime_ZeroConfirm pins the common case: a
 // prescan that never matches streams the full body in real time and pays ZERO
 // full confirms.
@@ -71,7 +161,7 @@ func TestModelAStream_PrescanMiss_RealTime_ZeroConfirm(t *testing.T) {
 	runner, confirms := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"), 0)
 
 	out := w.String()
 	if !strings.Contains(out, "hello") || !strings.Contains(out, "world") {
@@ -102,7 +192,7 @@ func TestModelAStream_FalsePositive_OneConfirm_FullBody(t *testing.T) {
 	s.hookRunner = runner
 
 	// Prescan HITs on "TRIGGER" (a false positive: no email → the hook Approves).
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("TRIGGER"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("TRIGGER"), 0)
 
 	out := w.String()
 	if !strings.Contains(out, "benign TRIGGER text") || !strings.Contains(out, "totally") {
@@ -129,7 +219,7 @@ func TestModelAStream_ConfirmedHit_Escalates_Redacts(t *testing.T) {
 	runner, confirms := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	out := w.String()
 	if strings.Contains(out, "alice@example.com") {
@@ -163,7 +253,7 @@ func TestModelAStream_NoHit_StampsApprove(t *testing.T) {
 	runner, confirms := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"), 0)
 
 	if *confirms != 0 {
 		t.Fatalf("clean stream must not confirm, ran %d", *confirms)
@@ -186,7 +276,7 @@ func TestModelAStream_FalsePositive_StampsDecision(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("TRIGGER"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("TRIGGER"), 0)
 
 	if s.rec.ResponseHookDecision != string(goHooks.Approve) {
 		t.Errorf("false-positive confirm must stamp ResponseHookDecision=%q, got %q", string(goHooks.Approve), s.rec.ResponseHookDecision)
@@ -207,7 +297,7 @@ func TestModelAStream_ToolCallName_Scanned(t *testing.T) {
 	runner, confirms := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	if *confirms < 1 {
 		t.Fatalf("a value in a tool-call name must be scanned and confirmed (FIX-2), ran %d confirms", *confirms)
@@ -228,7 +318,7 @@ func TestModelAStream_EscalationPreservesWireToolIndex(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	out := w.String()
 	if !strings.Contains(out, `"index":1`) {
@@ -255,7 +345,7 @@ func TestModelAStream_BoundedFragment_CompleteValueNeverDelivered(t *testing.T) 
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	out := w.String()
 	if !strings.Contains(out, "benign filler") {
@@ -292,7 +382,7 @@ func TestModelAStream_StorageCopyRedactedWithinTailWindow(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	// w.String() == tee.captured() == the bytes the relay persists as the audit
 	// storage copy (rec.ResponseBody / rec.ResponseBodyRedacted on a redact rewrite).
@@ -320,7 +410,7 @@ func TestModelAStream_HardBlock_ZeroContentAfterEscalation(t *testing.T) {
 	runner, confirms := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("secret"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("secret"), 0)
 
 	out := w.String()
 	if strings.Contains(out, "hunter2") {
@@ -356,7 +446,7 @@ func TestModelAStream_EscalationBufferCap_FailsClosed(t *testing.T) {
 	s.hookRunner = runner
 	s.streamMaxBufferBytes = 256 // smaller than the drained remainder
 
-	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	out := w.String()
 	if !strings.Contains(out, `"error"`) || !strings.Contains(out, "maximum buffer size") {
@@ -364,6 +454,42 @@ func TestModelAStream_EscalationBufferCap_FailsClosed(t *testing.T) {
 	}
 	if te := term.terminalError(); te == nil || te.code != streamErrCodeUpstream {
 		t.Errorf("expected %q classification on cap exceedance, got %+v", streamErrCodeUpstream, te)
+	}
+}
+
+// TestModelAStream_MemoryPressure_HoldsIncompleteContent pins the memory-pressure
+// safety guard: when a reasoning burst trips the held-bytes ceiling while a content
+// unit carrying an INCOMPLETE sensitive value is still at the front of the window,
+// the engine escalates rather than force-delivering that content raw. The prescan
+// never hits (the "@" only arrives in the final, still-held chunk), so this is a
+// pure memory-pressure escalation (zero confirms) — and the incomplete prefix
+// "alice" must never reach the wire (the old force-deliver-raw behavior would have
+// leaked it before the value completed).
+func TestModelAStream_MemoryPressure_HoldsIncompleteContent(t *testing.T) {
+	cache := newPiiRedactResponseHookCache(t)
+	chunks := []provcore.Chunk{
+		{Delta: "alice"}, // incomplete email (no "@" yet) — prescan misses
+		{ReasoningDelta: strings.Repeat("y", 400)}, // reasoning burst: 0 content bytes, ~400 held bytes
+		{Delta: "@example.com", Done: true},        // completes the email, still held at escalation
+	}
+	s, w, usage := bufferTestState(t, cache, openAIChatIngress, nil, chunks)
+	runner, confirms := modelACountingRunner(t, cache, openAIChatIngress)
+	s.hookRunner = runner
+	s.streamMaxBufferBytes = 200 // tripped by the reasoning burst while content window (8KB) is not
+
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
+
+	out := w.String()
+	if strings.Contains(out, "alice") {
+		t.Fatalf("memory-pressure eviction leaked the incomplete content raw: %q", out)
+	}
+	if *confirms != 0 {
+		t.Errorf("memory-pressure escalation must not run a prescan confirm, ran %d", *confirms)
+	}
+	// The held tail already exceeds the cap, so the escalation drain fails closed
+	// with an in-band error frame — the safe outcome (block, never leak).
+	if !strings.Contains(out, `"error"`) {
+		t.Errorf("expected a fail-closed error frame under memory pressure, got %q", out)
 	}
 }
 
@@ -379,7 +505,7 @@ func TestModelAStream_UsagePreserved(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"), 0)
 
 	snap := usage.snapshot()
 	if snap.TotalTokens == nil || *snap.TotalTokens != 12 {
@@ -399,7 +525,7 @@ func TestModelAStream_ProviderError_SynthesizesFrame(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	if !strings.Contains(w.String(), `"error"`) {
 		t.Errorf("expected SSE error frame on provider fault, got %q", w.String())
@@ -420,7 +546,7 @@ func TestModelAStream_ClientAbort_NoFrame(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	term := s.h.runModelAStream(ctx, s, w, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(ctx, s, w, usage, containsPrescan("@"), 0)
 
 	if w.Len() != 0 {
 		t.Errorf("client abort must not write to the gone peer, got %q", w.String())
@@ -435,7 +561,7 @@ func TestModelAStream_NilSubOrTee_NoOp(t *testing.T) {
 	cache := newPiiRedactResponseHookCache(t)
 	s, w, usage := bufferTestState(t, cache, openAIChatIngress, nil, nil)
 	s.sub = nil
-	if term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@")); term == nil {
+	if term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0); term == nil {
 		t.Fatal("expected a non-nil terminal carrier even on nil sub")
 	}
 	if w.Len() != 0 {
@@ -465,7 +591,7 @@ func TestModelAStream_NilPrescan_FailsSafeToConfirm(t *testing.T) {
 	runner, confirms := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, nil)
+	s.h.runModelAStream(context.Background(), s, w, usage, nil, 0)
 
 	if *confirms == 0 {
 		t.Error("nil prescan must fail safe to always-confirm (≥1 confirm)")
@@ -483,7 +609,7 @@ func TestBuildResponsePrescan_NoCache_AlwaysConfirms(t *testing.T) {
 	req = req.WithContext(WithIngress(req.Context(), openAIChatIngress))
 	s := &streamState{h: h, r: req, logger: noopLogger()}
 
-	prescan := h.buildResponsePrescan(context.Background(), s)
+	prescan, _ := h.buildResponsePrescan(context.Background(), s)
 	if !prescan([]byte("anything")) {
 		t.Error("no-cache prescan must fail safe to always-confirm")
 	}
@@ -499,12 +625,34 @@ func TestBuildResponsePrescan_RealCache_GatesOnContent(t *testing.T) {
 	req = req.WithContext(WithIngress(req.Context(), openAIChatIngress))
 	s := &streamState{h: h, r: req, logger: noopLogger()}
 
-	prescan := h.buildResponsePrescan(context.Background(), s)
+	prescan, _ := h.buildResponsePrescan(context.Background(), s)
 	if !prescan([]byte("write to alice@example.com")) {
 		t.Error("email content must trip the union prefilter")
 	}
 	if prescan([]byte("the quick brown fox")) {
 		t.Error("non-PII content must not trip the union prefilter")
+	}
+}
+
+// TestBuildResponsePrescan_DerivesFlooredLookahead pins the substrate glue that wires the
+// derived Model-A flush-before-deliver lookahead: typical PII patterns are far under the
+// 4096 floor, so the derivation returns exactly DefaultMaxPatternBytes; and the no-cache
+// fail-safe path also returns the default rather than 0.
+func TestBuildResponsePrescan_DerivesFlooredLookahead(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(WithIngress(req.Context(), openAIChatIngress))
+
+	cache := newPiiRedactResponseHookCache(t)
+	h := &Handler{deps: &Deps{HookConfigCache: cache, Logger: noopLogger()}}
+	s := &streamState{h: h, r: req, logger: noopLogger()}
+	if _, maxPattern := h.buildResponsePrescan(context.Background(), s); maxPattern != modela.DefaultMaxPatternBytes {
+		t.Fatalf("typical PII patterns must floor the lookahead at DefaultMaxPatternBytes, got %d", maxPattern)
+	}
+
+	h2 := &Handler{deps: &Deps{Logger: noopLogger()}} // no hook cache → always-confirm fail-safe
+	s2 := &streamState{h: h2, r: req, logger: noopLogger()}
+	if _, maxPattern := h2.buildResponsePrescan(context.Background(), s2); maxPattern != modela.DefaultMaxPatternBytes {
+		t.Fatalf("no-cache path must return DefaultMaxPatternBytes (not 0), got %d", maxPattern)
 	}
 }
 
@@ -559,7 +707,7 @@ func TestModelAStream_Concurrent_PerCallIsolation(t *testing.T) {
 			s, w, usage := bufferTestState(t, cache, openAIChatIngress, nil, chunks)
 			runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 			s.hookRunner = runner
-			s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+			s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 			out := w.String()
 			if strings.Contains(out, "carol@example.com") {
 				t.Errorf("per-call leak under concurrency: %q", out)
@@ -584,7 +732,7 @@ func TestModelAStream_EscalationProviderError_Classified(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	if !strings.Contains(w.String(), `"error"`) {
 		t.Errorf("expected synthesized error frame on drain fault, got %q", w.String())
@@ -607,7 +755,7 @@ func TestModelAStream_ToolArgs_ConfirmedRedact(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	out := w.String()
 	if strings.Contains(out, "alice@example.com") {
@@ -631,7 +779,7 @@ func TestModelAStream_FinishReason_Preserved_RealTime(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"), 0)
 
 	if !strings.Contains(w.String(), `"finish_reason":"length"`) {
 		t.Errorf("real-time path must preserve finish_reason=length, got %q", w.String())
@@ -647,7 +795,7 @@ func TestModelAStream_EOFWithoutDone_DeliversTail(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"), 0)
 
 	out := w.String()
 	if !strings.Contains(out, "tail without done") {
@@ -667,7 +815,7 @@ func TestModelAStream_GenericUpstreamFault_RealTime(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	if !strings.Contains(w.String(), `"error"`) {
 		t.Errorf("expected synthesized error frame, got %q", w.String())
@@ -688,7 +836,7 @@ func TestModelAStream_RealTimeFlushWriteError_Classified(t *testing.T) {
 	s.hookRunner = runner
 	fw := &failingWriter{header: http.Header{}}
 
-	term := s.h.runModelAStream(context.Background(), s, fw, usage, containsPrescan("NEVER"))
+	term := s.h.runModelAStream(context.Background(), s, fw, usage, containsPrescan("NEVER"), 0)
 
 	if te := term.terminalError(); te == nil || te.code != streamErrCodeUpstream {
 		t.Errorf("expected %q on flush write error, got %+v", streamErrCodeUpstream, te)
@@ -705,10 +853,49 @@ func TestModelAStream_EOFTailWriteError_Classified(t *testing.T) {
 	s.hookRunner = runner
 	fw := &failingWriter{header: http.Header{}}
 
-	term := s.h.runModelAStream(context.Background(), s, fw, usage, containsPrescan("NEVER"))
+	term := s.h.runModelAStream(context.Background(), s, fw, usage, containsPrescan("NEVER"), 0)
 
 	if te := term.terminalError(); te == nil || te.code != streamErrCodeUpstream {
 		t.Errorf("expected %q on EOF tail write error, got %+v", streamErrCodeUpstream, te)
+	}
+}
+
+// failOnMarkerWriter writes through until a payload contains marker, which it
+// fails — letting a test fail one specific late frame (the terminal sentinel)
+// while every earlier body write succeeds.
+type failOnMarkerWriter struct {
+	*bytes.Buffer
+	header http.Header
+	marker string
+}
+
+func (w *failOnMarkerWriter) Header() http.Header { return w.header }
+func (w *failOnMarkerWriter) WriteHeader(int)     {}
+func (w *failOnMarkerWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(w.marker)) {
+		return 0, io.ErrClosedPipe
+	}
+	return w.Buffer.Write(p)
+}
+
+// TestModelAStream_TerminalWriteError_Classified pins a write failure on the
+// terminal frame specifically: the body and finish frame deliver, but the [DONE]
+// sentinel write fails → the terminal carrier is classified upstream.
+func TestModelAStream_TerminalWriteError_Classified(t *testing.T) {
+	cache := newPiiRedactResponseHookCache(t)
+	chunks := []provcore.Chunk{{Delta: "clean body", Done: true}}
+	s, _, usage := bufferTestState(t, cache, openAIChatIngress, nil, chunks)
+	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
+	s.hookRunner = runner
+	w := &failOnMarkerWriter{Buffer: &bytes.Buffer{}, header: http.Header{}, marker: "[DONE]"}
+
+	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("NEVER"), 0)
+
+	if !strings.Contains(w.String(), "clean body") {
+		t.Fatalf("body must deliver before the terminal write fails, got %q", w.String())
+	}
+	if te := term.terminalError(); te == nil || te.code != streamErrCodeUpstream {
+		t.Errorf("terminal write failure must classify upstream, got %+v", te)
 	}
 }
 
@@ -722,7 +909,7 @@ func TestModelAStream_EscalationSynthWriteError_Classified(t *testing.T) {
 	s.hookRunner = runner
 	fw := &failingWriter{header: http.Header{}}
 
-	term := s.h.runModelAStream(context.Background(), s, fw, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(context.Background(), s, fw, usage, containsPrescan("@"), 0)
 
 	if te := term.terminalError(); te == nil || te.code != streamErrCodeUpstream {
 		t.Errorf("expected %q on escalation synth write error, got %+v", streamErrCodeUpstream, te)
@@ -743,7 +930,7 @@ func TestModelAStream_EscalationDrain_FinishReason(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	out := w.String()
 	if strings.Contains(out, "alice@example.com") {
@@ -767,7 +954,7 @@ func TestModelAStream_EscalationDrain_EOFNoDone(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	out := w.String()
 	if strings.Contains(out, "alice@example.com") {
@@ -789,7 +976,7 @@ func TestModelAStream_EscalationDrain_ClientAbort(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	term := s.h.runModelAStream(ctx, s, w, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(ctx, s, w, usage, containsPrescan("@"), 0)
 
 	if te := term.terminalError(); te == nil || te.code != streamErrCodeClientAbort {
 		t.Errorf("expected %q on drain client abort, got %+v", streamErrCodeClientAbort, te)
@@ -856,7 +1043,7 @@ func TestModelAStream_EscalationDrain_RecordsUsage(t *testing.T) {
 	runner, _ := modelACountingRunner(t, cache, openAIChatIngress)
 	s.hookRunner = runner
 
-	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	if snap := usage.snapshot(); snap.TotalTokens == nil || *snap.TotalTokens != 7 {
 		t.Fatalf("usage drained during escalation must be recorded, got %v", usage.snapshot().TotalTokens)
@@ -877,7 +1064,7 @@ func TestModelAStream_EscalationTerminalWriteError_Classified(t *testing.T) {
 	s.hookRunner = runner
 	w := &kthFailWriter{header: http.Header{}, failOn: 2} // synth ok, terminal fails
 
-	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"))
+	term := s.h.runModelAStream(context.Background(), s, w, usage, containsPrescan("@"), 0)
 
 	if te := term.terminalError(); te == nil || te.code != streamErrCodeUpstream {
 		t.Errorf("expected %q on escalation terminal write error, got %+v", streamErrCodeUpstream, te)

@@ -141,7 +141,10 @@ func (s *testSpillStore) Get(_ context.Context, ref sharedaudit.SpillRef) (io.Re
 		return nil, s.getErr
 	}
 	if s.readErr != nil {
-		return io.NopCloser(errReader{err: s.readErr}), nil
+		// Get succeeds — the configured failure surfaces later on Read via
+		// errReader (a spill object that resolves but whose stream is truncated),
+		// so returning a nil error here is correct.
+		return io.NopCloser(errReader{err: s.readErr}), nil //nolint:nilerr
 	}
 	return io.NopCloser(strings.NewReader(string(s.data))), nil
 }
@@ -2045,16 +2048,17 @@ func TestComplianceReport_HookHealthDBError_Returns500(t *testing.T) {
 
 // traffic.go — GetTrafficEvent success path (record != nil, spillStore branch)
 
-// trafficEventGetCols lists the 71 columns scanned by GetTrafficEvent
-// (trafficEventSelectColumns + 4 payload columns).
+// trafficEventGetCols lists the 97 columns scanned by GetTrafficEvent
+// (trafficEventSelectColumns 91 cols + 6 payload columns).
 var trafficEventGetCols = []string{
-	// trafficEventSelectColumns (67 cols)
+	// trafficEventSelectColumns (91 cols)
 	"id", "source", "timestamp",
 	"source_ip", "target_host", "method", "path",
 	"target_method", "target_path",
 	"status_code", "latency_ms",
 	"upstream_ttfb_ms", "upstream_total_ms",
 	"request_hooks_ms", "response_hooks_ms",
+	"request_hooks_us", "response_hooks_us",
 	"latency_breakdown",
 	"trace_id", "external_request_id",
 	"entity_type", "entity_id", "entity_name",
@@ -2116,6 +2120,8 @@ func newTrafficEventRow() *pgxmock.Rows {
 		// group 5: upstream_ttfb_ms, upstream_total_ms (*int)
 		nil, nil,
 		// group 6: request_hooks_ms, response_hooks_ms (*int)
+		nil, nil,
+		// group 6b: request_hooks_us, response_hooks_us (*int)
 		nil, nil,
 		// group 7: latency_breakdown (json.RawMessage)
 		[]byte(`null`),
@@ -2235,6 +2241,8 @@ func TestGetTrafficEvent_WithSpillStore_ResolvesFailed_StillReturns200(t *testin
 		// group 5: upstream_ttfb_ms, upstream_total_ms
 		nil, nil,
 		// group 6: request_hooks_ms, response_hooks_ms
+		nil, nil,
+		// group 6b: request_hooks_us, response_hooks_us
 		nil, nil,
 		// group 7: latency_breakdown
 		[]byte(`null`),

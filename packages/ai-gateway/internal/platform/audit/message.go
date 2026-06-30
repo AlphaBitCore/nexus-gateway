@@ -160,6 +160,8 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		UpstreamTotalMs:  rec.UpstreamTotalMs,
 		RequestHooksMs:   firstNonNil(rec.RequestHooksMs, sumHookLatenciesMs(rec.HooksPipeline, "request", "connection")),
 		ResponseHooksMs:  firstNonNil(rec.ResponseHooksMs, sumHookLatenciesMs(rec.HooksPipeline, "response")),
+		RequestHooksUs:   firstNonNil(rec.RequestHooksUs, sumHookLatenciesUs(rec.HooksPipeline, "request", "connection")),
+		ResponseHooksUs:  firstNonNil(rec.ResponseHooksUs, sumHookLatenciesUs(rec.HooksPipeline, "response")),
 		LatencyBreakdown: rec.LatencyBreakdown,
 	}
 	// Gateway response cache savings.

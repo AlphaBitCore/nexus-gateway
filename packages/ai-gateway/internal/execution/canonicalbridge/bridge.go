@@ -15,19 +15,20 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// formatsNativelyServingResponsesAPI is the set of provider wire formats whose
-// adapter declares AdapterSpec.RequestShapes ⊇ "responses-api". The bridge
-// consults this set on the /v1/responses ingress path — when the target's
-// Format is in this set, the body is forwarded verbatim and no
-// Responses↔canonical codec runs. Kept in lockstep with each adapter's
-// spec.go RequestShapes declaration (canonical truth:
-// providers/spec_openai/spec.go).
+// formatDefaultServesResponses reports the adapter-RequestShapes default for
+// whether a target Format natively serves the OpenAI /v1/responses wire
+// (RequestShapes ⊇ WireShapeOpenAIResponses). Today only FormatOpenAI's
+// adapter declares responses-api; every other adapter serves chat-completions
+// only, so /v1/responses ingress to them goes through the canonical(chat)
+// codec. The lockstep test pins this against the openai adapter's RequestShapes
+// so the default cannot drift from the adapter that actually talks the wire.
 //
 // Adding a sibling adapter: per provider-adapter-architecture.md §3a Rule 7
 // (binding), confirm via a captured 200 from that provider's real /v1/responses
-// endpoint before adding to this set AND the adapter's RequestShapes.
-var formatsNativelyServingResponsesAPI = map[provcore.Format]bool{
-	provcore.FormatOpenAI: true,
+// endpoint before declaring responses-api in its RequestShapes AND extending
+// this default.
+func formatDefaultServesResponses(target provcore.Format) bool {
+	return target == provcore.FormatOpenAI
 }
 
 // Bridge performs ingress ↔ canonical ↔ target wire conversions for chat.
@@ -100,10 +101,24 @@ func (b *Bridge) ChatRoutable(ingress, target provcore.Format) bool {
 	return ingressSupportsHubCanonicalChat(ingress) && formatSupportsChat(target)
 }
 
-// TargetNativelyServesResponsesAPI reports whether a target provider wire format
-// natively serves /v1/responses (adapter declares RequestShapes ⊇ "responses-api").
-func (b *Bridge) TargetNativelyServesResponsesAPI(target provcore.Format) bool {
-	return formatsNativelyServingResponsesAPI[target]
+// ServesResponses reports whether the resolved target serves the OpenAI
+// /v1/responses wire end-to-end — the single signal that decides, on a
+// /v1/responses ingress, whether the request body is sent Responses-shape
+// (true) or canonicalized to chat-completions (false).
+//
+// Resolution order (downgrade-only override):
+//   - override == nil  → adapter RequestShapes default (FormatOpenAI → true).
+//   - override == false → false, always (a chat-only OpenAI-compatible endpoint
+//     opts out so the gateway never POSTs a Responses body it would 404).
+//   - override == true  → the adapter default; a true override cannot grant a
+//     capability the adapter lacks (it is ignored unless RequestShapes already
+//     includes WireShapeOpenAIResponses).
+func (b *Bridge) ServesResponses(target provcore.Format, override *bool) bool {
+	base := formatDefaultServesResponses(target)
+	if override != nil && !*override {
+		return false
+	}
+	return base
 }
 
 // ResponsesRoutable reports whether /v1/responses ingress traffic
@@ -120,7 +135,7 @@ func (b *Bridge) TargetNativelyServesResponsesAPI(target provcore.Format) bool {
 // Bedrock uses AWS binary event-stream framing on streams (no SSE,
 // no chat-completions wire shape on responses).
 func (b *Bridge) ResponsesRoutable(target provcore.Format) bool {
-	if formatsNativelyServingResponsesAPI[target] {
+	if formatDefaultServesResponses(target) {
 		return true
 	}
 	// Cross-format path requires the target to have a chat-completions
@@ -269,32 +284,31 @@ func (b *Bridge) NewStreamTranscoder(ingress, target provcore.Format, model stri
 	if openAILike(ingress) && openAILike(target) {
 		return nil
 	}
-	// /v1/responses ingress + native responses-api target (today only
-	// spec_openai): the upstream's Responses SSE bytes flow through
-	// unchanged. No transcoder needed.
-	if ingress == provcore.FormatOpenAIResponses && formatsNativelyServingResponsesAPI[target] {
+	// Unknown ingress (not OpenAI-like, not a known native streaming ingress):
+	// no transcoder — passthrough, and let the executor surface any wire-format
+	// mismatch as an upstream error. Every recognised ingress re-encodes canonical
+	// chunks into its native wire via the single source of truth. For /v1/responses
+	// this returns the Responses encoder (the decode session forwards genuine
+	// Responses frames verbatim via provcore.Chunk.Verbatim; anything it could not
+	// classify as Responses is re-encoded here) — keeping a chat-shaped reply from
+	// ever leaking to a non-chat client.
+	if !openAILike(ingress) && !isNativeStreamIngress(ingress) {
 		return nil
 	}
-	switch {
-	case ingress == provcore.FormatOpenAIResponses:
-		// Cross-format: target is chat-completions wire. The reverse encoder
-		// re-shapes canonical chunks into Responses SSE event grammar before
-		// forwarding to the /v1/responses client.
-		return newResponsesStreamEncoder(model)
-	case openAILike(ingress):
-		return newOpenAIStreamEncoder(model)
-	case ingress == provcore.FormatAnthropic:
-		return newAnthropicStreamEncoder()
-	case ingress == provcore.FormatGemini, ingress == provcore.FormatVertex:
-		return &geminiStreamEncoder{}
-	case ingress == provcore.FormatCohere:
-		return &cohereStreamEncoder{}
-	case ingress == provcore.FormatReplicate:
-		return &replicateStreamEncoder{}
+	return IngressStreamEncoder(ingress, model)
+}
+
+// isNativeStreamIngress reports whether ingress is a non-OpenAI ingress with a
+// dedicated stream encoder (the formats IngressStreamEncoder re-encodes beyond
+// the OpenAI-family chat default).
+func isNativeStreamIngress(ingress provcore.Format) bool {
+	switch ingress {
+	case provcore.FormatOpenAIResponses, provcore.FormatAnthropic,
+		provcore.FormatGemini, provcore.FormatVertex,
+		provcore.FormatCohere, provcore.FormatReplicate:
+		return true
 	default:
-		// Unknown ingress: fall back to passthrough and let the executor
-		// surface any wire-format mismatch as an upstream error.
-		return nil
+		return false
 	}
 }
 
@@ -368,12 +382,13 @@ func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte,
 	if ingress == target {
 		return body, nil
 	}
-	// /v1/responses ingress + a target whose adapter natively serves
-	// responses-api (today: spec_openai): forward the body verbatim.
-	// This is the capability-driven same-shape passthrough — adding a
-	// new sibling to formatsNativelyServingResponsesAPI activates the
-	// fast path for them without further code changes here.
-	if ingress == provcore.FormatOpenAIResponses && formatsNativelyServingResponsesAPI[target] {
+	// /v1/responses ingress + a target that serves the Responses wire
+	// (per-provider capability, downgrade-only override on ct): forward the
+	// body verbatim so built-in tools / stateful fields survive. Otherwise
+	// fall through to canonical(chat). The executor resolves the same
+	// predicate before deciding whether to call this at all, so the two sites
+	// agree on the wire shape sent upstream.
+	if ingress == provcore.FormatOpenAIResponses && b.ServesResponses(target, ct.ServesResponsesAPI) {
 		return body, nil
 	}
 	canon, err := b.IngressChatToCanonical(ingress, body, ct)

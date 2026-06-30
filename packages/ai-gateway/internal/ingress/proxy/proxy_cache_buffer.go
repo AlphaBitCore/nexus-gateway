@@ -43,10 +43,10 @@ import (
 // the final aggregated usage, so per-chunk Done/Usage are stripped from the body
 // chunks. The OpenAI encoder does not emit `data: [DONE]` (the live pipeline
 // normally appends it), so this helper appends it when emitDone is set.
-func emitCanonicalStream(ctx context.Context, w io.Writer, transcoder canonicalbridge.StreamTranscoder, model string, emitDone bool, chunks []provcore.Chunk, finalUsage *provcore.Usage, finishReason string) error {
+func emitCanonicalStream(ctx context.Context, w io.Writer, transcoder canonicalbridge.StreamTranscoder, ingress provcore.Format, model string, emitDone bool, chunks []provcore.Chunk, finalUsage *provcore.Usage, finishReason string) error {
 	enc := transcoder
 	if enc == nil {
-		enc = canonicalbridge.NewChatCompletionsStreamEncoder(model)
+		enc = fallbackStreamEncoder(ingress, model)
 	}
 	for _, c := range chunks {
 		c.Done = false
@@ -80,6 +80,23 @@ func emitCanonicalStream(ctx context.Context, w io.Writer, transcoder canonicalb
 		}
 	}
 	return nil
+}
+
+// fallbackStreamEncoder builds the re-emit encoder used by an enforcement path
+// (buffer / Model A) when no cross-format transcoder was selected (same-shape
+// passthrough). Enforcement re-encodes the redacted canonical body to the
+// ingress wire, so the encoder MUST match the ingress shape: a /v1/responses
+// stream emits response.* events, NEVER chat.completion.chunk. Enforcement
+// takes precedence over native passthrough — built-in-tool / audio fidelity is
+// forfeited under an enforcing response scope (the canonical waist cannot carry
+// it), which is the accepted trade for a redacted/blocked stream.
+func fallbackStreamEncoder(ingress provcore.Format, model string) canonicalbridge.StreamTranscoder {
+	// Re-encode the redacted/buffered canonical chunks into the CALLER's ingress
+	// wire shape. Delegating to the shared IngressStreamEncoder (the same source
+	// the live transcoder uses) covers every ingress — Gemini, Anthropic, Cohere,
+	// Replicate, Responses, OpenAI — so an enforcing buffer / Model-A stream never
+	// leaks chat.completion.chunk frames to a non-chat client.
+	return canonicalbridge.IngressStreamEncoder(ingress, model)
 }
 
 // runCanonicalBufferStream is the streaming BUFFER-mode handler. It consumes the
@@ -206,7 +223,7 @@ func (h *Handler) runCanonicalBufferStream(ctx context.Context, s *streamState, 
 		// unchanged to the ingress wire.
 		emit = collected
 	}
-	if err := emitCanonicalStream(ctx, tee, s.transcoder, s.target.ModelCode, s.emitDone, emit, finalUsage, acc.finishReason); err != nil {
+	if err := emitCanonicalStream(ctx, tee, s.transcoder, s.ingressFormat, s.target.ModelCode, s.emitDone, emit, finalUsage, acc.finishReason); err != nil {
 		term.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
 	}
 	return term

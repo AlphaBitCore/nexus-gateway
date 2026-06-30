@@ -245,10 +245,15 @@ type Record struct {
 	//   LatencyBreakdown  — Long-tail per-source phase durations (ms).
 	//                       For ai-gateway: auth_ms, quota_ms, routing_ms,
 	//                       cache_lookup_ms, req_adapter_ms, resp_adapter_ms.
-	UpstreamTtfbMs   *int
-	UpstreamTotalMs  *int
-	RequestHooksMs   *int
-	ResponseHooksMs  *int
+	UpstreamTtfbMs  *int
+	UpstreamTotalMs *int
+	RequestHooksMs  *int
+	ResponseHooksMs *int
+	// Microsecond-precision hook aggregates (additive; siblings of the _ms fields).
+	// Normally nil and derived from HooksPipeline at recordToMessage time;
+	// firstNonNil lets a caller stamp them explicitly.
+	RequestHooksUs   *int
+	ResponseHooksUs  *int
 	LatencyBreakdown map[string]int
 
 	// EmbeddingCostUsd is stamped on every L1 miss that triggered an embedding

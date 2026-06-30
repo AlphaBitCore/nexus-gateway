@@ -36,10 +36,13 @@ type TrafficEvent struct {
 	// row. NULL on historical rows where upstream_ttfb / hooks could not be
 	// reconstructed. The UI computes `ourOverheadMs = latencyMs − upstream_total_ms`
 	// at render time.
-	UpstreamTtfbMs   *int            `json:"upstreamTtfbMs,omitempty"`
-	UpstreamTotalMs  *int            `json:"upstreamTotalMs,omitempty"`
-	RequestHooksMs   *int            `json:"requestHooksMs,omitempty"`
-	ResponseHooksMs  *int            `json:"responseHooksMs,omitempty"`
+	UpstreamTtfbMs  *int `json:"upstreamTtfbMs,omitempty"`
+	UpstreamTotalMs *int `json:"upstreamTotalMs,omitempty"`
+	RequestHooksMs  *int `json:"requestHooksMs,omitempty"`
+	ResponseHooksMs *int `json:"responseHooksMs,omitempty"`
+	// Microsecond-precision hook aggregates (additive; siblings of the _ms fields).
+	RequestHooksUs   *int            `json:"requestHooksUs,omitempty"`
+	ResponseHooksUs  *int            `json:"responseHooksUs,omitempty"`
 	LatencyBreakdown json.RawMessage `json:"latencyBreakdown,omitempty"`
 	// Request tracing
 	TraceID           *string `json:"traceId,omitempty"`
@@ -243,6 +246,7 @@ const trafficEventSelectColumns = `
 	a.status_code, a.latency_ms,
 	a.upstream_ttfb_ms, a.upstream_total_ms,
 	a.request_hooks_ms, a.response_hooks_ms,
+	a.request_hooks_us, a.response_hooks_us,
 	a.latency_breakdown,
 	a.trace_id, a.external_request_id,
 	a.entity_type, a.entity_id, a.entity_name,
@@ -339,6 +343,7 @@ func (store *Store) GetTrafficEvent(ctx context.Context, id string) (*TrafficEve
 		&a.StatusCode, &a.LatencyMs,
 		&a.UpstreamTtfbMs, &a.UpstreamTotalMs,
 		&a.RequestHooksMs, &a.ResponseHooksMs,
+		&a.RequestHooksUs, &a.ResponseHooksUs,
 		&a.LatencyBreakdown,
 		&a.TraceID, &a.ExternalRequestID,
 		&a.EntityType, &a.EntityID, &a.EntityName,
@@ -394,6 +399,7 @@ func scanOneTrafficEvent(row interface{ Scan(dest ...any) error }, a *TrafficEve
 		&a.StatusCode, &a.LatencyMs,
 		&a.UpstreamTtfbMs, &a.UpstreamTotalMs,
 		&a.RequestHooksMs, &a.ResponseHooksMs,
+		&a.RequestHooksUs, &a.ResponseHooksUs,
 		&a.LatencyBreakdown,
 		&a.TraceID, &a.ExternalRequestID,
 		&a.EntityType, &a.EntityID, &a.EntityName,

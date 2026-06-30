@@ -256,12 +256,22 @@ func (h *Handler) egressReshapeNonStream(ingress Ingress, target routingcore.Rou
 		return body, nil
 	}
 	if ingress.WireShape == typology.WireShapeOpenAIResponses {
-		// Responses ingress: native passthrough already in shape; cross-format
-		// re-encodes canonical chat → Responses output[] via the bridge.
-		if h.deps.CanonicalBridge.TargetNativelyServesResponsesAPI(provcore.Format(target.AdapterType)) {
+		// Content-authoritative egress: the wire shape follows the ACTUAL
+		// response bytes, never the target Format. A Responses-shape body is
+		// already in the client's shape (verbatim — zero-loss for built-in
+		// tools); a chat.completion body is canonical and re-encodes to the
+		// Responses output[] grammar via EncodeResponsesResponse. An
+		// unclassifiable body must NEVER be forwarded verbatim to a
+		// /v1/responses client — fail closed with a 502 so a chat-shaped or
+		// garbage reply can't leak in the wrong wire shape.
+		switch openairesponses.ClassifyNonStreamBody(body) {
+		case openairesponses.ClassResponses:
 			return body, nil
+		case openairesponses.ClassChat:
+			return h.deps.CanonicalBridge.ResponseCanonicalToIngress(ingress.BodyFormat, body)
+		default:
+			return nil, fmt.Errorf("egress: unclassifiable /v1/responses upstream body; refusing verbatim passthrough")
 		}
-		return h.deps.CanonicalBridge.ResponseCanonicalToIngress(ingress.BodyFormat, body)
 	}
 	if ingress.BodyFormat.IsOpenAIFamily() {
 		// Canonical == OpenAI shape == the caller's shape. Identity.

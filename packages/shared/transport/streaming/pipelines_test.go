@@ -388,31 +388,42 @@ func TestLivePipeline_NoCapture_CapturedNilAndFalse(t *testing.T) {
 
 // TestLivePipeline_MaxBufferExceeded — totalBytes > MaxBufferSize aborts
 // with an error event to the client and a non-nil writerErr.
+// TestLivePipeline_MaxBufferExceeded pins the AUDIT-ONLY overflow behaviour: when the
+// accumulated content exceeds MaxBufferSize the pipeline CAPS the audit scan to bound
+// memory but KEEPS delivering — an audit-only relay must never break a non-enforcing
+// stream just because it outgrew the scan budget. No block frame is emitted.
 func TestLivePipeline_MaxBufferExceeded(t *testing.T) {
 	lp := NewLivePipeline(LiveConfig{
 		CheckpointChars: 100000,
 		MaxBufferSize:   30, // tiny
 	}, &mockPipeline{}, nil)
 
-	in := makeOpenAISSE(
-		"this string easily exceeds the 30-byte buffer cap once accumulated across frames")
+	// Several frames: the cap trips early, and the LATER frames must still be
+	// delivered write-through (exercising the post-cap continue).
+	in := makeOpenAISSE("alpha", "bravo", "charlie", "delta")
 	var client bytes.Buffer
 	res, err := lp.Process(context.Background(), strings.NewReader(in), &client, &core.HookInput{IngressType: "X"})
-	_ = res
 	if err != nil {
-		t.Fatalf("Process err = %v (expect nil; chunk error converts to client write)", err)
+		t.Fatalf("Process err = %v (audit-only overflow must not error)", err)
 	}
-	if !strings.Contains(client.String(), "blocked by policy") {
-		t.Errorf("expected error envelope on client; got %q", client.String())
+	if res == nil || res.Decision != core.Approve {
+		t.Errorf("audit-only overflow must return Approve, got %+v", res)
+	}
+	if strings.Contains(client.String(), "blocked by policy") {
+		t.Errorf("audit-only overflow must NOT emit a block frame; got %q", client.String())
+	}
+	// Every frame is delivered write-through despite the audit cap tripping early.
+	for _, want := range []string{"alpha", "bravo", "charlie", "delta"} {
+		if !strings.Contains(client.String(), want) {
+			t.Errorf("expected %q delivered despite the audit cap; got %q", want, client.String())
+		}
 	}
 }
 
-// TestLivePipeline_NilPipelineResult_NoPanic — when checkpoint returns nil,
-// flushCheckpoint short-circuits with Approve. Observed behavior today:
-// pendingEvents are NOT forwarded to approvedChan on the nil-result branch
-// (the comment claims "treat as approve" but the code only returns the
-// decision — see live.go:212-215). This test pins the no-panic + final
-// decision == Approve guarantee, the only contract the call site relies on.
+// TestLivePipeline_NilPipelineResult_NoPanic — when an observe-only checkpoint
+// returns nil, the audit aggregate skips it (no panic, no HookResults appended) and
+// delivery proceeds write-through. The final decision is Approve and the content is
+// delivered regardless of the nil checkpoint (audit-only never gates the wire).
 func TestLivePipeline_NilPipelineResult_NoPanic(t *testing.T) {
 	mp := &mockPipeline{
 		decideFn: func(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
@@ -429,6 +440,9 @@ func TestLivePipeline_NilPipelineResult_NoPanic(t *testing.T) {
 	}
 	if res == nil || res.Decision != core.Approve {
 		t.Errorf("decision = %+v, want Approve", res)
+	}
+	if !strings.Contains(out.String(), "abcdef") || !strings.Contains(out.String(), "ghijkl") {
+		t.Errorf("audit-only must deliver write-through on a nil checkpoint; got %q", out.String())
 	}
 }
 
@@ -470,25 +484,6 @@ func TestLivePipeline_ReplayWithFlushableClient_FlushesEachChunk(t *testing.T) {
 	}
 	if client.flushes == 0 {
 		t.Error("Flush never called on flusher-capable client")
-	}
-}
-
-// TestLivePipeline_HardReject_WriterErrorOnError — when the hard-reject
-// path tries to write the error envelope but the client errors, Process
-// returns that error.
-func TestLivePipeline_HardReject_WriterErrorOnError(t *testing.T) {
-	mp := &mockPipeline{
-		decideFn: func(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
-			return &core.CompliancePipelineResult{Decision: core.RejectHard}
-		},
-	}
-	lp := NewLivePipeline(LiveConfig{CheckpointChars: 1}, mp, nil)
-	fc := &failingClientWriter{failAfter: 0, failureErr: errors.New("client gone")}
-
-	in := makeOpenAISSE("trigger")
-	_, err := lp.Process(context.Background(), strings.NewReader(in), fc, &core.HookInput{IngressType: "X"})
-	if err == nil {
-		t.Fatal("expected write error from reject path")
 	}
 }
 

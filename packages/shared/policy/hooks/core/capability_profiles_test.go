@@ -31,6 +31,17 @@ func TestChatOnly_SupportsEndpoint_Embeddings(t *testing.T) {
 	}
 }
 
+func TestChatOnly_SupportsEndpoint_Responses(t *testing.T) {
+	var h ChatOnly
+	// The Responses API carries its own endpoint_type label but is chat-family;
+	// ChatOnly hooks (PII redaction etc.) MUST still apply to it — otherwise
+	// labelling /v1/responses as "responses" would silently drop hooks that ran
+	// while it was labelled "chat".
+	if !h.SupportsEndpoint(EndpointTypeResponses) {
+		t.Error("ChatOnly must support EndpointTypeResponses (chat-family)")
+	}
+}
+
 func TestChatOnly_SupportsModality_Text(t *testing.T) {
 	var h ChatOnly
 	if !h.SupportsModality(ModalityText) {

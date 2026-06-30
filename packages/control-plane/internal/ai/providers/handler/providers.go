@@ -55,24 +55,27 @@ func (h *Handler) ListProviders(c echo.Context) error {
 	}
 
 	type listItem struct {
-		ID          string  `json:"id"`
-		Name        string  `json:"name"`
-		DisplayName *string `json:"displayName"`
-		Description *string `json:"description"`
-		AdapterType string  `json:"adapterType"`
-		BaseURL     string  `json:"baseUrl"`
-		Region      *string `json:"region"`
-		Enabled     bool    `json:"enabled"`
-		ModelCount  *int    `json:"modelCount"`
-		CreatedAt   any     `json:"createdAt"`
+		ID                 string  `json:"id"`
+		Name               string  `json:"name"`
+		DisplayName        *string `json:"displayName"`
+		Description        *string `json:"description"`
+		AdapterType        string  `json:"adapterType"`
+		BaseURL            string  `json:"baseUrl"`
+		Region             *string `json:"region"`
+		Enabled            bool    `json:"enabled"`
+		ServesResponsesAPI *bool   `json:"servesResponsesApi,omitempty"`
+		ModelCount         *int    `json:"modelCount"`
+		CreatedAt          any     `json:"createdAt"`
 	}
 	data := make([]listItem, 0, len(providers))
 	for _, p := range providers {
 		data = append(data, listItem{
 			ID: p.ID, Name: p.Name, DisplayName: p.DisplayName,
 			Description: p.Description, AdapterType: p.AdapterType, BaseURL: p.BaseURL,
-			Region:  p.Region,
-			Enabled: p.Enabled, ModelCount: p.ModelCount, CreatedAt: p.CreatedAt,
+			Region:             p.Region,
+			Enabled:            p.Enabled,
+			ServesResponsesAPI: p.ServesResponsesAPI,
+			ModelCount:         p.ModelCount, CreatedAt: p.CreatedAt,
 		})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"data": data, "total": total})
@@ -96,8 +99,10 @@ func (h *Handler) GetProvider(c echo.Context) error {
 		"id": p.ID, "name": p.Name, "displayName": p.DisplayName,
 		"description": p.Description, "adapterType": p.AdapterType, "baseUrl": p.BaseURL,
 		"pathPrefix": p.PathPrefix, "apiVersion": p.APIVersion,
-		"region":  p.Region,
-		"enabled": p.Enabled, "createdAt": p.CreatedAt, "updatedAt": p.UpdatedAt,
+		"region":             p.Region,
+		"enabled":            p.Enabled,
+		"servesResponsesApi": p.ServesResponsesAPI,
+		"createdAt":          p.CreatedAt, "updatedAt": p.UpdatedAt,
 		"models": models,
 	}
 	if p.Headers != nil {
@@ -173,17 +178,18 @@ func conflictForUniqueViolation(pgErr *pgconn.PgError, providerName string) (mes
 
 func (h *Handler) CreateProvider(c echo.Context) error {
 	var body struct {
-		Name        string                         `json:"name"`
-		DisplayName string                         `json:"displayName"`
-		Description string                         `json:"description"`
-		BaseURL     string                         `json:"baseUrl"`
-		AdapterType string                         `json:"adapterType"`
-		APIVersion  string                         `json:"apiVersion"`
-		Region      string                         `json:"region"`
-		Enabled     *bool                          `json:"enabled"`
-		Headers     json.RawMessage                `json:"headers"`
-		Models      []createProviderModelInput     `json:"models"`
-		Credential  *createProviderCredentialInput `json:"credential"`
+		Name               string                         `json:"name"`
+		DisplayName        string                         `json:"displayName"`
+		Description        string                         `json:"description"`
+		BaseURL            string                         `json:"baseUrl"`
+		AdapterType        string                         `json:"adapterType"`
+		APIVersion         string                         `json:"apiVersion"`
+		Region             string                         `json:"region"`
+		Enabled            *bool                          `json:"enabled"`
+		ServesResponsesAPI *bool                          `json:"servesResponsesApi"`
+		Headers            json.RawMessage                `json:"headers"`
+		Models             []createProviderModelInput     `json:"models"`
+		Credential         *createProviderCredentialInput `json:"credential"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
@@ -320,17 +326,18 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 	p, insertedModels, insertedCred, err := h.providers.CreateProviderWithChildren(
 		c.Request().Context(),
 		providerstore.CreateParams{
-			ID:          newProviderID, // Matches the AAD when an inline credential is sealed; empty → store generates
-			Name:        body.Name,
-			DisplayName: body.DisplayName,
-			Description: desc,
-			BaseURL:     body.BaseURL,
-			PathPrefix:  "/" + body.Name,
-			AdapterType: body.AdapterType,
-			APIVersion:  apiVersion,
-			Region:      region,
-			Enabled:     enabled,
-			Headers:     body.Headers,
+			ID:                 newProviderID, // Matches the AAD when an inline credential is sealed; empty → store generates
+			Name:               body.Name,
+			DisplayName:        body.DisplayName,
+			Description:        desc,
+			BaseURL:            body.BaseURL,
+			PathPrefix:         "/" + body.Name,
+			AdapterType:        body.AdapterType,
+			APIVersion:         apiVersion,
+			Region:             region,
+			Enabled:            enabled,
+			ServesResponsesAPI: body.ServesResponsesAPI,
+			Headers:            body.Headers,
 		},
 		modelParams,
 		credParams,
@@ -377,20 +384,21 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 	h.audit.LogObserved(c.Request().Context(), ae)
 
 	resp := map[string]any{
-		"id":          p.ID,
-		"name":        p.Name,
-		"displayName": p.DisplayName,
-		"description": p.Description,
-		"adapterType": p.AdapterType,
-		"baseUrl":     p.BaseURL,
-		"pathPrefix":  p.PathPrefix,
-		"apiVersion":  p.APIVersion,
-		"region":      p.Region,
-		"enabled":     p.Enabled,
-		"headers":     p.Headers,
-		"createdAt":   p.CreatedAt,
-		"updatedAt":   p.UpdatedAt,
-		"models":      insertedModels,
+		"id":                 p.ID,
+		"name":               p.Name,
+		"displayName":        p.DisplayName,
+		"description":        p.Description,
+		"adapterType":        p.AdapterType,
+		"baseUrl":            p.BaseURL,
+		"pathPrefix":         p.PathPrefix,
+		"apiVersion":         p.APIVersion,
+		"region":             p.Region,
+		"enabled":            p.Enabled,
+		"servesResponsesApi": p.ServesResponsesAPI,
+		"headers":            p.Headers,
+		"createdAt":          p.CreatedAt,
+		"updatedAt":          p.UpdatedAt,
+		"models":             insertedModels,
 	}
 	if insertedCred != nil {
 		resp["credential"] = insertedCred
@@ -447,6 +455,7 @@ func (h *Handler) UpdateProvider(c echo.Context) error {
 	}
 	var regionParam **string
 	var apiVersionParam **string
+	var servesResponsesParam **bool
 	var updateHeaders bool
 	var headersVal json.RawMessage
 	{
@@ -465,6 +474,16 @@ func (h *Handler) UpdateProvider(c echo.Context) error {
 						apiVersionParam = &s
 					}
 				}
+				// servesResponsesApi is three-state like apiVersion: a present
+				// JSON null clears the override back to the adapter default, a
+				// present boolean sets/downgrades, and an absent key leaves the
+				// stored value untouched.
+				if rv, ok := rawFields["servesResponsesApi"]; ok {
+					var b *bool
+					if err := json.Unmarshal(rv, &b); err == nil {
+						servesResponsesParam = &b
+					}
+				}
 				if rv, ok := rawFields["headers"]; ok {
 					updateHeaders = true
 					headersVal = rv
@@ -474,16 +493,17 @@ func (h *Handler) UpdateProvider(c echo.Context) error {
 	}
 
 	updated, err := h.providers.UpdateProvider(c.Request().Context(), id, providerstore.UpdateParams{
-		Name:          body.Name,
-		DisplayName:   body.DisplayName,
-		Description:   body.Description,
-		BaseURL:       body.BaseURL,
-		AdapterType:   body.AdapterType,
-		Region:        regionParam,
-		APIVersion:    apiVersionParam,
-		UpdateHeaders: updateHeaders,
-		Headers:       headersVal,
-		Enabled:       body.Enabled,
+		Name:               body.Name,
+		DisplayName:        body.DisplayName,
+		Description:        body.Description,
+		BaseURL:            body.BaseURL,
+		AdapterType:        body.AdapterType,
+		Region:             regionParam,
+		APIVersion:         apiVersionParam,
+		ServesResponsesAPI: servesResponsesParam,
+		UpdateHeaders:      updateHeaders,
+		Headers:            headersVal,
+		Enabled:            body.Enabled,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError

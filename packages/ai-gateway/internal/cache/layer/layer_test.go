@@ -103,7 +103,7 @@ func TestStart_HappyPath_PopulatesEverySnapshot(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"`).
 		WillReturnRows(pgxmock.NewRows(providerCols).
 			AddRow("p1", "openai", strPtr("OpenAI"), "openai",
-				"https://api.openai.com", "/v1", strPtr("2024-01"), strPtr("us-east-1"), true))
+				"https://api.openai.com", "/v1", strPtr("2024-01"), strPtr("us-east-1"), true, (*bool)(nil)))
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows(modelCols).
 			AddRow(makeModelRow("m1", "gpt-4o", "p1", true)...))
@@ -165,7 +165,7 @@ func TestReloadSnapshots_RoundTripsAndFiresMetricsHook(t *testing.T) {
 
 	mock.ExpectQuery(`FROM "Provider"`).
 		WillReturnRows(pgxmock.NewRows(providerCols).
-			AddRow("p1", "openai", nil, "openai", "https://x", "/v1", nil, nil, true))
+			AddRow("p1", "openai", nil, "openai", "https://x", "/v1", nil, nil, true, (*bool)(nil)))
 	if err := l.ReloadProviders(context.Background()); err != nil {
 		t.Fatalf("ReloadProviders: %v", err)
 	}
@@ -297,8 +297,8 @@ func TestStats_ReportsLiveValues(t *testing.T) {
 	// Two providers, one model, one cred.
 	mock.ExpectQuery(`FROM "Provider"`).
 		WillReturnRows(pgxmock.NewRows(providerCols).
-			AddRow("p1", "openai", nil, "openai", "https://x", "/v1", nil, nil, true).
-			AddRow("p2", "anthropic", nil, "anthropic", "https://y", "/v1", nil, nil, true))
+			AddRow("p1", "openai", nil, "openai", "https://x", "/v1", nil, nil, true, (*bool)(nil)).
+			AddRow("p2", "anthropic", nil, "anthropic", "https://y", "/v1", nil, nil, true, (*bool)(nil)))
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows(modelCols).
 			AddRow(makeModelRow("m1", "gpt-4o", "p1", true)...))

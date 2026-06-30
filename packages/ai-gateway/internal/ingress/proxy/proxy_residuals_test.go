@@ -211,7 +211,7 @@ func TestChunkSSEReader_TranscoderError_PropagatesError(t *testing.T) {
 	sub := &fakeChunkSub{chunks: []provcore.Chunk{
 		{Delta: "hello"}, // non-Done chunk; transcoder fires
 	}}
-	r := newChunkSSEReaderFromSubscription(context.Background(), sub, errorTranscoder{}, provcore.FormatOpenAI)
+	r := newChunkSSEReaderFromSubscription(context.Background(), sub, errorTranscoder{}, provcore.FormatOpenAI, false)
 	r.usageSink = &chunkUsageHolder{}
 	buf := make([]byte, 64)
 	n, err := r.Read(buf)
@@ -242,7 +242,7 @@ func TestChunkSSEReader_TranscoderDoneChunk_EmitsFrame(t *testing.T) {
 	sub := &fakeChunkSub{chunks: []provcore.Chunk{
 		{Done: true, RawBytes: []byte("data: [DONE]\n\n")},
 	}}
-	r := newChunkSSEReaderFromSubscription(context.Background(), sub, terminalTranscoder{}, provcore.FormatAnthropic)
+	r := newChunkSSEReaderFromSubscription(context.Background(), sub, terminalTranscoder{}, provcore.FormatAnthropic, false)
 	r.usageSink = &chunkUsageHolder{}
 	got, _ := io.ReadAll(r)
 	if !strings.Contains(string(got), "message_stop") {
@@ -271,7 +271,7 @@ func TestChunkSSEReader_TranscoderSkipsChunk_ReturnsZeroBytes(t *testing.T) {
 		{Delta: "skip-me"}, // transcoder skips this
 		{Done: true},
 	}}
-	r := newChunkSSEReaderFromSubscription(context.Background(), sub, skipTranscoder{}, provcore.FormatAnthropic)
+	r := newChunkSSEReaderFromSubscription(context.Background(), sub, skipTranscoder{}, provcore.FormatAnthropic, false)
 	r.usageSink = &chunkUsageHolder{}
 	// First Read: transcoder skips the first chunk → returns 0, nil.
 	buf := make([]byte, 64)

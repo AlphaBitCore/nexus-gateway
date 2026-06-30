@@ -287,7 +287,7 @@ func (e *TargetExecutor) executeInner(
 		// proxy-level needsCanonicalization=false rule and the egress
 		// native-passthrough skip — all three sites must agree.
 		nativeResponses := base.WireShape == typology.WireShapeOpenAIResponses &&
-			e.bridge != nil && e.bridge.TargetNativelyServesResponsesAPI(callTarget.Format)
+			e.bridge != nil && e.bridge.ServesResponses(callTarget.Format, callTarget.ServesResponsesAPI)
 		if e.bridge != nil && !nativeResponses {
 			switch ingressKind {
 			case typology.EndpointKindChat:

@@ -12,7 +12,7 @@ import (
 
 var providerTestColumns = []string{
 	"id", "name", "displayName", "adapter_type", "baseUrl", "pathPrefix",
-	"apiVersion", "region", "enabled",
+	"apiVersion", "region", "enabled", "serves_responses_api",
 }
 
 func makeProviderRow(id string) []any {
@@ -21,7 +21,7 @@ func makeProviderRow(id string) []any {
 	region := "us-east-1"
 	return []any{
 		id, "openai", &display, "openai", "https://api.openai.com", "/v1",
-		&apiV, &region, true,
+		&apiV, &region, true, (*bool)(nil),
 	}
 }
 

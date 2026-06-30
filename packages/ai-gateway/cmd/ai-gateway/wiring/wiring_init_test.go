@@ -110,7 +110,7 @@ func TestInitGeminiCacheMgrSet_listGeminiProviders_withLayer(t *testing.T) {
 
 	// Seed the layer with a gemini provider.
 	provRows := pgxmock.NewRows(providerColsForLayer).
-		AddRow("gemini-prov-1", "gemini", nil, "gemini", "https://generativelanguage.googleapis.com", "", (*string)(nil), (*string)(nil), true)
+		AddRow("gemini-prov-1", "gemini", nil, "gemini", "https://generativelanguage.googleapis.com", "", (*string)(nil), (*string)(nil), true, (*bool)(nil))
 	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
 	if err := l.ReloadProviders(context.Background()); err != nil {
 		t.Fatalf("ReloadProviders: %v", err)
@@ -271,8 +271,8 @@ func newTestCacheLayerWithAnthropicProvider(t *testing.T) (*cachelayer.Layer, pg
 	t.Helper()
 	mock, l := newLayerWithMock(t)
 	provRows := pgxmock.NewRows(providerColsForLayer).
-		AddRow("prov-anthropic", "anthropic", nil, "anthropic", "https://api.anthropic.com", "", (*string)(nil), (*string)(nil), true).
-		AddRow("prov-openai", "openai", nil, "openai", "https://api.openai.com", "", (*string)(nil), (*string)(nil), true)
+		AddRow("prov-anthropic", "anthropic", nil, "anthropic", "https://api.anthropic.com", "", (*string)(nil), (*string)(nil), true, (*bool)(nil)).
+		AddRow("prov-openai", "openai", nil, "openai", "https://api.openai.com", "", (*string)(nil), (*string)(nil), true, (*bool)(nil))
 	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
 	if err := l.ReloadProviders(context.Background()); err != nil {
 		t.Fatalf("ReloadProviders: %v", err)
@@ -305,7 +305,7 @@ func TestProjectCacheBlobToNormaliserConfig_withAnthropicProvider(t *testing.T) 
 func TestProjectCacheBlobToNormaliserConfig_withBedrockProvider(t *testing.T) {
 	mock, l := newLayerWithMock(t)
 	provRows := pgxmock.NewRows(providerColsForLayer).
-		AddRow("prov-bedrock", "bedrock", nil, "bedrock", "https://bedrock.aws.com", "", (*string)(nil), (*string)(nil), true)
+		AddRow("prov-bedrock", "bedrock", nil, "bedrock", "https://bedrock.aws.com", "", (*string)(nil), (*string)(nil), true, (*bool)(nil))
 	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
 	if err := l.ReloadProviders(context.Background()); err != nil {
 		t.Fatalf("ReloadProviders: %v", err)
@@ -1036,7 +1036,7 @@ func TestInitIntrospectRegistry_snapshotWithPopulatedLayer(t *testing.T) {
 	// Seed a provider.
 	provRows := pgxmock.NewRows(providerColsForLayer).AddRow(
 		"prov-snap-1", "openai", nil, "openai", "https://api.openai.com",
-		"", (*string)(nil), (*string)(nil), true,
+		"", (*string)(nil), (*string)(nil), true, (*bool)(nil),
 	)
 	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
 	if err := l.ReloadProviders(context.Background()); err != nil {

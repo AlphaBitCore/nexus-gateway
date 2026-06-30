@@ -177,8 +177,9 @@ func (st routingStage) run() bool {
 	if s.resolved.BodyFormat == provcore.FormatOpenAIResponses &&
 		len(routeResult.Targets) > 0 &&
 		h.deps.CanonicalBridge != nil {
-		targetFormat := provcore.Format(routeResult.Targets[0].AdapterType)
-		if !h.deps.CanonicalBridge.TargetNativelyServesResponsesAPI(targetFormat) {
+		primary := routeResult.Targets[0]
+		targetFormat := provcore.Format(primary.AdapterType)
+		if !h.deps.CanonicalBridge.ServesResponses(targetFormat, primary.ServesResponsesAPI) {
 			if rej := validateResponsesIngressForCrossFormat(s.body); rej != nil {
 				h.writeResponsesFeatureRejection(s.w, s.rec, rej)
 				return false

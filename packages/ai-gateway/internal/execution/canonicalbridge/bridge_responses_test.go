@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
@@ -150,13 +151,55 @@ func TestBridge_ResponseCanonicalToIngress_Responses(t *testing.T) {
 	}
 }
 
+// TestBridge_IngressChatToWire_ResponsesCapability proves the request-side wire
+// shape follows the resolved capability: a /v1/responses body to an OpenAI
+// target is forwarded verbatim by default, but a downgrade override (false)
+// forces canonicalization to chat-completions so the gateway never POSTs a
+// Responses body to an endpoint that only serves /v1/chat/completions.
+func TestBridge_IngressChatToWire_ResponsesCapability(t *testing.T) {
+	b := testBridge(t)
+	body := []byte(`{"model":"gpt-4o","input":"hi"}`)
+
+	// Default (override nil) → native passthrough: body forwarded verbatim.
+	ct := dummyCallTarget(provcore.FormatOpenAI)
+	out, err := b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, ct, false)
+	if err != nil {
+		t.Fatalf("IngressChatToWire (default): %v", err)
+	}
+	if string(out) != string(body) {
+		t.Fatalf("default capability must forward the Responses body verbatim; got %s", out)
+	}
+
+	// override=false → canonicalize to chat-completions (messages[], no verbatim input).
+	no := false
+	ctOff := dummyCallTarget(provcore.FormatOpenAI)
+	ctOff.ServesResponsesAPI = &no
+	out, err = b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, ctOff, false)
+	if err != nil {
+		t.Fatalf("IngressChatToWire (override=false): %v", err)
+	}
+	if string(out) == string(body) {
+		t.Fatal("override=false must canonicalize the Responses body, not forward it verbatim")
+	}
+	if !gjson.GetBytes(out, "messages").Exists() {
+		t.Fatalf("override=false must produce a chat-completions body with messages[]; got %s", out)
+	}
+}
+
 // TestBridge_NewStreamTranscoder_Responses pins the per-direction
 // transcoder choice for Responses ingress.
 func TestBridge_NewStreamTranscoder_Responses(t *testing.T) {
 	b := testBridge(t)
-	// Same-shape passthrough = nil transcoder.
-	if tr := b.NewStreamTranscoder(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, "gpt-5.2"); tr != nil {
-		t.Error("Responses → OpenAI same-shape passthrough should yield nil transcoder")
+	// Responses ingress always yields the Responses encoder: the egress wire
+	// shape is decided from the actual upstream bytes, not the target Format.
+	// A genuine Responses upstream is forwarded verbatim by the relay's
+	// Verbatim path (not via a nil transcoder); an upstream that returns
+	// chat.completion is decoded to canonical and re-encoded here, so a
+	// chat-shaped reply can never leak to a /v1/responses client.
+	if tr := b.NewStreamTranscoder(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, "gpt-5.2"); tr == nil {
+		t.Error("Responses → OpenAI must yield the Responses encoder, not a nil passthrough")
+	} else if _, ok := tr.(*responsesStreamEncoder); !ok {
+		t.Errorf("Responses → OpenAI transcoder should be *responsesStreamEncoder, got %T", tr)
 	}
 	// Cross-format target = responsesStreamEncoder (re-encode canonical → Responses SSE).
 	tr := b.NewStreamTranscoder(provcore.FormatOpenAIResponses, provcore.FormatAnthropic, "claude-sonnet-4-6")
@@ -298,19 +341,26 @@ func TestBridge_ResponseAcrossFormats_UnknownFromFormat(t *testing.T) {
 	}
 }
 
-// TestBridge_LockstepCheck pins the formatsNativelyServingResponsesAPI
-// lockstep with each adapter's RequestShapes declaration. If a sibling
-// adapter starts declaring responses-api support but the bridge's
-// lockstep map is not updated, this test surfaces the drift.
+// TestBridge_LockstepCheck pins the formatDefaultServesResponses default
+// against the openai adapter's actual RequestShapes declaration, so the
+// bridge default cannot drift from the adapter that talks the wire. If a
+// sibling adapter starts declaring responses-api support, its Format must be
+// added to formatDefaultServesResponses (and this test extended).
 func TestBridge_LockstepCheck(t *testing.T) {
-	// Today only spec_openai is in the lockstep map; no other adapter
-	// declares responses-api. Verify both sides.
-	got := len(formatsNativelyServingResponsesAPI)
-	want := 1
-	if got != want {
-		t.Errorf("formatsNativelyServingResponsesAPI has %d entries, want %d. If you added an adapter declaring responses-api in its RequestShapes, also add its Format here.", got, want)
+	// Both sides of the lockstep for the one format that serves Responses.
+	if !openai.NewSpec(nil).SupportsShape(typology.WireShapeOpenAIResponses) {
+		t.Fatal("spec_openai must declare WireShapeOpenAIResponses in RequestShapes")
 	}
-	if !formatsNativelyServingResponsesAPI[provcore.FormatOpenAI] {
-		t.Error("FormatOpenAI must be in formatsNativelyServingResponsesAPI")
+	if !formatDefaultServesResponses(provcore.FormatOpenAI) {
+		t.Error("formatDefaultServesResponses(FormatOpenAI) must be true")
+	}
+	// No other registered format may default to serving Responses.
+	for _, f := range provcore.AllFormats() {
+		if f == provcore.FormatOpenAI {
+			continue
+		}
+		if formatDefaultServesResponses(f) {
+			t.Errorf("format %q must NOT default to serving /v1/responses (no adapter declares it)", f)
+		}
 	}
 }

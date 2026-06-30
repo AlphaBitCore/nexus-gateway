@@ -47,6 +47,13 @@ var ErrRewriteUnsupported = errors.New("streaming: frame redactor cannot reconst
 //   - Any other non-nil error is treated as fail-closed as well (no
 //     original replay) — a redactor that hit an internal error must not
 //     leak the unredacted stream.
+//   - On ANY non-nil error return, the implementation MUST record a
+//     `nexus_streaming_modify_degraded_total` root-cause label (via
+//     streaming.RecordModifyDegraded) BEFORE returning — the buffer pipeline
+//     deliberately does NOT bump a coarse counter on the redactor's error arm
+//     (it would double-count, see buffer.go), so this metric is the only
+//     operator signal that a fail-closed redaction-unsupported event occurred.
+//     The production sseFrameRedactor satisfies this in redactUnsupported.
 //
 // The implementation MUST be re-entrant: BufferPipeline.Process can run
 // concurrently for many requests, each with its own redactor instance,

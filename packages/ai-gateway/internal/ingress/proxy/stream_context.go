@@ -78,6 +78,12 @@ type streamState struct {
 	streamMaxBufferBytes int
 	transcoder           canonicalbridge.StreamTranscoder
 	ingressFormat        provcore.Format
+	// allowVerbatim permits the live relay to forward a chunk's RawBytes
+	// byte-for-byte when the decode session marked it Verbatim (genuine
+	// Responses upstream on a /v1/responses ingress). Off on every enforcing
+	// scope and on the chat-ingress auto-upgrade path, so enforcement and
+	// cross-ingress re-encoding always win over passthrough.
+	allowVerbatim bool
 
 	// Relay outputs (stream_relay.go), read by the accounting stage:
 	// the SSE reader (terminal-error classification) and the usage

@@ -211,10 +211,13 @@ type TrafficEventMessage struct {
 	// Latency phase breakdown. Producers omit fields they did not measure.
 	// See docs/developers/architecture "Latency Phase Taxonomy" for the
 	// per-source population matrix and JSONB key schema.
-	UpstreamTtfbMs   *int            `json:"upstreamTtfbMs,omitempty"`
-	UpstreamTotalMs  *int            `json:"upstreamTotalMs,omitempty"`
-	RequestHooksMs   *int            `json:"requestHooksMs,omitempty"`
-	ResponseHooksMs  *int            `json:"responseHooksMs,omitempty"`
+	UpstreamTtfbMs  *int `json:"upstreamTtfbMs,omitempty"`
+	UpstreamTotalMs *int `json:"upstreamTotalMs,omitempty"`
+	RequestHooksMs  *int `json:"requestHooksMs,omitempty"`
+	ResponseHooksMs *int `json:"responseHooksMs,omitempty"`
+	// Microsecond-precision siblings (additive; the _ms fields are unchanged).
+	RequestHooksUs   *int            `json:"requestHooksUs,omitempty"`
+	ResponseHooksUs  *int            `json:"responseHooksUs,omitempty"`
 	LatencyBreakdown json.RawMessage `json:"latencyBreakdown,omitempty"`
 
 	// Agent attestation passthrough. Compliance-proxy sets both when a verified

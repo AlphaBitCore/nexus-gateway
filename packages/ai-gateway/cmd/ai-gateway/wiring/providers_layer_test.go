@@ -17,7 +17,7 @@ import (
 // for provider queries.
 var providerColsForLayer = []string{
 	"id", "name", "displayName", "adapter_type", "baseUrl",
-	"pathPrefix", "apiVersion", "region", "enabled",
+	"pathPrefix", "apiVersion", "region", "enabled", "serves_responses_api",
 }
 
 // modelColsForLayer mirrors the SELECT list for model queries (23 columns).
@@ -95,6 +95,7 @@ func TestProviderStoreAdapter_GetProviderByID_extras(t *testing.T) {
 		&apiVerStr,               // apiVersion (*string)
 		&regionStr,               // region (*string)
 		true,                     // enabled
+		(*bool)(nil),             // serves_responses_api
 	)
 	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
 
@@ -140,6 +141,7 @@ func TestProviderStoreAdapter_GetProviderByID_noExtras(t *testing.T) {
 		(*string)(nil),              // apiVersion (NULL)
 		(*string)(nil),              // region (NULL)
 		true,                        // enabled
+		(*bool)(nil),                // serves_responses_api
 	)
 	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
 

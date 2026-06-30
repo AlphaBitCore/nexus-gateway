@@ -51,6 +51,13 @@ type canonicalRedactOutcome struct {
 	// result is the pipeline result (decision / tags / blocking rule), set
 	// whenever the pipeline executed. nil on bypass / no-pipeline.
 	result *hookcore.CompliancePipelineResult
+	// appended is true only when this call actually appended a response-stage
+	// trace to rec.HooksPipeline (the pipeline executed). It is false on the
+	// early returns — BypassHooks, pipeline build error, nil pipeline — that
+	// return without appending. The Model-A escalation hand-off uses it to decide
+	// whether its accumulator fallback still needs to append (so a bypassed
+	// escalation does not silently drop the accumulated confirm traces).
+	appended bool
 }
 
 // redactCanonicalBuffer runs the response-stage compliance pipeline on the
@@ -148,6 +155,7 @@ func (h *Handler) redactCanonicalBuffer(
 	rec.ResponseHookReasonCode = hookResult.ReasonCode
 	rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, hookResult.Tags)
 	rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "response", hookResult.HookResults)
+	out.appended = true
 	if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
 		rec.BlockingRule = br
 	}
@@ -162,15 +170,20 @@ func (h *Handler) redactCanonicalBuffer(
 		out.errMsg = hookResult.Reason
 		return out
 	}
-	if hookResult.Decision == hookcore.Modify {
-		// A Modify decision MUST produce an applied rewrite. The canonical locus
-		// is fail-closed (the ai-gateway is not in the host packet path → strong
+	// Apply the redaction rewrite whenever the aggregate carries redaction work: a
+	// Modify decision, OR a BlockSoft that masks a co-firing redact. The shared
+	// predicate is the single source of truth used by every consumer (request +
+	// response, stream + non-stream) so keying on Decision==Modify alone cannot
+	// silently drop a real redaction. A standalone soft-block (no spans, no
+	// ModifiedContent) is allow-with-warning and still delivers the original.
+	if hookResult.CarriesRedaction() {
+		// The redaction MUST produce an applied rewrite. The canonical locus is
+		// fail-closed (the ai-gateway is not in the host packet path → strong
 		// compliance): a redaction the policy demanded but could not apply must
 		// NEVER deliver the original. Attempt the rewrite UNCONDITIONALLY — a
-		// Modify carrying only TransformSpans (tool-arg masking) with empty
-		// ModifiedContent still has real work to apply, so the old
-		// len(ModifiedContent)>0 gate silently dropped it and returned the
-		// original unredacted body (fail-OPEN).
+		// rewrite carrying only TransformSpans (tool-arg masking) with empty
+		// ModifiedContent still has real work to apply, so a len(ModifiedContent)>0
+		// gate would silently drop it and return the original unredacted body.
 		redacted, n, rErr := extractor.RewriteResponseBody(r.Context(), canonicalBody, canonicalPath, rewriteContentWithToolArgs(hookResult.ModifiedContent, respContent, hookResult.TransformSpans))
 		if rErr != nil {
 			// On canonical the rewrite is always supported: the sniff above only
@@ -185,11 +198,11 @@ func (h *Handler) redactCanonicalBuffer(
 			return out
 		}
 		if n == 0 {
-			// The Modify produced NO applied change: empty ModifiedContent and no
+			// The rewrite produced NO applied change: empty ModifiedContent and no
 			// applicable tool-arg spans. Mirror the rewrite-error arm — fail
 			// closed so the unredacted original is never delivered. out.rewritten
 			// stays false, so the relay's redacted-copy guard keeps storage NULL.
-			logger.Error("canonical response Modify produced no applied rewrite — failing closed")
+			logger.Error("canonical response redaction produced no applied rewrite — failing closed")
 			out.failClosed = true
 			out.errStatus = http.StatusInternalServerError
 			out.errMsg = "response rewrite produced no change"
@@ -197,6 +210,12 @@ func (h *Handler) redactCanonicalBuffer(
 		}
 		rec.ResponseHookRewriteCount = n
 		rec.ResponseHookRewritten = true
+		// Stamp the DISPOSITION action: an applied rewrite is a redact-deliver, even
+		// when the aggregate Decision is BlockSoft (a soft-block masking a co-firing
+		// redact). Without this the audit row would read Action=block + masked body,
+		// which misrepresents the outcome — the disposition is redact, the Decision is
+		// the (soft-block) ceiling.
+		rec.ResponseAction = hookcore.ActionRedact
 		out.body = redacted
 		out.rewritten = true
 		return out

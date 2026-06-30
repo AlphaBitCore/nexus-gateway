@@ -176,29 +176,18 @@ func (x *bumpedExchange) runRequestPhase() bool {
 		// convert it into a HookOutcomeInput for downstream writers.
 		x.reqHookResult = result
 
-		switch result.Decision {
-		case compliance.RejectHard:
-			logger.Info("request blocked by compliance (REJECT_HARD)",
-				"target", x.flow.targetHost,
-				"transactionId", x.txID,
-				"reason", result.Reason,
-			)
-			if bo.auditEmitter != nil {
-				bo.auditEmitter.Emit(reqInput, auditInfo, result, "BUMP_SUCCESS", http.StatusForbidden, int(time.Since(x.requestStart).Milliseconds()), captureBodyIfEnabled(x.pcCfg.StoreRequestBody, bodyBytes), nil, traffic.UsageMeta{})
-			}
-			stampRejectMarkers(x.w.Header(), bo.identity, x.txID, x.domainRuleID, cpHookOutcomeFromResult(result))
-			if bo.richReject {
-				WriteRejectResponse(x.w, x.r, bo.rejectConfig, x.txID, result.Reason, result.ReasonCode, http.StatusForbidden)
-			} else {
-				// Agent on-host interceptor: minimal 403 with no attribution
-				// body (it does not synthesize a rich error page in the host
-				// outbound path).
-				http.Error(x.w, "Forbidden", http.StatusForbidden)
-			}
-			return true
-
-		case compliance.Modify:
-			// Hook requested inflight redact. Try to rewrite the
+		// Gate the rewrite arm on CarriesRedaction() (Modify OR a BlockSoft masking a
+		// co-firing redact), NOT Decision==Modify — a co-firing soft-block promotes the
+		// aggregate Decision to BlockSoft while carrying the redact's spans/content, so
+		// keying on Modify alone would forward the original request body UNREDACTED to the
+		// upstream provider (the request-side leak this fixes).
+		// Order matters: CarriesRedaction() is checked BEFORE the folded-block refuse
+		// arm so a BlockSoft that masks a co-firing redact takes the redaction arm
+		// (redact-forward, the #13 invariant) instead of being refused.
+		switch {
+		case result.CarriesRedaction():
+			// Hook requested inflight redact (Modify, or a BlockSoft masking a
+			// co-firing redact). Try to rewrite the
 			// upstream body via the resolved adapter. If the adapter
 			// declares ErrRewriteUnsupported, fall back to
 			// "upstream sees original, audit log stores spans" and
@@ -235,6 +224,11 @@ func (x *bumpedExchange) runRequestPhase() bool {
 					result.ReasonCode = core.ReasonRedactInflightUnsupported
 				default:
 					bodyBytes = rewritten
+					// Stamp the DISPOSITION action: an applied rewrite is a redact even
+					// when the aggregate Decision is BlockSoft (a soft-block masking a
+					// co-firing redact) — otherwise the audit row reads action=block for a
+					// redact-delivered request.
+					result.Action = core.ActionRedact
 					// The rewritten copy is the only raw bytes allowed into
 					// the audit store under the redact action — the emitter
 					// selects it via StorageRawBody at build time.
@@ -246,6 +240,33 @@ func (x *bumpedExchange) runRequestPhase() bool {
 				}
 			}
 			// MODIFY does NOT short-circuit upstream; fall through.
+
+		case core.ActionFromDecision(result.Decision) == core.ActionBlock:
+			// Refuse on a folded BLOCK action: RejectHard OR a standalone BlockSoft.
+			// ActionFromDecision folds BlockSoft → block, so the request stage dispatches
+			// it exactly like RejectHard (a hard 403), matching the SSE/response path and
+			// error-taxonomy-architecture.md — there is no soft-block client response.
+			// RejectHard never carries redaction, so its behavior is unchanged; a BlockSoft
+			// masking a co-firing redact already took the CarriesRedaction arm above.
+			logger.Info("request blocked by compliance",
+				"target", x.flow.targetHost,
+				"transactionId", x.txID,
+				"decision", result.Decision,
+				"reason", result.Reason,
+			)
+			if bo.auditEmitter != nil {
+				bo.auditEmitter.Emit(reqInput, auditInfo, result, "BUMP_SUCCESS", http.StatusForbidden, int(time.Since(x.requestStart).Milliseconds()), captureBodyIfEnabled(x.pcCfg.StoreRequestBody, bodyBytes), nil, traffic.UsageMeta{})
+			}
+			stampRejectMarkers(x.w.Header(), bo.identity, x.txID, x.domainRuleID, cpHookOutcomeFromResult(result))
+			if bo.richReject {
+				WriteRejectResponse(x.w, x.r, bo.rejectConfig, x.txID, result.Reason, result.ReasonCode, http.StatusForbidden)
+			} else {
+				// Agent on-host interceptor: minimal 403 with no attribution
+				// body (it does not synthesize a rich error page in the host
+				// outbound path).
+				http.Error(x.w, "Forbidden", http.StatusForbidden)
+			}
+			return true
 		}
 
 		// APPROVE / ABSTAIN / MODIFY-handled — continue to upstream.

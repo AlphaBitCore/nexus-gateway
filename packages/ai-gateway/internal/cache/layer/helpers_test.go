@@ -42,7 +42,7 @@ func discardLogger() *slog.Logger {
 var (
 	providerCols = []string{
 		"id", "name", "displayName", "adapter_type", "baseUrl",
-		"pathPrefix", "apiVersion", "region", "enabled",
+		"pathPrefix", "apiVersion", "region", "enabled", "serves_responses_api",
 	}
 	modelCols = []string{
 		"id", "code", "name", "providerId", "p_name", "p_adapter_type",

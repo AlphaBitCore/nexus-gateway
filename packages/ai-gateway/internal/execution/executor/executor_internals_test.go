@@ -828,8 +828,9 @@ func TestExecute_ResponsesNative_KeepsResponsesWireShape(t *testing.T) {
 	}}
 	reg := newRegistry(t, adapter)
 	res := okResolver()
-	// Real bridge: TargetNativelyServesResponsesAPI(FormatOpenAI)==true (package
-	// map, codec-independent), so the native-responses passthrough branch fires.
+	// Real bridge: ServesResponses(FormatOpenAI, nil)==true (adapter
+	// RequestShapes default, codec-independent), so the native-responses
+	// passthrough branch fires.
 	bridge := canonicalbridge.New(map[provcore.Format]provcore.SchemaCodec{})
 	exec := New(reg, res, nil, bridge)
 

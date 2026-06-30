@@ -123,8 +123,13 @@ func TestBufferPipeline_ModifyWithRedactor_ReplaysMasked(t *testing.T) {
 // TestBufferPipeline_ModifyRedactorUnsupported_FailsClosed asserts that
 // when the FrameRedactor cannot reconstruct the wire (ErrRewriteUnsupported)
 // the buffer fails CLOSED: zero original (unredacted) content reaches the
-// client, the policy error frame is delivered, and the
-// redact_inflight_unsupported counter is bumped once.
+// client and the policy error frame is delivered. The buffer pipeline does NOT
+// itself bump the coarse redact_inflight_unsupported counter on this path (#21):
+// the FrameRedactor owns the degrade signal and records the more-informative
+// ROOT-CAUSE label (the production sseFrameRedactor bumps tlsbump_splice_divergence /
+// tlsbump_tool_arg_undeliverable in redactUnsupported); double-bumping the coarse
+// counter here over-counted the strict-buffer fault. This test's mock redactor does
+// not emit a root-cause label, so the coarse counter stays 0.
 func TestBufferPipeline_ModifyRedactorUnsupported_FailsClosed(t *testing.T) {
 	fr := &mockFrameRedactor{
 		fn: func(_ []*SSEEvent, _ *core.CompliancePipelineResult) ([]*SSEEvent, error) {
@@ -154,8 +159,10 @@ func TestBufferPipeline_ModifyRedactorUnsupported_FailsClosed(t *testing.T) {
 	if !strings.Contains(out, "blocked by policy") {
 		t.Errorf("expected policy error frame on fail-closed, got: %q", out)
 	}
-	if got := readCounter(t, reasonRedactInflightUnsupported); got != 1 {
-		t.Errorf("expected redact_inflight_unsupported counter == 1, got %v", got)
+	// #21: the buffer no longer double-bumps the coarse counter here — the redactor owns
+	// the (root-cause) degrade signal. This mock emits none, so the coarse stays 0.
+	if got := readCounter(t, reasonRedactInflightUnsupported); got != 0 {
+		t.Errorf("expected coarse redact_inflight_unsupported counter == 0 (the redactor owns the degrade label), got %v", got)
 	}
 }
 
@@ -183,8 +190,8 @@ func TestBufferPipeline_ModifyNoRedactor_LegacyDegrade(t *testing.T) {
 	if !strings.Contains(out, "verbatim") || !strings.Contains(out, "bytes") {
 		t.Errorf("expected verbatim replay (Modify ignored without redactor), got: %q", out)
 	}
-	if !strings.Contains(logBuf.String(), "Modify decision degraded to Approve") {
-		t.Errorf("expected WARN log about degradation, got: %s", logBuf.String())
+	if !strings.Contains(logBuf.String(), "degrading to replay") {
+		t.Errorf("expected WARN log about the no-redactor degrade, got: %s", logBuf.String())
 	}
 	if !strings.Contains(logBuf.String(), "buf-legacy-1") {
 		t.Errorf("expected requestId in degradation log, got: %s", logBuf.String())
@@ -233,5 +240,100 @@ func TestBufferPipeline_RedactorConcurrency(t *testing.T) {
 	}
 	if !strings.Contains(b, "BBBB") || strings.Contains(b, "AAAA") {
 		t.Errorf("redaction B cross-contaminated: %q", b)
+	}
+}
+
+// TestBufferPipeline_CoFiringBlockSoft_RedactDelivers proves the #13 appliance-leak fix:
+// a co-firing soft-block promotes the aggregate Decision to BlockSoft but carries the
+// redact's content, so the buffer routes it through the FrameRedactor (gating on
+// CarriesRedaction, not Decision==Modify) and delivers the MASKED stream — not the
+// original, which the old Decision==Modify switch fell through to `default` and replayed
+// raw (the leak this fixes).
+func TestBufferPipeline_CoFiringBlockSoft_RedactDelivers(t *testing.T) {
+	fr := &mockFrameRedactor{
+		fn: func(events []*SSEEvent, _ *core.CompliancePipelineResult) ([]*SSEEvent, error) {
+			out := make([]*SSEEvent, len(events))
+			for i, e := range events {
+				masked := *e
+				masked.Data = strings.ReplaceAll(e.Data, "SECRET", "[REDACTED]")
+				out[i] = &masked
+			}
+			return out, nil
+		},
+	}
+	mp := &mockPipeline{decideFn: func(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
+		// Models a real co-firing redact (a Modify hook's ModifiedContent) masked by a
+		// soft-block: mergeResults would set RedactionApplicable; this test bypasses the
+		// merge, so it sets the flag explicitly to stay faithful to the aggregate shape.
+		return &core.CompliancePipelineResult{Decision: core.BlockSoft, ModifiedContent: []core.ContentBlock{{}}, RedactionApplicable: true, Reason: "soft-block masking redact"}
+	}}
+	bp := NewBufferPipeline(BufferConfig{}, mp, slog.Default()).WithFrameRedactor(fr)
+
+	var output bytes.Buffer
+	result, err := bp.Process(context.Background(), strings.NewReader(makeOpenAISSE("my SECRET token")),
+		&output, &core.HookInput{Stage: "response", RequestID: "buf-cofire-1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := output.String()
+	if strings.Contains(out, "SECRET") {
+		t.Fatalf("co-firing BlockSoft leaked the original content: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("co-firing BlockSoft must redact-deliver the masked stream, got %q", out)
+	}
+	// #13 P3: the disposition is stamped redact (the mask WAS applied), not the BlockSoft
+	// ceiling — so the audit row reads action=redact for the redact-delivered stream.
+	if result == nil || result.Action != core.ActionRedact {
+		t.Fatalf("result.Action = %v, want redact (an applied splice is a redact disposition, not block)", result)
+	}
+}
+
+// TestBufferPipeline_CoFiringBlockSoft_FailOpenDegrade_KeepsBlockAction pins the #13 P3
+// guard: when the redactor CANNOT splice and fails open (agent: returns the original frames
+// with a nil error after stamping ReasonRedactInflightUnsupported), the original was relayed,
+// so the disposition must NOT be re-stamped redact — it stays the aggregate BlockSoft/block.
+func TestBufferPipeline_CoFiringBlockSoft_FailOpenDegrade_KeepsBlockAction(t *testing.T) {
+	fr := &mockFrameRedactor{
+		fn: func(events []*SSEEvent, result *core.CompliancePipelineResult) ([]*SSEEvent, error) {
+			// Agent fail-open degrade: relay the ORIGINAL frames unchanged, nil error,
+			// and stamp the disclosed unsupported reason (mirrors sseFrameRedactor).
+			result.ReasonCode = core.ReasonRedactInflightUnsupported
+			return events, nil
+		},
+	}
+	mp := &mockPipeline{decideFn: func(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
+		return &core.CompliancePipelineResult{Decision: core.BlockSoft, Action: core.ActionBlock, ModifiedContent: []core.ContentBlock{{}}, Reason: "soft-block masking redact"}
+	}}
+	bp := NewBufferPipeline(BufferConfig{}, mp, slog.Default()).WithFrameRedactor(fr)
+
+	var output bytes.Buffer
+	result, err := bp.Process(context.Background(), strings.NewReader(makeOpenAISSE("token")),
+		&output, &core.HookInput{Stage: "response", RequestID: "buf-cofire-failopen"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Action != core.ActionBlock {
+		t.Fatalf("result.Action = %v, want block — the fail-open degrade relayed the original, so it must NOT stamp redact", result)
+	}
+}
+
+// TestBufferPipeline_NoRedactor_Strict_FailsClosed proves GAP B for the appliance: a
+// redaction with no frame redactor wired fails CLOSED (error frame, no original) under
+// strictFailClosed, instead of the agent's degrade-replay.
+func TestBufferPipeline_NoRedactor_Strict_FailsClosed(t *testing.T) {
+	bp := NewBufferPipeline(BufferConfig{}, modifyPipeline(), slog.Default()).WithStrictFailClosed(true)
+
+	var output bytes.Buffer
+	if _, err := bp.Process(context.Background(), strings.NewReader(makeOpenAISSE("verbatim SECRET")),
+		&output, &core.HookInput{Stage: "response", RequestID: "buf-strict-1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := output.String()
+	if strings.Contains(out, "SECRET") {
+		t.Fatalf("strict appliance must not replay the original when no redactor is wired, got %q", out)
+	}
+	if !strings.Contains(out, `"error"`) {
+		t.Fatalf("strict appliance must fail closed with an error frame, got %q", out)
 	}
 }

@@ -124,7 +124,7 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 		case s.resolved.WireShape == typology.WireShapeOpenAIResponses:
 			// Responses is chat-kind but has its own native-passthrough
 			// rule (only targets that natively serve /v1/responses).
-			needsCanonicalization = !h.deps.CanonicalBridge.TargetNativelyServesResponsesAPI(targetFmt)
+			needsCanonicalization = !h.deps.CanonicalBridge.ServesResponses(targetFmt, primary.ServesResponsesAPI)
 		case ingressKind == typology.EndpointKindChat, isEmbeddingsIngress:
 			needsCanonicalization = s.resolved.BodyFormat != targetFmt
 		}
