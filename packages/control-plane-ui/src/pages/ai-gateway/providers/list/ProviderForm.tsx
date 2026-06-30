@@ -26,6 +26,16 @@ export function ProviderForm({ provider, onClose, onSaved }: ProviderFormProps) 
   const [region, setRegion] = useState(provider?.region ?? '');
   const [apiVersion, setApiVersion] = useState(provider?.apiVersion ?? '');
   const [enabled, setEnabled] = useState(provider?.enabled ?? true);
+  // Tri-state: 'default' = inherit the adapter type's capability (null),
+  // 'true'/'false' = explicit per-provider override. Stored as a string so the
+  // shared Select component (string-valued) can drive it directly.
+  const [servesResponsesApi, setServesResponsesApi] = useState<'default' | 'true' | 'false'>(
+    provider?.servesResponsesApi == null
+      ? 'default'
+      : provider.servesResponsesApi
+        ? 'true'
+        : 'false',
+  );
 
   const { mutate, loading } = useMutation(
     (data: unknown) =>
@@ -41,7 +51,15 @@ export function ProviderForm({ provider, onClose, onSaved }: ProviderFormProps) 
   );
 
   const handleSubmit = () => {
-    mutate({ name, displayName, description, baseUrl, adapterType, region: region || undefined, apiVersion: apiVersion || undefined, enabled });
+    mutate({
+      name, displayName, description, baseUrl, adapterType,
+      region: region || undefined,
+      apiVersion: apiVersion || undefined,
+      enabled,
+      // 'default' clears the override back to null (inherit the adapter default);
+      // an explicit choice sends the boolean.
+      servesResponsesApi: servesResponsesApi === 'default' ? null : servesResponsesApi === 'true',
+    });
   };
 
   return (
@@ -122,6 +140,20 @@ export function ProviderForm({ provider, onClose, onSaved }: ProviderFormProps) 
             value={apiVersion}
             onChange={(e) => setApiVersion(e.target.value)}
             placeholder={t('pages:providers.apiVersionPlaceholder')}
+          />
+        </FormField>
+        <FormField
+          label={t('pages:providers.servesResponsesApi')}
+          helpText={t('pages:providers.servesResponsesApiHelp')}
+        >
+          <Select
+            value={servesResponsesApi}
+            onValueChange={(v) => setServesResponsesApi(v as 'default' | 'true' | 'false')}
+            options={[
+              { value: 'default', label: t('pages:providers.servesResponsesApiOption_default') },
+              { value: 'true', label: t('pages:providers.servesResponsesApiOption_true') },
+              { value: 'false', label: t('pages:providers.servesResponsesApiOption_false') },
+            ]}
           />
         </FormField>
         <Stack direction="horizontal" gap="sm" align="center">

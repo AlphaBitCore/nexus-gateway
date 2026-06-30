@@ -180,6 +180,16 @@ export interface Provider {
   region?: string | null;
   headers?: Record<string, string> | null;
   enabled: boolean;
+  /**
+   * Whether this provider's endpoint serves the OpenAI Responses API
+   * (`/v1/responses`). `null`/absent means "use the adapter type's default"
+   * (the gateway decides from the wire adapter's capabilities). `false`
+   * forces the gateway to downgrade to `/v1/chat/completions` for
+   * OpenAI-compatible endpoints that only implement chat completions.
+   * Downgrade-only: a `true` value cannot make an adapter serve Responses
+   * if its wire format does not support it.
+   */
+  servesResponsesApi?: boolean | null;
   createdAt: string;
   updatedAt?: string;
 }
@@ -531,6 +541,9 @@ export interface HookExecutionRecord {
   reason?: string;
   reasonCode?: string;
   latencyMs?: number;
+  // Microsecond-precision per-hook latency (hooks run at microsecond scale, so
+  // latencyMs truncates sub-millisecond hooks to 0). Additive; latencyMs kept.
+  latencyUs?: number;
   error?: string;
   // PascalCase keys (compliance-proxy producer — shared/hooks.HookResult
   // serializes with Go field names since the struct lacks json tags).
@@ -541,6 +554,7 @@ export interface HookExecutionRecord {
   Reason?: string;
   ReasonCode?: string;
   LatencyMs?: number;
+  LatencyUs?: number;
   Order?: number;
   Error?: string;
 }
@@ -755,6 +769,11 @@ export interface TrafficEvent {
   upstreamTotalMs?: number | null;
   requestHooksMs?: number | null;
   responseHooksMs?: number | null;
+  // Microsecond-precision hook aggregates (additive; the _ms fields are kept).
+  // Hooks run at microsecond scale, so the _ms aggregates floor sub-millisecond
+  // hooks to 0; these carry the real value for precise display.
+  requestHooksUs?: number | null;
+  responseHooksUs?: number | null;
   /**
    * Long-tail phase durations. Values are milliseconds EXCEPT keys ending in
    * `_us`, which are microseconds (the sub-millisecond hook framing segments,
