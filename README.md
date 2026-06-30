@@ -1,7 +1,7 @@
 # Nexus Gateway
 
-[![CI](https://github.com/itechchoice/abc-nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](.github/workflows/ci.yml)
-[![Go CI](https://github.com/itechchoice/abc-nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](.github/workflows/go-ci.yml)
+[![CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](.github/workflows/ci.yml)
+[![Go CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](.github/workflows/go-ci.yml)
 [![Coverage gate](https://img.shields.io/badge/coverage-%E2%89%A595%25%20per%20package-brightgreen)](./scripts/check-go-coverage.sh)
 [![Status: 1.1.0](https://img.shields.io/badge/status-1.1.0-brightgreen)](./CHANGELOG.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
@@ -101,6 +101,52 @@ Nexus is designed so that the compliance layer adds as little latency as possibl
 **Upstream connection pool is sized for throughput.** The default pool is 5,000 connections per upstream target, eliminating connection establishment as a bottleneck under sustained load.
 
 **Quota accounting is write-behind.** Per-request quota costs accumulate in-process and flush to Redis on a 250ms interval, removing the synchronous Redis round-trip from the hot path. Configurable back to synchronous mode (`NEXUS_QUOTA_WRITE_BEHIND=0`) for strict accounting requirements.
+
+### Benchmarking & load-testing toolkit
+
+The numbers above are produced and re-verified by a three-repo toolkit, each maintained as its own standalone repository. The load generator was previously the in-tree `tools/loadtest` and was extracted to `nexus-loadtest` (see [CHANGELOG](./CHANGELOG.md)).
+
+| Repo | Role | Key docs |
+|---|---|---|
+| **[llm-gateway-benchmark](https://github.com/AlphaBitCore/llm-gateway-benchmark)** | On-demand AWS rig (CloudFormation + Ansible) that benchmarks Nexus head-to-head against 5 other gateways (Bifrost, LiteLLM, Kong, Portkey, TensorZero) — each isolated on its own box, all hitting one shared mock upstream. Deploy to run, `delete-stack` to tear down. | [ARCHITECTURE](https://github.com/AlphaBitCore/llm-gateway-benchmark/blob/main/ARCHITECTURE.md) · [LOADTEST-RUNBOOK](https://github.com/AlphaBitCore/llm-gateway-benchmark/blob/main/docs/LOADTEST-RUNBOOK.md) · [CONTROL-BOX-RUNBOOK](https://github.com/AlphaBitCore/llm-gateway-benchmark/blob/main/docs/CONTROL-BOX-RUNBOOK.md) |
+| **[nexus-mock-provider](https://github.com/AlphaBitCore/nexus-mock-provider)** | High-performance mock upstream that speaks the real OpenAI / Gemini / Anthropic wire formats (streaming + non-streaming) and echoes requests back with plausible token usage. Removes the real, paid, rate-limited provider from the measurement so you benchmark the gateway, not the model. Listens on `:3062`. | [README](https://github.com/AlphaBitCore/nexus-mock-provider/blob/main/README.md) · [CONFIGURE-NEXUS](https://github.com/AlphaBitCore/nexus-mock-provider/blob/main/CONFIGURE-NEXUS.md) |
+| **[nexus-loadtest](https://github.com/AlphaBitCore/nexus-loadtest)** | Scenario-driven load generator for any OpenAI- or Anthropic-compatible endpoint. Simulates realistic, weighted, multi-turn traffic and reports TTFT, inter-token latency, and token throughput. Scales to tens of thousands of concurrent virtual users from one host. | [README](https://github.com/AlphaBitCore/nexus-loadtest/blob/main/README.md) · [DESIGN](https://github.com/AlphaBitCore/nexus-loadtest/blob/main/DESIGN.md) |
+
+#### Run a quick local benchmark (single gateway)
+
+Measure your local AI Gateway (`:3050`) against the mock upstream — no real provider, no cost:
+
+1. **Start the mock upstream** (in a `nexus-mock-provider` checkout):
+   ```bash
+   make run            # serves :3062, all three specs (OpenAI / Gemini / Anthropic)
+   ```
+2. **Point Nexus at the mock.** Add a provider credential / routing rule whose upstream base URL is `http://localhost:3062` (the mock accepts any API key). See [`CONFIGURE-NEXUS.md`](https://github.com/AlphaBitCore/nexus-mock-provider/blob/main/CONFIGURE-NEXUS.md) for the exact routing setup.
+3. **Run the load generator** (in a `nexus-loadtest` checkout) against the gateway, authenticating with a Nexus virtual key:
+   ```bash
+   go run ./cmd/loadtest -config profiles/realistic.json \
+     -target http://localhost:3050 -vk <your-virtual-key> -out runs/
+   ```
+4. **Read the report** at `runs/<run-id>/` — TTFT, inter-token latency, throughput, and per-tier breakdown. Use `-compare` against an earlier `summary.json` to gate regressions.
+
+#### Run the full head-to-head matrix (AWS)
+
+To compare Nexus against the other gateways on isolated boxes, use the `llm-gateway-benchmark` rig (binaries ship prebuilt in `artifacts/` — nothing compiles on-box):
+
+```bash
+# 1. Deploy infra
+aws cloudformation deploy --stack-name nexus-perf-matrix \
+  --template-file cloudformation/perf-matrix-stack.yaml --capabilities CAPABILITY_IAM \
+  --parameter-overrides KeyName=<your-key> AdminCidr=<your.ip>/32
+# 2. Provision every box (host-native)
+scripts/gen-inventory.sh nexus-perf-matrix ~/.ssh/<your-key>.pem <region>
+cd ansible && ansible-playbook -i inventory.ini site.yml
+# 3. Run the benchmark (one gateway, all tiers → a report each)
+GATEWAY=nexus scripts/bench/run-tiers.sh
+# 4. Tear down when idle (on-demand, cost control)
+aws cloudformation delete-stack --stack-name nexus-perf-matrix
+```
+
+Compare gateways by **TTFT delta** — the shared mock's latency cancels out, so the difference is the gateway's own overhead. Full procedure and the report-validity gate are in the rig's [LOADTEST-RUNBOOK](https://github.com/AlphaBitCore/llm-gateway-benchmark/blob/main/docs/LOADTEST-RUNBOOK.md).
 
 ---
 
