@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed — Request/Response hook timing
+
+- **Streamed responses now record response-hook timing, exactly once per hook.**
+  The streaming response pipeline runs the response stage at every checkpoint, so
+  the live audit-only path previously recorded nothing (`response_hooks_ms` NULL)
+  while the chunked_async path recorded the same hook once per checkpoint (N
+  duplicate rows, an N×-inflated aggregate — observed as a "RESPONSE PIPELINE (63)"
+  list of identical rows). The trace is now folded to one record per hook (summed
+  latency, latest decision) across the ai-gateway live + Model A paths and the
+  shared compliance-proxy/agent path. The audit drawer also collapses any residual
+  duplicates (historical rows) into a single `×N` card.
+
+### Added — microsecond-precision hook timing (additive, backward compatible)
+
+- Per-hook latency is now measured in **microseconds** (`latencyUs`) alongside the
+  existing truncated-millisecond `latencyMs`, with new aggregate columns
+  `request_hooks_us` / `response_hooks_us` beside the unchanged `_ms` columns.
+  Hooks run at microsecond scale, so the millisecond aggregates floored a
+  sub-millisecond hook to `0`; the µs fields carry the real value, surfaced
+  precisely per hook in the control-plane audit drawer. The `_ms` columns / wire
+  ids / values are unchanged. The new binwire field ids are forward-incompatible,
+  so the deploy order is **schema → Hub → producers**.
+
 ### Changed (BREAKING — major version bump)
 - **Hook `onMatch` collapses to a single `action` (approve | redact | block).**
   The orthogonal `onMatch.inflightAction` (approve / block-hard / block-soft /
@@ -40,6 +63,46 @@ All notable changes to this project are documented here. The format follows
   as a 403 reject. The Agent signals a block by dropping the
   connection (no rich error body); the proxies return an attributed 403 whose
   response-stage reason carries rule-ID labels only, never the upstream value.
+### Fixed — co-firing redact + soft-block no longer drops the redaction (security)
+
+- **A redact hook co-firing with a soft-block hook now masks-and-delivers instead of
+  leaking or failing closed.** When a redact hook (`Modify` + masked content/spans) and
+  a soft-block hook fired on the same request or response, the pipeline aggregator
+  promoted the reported `Decision` to `BlockSoft` (the strictest) but DROPPED the redact
+  hook's replacement content, leaving spans without content. Downstream this produced a
+  no-op rewrite that, depending on the path, either failed closed (canonical response)
+  or replayed/forwarded the ORIGINAL unredacted body — a PII leak on the shared buffer
+  pipeline (compliance-proxy appliance included), the agent Model A wire, and both
+  request stages. `mergeResults` now carries the redact's `ModifiedContent`
+  unconditionally, and every redaction consumer gates on the new
+  `decision.CompliancePipelineResult.CarriesRedaction()` predicate (Modify OR a
+  BlockSoft masking a co-firing redact) rather than `Decision==Modify`, so the masked
+  body is applied and delivered on all paths. The audit row stamps the disposition
+  `action=redact` even when the (soft-block) `Decision` ceiling is `BlockSoft`. No
+  config or schema change; behavior is compliance-safe (a hard `block`/`RejectHard`
+  still rejects; a standalone soft-block still delivers-with-warning). The no-redactor
+  buffer degrade is now posture-aware (appliance fail-closed, agent fail-open).
+
+### Changed — three-end streaming-compliance parity via a shared Model A engine
+
+- **The Model A streaming-compliance algorithm is now a single shared engine driving
+  three ends.** The prescan-gated real-time streaming path (bounded tail-hold +
+  union prescan + confirm + escalate-to-buffer redaction) for a redact-scope
+  `chunked_async` stream is extracted into a substrate-agnostic engine
+  (`shared/transport/streaming/modela`). The AI Gateway drives it with a canonical
+  substrate (fail-closed) and the transparent proxy used by the Agent +
+  Compliance Proxy drives it with a raw-SSE-wire substrate (fail-open, NE
+  host-packet safety) — so hooks/compliance behave identically across all three
+  ends while each keeps its own ingress and delivery. The transparent-proxy live
+  path becomes **audit-only** (real-time write-through, observe-only checkpoints,
+  never blocks/rewrites): scope-derived routing sends a `block` scope to buffer and
+  a `redact` scope to Model A (or buffer), so only non-enforcing traffic reaches
+  live. The adoption also closed two latent PII-leak paths in the shipped AI Gateway
+  Model A (a redact masked behind a co-firing soft-block; a memory-pressure eviction
+  of an incomplete content unit). No config or contract change; behavior is
+  compliance-safe (a sub-window value is never delivered raw; storage never persists
+  a raw prefix on an enforcing outcome).
+
 ### Changed — normalized projection is now fully view-time (no migration required)
 
 - **The normalized traffic projection is no longer written on the hot path; it is
