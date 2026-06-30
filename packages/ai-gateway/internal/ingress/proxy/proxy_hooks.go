@@ -17,6 +17,67 @@ import (
 // helpers + the audit tag-set + blocking-rule mappers split out of proxy.go (behavior
 // unchanged). The orchestrator runRequestHooks stays in proxy.go with the request flow.
 
+// hookKey identifies a hook across repeated response-stage scans of one stream
+// (live checkpoints / Model A confirms). Keyed by stable identity — NOT the
+// per-scan slice index Order — so a hook is never split into two rows if the
+// per-checkpoint pipeline rebuild ever shifts ordering.
+type hookKey struct {
+	hookID string
+	implID string
+}
+
+// responseHookAccumulator folds the per-hook results of multiple response-stage
+// scans into ONE record per hook: LatencyMs/LatencyUs are SUMMED (the real scan
+// CPU spent across the stream) and decision/reason/order are overwritten by the
+// latest scan (the last checkpoint that ran is authoritative). The streaming
+// response pipeline runs once per checkpoint/confirm, so appending each scan's
+// results directly would write a hook N times and N×-inflate the response hook
+// aggregates; this accumulator is the single-append guard. Single-writer (the
+// live checkpoint runs on the relay's main goroutine; Model A on its one loop
+// goroutine) so it needs no lock, and the map is lazily allocated so a stream
+// that produces no response-hook results pays nothing.
+type responseHookAccumulator struct {
+	order []hookKey
+	byKey map[hookKey]hookcore.HookResult
+}
+
+func (a *responseHookAccumulator) add(results []hookcore.HookResult) {
+	if len(results) == 0 {
+		return
+	}
+	if a.byKey == nil {
+		a.byKey = make(map[hookKey]hookcore.HookResult, len(results))
+	}
+	for _, r := range results {
+		k := hookKey{hookID: r.HookID, implID: r.ImplementationID}
+		if cur, ok := a.byKey[k]; ok {
+			// Latest scan is authoritative for ALL fields; only the two latency
+			// counters accumulate. Copying the whole struct (rather than a chosen
+			// subset) keeps any future-read field — Tags, Action, BlockingRule — in
+			// sync with the latest scan instead of serving a stale first-scan value.
+			r.LatencyMs += cur.LatencyMs
+			r.LatencyUs += cur.LatencyUs
+			a.byKey[k] = r
+		} else {
+			a.byKey[k] = r
+			a.order = append(a.order, k)
+		}
+	}
+}
+
+// finalize returns the folded per-hook results in first-seen order, or nil when
+// nothing was accumulated (so appendHookTrace is a no-op).
+func (a *responseHookAccumulator) finalize() []hookcore.HookResult {
+	if len(a.order) == 0 {
+		return nil
+	}
+	out := make([]hookcore.HookResult, 0, len(a.order))
+	for _, k := range a.order {
+		out = append(out, a.byKey[k])
+	}
+	return out
+}
+
 func appendHookTrace(existing []audit.HookExecRecord, stage string, results []hookcore.HookResult) []audit.HookExecRecord {
 	if len(results) == 0 {
 		return existing
@@ -32,6 +93,7 @@ func appendHookTrace(existing []audit.HookExecRecord, stage string, results []ho
 			Reason:     r.Reason,
 			ReasonCode: r.ReasonCode,
 			LatencyMs:  r.LatencyMs,
+			LatencyUs:  r.LatencyUs,
 			Error:      r.Error,
 		})
 	}

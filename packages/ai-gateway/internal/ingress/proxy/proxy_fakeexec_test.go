@@ -118,7 +118,10 @@ func (b *fakeBridge) EndpointRoutable(ep typology.WireShape, ingress, target pro
 	return ingress.Valid() && target.Valid()
 }
 
-func (b *fakeBridge) TargetNativelyServesResponsesAPI(target provcore.Format) bool {
+func (b *fakeBridge) ServesResponses(target provcore.Format, override *bool) bool {
+	if override != nil && !*override {
+		return false
+	}
 	if b.targetNativelyServesResponsesAPI != nil {
 		return b.targetNativelyServesResponsesAPI(target)
 	}

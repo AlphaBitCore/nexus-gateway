@@ -26,10 +26,12 @@ func (w *Writer) consumeLoop(connIdx int) {
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
 	armed := false
+	// publish flushes the current batch on connIdx. It is only ever invoked with a
+	// NON-EMPTY batch: the recCh arm fires it at len>=batchMaxCount, and the timer.C arm
+	// fires it only while armed (armed is set only after a record was appended and is
+	// cleared by every publish, so a fired linger timer always has a pending record). The
+	// shutdown path's empty-safe flush lives in drainOnStop.
 	publish := func() {
-		if len(batch) == 0 {
-			return
-		}
 		w.publishBatchOn(connIdx, batch)
 		batch = batch[:0]
 		if armed {
@@ -64,18 +66,35 @@ func (w *Writer) consumeLoop(connIdx int) {
 			armed = false
 			publish()
 		case <-w.stopCh:
-			for {
-				select {
-				case rec := <-w.recCh:
-					batch = append(batch, rec)
-					if len(batch) >= batchMaxCount {
-						publish()
-					}
-				default:
-					publish()
-					return
-				}
+			w.drainOnStop(connIdx, batch)
+			return
+		}
+	}
+}
+
+// drainOnStop empties the bounded queue into batch on shutdown and publishes the
+// remainder on connIdx, bounding each publish at batchMaxCount (same cap as the
+// steady-state path). Split out of consumeLoop's stopCh case so the drain is
+// unit-testable deterministically: its inner select is recCh-vs-default (records-ready
+// wins over default), unlike consumeLoop's main select where stopCh-vs-recCh is random,
+// so exercising the drain THROUGH consumeLoop cannot be forced. Logic-equivalent to the
+// previous inline loop; timer/armed cleanup is irrelevant on the exit path, and the
+// per-publish non-empty guard lives here (so the steady-state publish() never needs it).
+// batch is the consumer's current (possibly lingering) batch, consumed by value.
+func (w *Writer) drainOnStop(connIdx int, batch []*Record) {
+	for {
+		select {
+		case rec := <-w.recCh:
+			batch = append(batch, rec)
+			if len(batch) >= batchMaxCount {
+				w.publishBatchOn(connIdx, batch)
+				batch = batch[:0]
 			}
+		default:
+			if len(batch) > 0 {
+				w.publishBatchOn(connIdx, batch)
+			}
+			return
 		}
 	}
 }

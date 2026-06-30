@@ -120,7 +120,7 @@ func TestMetrics_AllHooksInvokeUnderlyingInstruments(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery(`FROM "Provider"`).
 		WillReturnRows(pgxmock.NewRows(providerCols).
-			AddRow("p1", "openai", nil, "openai", "https://x", "/v1", nil, nil, true))
+			AddRow("p1", "openai", nil, "openai", "https://x", "/v1", nil, nil, true, (*bool)(nil)))
 	if err := l.ReloadProviders(context.Background()); err != nil {
 		t.Fatalf("ReloadProviders: %v", err)
 	}

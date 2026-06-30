@@ -28,11 +28,11 @@ import (
 // 89 base scan destinations plus the 6 payload-JOIN columns
 // (inline_request_body, inline_response_body, request_spill_ref,
 // response_spill_ref, inline_request_encoding, inline_response_encoding). Base
-// columns 0/1/2/66 carry the non-nullable values (ID, Source, Timestamp,
+// columns 0/1/2/68 carry the non-nullable values (ID, Source, Timestamp,
 // CreatedAt); every other base column is SQL NULL. The caller fills the 6
-// payload columns (indices 89..94) to drive the body/spill branches.
+// payload columns (indices 91..96) to drive the body/spill branches.
 func trafficEventCovRow(id string, reqBody, respBody, reqSpill, respSpill []byte, reqEnc, respEnc string) *pgxmock.Rows {
-	const n = 89
+	const n = 91
 	const extra = 6
 	cols := make([]string, n+extra)
 	vals := make([]any, n+extra)
@@ -43,13 +43,13 @@ func trafficEventCovRow(id string, reqBody, respBody, reqSpill, respSpill []byte
 	vals[0] = id
 	vals[1] = "ai-gateway"
 	vals[2] = tNowCov
-	vals[66] = tNowCov
-	vals[89] = nullableBytes(reqBody)
-	vals[90] = nullableBytes(respBody)
-	vals[91] = nullableBytes(reqSpill)
-	vals[92] = nullableBytes(respSpill)
-	vals[93] = reqEnc
-	vals[94] = respEnc
+	vals[68] = tNowCov // CreatedAt — index +2 after request/response_hooks_us
+	vals[91] = nullableBytes(reqBody)
+	vals[92] = nullableBytes(respBody)
+	vals[93] = nullableBytes(reqSpill)
+	vals[94] = nullableBytes(respSpill)
+	vals[95] = reqEnc
+	vals[96] = respEnc
 	return pgxmock.NewRows(cols).AddRow(vals...)
 }
 

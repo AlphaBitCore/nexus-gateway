@@ -122,10 +122,13 @@ type AuditEvent struct {
 	// traffic.PhaseSink attached to the upstream call's context and from
 	// the hook pipeline's per-hook latencyMs. Nil pointers stay NULL on
 	// the wire and on the DB column.
-	UpstreamTtfbMs   *int
-	UpstreamTotalMs  *int
-	RequestHooksMs   *int
-	ResponseHooksMs  *int
+	UpstreamTtfbMs  *int
+	UpstreamTotalMs *int
+	RequestHooksMs  *int
+	ResponseHooksMs *int
+	// Microsecond-precision hook aggregates (additive; siblings of the _ms fields).
+	RequestHooksUs   *int
+	ResponseHooksUs  *int
 	LatencyBreakdown map[string]int
 
 	// DomainRuleID is the matched interception_domain.id when the host

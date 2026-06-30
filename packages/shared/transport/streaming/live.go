@@ -3,7 +3,6 @@ package streaming
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
@@ -54,13 +53,6 @@ func (c *LiveConfig) withDefaults() LiveConfig {
 // PipelineExecutor abstracts the compliance pipeline for testability.
 type PipelineExecutor interface {
 	Execute(ctx context.Context, input *core.HookInput) *core.CompliancePipelineResult
-}
-
-// approvedChunk is a batch of events approved by a checkpoint evaluation.
-type approvedChunk struct {
-	events []*SSEEvent
-	err    error  // non-nil signals the writer should emit an error and stop
-	reason string // human-readable rejection reason, if any
 }
 
 // LivePipeline processes an SSE stream with checkpoint-based compliance core.
@@ -143,9 +135,42 @@ func (l *LivePipeline) CapturedTruncated() bool {
 	return l.captureBuf.Truncated()
 }
 
-// Process reads SSE events from upstream, applies checkpoint-based compliance
-// hooks, and writes approved events to the client writer.
-// Returns the aggregated compliance result.
+// foldHookResults collapses the per-checkpoint scans of the same hook into ONE
+// result: LatencyMs/LatencyUs are summed (the real scan CPU spent across the
+// stream) and every other field is taken from the latest scan (the last checkpoint
+// is authoritative). The chunked_async response pipeline runs once per checkpoint
+// and appends each scan's results, so without this fold the same hook is emitted N
+// times — observed as a "RESPONSE PIPELINE (63)" list of identical rows — and the
+// response hook aggregates are N×-inflated. Keyed by stable identity
+// (HookID+ImplementationID), not the volatile per-scan Order; first-seen order is
+// preserved.
+func foldHookResults(in []core.HookResult) []core.HookResult {
+	if len(in) <= 1 {
+		return in
+	}
+	type key struct{ hookID, implID string }
+	idx := make(map[key]int, len(in))
+	out := make([]core.HookResult, 0, len(in))
+	for _, r := range in {
+		k := key{r.HookID, r.ImplementationID}
+		if i, ok := idx[k]; ok {
+			r.LatencyMs += out[i].LatencyMs
+			r.LatencyUs += out[i].LatencyUs
+			out[i] = r // latest scan authoritative for all non-latency fields
+		} else {
+			idx[k] = len(out)
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// Process reads SSE events from upstream and relays them to the client in REAL TIME
+// (write-through), running observe-only compliance checkpoints on the accumulated
+// content for AUDIT. It never holds back, blocks, or rewrites the wire: an enforcing
+// (block/redact) scope is routed to the buffer / Model A paths upstream, so this
+// path carries only non-enforcing traffic and a checkpoint's decision is recorded
+// but never gates delivery. Returns the aggregated (always-Approve) result.
 func (l *LivePipeline) Process(
 	ctx context.Context,
 	upstream io.Reader,
@@ -184,13 +209,10 @@ func (l *LivePipeline) Process(
 	}
 
 	eventChan := make(chan *SSEEvent, l.config.ChannelSize)
-	approvedChan := make(chan approvedChunk, l.config.ChannelSize)
 
 	var (
-		wg          sync.WaitGroup
-		readerErr   error
-		writerErr   error
-		finalResult *core.CompliancePipelineResult
+		wg        sync.WaitGroup
+		readerErr error
 	)
 
 	// --- Reader goroutine ---
@@ -226,182 +248,88 @@ func (l *LivePipeline) Process(
 		}
 	}()
 
-	// --- Compliance goroutine ---
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(approvedChan)
+	// --- Delivery + observe-only audit (current goroutine) ---
+	// accumulatedAll grows with the cumulative response text (bounded by
+	// MaxBufferSize); strings.Builder keeps the per-event append amortized O(1).
+	// pendingLen counts chars since the last checkpoint so the cadence check stays a
+	// cheap int compare.
+	var (
+		accumulatedAll strings.Builder
+		pendingLen     int
+		totalBytes     int
+		allResults     []core.HookResult
+		auditCapped    bool
+		writerErr      error
+	)
 
-		var (
-			pendingEvents []*SSEEvent
-			// accumulatedAll is the full text accumulated so far (fed to every
-			// checkpoint). pendingText is the text since the last checkpoint.
-			// Both use strings.Builder so appending each SSE delta is amortized
-			// O(1); naive `s += delta` in this per-event loop is O(n²) over the
-			// length of a long stream. pendingLen tracks the
-			// builder's current length so the checkpoint threshold check stays a
-			// cheap int compare instead of len(pendingText.String()).
-			accumulatedAll strings.Builder
-			pendingText    strings.Builder
-			pendingLen     int
-			totalBytes     int
-			allResults     []core.HookResult
-		)
-
-		flushCheckpoint := func() core.Decision {
-			if len(pendingEvents) == 0 && pendingLen == 0 {
-				return core.Approve
-			}
-
-			checkpointInput := buildCheckpointInput(baseInput, accumulatedAll.String())
-
-			// Let caller swap in a Registry-normalized payload so
-			// hooks see structured chat content (model name, tool_calls,
-			// reasoning segments, etc.) instead of the flat-text fallback.
-			// Receives the cumulative raw SSE wire bytes seen so far so
-			// each checkpoint re-normalizes the full accumulated payload
-			// — matches the "hooks operate on what user has seen so far"
-			// chunked_async semantic the user binding specifies.
-			if l.preHook != nil && rawAcc != nil {
-				l.preHook(rawAcc.Snapshot(), checkpointInput)
-			}
-
-			result := l.pipeline.Execute(ctx, checkpointInput)
-			if result == nil {
-				// Pipeline returned nil — treat as approve.
-				return core.Approve
-			}
-
+	// runCheckpoint fires the compliance pipeline OBSERVE-ONLY: it records the hook
+	// results for the audit aggregate but never blocks or rewrites the wire. The
+	// PreHook re-normalizes the cumulative raw bytes so hooks see structured content.
+	runCheckpoint := func() {
+		// Audit-only relay with no executor or no base input has nothing to record —
+		// skip the checkpoint rather than deref a nil. Delivery is independent of the
+		// checkpoint, so the stream still writes through. (Reached when a caller builds
+		// a hookless live pipeline for usage accumulation only, e.g. AI traffic whose
+		// response stage binds no hooks.)
+		if l.pipeline == nil || baseInput == nil {
+			return
+		}
+		checkpointInput := buildCheckpointInput(baseInput, accumulatedAll.String())
+		if l.preHook != nil && rawAcc != nil {
+			l.preHook(rawAcc.Snapshot(), checkpointInput)
+		}
+		if result := l.pipeline.Execute(ctx, checkpointInput); result != nil {
 			allResults = append(allResults, result.HookResults...)
-
-			switch result.Decision {
-			case core.RejectHard:
-				finalResult = &core.CompliancePipelineResult{
-					Decision:    core.RejectHard,
-					Reason:      result.Reason,
-					ReasonCode:  result.ReasonCode,
-					HookResults: allResults,
-				}
-				select {
-				case approvedChan <- approvedChunk{err: fmt.Errorf("blocked by policy"), reason: result.Reason}:
-				case <-ctx.Done():
-				}
-				cancel()
-				// cancel alone doesn't unblock a reader sitting in
-				// upstream.Read — close the upstream so the reader
-				// goroutine exits and wg.Wait() can return (same wedge
-				// as the writer-error and overflow branches).
-				CloseUpstreamOnExit(upstream)
-				return core.RejectHard
-
-			default:
-				// Approve or Abstain — flush pending events.
-				select {
-				case approvedChan <- approvedChunk{events: pendingEvents}:
-				case <-ctx.Done():
-					return core.Approve
-				}
-				pendingEvents = nil
-				pendingText.Reset()
-				pendingLen = 0
-				return core.Approve
-			}
 		}
+	}
 
-		for evt := range eventChan {
-			if ctx.Err() != nil {
-				return
-			}
-
-			deltaText := extractDeltaText(evt)
-			totalBytes += len(evt.Data)
-
-			if totalBytes > l.config.MaxBufferSize {
-				l.logger.Error("live pipeline: max buffer size exceeded", "bytes", totalBytes)
-				select {
-				case approvedChan <- approvedChunk{err: fmt.Errorf("stream buffer exceeded maximum size")}:
-				case <-ctx.Done():
-				}
-				cancel()
-				// cancel doesn't unblock a slow upstream.Read — close
-				// the upstream so the reader goroutine exits and
-				// wg.Wait() can return (same wedge as the writer-error
-				// path).
-				CloseUpstreamOnExit(upstream)
-				return
-			}
-
-			pendingEvents = append(pendingEvents, evt)
-			pendingText.WriteString(deltaText)
-			accumulatedAll.WriteString(deltaText)
-			pendingLen += len(deltaText)
-
-			// Check if we've reached the checkpoint threshold.
-			if pendingLen >= l.config.CheckpointChars {
-				decision := flushCheckpoint()
-				if decision == core.RejectHard {
-					return
-				}
-			}
-		}
-
-		// Final checkpoint: flush remaining accumulated text.
-		flushCheckpoint()
-
-		// Build final aggregate result if not already set by a rejection.
-		if finalResult == nil {
-			finalResult = &core.CompliancePipelineResult{
-				Decision:    core.Approve,
-				HookResults: allResults,
-			}
-		}
-	}()
-
-	// --- Writer goroutine (runs on current goroutine) ---
-	// flusher / canFlush were resolved above against the original client
-	// before MultiWriter wrapping (see comment near captureBuf init).
-	for chunk := range approvedChan {
-		if chunk.err != nil {
-			writerErr = writeErrorAndDone(client)
-			if canFlush {
-				flusher.Flush()
-			}
-			// Drain remaining items so the compliance goroutine does not block.
-			for range approvedChan {
-			}
-			break
-		}
-		writeOK := true
-		for _, evt := range chunk.events {
-			if err := WriteSSEEvent(client, evt); err != nil {
-				writerErr = err
-				cancel()
-				// cancel alone does NOT unblock a reader goroutine
-				// sitting inside upstream.Read. If
-				// upstream is a slow / hung connection, the reader stays
-				// blocked until upstream actually delivers bytes or the
-				// caller's outer defer Close() runs — but Process can't
-				// return until wg.Wait() does, and wg.Wait() can't return
-				// until the reader exits. CloseUpstreamOnExit calls
-				// upstream.(io.Closer).Close synchronously to unblock
-				// the reader's parser.Next; caller's outer defer Close
-				// is idempotent on http.Body.
-				CloseUpstreamOnExit(upstream)
-				writeOK = false
-				break
-			}
-		}
-		if !writeOK {
+	for evt := range eventChan {
+		// AUDIT-ONLY: deliver every event in real time — delivery is NEVER gated on a
+		// checkpoint. A write error closes the upstream so the reader goroutine exits
+		// and wg.Wait() can return (the slow-upstream wedge guard).
+		if err := WriteSSEEvent(client, evt); err != nil {
+			writerErr = err
+			cancel()
+			CloseUpstreamOnExit(upstream)
 			break
 		}
 		if canFlush {
 			flusher.Flush()
 		}
+
+		if auditCapped {
+			continue
+		}
+		deltaText := extractDeltaText(evt)
+		accumulatedAll.WriteString(deltaText)
+		pendingLen += len(deltaText)
+		totalBytes += len(evt.Data)
+		if totalBytes > l.config.MaxBufferSize {
+			// Audit-accumulation cap: stop scanning further content to bound memory,
+			// but KEEP delivering — an audit-only relay must never break a
+			// non-enforcing stream just because it grew past the scan budget.
+			l.logger.Warn("live pipeline: audit accumulation capped at max buffer size", "bytes", totalBytes)
+			auditCapped = true
+			continue
+		}
+		if pendingLen >= l.config.CheckpointChars {
+			runCheckpoint()
+			pendingLen = 0
+		}
 	}
 
-	// Wait for reader and compliance goroutines to finish.
+	// Mandatory final checkpoint (observe-only): scan the trailing content not yet
+	// covered by a periodic checkpoint so a stream shorter than the cadence — or the
+	// tail after the last checkpoint — is still audited once. Skipped when a write
+	// error aborted delivery or when the last checkpoint already covered everything.
+	if writerErr == nil && pendingLen > 0 {
+		runCheckpoint()
+	}
+
+	// Wait for the reader goroutine to finish.
 	wg.Wait()
 
+	finalResult := &core.CompliancePipelineResult{Decision: core.Approve, HookResults: foldHookResults(allResults)}
 	if writerErr != nil {
 		return finalResult, writerErr
 	}

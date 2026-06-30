@@ -30,8 +30,8 @@ import (
 // shape (redactions[] of {start, end, replacement, action, reason}),
 // webhook-forward decodes each redaction into a normalize.TransformSpan.
 // The offsets index a flat joined projection; spans use
-// ContentAddress = "webhook.flat" which ApplySpans does not resolve, so
-// they land in the audit row but are not applied inflight. Inflight
+// ContentAddress = normalize.AddressAuditOnlySentinel which ApplySpans does
+// not resolve, so they land in the audit row but are not applied inflight. Inflight
 // redaction of AI-Guard suggestions requires the internal aiguard-classify
 // path in ai-gateway.
 //
@@ -139,6 +139,17 @@ func NewWebhookForwardWithClient(cfg *core.HookConfig, client *http.Client) (cor
 		projectionOpts: cfg.ProjectionOptions(),
 	}, nil
 }
+
+// MayExceedOnMatch satisfies core.RuntimeEscalatable: webhook-forward can return
+// a decision stricter than its declarative onMatch ceiling. Execute reconciles
+// the remote endpoint's suggested decision against the ceiling via
+// core.StrictestDecision, so a remote reject_hard or modify wins over an approve
+// or redact ceiling. The streaming-routing predicates must therefore treat every
+// webhook-forward hook as may-block AND may-redact regardless of its configured
+// action, so its runtime enforcement is never under-routed onto the audit-only
+// live path. Always true: the reconcile can escalate under any ceiling, so the
+// safe over-route applies unconditionally.
+func (w *WebhookForward) MayExceedOnMatch() bool { return true }
 
 func (w *WebhookForward) Execute(ctx context.Context, input *core.HookInput) (*core.HookResult, error) {
 	// Build payload. The envelope is always included; content visibility
@@ -301,9 +312,9 @@ type webhookRedactionWire struct {
 // redact when the wire field is missing; explicit "strip" / "inject" /
 // "replace" values are honored so the audit record is faithful.
 //
-// ContentAddress is "webhook.flat" because the wire offsets index a flat
-// joined projection that webhook-forward did not construct (the
-// compliance-webhook shim on the AI-Guard side builds it). ApplySpans does
+// ContentAddress is normalize.AddressAuditOnlySentinel because the wire
+// offsets index a flat joined projection that webhook-forward did not construct
+// (the compliance-webhook shim on the AI-Guard side builds it). ApplySpans does
 // not resolve this sentinel, so spans land in the audit row but do not
 // mutate inflight bytes.
 func redactionsToTransformSpans(redactions []webhookRedactionWire, endpoint string) []normalize.TransformSpan {
@@ -327,7 +338,7 @@ func redactionsToTransformSpans(redactions []webhookRedactionWire, endpoint stri
 			Source:         normalize.SourceHook,
 			SourceID:       endpoint,
 			Action:         action,
-			ContentAddress: "webhook.flat",
+			ContentAddress: normalize.AddressAuditOnlySentinel,
 			Start:          r.Start,
 			End:            r.End,
 			Replacement:    r.Replacement,

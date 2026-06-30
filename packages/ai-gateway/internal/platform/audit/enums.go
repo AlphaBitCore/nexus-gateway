@@ -19,8 +19,11 @@ type HookExecRecord struct {
 	Decision   string `json:"decision"`
 	Reason     string `json:"reason,omitempty"`
 	ReasonCode string `json:"reasonCode,omitempty"`
-	LatencyMs  int    `json:"latencyMs"`
-	Error      string `json:"error,omitempty"`
+	// LatencyMs is the truncated integer-ms floor of LatencyUs (backward compat,
+	// never clamped); LatencyUs is the precise microsecond wall-clock per hook.
+	LatencyMs int    `json:"latencyMs"`
+	LatencyUs int    `json:"latencyUs"`
+	Error     string `json:"error,omitempty"`
 }
 
 // CacheStatus is the UNIFIED rollup recorded on traffic_event.cache_status.

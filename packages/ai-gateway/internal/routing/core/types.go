@@ -183,6 +183,12 @@ type RoutingTarget struct {
 	BaseURL         string
 	Region          string
 	Source          string // "primary", "fallback", "recovery"
+	// ServesResponsesAPI mirrors Provider.serves_responses_api (nil = adapter
+	// RequestShapes default). Carried on the routing snapshot so the proxy
+	// stages (cross-format guard, body canonicalization, egress reshape) and
+	// the executor resolve the /v1/responses capability identically without a
+	// per-request DB read.
+	ServesResponsesAPI *bool
 }
 
 // RoutingPlan is the output of route resolution.

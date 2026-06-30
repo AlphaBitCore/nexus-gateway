@@ -66,12 +66,13 @@ func (p *providerStoreAdapter) GetProviderByID(ctx context.Context, providerID s
 		extras["provider.pathPrefix"] = prov.PathPrefix
 	}
 	return provtarget.ProviderRow{
-		ID:          prov.ID,
-		Name:        prov.Name,
-		AdapterType: prov.AdapterType,
-		BaseURL:     prov.BaseURL,
-		Extras:      extras,
-		Disabled:    !prov.Enabled,
+		ID:                 prov.ID,
+		Name:               prov.Name,
+		AdapterType:        prov.AdapterType,
+		BaseURL:            prov.BaseURL,
+		Extras:             extras,
+		Disabled:           !prov.Enabled,
+		ServesResponsesAPI: prov.ServesResponsesAPI,
 	}, nil
 }
 

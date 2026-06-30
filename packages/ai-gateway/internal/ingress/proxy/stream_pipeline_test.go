@@ -212,7 +212,7 @@ func TestHandleStreamWithSubscription_UnmappedHitOrigin_KeepsDefaultTranscoderSe
 	rec := &audit.Record{EndpointType: "chat", GatewayCacheStatus: audit.GatewayCacheHit}
 	r := openAIIngressRequest(t)
 	r = r.WithContext(WithStreamHitOrigin(r.Context(), StreamHitOrigin{
-		WireShape: typology.WireShapeGeminiGenerateContent, // no Format mapping
+		WireShape: typology.WireShapeBedrockConverse, // no Format mapping (event-stream framing)
 	}))
 	w := httptest.NewRecorder()
 

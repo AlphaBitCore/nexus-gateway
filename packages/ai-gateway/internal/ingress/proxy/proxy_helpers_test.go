@@ -1007,7 +1007,7 @@ func TestProxyCache_ChunkSSEReader_RawBytesPassthrough(t *testing.T) {
 		{RawBytes: []byte("data: {\"a\":1}\n\n")},
 		{Done: true, RawBytes: []byte("data: [DONE]\n\n")},
 	}}
-	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	r.usageSink = &chunkUsageHolder{}
 	got, err := io.ReadAll(r)
 	if err != nil {
@@ -1026,7 +1026,7 @@ func TestProxyCache_ChunkSSEReader_DeltaFallback(t *testing.T) {
 		{Delta: "hello"},
 		{Done: true},
 	}}
-	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	r.usageSink = &chunkUsageHolder{}
 	got, _ := io.ReadAll(r)
 	// Should synthesize {"choices":[{"delta":{"content":"hello"}}]}
@@ -1036,7 +1036,7 @@ func TestProxyCache_ChunkSSEReader_DeltaFallback(t *testing.T) {
 }
 
 func TestProxyCache_ChunkSSEReader_NilSub(t *testing.T) {
-	r := newChunkSSEReaderFromSubscription(context.Background(), nil, nil, provcore.FormatOpenAI)
+	r := newChunkSSEReaderFromSubscription(context.Background(), nil, nil, provcore.FormatOpenAI, false)
 	buf := make([]byte, 10)
 	n, err := r.Read(buf)
 	if n != 0 || !errors.Is(err, io.EOF) {
@@ -1046,7 +1046,7 @@ func TestProxyCache_ChunkSSEReader_NilSub(t *testing.T) {
 
 func TestProxyCache_ChunkSSEReader_ProviderErrorSynthesizesFrame(t *testing.T) {
 	sub := &fakeChunkSub{err: errors.New("upstream blew up")}
-	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	r.usageSink = &chunkUsageHolder{}
 	got, _ := io.ReadAll(r)
 	// Must contain an SSE frame with the error message
@@ -1062,7 +1062,7 @@ func TestProxyCache_ChunkSSEReader_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	sub := &fakeChunkSub{err: context.Canceled}
-	r := newChunkSSEReaderFromSubscription(ctx, sub, nil, provcore.FormatOpenAI)
+	r := newChunkSSEReaderFromSubscription(ctx, sub, nil, provcore.FormatOpenAI, false)
 	r.usageSink = &chunkUsageHolder{}
 	buf := make([]byte, 10)
 	_, err := r.Read(buf)

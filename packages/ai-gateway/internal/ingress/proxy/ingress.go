@@ -174,11 +174,11 @@ func stickyKeyFromCtx(ctx context.Context) string {
 // dispatch in canonicalbridge.NewStreamTranscoder (per-Format-family
 // grammar selection — see api.go for the asymmetry rationale).
 //
-// Returns (Format, ok=false) for wire shapes that are not yet routed
-// through Format-keyed SSE transcoder construction (Gemini, Vertex,
-// Bedrock, Cohere, Voyage). Callers MUST check ok and skip the dependent
-// operation when the mapping is undefined — silently returning the empty
-// Format would drive downstream dispatch to an unconfigured codec.
+// Returns (Format, ok=false) for wire shapes with no Format-keyed SSE
+// transcoder construction (Bedrock event-stream framing, Voyage embeddings).
+// Callers MUST check ok and skip the dependent operation when the mapping is
+// undefined — silently returning the empty Format would drive downstream
+// dispatch to an unconfigured codec.
 func WireShapeToBodyFormat(w typology.WireShape) (provcore.Format, bool) {
 	switch w {
 	case typology.WireShapeOpenAIChat,
@@ -189,6 +189,12 @@ func WireShapeToBodyFormat(w typology.WireShape) (provcore.Format, bool) {
 		return provcore.FormatOpenAIResponses, true
 	case typology.WireShapeAnthropicMessages:
 		return provcore.FormatAnthropic, true
+	case typology.WireShapeGeminiGenerateContent:
+		return provcore.FormatGemini, true
+	case typology.WireShapeVertexGenerateContent:
+		return provcore.FormatVertex, true
+	case typology.WireShapeCohereChat:
+		return provcore.FormatCohere, true
 	}
 	return provcore.Format(""), false
 }

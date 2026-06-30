@@ -26,8 +26,20 @@ var errFailClosedUnbuildable = fmt.Errorf("fail-closed compliance hook could not
 // replace it concurrently with in-flight Resolve*/Has* calls — a reader
 // keeps its loaded snapshot for the remainder of its call while the next
 // caller sees the new one. Config invalidation is lazy and non-blocking.
+// configSnapshot bundles the hook-config slice with the generation it was published
+// under, so a reader gets a CONSISTENT (gen, configs) pair from ONE atomic load. The
+// per-generation cache memos (union prefilter, MaxPatternBound) tag their entries with
+// the gen the configs were read under — bundling closes the window where a request could
+// read a new swapGen but the old config (or vice versa) and cache a bound/union derived
+// from one generation's hooks under another's key. swapGen stays the monotonic counter
+// (lockstep with .gen) that Prewarm's staleness recheck and the union close-dance use.
+type configSnapshot struct {
+	gen     uint64
+	configs []core.HookConfig
+}
+
 type PolicyResolver struct {
-	hookConfigs atomic.Pointer[[]core.HookConfig]
+	hookConfigs atomic.Pointer[configSnapshot]
 	registry    *core.HookRegistry
 	logger      *slog.Logger
 
@@ -53,6 +65,12 @@ type PolicyResolver struct {
 	// hook's anchor-stripped patterns) per resolved hook set, tagged with the
 	// swapGen it was built under. See unionprescan.go.
 	union unionState
+
+	// patternBound memoises MaxPatternBound per resolved hook set, tagged with the
+	// generation it was built under (see maxPatternBoundFor in unionprescan.go).
+	boundMu    sync.Mutex
+	boundGen   uint64
+	boundByKey map[string]patternBound
 }
 
 // NewPolicyResolver creates a resolver with an initial hook config snapshot
@@ -66,7 +84,7 @@ func NewPolicyResolver(configs []core.HookConfig, registry *core.HookRegistry, l
 		hookCache: make(map[string]core.Hook),
 	}
 	snapshot := append([]core.HookConfig(nil), configs...)
-	r.hookConfigs.Store(&snapshot)
+	r.hookConfigs.Store(&configSnapshot{gen: 0, configs: snapshot})
 	return r
 }
 
@@ -88,11 +106,13 @@ func NewPolicyResolver(configs []core.HookConfig, registry *core.HookRegistry, l
 func (r *PolicyResolver) Swap(configs []core.HookConfig) {
 	prevGen := r.swapGen.Add(1) - 1
 	snapshot := append([]core.HookConfig(nil), configs...)
-	oldPtr := r.hookConfigs.Swap(&snapshot)
+	// Publish gen+configs as ONE atomic value (lockstep with swapGen) so cache
+	// consumers reading hookConfigs get a consistent pair — see configSnapshot.
+	oldPtr := r.hookConfigs.Swap(&configSnapshot{gen: prevGen + 1, configs: snapshot})
 
 	oldByID := map[string]*core.HookConfig{}
 	if oldPtr != nil {
-		old := *oldPtr
+		old := oldPtr.configs
 		for i := range old {
 			oldByID[old[i].ID] = &old[i]
 		}
@@ -160,80 +180,14 @@ func (r *PolicyResolver) Swap(configs []core.HookConfig) {
 // hands out the same slice. Returns true if a swap occurred.
 func (r *PolicyResolver) SwapIfChanged(configs []core.HookConfig) bool {
 	cur := r.hookConfigs.Load()
-	if cur != nil && len(*cur) == len(configs) && len(configs) > 0 {
+	if cur != nil && len(cur.configs) == len(configs) && len(configs) > 0 {
 		// Fast pointer check: if the backing array is the same, skip.
-		if &(*cur)[0] == &configs[0] {
+		if &cur.configs[0] == &configs[0] {
 			return false
 		}
 	}
 	r.Swap(configs)
 	return true
-}
-
-// Prewarm eagerly builds and caches the hook for every enabled request/response
-// config so the factory's compile cost (notably the Vectorscan database, ~100s
-// of ms) runs OFF the request path — at startup and in the background after each
-// Swap. It is best-effort and idempotent:
-//
-//   - Hooks are built WITHOUT holding hookMu (the compile must not block
-//     resolve()), then inserted under the lock with a double-check.
-//   - It is guarded by swapGen: if a Swap races while Prewarm is building, the
-//     captured generation no longer matches and Prewarm aborts without caching,
-//     so it can never install a hook for a superseded config. The newer Swap
-//     spawns its own Prewarm for the current snapshot.
-//   - Connection-stage hooks are skipped (they are cheap metadata hooks and
-//     resolve() applies an extra connection-compat gate before caching them).
-//
-// A hook left unbuilt (factory error, or aborted prewarm) is simply built
-// lazily by the next resolve(), exactly as before — prewarm only removes the
-// first-request latency spike, never changes correctness.
-func (r *PolicyResolver) Prewarm() {
-	gen := r.swapGen.Load()
-	configs := r.snapshot()
-	for i := range configs {
-		cfg := &configs[i]
-		if !cfg.Enabled || strings.EqualFold(cfg.Stage, "connection") {
-			continue
-		}
-		factory := r.registry.Get(cfg.ImplementationID)
-		if factory == nil {
-			continue
-		}
-		r.hookMu.RLock()
-		_, hit := r.hookCache[cfg.ID]
-		r.hookMu.RUnlock()
-		if hit {
-			continue
-		}
-		// Build outside the lock — the compile is the expensive part and must
-		// not stall concurrent resolve() readers.
-		hook, err := factory(cfg)
-		if err != nil {
-			continue // resolve() will log+skip per its fail posture
-		}
-		r.hookMu.Lock()
-		switch {
-		case r.swapGen.Load() != gen:
-			// A swap raced; this snapshot may be stale. Drop our build.
-			r.hookMu.Unlock()
-			closeHook(hook)
-		case r.hookCache[cfg.ID] != nil:
-			// Someone (resolve or a concurrent prewarm) already built it.
-			r.hookMu.Unlock()
-			closeHook(hook)
-		default:
-			r.hookCache[cfg.ID] = hook
-			r.hookMu.Unlock()
-		}
-	}
-}
-
-// closeHook releases a built-but-unused hook's resources (e.g. a Vectorscan
-// matcher's cgo memory) when prewarm discards it.
-func closeHook(h core.Hook) {
-	if c, ok := h.(io.Closer); ok {
-		_ = c.Close()
-	}
 }
 
 // snapshot returns the current hook config slice. Callers MUST capture
@@ -245,7 +199,19 @@ func (r *PolicyResolver) snapshot() []core.HookConfig {
 	if p == nil {
 		return nil
 	}
-	return *p
+	return p.configs
+}
+
+// loadSnapshot returns the current (gen, configs) pair in one atomic load. Callers
+// that build a per-generation cache entry (BuildPipeline → union/bound memos) MUST use
+// THIS gen — not a separate r.swapGen.Load() — so the entry is tagged with the gen its
+// configs were actually read under (closing the cross-generation cache window).
+func (r *PolicyResolver) loadSnapshot() (uint64, []core.HookConfig) {
+	p := r.hookConfigs.Load()
+	if p == nil {
+		return 0, nil
+	}
+	return p.gen, p.configs
 }
 
 // ResolveHooks returns hooks to run for the given stage and ingress type, sorted
@@ -278,15 +244,19 @@ func (r *PolicyResolver) ResolveHooks(stage, ingressType string, strictFailClose
 }
 
 // resolve filters configs by stage, ingress, and enabled, then instantiates core.
+// It captures the current snapshot once (so a concurrent Swap cannot change the set
+// mid-call) and delegates to resolveFrom. Callers that ALSO need the generation the
+// configs were read under (BuildPipeline, for the per-gen caches) call loadSnapshot +
+// resolveFrom directly so the hooks and the cache gen come from the SAME atomic load.
 func (r *PolicyResolver) resolve(stage, ingressType string, strictFailClosed bool) ([]boundHook, error) {
-	var out []boundHook
+	return r.resolveFrom(r.snapshot(), stage, ingressType, strictFailClosed)
+}
 
-	// Capture the current snapshot once so that a concurrent Swap does
-	// not change the set of configs we iterate over mid-call. Pointers
-	// taken into this slice remain valid for the lifetime of the
-	// returned boundHook slice because Go GC keeps the backing array
-	// alive as long as any pointer references it.
-	configs := r.snapshot()
+// resolveFrom is resolve over an already-captured config snapshot. Pointers taken into
+// `configs` remain valid for the lifetime of the returned boundHook slice (Go GC keeps
+// the backing array alive as long as any pointer references it).
+func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressType string, strictFailClosed bool) ([]boundHook, error) {
+	var out []boundHook
 
 	for i := range configs {
 		cfg := &configs[i]
@@ -410,7 +380,10 @@ func (r *PolicyResolver) BuildPipeline(
 	strictFailClosed bool,
 	logger *slog.Logger,
 ) (*Pipeline, error) {
-	candidates, err := r.ResolveHooks(stage, ingressType, strictFailClosed)
+	// Load the (gen, configs) pair ONCE so the hooks we resolve and the generation
+	// we tag the per-gen caches with come from the same atomic snapshot.
+	gen, configs := r.loadSnapshot()
+	candidates, err := r.resolveFrom(configs, stage, ingressType, strictFailClosed)
 	if err != nil {
 		return nil, err
 	}
@@ -467,8 +440,19 @@ func (r *PolicyResolver) BuildPipeline(
 	// (non-packet-path) callers — matching the build-time UNBUILDABLE posture.
 	p.SetStrictFailClosed(strictFailClosed)
 	// Fold every content hook's raw-body prefilter into one shared scan for this
-	// resolved set (cached per generation). nil => use the per-hook loop.
-	p.unionPrescan = r.unionPrescanFor(filtered)
+	// resolved set (cached per generation). nil => use the per-hook loop. The gen is
+	// the one the configs were loaded under (above), not a fresh read.
+	p.unionPrescan = r.unionPrescanFor(filtered, gen)
+	// Pre-stamp the per-generation cached MaxPatternBound so the streaming hot path
+	// reads O(1) instead of re-walking every hook regex per request. Only the response
+	// stage consumes the bound (Model-A streaming), so skip the cache lookup + signature
+	// work on request/connection-stage builds that never read it. EqualFold for parity
+	// with resolveFrom's stage match (a non-canonical "Response" would otherwise silently
+	// fall back to the per-request lazy compute — the exact cost being optimized away).
+	if strings.EqualFold(stage, "response") {
+		p.maxBounded, p.anyUnbounded = r.maxPatternBoundFor(filtered, gen)
+		p.boundComputed = true
+	}
 	return p, nil
 }
 

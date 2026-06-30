@@ -329,15 +329,16 @@ func (r *Resolver) lookupTarget(ctx context.Context, providerID, modelID string)
 		region = *p.Region
 	}
 	return &core.RoutingTarget{
-		ProviderID:      p.ID,
-		ProviderName:    p.Name,
-		AdapterType:     p.AdapterType,
-		ModelID:         m.ID,
-		ModelCode:       m.Code,
-		ModelName:       m.Name,
-		ProviderModelID: m.ProviderModelID,
-		BaseURL:         p.BaseURL,
-		Region:          region,
+		ProviderID:         p.ID,
+		ProviderName:       p.Name,
+		AdapterType:        p.AdapterType,
+		ModelID:            m.ID,
+		ModelCode:          m.Code,
+		ModelName:          m.Name,
+		ProviderModelID:    m.ProviderModelID,
+		BaseURL:            p.BaseURL,
+		Region:             region,
+		ServesResponsesAPI: p.ServesResponsesAPI,
 	}, nil
 }
 

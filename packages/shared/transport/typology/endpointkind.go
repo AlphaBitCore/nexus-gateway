@@ -63,6 +63,13 @@ const (
 	// /v1/models/{model}). Never carries user content; hook pipeline
 	// and cost layer ignore these.
 	EndpointKindModels EndpointKind = "models"
+
+	// EndpointKindResponses is the OpenAI Responses API (/v1/responses). It is
+	// a chat-FAMILY endpoint for routing / cache / hook purposes (the wire-shape
+	// dispatch KindFromWireShape keeps it chat-kind), but carries its own
+	// endpoint_type label so analytics and the route simulator can distinguish
+	// Responses traffic from /v1/chat/completions.
+	EndpointKindResponses EndpointKind = "responses"
 )
 
 // AllEndpointKinds is the closed enumeration of every defined
@@ -78,6 +85,7 @@ var AllEndpointKinds = []EndpointKind{
 	EndpointKindBatch,
 	EndpointKindJob,
 	EndpointKindModels,
+	EndpointKindResponses,
 }
 
 // IsValid reports whether k is one of the defined EndpointKind constants.

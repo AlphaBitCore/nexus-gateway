@@ -238,6 +238,7 @@ const (
 	EndpointTypeVideoGeneration = typology.EndpointKindVideoGeneration
 	EndpointTypeBatch           = typology.EndpointKindBatch
 	EndpointTypeJob             = typology.EndpointKindJob
+	EndpointTypeResponses       = typology.EndpointKindResponses
 )
 
 // Modality identifies the content modality carried by a request or response.
@@ -294,6 +295,31 @@ type RawContentPrescanner interface {
 	MayMatchRaw(body []byte) bool
 }
 
+// RuntimeEscalatable is the optional capability a hook implements when its
+// runtime decision can be MORE restrictive than the action declared in its
+// onMatch config — it can block or redact even when its declarative ceiling
+// says approve (or redact).
+//
+// The streaming-routing predicates (Pipeline.MayBlock / Pipeline.MayRedact)
+// answer "could this resolved pipeline ever block / redact" by reading each
+// bound hook's declared onMatch action, BEFORE any response bytes are read, to
+// decide whether the response must run in buffered execution. A hook that can
+// exceed its declared action at execution would be under-routed onto the
+// audit-only live path on the strength of a permissive declaration, and its
+// runtime enforcement would be silently dropped. Such a hook reports
+// MayExceedOnMatch()==true so the predicates treat it as both may-block and
+// may-redact regardless of its configured action — the safe over-route
+// direction (a pipeline that buffers but never fires is harmless; one that
+// streams an enforceable block is not).
+//
+// webhook-forward is the canonical implementer: its Execute reconciles the
+// remote endpoint's suggested decision against the admin ceiling via the
+// STRICTEST of the two, so a remote reject_hard / modify overrides an approve
+// or redact ceiling at runtime.
+type RuntimeEscalatable interface {
+	MayExceedOnMatch() bool
+}
+
 // ChatOnly is the applicability helper for hooks that exclusively apply to
 // text-based chat traffic. Embed it into a hook struct to satisfy
 // SupportsEndpoint and SupportsModality: SupportsEndpoint returns true only
@@ -308,10 +334,13 @@ type RawContentPrescanner interface {
 //	}
 type ChatOnly struct{}
 
-// SupportsEndpoint returns true for EndpointTypeChat and for the empty string
-// (backward-compatible default when the caller has not yet classified the
-// endpoint).
-func (ChatOnly) SupportsEndpoint(e EndpointType) bool { return e == EndpointTypeChat || e == "" }
+// SupportsEndpoint returns true for EndpointTypeChat, EndpointTypeResponses
+// (the Responses API is chat-family — same conversational text content), and
+// the empty string (backward-compatible default when the caller has not yet
+// classified the endpoint).
+func (ChatOnly) SupportsEndpoint(e EndpointType) bool {
+	return e == EndpointTypeChat || e == EndpointTypeResponses || e == ""
+}
 
 // SupportsModality returns true for ModalityText and for the empty string.
 func (ChatOnly) SupportsModality(m Modality) bool { return m == ModalityText || m == "" }

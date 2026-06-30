@@ -14,6 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/modela"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -35,7 +36,7 @@ func modelAContentSize(c provcore.Chunk) int {
 // Model-A stream that approved or hit a false positive would leave
 // ResponseHookDecision empty — indistinguishable to a SIEM from "no response
 // hook configured" — and would lose any tags the confirm carried.
-func stampModelAResponseHook(rec *audit.Record, res *hookcore.CompliancePipelineResult) {
+func stampModelAResponseHook(rec *audit.Record, acc *responseHookAccumulator, res *hookcore.CompliancePipelineResult) {
 	if rec == nil || res == nil {
 		return
 	}
@@ -43,7 +44,14 @@ func stampModelAResponseHook(rec *audit.Record, res *hookcore.CompliancePipeline
 	rec.ResponseHookReason = res.Reason
 	rec.ResponseHookReasonCode = res.ReasonCode
 	rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, res.Tags)
-	rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "response", res.HookResults)
+	// Fold into the accumulator instead of appending here: a stream can run
+	// several false-positive confirms, and appending each would write the same
+	// hook N times and N×-inflate the response hook aggregates. runModelAStream
+	// appends the folded trace once at stream end (unless escalation already wrote
+	// the authoritative full-buffer scan via redactCanonicalBuffer).
+	if acc != nil {
+		acc.add(res.HookResults)
+	}
 	rec.ResponseAction = hookcore.ActionFromDecision(res.Decision)
 }
 
@@ -54,10 +62,15 @@ func stampModelAResponseHook(rec *audit.Record, res *hookcore.CompliancePipeline
 // probe cannot be built (no cache, build error, or no response rules), it returns
 // an "always confirm" prescan so the gate fails safe to a full confirm on every
 // checkpoint rather than silently skipping enforcement.
-func (h *Handler) buildResponsePrescan(ctx context.Context, s *streamState) func([]byte) bool {
+// buildResponsePrescan returns the cheap union prefilter for the Model-A relay AND the
+// flush-before-deliver lookahead (modela.Config.MaxPatternBytes) DERIVED from the
+// resolved response pipeline's longest contiguous enforceable match — floored at
+// modela.DefaultMaxPatternBytes so it never drops below the proven-safe baseline. The
+// lookahead is the package default whenever no pipeline resolves (always-confirm path).
+func (h *Handler) buildResponsePrescan(ctx context.Context, s *streamState) (func([]byte) bool, int) {
 	alwaysConfirm := func([]byte) bool { return true }
 	if h.deps == nil || h.deps.HookConfigCache == nil {
-		return alwaysConfirm
+		return alwaysConfirm, modela.DefaultMaxPatternBytes
 	}
 	var epType hookcore.EndpointType
 	if ingress, ok := IngressFromContext(s.r.Context()); ok {
@@ -70,9 +83,13 @@ func (h *Handler) buildResponsePrescan(ctx context.Context, s *streamState) func
 		s.logger,
 	)
 	if err != nil || probe == nil {
-		return alwaysConfirm
+		return alwaysConfirm, modela.DefaultMaxPatternBytes
 	}
-	return probe.MayMatchRawContent
+	maxPattern := modela.DefaultMaxPatternBytes
+	if bound, _ := probe.MaxPatternBound(); bound > maxPattern {
+		maxPattern = bound // a longer contiguous enforceable pattern needs a wider lookahead
+	}
+	return probe.MayMatchRawContent, maxPattern
 }
 
 // writeEncodedChunk forward-encodes one canonical BODY chunk through the shared

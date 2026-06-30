@@ -173,7 +173,7 @@ func TestChunkUsageHolder_NilReceiverAndNilUsage(t *testing.T) {
 
 func TestChunkSSEReader_NilSubReturnsEOF(t *testing.T) {
 	// nil sub triggers the "closed = true; return 0, io.EOF" arm.
-	rd := newChunkSSEReaderFromSubscription(context.Background(), nil, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), nil, nil, provcore.FormatOpenAI, false)
 	buf := make([]byte, 16)
 	n, err := rd.Read(buf)
 	if n != 0 || err == nil {
@@ -241,7 +241,7 @@ func (f *queuedChunkSub) Close() error { return nil }
 func TestChunkSSEReader_ProviderErrorEmitsSSEFrame(t *testing.T) {
 	pErr := errors.New("upstream disconnected")
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{{err: pErr}}}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	buf := make([]byte, 4096)
@@ -263,7 +263,7 @@ func TestChunkSSEReader_DoneChunkWithRawBytes(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{
 		{chunk: provcore.Chunk{Done: true, RawBytes: terminal}},
 	}}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	buf := make([]byte, 64)
@@ -307,7 +307,7 @@ func TestChunkSSEReader_PassthroughMultiChunk_ByteLossless(t *testing.T) {
 	// Read with a 1-byte buffer to force maximal partial reads across the sliding
 	// window + backing-array reuse — the harshest aliasing exposure.
 	sub := &queuedChunkSub{entries: append([]queuedChunkEntry(nil), entries...)}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 	var got bytes.Buffer
 	one := make([]byte, 1)
@@ -388,7 +388,7 @@ func TestChunkSSEReader_DeltaSynthesisedOpenAIEnvelope(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{
 		{chunk: provcore.Chunk{Delta: "hello "}},
 	}}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	buf := make([]byte, 256)
@@ -408,7 +408,7 @@ func TestChunkSSEReader_DefaultArmYieldsZero(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{
 		{chunk: provcore.Chunk{}},
 	}}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	buf := make([]byte, 16)

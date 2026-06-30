@@ -12,7 +12,7 @@ import (
 // loadProviders reads every Provider row.
 func (l *Layer) loadProviders(ctx context.Context) (map[string]store.Provider, error) {
 	rows, err := l.pool.Query(ctx, `
-		SELECT id, name, "displayName", adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled
+		SELECT id, name, "displayName", adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, serves_responses_api
 		FROM "Provider"
 	`)
 	if err != nil {
@@ -24,7 +24,7 @@ func (l *Layer) loadProviders(ctx context.Context) (map[string]store.Provider, e
 	for rows.Next() {
 		var p store.Provider
 		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.AdapterType, &p.BaseURL,
-			&p.PathPrefix, &p.APIVersion, &p.Region, &p.Enabled); err != nil {
+			&p.PathPrefix, &p.APIVersion, &p.Region, &p.Enabled, &p.ServesResponsesAPI); err != nil {
 			return nil, fmt.Errorf("cachelayer: scan provider: %w", err)
 		}
 		out[p.ID] = p

@@ -466,6 +466,11 @@ type chunkSSEReader struct {
 	err           error
 	transcoder    canonicalbridge.StreamTranscoder // non-nil for cross-format; nil for passthrough
 	ingressFormat provcore.Format                  // ingress wire shape; drives SSE error-frame envelope (G4)
+	// allowVerbatim forwards a chunk's RawBytes byte-for-byte when the decode
+	// session marked it Verbatim (genuine Responses upstream on a non-enforced
+	// /v1/responses ingress), bypassing the transcoder so built-in-tool / audio
+	// events survive. Off everywhere else, so a Verbatim flag is ignored.
+	allowVerbatim bool
 	// termErr publishes the reader's terminal failure (if any) for the
 	// post-pump audit stamp. nil = the stream reached a clean EOF. It is
 	// written once from the reader goroutine on the terminal Read and read
@@ -498,8 +503,8 @@ func (r *chunkSSEReader) terminalError() *streamTerminalError {
 	return r.termErr.Load()
 }
 
-func newChunkSSEReaderFromSubscription(ctx context.Context, sub streamcache.ChunkSubscription, transcoder canonicalbridge.StreamTranscoder, ingressFormat provcore.Format) *chunkSSEReader {
-	return &chunkSSEReader{ctx: ctx, sub: sub, transcoder: transcoder, ingressFormat: ingressFormat}
+func newChunkSSEReaderFromSubscription(ctx context.Context, sub streamcache.ChunkSubscription, transcoder canonicalbridge.StreamTranscoder, ingressFormat provcore.Format, allowVerbatim bool) *chunkSSEReader {
+	return &chunkSSEReader{ctx: ctx, sub: sub, transcoder: transcoder, ingressFormat: ingressFormat, allowVerbatim: allowVerbatim}
 }
 
 func (r *chunkSSEReader) Read(p []byte) (int, error) {
@@ -558,23 +563,39 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 		r.usageSink.record(chunk.Usage)
 	}
 
+	// verbatim forwards the upstream frame byte-for-byte, bypassing the
+	// transcoder, when the decode session marked the chunk Verbatim and this
+	// lane allows it (non-enforced /v1/responses passthrough). It preserves
+	// built-in-tool / audio events the canonical waist cannot represent.
+	verbatim := r.allowVerbatim && chunk.Verbatim && len(chunk.RawBytes) > 0
+
 	switch {
 	case chunk.Done:
-		// Cross-format: transcoder synthesises the ingress-format terminal
-		// events (e.g. Anthropic message_stop, Gemini finishReason frame).
-		// Passthrough: forward the provider's raw terminal frame so that
-		// native ingress clients (Anthropic SDK, Gemini SDK, etc.) receive
-		// the typed terminator they expect.
-		if r.transcoder != nil {
+		// Verbatim: forward the provider's real terminal frame (response.completed
+		// with its full payload). Cross-format: transcoder synthesises the
+		// ingress-format terminal events (e.g. Anthropic message_stop, Gemini
+		// finishReason frame). Passthrough: forward the provider's raw terminal
+		// frame so native ingress clients receive the typed terminator they expect.
+		switch {
+		case verbatim:
+			r.scratch = append(r.scratch[:0], chunk.RawBytes...)
+			r.buf = r.scratch
+		case r.transcoder != nil:
 			b, _ := r.transcoder.Write(r.ctx, chunk)
 			if len(b) > 0 {
 				r.buf = b
 			}
-		} else if len(chunk.RawBytes) > 0 {
+		case len(chunk.RawBytes) > 0:
 			r.scratch = append(r.scratch[:0], chunk.RawBytes...)
 			r.buf = r.scratch
 		}
 		r.closed = true
+	case verbatim:
+		// Genuine Responses frame on the non-enforced passthrough lane: forward
+		// the original bytes (built-in-tool / audio events included) instead of
+		// re-encoding the decoded canonical fields.
+		r.scratch = append(r.scratch[:0], chunk.RawBytes...)
+		r.buf = r.scratch
 	case r.transcoder != nil:
 		// Cross-format: delegate all non-Done chunks to the transcoder so
 		// provider-native RawBytes are never forwarded to the client.

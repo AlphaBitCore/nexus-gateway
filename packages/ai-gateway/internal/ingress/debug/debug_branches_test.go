@@ -225,7 +225,7 @@ func (s stubBridgeForDebug) EndpointRoutable(ep typology.WireShape, ingress, pro
 	return s.routable
 }
 
-func (s stubBridgeForDebug) TargetNativelyServesResponsesAPI(target provcore.Format) bool {
+func (s stubBridgeForDebug) ServesResponses(target provcore.Format, override *bool) bool {
 	return false
 }
 

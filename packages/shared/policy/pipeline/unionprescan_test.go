@@ -171,18 +171,18 @@ func TestUnion_CacheAndGeneration(t *testing.T) {
 	r := NewPolicyResolver(nil, core.NewHookRegistry(), nil)
 	hooks := []boundHook{bh(newPrescanHook(t, `secret`, `\btoken\b`), "a")}
 
-	m1 := r.unionPrescanFor(hooks)
+	m1 := r.unionPrescanFor(hooks, r.swapGen.Load())
 	if m1 == nil {
 		t.Fatal("expected a union matcher")
 	}
-	m2 := r.unionPrescanFor(hooks)
+	m2 := r.unionPrescanFor(hooks, r.swapGen.Load())
 	if m1 != m2 {
 		t.Error("expected the cached matcher on the second call within one generation")
 	}
 
 	prev := r.swapGen.Add(1) - 1 // simulate a Swap (increment, capture pre-gen)
 	r.closeUnionsIfGen(prev)     // Swap closes only the previous generation's unions
-	m3 := r.unionPrescanFor(hooks)
+	m3 := r.unionPrescanFor(hooks, r.swapGen.Load())
 	if m3 == nil {
 		t.Fatal("expected a rebuilt union after generation bump")
 	}
@@ -198,20 +198,20 @@ func TestUnion_EmptyOrDupIDFallsBack(t *testing.T) {
 	r := NewPolicyResolver(nil, core.NewHookRegistry(), nil)
 
 	emptyID := []boundHook{{hook: newPrescanHook(t, `secret`), config: &core.HookConfig{ID: ""}}}
-	if m := r.unionPrescanFor(emptyID); m != nil {
+	if m := r.unionPrescanFor(emptyID, r.swapGen.Load()); m != nil {
 		t.Error("empty hook ID must fall back to the per-hook loop (nil union)")
 	}
 	nilCfg := []boundHook{{hook: newPrescanHook(t, `secret`), config: nil}}
-	if m := r.unionPrescanFor(nilCfg); m != nil {
+	if m := r.unionPrescanFor(nilCfg, r.swapGen.Load()); m != nil {
 		t.Error("nil hook config must fall back (nil union)")
 	}
 	dupID := []boundHook{bh(newPrescanHook(t, `a`), "x"), bh(newPrescanHook(t, `b`), "x")}
-	if m := r.unionPrescanFor(dupID); m != nil {
+	if m := r.unionPrescanFor(dupID, r.swapGen.Load()); m != nil {
 		t.Error("duplicate hook ID must fall back (nil union)")
 	}
 	// Sanity: a clean, unique-ID set still unions.
 	ok := []boundHook{bh(newPrescanHook(t, `a`), "x"), bh(newPrescanHook(t, `b`), "y")}
-	if m := r.unionPrescanFor(ok); m == nil {
+	if m := r.unionPrescanFor(ok, r.swapGen.Load()); m == nil {
 		t.Error("unique non-empty IDs should produce a union")
 	}
 }
@@ -254,7 +254,7 @@ func TestUnion_ConcurrentSwapNoPanic(t *testing.T) {
 			defer builders.Done()
 			hooks := mk(id)
 			for range 5000 {
-				if m := r.unionPrescanFor(hooks); m != nil {
+				if m := r.unionPrescanFor(hooks, r.swapGen.Load()); m != nil {
 					_ = m.Scan([]string{"benign body without any token here"}, true)
 				}
 			}

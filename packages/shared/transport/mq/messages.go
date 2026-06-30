@@ -265,10 +265,15 @@ type TrafficEventMessage struct {
 	//   LatencyBreakdown — Per-source phase durations (ms); key set is closed per source.
 	//
 	// our_overhead_ms is not on the wire — derived as LatencyMs - UpstreamTotalMs (≥0) at read time.
-	UpstreamTtfbMs   *int           `json:"upstreamTtfbMs,omitempty"`
-	UpstreamTotalMs  *int           `json:"upstreamTotalMs,omitempty"`
-	RequestHooksMs   *int           `json:"requestHooksMs,omitempty"`
-	ResponseHooksMs  *int           `json:"responseHooksMs,omitempty"`
+	UpstreamTtfbMs  *int `json:"upstreamTtfbMs,omitempty"`
+	UpstreamTotalMs *int `json:"upstreamTotalMs,omitempty"`
+	RequestHooksMs  *int `json:"requestHooksMs,omitempty"`
+	ResponseHooksMs *int `json:"responseHooksMs,omitempty"`
+	// Microsecond-precision siblings of RequestHooksMs / ResponseHooksMs. Hooks run
+	// at microsecond scale, so the _ms aggregates truncate sub-millisecond hooks to
+	// 0; these carry the real value. Additive — the _ms fields are unchanged.
+	RequestHooksUs   *int           `json:"requestHooksUs,omitempty"`
+	ResponseHooksUs  *int           `json:"responseHooksUs,omitempty"`
 	LatencyBreakdown map[string]int `json:"latencyBreakdown,omitempty"`
 
 	// AttestationVerified and AttestationAgentID are set by the compliance-proxy

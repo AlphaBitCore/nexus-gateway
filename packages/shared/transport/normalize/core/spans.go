@@ -77,3 +77,32 @@ type TransformSpan struct {
 // directly so non-redact sources (cache normaliser, cache_control
 // inject) flow through the same audit channel.
 type RedactionSpan = TransformSpan
+
+// AddressAuditOnlySentinel is the ContentAddress a span carries when it
+// records WHAT was flagged but cannot be applied to any payload — the
+// webhook-forward hook emits it because the webhook reports wire offsets
+// against a flat body the gateway never reconstructs. ApplySpans drops
+// such a span (its address resolves to no content block), so it lands in
+// the audit row only, never mutating delivered or stored bytes.
+//
+// It is the single source of truth for that sentinel: the webhook producer
+// and IsAuditOnlySentinelAddress both reference this const so they cannot
+// drift. A future audit-only span family adds its sentinel here.
+const AddressAuditOnlySentinel = "webhook.flat"
+
+// IsAuditOnlySentinelAddress reports whether a ContentAddress is a known
+// audit-only sentinel — a span that records a flag for the audit log but
+// is NOT applicable to delivered/stored bytes.
+//
+// Callers deciding "does this result carry an APPLICABLE redaction"
+// (decision.CompliancePipelineResult via the pipeline aggregator) use the
+// NEGATION of this as a deliberate DENYLIST, not an allowlist of resolvable
+// address grammars: an unknown address is treated as applicable (fail-safe
+// over-block on a dormant path), whereas an allowlist would mis-classify a
+// future resolvable address family as inapplicable and risk a leak. This is
+// NOT a payload-aware resolvability check — a malformed/empty address also
+// fails ApplySpans yet is not a sentinel; the predicate answers only "is
+// this a recognised audit-only marker".
+func IsAuditOnlySentinelAddress(addr string) bool {
+	return addr == AddressAuditOnlySentinel
+}

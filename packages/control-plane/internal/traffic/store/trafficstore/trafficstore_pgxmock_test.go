@@ -42,7 +42,7 @@ func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
 // accept. extra appends additional nil columns for GetTrafficEvent's payload
 // JOIN (request/response body + spill refs).
 func trafficEventRow(extra int) *pgxmock.Rows {
-	const n = 89
+	const n = 91
 	cols := make([]string, n+extra)
 	vals := make([]any, n+extra)
 	for i := range cols {
@@ -52,7 +52,7 @@ func trafficEventRow(extra int) *pgxmock.Rows {
 	vals[0] = "evt1"       // ID (string)
 	vals[1] = "ai-gateway" // Source (string)
 	vals[2] = tNow         // Timestamp (time.Time)
-	vals[66] = tNow        // CreatedAt (time.Time)
+	vals[68] = tNow        // CreatedAt (time.Time) — index +2 after request/response_hooks_us
 	return pgxmock.NewRows(cols).AddRow(vals...)
 }
 

@@ -165,10 +165,11 @@ func anonEchoCtx(req *http.Request, rec *httptest.ResponseRecorder) echo.Context
 
 // Test fixtures: column lists + row builders mirroring store/
 
-// providerCols mirrors the 13-column GetProvider / Create / Update projection.
+// providerCols mirrors the 14-column GetProvider / Create / Update projection
+// (serves_responses_api sits between enabled and headers).
 var providerCols = []string{
 	"id", "name", "displayName", "description", "adapter_type", "baseUrl",
-	"pathPrefix", "apiVersion", "region", "enabled", "headers",
+	"pathPrefix", "apiVersion", "region", "enabled", "serves_responses_api", "headers",
 	"createdAt", "updatedAt",
 }
 
@@ -178,6 +179,7 @@ var providerListCols = append(append([]string{}, providerCols...), "model_count"
 func strPtr(s string) *string   { return &s }
 func intPtr(n int) *int         { return &n }
 func f64Ptr(f float64) *float64 { return &f }
+func boolPtr(b bool) *bool      { return &b }
 
 // nowFixture returns a stable UTC timestamp suitable for fixture rows.
 func nowFixture() time.Time { return time.Now().UTC().Truncate(time.Second) }
@@ -190,7 +192,7 @@ func makeProviderRow(now time.Time) []any {
 	return []any{
 		"prov-1", "test-provider", &displayName, &desc, "openai",
 		"https://api.test.com", "/test", &apiVer, &region, true,
-		json.RawMessage(`{"x":"y"}`), now, now,
+		boolPtr(false), json.RawMessage(`{"x":"y"}`), now, now,
 	}
 }
 

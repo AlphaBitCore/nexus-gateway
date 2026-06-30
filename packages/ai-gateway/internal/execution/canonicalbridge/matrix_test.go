@@ -341,21 +341,28 @@ func TestSubsetFields_CoversCanonicalContract(t *testing.T) {
 	}
 }
 
-func TestTargetNativelyServesResponsesAPI(t *testing.T) {
-	// The native-passthrough set governs which TARGET formats can
-	// receive /v1/responses traffic verbatim (no Responses↔canonical
-	// codec). The set is intentionally narrow — only providers whose
-	// /v1/responses endpoint has been verified with a captured 200.
-	// Drift here is the failure mode the cross-format guard
-	// catches; this test pins the current sanctioned set.
+func TestServesResponses(t *testing.T) {
+	// ServesResponses governs whether a /v1/responses request is sent
+	// upstream Responses-shape (true) or canonicalized to chat (false).
+	// The default is the adapter RequestShapes default; the per-provider
+	// override is downgrade-only.
 	b := testBridge(t)
-	if !b.TargetNativelyServesResponsesAPI(provcore.FormatOpenAI) {
-		t.Errorf("FormatOpenAI must natively serve /v1/responses (lockstep with spec_openai RequestShapes)")
+	if !b.ServesResponses(provcore.FormatOpenAI, nil) {
+		t.Errorf("FormatOpenAI must serve /v1/responses by default (lockstep with spec_openai RequestShapes)")
 	}
-	// Bedrock must NOT be in the native-passthrough set (uses AWS
-	// event-stream framing — no SSE on streams).
-	if b.TargetNativelyServesResponsesAPI(provcore.FormatBedrock) {
-		t.Errorf("FormatBedrock must NOT serve /v1/responses natively")
+	// Bedrock has no Responses codec (AWS event-stream framing).
+	if b.ServesResponses(provcore.FormatBedrock, nil) {
+		t.Errorf("FormatBedrock must NOT serve /v1/responses")
+	}
+	// Override is downgrade-only: false wins for an OpenAI target.
+	no := false
+	if b.ServesResponses(provcore.FormatOpenAI, &no) {
+		t.Errorf("override=false must force canonical(chat) even for FormatOpenAI")
+	}
+	// Override=true cannot grant a capability the adapter lacks.
+	yes := true
+	if b.ServesResponses(provcore.FormatAnthropic, &yes) {
+		t.Errorf("override=true must NOT make a non-Responses adapter serve /v1/responses")
 	}
 }
 

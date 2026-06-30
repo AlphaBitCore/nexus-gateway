@@ -43,6 +43,25 @@ func makeOpenAISSE(deltas ...string) string {
 	return sb.String()
 }
 
+func TestLivePipeline_NilExecutorAndNilBase_NoPanic(t *testing.T) {
+	// A hookless live pipeline (nil executor) built for usage accumulation only, with a
+	// nil base input, must not panic at the checkpoint — it skips checkpoint recording
+	// and still delivers every event (audit-only write-through).
+	lp := NewLivePipeline(LiveConfig{CheckpointChars: 5}, nil, slog.Default())
+	input := makeOpenAISSE("Hello", " ", "World", "!")
+	var output bytes.Buffer
+	result, err := lp.Process(context.Background(), strings.NewReader(input), &output, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Decision != core.Approve {
+		t.Fatalf("audit-only relay must return Approve, got %v", result)
+	}
+	if out := output.String(); !strings.Contains(out, "Hello") || !strings.Contains(out, "World") {
+		t.Fatalf("audit-only relay must deliver every event, got %q", out)
+	}
+}
+
 func TestLivePipeline_AllApproved(t *testing.T) {
 	mp := &mockPipeline{}
 	logger := slog.Default()
@@ -88,21 +107,21 @@ func TestLivePipeline_AllApproved(t *testing.T) {
 	}
 }
 
+// TestLivePipeline_RejectAtCheckpoint pins the AUDIT-ONLY contract: a checkpoint
+// hook returning RejectHard on the live path NEVER blocks — every event is delivered
+// write-through, no in-band error frame is emitted, and Process returns Approve. The
+// live path carries only non-enforcing traffic (enforcing scopes route to buffer /
+// Model A upstream), so a hook decision is observed for audit but never gates the wire.
 func TestLivePipeline_RejectAtCheckpoint(t *testing.T) {
 	callCount := 0
 	mp := &mockPipeline{
 		decideFn: func(ctx context.Context, input *core.HookInput) *core.CompliancePipelineResult {
 			callCount++
-			// Reject on second checkpoint.
+			// Even an enforcing RejectHard must NOT block the audit-only live path.
 			if callCount >= 2 {
-				return &core.CompliancePipelineResult{
-					Decision: core.RejectHard,
-					Reason:   "policy violation detected",
-				}
+				return &core.CompliancePipelineResult{Decision: core.RejectHard, Reason: "policy violation detected"}
 			}
-			return &core.CompliancePipelineResult{
-				Decision: core.Approve,
-			}
+			return &core.CompliancePipelineResult{Decision: core.Approve}
 		},
 	}
 	logger := slog.Default()
@@ -128,14 +147,53 @@ func TestLivePipeline_RejectAtCheckpoint(t *testing.T) {
 		t.Fatal("expected non-nil result")
 		return
 	}
-	if result.Decision != core.RejectHard {
-		t.Errorf("expected REJECT_HARD, got %s", result.Decision)
+	if result.Decision != core.Approve {
+		t.Errorf("audit-only live path must always return Approve, got %s", result.Decision)
+	}
+	if callCount == 0 {
+		t.Error("expected the audit checkpoint pipeline to run")
 	}
 
-	// Output should contain the error message.
 	outputStr := output.String()
-	if !strings.Contains(outputStr, "blocked by policy") {
-		t.Errorf("expected output to contain error message, got:\n%s", outputStr)
+	if strings.Contains(outputStr, "blocked by policy") {
+		t.Errorf("audit-only live path must NOT emit a block frame, got:\n%s", outputStr)
+	}
+	// All content is delivered write-through despite the RejectHard checkpoint.
+	if !strings.Contains(outputStr, "Hello") || !strings.Contains(outputStr, "policy") {
+		t.Errorf("expected the full stream delivered write-through, got:\n%s", outputStr)
+	}
+}
+
+// TestLivePipeline_AuditOnly_PreHookAndCapture exercises the observe-only checkpoint
+// with a PreHook installed (the raw-bytes tee) plus body capture: the PreHook fires
+// at each checkpoint, the full stream is delivered write-through, and the captured
+// body mirrors the delivered bytes. Decision is Approve (audit-only never enforces).
+func TestLivePipeline_AuditOnly_PreHookAndCapture(t *testing.T) {
+	preHookFired := 0
+	lp := NewLivePipeline(LiveConfig{CheckpointChars: 5}, &mockPipeline{}, slog.Default())
+	lp.WithPreHook(func(_ []byte, _ *core.HookInput) { preHookFired++ })
+	lp.WithBodyCapture(1 << 20)
+
+	input := makeOpenAISSE("Hello", " World", " this", " is", " enough")
+	var out bytes.Buffer
+	res, err := lp.Process(context.Background(), strings.NewReader(input), &out, &core.HookInput{
+		Stage:       "response",
+		IngressType: "COMPLIANCE_PROXY",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.Decision != core.Approve {
+		t.Errorf("audit-only must return Approve, got %+v", res)
+	}
+	if preHookFired == 0 {
+		t.Error("PreHook never fired — the raw-bytes tee + checkpoint PreHook branch is unexercised")
+	}
+	if !strings.Contains(out.String(), "Hello") || !strings.Contains(out.String(), "enough") {
+		t.Errorf("expected the full stream delivered write-through, got %q", out.String())
+	}
+	if cb := lp.CapturedBytes(); cb == nil || !strings.Contains(string(cb), "Hello") {
+		t.Errorf("body capture did not record the delivered bytes, got %q", string(cb))
 	}
 }
 
@@ -327,53 +385,15 @@ func TestLivePipeline_WriterError_ClosesUpstream(t *testing.T) {
 	}
 }
 
-// TestLivePipeline_RejectHard_ClosesUpstream pins the RejectHard
-// close fix: the RejectHard branch in the
-// compliance goroutine also needs to call CloseUpstreamOnExit (the
-// initial fix covered writer-error + overflow but missed RejectHard).
-// Without this, a slow upstream + RejectHard mid-stream wedges
-// indefinitely. blockingReader makes the test fail deterministically
-// if the fix is reverted.
-func TestLivePipeline_RejectHard_ClosesUpstream(t *testing.T) {
-	rejectMP := &mockPipeline{
-		decideFn: func(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
-			return &core.CompliancePipelineResult{Decision: core.RejectHard, Reason: "test reject"}
-		},
-	}
-	upstream := newBlockingReader([]byte(makeOpenAISSE("hello world is enough text to trip checkpoint")))
-	var writer bytes.Buffer
-	lp := NewLivePipeline(LiveConfig{CheckpointChars: 5}, rejectMP, slog.Default())
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = lp.Process(context.Background(), upstream, &writer, &core.HookInput{
-			Stage:       "response",
-			IngressType: "COMPLIANCE_PROXY",
-		})
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Process did not return within 2s after RejectHard — wedge regression (R-1: CloseUpstreamOnExit missing at RejectHard branch)")
-	}
-	if upstream.closeCount() == 0 {
-		t.Errorf("expected upstream.Close on RejectHard (R-1 fix); got 0")
-	}
-}
-
-// TestLivePipeline_CancelDuringCheckpoint_FinalResultRaceFree drives
-// the cancel-mid-checkpoint scenario. A slow pipeline.Execute simulates
-// a hook taking time; the test cancels ctx WHILE Execute is in
-// flight. The compliance goroutine may write `finalResult` after the
-// cancel, then return; the main goroutine reads `finalResult` only
-// after wg.Wait(), so happens-before via wg makes the publish safe.
-//
-// Run with `go test -race` (CI default). A potential race on
-// `finalResult` was flagged here; this test pins that the
-// path is race-free under the race detector. Any future refactor that
-// reorders the publish before wg.Wait() will trip this test.
-func TestLivePipeline_CancelDuringCheckpoint_FinalResultRaceFree(t *testing.T) {
+// TestLivePipeline_CancelDuringCheckpoint_NoDeadlock drives the
+// cancel-mid-checkpoint scenario: a slow observe-only pipeline.Execute holds until
+// ctx is cancelled WHILE the checkpoint runs inline on the (single) delivery
+// goroutine. The test pins that Process returns promptly (no deadlock on wg.Wait,
+// no hang on the cancelled Execute) and returns a sane decision shape. There is no
+// cross-goroutine publish to race: runCheckpoint / allResults / the final result are
+// all touched only by the main goroutine after the audit-only refactor — run under
+// `go test -race` to confirm.
+func TestLivePipeline_CancelDuringCheckpoint_NoDeadlock(t *testing.T) {
 	// Slow pipeline that lets the test inject cancel during Execute.
 	executing := make(chan struct{}, 1)
 	mp := &mockPipeline{

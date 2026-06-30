@@ -58,6 +58,15 @@ type Pipeline struct {
 	// PolicyResolver). MayMatchRawContent scans it ONCE instead of looping one
 	// cgo scan per hook. nil => use the per-hook loop. See unionprescan.go.
 	unionPrescan matcher.Matcher
+
+	// boundComputed/maxBounded/anyUnbounded carry the pre-stamped MaxPatternBound
+	// result. BuildPipeline sets these from the resolver's per-generation cache
+	// (maxPatternBoundFor) so MaxPatternBound() is O(1) on the streaming hot path
+	// instead of re-walking every hook regex per request. boundComputed is false on
+	// a NewPipeline-built pipeline (tests), where MaxPatternBound computes lazily.
+	boundComputed bool
+	maxBounded    int
+	anyUnbounded  bool
 }
 
 // SetAllowModify enables MODIFY decision passthrough (for ai-gateway).
@@ -342,6 +351,7 @@ func (p *Pipeline) executeOneHook(ctx context.Context, bh *boundHook, input *cor
 			ImplementationID: bh.config.ImplementationID,
 			HookName:         hookName,
 			LatencyMs:        int(elapsed.Milliseconds()),
+			LatencyUs:        int(elapsed.Microseconds()),
 			Error:            err.Error(),
 		}
 
@@ -350,7 +360,7 @@ func (p *Pipeline) executeOneHook(ctx context.Context, bh *boundHook, input *cor
 		// win; otherwise a strict (non-packet-path) caller fails an ENFORCING
 		// hook closed so a transient error cannot leak PII/secrets on the very
 		// rule meant to stop them, while packet-path callers stay fail-open.
-		if failClosedOnError(p.strictFailClosed, bh.config) {
+		if failClosedOnError(p.strictFailClosed, bh.hook, bh.config) {
 			hr.Decision = core.RejectHard
 			hr.Reason = fmt.Sprintf("hook error (fail-closed): %v", err)
 			hr.ReasonCode = "HOOK_ERROR_FAIL_CLOSED"
@@ -380,7 +390,10 @@ func (p *Pipeline) executeOneHook(ctx context.Context, bh *boundHook, input *cor
 	if result.HookName == "" {
 		result.HookName = hookName
 	}
+	// Both derive from the single captured elapsed: LatencyUs is precise, LatencyMs
+	// its integer-ms floor (sub-millisecond hooks → 0). Not clamped (see HookResult).
 	result.LatencyMs = int(elapsed.Milliseconds())
+	result.LatencyUs = int(elapsed.Microseconds())
 
 	// MODIFY passes through unconditionally. The downstream caller applies
 	// TransformSpans via TrafficAdapter.RewriteRequestBody; protocols that
@@ -396,131 +409,4 @@ func (p *Pipeline) executeOneHook(ctx context.Context, bh *boundHook, input *cor
 
 	HookDecisionTotal.WithLabelValues(hookName, string(result.Decision)).Inc()
 	return *result
-}
-
-// mergeResults aggregates individual hook results into a single pipeline result.
-//
-// Decision merging:
-//   - First REJECT_HARD wins overall
-//   - Any BLOCK_SOFT (with no REJECT_HARD) => BLOCK_SOFT
-//   - All APPROVE/ABSTAIN => APPROVE
-//
-// "First" is by hook priority (HookResult.Order), not by arrival order.
-// executeParallel appends results in goroutine-completion order, so the
-// raw slice can be in any order; sort up front by Order so the BLOCK_SOFT
-// / Modify Reason+ReasonCode tie-breaks are deterministic across runs.
-//
-// Tags: union of all hook-emitted tags, sorted alphabetically and deduplicated.
-func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipelineResult {
-	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].Order < results[j].Order
-	})
-
-	pr := &core.CompliancePipelineResult{
-		Decision:    core.Approve,
-		HookResults: results,
-	}
-
-	// Merge tags from every executed hook (set union, sorted, deduped) up front,
-	// so tags from earlier hooks survive even if a later hook short-circuits
-	// the decision loop below via REJECT_HARD.
-	tagSet := make(map[string]struct{})
-	for i := range results {
-		for _, tag := range results[i].Tags {
-			if tag == "" {
-				continue
-			}
-			tagSet[tag] = struct{}{}
-		}
-	}
-	merged := make([]string, 0, len(tagSet))
-	for tag := range tagSet {
-		merged = append(merged, tag)
-	}
-	sort.Strings(merged)
-	pr.Tags = merged
-
-	hasSoftReject := false
-	var softRejectReason, softRejectCode string
-	var softBlockingRule *core.BlockingRule
-	hasModify := false
-	// First Modify hook's Reason / ReasonCode wins so a specific
-	// reason (e.g. ReasonAIGuardSuggestedVsPolicy stamped at the
-	// webhook-forward reconcile) propagates to CompliancePipelineResult
-	// instead of being clobbered by the generic "CONTENT_MODIFIED" default.
-	var modifyReason, modifyReasonCode string
-	var lastModifiedContent []core.ContentBlock
-	var allSpans []normalize.TransformSpan
-
-	for i := range results {
-		r := &results[i]
-		// Aggregate spans from every hook regardless of terminal decision —
-		// even Approve hooks may emit informational transforms (e.g.
-		// cache-normaliser strips through a hook integration). Storage
-		// rewrite at the audit-write stage walks this aggregate.
-		if len(r.TransformSpans) > 0 {
-			allSpans = append(allSpans, r.TransformSpans...)
-		}
-
-		switch r.Decision {
-		case core.RejectHard:
-			pr.Decision = core.RejectHard
-			pr.Reason = r.Reason
-			pr.ReasonCode = r.ReasonCode
-			pr.BlockingRule = r.BlockingRule
-			pr.TransformSpans = allSpans
-			pr.Action = core.ActionFromDecision(core.RejectHard)
-			return pr
-		case core.BlockSoft:
-			hasSoftReject = true
-			softRejectReason = r.Reason
-			softRejectCode = r.ReasonCode
-			if softBlockingRule == nil {
-				softBlockingRule = r.BlockingRule
-			}
-		case core.Modify:
-			if !hasModify {
-				// First Modify hook's reason wins so a hook-stamped
-				// ReasonCode (e.g. ReasonAIGuardSuggestedVsPolicy) is not
-				// silently replaced by the generic "CONTENT_MODIFIED".
-				modifyReason = r.Reason
-				modifyReasonCode = r.ReasonCode
-			}
-			hasModify = true
-			if len(r.ModifiedContent) > 0 {
-				lastModifiedContent = r.ModifiedContent
-			}
-		case core.Approve:
-			if p.clearSoftOnApprove {
-				hasSoftReject = false
-				softRejectReason = ""
-				softRejectCode = ""
-				softBlockingRule = nil
-			}
-		}
-	}
-
-	pr.TransformSpans = allSpans
-
-	if hasSoftReject {
-		pr.Decision = core.BlockSoft
-		pr.Reason = softRejectReason
-		pr.ReasonCode = softRejectCode
-		pr.BlockingRule = softBlockingRule
-	} else if hasModify {
-		pr.Decision = core.Modify
-		if modifyReason != "" {
-			pr.Reason = modifyReason
-		} else {
-			pr.Reason = "content modified by hook pipeline"
-		}
-		if modifyReasonCode != "" {
-			pr.ReasonCode = modifyReasonCode
-		} else {
-			pr.ReasonCode = "CONTENT_MODIFIED"
-		}
-		pr.ModifiedContent = lastModifiedContent
-	}
-	pr.Action = core.ActionFromDecision(pr.Decision)
-	return pr
 }

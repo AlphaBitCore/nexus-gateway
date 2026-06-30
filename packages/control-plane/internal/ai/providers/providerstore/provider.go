@@ -27,20 +27,27 @@ import (
 // Nullable so existing providers keep working until an operator fills
 // it in; the runtime hook treats a missing region as "unknown".
 type Provider struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	DisplayName *string         `json:"displayName"`
-	Description *string         `json:"description"`
-	AdapterType string          `json:"adapterType"`
-	BaseURL     string          `json:"baseUrl"`
-	PathPrefix  string          `json:"pathPrefix"`
-	APIVersion  *string         `json:"apiVersion"`
-	Region      *string         `json:"region"`
-	Enabled     bool            `json:"enabled"`
-	Headers     json.RawMessage `json:"headers"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
-	ModelCount  *int            `json:"modelCount,omitempty"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	DisplayName *string `json:"displayName"`
+	Description *string `json:"description"`
+	AdapterType string  `json:"adapterType"`
+	BaseURL     string  `json:"baseUrl"`
+	PathPrefix  string  `json:"pathPrefix"`
+	APIVersion  *string `json:"apiVersion"`
+	Region      *string `json:"region"`
+	Enabled     bool    `json:"enabled"`
+	// ServesResponsesAPI mirrors Provider.serves_responses_api. nil = use the
+	// adapter type's RequestShapes default (FormatOpenAI → true; every other
+	// adapter → false); an explicit value only DOWNGRADES (false forces
+	// /v1/responses ingress through the canonical chat codec). The AI Gateway
+	// reads this column to decide whether to relay Responses-shape bytes
+	// upstream or downgrade to /v1/chat/completions.
+	ServesResponsesAPI *bool           `json:"servesResponsesApi,omitempty"`
+	Headers            json.RawMessage `json:"headers"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	UpdatedAt          time.Time       `json:"updatedAt"`
+	ModelCount         *int            `json:"modelCount,omitempty"`
 }
 
 // ListParams holds filter/pagination for listing providers.
@@ -78,7 +85,7 @@ func (s *Store) ListProviders(ctx context.Context, p ListParams) ([]Provider, in
 	// Data with model count
 	dataQuery := fmt.Sprintf(`
 		SELECT p.id, p.name, p."displayName", p.description, p.adapter_type, p."baseUrl",
-		       p."pathPrefix", p."apiVersion", p.region, p.enabled, p.headers,
+		       p."pathPrefix", p."apiVersion", p.region, p.enabled, p.serves_responses_api, p.headers,
 		       p."createdAt", p."updatedAt",
 		       (SELECT COUNT(*) FROM "Model" m WHERE m."providerId" = p.id) AS model_count
 		FROM "Provider" p
@@ -100,7 +107,7 @@ func (s *Store) ListProviders(ctx context.Context, p ListParams) ([]Provider, in
 		var mc int
 		if err := rows.Scan(
 			&pr.ID, &pr.Name, &pr.DisplayName, &pr.Description, &pr.AdapterType, &pr.BaseURL,
-			&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.Headers,
+			&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.ServesResponsesAPI, &pr.Headers,
 			&pr.CreatedAt, &pr.UpdatedAt, &mc,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan provider: %w", err)
@@ -115,14 +122,14 @@ func (s *Store) ListProviders(ctx context.Context, p ListParams) ([]Provider, in
 func (s *Store) GetProvider(ctx context.Context, id string) (*Provider, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, "displayName", description, adapter_type, "baseUrl",
-		       "pathPrefix", "apiVersion", region, enabled, headers, "createdAt", "updatedAt"
+		       "pathPrefix", "apiVersion", region, enabled, serves_responses_api, headers, "createdAt", "updatedAt"
 		FROM "Provider"
 		WHERE id = $1
 	`, id)
 
 	var p Provider
 	err := row.Scan(&p.ID, &p.Name, &p.DisplayName, &p.Description, &p.AdapterType, &p.BaseURL,
-		&p.PathPrefix, &p.APIVersion, &p.Region, &p.Enabled, &p.Headers, &p.CreatedAt, &p.UpdatedAt)
+		&p.PathPrefix, &p.APIVersion, &p.Region, &p.Enabled, &p.ServesResponsesAPI, &p.Headers, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -148,20 +155,23 @@ type CreateParams struct {
 	APIVersion  *string
 	Region      *string
 	Enabled     bool
-	Headers     json.RawMessage
+	// ServesResponsesAPI is the per-provider Responses-API capability override.
+	// nil persists SQL NULL (adapter default); a non-nil value downgrades.
+	ServesResponsesAPI *bool
+	Headers            json.RawMessage
 }
 
 // CreateProvider inserts a new provider and returns it.
 func (s *Store) CreateProvider(ctx context.Context, p CreateParams) (*Provider, error) {
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO "Provider" (id, name, "displayName", description, "baseUrl", "pathPrefix", adapter_type, "apiVersion", region, enabled, headers, "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-		RETURNING id, name, "displayName", description, adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, headers, "createdAt", "updatedAt"
-	`, p.Name, p.DisplayName, p.Description, p.BaseURL, p.PathPrefix, p.AdapterType, p.APIVersion, p.Region, p.Enabled, p.Headers)
+		INSERT INTO "Provider" (id, name, "displayName", description, "baseUrl", "pathPrefix", adapter_type, "apiVersion", region, enabled, serves_responses_api, headers, "createdAt", "updatedAt")
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+		RETURNING id, name, "displayName", description, adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, serves_responses_api, headers, "createdAt", "updatedAt"
+	`, p.Name, p.DisplayName, p.Description, p.BaseURL, p.PathPrefix, p.AdapterType, p.APIVersion, p.Region, p.Enabled, p.ServesResponsesAPI, p.Headers)
 
 	var pr Provider
 	err := row.Scan(&pr.ID, &pr.Name, &pr.DisplayName, &pr.Description, &pr.AdapterType, &pr.BaseURL,
-		&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.Headers, &pr.CreatedAt, &pr.UpdatedAt)
+		&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.ServesResponsesAPI, &pr.Headers, &pr.CreatedAt, &pr.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create provider: %w", err)
 	}
@@ -188,12 +198,12 @@ func (s *Store) CreateProviderWithChildren(
 	}
 	var pr Provider
 	err = tx.QueryRow(ctx, `
-		INSERT INTO "Provider" (id, name, "displayName", description, "baseUrl", "pathPrefix", adapter_type, "apiVersion", region, enabled, headers, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-		RETURNING id, name, "displayName", description, adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, headers, "createdAt", "updatedAt"
-	`, providerID, provider.Name, provider.DisplayName, provider.Description, provider.BaseURL, provider.PathPrefix, provider.AdapterType, provider.APIVersion, provider.Region, provider.Enabled, provider.Headers,
+		INSERT INTO "Provider" (id, name, "displayName", description, "baseUrl", "pathPrefix", adapter_type, "apiVersion", region, enabled, serves_responses_api, headers, "createdAt", "updatedAt")
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+		RETURNING id, name, "displayName", description, adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, serves_responses_api, headers, "createdAt", "updatedAt"
+	`, providerID, provider.Name, provider.DisplayName, provider.Description, provider.BaseURL, provider.PathPrefix, provider.AdapterType, provider.APIVersion, provider.Region, provider.Enabled, provider.ServesResponsesAPI, provider.Headers,
 	).Scan(&pr.ID, &pr.Name, &pr.DisplayName, &pr.Description, &pr.AdapterType, &pr.BaseURL,
-		&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.Headers, &pr.CreatedAt, &pr.UpdatedAt)
+		&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.ServesResponsesAPI, &pr.Headers, &pr.CreatedAt, &pr.UpdatedAt)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("insert provider: %w", err)
 	}
@@ -294,16 +304,19 @@ func (s *Store) CreateProviderWithChildren(
 
 // UpdateParams holds fields for updating a provider.
 type UpdateParams struct {
-	Name          *string
-	DisplayName   *string
-	Description   *string
-	BaseURL       *string
-	AdapterType   *string
-	Region        **string
-	APIVersion    **string // nil=no change; &nil=clear; &s=set
-	UpdateHeaders bool
-	Headers       json.RawMessage // used when UpdateHeaders=true; nil clears the column
-	Enabled       *bool
+	Name        *string
+	DisplayName *string
+	Description *string
+	BaseURL     *string
+	AdapterType *string
+	Region      **string
+	APIVersion  **string // nil=no change; &nil=clear; &s=set
+	// ServesResponsesAPI follows the same three-state semantic as APIVersion:
+	// nil=no change; &nil=clear back to adapter default; &b=set the override.
+	ServesResponsesAPI **bool
+	UpdateHeaders      bool
+	Headers            json.RawMessage // used when UpdateHeaders=true; nil clears the column
+	Enabled            *bool
 }
 
 // UpdateProvider updates a provider's mutable fields.
@@ -318,6 +331,11 @@ func (s *Store) UpdateProvider(ctx context.Context, id string, p UpdateParams) (
 	if applyAPIVersion {
 		apiVersionVal = *p.APIVersion
 	}
+	applyServesResponses := p.ServesResponsesAPI != nil
+	var servesResponsesVal *bool
+	if applyServesResponses {
+		servesResponsesVal = *p.ServesResponsesAPI
+	}
 	row := s.pool.QueryRow(ctx, `
 		UPDATE "Provider"
 		SET name = COALESCE($2, name),
@@ -329,16 +347,17 @@ func (s *Store) UpdateProvider(ctx context.Context, id string, p UpdateParams) (
 		    enabled = COALESCE($9, enabled),
 		    "pathPrefix" = CASE WHEN $2 IS NOT NULL THEN '/' || $2 ELSE "pathPrefix" END,
 		    "apiVersion" = CASE WHEN $10::boolean THEN $11 ELSE "apiVersion" END,
+		    serves_responses_api = CASE WHEN $14::boolean THEN $15 ELSE serves_responses_api END,
 		    headers = CASE WHEN $12::boolean THEN $13 ELSE headers END,
 		    "updatedAt" = NOW()
 		WHERE id = $1
-		RETURNING id, name, "displayName", description, adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, headers, "createdAt", "updatedAt"
+		RETURNING id, name, "displayName", description, adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, serves_responses_api, headers, "createdAt", "updatedAt"
 	`, id, p.Name, p.DisplayName, p.Description, p.BaseURL, p.AdapterType, applyRegion, regionVal, p.Enabled,
-		applyAPIVersion, apiVersionVal, p.UpdateHeaders, p.Headers)
+		applyAPIVersion, apiVersionVal, p.UpdateHeaders, p.Headers, applyServesResponses, servesResponsesVal)
 
 	var pr Provider
 	err := row.Scan(&pr.ID, &pr.Name, &pr.DisplayName, &pr.Description, &pr.AdapterType, &pr.BaseURL,
-		&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.Headers, &pr.CreatedAt, &pr.UpdatedAt)
+		&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.ServesResponsesAPI, &pr.Headers, &pr.CreatedAt, &pr.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

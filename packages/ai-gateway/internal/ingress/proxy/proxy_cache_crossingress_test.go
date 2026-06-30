@@ -300,6 +300,128 @@ func TestCacheHit_Stream_OriginDiffers_StampsContext(t *testing.T) {
 	}
 }
 
+// TestCacheHit_Stream_CrossIngress_WireGrammar is the Amendment E
+// streaming proof, both directions: a stream cache entry written under
+// one OpenAI wire shape and replayed to a client on the OTHER shape must
+// reach the client re-encoded into the READER's SSE grammar — never the
+// writer's. Replay ChunkRecords carry no RawBytes/Verbatim, so the
+// response-side content-peek classifier cannot fire on a HIT; the
+// OriginWireShape tag stamped on the request context (StreamHitOrigin) is
+// the ONLY signal that selects the transcoder in streamShapeStage. This
+// pins that the origin override survived the Format-backdoor deletion:
+// the target-Format reassignment now drives NewStreamTranscoder to the
+// reader's encoder in both directions (chat→responses and responses→chat).
+func TestCacheHit_Stream_CrossIngress_WireGrammar(t *testing.T) {
+	const relayToken = "xrelaymarker"
+	cases := []struct {
+		name          string
+		originShape   typology.WireShape
+		ingressShape  typology.WireShape
+		ingressFormat provcore.Format
+		path          string
+		reqBody       []byte
+		keyWireShape  typology.WireShape
+		wantContains  []string
+		wantAbsent    []string
+	}{
+		{
+			name:          "chat_written_responses_replay",
+			originShape:   typology.WireShapeOpenAIChat,
+			ingressShape:  typology.WireShapeOpenAIResponses,
+			ingressFormat: provcore.FormatOpenAIResponses,
+			path:          "/v1/responses",
+			reqBody:       []byte(`{"model":"gpt-4o","input":"cross stream chat to responses","stream":true}`),
+			keyWireShape:  typology.WireShapeOpenAIResponses,
+			// The Responses encoder opens with response.created and closes
+			// with response.completed; the cached delta rides an
+			// output_text.delta event in between.
+			wantContains: []string{"event: response.created", "event: response.completed", relayToken},
+			wantAbsent:   []string{"chat.completion.chunk"},
+		},
+		{
+			name:          "responses_written_chat_replay",
+			originShape:   typology.WireShapeOpenAIResponses,
+			ingressShape:  typology.WireShapeOpenAIChat,
+			ingressFormat: provcore.FormatOpenAI,
+			path:          "/v1/chat/completions",
+			reqBody:       []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"cross stream responses to chat"}],"stream":true}`),
+			keyWireShape:  typology.WireShapeOpenAIChat,
+			wantContains:  []string{"chat.completion.chunk", relayToken},
+			wantAbsent:    []string{"event: response.created", "event: response.completed"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cacheOpt, cleanup := withCache(t)
+			defer cleanup()
+
+			deps := makeOpenAIDeps(t, "", emptyHookCache(t), cacheOpt)
+			streamEntry := &cache.StreamEntry{
+				Provider: "openai",
+				Model:    "gpt-4o",
+				Chunks: []cache.ChunkRecord{
+					{Delta: relayToken},
+					{Done: true, Usage: &provcore.Usage{
+						PromptTokens: iPtr(2), CompletionTokens: iPtr(3), TotalTokens: iPtr(5),
+					}},
+				},
+				CachedAt:        time.Now().UTC(),
+				OriginWireShape: tc.originShape,
+			}
+			// Derive the cache key exactly as the handler does for this
+			// reader: PrepareBody at the reader's wire shape, then BuildKey.
+			adapter, ok := deps.ProviderReg.Get(provcore.FormatOpenAI)
+			if !ok {
+				t.Fatal("openai adapter missing")
+			}
+			prepReq := provcore.Request{
+				WireShape:  tc.keyWireShape,
+				Body:       tc.reqBody,
+				BodyFormat: tc.ingressFormat,
+				Stream:     true,
+			}
+			prepReq.Target.ProviderModelID = "gpt-4o"
+			finalBody, _, _, err := adapter.PrepareBody(prepReq)
+			if err != nil {
+				t.Fatalf("PrepareBody: %v", err)
+			}
+			cacheKey := deps.Cache.BuildKey("openai", "gpt-4o", finalBody, "")
+			if _, err := deps.Cache.StoreStream(context.Background(), cacheKey, streamEntry); err != nil {
+				t.Fatalf("StoreStream: %v", err)
+			}
+
+			h := NewHandler(deps).ServeProxy(Ingress{
+				WireShape:  tc.ingressShape,
+				BodyFormat: tc.ingressFormat,
+				Stream:     true,
+			})
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(string(tc.reqBody)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer vk")
+			w := httptest.NewRecorder()
+			h(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if !strings.EqualFold(w.Header().Get("X-Nexus-Cache"), "hit") {
+				t.Fatalf("x-nexus-cache=%q want HIT (cross-ingress stream replay did not hit)", w.Header().Get("X-Nexus-Cache"))
+			}
+			out := w.Body.String()
+			for _, want := range tc.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("replay missing %q — origin override did not re-encode to the reader's grammar; body=%s", want, out)
+				}
+			}
+			for _, absent := range tc.wantAbsent {
+				if strings.Contains(out, absent) {
+					t.Errorf("replay leaked the writer's grammar %q to the reader; body=%s", absent, out)
+				}
+			}
+		})
+	}
+}
+
 // TestCacheHit_Stream_ResponsesIngress_OriginOverride exercises the
 // B2 stream-HIT override branch in handleStreamWithSubscription:
 // when origin override is set AND the standard NewStreamTranscoder

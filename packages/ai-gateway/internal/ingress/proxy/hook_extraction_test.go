@@ -485,7 +485,7 @@ func TestChunkSSEReader_PartialReadAcrossChunks(t *testing.T) {
 		{RawBytes: []byte("data: 2\n\n")},
 		{Done: true, RawBytes: []byte("data: [DONE]\n\n")},
 	}}
-	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	r := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	r.usageSink = &chunkUsageHolder{}
 	// Read in 4-byte chunks to force the internal buf re-fill loop.
 	buf := make([]byte, 4)

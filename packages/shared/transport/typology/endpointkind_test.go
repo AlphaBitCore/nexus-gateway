@@ -22,6 +22,7 @@ func TestEndpointKindConstants(t *testing.T) {
 		{EndpointKindBatch, "batch"},
 		{EndpointKindJob, "job"},
 		{EndpointKindModels, "models"},
+		{EndpointKindResponses, "responses"},
 	}
 	for _, c := range cases {
 		if string(c.k) != c.want {
@@ -48,6 +49,7 @@ func TestAllEndpointKindsExhaustive(t *testing.T) {
 		EndpointKindBatch,
 		EndpointKindJob,
 		EndpointKindModels,
+		EndpointKindResponses,
 	}
 	if len(AllEndpointKinds) != len(want) {
 		t.Fatalf("len(AllEndpointKinds) = %d, want %d", len(AllEndpointKinds), len(want))

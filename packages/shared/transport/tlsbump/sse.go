@@ -228,7 +228,7 @@ func handleSSEResponse(
 	// captureMax is the upper bound on bytes we'll keep for audit when
 	// audCtx.storeResponseBody is true. Mirrors the streamingConfig's
 	// MaxBufferSize so a single tunable governs both the live-pipeline
-	// hold-back budget and the audit-capture budget.
+	// audit-accumulation cap and the audit-capture budget.
 	captureMax := 0
 	if audCtx != nil && audCtx.storeResponseBody {
 		captureMax = bo.streamingConfig.MaxBufferSize
@@ -278,6 +278,13 @@ func handleSSEResponse(
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, capturedBytes)
 		return
 	}
+
+	// Scope-derived routing (mirror ai-gateway stream_shape.go §B2): an enforcing
+	// response scope OVERRIDES the admin streaming mode — the audit-only live path
+	// cannot enforce, so enforcing traffic must route to buffer or Model A. The probe
+	// is reused as the Model A prescan/confirm pipeline.
+	var responseProbe *compliance.Pipeline
+	mode, responseProbe = scopeRouteSSEMode(bo, mode, respInput, audCtx, logger)
 
 	switch mode {
 	case "passthrough":
@@ -429,6 +436,7 @@ func handleSSEResponse(
 
 		bufConfig := streaming.BufferConfig{MaxBufferSize: bo.streamingConfig.MaxBufferSize}
 		bufPipeline := streaming.NewBufferPipeline(bufConfig, pipelineExec, logger)
+		bufPipeline.WithStrictFailClosed(bo.strictFailClosed) // no-redactor posture (GAP B)
 		if acc != nil {
 			bufPipeline.WithUsageAccumulator(acc)
 		}
@@ -442,11 +450,10 @@ func handleSSEResponse(
 		if cb := buildSSEPreHookCallback(ctx, bo, audCtx, respInput, respContentType); cb != nil {
 			bufPipeline.WithPreHook(cb)
 		}
-		// Wire the per-host frame redactor so a Modify (redact) decision rewrites
-		// the buffered timeline — splicing the masked text into the per-host text
-		// frames and passing non-text frames byte-verbatim — instead of degrading
-		// to a verbatim replay of the unredacted stream (a PII leak). nil adapter
-		// leaves the redactor unset → backward-compatible Modify-degrade.
+		// Wire the per-host frame redactor so a redact decision rewrites the buffered
+		// timeline (masked text spliced in, non-text frames byte-verbatim) instead of a
+		// verbatim replay (a PII leak). nil adapter → no redactor → posture-aware degrade
+		// (WithStrictFailClosed). Redactor carries the per-caller posture (open/closed).
 		var sseAdapter traffic.Adapter
 		if audCtx != nil {
 			sseAdapter = audCtx.adapter
@@ -456,7 +463,7 @@ func handleSSEResponse(
 			ssePath = respInput.Path
 		}
 		spliceWired := false
-		if fr := newSSEFrameRedactor(ctx, sseAdapter, ssePath, logger); fr != nil {
+		if fr := newSSEFrameRedactor(ctx, sseAdapter, ssePath, bo.strictFailClosed, logger); fr != nil {
 			bufPipeline.WithFrameRedactor(fr)
 			spliceWired = true
 		}
@@ -473,6 +480,14 @@ func handleSSEResponse(
 		}
 		stampSpliceRedactedBody(auditInfo, result, spliceWired, bufPipeline)
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, result, resp.StatusCode, requestStart, finalizeUsage(ctx, acc), bufPipeline.CapturedBytes())
+
+	case "modela":
+		// redact-scope under chunked_async with a per-host adapter: prescan-gated
+		// real-time streaming with a bounded tail + escalate-to-buffer redaction via
+		// the shared Model-A engine (fail-OPEN wire substrate). responseProbe + the
+		// adapter are non-nil here (the routing reached "modela" only on MayRedact +
+		// an available adapter).
+		runSSEModelA(ctx, w, resp, audCtx, respInput, auditInfo, bo, logger, requestStart, responseProbe, acc, captureMax)
 
 	default:
 		logger.Warn("unknown streaming mode, using passthrough", "mode", mode)

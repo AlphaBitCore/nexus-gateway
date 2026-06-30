@@ -63,6 +63,11 @@ type ProviderRow struct {
 	BaseURL     string
 	Extras      map[string]string
 	Disabled    bool
+	// ServesResponsesAPI mirrors Provider.serves_responses_api. nil = use
+	// the adapter RequestShapes default; copied onto CallTarget so the
+	// executor/bridge can resolve the /v1/responses capability without a
+	// per-request DB read.
+	ServesResponsesAPI *bool
 }
 
 // ModelStore is the minimum model-catalog surface the default
@@ -152,14 +157,15 @@ func (r *PgResolver) Resolve(ctx context.Context, providerID, modelID string, hi
 	}
 
 	target := provcore.CallTarget{
-		ProviderID:      pr.ID,
-		ProviderName:    pr.Name,
-		Format:          provcore.Format(pr.AdapterType),
-		BaseURL:         pr.BaseURL,
-		APIKey:          apiKey,
-		CredentialID:    credID,
-		CredentialName:  credName,
-		ProviderModelID: mr.ProviderModelID,
+		ProviderID:         pr.ID,
+		ProviderName:       pr.Name,
+		Format:             provcore.Format(pr.AdapterType),
+		BaseURL:            pr.BaseURL,
+		APIKey:             apiKey,
+		CredentialID:       credID,
+		CredentialName:     credName,
+		ProviderModelID:    mr.ProviderModelID,
+		ServesResponsesAPI: pr.ServesResponsesAPI,
 	}
 	if len(pr.Extras) > 0 {
 		target.Extras = make(map[string]string, len(pr.Extras))
