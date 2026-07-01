@@ -11,7 +11,7 @@ jobs:
     name: Terminology Guard - No Internal Thing Model Terms in Product Surfaces
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Terminology guard self-test (detector canary)
         run: ./scripts/check-terminology.sh --selftest
       - name: Terminology check
@@ -21,7 +21,7 @@ jobs:
     name: Governance Lints - Arch-Doc Triggers, Migration Timestamps, i18n, TZ, Code Bindings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Need full clone for `git ls-files` + `git show :path` patterns
           # used by check-no-redis-pubsub.mjs / check-hardcoded-agent-paths.mjs.
@@ -86,7 +86,7 @@ jobs:
     name: Frontend - Type Check, Test, Build (control-plane-ui + ui-shared)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -117,7 +117,7 @@ jobs:
     name: DB Migrate - Seed Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -140,7 +140,7 @@ jobs:
     name: Security Scanning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           # Pinned (not `stable`) so the govulncheck gate is reproducible:
