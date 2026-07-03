@@ -11,7 +11,7 @@ import {
   Switch,
   Tooltip
 } from '@/components/ui';
-import type { StrategyType } from '../_shared/routing-rule-config';
+import { type StrategyType, validateSplitWeights } from '../_shared/routing-rule-config';
 import { ConditionalRoutingEditor } from '../editor/ConditionalRoutingEditor';
 import { RoutingPrimaryWinnerCallout } from '../_shared/RoutingPrimaryWinnerCallout';
 import { MatchConditionExtraFields } from '../editor/MatchConditionExtraFields';
@@ -40,6 +40,39 @@ export function RoutingRuleCreate() {
 
   const weightLabel = h.strategyType === 'ab_split' ? t('pages:routing.splitPercent') : t('pages:routing.weight');
   const isLastStep = currentStep === WIZARD_TOTAL_STEPS - 1;
+
+  // Weighted targets (ab_split "Split %" + loadbalance "Weight") must sum to
+  // exactly 100 — see validateSplitWeights.
+  const hasWeightTargets = h.pipelineStage === '1' && h.showWeightColumn;
+  const weightCheck = validateSplitWeights(h.entries);
+  const weightSumInvalid = hasWeightTargets && !weightCheck.valid;
+
+  // Smart routing must pin matchConditions to the "auto" literal (backend guard).
+  const smartNeedsAutoMatch = h.pipelineStage === '1' && h.strategyType === 'smart' &&
+    !(h.matchRequestedModelLiterals.length > 0 && h.matchRequestedModelLiterals.every((l) => l === 'auto'));
+  // Non-smart rule with empty match conditions matches every request (soft note).
+  const matchIsEmpty = h.models.length === 0 && h.matchProviders.length === 0 && h.matchProjectIds.length === 0 &&
+    h.matchRequestedModelLiterals.length === 0 && h.matchModelTypes.length === 0 && h.matchVirtualKeys.length === 0;
+
+  // The blocking hint for a wizard step, or null when the step is complete.
+  const stepHint = (step: number): string | null => {
+    if (step === 0) {
+      return h.name.trim() === '' ? t('pages:routing.nameRequired', 'Name is required.') : null;
+    }
+    if (step === 1) {
+      return h.configValidity.ok ? null : h.configValidity.message;
+    }
+    if (step === 2) {
+      return h.fallbackIncomplete
+        ? t('pages:routing.fallbackIncomplete', 'Finish or remove the partially-filled fallback target — set both provider and model.')
+        : null;
+    }
+    return smartNeedsAutoMatch
+      ? t('pages:routing.smartMatchAutoRequired', 'Smart routing must match the "auto" model literal — add it under Match conditions.')
+      : null;
+  };
+  const currentStepHint = stepHint(currentStep);
+  const allStepsValid = [0, 1, 2, 3].every((s) => stepHint(s) === null);
 
   const goNext = () => setCurrentStep(s => Math.min(s + 1, WIZARD_TOTAL_STEPS - 1));
   const goBack = () => {
@@ -261,6 +294,11 @@ export function RoutingRuleCreate() {
                     </div>
                   ))}
                   <Button variant="secondary" size="sm" onClick={h.addEntry}>{t('pages:routing.addTarget')}</Button>
+                  {weightSumInvalid && (
+                    <p className={styles.weightSumError} role="alert">
+                      {t('pages:routing.weightSumError', { total: weightCheck.total })}
+                    </p>
+                  )}
                 </>
               )}
             </Card>
@@ -340,17 +378,27 @@ export function RoutingRuleCreate() {
             </Card>
           </div>
 
+          {/* ── Step validation hint / soft note ── */}
+          {currentStepHint && (
+            <p className={styles.stepHint} role="alert">{currentStepHint}</p>
+          )}
+          {isLastStep && matchIsEmpty && !smartNeedsAutoMatch && (
+            <p className={styles.stepNote}>
+              {t('pages:routing.matchEmptyNote', 'No match conditions set — this rule will apply to all requests.')}
+            </p>
+          )}
+
           {/* ── Wizard navigation footer ── */}
           <div className={styles.wizardFooter}>
             <Button variant="secondary" onClick={goBack}>
               {currentStep === 0 ? t('common:cancel') : t('common:back')}
             </Button>
             {isLastStep ? (
-              <Button variant="primary" onClick={h.handleSubmit} disabled={h.loading || !h.name}>
+              <Button variant="primary" onClick={h.handleSubmit} disabled={h.loading || !allStepsValid}>
                 {h.loading ? t('pages:routing.creating', 'Creating...') : t('pages:routing.createRule')}
               </Button>
             ) : (
-              <Button variant="primary" onClick={goNext}>
+              <Button variant="primary" onClick={goNext} disabled={currentStepHint !== null}>
                 {t('pages:routing.wizardContinue', 'Continue')}
               </Button>
             )}

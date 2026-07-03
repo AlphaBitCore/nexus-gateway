@@ -11,8 +11,8 @@ export interface CreatePersonalVKInput {
 }
 
 export const personalVKApi = {
-  list: () =>
-    api.get<{ data: VirtualKey[]; total: number }>('/api/my/virtual-keys'),
+  list: (params?: Record<string, string>) =>
+    api.get<{ data: VirtualKey[]; total: number }>('/api/my/virtual-keys', params),
 
   create: (data: CreatePersonalVKInput) =>
     api.post<VirtualKey>('/api/my/virtual-keys', data),

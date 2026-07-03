@@ -1,9 +1,11 @@
+import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { personalVKApi } from '@/api/services/ai-gateway/personalVirtualKeys';
 import type { CreatePersonalVKInput } from '@/api/services/ai-gateway/personalVirtualKeys';
 import { useMutation } from '@/hooks/useMutation';
+import { useDuplicateNameCheck } from '@/hooks/useDuplicateNameCheck';
 import { useZodForm, FormInput } from '@/lib/forms';
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import {
@@ -38,6 +40,20 @@ export function PersonalVKCreate() {
 
   useUnsavedChangesWarning(form.formState.isDirty);
 
+  // Fail-fast duplicate probe on blur: personal VK names are unique per
+  // owner, and /api/my/virtual-keys is already scoped to the current user.
+  // Advisory only; the create 409 is authoritative.
+  const isNameTaken = useCallback(async (name: string) => {
+    const res = await personalVKApi.list({ q: name, limit: '100' });
+    return (res.data ?? []).some(vk => vk.name === name);
+  }, []);
+  const checkName = useDuplicateNameCheck({
+    form,
+    field: 'name',
+    message: t('pages:personalVks.nameTaken'),
+    isTaken: isNameTaken,
+  });
+
   const { mutate, loading } = useMutation(
     (data: CreatePersonalVKInput) => personalVKApi.create(data),
     {
@@ -70,7 +86,7 @@ export function PersonalVKCreate() {
       <Card>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <Stack gap="md">
-            <FormInput form={form} name="name" label={t('pages:personalVks.name')} required placeholder={t('pages:personalVks.namePlaceholder')} />
+            <FormInput form={form} name="name" label={t('pages:personalVks.name')} required placeholder={t('pages:personalVks.namePlaceholder')} onValueBlur={checkName} />
             <FormInput form={form} name="sourceApp" label={t('pages:personalVks.sourceApp')} placeholder={t('pages:personalVks.optional')} />
             <FormInput form={form} name="rateLimitRpm" label={t('pages:personalVks.rpm')} type="number" placeholder={t('pages:personalVks.optional')} />
 

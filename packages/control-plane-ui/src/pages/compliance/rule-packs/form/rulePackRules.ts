@@ -1,5 +1,23 @@
 import type { RulePackRule } from '@/api/services';
 
+// Mirror the backend authoring contract in
+// packages/shared/policy/rulepack/yaml.go (packNameRE / semverRE) so the JSON
+// admin form rejects a malformed name/version inline — with a friendly hint —
+// instead of round-tripping to the API and surfacing the raw 400 detail
+// (`rulepack: name "test" must match <namespace>/<short-name>`).
+const PACK_NAME_RE = /^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$/;
+const PACK_VERSION_RE = /^v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/;
+
+/** True when name matches "<namespace>/<short-name>" (lowercase, digits, hyphens). */
+export function isValidPackName(name: string): boolean {
+  return PACK_NAME_RE.test(name);
+}
+
+/** True when version is a v-prefixed semver, e.g. v1.0.0 or v1.2.3-rc1. */
+export function isValidPackVersion(version: string): boolean {
+  return PACK_VERSION_RE.test(version);
+}
+
 export interface RuleDraft {
   ruleId: string;
   category: string;
@@ -21,6 +39,18 @@ export function emptyRuleDraft(): RuleDraft {
     labels: '',
   };
 }
+
+/** Seed JSON shown in the create form's rules editor: one example PII rule. */
+export const DEFAULT_RULES_JSON = serializeRules([
+  {
+    ruleId: 'example-email',
+    category: 'pii',
+    severity: 'hard',
+    pattern: '[\\w.+-]+@[\\w-]+\\.[\\w.-]+',
+    description: 'Blocks email addresses',
+    labels: ['pii:email'],
+  },
+]);
 
 export function serializeRules(rules: RulePackRule[]): string {
   return JSON.stringify(

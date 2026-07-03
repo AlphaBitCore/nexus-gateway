@@ -92,20 +92,21 @@ describe('RoutingRuleCreate', () => {
     expect(navigate).toHaveBeenCalledWith('/ai-gateway/routing');
   });
 
-  it('Continue advances the wizard; Create on the last step (single, no model) surfaces an error', () => {
+  it('blocks Continue on step 0 until Name is filled', () => {
+    wrap();
+    const next = () => screen.getByRole('button', { name: i18n.t('pages:routing.wizardContinue', 'Continue') });
+    expect(next()).toBeDisabled();
+    fireEvent.change(screen.getByTestId('routing-rule-name'), { target: { value: 'r' } });
+    expect(next()).toBeEnabled();
+  });
+
+  it('blocks Continue on the Configuration step when single strategy has no provider/model', () => {
     wrap();
     fireEvent.change(screen.getByTestId('routing-rule-name'), { target: { value: 'r' } });
-    // walk to the last step
-    for (let i = 0; i < 6; i++) {
-      const next = screen.queryByRole('button', { name: i18n.t('pages:routing.wizardContinue', 'Continue') });
-      if (!next) break;
-      fireEvent.click(next);
-    }
-    const create = screen.getByRole('button', { name: i18n.t('pages:routing.createRule') });
-    expect(create).toBeEnabled(); // name present
-    fireEvent.click(create);
-    // single strategy with no provider/model resolved → validation toast, no mutation
-    expect(addToast).toHaveBeenCalledWith(expect.any(String), 'error');
+    // step 0 → Configuration
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('pages:routing.wizardContinue', 'Continue') }));
+    // single strategy with no provider/model resolved → Continue gated, never submits
+    expect(screen.getByRole('button', { name: i18n.t('pages:routing.wizardContinue', 'Continue') })).toBeDisabled();
     expect(mutate).not.toHaveBeenCalled();
   });
 });

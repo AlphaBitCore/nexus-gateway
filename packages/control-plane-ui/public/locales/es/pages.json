@@ -406,6 +406,11 @@
     "apiVersion": "Versión de API",
     "apiVersionHelp": "Opcional. Cadena de versión de API del proveedor (p. ej. 2024-02-01 para Azure OpenAI). Dejar en blanco si el endpoint no requiere un segmento de versión.",
     "apiVersionPlaceholder": "p. ej. 2024-02-01",
+    "servesResponsesApi": "Sirve la API de Responses de OpenAI",
+    "servesResponsesApiHelp": "Déjalo sin definir para usar el valor predeterminado del tipo de proveedor. Desactívalo para endpoints compatibles con OpenAI que solo implementan /v1/chat/completions.",
+    "servesResponsesApiOption_default": "Usar el valor predeterminado del adaptador",
+    "servesResponsesApiOption_true": "Activado",
+    "servesResponsesApiOption_false": "Desactivado (solo chat completions)",
     "modelCode": "Model ID",
     "modelCodeLabel": "Model ID *",
     "placeholderModelCode": "p. ej. gpt-4o (por defecto usa el ID de modelo upstream)",
@@ -525,6 +530,11 @@
     "defaultModelFallback": "Modelo predeterminado (respaldo si el enrutador falla)",
     "providerModel": "Proveedor / Modelo",
     "splitPercent": "% de división",
+    "weightSumError": "Los porcentajes de los objetivos deben sumar 100 % (actualmente {{total}} %).",
+    "nameRequired": "El nombre es obligatorio.",
+    "fallbackIncomplete": "Completa o elimina el objetivo de reserva a medio llenar: define proveedor y modelo.",
+    "smartMatchAutoRequired": "El enrutamiento inteligente debe coincidir con el literal de modelo «auto»: añádelo en Condiciones de coincidencia.",
+    "matchEmptyNote": "Sin condiciones de coincidencia: esta regla se aplicará a todas las solicitudes.",
     "weight": "Peso",
     "remove": "Eliminar",
     "addTarget": "+ Agregar objetivo",
@@ -878,6 +888,9 @@
       "createNameRequired": "El nombre es obligatorio",
       "createVersionRequired": "La versión es obligatoria",
       "createMaintainerRequired": "El mantenedor es obligatorio",
+      "createNameInvalid": "Usa «<namespace>/<short-name>»: solo minúsculas, números y guiones, p. ej. acme/pii-rules.",
+      "createVersionInvalid": "Usa una versión semántica con prefijo v, p. ej. v1.0.0.",
+      "createNameHelp": "Formato: <namespace>/<short-name> (minúsculas), p. ej. acme/pii-rules.",
       "createDescriptionHelp": "Opcional. Se muestra a los operadores que exploran el catálogo.",
       "createRulesLabel": "Reglas (array JSON)",
       "createRulesHelp": "Cada regla requiere ruleId, category, severity (hard|soft|info) y pattern. Opcional: flags, description, labels.",
@@ -1054,6 +1067,7 @@
     "virtualKeyCreatedMsg": "Mensaje de clave virtual creada",
     "nameHelpText": "Etiqueta legible para esta clave virtual. Se usa como nombre de visualización en paneles y registros de auditoría.",
     "namePlaceholder": "engineering-openai",
+    "nameTakenApplication": "Ya existe una clave virtual de aplicación con este nombre. Elige un nombre diferente.",
     "projectTooltip": "Proyecto al que pertenece esta clave virtual. Se utiliza para la atribución del tráfico y el cálculo de cuotas.",
     "expirationTooltip": "Las claves virtuales de aplicación requieren una fecha de vencimiento máxima de 3 meses. La clave no se puede usar después de su vencimiento.",
     "disabledKeysTooltip": "Tooltip de claves deshabilitadas",
@@ -4322,6 +4336,7 @@
     "createSubtitle": "Crear una nueva clave virtual personal",
     "name": "Nombre",
     "namePlaceholder": "my-api-key",
+    "nameTaken": "Ya tienes una clave virtual con este nombre. Elige un nombre diferente.",
     "sourceApp": "App de origen",
     "status": "Estado",
     "rpm": "Límite de tasa (RPM)",
@@ -6289,9 +6304,9 @@
     "endpointExamplePlaceholder": "OpenAI (chat)"
   },
   "rulePacks": {
-    "slugPlaceholder": "acme/rules",
-    "versionPlaceholder": "v1.0.0",
-    "sourcePlaceholder": "customer"
+    "slugPlaceholder": "p. ej. acme/rules",
+    "versionPlaceholder": "p. ej. v1.0.0",
+    "sourcePlaceholder": "p. ej. customer"
   },
   "idp": {
     "clientIdPlaceholder": "0oa1abc2def3ghi4j5k6"

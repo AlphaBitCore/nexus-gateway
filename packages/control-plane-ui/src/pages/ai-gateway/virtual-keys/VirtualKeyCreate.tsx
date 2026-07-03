@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
@@ -6,6 +6,7 @@ import { useApi } from '@/hooks/useApi';
 import { virtualKeyApi, projectApi, systemApi } from '@/api/services';
 import type { CreateVirtualKeyInput } from '@/api/services';
 import { useMutation } from '@/hooks/useMutation';
+import { useDuplicateNameCheck } from '@/hooks/useDuplicateNameCheck';
 import { useZodForm, FormInput, FormSwitch } from '@/lib/forms';
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import {
@@ -186,6 +187,22 @@ export function VirtualKeyCreate() {
     ['admin', 'projects', 'list', 'vk-create'],
   );
 
+  // Fail-fast duplicate probe on blur: application VK names are unique
+  // deployment-wide, so ask the list endpoint (q is a substring filter —
+  // exact-compare client-side). Advisory only; the create 409 is
+  // authoritative, and a non-super-admin's list may be scoped to their own
+  // keys, so a silent miss here is possible and fine.
+  const isNameTaken = useCallback(async (name: string) => {
+    const res = await virtualKeyApi.list({ q: name, vkType: 'application', limit: '100' });
+    return (res.data ?? []).some(vk => vk.name === name);
+  }, []);
+  const checkName = useDuplicateNameCheck({
+    form,
+    field: 'name',
+    message: t('pages:virtualKeys.nameTakenApplication'),
+    isTaken: isNameTaken,
+  });
+
   const { mutate, loading } = useMutation(
     (data: CreateVirtualKeyInput) => virtualKeyApi.create(data) as Promise<{ key?: string; id?: string }>,
     {
@@ -273,7 +290,7 @@ export function VirtualKeyCreate() {
       <Card>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <Stack gap="md">
-            <FormInput form={form} name="name" label={t('pages:virtualKeys.name')} required helpText={t('pages:virtualKeys.nameHelpText')} placeholder={t('pages:virtualKeys.namePlaceholder')} />
+            <FormInput form={form} name="name" label={t('pages:virtualKeys.name')} required helpText={t('pages:virtualKeys.nameHelpText')} placeholder={t('pages:virtualKeys.namePlaceholder')} onValueBlur={checkName} />
 
             <FormField
               label={t('pages:virtualKeys.project')}
