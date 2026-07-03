@@ -17,6 +17,12 @@ interface FormInputProps<T extends FieldValues> {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /**
+   * Called with the field's current value after RHF's own blur handling —
+   * for advisory async checks (e.g. duplicate-name probes) that should run
+   * when the user leaves the field.
+   */
+  onValueBlur?: (value: string) => void;
 }
 
 export function FormInput<T extends FieldValues>({
@@ -30,6 +36,7 @@ export function FormInput<T extends FieldValues>({
   placeholder,
   disabled,
   className,
+  onValueBlur,
 }: FormInputProps<T>) {
   const { field, fieldState } = useController({ name, control: form.control });
 
@@ -45,6 +52,10 @@ export function FormInput<T extends FieldValues>({
       <Input
         {...field}
         value={field.value ?? ''}
+        onBlur={e => {
+          field.onBlur();
+          onValueBlur?.(e.target.value);
+        }}
         type={type}
         placeholder={placeholder}
         disabled={disabled}

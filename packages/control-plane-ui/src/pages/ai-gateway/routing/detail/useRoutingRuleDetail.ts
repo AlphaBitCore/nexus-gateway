@@ -39,6 +39,7 @@ import {
   DEFAULT_SMART_SYSTEM_PROMPT,
   parseMatchConditionsForm,
   buildMatchConditionsPayload,
+  validateSplitWeights,
   type ConditionalEditorHydration,
   type StrategyType,
   type ProviderModelEntry,
@@ -331,7 +332,7 @@ export function useRoutingRuleDetail() {
         name: v.editName,
         description: v.editDescription,
         strategyType: 'policy',
-        priority: v.editPriority,
+        priority: Number(v.editPriority),
         enabled: v.editEnabled,
         pipelineStage: 0,
         config: built.config,
@@ -339,6 +340,14 @@ export function useRoutingRuleDetail() {
         ...retryPolicyPatch,
       });
       return;
+    }
+
+    if (editStrategyType === 'ab_split' || editStrategyType === 'loadbalance') {
+      const weightCheck = validateSplitWeights(entries);
+      if (!weightCheck.valid) {
+        addToast(t('pages:routing.weightSumError', { total: weightCheck.total }), 'error');
+        return;
+      }
     }
 
     const built =
@@ -372,7 +381,7 @@ export function useRoutingRuleDetail() {
       name: v.editName,
       description: v.editDescription,
       strategyType: editStrategyType,
-      priority: v.editPriority,
+      priority: Number(v.editPriority),
       enabled: v.editEnabled,
       pipelineStage: 1,
       config: built.config,

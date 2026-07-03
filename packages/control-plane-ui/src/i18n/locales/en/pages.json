@@ -530,6 +530,11 @@
     "defaultModelFallback": "Default Model (fallback if router fails)",
     "providerModel": "Provider / Model",
     "splitPercent": "Split %",
+    "weightSumError": "Target percentages must add up to 100% (currently {{total}}%).",
+    "nameRequired": "Name is required.",
+    "fallbackIncomplete": "Finish or remove the partially-filled fallback target — set both provider and model.",
+    "smartMatchAutoRequired": "Smart routing must match the \"auto\" model literal — add it under Match conditions.",
+    "matchEmptyNote": "No match conditions set — this rule will apply to all requests.",
     "weight": "Weight",
     "remove": "Remove",
     "addTarget": "+ Add Target",
@@ -883,6 +888,9 @@
       "createNameRequired": "Name is required",
       "createVersionRequired": "Version is required",
       "createMaintainerRequired": "Maintainer is required",
+      "createNameInvalid": "Use \"<namespace>/<short-name>\" (lowercase), e.g. acme/pii-rules.",
+      "createVersionInvalid": "Use a v-prefixed semantic version, e.g. v1.0.0.",
+      "createNameHelp": "Format: <namespace>/<short-name> (lowercase), e.g. acme/pii-rules.",
       "createDescriptionHelp": "Optional. Shown to operators browsing the catalog.",
       "createRulesLabel": "Rules (JSON array)",
       "createRulesHelp": "Each rule requires ruleId, category, severity (hard|soft|info), pattern. Optional: flags, description, labels.",
@@ -1059,6 +1067,7 @@
     "virtualKeyCreatedMsg": "Virtual Key Created Msg",
     "nameHelpText": "Human-readable label for this virtual key. Used as the display name in dashboards and audit logs.",
     "namePlaceholder": "engineering-openai",
+    "nameTakenApplication": "An application virtual key with this name already exists. Choose a different name.",
     "projectTooltip": "Project this virtual key belongs to. Used for traffic attribution and quota calculation.",
     "expirationTooltip": "Application virtual keys require an expiration date capped at 3 months from now. The key cannot be used after it expires.",
     "disabledKeysTooltip": "Disabled Keys Tooltip",
@@ -4327,6 +4336,7 @@
     "createSubtitle": "Create a new personal virtual key",
     "name": "Name",
     "namePlaceholder": "my-api-key",
+    "nameTaken": "You already have a virtual key with this name. Choose a different name.",
     "sourceApp": "Source App",
     "status": "Status",
     "rpm": "Rate Limit (RPM)",
@@ -6294,9 +6304,9 @@
     "endpointExamplePlaceholder": "OpenAI (chat)"
   },
   "rulePacks": {
-    "slugPlaceholder": "acme/rules",
-    "versionPlaceholder": "v1.0.0",
-    "sourcePlaceholder": "customer"
+    "slugPlaceholder": "e.g. acme/rules",
+    "versionPlaceholder": "e.g. v1.0.0",
+    "sourcePlaceholder": "e.g. customer"
   },
   "idp": {
     "clientIdPlaceholder": "0oa1abc2def3ghi4j5k6"

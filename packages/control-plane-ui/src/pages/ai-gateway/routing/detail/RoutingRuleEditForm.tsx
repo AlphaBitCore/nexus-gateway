@@ -10,6 +10,7 @@ import {
   emptyConditionalFormState,
   hydrateConditionalEditorState,
   tryParseConditionalFormFromConfig,
+  validateSplitWeights,
   type StrategyType,
 } from '../_shared/routing-rule-config';
 import { ConditionalRoutingEditor } from '../editor/ConditionalRoutingEditor';
@@ -75,6 +76,12 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
   const matchProjectIds = editForm.watch('matchProjectIds');
 
   const weightLabel = editStrategyType === 'ab_split' ? t('pages:routing.splitPercent') : t('pages:routing.weight');
+
+  // Weighted targets (ab_split "Split %" + loadbalance "Weight") must sum to
+  // exactly 100 — see validateSplitWeights.
+  const hasWeightTargets = editPipelineStage === '1' && showWeightColumn;
+  const weightCheck = validateSplitWeights(entries);
+  const weightSumInvalid = hasWeightTargets && !weightCheck.valid;
 
   const switchConditionalToJson = () => {
     if (conditionalUi.mode === 'json') return;
@@ -297,6 +304,11 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
               </div>
             ))}
             <button type="button" onClick={addEntry} className={styles.smallBtn}>{t('pages:routing.addTarget')}</button>
+            {weightSumInvalid && (
+              <p className={styles.weightSumError} role="alert">
+                {t('pages:routing.weightSumError', { total: weightCheck.total })}
+              </p>
+            )}
           </>
         )}
       </div>
@@ -397,7 +409,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
       <Stack direction="horizontal" gap="sm" className={styles.routingEditActions}>
         <Button
           onClick={handleSave}
-          disabled={saveLoading || !editName || retryPolicyInvalid}
+          disabled={saveLoading || !editName || retryPolicyInvalid || weightSumInvalid}
         >
           {saveLoading ? t('pages:routing.saving') : t('common:save')}
         </Button>

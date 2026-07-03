@@ -26,6 +26,24 @@
   margin-left: 2px;
 }
 
+.weightSumError {
+  color: var(--color-danger);
+  font-size: var(--g-font-size-sm);
+  margin: 8px 0 0;
+}
+
+.stepHint {
+  color: var(--color-danger);
+  font-size: var(--g-font-size-sm);
+  margin: 0 0 8px;
+}
+
+.stepNote {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  margin: 0 0 8px;
+}
+
 .helpBtn {
   display: inline-flex;
   align-items: center;

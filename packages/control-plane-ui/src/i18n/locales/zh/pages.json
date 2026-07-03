@@ -530,6 +530,11 @@
     "defaultModelFallback": "默认模型（路由器失败时的回退）",
     "providerModel": "供应商 / 模型",
     "splitPercent": "分流百分比",
+    "weightSumError": "各目标的百分比之和必须为 100%(当前为 {{total}}%)。",
+    "nameRequired": "名称必填。",
+    "fallbackIncomplete": "请补全或删除半填的回退目标——供应商和模型都要选。",
+    "smartMatchAutoRequired": "智能路由必须匹配“auto”模型字面量——请在匹配条件里添加。",
+    "matchEmptyNote": "未设置匹配条件——该规则将应用于所有请求。",
     "weight": "权重",
     "remove": "移除",
     "addTarget": "+ 添加目标",
@@ -883,6 +888,9 @@
       "createNameRequired": "名称必填",
       "createVersionRequired": "版本必填",
       "createMaintainerRequired": "维护者必填",
+      "createNameInvalid": "请使用“<namespace>/<short-name>”格式——仅限小写字母、数字和连字符,例如 acme/pii-rules。",
+      "createVersionInvalid": "请使用带 v 前缀的语义化版本号,例如 v1.0.0。",
+      "createNameHelp": "格式:<namespace>/<short-name>(小写),例如 acme/pii-rules。",
       "createDescriptionHelp": "可选。在目录中展示给操作员。",
       "createRulesLabel": "规则 (JSON 数组)",
       "createRulesHelp": "每条规则需包含 ruleId、category、severity（hard|soft|info）、pattern；可选 flags、description、labels。",
@@ -1059,6 +1067,7 @@
     "virtualKeyCreatedMsg": "虚拟密钥已创建",
     "nameHelpText": "虚拟密钥的人读名称，在仪表板和审计日志中作为显示名使用。",
     "namePlaceholder": "engineering-openai",
+    "nameTakenApplication": "已存在同名的应用类型虚拟密钥，请更换名称。",
     "projectTooltip": "此虚拟密钥所属的项目，用于流量归属和配额计算。",
     "expirationTooltip": "应用类型虚拟密钥必须设置过期时间，且不得超过 3 个月。密钥过期后将无法用于认证。",
     "disabledKeysTooltip": "已禁用的密钥立即拒绝所有调用，但保留配置以供审计或重新启用。",
@@ -4327,6 +4336,7 @@
     "createSubtitle": "创建新的个人虚拟密钥",
     "name": "名称",
     "namePlaceholder": "my-api-key",
+    "nameTaken": "你已有同名的虚拟密钥，请更换名称。",
     "sourceApp": "来源应用",
     "status": "状态",
     "rpm": "速率限制 (RPM)",
@@ -6294,9 +6304,9 @@
     "endpointExamplePlaceholder": "OpenAI (chat)"
   },
   "rulePacks": {
-    "slugPlaceholder": "acme/rules",
-    "versionPlaceholder": "v1.0.0",
-    "sourcePlaceholder": "customer"
+    "slugPlaceholder": "例如 acme/rules",
+    "versionPlaceholder": "例如 v1.0.0",
+    "sourcePlaceholder": "例如 customer"
   },
   "idp": {
     "clientIdPlaceholder": "0oa1abc2def3ghi4j5k6"

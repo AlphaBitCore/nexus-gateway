@@ -35,6 +35,32 @@ export interface ProviderModelEntry {
   weight: string;
 }
 
+/**
+ * Weighted-target strategies (ab_split "Split %" and loadbalance "Weight")
+ * present operators with per-target numbers that must sum to exactly 100, with
+ * every target in 0..100. Both resolvers treat weights as *relative* (weighted
+ * random over the sum), so 70+50 would silently become 58/42 — enforcing 100
+ * makes the entered numbers truthful and the split predictable. Applied to any
+ * strategy that shows the weight column; single/fallback/conditional/etc. have
+ * no weights and are unaffected.
+ */
+export function validateSplitWeights(entries: ProviderModelEntry[]): { valid: boolean; total: number } {
+  let total = 0;
+  let allInRange = true;
+  for (const entry of entries) {
+    const raw = entry.weight.trim();
+    const n = Number(raw);
+    // Number('') is 0, so guard empty/whitespace explicitly — a blank weight
+    // field is not a valid target, even though it would coerce to 0.
+    if (raw === '' || !Number.isFinite(n) || n < 0 || n > 100) {
+      allInRange = false;
+      continue;
+    }
+    total += n;
+  }
+  return { valid: allInRange && total === 100, total };
+}
+
 export function mapLegacyStrategy(s: string): StrategyType {
   const map: Record<string, StrategyType> = {
     priority: 'single',

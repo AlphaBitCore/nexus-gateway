@@ -19,6 +19,7 @@ import {
   resolveConditionalConfigFromEditor,
   DEFAULT_SMART_SYSTEM_PROMPT,
   buildMatchConditionsPayload,
+  validateSplitWeights,
   type ConditionalEditorHydration,
   type StrategyType,
   type ProviderModelEntry,
@@ -115,36 +116,14 @@ export function useRoutingRuleCreate() {
     setStrategyType(next);
   };
 
-  // ── Submit handler ────────────────────────────────────────────────
-  const handleSubmit = () => {
-    const stageNum = pipelineStage === '0' ? 0 : 1;
-    if (stageNum === 0) {
-      const built = buildPolicyApiConfig(policyAllowM, policyDenyM, policyAllowP, policyDenyP);
-      if (!built.ok) {
-        addToast(built.message, 'error');
-        return;
-      }
-      const matchConditions = buildMatchConditionsPayload({
-        models,
-        requestedModelLiterals: matchRequestedModelLiterals,
-        modelTypes: matchModelTypes,
-        providers: matchProviders,
-        projects: matchProjectIds,
-        virtualKeys: matchVirtualKeys,
-      });
-      mutate({
-        name,
-        description,
-        strategyType: 'policy',
-        priority: Number(priority),
-        enabled,
-        pipelineStage: 0,
-        config: built.config,
-        matchConditions,
-      });
-      return;
+  // Build the strategy config for the current form state. Shared by the
+  // wizard's Configuration-step gating (configValidity) and the final submit
+  // so what blocks Continue and what the API rejects can never drift. Returns
+  // the same {ok,message}|{ok,config} shape the build helpers use.
+  const buildConfig = (): { ok: true; config: unknown } | { ok: false; message: string } => {
+    if (pipelineStage === '0') {
+      return buildPolicyApiConfig(policyAllowM, policyDenyM, policyAllowP, policyDenyP);
     }
-
     const built =
       strategyType === 'conditional'
         ? resolveConditionalConfigFromEditor(conditionalUi, providerGroups)
@@ -159,6 +138,20 @@ export function useRoutingRuleCreate() {
               matchModelIds: models,
               preservedConditionalConfig: null,
             });
+    if (!built.ok) return built;
+    // Weighted strategies additionally require the split to total 100.
+    if (strategyType === 'ab_split' || strategyType === 'loadbalance') {
+      const weightCheck = validateSplitWeights(entries);
+      if (!weightCheck.valid) {
+        return { ok: false, message: t('pages:routing.weightSumError', { total: weightCheck.total }) };
+      }
+    }
+    return built;
+  };
+
+  // ── Submit handler ────────────────────────────────────────────────
+  const handleSubmit = () => {
+    const built = buildConfig();
     if (!built.ok) {
       addToast(built.message, 'error');
       return;
@@ -171,6 +164,19 @@ export function useRoutingRuleCreate() {
       projects: matchProjectIds,
       virtualKeys: matchVirtualKeys,
     });
+    if (pipelineStage === '0') {
+      mutate({
+        name,
+        description,
+        strategyType: 'policy',
+        priority: Number(priority),
+        enabled,
+        pipelineStage: 0,
+        config: built.config,
+        matchConditions,
+      });
+      return;
+    }
     const fallbackChainApi = buildFallbackChainApi(fallbackEntries, providerGroups);
     mutate({
       name,
@@ -184,6 +190,14 @@ export function useRoutingRuleCreate() {
       ...(fallbackChainApi.length > 0 ? { fallbackChain: fallbackChainApi } : {}),
     });
   };
+
+  // Per-step required-field state for the wizard's Continue/submit gating.
+  const configValidity = buildConfig();
+  // A fallback target is either fully filled or empty; a half-filled row
+  // (provider XOR model) would silently drop at buildFallbackChainApi.
+  const fallbackIncomplete = fallbackEntries.some(
+    (e) => (e.provider.trim() !== '') !== (e.model.trim() !== ''),
+  );
 
   // ── Derived values ────────────────────────────────────────────────
   const showWeightColumn = strategyType === 'loadbalance' || strategyType === 'ab_split';
@@ -242,6 +256,8 @@ export function useRoutingRuleCreate() {
     // Derived
     showWeightColumn,
     configModelIds,
+    configValidity,
+    fallbackIncomplete,
 
     // Actions
     handleSubmit,

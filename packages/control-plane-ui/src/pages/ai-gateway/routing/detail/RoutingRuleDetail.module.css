@@ -458,6 +458,13 @@
   margin-left: 2px;
 }
 
+/* Weighted-target sum-to-100 validation message */
+.weightSumError {
+  color: var(--color-danger);
+  font-size: var(--g-font-size-sm);
+  margin: 8px 0 0;
+}
+
 /* Inline "Enabled" text next to the switch */
 .enabledLabel {
   font-size: var(--g-font-size-sm);

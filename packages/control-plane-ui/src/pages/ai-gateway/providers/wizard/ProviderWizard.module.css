@@ -273,8 +273,9 @@
 
 .templateCardSelected {
   composes: templateCard;
-  border-width: 2px;
-  box-shadow: var(--shadow-sm);
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+  box-shadow: 0 0 0 3px var(--color-accent-bg);
 }
 
 .templateAvatar {
@@ -340,8 +341,9 @@
 
 .customCardSelected {
   composes: customCard;
-  border: 2px dashed var(--color-text);
-  background: var(--color-muted);
+  border: 2px dashed var(--color-primary);
+  background: var(--color-primary-light);
+  box-shadow: 0 0 0 3px var(--color-accent-bg);
 }
 
 .browseBtn {
