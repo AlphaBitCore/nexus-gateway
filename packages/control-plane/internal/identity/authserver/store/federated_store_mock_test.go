@@ -269,10 +269,10 @@ func TestFederatedStore_RefreshUserProfile_Success(t *testing.T) {
 	ctx := context.Background()
 
 	mock.ExpectExec(`UPDATE "NexusUser"\s+SET "displayName" = COALESCE\(NULLIF\(\$2, ''\), "displayName"\),\s+email\s+= COALESCE\(NULLIF\(\$3, ''\), email\),\s+"updatedAt"\s+= NOW\(\)\s+WHERE id = \$1`).
-		WithArgs("user_1", "steve chen", "steve.chen@itechchoice.com").
+		WithArgs("user_1", "steve chen", "steve.chen@alphabitcore.com").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
-	if err := s.RefreshUserProfile(ctx, "user_1", "steve chen", "steve.chen@itechchoice.com"); err != nil {
+	if err := s.RefreshUserProfile(ctx, "user_1", "steve chen", "steve.chen@alphabitcore.com"); err != nil {
 		t.Fatalf("RefreshUserProfile: %v", err)
 	}
 }

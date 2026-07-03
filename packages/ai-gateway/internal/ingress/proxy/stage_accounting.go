@@ -15,6 +15,19 @@ import (
 // ServeProxy immediately after the state is built, so it covers every
 // stage's exit path.
 func (s *proxyState) finalizeAudit() {
+	// Pure-forward benchmark mode: skip the entire audit tail (no traffic_event).
+	// The record carries pooled request/response body buffers that the async
+	// writer normally returns downstream of Enqueue; since we skip Enqueue, return
+	// them here so the measured hot path recycles them instead of re-allocating
+	// the ~64 KB request body every request. Everything before this point
+	// (forwarding, cross-spec conversion, hook extraction/enforcement) has already
+	// run — this only drops the audit record.
+	if pureForward {
+		if s.h != nil && s.h.deps != nil && s.h.deps.AuditWriter != nil {
+			s.h.deps.AuditWriter.ReclaimRecordBody(s.rec)
+		}
+		return
+	}
 	deferStart := time.Now()
 	s.rec.UpstreamTtfbMs = s.phaseSink.TtfbMs()
 	s.rec.UpstreamTotalMs = s.phaseSink.TotalMs()

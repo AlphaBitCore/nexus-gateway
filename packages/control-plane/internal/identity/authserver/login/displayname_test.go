@@ -24,8 +24,8 @@ func TestSAMLNameWithFallback(t *testing.T) {
 		{"given + family composed", []saml.Attribute{attr(givenURI, "Carol"), attr(surnameURI, "King")}, "", "Carol King"},
 		{"given only", []saml.Attribute{attr("givenName", "Dave")}, "", "Dave"},
 		{"no name + no email → empty", []saml.Attribute{attr("dept", "eng")}, "", ""},
-		{"email-valued name falls to humanized nickname", []saml.Attribute{attr(fullNameURI, "steve.chen@itechchoice.com"), attr("http://schemas.auth0.com/nickname", "steve.chen")}, "steve.chen@itechchoice.com", "steve chen"},
-		{"email-valued name, no nickname → humanized email local-part", []saml.Attribute{attr(fullNameURI, "steve.chen@itechchoice.com")}, "steve.chen@itechchoice.com", "steve chen"},
+		{"email-valued name falls to humanized nickname", []saml.Attribute{attr(fullNameURI, "steve.chen@alphabitcore.com"), attr("http://schemas.auth0.com/nickname", "steve.chen")}, "steve.chen@alphabitcore.com", "steve chen"},
+		{"email-valued name, no nickname → humanized email local-part", []saml.Attribute{attr(fullNameURI, "steve.chen@alphabitcore.com")}, "steve.chen@alphabitcore.com", "steve chen"},
 		{"nickname handle when no full/given name", []saml.Attribute{attr("nickname", "ada.lovelace")}, "", "ada lovelace"},
 		{"no name attribute → humanized email local-part", []saml.Attribute{attr("dept", "eng")}, "grace.hopper@navy.mil", "grace hopper"},
 	}
@@ -45,7 +45,7 @@ func TestHumanizeHandle(t *testing.T) {
 		want string
 	}{
 		{"steve.chen", "steve chen"},
-		{"steve.chen@itechchoice.com", "steve chen"},
+		{"steve.chen@alphabitcore.com", "steve chen"},
 		{"steve_chen", "steve chen"},
 		{"john.doe.42", "john doe"},
 		{"gracehopper", "gracehopper"},
@@ -80,9 +80,9 @@ func TestOIDCDisplayName(t *testing.T) {
 		{"preferred_username humanized when no name/given", map[string]any{"preferred_username": "grace.hopper"}, "g@x", "sub-3", "grace hopper"},
 		{"humanized email local-part when no name claims", map[string]any{}, "harry.styles@x.com", "sub-4", "harry styles"},
 		{"falls back to subject when no name + no email", map[string]any{}, "", "sub-5", "sub-5"},
-		{"email-valued name falls to humanized preferred_username", map[string]any{"name": "steve.chen@itechchoice.com", "preferred_username": "steve.chen"}, "steve.chen@itechchoice.com", "sub-6", "steve chen"},
-		{"email-valued name falls to humanized nickname", map[string]any{"name": "steve.chen@itechchoice.com", "nickname": "steve.chen"}, "steve.chen@itechchoice.com", "sub-7", "steve chen"},
-		{"email-valued name, no handles → humanized email local-part", map[string]any{"name": "steve.chen@itechchoice.com"}, "steve.chen@itechchoice.com", "sub-8", "steve chen"},
+		{"email-valued name falls to humanized preferred_username", map[string]any{"name": "steve.chen@alphabitcore.com", "preferred_username": "steve.chen"}, "steve.chen@alphabitcore.com", "sub-6", "steve chen"},
+		{"email-valued name falls to humanized nickname", map[string]any{"name": "steve.chen@alphabitcore.com", "nickname": "steve.chen"}, "steve.chen@alphabitcore.com", "sub-7", "steve chen"},
+		{"email-valued name, no handles → humanized email local-part", map[string]any{"name": "steve.chen@alphabitcore.com"}, "steve.chen@alphabitcore.com", "sub-8", "steve chen"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

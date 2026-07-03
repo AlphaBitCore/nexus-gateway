@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
 
@@ -546,6 +547,53 @@ func TestCreateVirtualKey_DBError(t *testing.T) {
 	}
 	if aud.count() != 0 {
 		t.Errorf("expected no audit on DB failure")
+	}
+}
+
+// TestCreateVirtualKey_DuplicateName covers the 409 envelope when the INSERT
+// trips the fleet-wide application-name partial unique index: the caller gets
+// a duplicate_name conflict, and no audit entry fires.
+func TestCreateVirtualKey_DuplicateName(t *testing.T) {
+	h, mock, _, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
+		WithArgs(anyN(14)...).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "VirtualKey_application_name_uniq"})
+
+	future := time.Now().UTC().Add(30 * 24 * time.Hour)
+	body := `{"name":"taken","vkType":"application","projectId":"p-1","expiresAt":"` + future.Format(time.RFC3339) + `"}`
+	c, rec := makeJSONReq(t, http.MethodPost, "/api/admin/virtual-keys", body)
+	if err := h.CreateVirtualKey(c); err != nil {
+		t.Fatalf("CreateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "duplicate_name") {
+		t.Errorf("body missing duplicate_name type: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "application virtual key with this name already exists") {
+		t.Errorf("body missing application-name message: %s", rec.Body.String())
+	}
+	if aud.count() != 0 {
+		t.Errorf("expected no audit on rejected create")
+	}
+}
+
+// TestCreateVirtualKey_UnrelatedUniqueViolation pins the helper's boundary: a
+// 23505 on any constraint other than the two name indexes (here the keyHash
+// unique, an internal random-collision fault, not caller input) stays a 500.
+func TestCreateVirtualKey_UnrelatedUniqueViolation(t *testing.T) {
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
+		WithArgs(anyN(14)...).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "VirtualKey_keyHash_key"})
+
+	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{"name":"n","vkType":"personal"}`)
+	if err := h.CreateVirtualKey(c); err != nil {
+		t.Fatalf("CreateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

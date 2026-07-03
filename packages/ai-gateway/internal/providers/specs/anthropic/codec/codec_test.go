@@ -1182,6 +1182,8 @@ func TestAnthropicModelRejectsSamplingParams(t *testing.T) {
 	}{
 		{"claude-opus-4-7", true},
 		{"claude-opus-4-7-20260101", true}, // dated variant in the same family
+		{"claude-opus-4-8", true},          // prod smoke 2026-07-03: 400 "temperature is deprecated"
+		{"claude-opus-4-8-20260101", true}, // dated variant in the same family
 		{"claude-opus-4-1-20250805", false},
 		{"claude-opus-4-5-20250929", false}, // not yet observed; needs empirical confirmation
 		{"claude-sonnet-4-6", false},
