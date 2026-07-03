@@ -84,6 +84,13 @@ func (w *Writer) reclaimRecordBody(rec *Record) {
 	}
 }
 
+// ReclaimRecordBody returns rec's pooled request/response body buffers to their
+// pools. The normal terminal reclaim runs inside the writer downstream of
+// Enqueue; the pure-forward benchmark path skips Enqueue and must return the
+// buffers itself, or the measured hot path re-allocates the ~64 KB request body
+// every request. Idempotent; safe on a nil or un-pooled record.
+func (w *Writer) ReclaimRecordBody(rec *Record) { w.reclaimRecordBody(rec) }
+
 // responseBodyPool reuses the streaming-capture tee's backing array. The SSE
 // capture tee buffers the response body into this array (one alloc per stream
 // was ~3.7 GB/window — the second-largest streaming-relay allocator); pooling it

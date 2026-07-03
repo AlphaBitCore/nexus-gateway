@@ -56,6 +56,7 @@ func run() int {
 	}
 	slog.SetDefault(logger)
 	slog.Info("shared initialized", slog.Int("sharedHooks", len(builtins.Registry.All())))
+	wiring.RegisterPureForwardMode(prometheus.DefaultRegisterer, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

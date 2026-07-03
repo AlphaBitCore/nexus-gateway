@@ -265,3 +265,34 @@ func TestResponseBodyPool_ReuseNoStaleBytes(t *testing.T) {
 		t.Fatalf("reused response buffer leaked stale bytes: %q", *h2)
 	}
 }
+
+func TestReclaimRecordBody_ReturnsPooledBuffersAndClearsHandles(t *testing.T) {
+	w := NewWriter(nil, "topic", nil, slog.Default())
+
+	body, handle := AcquireRequestBody([]byte(`{"model":"gpt-4o"}`))
+	rec := &Record{RequestBody: body}
+	rec.AttachPooledRequestBody(handle)
+
+	respHandle := AcquireResponseBuffer()
+	*respHandle = append(*respHandle, []byte("streamed-bytes")...)
+	rec.ResponseBody = *respHandle
+	rec.AttachPooledResponseBody(respHandle)
+
+	w.ReclaimRecordBody(rec)
+
+	// After reclaim the record must not reference the pooled bytes — the guard
+	// relies on this so the benchmark hot path recycles buffers instead of
+	// re-allocating the ~64 KB request body every request.
+	if rec.RequestBody != nil {
+		t.Errorf("RequestBody not cleared after reclaim: %v", rec.RequestBody)
+	}
+	if rec.ResponseBody != nil {
+		t.Errorf("ResponseBody not cleared after reclaim: %v", rec.ResponseBody)
+	}
+	if rec.reqBodyHandle != nil || rec.respBodyHandle != nil {
+		t.Errorf("handles not nil'd: req=%v resp=%v", rec.reqBodyHandle, rec.respBodyHandle)
+	}
+	// Idempotent: a second call and a nil record must not panic.
+	w.ReclaimRecordBody(rec)
+	w.ReclaimRecordBody(nil)
+}

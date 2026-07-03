@@ -56,3 +56,16 @@ func perfParallelHooks() bool {
 	})
 	return parallelHooksFlag
 }
+
+// pureForward is the NEXUS_PERF_PURE_FORWARD benchmark switch. When on, the proxy
+// skips its entire audit tail (no traffic_event) so throughput can be compared
+// against forward-only gateways (Bifrost, agentgateway). Default off ("" or any
+// value != "1") = audit stored, byte-identical to normal operation. Read once at
+// package init; a plain var (not sync.Once) so tests can toggle it. Env-only by
+// design — this must never be reachable via config/yaml/shadow, and must never be
+// set in production (it disables the audit trail).
+var pureForward = os.Getenv("NEXUS_PERF_PURE_FORWARD") == "1"
+
+// PerfPureForward reports whether pure-forward benchmark mode is active. Exported
+// for the wiring layer's startup WARN banner and self-identifying gauge.
+func PerfPureForward() bool { return pureForward }

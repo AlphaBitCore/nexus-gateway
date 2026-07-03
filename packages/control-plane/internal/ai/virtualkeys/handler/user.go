@@ -122,6 +122,9 @@ func (h *Handler) CreateUserVirtualKey(c echo.Context) error {
 		VKStatus:                    "active",
 	})
 	if err != nil {
+		if msg, ok := vkNameConflict(err); ok {
+			return c.JSON(http.StatusConflict, errJSON(msg, "duplicate_name", ""))
+		}
 		h.logger.Error("create user virtual key", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
 	}
