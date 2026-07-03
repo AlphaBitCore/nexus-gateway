@@ -113,6 +113,10 @@ paths:
                 resolved type is "application", `projectId` and `expiresAt` become required,
                 `expiresAt` must not exceed three months from now, and the key is created in
                 "pending" status awaiting approval; other types are created "active".
+
+                Names must be unique: application keys share one deployment-wide namespace,
+                and personal keys are unique per owner. A taken name is rejected with 409
+                `duplicate_name`.
             x-nexus-iam-action: iam.ResourceVirtualKey.Action(iam.VerbCreate)
             x-nexus-tier: confirm
             requestBody:
@@ -183,6 +187,21 @@ paths:
                             schema:
                                 type: object
                                 additionalProperties: {}
+                "409":
+                    description: |-
+                        Conflict — the name is already taken (`error.type` is `duplicate_name`).
+                        Application virtual-key names are unique across the deployment; personal
+                        virtual-key names are unique per owner.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error:
+                                    message: An application virtual key with this name already exists
+                                    type: duplicate_name
+                                    code: ""
                 "500":
                     description: Internal Server Error
                     content:

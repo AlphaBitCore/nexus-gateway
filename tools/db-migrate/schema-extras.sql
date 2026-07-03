@@ -128,6 +128,12 @@ CREATE INDEX IF NOT EXISTS traffic_event_passthrough_active_idx ON public.traffi
 -- so without this partial the page seq-scans the whole table per sub-query.
 CREATE INDEX IF NOT EXISTS traffic_event_routed_provider_ts_idx ON public.traffic_event USING btree (routed_provider_id, "timestamp" DESC) WHERE ((source = 'ai-gateway'::text) AND (routed_provider_id IS NOT NULL));
 CREATE UNIQUE INDEX IF NOT EXISTS "DeviceAssignment_deviceId_active_uidx" ON public."DeviceAssignment" USING btree ("deviceId") WHERE ("releasedAt" IS NULL);
+-- Virtual-key name uniqueness is scoped by vkType: application keys share one
+-- fleet-wide admin namespace, while personal keys are self-service and only
+-- collide within their owner (user A's "test" must not block user B's).
+-- Handlers map violations of these two indexes to 409 duplicate_name.
+CREATE UNIQUE INDEX IF NOT EXISTS "VirtualKey_application_name_uniq" ON public."VirtualKey" USING btree (name) WHERE ("vkType" = 'application'::text);
+CREATE UNIQUE INDEX IF NOT EXISTS "VirtualKey_personal_owner_name_uniq" ON public."VirtualKey" USING btree ("ownerId", name) WHERE ("vkType" = 'personal'::text);
 CREATE UNIQUE INDEX IF NOT EXISTS exemption_request_pending_dedup_uniq ON public.exemption_request USING btree (target_host, requested_by) WHERE (status = 'PENDING'::public."ExemptionRequestStatus");
 CREATE UNIQUE INDEX IF NOT EXISTS thing_type_physical_id_uniq ON public.thing USING btree (type, physical_id) WHERE ((type = 'agent'::text) AND (physical_id IS NOT NULL));
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ops_rollup_1d ON public.metric_ops_rollup_1d USING btree (bucket_start, COALESCE(thing_id, ''::text), metric_name, dimension_key);
