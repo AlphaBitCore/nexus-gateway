@@ -35,6 +35,10 @@ model VirtualKey {
   rejectedAt   DateTime? @db.Timestamptz(3)
   rejectReason String?
 
+  /// Name uniqueness is enforced by two partial unique indexes in
+  /// schema-extras.sql (Prisma cannot express WHERE-scoped uniques):
+  /// `VirtualKey_application_name_uniq` (name, vkType='application') and
+  /// `VirtualKey_personal_owner_name_uniq` (ownerId+name, vkType='personal').
   @@index([name])
   @@index([keyHash])
   @@index([projectId])

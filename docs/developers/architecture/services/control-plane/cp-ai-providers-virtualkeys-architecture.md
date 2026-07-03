@@ -89,6 +89,16 @@ clear the expiry to never-expire and escape the re-approval cadence; create and
 renew additionally require the value. **Personal** keys are exempt (uncapped,
 and may clear their expiry).
 
+Names are unique per scope: application keys share one deployment-wide
+namespace, while personal keys collide only within their owner — user A's
+"test" never blocks user B's, and personal names are never disclosed across
+users. Enforcement is two partial unique indexes in
+`tools/db-migrate/schema-extras.sql` (`VirtualKey_application_name_uniq`,
+`VirtualKey_personal_owner_name_uniq`); both create handlers (admin and
+personal self-service) translate a violation into 409 `duplicate_name`, so the
+check is race-proof rather than a read-then-insert. Update paths never touch
+`name` (rename is not supported), so create is the only enforcement point.
+
 Propagation splits by transition. Update, delete, and regenerate push a targeted
 invalidate-by-hash through `NotifyConfigChange` under the `virtual_keys` shadow
 key — an `invalidate` op carrying the affected key hash — so the gateway evicts
