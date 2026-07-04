@@ -1,0 +1,50 @@
+{{- if .Values.dbInit.enabled }}
+# Schema + seed as a pre-install/pre-upgrade hook, mirroring the AMI
+# first-boot-db sequence (prisma db push --accept-data-loss → prod seed). Runs
+# before any service Deployment so the DB is materialised on first install and
+# migrated on upgrade. The seed re-encrypts credential rows / re-hashes VK
+# lookup keys, so it needs the same CREDENTIAL_ENCRYPTION_KEY +
+# ADMIN_KEY_HMAC_SECRET the services use.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nexus.fullname" . }}-db-init
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-init
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.labels" . | nindent 8 }}
+        app.kubernetes.io/component: db-init
+    spec:
+      restartPolicy: Never
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-init
+          image: {{ .Values.dbInit.image | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              value: {{ include "nexus.databaseUrl" . | quote }}
+            - name: SEED_DEMO
+              value: {{ .Values.dbInit.seedDemo | quote }}
+            - name: CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: credentialEncryptionKey}
+            - name: ADMIN_KEY_HMAC_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: adminKeyHmacSecret}
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: internalServiceToken}
+          command: ["sh", "-c", "npm run db:push -- --accept-data-loss && npm run seed:prod"]
+{{- end }}

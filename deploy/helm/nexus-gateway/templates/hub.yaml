@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus.fullname" . }}-hub
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hub
+spec:
+  replicas: {{ .Values.hub.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: hub
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.labels" . | nindent 8 }}
+        app.kubernetes.io/component: hub
+    spec:
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: hub
+          image: {{ include "nexus.image" (dict "root" . "repo" "nexus-hub") | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            {{- include "nexus.commonEnv" . | nindent 12 }}
+            - name: NEXUS_CONSOLE_INTERNAL_URL
+              value: {{ printf "http://%s-console:3001" (include "nexus.fullname" .) | quote }}
+            - name: NEXUS_AUTH_ISSUER
+              value: {{ .Values.authServer.issuer | quote }}
+            - name: NEXUS_HUB_ADVERTISE_ADDR
+              value: {{ printf "http://%s-hub:3060" (include "nexus.fullname" .) | quote }}
+            - name: NEXUS_HUB_PUBLIC_URL
+              value: {{ printf "http://%s-hub:3060" (include "nexus.fullname" .) | quote }}
+            - name: HUB_CONFIG_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: hubConfigToken}
+          ports:
+            - {name: http, containerPort: 3060}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 3060}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: 3060}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources: {{ toYaml .Values.hub.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus.fullname" . }}-hub
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hub
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: hub
+  ports:
+    - {name: http, port: 3060, targetPort: 3060}

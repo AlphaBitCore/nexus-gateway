@@ -1,0 +1,198 @@
+# Nexus Gateway — full-stack docker-compose (dev / demo quick setup).
+#
+#   ./scripts/compose-init.sh                        # once: generate secrets
+#   docker compose -f docker-compose.full.yml \
+#     --env-file deploy/docker/.env.compose up -d    # bring the stack up
+#   open https://localhost/                          # console (self-signed TLS)
+#
+# Production deploys use the Helm chart (deploy/helm/nexus-gateway), not this
+# file. Architecture: docs/developers/architecture/cross-cutting/deployment/
+# container-deployment-architecture.md
+#
+# Secrets live ONLY in deploy/docker/.env.compose (generated, gitignored) —
+# never in this yaml. The dev-infra docker-compose.yml (postgres/valkey/nats
+# for `scripts/dev-start.sh`) is untouched by this file; the two use separate
+# container names and volumes so they can coexist.
+
+name: nexus-full
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus-full-postgres
+    environment:
+      POSTGRES_DB: nexus_gateway
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/compose-init.sh first}
+    volumes:
+      - nexus-full-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  valkey:
+    # Same image the dev-infra compose uses: BSD-licensed, wire-compatible
+    # with Redis 7, bundles valkey-search.
+    image: valkey/valkey-bundle:8-trixie
+    container_name: nexus-full-valkey
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  nats:
+    image: nats:2-alpine
+    container_name: nexus-full-nats
+    command: ["-js", "-m", "8222"]
+    volumes:
+      - nexus-full-natsdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # One-shot schema + seed, mirroring the AMI first-boot-db sequence
+  # (prisma db push --accept-data-loss → prisma generate → prod seed). The
+  # seed re-encrypts credential rows and re-hashes VK lookup keys, so it needs
+  # the same CREDENTIAL_ENCRYPTION_KEY / ADMIN_KEY_HMAC_SECRET the services use.
+  db-init:
+    image: ${NEXUS_IMAGE_REGISTRY:-alphabitcore}/nexus-db-migrate:${NEXUS_IMAGE_TAG:-latest}
+    container_name: nexus-full-db-init
+    environment:
+      DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus_gateway
+      SEED_DEMO: "false"
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      ADMIN_KEY_HMAC_SECRET: ${ADMIN_KEY_HMAC_SECRET}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      COMPLIANCE_PROXY_API_TOKEN: ${COMPLIANCE_PROXY_API_TOKEN}
+    # Image default CMD runs prisma db push --accept-data-loss + prod seed.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  nexus-hub:
+    image: ${NEXUS_IMAGE_REGISTRY:-alphabitcore}/nexus-hub:${NEXUS_IMAGE_TAG:-latest}
+    container_name: nexus-full-hub
+    environment:
+      DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus_gateway
+      NEXUS_REDIS_ADDR: valkey:6379
+      NEXUS_NATS_URL: nats://nats:4222
+      NEXUS_CONSOLE_INTERNAL_URL: http://nexus-console:3001
+      NEXUS_HUB_PUBLIC_URL: http://nexus-hub:3060
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      HUB_CONFIG_TOKEN: ${HUB_CONFIG_TOKEN}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+    volumes:
+      - nexus-full-agentca:/var/lib/nexus/agentca
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3060/healthz > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  nexus-ai-gateway:
+    image: ${NEXUS_IMAGE_REGISTRY:-alphabitcore}/nexus-ai-gateway:${NEXUS_IMAGE_TAG:-latest}
+    container_name: nexus-full-ai-gateway
+    ports:
+      - "3050:3050"   # ingress for API clients (OpenAI/Anthropic/Gemini wire formats)
+    environment:
+      DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus_gateway
+      NEXUS_REDIS_ADDR: valkey:6379
+      NEXUS_NATS_URL: nats://nats:4222
+      NEXUS_HUB_URL: http://nexus-hub:3060
+      NEXUS_AI_GATEWAY_PUBLIC_URL: http://localhost:3050
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      ADMIN_KEY_HMAC_SECRET: ${ADMIN_KEY_HMAC_SECRET}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      AI_GATEWAY_API_TOKEN: ${AI_GATEWAY_API_TOKEN}
+    depends_on:
+      nexus-hub:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3050/healthz > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  nexus-compliance-proxy:
+    image: ${NEXUS_IMAGE_REGISTRY:-alphabitcore}/nexus-compliance-proxy:${NEXUS_IMAGE_TAG:-latest}
+    container_name: nexus-full-compliance-proxy
+    ports:
+      - "3128:3128"   # CONNECT proxy for intercepted clients
+    environment:
+      DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus_gateway
+      NEXUS_REDIS_ADDR: valkey:6379
+      NEXUS_NATS_URL: nats://nats:4222
+      NEXUS_HUB_URL: http://nexus-hub:3060
+      NEXUS_COMPLIANCE_PROXY_PUBLIC_URL: http://localhost:3128
+      COMPLIANCE_PROXY_PUBLIC_URL: http://localhost:3128
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      COMPLIANCE_PROXY_API_TOKEN: ${COMPLIANCE_PROXY_API_TOKEN}
+    volumes:
+      - nexus-full-proxyca:/etc/compliance-proxy
+      - nexus-full-proxyspool:/var/lib/nexus
+    depends_on:
+      nexus-hub:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9090/metrics > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  nexus-console:
+    image: ${NEXUS_IMAGE_REGISTRY:-alphabitcore}/nexus-console:${NEXUS_IMAGE_TAG:-latest}
+    container_name: nexus-full-console
+    ports:
+      - "80:80"       # http → https redirect
+      - "443:443"     # console UI + admin API + gateway/hub reverse proxy
+    environment:
+      DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus_gateway
+      NEXUS_REDIS_ADDR: valkey:6379
+      NEXUS_NATS_URL: nats://nats:4222
+      NEXUS_HUB_URL: http://nexus-hub:3060
+      NEXUS_AI_GATEWAY_URL: http://nexus-ai-gateway:3050
+      NEXUS_AI_GATEWAY_UPSTREAM: http://nexus-ai-gateway:3050
+      NEXUS_HUB_UPSTREAM: http://nexus-hub:3060
+      NEXUS_COMPLIANCE_PROXY_URL: http://nexus-compliance-proxy:3040
+      CONTROL_PLANE_PUBLIC_URL: https://localhost
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      HUB_CONFIG_TOKEN: ${HUB_CONFIG_TOKEN}
+      ADMIN_KEY_HMAC_SECRET: ${ADMIN_KEY_HMAC_SECRET}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      COMPLIANCE_PROXY_API_TOKEN: ${COMPLIANCE_PROXY_API_TOKEN}
+      AUTH_SERVER_ISSUER: ${AUTH_SERVER_ISSUER:-https://localhost}
+    volumes:
+      - nexus-full-consoleca:/var/lib/nexus
+      - nexus-full-consoletls:/etc/nexus
+    depends_on:
+      nexus-hub:
+        condition: service_healthy
+      nexus-ai-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null https://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+volumes:
+  nexus-full-pgdata:
+  nexus-full-natsdata:
+  nexus-full-agentca:
+  nexus-full-proxyca:
+  nexus-full-proxyspool:
+  nexus-full-consoleca:
+  nexus-full-consoletls:

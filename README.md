@@ -211,8 +211,35 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 |---|---|---|
 | **AWS Marketplace AMI / single-instance appliance** | `cd nexus-ami && ./build.sh` — bakes binaries + UI + Prisma + nginx + Postgres + Valkey + NATS into one AL2023 image via Packer | [`nexus-ami/README.md`](./nexus-ami/README.md) for build steps, [`docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md`](./docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md) for design |
 | **Local development** | docker-compose + `./scripts/dev-start.sh` (Postgres + Valkey + NATS) and per-service `go run ./cmd/<svc>/` | See **Quick start** below |
+| **Docker (dev / demo)** | `./scripts/compose-init.sh && docker compose -f docker-compose.full.yml --env-file deploy/docker/.env.compose up -d` — full stack from the published `alphabitcore/nexus-*` images | See **Docker images** below |
+| **Kubernetes / Helm (production)** | `helm install nexus deploy/helm/nexus-gateway` — 4 service deployments + embedded or external Postgres/Valkey/NATS | [`deploy/helm/nexus-gateway/README.md`](./deploy/helm/nexus-gateway/README.md) |
 | **VMware / KVM image / bare-metal appliance** | Reuses the same `install.sh` + `harden.sh` from `nexus-ami/scripts/` under a different Packer builder | Future |
-| **Container / Kubernetes** | Out of scope for the appliance form factor — separate product line | Future |
+
+### Docker images
+
+Four images ship to Docker Hub under the `alphabitcore` org (tag-triggered by
+`.github/workflows/docker-publish.yml`; dependency stores — Postgres, Valkey,
+NATS — are pulled upstream, never rebuilt):
+
+| Image | Contents | Ports |
+|---|---|---|
+| `alphabitcore/nexus-console` | nginx + control-plane + admin UI (the console) | 80, 443, 3001 |
+| `alphabitcore/nexus-hub` | Hub (node lifecycle, config sync, MQ consumers) | 3060 |
+| `alphabitcore/nexus-ai-gateway` | AI Gateway — Vectorscan-accelerated compliance scanning | 3050 |
+| `alphabitcore/nexus-compliance-proxy` | TLS-bump compliance proxy — Vectorscan-accelerated | 3128, 3040, 9090 |
+
+```bash
+docker pull alphabitcore/nexus-ai-gateway:latest
+# verify the scanning engine inside the shipped image (never trust "build succeeded"):
+docker run --rm --entrypoint hs-selfcheck alphabitcore/nexus-ai-gateway:latest
+# single service against your own infra (vars documented in .env.example):
+docker run --env-file ai-gateway.env -p 3050:3050 alphabitcore/nexus-ai-gateway:latest
+```
+
+The ai-gateway and compliance-proxy images build libhs from source per-arch
+with `FAT_RUNTIME=OFF` + `BUILD_AVX512=OFF` (portable baseline; see the
+warning below) and hard-fail the build if the engine didn't link or its
+self-test fails — a silent pure-Go RE2 fallback image can never ship.
 
 > **⚠ Building from source — Vectorscan binaries are CPU-microarchitecture-specific.**
 > The compliance scanner links **libhs (Vectorscan) statically with `FAT_RUNTIME=OFF`** —

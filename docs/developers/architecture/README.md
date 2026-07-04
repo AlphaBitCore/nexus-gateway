@@ -173,6 +173,7 @@ If you are about to edit code in an area that is genuinely **not** covered by an
 | Editing area / file glob | Read FIRST |
 |---|---|
 | `nexus-ami/**` — Packer template, install / first-boot / harden scripts, prod-shape `*.config.yaml`, systemd unit files for the AMI / bare-metal appliance form factor | `docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md` |
+| `packages/*/Dockerfile`, `deploy/docker/**`, `deploy/helm/**`, `docker-compose.full.yml`, `scripts/compose-init.sh`, `.github/workflows/docker-publish.yml`, `tools/db-migrate/Dockerfile` — container images (4 product + db-migrate utility), docker-compose (dev/demo), Helm chart (production), publish pipeline + Vectorscan build discipline | `docs/developers/architecture/cross-cutting/deployment/container-deployment-architecture.md` |
 
 ## Adding a new arch doc
 

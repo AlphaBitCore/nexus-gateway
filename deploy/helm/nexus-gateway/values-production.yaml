@@ -1,0 +1,62 @@
+# Production overrides for the nexus-gateway chart.
+#   helm install nexus deploy/helm/nexus-gateway -f deploy/helm/nexus-gateway/values-production.yaml
+#
+# Assumes managed external Postgres / Valkey / NATS and real TLS + secrets.
+
+images:
+  tag: ""                       # PIN a published semver, e.g. "v1.1.0" — never latest in prod
+  pullPolicy: IfNotPresent
+
+# Provide the shared secrets out-of-band (sealed-secret / external-secrets /
+# vault) and reference the resulting Secret here — never inline in a values
+# file committed to git.
+secrets:
+  existingSecret: "nexus-shared-secrets"
+
+# Real cert for the console (the OIDC issuer host).
+consoleTls:
+  existingSecret: "nexus-console-tls"
+
+# Real MITM CA for the compliance proxy.
+complianceProxy:
+  enabled: true
+  replicas: 2
+  caExistingSecret: "nexus-proxy-ca"
+
+console:
+  replicas: 2
+  service:
+    type: ClusterIP
+
+hub:
+  replicas: 2
+
+aiGateway:
+  replicas: 4                   # the load-bearing tier — scale to traffic
+
+ingress:
+  enabled: true
+  className: nginx
+  host: nexus.example.com
+  tls:
+    enabled: true
+    secretName: nexus-console-tls
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/proxy-body-size: "32m"
+
+authServer:
+  issuer: "https://nexus.example.com"
+
+# Managed datastores — disable the in-cluster subcharts, point at real ones.
+postgresql:
+  enabled: false
+valkey:
+  enabled: false
+nats:
+  enabled: false
+
+external:
+  databaseUrl: ""               # postgresql://user:pass@rds-host:5432/nexus_gateway (via secret-injected env in real setups)
+  redisAddr: ""                 # elasticache-host:6379
+  natsUrl: ""                   # nats://nats-host:4222

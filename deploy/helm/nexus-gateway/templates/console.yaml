@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus.fullname" . }}-console
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: console
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.labels" . | nindent 8 }}
+        app.kubernetes.io/component: console
+    spec:
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: console
+          image: {{ include "nexus.image" (dict "root" . "repo" "nexus-console") | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            {{- include "nexus.commonEnv" . | nindent 12 }}
+            - name: NEXUS_AI_GATEWAY_URL
+              value: {{ printf "http://%s-ai-gateway:3050" (include "nexus.fullname" .) | quote }}
+            - name: NEXUS_AI_GATEWAY_UPSTREAM
+              value: {{ printf "http://%s-ai-gateway:3050" (include "nexus.fullname" .) | quote }}
+            - name: NEXUS_HUB_UPSTREAM
+              value: {{ printf "http://%s-hub:3060" (include "nexus.fullname" .) | quote }}
+            {{- if .Values.complianceProxy.enabled }}
+            - name: NEXUS_COMPLIANCE_PROXY_URL
+              value: {{ printf "http://%s-compliance-proxy:3040" (include "nexus.fullname" .) | quote }}
+            {{- end }}
+            - name: CONTROL_PLANE_PUBLIC_URL
+              value: {{ .Values.authServer.issuer | quote }}
+            - name: ADMIN_KEY_HMAC_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: adminKeyHmacSecret}
+            - name: HUB_CONFIG_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: hubConfigToken}
+            - name: COMPLIANCE_PROXY_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: complianceProxyApiToken}
+            - name: AUTH_SERVER_ISSUER
+              value: {{ .Values.authServer.issuer | quote }}
+          ports:
+            - {name: https, containerPort: 443}
+            - {name: http, containerPort: 80}
+          {{- if .Values.consoleTls.existingSecret }}
+          volumeMounts:
+            - {name: tls, mountPath: /etc/nexus, readOnly: false}
+          {{- end }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: 443, scheme: HTTPS}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: 443, scheme: HTTPS}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources: {{ toYaml .Values.console.resources | nindent 12 }}
+      {{- if .Values.consoleTls.existingSecret }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Values.consoleTls.existingSecret }}
+            items:
+              - {key: tls.crt, path: tls.crt}
+              - {key: tls.key, path: tls.key}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus.fullname" . }}-console
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  type: {{ .Values.console.service.type }}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: console
+  ports:
+    - {name: https, port: {{ .Values.console.service.httpsPort }}, targetPort: 443}
+    - {name: http, port: 80, targetPort: 80}
+    - {name: cp, port: 3001, targetPort: 3001}

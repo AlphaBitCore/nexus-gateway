@@ -1,0 +1,30 @@
+apiVersion: v2
+name: nexus-gateway
+description: Nexus Gateway — enterprise AI traffic gateway (console, hub, AI gateway, compliance proxy) for Kubernetes.
+type: application
+version: 0.1.0
+# Tracks the app/image release line; override images.tag to pin a published tag.
+appVersion: "1.1.0"
+home: https://github.com/AlphaBitCore/nexus-gateway
+sources:
+  - https://github.com/AlphaBitCore/nexus-gateway
+maintainers:
+  - name: AlphaBitCore
+
+# Backing stores are optional subchart dependencies — enabled by default for a
+# batteries-included install, disabled when you point at external managed
+# Postgres / Valkey / NATS via values. Run `helm dependency build` before
+# install to fetch them (see deploy/helm/nexus-gateway/README.md).
+dependencies:
+  - name: postgresql
+    version: "15.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: valkey
+    version: "2.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: valkey.enabled
+  - name: nats
+    version: "1.x.x"
+    repository: https://nats-io.github.io/k8s/helm/charts/
+    condition: nats.enabled
