@@ -30,7 +30,7 @@ export function LatencyHealth({ latencyPhases, navigate }: LatencyHealthProps) {
           {t('pages:dashboard.sectionLatencyHealthSubtitle', 'Our overhead versus the upstream provider — by the busiest provider in the window.')}
         </p>
       </div>
-      <Grid columns={3} gap="md">
+      <Grid columns={4} gap="md">
         <Card padding="lg" className={styles.metricCard}>
           <div className={styles.metricLabelRow}>{t('pages:dashboard.latencyOurOverheadP95', 'Our Overhead P95')}</div>
           <div className={styles.metricValueRow}>
@@ -42,6 +42,13 @@ export function LatencyHealth({ latencyPhases, navigate }: LatencyHealthProps) {
           <div className={styles.metricLabelRow}>{t('pages:dashboard.latencyUpstreamTotalP95', 'Upstream P95')}</div>
           <div className={styles.metricValueRow}>
             <span className={styles.metricValue}>{fmtMs(top.upstreamTotalP95Ms)}</span>
+          </div>
+          <span className={styles.metricSubtitle}>{top.groupLabel}</span>
+        </Card>
+        <Card padding="lg" className={styles.metricCard}>
+          <div className={styles.metricLabelRow}>{t('pages:dashboard.latencyEndToEndP95', 'End-to-End P95')}</div>
+          <div className={styles.metricValueRow}>
+            <span className={styles.metricValue}>{fmtMs(top.totalP95Ms)}</span>
           </div>
           <span className={styles.metricSubtitle}>{top.groupLabel}</span>
         </Card>
