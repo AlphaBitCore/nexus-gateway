@@ -481,6 +481,25 @@ func TestExecute_ContextCanceledDuringBackoff(t *testing.T) {
 
 // classifyAttempt — recordHealth happy paths (tracker non-nil).
 
+// awaitHealth polls GetHealth until at least one sample is visible or a short
+// deadline elapses. The HealthTracker applies records asynchronously (single
+// writer), so a read immediately after Execute must wait for the sample to be
+// published rather than assuming synchronous visibility.
+func awaitHealth(t *testing.T, health *store.HealthTracker, providerID string) store.HealthState {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		hs := health.GetHealth(providerID)
+		if hs.SampleCount > 0 {
+			return hs
+		}
+		if time.Now().After(deadline) {
+			return hs
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // TestExecute_RecordsHealth_SuccessAndFailure covers executor.go:454-458
 // — when a HealthTracker is wired, recordHealth invokes RecordSuccess
 // (success path) AND RecordFailure (retryable failure + 4xx terminal).
@@ -493,6 +512,7 @@ func TestExecute_RecordsHealth_SuccessAndFailure(t *testing.T) {
 		reg := newRegistry(t, adapter)
 		res := okResolver()
 		health := store.NewHealthTracker()
+		t.Cleanup(health.Stop)
 		exec := New(reg, res, health, nil)
 
 		tgt := target(providerSlug)
@@ -504,7 +524,7 @@ func TestExecute_RecordsHealth_SuccessAndFailure(t *testing.T) {
 		if result.Error != nil {
 			t.Fatalf("unexpected error: %v", result.Error)
 		}
-		hs := health.GetHealth(tgt.ProviderID)
+		hs := awaitHealth(t, health, tgt.ProviderID)
 		// SampleCount > 0 proves we reached RecordSuccess. The
 		// HealthTracker contract guarantees a successful call appends
 		// to the sample window.
@@ -523,6 +543,7 @@ func TestExecute_RecordsHealth_SuccessAndFailure(t *testing.T) {
 		reg := newRegistry(t, adapter)
 		res := okResolver()
 		health := store.NewHealthTracker()
+		t.Cleanup(health.Stop)
 		exec := New(reg, res, health, nil)
 
 		tgt := target(providerSlug)
@@ -538,7 +559,7 @@ func TestExecute_RecordsHealth_SuccessAndFailure(t *testing.T) {
 		if !errors.Is(result.Error, ErrAllTargetsExhausted) {
 			t.Fatalf("expected ErrAllTargetsExhausted, got %v", result.Error)
 		}
-		hs := health.GetHealth(tgt.ProviderID)
+		hs := awaitHealth(t, health, tgt.ProviderID)
 		if hs.SampleCount == 0 {
 			t.Fatalf("RecordFailure was not called; GetHealth=%+v", hs)
 		}
@@ -557,6 +578,7 @@ func TestExecute_RecordsHealth_SuccessAndFailure(t *testing.T) {
 		reg := newRegistry(t, adapter)
 		res := okResolver()
 		health := store.NewHealthTracker()
+		t.Cleanup(health.Stop)
 		exec := New(reg, res, health, nil)
 
 		tgt := target(providerSlug)
@@ -571,7 +593,7 @@ func TestExecute_RecordsHealth_SuccessAndFailure(t *testing.T) {
 		if result.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d", result.StatusCode)
 		}
-		hs := health.GetHealth(tgt.ProviderID)
+		hs := awaitHealth(t, health, tgt.ProviderID)
 		if hs.SampleCount == 0 {
 			t.Fatalf("RecordFailure was not called on 4xx terminal; GetHealth=%+v", hs)
 		}

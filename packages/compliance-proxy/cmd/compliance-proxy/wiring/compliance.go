@@ -107,8 +107,10 @@ func InitCompliance(cfg *config.Config, cacheManager *cache.Manager, auditWriter
 		2*time.Minute,
 		logger,
 	)
-	// Redis and Start are handled after context creation in main.go.
-	// Perform initial load synchronously here.
+	// Initial load happens synchronously here and FAILS the boot on error —
+	// the compliance plane must never start serving with an empty hook
+	// config. main.go arms the TTL-backstop ticker via HookConfigCache.Start
+	// once the signal context exists; Hub push stays the primary update path.
 	initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	if err := result.HookConfigCache.Reload(initCtx); err != nil {
 		initCancel()

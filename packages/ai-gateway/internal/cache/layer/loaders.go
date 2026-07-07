@@ -54,6 +54,7 @@ func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) 
 
 	byID := map[string]store.Model{}
 	byCode := map[string]store.Model{}
+	enabled := make([]store.Model, 0)
 	for rows.Next() {
 		var m store.Model
 		var inPrice, outPrice, cachedReadPrice, cachedWritePrice *string
@@ -92,8 +93,36 @@ func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) 
 		if m.Enabled && m.Code != "" {
 			byCode[m.Code] = m
 		}
+		if m.Enabled {
+			enabled = append(enabled, m)
+		}
+	}
+	// Build the code-or-alias index. Pass 1 seeds every enabled code so a real
+	// code always wins over any alias — this is order-independent and is the
+	// only load-bearing guarantee. Pass 2 adds aliases only where the key is
+	// still free. Alias uniqueness is NOT enforced by the schema or admin API,
+	// so if two enabled models share the same alias the winner is unspecified
+	// (whichever row the catalog query returns first); an ambiguous alias is a
+	// misconfiguration, not a case this index promises to disambiguate.
+	byCodeOrAlias := make(map[string]store.Model, len(byCode))
+	for _, m := range enabled {
+		if m.Code != "" {
+			byCodeOrAlias[m.Code] = m
+		}
+	}
+	for _, m := range enabled {
+		for _, a := range m.Aliases {
+			if a == "" {
+				continue
+			}
+			if _, taken := byCodeOrAlias[a]; taken {
+				continue
+			}
+			byCodeOrAlias[a] = m
+		}
 	}
 	l.modelsByCode.Store(&byCode)
+	l.modelsByCodeOrAlias.Store(&byCodeOrAlias)
 	return byID, nil
 }
 

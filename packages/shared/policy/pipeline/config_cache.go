@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -18,24 +19,40 @@ type HookConfigLoader func(ctx context.Context) ([]core.HookConfig, error)
 // shared/configcache.SnapshotCache for atomic-pointer swap and metrics;
 // on top of the snapshot a PolicyResolver holds the compiled pipeline state.
 //
+// Config changes are low-frequency, push-driven events: the Hub thingclient
+// OnConfigChanged callback calls Reload when an admin edits hook config. The
+// request path NEVER loads — Resolver is a pure snapshot getter, so a slow
+// database can never stall or stampede request goroutines (thousands of
+// concurrent requests each observing a stale TTL and issuing their own full
+// reload is exactly the failure mode this design forbids).
+//
 // Two operating modes via the ttl argument to NewHookConfigCache:
 //
 //   - ttl > 0 (AI Gateway, Compliance Proxy): push-driven invalidation via
-//     Hub thingclient OnConfigChanged calling Reload, plus a TTL backstop
-//     on Resolver() that closes any gap if the push channel is degraded.
+//     Reload, plus a background ticker started by Start that refreshes every
+//     ttl as a backstop if the push channel is degraded. The backstop runs
+//     off the request path and holds at most one load in flight.
 //
-//   - ttl = 0 (Agent): pure push mode. Resolver() never auto-reloads; the
-//     configsync layer pulls hook configs from Hub and calls Reload. The
-//     agent has no direct DB access, so no TTL backstop is meaningful.
+//   - ttl = 0 (Agent): pure push mode. No ticker; the configsync layer
+//     pulls hook configs from Hub and calls Reload. The agent has no direct
+//     DB access, so no TTL backstop is meaningful.
 type HookConfigCache struct {
 	snap     *configcache.SnapshotCache[core.HookConfig]
 	resolver *PolicyResolver
 	ttl      time.Duration
 	logger   *slog.Logger
 
-	mu       sync.Mutex
-	lastLoad time.Time
+	// loadMu serializes snapshot loads (backstop tick, Hub push Reload,
+	// startup). Loads commit in start order, so the last committer read the
+	// freshest rows — a slow backstop load can never overwrite a newer push
+	// result with stale content. Never touched on the request path.
+	loadMu sync.Mutex
 }
+
+// ttlRefreshTimeout bounds a single background backstop load so a wedged
+// database cannot pin the refresh goroutine's context forever. Loads are
+// serial (one ticker loop), so a slow load also cannot stack.
+const ttlRefreshTimeout = 30 * time.Second
 
 // NewHookConfigCache creates a cache.
 func NewHookConfigCache(loader HookConfigLoader, registry *core.HookRegistry, ttl time.Duration, logger *slog.Logger) *HookConfigCache {
@@ -79,49 +96,78 @@ func NewHookConfigCache(loader HookConfigLoader, registry *core.HookRegistry, tt
 			// generation under load. Real changes (startup, Hub push delta) differ
 			// and swap normally.
 			c.resolver.SwapIfContentChanged(cfgs)
-			c.mu.Lock()
-			c.lastLoad = time.Now()
-			c.mu.Unlock()
 			// Build the (potentially expensive) engines off the request path.
 			// Background and best-effort: it must never block this callback,
-			// which runs both at startup and on a TTL-staleness reload that a
-			// request triggers. The lazy build in resolve() is the fallback if a
-			// request arrives before prewarm finishes. swapGen guards staleness.
+			// which runs at startup, on Hub push, and on the backstop ticker.
+			// The lazy build in resolve() is the fallback if a request arrives
+			// before prewarm finishes. swapGen guards staleness.
 			go c.resolver.Prewarm()
 		}),
 	)
 	return c
 }
 
-// Start performs the initial load. The TTL backstop and any external
-// invalidation source (currently the Hub thingclient OnConfigChanged
-// callback) drive subsequent reloads.
+// Start performs the initial load and, in TTL mode, starts the background
+// backstop ticker that refreshes the snapshot every ttl. The ticker stops
+// when ctx is canceled, so callers must pass a process-lifetime context.
+// Push invalidation (Hub thingclient OnConfigChanged → Reload) remains the
+// primary update path; the ticker only closes the gap when push is degraded.
 func (c *HookConfigCache) Start(ctx context.Context) error {
-	if err := c.snap.Load(ctx); err != nil {
+	if err := c.load(ctx); err != nil {
 		c.logger.Warn("initial hook config load failed, continuing with empty config", "error", err)
+	}
+	if c.ttl > 0 {
+		go c.refreshLoop(ctx)
 	}
 	return nil
 }
 
-// Resolver returns the PolicyResolver with the current config snapshot.
-// In TTL mode (ttl > 0) triggers a reload if the cache is stale. In
-// pure push mode (ttl == 0) returns the resolver directly without any
-// TTL bookkeeping.
-func (c *HookConfigCache) Resolver(ctx context.Context) *PolicyResolver {
-	if c.ttl > 0 {
-		c.mu.Lock()
-		stale := time.Since(c.lastLoad) > c.ttl
-		c.mu.Unlock()
-		if stale {
-			_ = c.Reload(ctx)
+// refreshLoop is the TTL backstop: one serial background loop, so at most
+// one backstop load is ever in flight regardless of load or DB latency.
+func (c *HookConfigCache) refreshLoop(ctx context.Context) {
+	ticker := time.NewTicker(c.ttl)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := c.load(ctx); err != nil {
+				c.logger.Warn("hook config backstop refresh failed; previous snapshot stays active", "error", err)
+			}
 		}
 	}
+}
+
+// load runs one serialized, deadline-bounded snapshot load. Every load —
+// startup, backstop tick, Hub push — goes through here, so a wedged
+// database can pin at most one goroutine for at most ttlRefreshTimeout,
+// and loads commit in start order (see loadMu).
+func (c *HookConfigCache) load(ctx context.Context) error {
+	// A nil context must fail gracefully (as snap.Load does) rather than panic
+	// in WithTimeout — the agent's shadow-apply path surfaces a nil-context
+	// reload as a normal error and keeps the prior policy.
+	if ctx == nil {
+		return errors.New("configcache: nil context")
+	}
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+	rctx, cancel := context.WithTimeout(ctx, ttlRefreshTimeout)
+	defer cancel()
+	return c.snap.Load(rctx)
+}
+
+// Resolver returns the PolicyResolver holding the current config snapshot.
+// Pure getter on the request hot path: freshness is owned by push (Reload)
+// and the Start backstop ticker, never by request goroutines.
+func (c *HookConfigCache) Resolver(_ context.Context) *PolicyResolver {
 	return c.resolver
 }
 
-// Reload forces an immediate reload from the database.
+// Reload forces an immediate reload from the database. Called by the Hub
+// push-invalidation path (thingclient OnConfigChanged) and boot wiring.
 func (c *HookConfigCache) Reload(ctx context.Context) error {
-	return c.snap.Load(ctx)
+	return c.load(ctx)
 }
 
 // HookSnapshotEntry is the redacted view of a HookConfig used by runtime

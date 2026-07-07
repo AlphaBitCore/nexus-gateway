@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/http/httptrace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,8 +13,8 @@ import (
 // plus an optional long-tail phase breakdown stamped by deeper layers
 // (e.g. the spec_adapter codec) where the request handler's PhaseTimer
 // isn't reachable. Producers (the TracingRoundTripper) write `ttfbMs`
-// from httptrace.ClientTrace.GotFirstResponseByte and `totalMs` from a
-// response-body Close hook. Long-tail consumers call Breakdown(phase, ms)
+// from the response body's first Read and `totalMs` from the body's
+// Read/Close stamp. Long-tail consumers call Breakdown(phase, ms)
 // to add a named entry; the handler reads Breakdown() at finalize time
 // and merges into the audit Record's latency_breakdown JSONB column.
 //
@@ -151,16 +150,6 @@ func (t *tracingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		return t.base.RoundTrip(req)
 	}
 	ps.sendStart = time.Now()
-	trace := &httptrace.ClientTrace{
-		GotFirstResponseByte: func() {
-			ms := time.Since(ps.sendStart).Milliseconds()
-			if ms <= 0 {
-				ms = 1
-			}
-			ps.ttfbMs.Store(ms)
-		},
-	}
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
 		ms := time.Since(ps.sendStart).Milliseconds()
@@ -171,17 +160,10 @@ func (t *tracingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		return resp, err
 	}
 	if resp != nil && resp.Body != nil {
-		sendStart := ps.sendStart
-		stamp := func() {
-			ms := time.Since(sendStart).Milliseconds()
-			if ms <= 0 {
-				ms = 1
-			}
-			ps.totalMs.Store(ms)
-		}
 		resp.Body = &phaseTrackedBody{
 			ReadCloser: resp.Body,
-			stamp:      stamp,
+			ps:         ps,
+			sendStart:  ps.sendStart, // copied on this goroutine before resp returns
 		}
 	}
 	return resp, nil
@@ -195,35 +177,61 @@ func (t *tracingTransport) Unwrap() http.RoundTripper {
 	return t.base
 }
 
-// phaseTrackedBody wraps an io.ReadCloser so the upstream-total instant
-// is refreshed on EVERY successful Read (last-write-wins on the atomic),
-// in addition to a once-only stamp at Close. Read-side stamping is
-// required because the streaming broker pump runs Close() in its own
-// goroutine (`defer session.Close()` in broker.pump) — the request
-// handler reads PhaseSink.TotalMs() during its own defer, which can
-// fire before the pump goroutine has reached its defer. Without
-// Read-side stamping, the audit row sees totalMs=0 (and writes NULL)
-// even though the upstream stream finished successfully. Non-streaming
-// reads also benefit: totalMs ends up reflecting the last-byte time
-// rather than the Body.Close call site, which is closer to "upstream
-// done". Close keeps sync.Once semantics so repeat-close (idempotent
-// callers like SSEScanner.Close + defer Close stacks) does not
-// re-stamp with a later timestamp.
+// phaseTrackedBody wraps an io.ReadCloser to capture two upstream timings
+// off the response body, avoiding a per-RoundTrip httptrace.ClientTrace +
+// request-context copy:
+//
+//   - ttfbMs is stamped ONCE, on the first Read that returns content
+//     (n>0). The first body byte reaching the caller is the first SSE
+//     chunk for a streaming provider — matching the audit Record's
+//     documented "TTFB = first SSE chunk arrival" intent (the prior
+//     httptrace hook fired on the first response-HEADER byte, which for a
+//     slow-thinking model wrongly folded think-time into TTFB).
+//   - totalMs is refreshed on EVERY successful Read (last-write-wins on
+//     the atomic) plus a once-only stamp at Close. Read-side stamping is
+//     required because the streaming broker pump runs Close() in its own
+//     goroutine (`defer session.Close()` in broker.pump) — the request
+//     handler reads PhaseSink.TotalMs() during its own defer, which can
+//     fire before the pump goroutine has reached its defer. Without
+//     Read-side stamping, the audit row sees totalMs=0 (and writes NULL)
+//     even though the upstream stream finished successfully. Close keeps
+//     sync.Once semantics so repeat-close (idempotent callers like
+//     SSEScanner.Close + defer Close stacks) does not re-stamp with a
+//     later timestamp.
+//
+// A response body is not safe for concurrent Read, so ttfbStamped needs no
+// synchronisation; cross-goroutine visibility of the timings is via the
+// PhaseSink atomics.
 type phaseTrackedBody struct {
 	io.ReadCloser
-	stamp     func()
-	closeOnce sync.Once
+	ps          *PhaseSink
+	sendStart   time.Time
+	ttfbStamped bool
+	closeOnce   sync.Once
+}
+
+func (b *phaseTrackedBody) elapsedMs() int64 {
+	ms := time.Since(b.sendStart).Milliseconds()
+	if ms <= 0 {
+		ms = 1
+	}
+	return ms
 }
 
 func (b *phaseTrackedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if n > 0 || err != nil {
-		b.stamp()
+		ms := b.elapsedMs()
+		if n > 0 && !b.ttfbStamped {
+			b.ttfbStamped = true
+			b.ps.ttfbMs.Store(ms)
+		}
+		b.ps.totalMs.Store(ms)
 	}
 	return n, err
 }
 
 func (b *phaseTrackedBody) Close() error {
-	b.closeOnce.Do(b.stamp)
+	b.closeOnce.Do(func() { b.ps.totalMs.Store(b.elapsedMs()) })
 	return b.ReadCloser.Close()
 }

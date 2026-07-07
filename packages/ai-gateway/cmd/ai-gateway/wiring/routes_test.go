@@ -41,6 +41,9 @@ func buildMinimalRouteDeps(t *testing.T) RouteDeps {
 	}
 	db := store.NewWithPgxPool(mock)
 
+	ht := store.NewHealthTracker()
+	t.Cleanup(ht.Stop)
+
 	return RouteDeps{
 		Config: &config.Config{
 			// Auth.InternalServiceToken gates the /internal/* operator routes;
@@ -62,7 +65,7 @@ func buildMinimalRouteDeps(t *testing.T) RouteDeps {
 		HookConfigCache: hookCache,
 		GWHookRegistry:  reg,
 		ProviderReg:     adapterReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   ht,
 		PayloadCapture:  pcs,
 		Allowlist:       allowlist,
 		Logger:          discardLogger(),

@@ -49,6 +49,29 @@ type AdapterSpec struct {
 	// adapters that do not provide the probe.
 	PassthroughRewriteApplies func(modelID string) bool
 
+	// PassthroughModelInBody declares that this adapter's native wire
+	// carries the model at the JSON body top-level `model` field (as the
+	// OpenAI shape does), so the passthrough path must rewrite it to the
+	// resolved CallTarget.ProviderModelID before upstream dispatch —
+	// otherwise a client-facing alias / a routing-changed model is sent
+	// verbatim and the upstream 404s the unknown name.
+	//
+	// The generic dispatcher already does this rewrite for OpenAI-family
+	// formats (gated by Format.IsOpenAIFamily). This flag extends the same
+	// surgical top-level `model` rewrite to a non-OpenAI-family adapter whose
+	// wire also puts the model in the body root — today only Anthropic
+	// (`/v1/messages`). Adapters that carry the model elsewhere leave it
+	// false: Gemini (URL path, rewritten by Transport.BuildURL from
+	// ProviderModelID), Bedrock (model deleted from body, encoded into the
+	// URL by its codec). Cross-format routes never rely on this flag — the
+	// codec's EncodeRequest already stamps ProviderModelID.
+	//
+	// Per provider-adapter-architecture.md §3 (Ingress shape preservation)
+	// and §3a Rule 3: the model-location fact is owned by the adapter that
+	// talks to that wire, declared here rather than as a format switch in
+	// the generic dispatcher.
+	PassthroughModelInBody bool
+
 	// RequestShapes lists the typology.WireShape values this adapter
 	// natively serves at the codec boundary (i.e. the WireShape values
 	// the codec's EncodeRequest/DecodeResponse will accept without

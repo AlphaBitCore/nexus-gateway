@@ -87,6 +87,15 @@ func (e *RulePackEngine) addressedSegments(input *core.HookInput) []addressedTex
 // the few rules that hit. Severity still gates enforcement: warn/info matches
 // only tag (observe), they do not mask.
 func (e *RulePackEngine) executeRedact(input *core.HookInput, result *core.HookResult, matched map[[2]int]struct{}, complete bool, start time.Time) (*core.HookResult, error) {
+	// Zero matches on a COMPLETE scan: nothing can tag or mask, so skip the
+	// re-localization machinery (segment addressing, per-rule loop) — benign
+	// traffic is the overwhelmingly common case and paid it for nothing. An
+	// INCOMPLETE scan must fall through: an empty hit set proves nothing
+	// there, and the fail-safe below re-confirms every rule with RE2.
+	if complete && len(matched) == 0 {
+		result.LatencyMs = int(time.Since(start).Milliseconds())
+		return result, nil
+	}
 	var matchedRules map[int]struct{}
 	if complete {
 		matchedRules = make(map[int]struct{}, len(matched))

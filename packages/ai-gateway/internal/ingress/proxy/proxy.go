@@ -209,6 +209,10 @@ type Handler struct {
 	// skips the eager request-body Normalize entirely (~29% of request-path CPU
 	// on a 50 KB body). Set NEXUS_LAZY_CANONICAL=0 to force always-compute.
 	lazyCanonical bool
+	// gate bounds in-flight proxy requests (nil = disabled). See admissionGate:
+	// overload degrades into fast retryable 429s instead of unbounded in-heap
+	// queueing toward the GOMEMLIMIT collapse.
+	gate *admissionGate
 }
 
 // NewHandler creates a Handler with the given dependencies.
@@ -216,6 +220,7 @@ func NewHandler(deps *Deps) *Handler {
 	return &Handler{
 		deps:          deps,
 		lazyCanonical: os.Getenv("NEXUS_LAZY_CANONICAL") != "0",
+		gate:          newAdmissionGate(),
 	}
 }
 
@@ -262,6 +267,17 @@ func (h *Handler) streamCaptureHardCap() int64 {
 // record on every exit path.
 func (h *Handler) ServeProxy(in Ingress) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// In-flight admission gate: reject-fast BEFORE any per-request setup
+		// (no state, no audit record — the shed path's observability is the
+		// admission_shed_total counter). Health/metrics/admin routes live
+		// outside ServeProxy and are never gated.
+		if h.gate != nil {
+			if !h.gate.acquire() {
+				writeOverloaded(w, in.BodyFormat)
+				return
+			}
+			defer h.gate.release()
+		}
 		s, ok := h.newProxyState(in, w, r)
 		if !ok {
 			return // invalid body-format override; 400 already written

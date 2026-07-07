@@ -37,6 +37,10 @@ type CredentialLookup interface {
 type ModelLookup interface {
 	GetModel(ctx context.Context, id string) (*store.Model, error)
 	GetModelByCode(ctx context.Context, idOrName string) (*store.Model, error)
+	// GetModelByCodeOrAlias resolves a code OR an alias (code wins on
+	// collision). Used by the routing passthrough fallback so an aliased
+	// model routes without an explicit routing rule.
+	GetModelByCodeOrAlias(ctx context.Context, key string) (*store.Model, error)
 	ListEnabledModels(ctx context.Context) ([]store.Model, error)
 	// FetchModelPricing returns pricing rows for the requested IDs.
 	// Production wires *cachelayer.Layer which reads from the in-memory

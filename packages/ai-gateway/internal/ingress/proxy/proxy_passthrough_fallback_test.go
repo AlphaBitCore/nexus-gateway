@@ -27,6 +27,13 @@ func (s fallbackModelLookupStub) GetModelByCode(ctx context.Context, idOrName st
 	return s.model, nil
 }
 
+func (s fallbackModelLookupStub) GetModelByCodeOrAlias(ctx context.Context, key string) (*store.Model, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.model, nil
+}
+
 func (s fallbackModelLookupStub) ListEnabledModels(ctx context.Context) ([]store.Model, error) {
 	return nil, errors.New("not used")
 }

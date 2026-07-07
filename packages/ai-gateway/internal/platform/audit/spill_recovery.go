@@ -87,6 +87,16 @@ type spillRecovery struct {
 	// leaves its file for a future pass, the pre-recovery behaviour).
 	maxRecordBytes int
 
+	// maxPayload, when non-nil, re-reads the broker's negotiated max_payload so
+	// runOnce can populate maxRecordBytes on a LATER pass if the broker was not yet
+	// connected when the sweeper started (MaxPayload returns 0 pre-connect). Without
+	// this refresh an oversize record spooled during that window would never be
+	// dead-lettered and its sealed file would never drain — permanently consuming the
+	// reclaimable spool quota, which HARD-WEDGES audit intake once the writer
+	// back-pressures on that quota (spillBlock). Read once per sweep from the sole run
+	// goroutine, so no lock is needed.
+	maxPayload func() int64
+
 	// onReingested / onError / onPoisoned are metric hooks; nil-safe via helpers.
 	onReingested func(records int)
 	onError      func()
@@ -175,6 +185,14 @@ func (r *spillRecovery) run(ctx context.Context, base time.Duration) {
 // dir exercises the full read→frame→publish→delete path without a goroutine or a
 // live broker.
 func (r *spillRecovery) runOnce(ctx context.Context) int {
+	// Late-bind the broker max_payload: if it was unknown at start (NATS not yet
+	// connected → MaxPayload()==0), pick it up now so oversize records start being
+	// dead-lettered to .poison instead of wedging their file (and the quota) forever.
+	if r.maxRecordBytes == 0 && r.maxPayload != nil {
+		if mp := r.maxPayload(); mp > maxPayloadMargin {
+			r.maxRecordBytes = int(mp - maxPayloadMargin)
+		}
+	}
 	if err := r.src.Rotate(); err != nil {
 		r.logf("audit: spill recovery rotate failed", "error", err)
 		// Continue: already-sealed files from earlier rotations are still drainable.

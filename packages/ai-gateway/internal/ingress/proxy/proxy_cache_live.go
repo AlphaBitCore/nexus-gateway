@@ -24,10 +24,21 @@ func runLiveStream(ctx context.Context, d runStreamDeps) {
 	if d.SSEReader == nil || d.Tee == nil {
 		return
 	}
+	// When no response-stage rule is bound (HasResponseHooks=false — the default
+	// deployment shape), pass a nil runner so Process skips both the per-checkpoint
+	// scan (which would resolve to nil and stamp a synthetic Approve) AND the
+	// per-chunk ExtractDeltaText accumulation that only feeds it. Mirrors the
+	// shared LivePipeline's `l.pipeline == nil` guard; the captured body still
+	// persists via rec's default ActionApprove, matching the non-stream rule-free
+	// path (both leave response_hook_decision empty).
+	hookRun := d.HookRunner
+	if !d.HasResponseHooks {
+		hookRun = nil
+	}
 	lp := streaming.NewLivePipeline(streaming.LiveConfig{
 		EmitOpenAIDone: d.EmitDone,
 		MaxBufferSize:  d.MaxBufferBytes,
-	}, d.HookRunner, nil, d.Logger)
+	}, hookRun, nil, d.Logger)
 
 	// The PreHook re-normalizes the cumulative raw SSE through the Registry at
 	// every checkpoint so a response hook sees the same structured payload the

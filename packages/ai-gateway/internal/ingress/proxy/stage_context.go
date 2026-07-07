@@ -68,6 +68,10 @@ type proxyState struct {
 	modelID  string
 	isStream bool
 	rctxFull *requestcontext.RequestContext
+	// unattachedBodyHandle is the pooled request-body handle when payload
+	// capture did NOT attach it to the record (bodies-off). finalizeAudit
+	// returns it to the pool at request end; nil when captured or no body.
+	unattachedBodyHandle *[]byte
 
 	// Routing outputs.
 	routeResult *routingcore.RouteResult

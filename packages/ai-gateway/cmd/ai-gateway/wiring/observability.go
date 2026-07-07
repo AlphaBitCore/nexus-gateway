@@ -86,6 +86,17 @@ func InitAuditWriter(
 	logger.Info("audit overflow policy resolved",
 		"configured", auditCfg.LossMode, "effective", auditWriter.LossMode())
 
+	// In-memory audit byte budget — the memory half of the bounded audit queue.
+	// Same semantics as NEXUS_EVENTS_MAX_BYTES: empty/"auto" auto-sizes to ~15% of
+	// available RAM; an explicit size ("8GB") pins it. Log the RESOLVED value so
+	// operators see what the box defaulted to and how to pin it.
+	auditWriter.WithMemMaxBytes(auditCfg.MemMaxBytes)
+	logger.Info("audit memory budget resolved",
+		"configured", auditCfg.MemMaxBytes,
+		"effective_bytes", auditWriter.MemBudgetBytes(),
+		"effective_gib", float64(auditWriter.MemBudgetBytes())/(1<<30),
+		"override", "set AI_GATEWAY_AUDIT_MEM_MAX_BYTES=<size> (e.g. 8GB) to pin a fixed value")
+
 	// End-to-end zstd compression of large captured bodies: the producer marks
 	// large bodies for compression in NewInlineBody and compresses lazily in the
 	// async marshal worker (off the request path); the Hub persists the compressed

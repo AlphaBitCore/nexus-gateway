@@ -65,7 +65,13 @@ type Layer struct {
 
 	// Secondary indices computed alongside snapshot loads. Replaced
 	// atomically; readers never see a torn state.
-	modelsByCode               atomic.Pointer[map[string]store.Model]
+	modelsByCode atomic.Pointer[map[string]store.Model]
+	// modelsByCodeOrAlias resolves a customer-supplied identifier that may be
+	// a Model.code OR one of its Model.aliases in O(1) — the routing
+	// passthrough fallback needs alias resolution without an O(n) scan or a
+	// per-request DB read. Code keys take priority over alias keys, so an
+	// alias can never shadow another model's real code.
+	modelsByCodeOrAlias        atomic.Pointer[map[string]store.Model]
 	credentialsByProviderFirst atomic.Pointer[map[string]store.Credential]
 
 	// invalidationCount tracks how many entries the cache evicted on

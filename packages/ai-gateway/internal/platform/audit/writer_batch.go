@@ -167,9 +167,8 @@ func (w *Writer) batchPublish(bp batchProducer, connIdx int, ctx context.Context
 const (
 	// batchPublishTimeout bounds how long ONE chunk waits for its async batch to
 	// be acked before treating still-unresolved records as failed
-	// (re-buffer/spill). Kept under closeShutdownDeadline so Close's drainBuffer
-	// loop (which checks the wall only between flushes) cannot overrun even
-	// across two chunk flushes.
+	// (re-buffer/spill), so a wedged broker cannot pin a publish worker — or the
+	// shutdown drain that waits on it — indefinitely.
 	batchPublishTimeout = 5 * time.Second
 )
 
@@ -344,11 +343,12 @@ func (w *Writer) publishFramed(bp batchProducer, connIdx int, datas [][]byte, re
 			}
 			continue
 		}
-		for range fr {
+		for _, rec := range fr {
 			w.metrics.incEnqueueTotal()
 			// Terminal: published OK. The pooled body was already reclaimed at
-			// marshal time (the frame copied the marshaled bytes), so nothing to
-			// reclaim here.
+			// marshal time (the frame copied the marshaled bytes); the byte-budget
+			// reservation returns here, once the bytes are on the wire.
+			w.releaseRecordMem(rec)
 		}
 	}
 }
@@ -379,7 +379,9 @@ func (w *Writer) publishChunk(bp batchProducer, connIdx int, datas [][]byte, rec
 		}
 		w.metrics.incEnqueueTotal()
 		// Terminal: published OK. The pooled body was already reclaimed at marshal
-		// time (EnqueueBatchAsync took the bytes), so nothing to reclaim here.
+		// time (EnqueueBatchAsync took the bytes); the byte-budget reservation
+		// returns here, once the bytes are on the wire.
+		w.releaseRecordMem(recs[j])
 	}
 }
 
@@ -424,6 +426,7 @@ func (w *Writer) marshalRecord(rec *Record) (data []byte, buf *bytes.Buffer, ok 
 		w.logger.Error("audit: marshal failed", "requestId", rec.RequestID, "error", err)
 		reclaimMsgBuf(enc)
 		w.reclaimRecordBody(rec) // dropped record: return its pooled body to the pool
+		w.releaseRecordMem(rec)  // terminal: the record leaves the pipeline here
 		return nil, nil, false
 	}
 	// json.Encoder appends a trailing '\n'; drop it so each record is a single

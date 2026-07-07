@@ -10,6 +10,7 @@ import (
 	"time"
 
 	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bytebudget"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
@@ -87,8 +88,9 @@ type Writer struct {
 	// the producer; N publishWorkers are the consumers. This IS the standard
 	// bounded producer/multi-consumer pattern: a blocking send (block mode) is the
 	// no-loss back-pressure, a non-blocking send (spill/drop modes) is the lossy
-	// opt-out. Each queued record pins its pooled ~50 KB body until a worker
-	// marshals it, so the cap bounds the audit body-pool working set.
+	// opt-out. The cap bounds POINTER count only (a guard against a flood of tiny
+	// records); the memory each queued record pins is bounded by memBudget, which
+	// accounts the REAL body bytes at Enqueue admission.
 	recCh chan *Record
 
 	// maxQueued is recCh's capacity (the bounded-queue depth). Defaults to
@@ -147,6 +149,18 @@ type Writer struct {
 	// spillFlush adapts the spill worker's flush size to measured disk-write
 	// latency (replacing a fixed flush-bytes magic number). Set in NewWriter.
 	spillFlush *adaptiveSpillFlush
+
+	// memBudget bounds the BYTES the in-memory audit pipeline may pin (captured
+	// request/response bodies and the marshaled copies that supersede them),
+	// reserved at Enqueue admission and released exactly once per record at its
+	// terminal (published / durably spilled / dropped). The structural channel
+	// caps bound POINTER counts only; this is the real memory bound — sized from
+	// available RAM (adaptiveMemBudgetBytes), soft and lock-free (see
+	// shared/core/bytebudget). No-loss modes block at Enqueue on a full budget
+	// (back-pressure to the request path); lossy modes shed with a counted drop
+	// instead of blocking. This replaced the count-derived sizing that assumed an
+	// average body size and OOM'd when real bodies exceeded it.
+	memBudget *bytebudget.Budget
 }
 
 // NewWriter creates an audit writer that publishes to the given MQ producer.
@@ -166,11 +180,15 @@ func NewWriter(producer mq.Producer, queue string, reg *opsmetrics.Registry, log
 	// choice.
 	recChCap, spillChCap := adaptiveBufferCaps()
 	w := &Writer{
-		producer:   producer,
-		queue:      queue,
-		logger:     logger,
-		metrics:    newAuditMetrics(reg),
-		maxQueued:  recChCap,
+		producer:  producer,
+		queue:     queue,
+		logger:    logger,
+		metrics:   newAuditMetrics(reg),
+		maxQueued: recChCap,
+		// Pre-config default is the strictest no-loss mode (back-pressure, no spool
+		// dependency); WithLossMode applies the deployment default (spillBlock — spool
+		// as primary buffer) from AuditConfig.LossMode, whose empty/unknown fallback is
+		// spillBlock. A raw constructor without WithLossMode therefore stays safest.
 		lossMode:   lossModeBlock,
 		workers:    workers,
 		spillCh:    make(chan *Record, spillChCap),
@@ -182,6 +200,9 @@ func NewWriter(producer mq.Producer, queue string, reg *opsmetrics.Registry, log
 		// out (the legacy path, kept until it is deleted).
 		wireBinary: !strings.EqualFold(strings.TrimSpace(os.Getenv("NEXUS_AUDIT_WIRE")), "json"),
 	}
+	// The byte budget shares stopCh so an Enqueue blocked on a full budget always
+	// unblocks at shutdown (it then spills durably instead of enqueuing).
+	w.memBudget = bytebudget.New(adaptiveMemBudgetBytes(), w.stopCh)
 	return w
 }
 
@@ -207,7 +228,7 @@ func (w *Writer) WithPayloadCaptureStore(s *payloadcapture.Store) *Writer {
 // human-readable name onto every TrafficEventMessage. Persisted as
 // traffic_event.thing_id / thing_name. Returns the receiver for chaining.
 //
-// Must be called during startup before any Enqueue / flushLoop runs;
+// Must be called during startup before any Enqueue / consumer worker runs;
 // mutates w.thingID / w.thingName without a lock, matching the
 // WithSpillStore / WithPayloadCaptureStore startup-only convention.
 func (w *Writer) WithThingIdentity(id, name string) *Writer {

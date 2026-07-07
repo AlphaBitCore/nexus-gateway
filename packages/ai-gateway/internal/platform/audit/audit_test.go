@@ -717,13 +717,24 @@ func TestPublishFailure_OverflowSpillsNotLost(t *testing.T) {
 	for i := range batch {
 		batch[i] = &Record{RequestID: fmt.Sprintf("rec-stuck-%d", i), Timestamp: time.Now().Add(time.Duration(i))}
 	}
-	w.publishBatchOn(0, batch) // every publish fails → re-queue full → durable spill
+	w.publishBatchOn(0, batch) // every publish fails → re-queue full → durable batched spill
 
 	if got := len(prod.msgs()); got != 0 {
 		t.Errorf("alwaysFail producer must not record messages; got %d", got)
 	}
-	// The stuck records landed durably on the spill sink — no silent loss, no
-	// infinite retry.
+	// The stuck records were handed to the batched spill channel (off the publish
+	// worker) rather than written synchronously; drive the worker's write step for
+	// each and confirm they land durably — no silent loss, no infinite retry.
+	for i := range n {
+		select {
+		case rec := <-w.spillCh:
+			if !w.spillRecord(rec) {
+				t.Fatalf("spillRecord must durably write stuck record %d", i)
+			}
+		default:
+			t.Fatalf("stuck record %d was not handed to the spill channel", i)
+		}
+	}
 	if got := len(readSpool(t, dir, "test")); got != n {
 		t.Errorf("sustained-outage records must spill durably; spooled %d, want %d", got, n)
 	}

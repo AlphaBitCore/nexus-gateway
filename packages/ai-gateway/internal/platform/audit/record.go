@@ -315,6 +315,26 @@ type Record struct {
 	// In-process only — never serialized.
 	marshaled []byte
 
+	// publishRetries counts how many times handlePublishFailure has re-queued this
+	// record onto recCh for an in-memory re-publish. It bounds the transient retry:
+	// under a SUSTAINED broker outage (stream full → every publish 503s) the workers
+	// keep draining recCh, so a naive re-queue always wins a slot and the record
+	// circulates FOREVER — a busy-spin that pins its marshaled copy in the queue and
+	// craters throughput. After maxPublishRetries in-memory attempts the record is
+	// routed to the durable batched spill instead of re-queued. In-process only —
+	// never serialized.
+	publishRetries int
+
+	// reserved is the byte weight this record holds against the Writer's in-memory
+	// byte budget (Writer.memBudget): Acquired at Enqueue admission from the REAL
+	// captured body sizes, Released exactly once when the record leaves the
+	// in-memory pipeline — published OK, durably spilled, or dropped — via
+	// releaseRecordMem (or transferred to the spill worker's batch aggregate, which
+	// releases at its flush terminal). 0 when the record carried no captured bodies,
+	// the budget is disabled, or the reservation has already been released.
+	// In-process only — never serialized.
+	reserved int64
+
 	// RequestContentType / ResponseContentType travel with the captured
 	// bytes onto traffic_event_payload.{request,response}_content_type.
 	// Empty when not detected; consumers default to inferring from the

@@ -280,6 +280,16 @@ type Server struct {
 	wg         sync.WaitGroup
 	done       chan struct{}
 	stopOnce   sync.Once
+	// closeMu serialises the accept loop's wg.Add(1) against Stop()'s
+	// wg.Wait(). Go requires every positive-delta Add to happen-before the
+	// Wait; without this an in-flight Accept() could call wg.Add(1)
+	// concurrently with Stop()'s wg.Wait(), which the race detector
+	// (correctly) flags as a data race on the WaitGroup counter. Stop()
+	// sets `closing` under this lock before waiting, so the accept loop
+	// either adds strictly before Stop() (mutex happens-before → before
+	// Wait) or observes closing and never adds at all.
+	closeMu sync.Mutex
+	closing bool
 	// sem caps simultaneous live IPC connections.
 	sem chan struct{}
 }
@@ -361,7 +371,19 @@ func (s *Server) Start() error {
 			_ = conn.Close()
 			continue
 		}
+		// Register the handler under closeMu so wg.Add(1) can never race
+		// Stop()'s wg.Wait(). If Stop() has already begun, drop this
+		// just-accepted connection and end the accept loop instead of
+		// adding to a WaitGroup that is being waited on.
+		s.closeMu.Lock()
+		if s.closing {
+			s.closeMu.Unlock()
+			<-s.sem
+			_ = conn.Close()
+			return nil
+		}
 		s.wg.Add(1)
+		s.closeMu.Unlock()
 		go func() {
 			defer s.wg.Done()
 			defer func() { <-s.sem }()
@@ -491,6 +513,13 @@ func (s *Server) SetRefreshPoliciesFn(fn RefreshPoliciesFn) {
 // Stop gracefully stops the server.
 func (s *Server) Stop() {
 	s.stopOnce.Do(func() { close(s.done) })
+	// Mark closing before waiting so the accept loop stops calling
+	// wg.Add(1). Taken under closeMu, this establishes the happens-before
+	// the WaitGroup contract requires between any in-flight Add and the
+	// Wait below (see closeMu's field comment).
+	s.closeMu.Lock()
+	s.closing = true
+	s.closeMu.Unlock()
 	s.listenerMu.Lock()
 	ln := s.listener
 	s.listenerMu.Unlock()

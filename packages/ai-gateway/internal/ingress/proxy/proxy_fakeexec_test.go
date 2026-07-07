@@ -235,6 +235,8 @@ func makeFakeDeps(t *testing.T, fexec *fakeExecutor, fbridge *fakeBridge) *Deps 
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	ht := store.NewHealthTracker()
+	t.Cleanup(ht.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -256,7 +258,7 @@ func makeFakeDeps(t *testing.T, fexec *fakeExecutor, fbridge *fakeBridge) *Deps 
 		Executor:        fexec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   ht,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: fbridge,
 		TrafficAdapters: trafficReg,

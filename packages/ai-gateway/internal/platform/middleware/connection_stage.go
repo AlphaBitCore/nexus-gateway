@@ -23,10 +23,11 @@ import (
 // wrapper). This is the default in tests / local runs that don't have a
 // HookConfigCache configured.
 //
-// The supplier callback is invoked per-request to honor the TTL-based reload
-// semantics of pipeline.HookConfigCache.Resolver: the cache refreshes when
-// stale, so we must not capture a single *PolicyResolver at construction
-// time.
+// The supplier callback is invoked per-request so the middleware keeps
+// working if a future cache implementation ever hands out per-generation
+// resolver instances. With pipeline.HookConfigCache the call is a pure
+// pointer read (the resolver is swapped in place by push/backstop reloads),
+// so the indirection costs nothing on the hot path.
 func ConnectionStage(
 	resolverSupplier func(ctx context.Context) (*pipeline.PolicyResolver, error),
 	perHookTimeout, totalTimeout time.Duration,

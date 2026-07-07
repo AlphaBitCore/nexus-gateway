@@ -228,6 +228,9 @@ func (lp *LivePipeline) Process(
 	// off-path redacted storage copy, but NEVER blocks or rewrites the already-
 	// delivered wire.
 	runCheckpoint := func() {
+		if lp.hookRun == nil {
+			return // no response-stage hooks bound: nothing to scan or stamp.
+		}
 		input := &hookcore.HookInput{
 			RequestID:      hookCtx.RequestID,
 			Stage:          "response",
@@ -253,12 +256,32 @@ func (lp *LivePipeline) Process(
 		}
 	}
 
-	for ch := range eventCh {
-		delta := format.ExtractDeltaText(ch.data)
-		totalBytes += len(ch.rawData)
+	// scanForAudit is false when no response-stage hooks are bound (nil runner).
+	// In that case the per-event canonical-text accumulation (a per-chunk JSON
+	// parse) and the audit checkpoints are pure no-op work — the checkpoint would
+	// resolve BuildPipeline("response") to nil and stamp a synthetic Approve every
+	// window. Skipping mirrors the shared LivePipeline's `l.pipeline == nil` guard
+	// and the non-stream rule-free path; rec.ResponseAction already defaults to
+	// ActionApprove upstream so the captured body still persists (only the
+	// synthetic response_hook_decision="APPROVE" is dropped, matching non-stream).
+	scanForAudit := lp.hookRun != nil
 
+	// writeEvent delivers ONE chunk: it enforces the buffer cap, writes the SSE
+	// frame (WITHOUT flushing — the caller coalesces flushes across a burst),
+	// accumulates the canonical text, and runs the byte-window audit checkpoint.
+	// It returns true when the buffer cap overflowed, in which case it has already
+	// emitted the error frame, flushed, cancelled, closed the upstream, and set
+	// blocked — the caller must stop.
+	writeEvent := func(ch chunk) (overflow bool) {
+		totalBytes += len(ch.rawData)
 		if totalBytes > lp.config.MaxBufferSize {
 			lp.logger.Error("stream buffer exceeded", "bytes", totalBytes)
+			// Audit the content accumulated so far before aborting: the
+			// mandatory EOF checkpoint below is skipped on this blocked path, so
+			// without this scan the widening cadence would leave the tail since
+			// the last intermediate checkpoint unaudited. The buffer is already
+			// in hand — one O(n) scan, not a per-chunk cost.
+			runCheckpoint()
 			// best-effort: error notification to client; we cancel below regardless.
 			// Flush BEFORE cancel — without the flush, the error frame stays
 			// in the kernel buffer and the client sees a silent disconnect
@@ -276,7 +299,7 @@ func (lp *LivePipeline) Process(
 			// unblock the reader so wg.Wait() can return.
 			sharedstreaming.CloseUpstreamOnExit(upstream)
 			blocked = true
-			break
+			return true
 		}
 
 		// AUDIT-ONLY (B1): deliver every chunk in real time — delivery is never
@@ -285,24 +308,79 @@ func (lp *LivePipeline) Process(
 		// traffic). Accumulate the canonical text so the periodic + final
 		// checkpoints scan it for the audit tag and the off-path redacted copy.
 		_ = format.WriteTypedEvent(client, ch.eventType, ch.data)
+
+		// Skip the audit-scan bookkeeping entirely when no response hooks are
+		// bound: the per-chunk ExtractDeltaText JSON parse + accumulation exist
+		// only to feed the checkpoint scan.
+		if scanForAudit {
+			accBuf.WriteString(format.ExtractDeltaText(ch.data))
+			// Observe-only audit checkpoint on a widening byte cadence; it does
+			// NOT gate delivery. Each checkpoint re-normalizes the FULL accumulated
+			// stream (the pre-hook parses cumulative wire bytes, not just the new
+			// delta), so a fixed byte-step makes the total re-normalization work
+			// grow with the square of the response length. Growing the step
+			// proportionally to the transcript caps the checkpoint count so the
+			// total work stays linear; short streams keep the fine ReinspectStepChars
+			// cadence (the proportional term overtakes only past ~8x the step), and
+			// the mandatory EOF checkpoint below is always the authoritative full
+			// scan, so coarser intermediate spacing never changes the final result.
+			if accBuf.Len() >= nextInspect {
+				runCheckpoint()
+				step := lp.config.ReinspectStepChars
+				if grow := accBuf.Len() / 8; grow > step {
+					step = grow
+				}
+				nextInspect = accBuf.Len() + step
+			}
+		}
+		return false
+	}
+
+	for ch := range eventCh {
+		if writeEvent(ch) {
+			break
+		}
+
+		// Opportunistic drain-then-flush: write any events ALREADY queued without
+		// a per-event flush, then issue ONE flush for the whole burst. This
+		// coalesces the flush syscall under load (the dominant cost on the live
+		// path) while adding zero latency — a lone event finds the channel empty on
+		// the first drain iteration and flushes immediately, so TTFT is unchanged.
+		// The comma-ok receive is load-bearing: once the reader closes eventCh a
+		// bare receive would spin returning zero-value chunks forever.
+		draining := true
+		for draining {
+			select {
+			case ch2, ok := <-eventCh:
+				if !ok {
+					// Reader closed the channel; stop draining. The outer range
+					// exits on its next receive.
+					draining = false
+					break
+				}
+				if writeEvent(ch2) {
+					draining = false
+				}
+			default:
+				// Channel momentarily empty — flush the burst delivered so far.
+				draining = false
+			}
+		}
+
 		if canFlush {
 			flusher.Flush()
 		}
-		accBuf.WriteString(delta)
-
-		// Byte-window cadence: an observe-only audit checkpoint roughly every
-		// ReinspectStepChars of new content. It does NOT gate delivery.
-		if accBuf.Len() >= nextInspect {
-			runCheckpoint()
-			nextInspect = accBuf.Len() + lp.config.ReinspectStepChars
+		if blocked {
+			break
 		}
 	}
 
 	// Mandatory final checkpoint — the authoritative audit scan of the FULL
 	// response, always run at EOF (never gated behind a content-length threshold)
 	// so a stream shorter than the first inspect window is still scanned for the
-	// audit tag and the off-path redacted storage copy.
-	if !blocked {
+	// audit tag and the off-path redacted storage copy. Skipped when no response
+	// hooks are bound (scanForAudit false) — there is nothing to scan or stamp.
+	if !blocked && scanForAudit {
 		runCheckpoint()
 	}
 

@@ -290,6 +290,17 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 			// the pre-hook bytes for normalization and must never reach
 			// raw storage when redaction is demanded — without this stamp
 			// the writer fail-safes the raw copy to NULL).
+			//
+			// Zero-write rewrites return the INPUT slice — which is the pooled
+			// request-body buffer that finalizeAudit releases for reuse when the
+			// body is not captured. The record outlives that release (the async
+			// audit writer holds it), so a stamped alias would let the next
+			// request's bytes bleed into this record's redacted copy. Clone the
+			// rare zero-write case; real rewrites (n > 0) already produced a
+			// fresh buffer via sjson.
+			if n == 0 {
+				rewritten = bytes.Clone(rewritten)
+			}
 			rec.RequestBodyRedacted = rewritten
 			return rewritten, hookResult, false
 		}

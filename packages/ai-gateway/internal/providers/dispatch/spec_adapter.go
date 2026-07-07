@@ -404,7 +404,7 @@ func (a *specAdapter) prepareBodyFull(req Request) (body []byte, rewrites []stri
 	// codec EncodeRequest on those adapters is an identity pass that would
 	// leave the original model ID in the body.
 	if req.BodyFormat == a.spec.Format || (req.BodyFormat.IsOpenAIFamily() && a.spec.Format.IsOpenAIFamily()) {
-		b, rw, e := rewritePassthroughModel(req, a.spec.PassthroughRewrite, a.spec.PassthroughRewriteApplies)
+		b, rw, e := rewritePassthroughModel(req, a.spec.PassthroughRewrite, a.spec.PassthroughRewriteApplies, a.spec.PassthroughModelInBody)
 		return b, rw, "", e
 	}
 	// Canonical OpenAI input needs codec translation. Codecs may apply
@@ -440,7 +440,7 @@ func applyURLOverride(baseURL, override string) string {
 	return override
 }
 
-func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any, string) []string, rewriteApplies func(string) bool) ([]byte, []string, error) {
+func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any, string) []string, rewriteApplies func(string) bool, modelInBody bool) ([]byte, []string, error) {
 	// Strip the gateway-internal `nexus` namespace from the body before
 	// any further work The passthrough path forwards req.Body
 	// to upstream verbatim (modulo model rewrite), and the cross-format
@@ -455,16 +455,27 @@ func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any
 	if req.Target.ProviderModelID == "" {
 		return body, nil, nil
 	}
-	switch req.WireShape {
-	case typology.WireShapeOpenAIChat, typology.WireShapeOpenAIEmbeddings, typology.WireShapeOpenAICompletionsLegacy:
-	default:
-		return body, nil, nil
-	}
-	if !req.BodyFormat.IsOpenAIFamily() {
-		// Non-OpenAI-shape bodies (Anthropic Messages, Gemini generateContent,
-		// Bedrock, Cohere, Replicate, ...) carry the model field in different
-		// places or names; their per-format SchemaCodec.EncodeRequest is the
-		// site that applies ct.ProviderModelID, not this passthrough path.
+	// The passthrough rewrites the top-level `model` field only for wires that
+	// carry it there. Two sources qualify:
+	//   1. OpenAI-family bodies on an OpenAI wire shape — the model sits at the
+	//      JSON root and `payload["model"] = X` substitution is valid.
+	//   2. A non-OpenAI-family adapter that declares PassthroughModelInBody
+	//      (today only Anthropic `/v1/messages`), whose native wire also puts
+	//      the model at the body root but whose EncodeRequest — the usual
+	//      ProviderModelID-stamping site — is skipped on the same-format
+	//      native passthrough. Without this the client-facing alias / a
+	//      routing-changed model reaches the upstream verbatim and 404s.
+	// Wires that carry the model elsewhere leave both false and pass through
+	// untouched: Gemini (URL path, set by Transport.BuildURL from
+	// ProviderModelID), Bedrock (model deleted from body, encoded into the URL
+	// by its codec). The stream_options / PassthroughRewrite map path below
+	// stays OpenAI-chat-only, so an Anthropic body only ever takes the
+	// surgical top-level `model` rewrite — never OpenAI-specific injection.
+	openAIWire := req.WireShape == typology.WireShapeOpenAIChat ||
+		req.WireShape == typology.WireShapeOpenAIEmbeddings ||
+		req.WireShape == typology.WireShapeOpenAICompletionsLegacy
+	rewriteBodyModel := (openAIWire && req.BodyFormat.IsOpenAIFamily()) || modelInBody
+	if !rewriteBodyModel {
 		return body, nil, nil
 	}
 	if len(body) == 0 {

@@ -25,6 +25,15 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		SchemaCodec:     apcodec.NewCodec(),
 		StreamDecoder:   apstream.NewStreamDecoder(log),
 		ErrorNormalizer: specerrors.ErrorNormalizer{},
+		// Anthropic `/v1/messages` carries the model at the body top-level,
+		// like the OpenAI shape. On the same-format native passthrough the
+		// codec's EncodeRequest (which stamps ProviderModelID) is skipped, so
+		// the generic dispatcher must apply the resolved ProviderModelID to
+		// the body `model` itself — otherwise a client-facing alias reaches
+		// Anthropic verbatim and 404s. Cross-format routes still stamp it via
+		// the codec. Sampling-param wire quirks stay in the codec (Rule 3) and
+		// remain transparent on the native passthrough by design.
+		PassthroughModelInBody: true,
 	}
 }
 

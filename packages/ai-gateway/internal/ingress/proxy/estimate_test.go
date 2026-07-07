@@ -53,6 +53,12 @@ func (s *stubModels) GetModelByCode(_ context.Context, code string) (*store.Mode
 	}
 	return nil, errors.New("not found")
 }
+func (s *stubModels) GetModelByCodeOrAlias(_ context.Context, key string) (*store.Model, error) {
+	if m, ok := s.byCode[key]; ok {
+		return m, nil
+	}
+	return nil, errors.New("not found")
+}
 func (s *stubModels) ListEnabledModels(_ context.Context) ([]store.Model, error) {
 	return nil, nil
 }

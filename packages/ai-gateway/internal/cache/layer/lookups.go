@@ -48,6 +48,22 @@ func (l *Layer) GetModelByCode(ctx context.Context, code string) (*store.Model, 
 	return nil, fmt.Errorf("cachelayer: model code %q: %w", code, errNotFound)
 }
 
+// GetModelByCodeOrAlias returns the enabled Model row whose customer-facing
+// code OR one of its aliases matches key, resolved in O(1) from the in-memory
+// code-or-alias index (no per-request scan, no DB read). Codes take priority
+// over aliases. Used by the routing passthrough fallback so an aliased model
+// routes without an explicit routing rule; GetModelByCode stays strict-code.
+func (l *Layer) GetModelByCodeOrAlias(ctx context.Context, key string) (*store.Model, error) {
+	idx := l.modelsByCodeOrAlias.Load()
+	if idx != nil {
+		if m, ok := (*idx)[key]; ok {
+			v := m
+			return &v, nil
+		}
+	}
+	return nil, fmt.Errorf("cachelayer: model code/alias %q: %w", key, errNotFound)
+}
+
 // AllModels returns a copy of every Model row in the current snapshot.
 // Used by the capability cache rebuild hook in configdispatch after a
 // models reload so the pre-filter stays in sync without a second DB query.

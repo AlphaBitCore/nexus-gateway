@@ -163,6 +163,7 @@ func TestInitExecutor_withNilPtResolverAndStats(t *testing.T) {
 	}
 	adapterReg := InitProviderRegistry(allowlist, discardLogger())
 	ht := store.NewHealthTracker()
+	t.Cleanup(ht.Stop)
 
 	bridge, exec := InitExecutor(adapterReg, nil, ht, nil, discardLogger())
 	if bridge == nil {
@@ -399,6 +400,7 @@ func TestInitRouter_withNonNilCacheLayerAndPtResolver(t *testing.T) {
 	ptResolver := NewResolver(l, mgr, nil)
 
 	ht := store.NewHealthTracker()
+	t.Cleanup(ht.Stop)
 	stratReg, healthRanker, resolver, capCache := InitRouter(l, ht, ptResolver, adapterReg, discardLogger())
 	if stratReg == nil {
 		t.Fatal("expected non-nil strategyReg")

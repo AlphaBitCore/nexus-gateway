@@ -42,7 +42,8 @@ func (stubResolver) Resolve(_ context.Context, providerID, modelID string, _ pro
 
 // testDeps creates handler.Deps with no DB (stubs VK auth and routing).
 // The upstream URL is injected via the provider registry mock.
-func testDeps(upstreamURL string) *proxy.Deps {
+func testDeps(t *testing.T, upstreamURL string) *proxy.Deps {
+	t.Helper()
 	logger := slog.Default()
 
 	// Provider adapter registry populated with the nine built-in stub
@@ -63,6 +64,7 @@ func testDeps(upstreamURL string) *proxy.Deps {
 
 	credMgr := credmanager.NewManager(nil, nil)
 	healthTracker := store.NewHealthTracker()
+	t.Cleanup(healthTracker.Stop)
 
 	return &proxy.Deps{
 		Models:          nil,                            // no DB in test
@@ -92,7 +94,7 @@ func (okVKAuth) Authenticate(_ context.Context, _ *http.Request) (*vkauth.VKMeta
 func TestProxyHandler_MissingModel(t *testing.T) {
 	// auth runs BEFORE the body read, so authenticate with a
 	// passing VKAuth stub to reach the body-level model validation.
-	deps := testDeps("")
+	deps := testDeps(t, "")
 	deps.VKAuth = okVKAuth{}
 	h := proxy.NewHandler(deps).ServeProxy(proxy.Ingress{
 		WireShape:  typology.WireShapeOpenAIChat,
@@ -121,7 +123,7 @@ func TestProxyHandler_MissingModel(t *testing.T) {
 // payload capture pre-auth. A missing-model body that would 400 once
 // authenticated must instead surface the 401.
 func TestProxyHandler_AuthBeforeBody(t *testing.T) {
-	deps := testDeps("")
+	deps := testDeps(t, "")
 	deps.VKAuth = stubAuthErr{err: vkauth.ErrMissing}
 	h := proxy.NewHandler(deps).ServeProxy(proxy.Ingress{
 		WireShape:  typology.WireShapeOpenAIChat,

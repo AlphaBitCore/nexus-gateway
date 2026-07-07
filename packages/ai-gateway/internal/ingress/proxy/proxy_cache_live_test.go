@@ -45,20 +45,86 @@ func TestRunLiveStream_HappyPath_FlowsThroughLivePipeline(t *testing.T) {
 	deps := &Deps{NormalizeRegistry: reg}
 
 	runLiveStream(context.Background(), runStreamDeps{
-		Deps:         deps,
-		AdapterType:  "openai",
-		Path:         "/v1/chat/completions",
-		AcceptHeader: "text/event-stream",
-		HookRunner:   runner,
-		HookCtx:      hookCtx,
-		SSEReader:    body,
-		Tee:          tee,
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		EmitDone:     true,
+		Deps:             deps,
+		AdapterType:      "openai",
+		Path:             "/v1/chat/completions",
+		AcceptHeader:     "text/event-stream",
+		HookRunner:       runner,
+		HookCtx:          hookCtx,
+		HasResponseHooks: true, // response rules bound → PreHook installed + checkpoints run
+		SSEReader:        body,
+		Tee:              tee,
+		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		EmitDone:         true,
 	})
 
 	if teeBuf.Len() == 0 {
 		t.Errorf("expected LivePipeline to forward bytes to tee, got 0")
+	}
+	// With response hooks bound the checkpoint MUST fire (the runner is kept,
+	// not nil'd) — without this assertion the test went blind to the
+	// HasResponseHooks gate.
+	if hookCalls.Load() == 0 {
+		t.Error("expected OnCheckpoint to fire with HasResponseHooks=true")
+	}
+}
+
+// TestRunLiveStream_ResponseHooksGate pins the HasResponseHooks gate: with a
+// response rule bound the runner is kept and checkpoints fire; with none bound
+// the runner is nil'd and checkpoints are skipped — but in BOTH cases the
+// persisted (tee) body carries the full transcript, since skipping the audit
+// scan must never drop delivered/persisted bytes.
+func TestRunLiveStream_ResponseHooksGate(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		hasResponseHooks bool
+		wantCheckpoints  bool
+	}{
+		{"hooks_bound_runs_checkpoints", true, true},
+		{"no_hooks_skips_checkpoints", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"hello world\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" more\"}}]}\n\ndata: [DONE]\n\n")
+			var teeBuf bytes.Buffer
+			tee := &testWriter{Buffer: &teeBuf, header: http.Header{}}
+
+			var hookCalls atomic.Int32
+			hookCtx := &streaming.StreamHookContext{
+				RequestID:    "gate-" + tc.name,
+				IngressType:  "AI_GATEWAY",
+				OnCheckpoint: func(*hookcore.CompliancePipelineResult) { hookCalls.Add(1) },
+			}
+			runner := func(_ context.Context, _ *hookcore.HookInput) *hookcore.CompliancePipelineResult {
+				return &hookcore.CompliancePipelineResult{Decision: hookcore.Approve}
+			}
+			reg := normcore.NewRegistry()
+			codecs.RegisterDefaultAIBuiltins(reg)
+
+			runLiveStream(context.Background(), runStreamDeps{
+				Deps:             &Deps{NormalizeRegistry: reg},
+				AdapterType:      "openai",
+				Path:             "/v1/chat/completions",
+				HookRunner:       runner,
+				HookCtx:          hookCtx,
+				HasResponseHooks: tc.hasResponseHooks,
+				SSEReader:        body,
+				Tee:              tee,
+				Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+				EmitDone:         true,
+			})
+
+			// (a) OnCheckpoint fires ONLY when response hooks are bound.
+			if got := hookCalls.Load() > 0; got != tc.wantCheckpoints {
+				t.Errorf("checkpoints fired=%v, want %v (HasResponseHooks=%v)", got, tc.wantCheckpoints, tc.hasResponseHooks)
+			}
+			// (b) The persisted (tee) body carries the FULL transcript in BOTH cases.
+			persisted := teeBuf.String()
+			for _, want := range []string{"hello world", " more", "[DONE]"} {
+				if !strings.Contains(persisted, want) {
+					t.Errorf("persisted tee body missing %q (HasResponseHooks=%v); got %q", want, tc.hasResponseHooks, persisted)
+				}
+			}
+		})
 	}
 }
 
