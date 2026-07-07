@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,20 +39,24 @@ func TestHookConfigCache_StartAndResolve(t *testing.T) {
 }
 
 func TestHookConfigCache_TTLRefresh(t *testing.T) {
-	loadCount := 0
+	var loadCount atomic.Int32
 	loader := func(ctx context.Context) ([]core.HookConfig, error) {
-		loadCount++
+		loadCount.Add(1)
 		return nil, nil
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	cache := NewHookConfigCache(loader, builtins.Registry, 10*time.Millisecond, slog.Default())
-	_ = cache.Start(context.Background())
+	_ = cache.Start(ctx)
 
-	time.Sleep(20 * time.Millisecond)
-	_ = cache.Resolver(context.Background())
-
-	if loadCount < 2 {
-		t.Fatalf("expected TTL refresh, got %d loads", loadCount)
+	// The backstop ticker must refresh on its own — no request traffic needed.
+	deadline := time.Now().Add(time.Second)
+	for loadCount.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if loadCount.Load() < 2 {
+		t.Fatalf("expected TTL backstop refresh, got %d loads", loadCount.Load())
 	}
 }
 

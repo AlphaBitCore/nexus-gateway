@@ -10,12 +10,30 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/matcher"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/strategies"
 )
+
+// awaitStatus polls until a provider reaches the expected health status. The
+// HealthTracker applies records asynchronously (single writer), so a read
+// immediately after recording must wait for the samples to be published.
+func awaitStatus(t *testing.T, tracker *store.HealthTracker, providerID string, want store.HealthStatus) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if tracker.GetHealth(providerID).Status == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("provider %s did not reach %s in time; got %+v", providerID, want, tracker.GetHealth(providerID))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
 
 // Test helpers for routing package coverage tests.
 // These mirror the helpers in resolver_test.go to avoid the import cycle that
@@ -164,6 +182,7 @@ func TestFormatTarget_PartialFields(t *testing.T) {
 
 func TestHealthRanker_DegradedAndUnavailable_RankedLast(t *testing.T) {
 	tracker := store.NewHealthTracker()
+	t.Cleanup(tracker.Stop)
 	// degraded: ~10% failure rate (just above 0.05 threshold).
 	// thresholdDegraded = 0.05, thresholdUnavailable = 0.25.
 	// One failure out of 11 samples = ~0.09 error rate => degraded.
@@ -176,6 +195,8 @@ func TestHealthRanker_DegradedAndUnavailable_RankedLast(t *testing.T) {
 	for range 5 {
 		tracker.RecordFailure("provUnavail", "una", 200)
 	}
+	awaitStatus(t, tracker, "provDegraded", store.HealthStatusDegraded)
+	awaitStatus(t, tracker, "provUnavail", store.HealthStatusUnavailable)
 
 	ranker := core.NewHealthRanker(tracker)
 	in := []core.RoutingTarget{
@@ -270,7 +291,9 @@ func TestNarrowingEngine_Apply_SkipsNonStage0AndNonPolicy(t *testing.T) {
 func TestNewResolver_WiresAllFields(t *testing.T) {
 	fs := &coverageFakeStore{providers: map[string]*store.Provider{}, models: map[string]*store.Model{}}
 	reg := strategies.NewStrategyRegistry()
-	ranker := core.NewHealthRanker(store.NewHealthTracker())
+	ht := store.NewHealthTracker()
+	t.Cleanup(ht.Stop)
+	ranker := core.NewHealthRanker(ht)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	r := NewResolver(fs, reg, ranker, logger, nil)
 	if r == nil {
@@ -819,9 +842,11 @@ func TestResolveTargets_FlattensAndHealthRanks(t *testing.T) {
 
 	// Mark openai unhealthy so ranker should sink it to the end.
 	tracker := store.NewHealthTracker()
+	t.Cleanup(tracker.Stop)
 	for range 20 {
 		tracker.RecordFailure("openai", "openai", 100)
 	}
+	awaitStatus(t, tracker, "openai", store.HealthStatusUnavailable)
 	f.resolver.healthRanker = core.NewHealthRanker(tracker)
 
 	res, err := f.resolver.ResolveTargets(context.Background(), &core.RoutingContext{

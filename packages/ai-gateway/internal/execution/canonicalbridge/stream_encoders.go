@@ -32,6 +32,11 @@ type openAIStreamEncoder struct {
 	// it (the io.Writer "must not retain p" contract; every call site writes it
 	// out synchronously before the next Write).
 	scratch []byte
+	// contentSuffix is the precomputed tail of a content-delta frame — everything
+	// after the (variable) content string. See stream_encoders_fastpath.go
+	// (emitContentDelta) for how the per-token hot path uses it to avoid
+	// marshalling the whole envelope struct graph.
+	contentSuffix []byte
 }
 
 // NewChatCompletionsStreamEncoder returns an encoder that converts canonical
@@ -127,8 +132,10 @@ func (e *openAIStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 	// finishReason, and usageMetadata into a single SSE frame, so chunk.Delta
 	// can be non-empty even when chunk.Done is also true.
 	if chunk.Delta != "" {
-		d := chunk.Delta
-		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{Content: &d}}, nil)
+		// Per-token hot path: byte-identical to
+		// emit(oaiStreamChoice{Delta:{Content:&d}}, nil) but skips the envelope
+		// struct reflection (the dominant streaming encode cost).
+		e.emitContentDelta(chunk.Delta)
 	}
 	if len(chunk.ToolCallDeltas) > 0 {
 		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{ToolCalls: buildOAIToolCalls(chunk.ToolCallDeltas)}}, nil)

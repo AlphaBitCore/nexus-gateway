@@ -192,8 +192,10 @@ func TestWriter_SpillWriteErrorFallsToLoudDrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ndjson.New: %v", err)
 	}
-	// Pre-seed past the quota so the next spill write is refused.
-	if err := os.WriteFile(filepath.Join(dir, "test", "seed.ndjson"), make([]byte, 1100*1024), 0o600); err != nil {
+	// Pre-seed past the quota so the next spill write is refused. The seed must be a
+	// countable audit-*.ndjson file: the reclaimable-quota gate excludes non-audit
+	// entries (e.g. .poison), so a differently-named filler would not count.
+	if err := os.WriteFile(filepath.Join(dir, "test", "audit-20260101-0001.ndjson"), make([]byte, 1100*1024), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	w := NewWriter(&memProducer{}, "q", nil, slog.Default()).WithNDJSONSpill(spill).WithLossMode(lossModeSpill)
@@ -252,7 +254,18 @@ func TestWriter_PublishRecord_SpillsWhenBufferFull(t *testing.T) {
 	w := NewWriter(&memProducer{alwaysFail: true}, "q", nil, slog.Default()).WithNDJSONSpill(spill).WithLossMode(lossModeSpill)
 	saturate(w)
 
-	w.publishRecord(&Record{RequestID: "pub-spill"}) // publish fails, buffer full → spill
+	w.publishRecord(&Record{RequestID: "pub-spill"}) // publish fails, buffer full → async spill hand-off
+
+	// The overflow is handed to the batched spill channel (off the request path),
+	// not written synchronously; drain it and drive the worker's write step.
+	select {
+	case rec := <-w.spillCh:
+		if !w.spillRecord(rec) {
+			t.Fatal("spillRecord must durably write the handed-off overflow record")
+		}
+	default:
+		t.Fatal("publishRecord overflow must hand the record to the async spill channel")
+	}
 
 	lines := readSpool(t, dir, "test")
 	if len(lines) != 1 || !strings.Contains(lines[0], "pub-spill") {
@@ -325,7 +338,7 @@ func TestSpillData_NilSinkAndWriteError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ndjson.New: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "test", "seed.ndjson"), make([]byte, 1100*1024), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test", "audit-20260101-0001.ndjson"), make([]byte, 1100*1024), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	w.WithNDJSONSpill(spill).WithLossMode(lossModeSpill)

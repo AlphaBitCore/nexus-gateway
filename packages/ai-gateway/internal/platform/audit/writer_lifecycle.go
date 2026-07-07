@@ -21,6 +21,20 @@ func (w *Writer) Start() *Writer {
 
 func (w *Writer) ensureStarted() {
 	w.startOnce.Do(func() {
+		// spillBlock uses the durable on-disk spool as its overflow buffer and only
+		// back-pressures the request path when that spool ALSO saturates. Without a
+		// spool wired — an explicit empty spoolDir, OR a spool-dir creation failure at
+		// wiring time (which only logs and leaves ndjsonSpill nil) — spillOverflow has
+		// no durable sink and would DROP on the first overflow. Downgrade to block, the
+		// stricter no-loss mode that back-pressures at the in-heap queue and needs no
+		// spool, so audit is never silently lossy from a missing/failed spool. This is
+		// the documented "spillBlock without a spool falls back to block-style
+		// back-pressure" — enforced here rather than assumed.
+		if w.lossMode == lossModeSpillBlock && w.ndjsonSpill == nil {
+			w.logger.Warn("audit: lossMode=spillBlock but no durable spool is wired; " +
+				"downgrading to block (no-loss back-pressure) — wire a spool dir for spillBlock")
+			w.lossMode = lossModeBlock
+		}
 		// Binary wire MUST always travel framed: an unframed (per-record) binary
 		// message begins with field-id 1's uvarint (0x01), which is exactly the frame
 		// magic — the Hub would mis-detect it as a multi-record binary frame. The
@@ -76,6 +90,10 @@ func (w *Writer) startSpillRecovery() {
 	// (subject + headers). Unknown (producer without the accessor) → 0 = no
 	// proactive dead-letter.
 	if mp, ok := w.producer.(interface{ MaxPayload() int64 }); ok {
+		// Wire the accessor so runOnce can late-bind maxRecordBytes if the broker is
+		// not connected yet at wiring time (MaxPayload()==0 pre-connect); also seed it
+		// now for the common case where NATS is already up.
+		r.maxPayload = mp.MaxPayload
 		if max := mp.MaxPayload(); max > maxPayloadMargin {
 			r.maxRecordBytes = int(max - maxPayloadMargin)
 		}
@@ -93,19 +111,27 @@ func (w *Writer) startSpillRecovery() {
 // Close stops accepting records and waits for the consumer + spill workers to
 // drain and publish/spill everything in flight. Nothing is lost: workers drain
 // recCh on stopCh, then the final sweep spills any straggler that raced in after
-// their last drain check.
+// their last drain check — from BOTH recCh and spillCh. spillCh must be drained
+// too: after stopCh a producer's `spillCh <- rec` (the primary spillBlock
+// back-pressure path) can land a record in the channel buffer AFTER the spill
+// worker's final drain already returned; without this sweep that straggler is
+// neither published, spilled, nor counted — a silent shutdown loss.
 func (w *Writer) Close() {
 	close(w.stopCh)
 	w.wg.Wait()
 	if w.recCh == nil {
 		return // never started
 	}
-	for {
-		select {
-		case rec := <-w.recCh:
-			w.spillRecord(rec)
-		default:
-			return
+	drain := func(ch <-chan *Record) {
+		for {
+			select {
+			case rec := <-ch:
+				w.spillRecord(rec)
+			default:
+				return
+			}
 		}
 	}
+	drain(w.recCh)
+	drain(w.spillCh)
 }

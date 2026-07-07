@@ -25,6 +25,21 @@ type auditMetrics struct {
 	// value means audit data is durably retained but NOT in the queryable store —
 	// an operator signal to fix the inline-body cap / enable out-of-band body spill.
 	recoveryPoisoned *opsmetrics.CounterPin
+	// spillBackpressure counts how many times the spill worker entered a quota-full
+	// back-pressure retry (spool at its total-size quota under a no-loss mode). It is
+	// the DISTINCT "spool full → throttling the request path, recovery cannot keep up"
+	// signal: a rising value with dropped_total flat at 0 means the gateway is
+	// deliberately back-pressuring (not dropping, not hung) because NATS/Hub/PG drain
+	// < audit ingest. On-call uses it to tell an audit-spool wedge from an app hang.
+	spillBackpressure *opsmetrics.CounterPin
+	// memBackpressure counts how many times Enqueue found the in-memory byte
+	// budget exhausted. No-loss modes then BLOCK the request goroutine until drain
+	// frees bytes; lossy modes shed with a counted drop (this counter is what
+	// distinguishes a budget-full drop from a plain queue-full drop). Rising with
+	// dropped_total flat at 0 = the gateway is deliberately throttling ingest
+	// because in-memory audit bytes hit their RAM share — the designed overload
+	// behavior (bounded memory, no loss), not a hang.
+	memBackpressure *opsmetrics.CounterPin
 }
 
 func newAuditMetrics(reg *opsmetrics.Registry) *auditMetrics {
@@ -35,13 +50,15 @@ func newAuditMetrics(reg *opsmetrics.Registry) *auditMetrics {
 	// still applies; With() with zero values returns a CounterPin bound to
 	// the empty label set.
 	return &auditMetrics{
-		enqueueTotal:     reg.NewCounter("audit.mq_enqueue_total", nil).With(),
-		enqueueErrors:    reg.NewCounter("audit.mq_enqueue_errors_total", nil).With(),
-		dropped:          reg.NewCounter("audit.mq_dropped_total", nil).With(),
-		spilled:          reg.NewCounter("audit.mq_spilled_total", nil).With(),
-		reingested:       reg.NewCounter("audit.mq_reingested_total", nil).With(),
-		recoveryErrors:   reg.NewCounter("audit.mq_recovery_errors_total", nil).With(),
-		recoveryPoisoned: reg.NewCounter("audit.mq_recovery_poisoned_total", nil).With(),
+		enqueueTotal:      reg.NewCounter("audit.mq_enqueue_total", nil).With(),
+		enqueueErrors:     reg.NewCounter("audit.mq_enqueue_errors_total", nil).With(),
+		dropped:           reg.NewCounter("audit.mq_dropped_total", nil).With(),
+		spilled:           reg.NewCounter("audit.mq_spilled_total", nil).With(),
+		reingested:        reg.NewCounter("audit.mq_reingested_total", nil).With(),
+		recoveryErrors:    reg.NewCounter("audit.mq_recovery_errors_total", nil).With(),
+		recoveryPoisoned:  reg.NewCounter("audit.mq_recovery_poisoned_total", nil).With(),
+		spillBackpressure: reg.NewCounter("audit.mq_spill_backpressure_total", nil).With(),
+		memBackpressure:   reg.NewCounter("audit.mem_backpressure_total", nil).With(),
 	}
 }
 
@@ -88,5 +105,15 @@ func (m *auditMetrics) incRecoveryErrors() {
 func (m *auditMetrics) addPoisoned(n int) {
 	if m != nil && n > 0 {
 		m.recoveryPoisoned.Add(float64(n))
+	}
+}
+func (m *auditMetrics) incSpillBackpressure() {
+	if m != nil {
+		m.spillBackpressure.Inc()
+	}
+}
+func (m *auditMetrics) incMemBackpressure() {
+	if m != nil {
+		m.memBackpressure.Inc()
 	}
 }

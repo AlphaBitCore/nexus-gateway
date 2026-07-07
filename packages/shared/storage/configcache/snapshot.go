@@ -79,12 +79,14 @@ func (c *SnapshotCache[T]) Load(ctx context.Context) error {
 	items, err := c.loader(ctx)
 	if err != nil {
 		c.log.Error("snapshot load failed", "cache", c.name, "error", err)
+		loadFailures.WithLabelValues(c.name).Inc()
 		return err
 	}
 	if items == nil {
 		items = map[string]T{}
 	}
 	c.snap.Store(&items)
+	lastLoadSuccess.WithLabelValues(c.name).SetToCurrentTime()
 	c.log.Info("snapshot loaded", "cache", c.name, "size", len(items))
 	if c.onLoad != nil {
 		c.onLoad(c.name, len(items))

@@ -23,9 +23,14 @@ const (
 
 // LiveConfig configures the live streaming compliance pipeline.
 type LiveConfig struct {
-	CheckpointChars    int // chars between checkpoints (default 500)
-	MinCheckpointChars int // adaptive lower bound (default 200)
-	MaxCheckpointChars int // adaptive upper bound (default 2000)
+	CheckpointChars int // base chars between checkpoints (default 500); the cadence widens with the transcript
+	// MinCheckpointChars / MaxCheckpointChars are RESERVED and currently
+	// unused — no caller sets them and the checkpoint cadence is
+	// deliberately uncapped (a fixed upper bound would re-introduce
+	// quadratic re-normalization on very long streams). Kept for wire/field
+	// compatibility; do not treat MaxCheckpointChars as a cadence ceiling.
+	MinCheckpointChars int
+	MaxCheckpointChars int
 	MaxBufferSize      int // max total buffer (default 8MB)
 	ChannelSize        int // internal channel buffer (default 64)
 }
@@ -100,13 +105,11 @@ func (l *LivePipeline) WithUsageAccumulator(acc UsageAccumulator) *LivePipeline 
 // pipelines see structured chat content rather than the flat-text
 // fallback buildCheckpointInput would otherwise produce.
 //
-// Cost: each checkpoint re-runs normalize on the cumulative body — for
-// long streams that's quadratic in body size if normalize itself is
-// O(n). Acceptable in practice because (a) checkpoints fire every
-// ~500 chars by default so the per-call body is bounded by
-// MaxBufferSize anyway, (b) normalize.Registry is structured around
-// O(n) parse + adapter dispatch, (c) Registry tier 1 adapters (claude-
-// web, chatgpt-web, anthropic, openai-chat) are byte-parser-fast.
+// Cost: each checkpoint re-runs normalize on the cumulative body. To keep
+// the total normalize work linear in the response length rather than
+// quadratic, the checkpoint cadence widens with the accumulated transcript
+// (see the step calc in Process) so the checkpoint count stays sublinear;
+// the mandatory final checkpoint is always the authoritative full scan.
 func (l *LivePipeline) WithPreHook(fn PreHookCallback) *LivePipeline {
 	l.preHook = fn
 	return l
@@ -312,7 +315,20 @@ func (l *LivePipeline) Process(
 			auditCapped = true
 			continue
 		}
-		if pendingLen >= l.config.CheckpointChars {
+		// Widen the checkpoint cadence with the transcript: each checkpoint
+		// re-normalizes the FULL accumulated body (the pre-hook parses cumulative
+		// wire bytes), so a fixed step makes the total re-normalization work grow
+		// with the square of the response length — a long stream saturates the
+		// box on parsing alone. Growing the step proportionally to the accumulated
+		// length keeps the checkpoint count sublinear and the total work linear.
+		// Short streams keep the fixed CheckpointChars cadence; the mandatory
+		// final checkpoint below always covers the trailing content, so coarser
+		// intermediate spacing never changes the final audit result.
+		step := l.config.CheckpointChars
+		if grow := accumulatedAll.Len() / 8; grow > step {
+			step = grow
+		}
+		if pendingLen >= step {
 			runCheckpoint()
 			pendingLen = 0
 		}

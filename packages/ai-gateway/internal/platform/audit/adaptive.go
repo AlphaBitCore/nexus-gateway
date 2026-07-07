@@ -52,60 +52,48 @@ func availableMemoryBytes() uint64 {
 }
 
 const (
-	// auditMemFraction is the share of AVAILABLE memory the audit side-path's
-	// in-heap + spill-handoff buffers may occupy. Audit is a side-path, so it takes
-	// a minority slice; the rest stays for the request path + page cache.
-	auditMemFraction = 0.25
+	// auditMemFraction is the share of AVAILABLE memory the audit in-memory queue may
+	// pin, as a BYTE budget (see adaptiveMemBudgetBytes + shared/core/bytebudget). ~15%
+	// of RAM — the same order as the NATS JetStream memory-store limit, a side-path
+	// minority slice. A producer Acquires its record's REAL byte weight before enqueuing
+	// and blocks when this budget is exhausted (back-pressure to the request path), so
+	// the in-memory audit heap is bounded by BYTES (the actual record size), never by a
+	// slot count derived from an ASSUMED body size (the old sizing OOM-killed the process
+	// at 18 GiB when real bodies exceeded the assumed average). Configure it below the
+	// machine's real headroom (e.g. 15% of RAM) so the soft budget's small overshoot
+	// never matters.
+	auditMemFraction = 0.15
 
-	// avgRecordPinBytes is the assumed memory a queued record pins until it is
-	// marshaled out of the pools — dominated by the captured request/response body
-	// (the inline cap is 256 KiB, but typical bodies + the small-record mix average
-	// far lower). Used only to turn a byte budget into a channel capacity; the exact
-	// value is not load-bearing (it sizes a buffer, not a correctness bound).
-	avgRecordPinBytes = 48 << 10 // 48 KiB
+	// recChStructuralCap / spillChStructuralCap are FIXED structural channel depths —
+	// how many *Record POINTERS the queues may hold. NOT the memory bound (the
+	// byteBudget bounds bytes); a slot is ~8 B, so a deep channel is cheap. Sized
+	// generously so the byte budget binds first for realistic large-body traffic, while
+	// the count still caps a pathological flood of tiny records. Body-size-INDEPENDENT
+	// on purpose: the memory limit is the byte budget, computed from the ACTUAL record.
+	recChStructuralCap   = 200_000
+	spillChStructuralCap = 100_000
 
-	// in-heap : spill-handoff split of the buffer budget. The in-heap queue is the
-	// fast path (workers drain it to NATS); the spill channel is the overflow runway
-	// to disk. Weight the fast path heavier.
-	recChBudgetShare   = 0.6
-	spillChBudgetShare = 0.4
-
-	// Capacity clamps so a tiny box still gets a usable buffer and a huge box does
-	// not allocate an absurd channel. These bound the AUTO value, they are not the
-	// value — the machine picks within the band.
-	minRecChCap   = 2000
-	maxRecChCap   = 2_000_000
-	minSpillChCap = 1000
-	maxSpillChCap = 1_000_000
-
-	// fixedBudgetFallback is used when MemAvailable cannot be read (non-Linux).
+	// fixedBudgetFallback is the byte budget used when MemAvailable cannot be read
+	// (non-Linux / restricted /proc).
 	fixedBudgetFallback = 2 << 30 // 2 GiB
 )
 
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
+// adaptiveMemBudgetBytes is the in-memory audit BYTE budget — a fraction of the live
+// MemAvailable (fallback fixedBudgetFallback off-Linux). The byteBudget back-pressures
+// Enqueue on this, bounding the audit heap by ACTUAL bytes regardless of body size.
+func adaptiveMemBudgetBytes() int64 {
+	avail := availableMemoryBytes()
+	if avail == 0 {
+		return fixedBudgetFallback
 	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return int64(float64(avail) * auditMemFraction)
 }
 
-// adaptiveBufferCaps computes the in-heap (recCh) and spill-handoff (spillCh)
-// channel capacities from available memory — replacing the former fixed
-// maxQueueSize / spillChanCap magic numbers. A bigger box automatically gets
-// deeper buffers (more burst absorption before any back-pressure), a smaller box
-// gets shallower ones, with no config.
+// adaptiveBufferCaps returns the STRUCTURAL channel depths (pointer counts) for
+// recCh / spillCh. These are a count ceiling, not the memory bound — the byteBudget
+// bounds bytes. Fixed and body-size-independent by design.
 func adaptiveBufferCaps() (recCh, spillCh int) {
-	budget := availableMemoryBytes()
-	if budget == 0 {
-		budget = fixedBudgetFallback
-	}
-	budget = uint64(float64(budget) * auditMemFraction)
-	recCh = clampInt(int(float64(budget)*recChBudgetShare)/avgRecordPinBytes, minRecChCap, maxRecChCap)
-	spillCh = clampInt(int(float64(budget)*spillChBudgetShare)/avgRecordPinBytes, minSpillChCap, maxSpillChCap)
-	return recCh, spillCh
+	return recChStructuralCap, spillChStructuralCap
 }
 
 // adaptiveSpillFlush adapts the spill worker's flush size to measured disk write

@@ -88,7 +88,11 @@ func TestProxy_Embeddings_OpenAIIngress_GeminiOnlyTarget_NoCompatibleProvider(t 
 	provReg := provcore.NewRegistry()
 	provbuiltins.Register(provReg, nil, logger)
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, embeddingsStubProvResolve{}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, embeddingsStubProvResolve{}, execHT, bridge)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		Models:      nil,
@@ -108,7 +112,7 @@ func TestProxy_Embeddings_OpenAIIngress_GeminiOnlyTarget_NoCompatibleProvider(t 
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     audit.NewWriter(nil, "nexus.event.ai-traffic", nil, logger),
 		CanonicalBridge: bridge,
 		Logger:          logger,

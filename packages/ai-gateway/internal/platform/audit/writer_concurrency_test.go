@@ -36,7 +36,7 @@ func TestWriter_BurstDrainsPromptly(t *testing.T) {
 	w := NewWriter(prod, "q", nil, slog.Default())
 	defer w.Close()
 
-	const burst = flushHighWater
+	const burst = 1000
 	for i := range burst {
 		w.Enqueue(&Record{RequestID: fmt.Sprintf("r%d", i)})
 	}
@@ -160,19 +160,18 @@ func TestWriter_RequeueOnTransientFailure(t *testing.T) {
 // a small N back-pressures/spills at N, not the maxQueueSize default — the knob
 // that bounds the audit body pool's working set. n<=0 keeps the default.
 func TestWriter_WithMaxQueuedRecords_BoundsBuffer(t *testing.T) {
-	// Default: no override → effective cap is sized to available memory
-	// (adaptiveBufferCaps), so it lands within the adaptive clamp band, not a fixed
-	// constant.
+	// Default: no override → the FIXED structural pointer-count depth (the byte
+	// budget bounds memory; the count cap is body-size-independent by design).
 	wDef := NewWriter(&memProducer{}, "q", nil, slog.Default())
 	def := wDef.effectiveMaxQueue()
-	if def < minRecChCap || def > maxRecChCap {
-		t.Fatalf("default effectiveMaxQueue = %d, want within adaptive band [%d,%d]", def, minRecChCap, maxRecChCap)
+	if def != recChStructuralCap {
+		t.Fatalf("default effectiveMaxQueue = %d, want structural cap %d", def, recChStructuralCap)
 	}
 	wDef.Close()
 
-	// n<=0 is ignored (keeps the adaptive default).
+	// n<=0 is ignored (keeps the structural default).
 	if got := NewWriter(&memProducer{}, "q", nil, slog.Default()).WithMaxQueuedRecords(0).effectiveMaxQueue(); got != def {
-		t.Fatalf("WithMaxQueuedRecords(0) changed the cap to %d, want adaptive default %d", got, def)
+		t.Fatalf("WithMaxQueuedRecords(0) changed the cap to %d, want structural default %d", got, def)
 	}
 
 	// A small override sizes the bounded queue at N: Start() sizes recCh from the

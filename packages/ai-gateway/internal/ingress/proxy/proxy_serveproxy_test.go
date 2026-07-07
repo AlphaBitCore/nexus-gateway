@@ -213,7 +213,9 @@ func makeOpenAIDeps(t *testing.T, upstreamURL string, hookCache *compliance.Hook
 	provReg.Freeze()
 
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, &coverageUpstreamResolver{baseURL: upstreamURL}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, &coverageUpstreamResolver{baseURL: upstreamURL}, execHT, bridge)
 
 	// Wire the traffic adapter registry so response-hook Modify branches
 	// have an extractor to call (without it, RewriteResponseBody panics
@@ -225,6 +227,8 @@ func makeOpenAIDeps(t *testing.T, upstreamURL string, hookCache *compliance.Hook
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -246,7 +250,7 @@ func makeOpenAIDeps(t *testing.T, upstreamURL string, hookCache *compliance.Hook
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: bridge,
 		TrafficAdapters: trafficReg,

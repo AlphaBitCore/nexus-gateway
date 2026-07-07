@@ -26,6 +26,26 @@ func TestLoad_AuditSpoolMB_EnvOverride(t *testing.T) {
 	}
 }
 
+// AI_GATEWAY_AUDIT_MEM_MAX_BYTES flows verbatim into Audit.MemMaxBytes (the
+// audit writer parses it and keeps its auto default on a bad value), and an
+// unset env leaves the default empty string (= auto).
+func TestLoad_AuditMemMaxBytes_EnvOverride(t *testing.T) {
+	p := writeYAML(t, "server:\n  port: 3050\n")
+	setRequiredEnvBaseline(t)
+	t.Setenv("AI_GATEWAY_AUDIT_MEM_MAX_BYTES", "8GB")
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Audit.MemMaxBytes != "8GB" {
+		t.Errorf("Audit.MemMaxBytes = %q, want %q (from env)", cfg.Audit.MemMaxBytes, "8GB")
+	}
+	if def := defaults().Audit.MemMaxBytes; def != "" {
+		t.Errorf("default Audit.MemMaxBytes = %q, want empty (= auto)", def)
+	}
+}
+
 // TestLoad_AuditSpoolMB_MalformedKeepsDefault asserts the best-effort parse
 // contract: a non-numeric value is ignored and the default survives. We capture
 // the default from a clean Load (env unset) and prove the malformed Load yields

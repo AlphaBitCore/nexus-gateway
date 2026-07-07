@@ -18,24 +18,13 @@ import (
 )
 
 const (
-	// maxQueueSize is the DEFAULT in-memory record-buffer cap (overridable per
-	// Writer via WithMaxQueuedRecords / AuditConfig.MaxQueuedRecords). On overflow
-	// Enqueue spills to the durable NDJSON sink (never a silent drop). Each queued
-	// record PINS its pooled ~50 KB request/response body until it is marshaled, so
-	// the cap directly bounds the audit body pool's working set: at the old 50000 a
-	// slow-publish burst pinned ~5 GB of bodies (the dominant gw retained heap);
-	// 10000 holds the pool near ~1 GB with the same measured spill/drop rate and a
-	// ~70% lower GC pause. The buffer of last resort is NATS (disk) + the spill
-	// sink, NOT this in-heap queue — keep it bounded, raise it only where a
-	// memory-rich box wants extra absorption headroom.
+	// maxQueueSize is the LAST-RESORT record-buffer cap, used only when a Writer
+	// was constructed without NewWriter's structural sizing and without a
+	// WithMaxQueuedRecords override (effectiveMaxQueue's zero fallback). Like the
+	// structural caps it bounds pointer count only; the audit heap is bounded by
+	// the byte budget (Writer.memBudget), which accounts each record's REAL body
+	// bytes at Enqueue admission.
 	maxQueueSize = 10000
-
-	// flushHighWater triggers an immediate flush once the buffer reaches
-	// this depth, instead of waiting for the next ticker. Without it a
-	// burst toward maxQueueSize within one flush interval would force
-	// backpressure/spill even when the pipeline has drain capacity. Set
-	// well below maxQueueSize so a spike flushes early.
-	flushHighWater = 1000
 
 	// Audit loss modes (AuditConfig.LossMode). Every default is zero-loss, because
 	// durable audit is a product promise + a compliance requirement — the gateway
@@ -47,11 +36,13 @@ const (
 	// lossy modes are an explicit opt-out for callers that do NOT need compliance
 	// audit and prefer raw throughput.
 	//   - spillblock (CONFIG default): like spill, but on a full spill channel it
-	//     back-pressures the request goroutine until a slot frees instead of
-	//     dropping (bounded by backpressureMaxWait → durable spill). Lossless up to
-	//     disk-write success, throttling ingest to the disk rate; spills to disk
-	//     before it ever blocks. Identical to spill in the normal regime; differs
-	//     only at the extreme where spill would drop.
+	//     back-pressures the request goroutine (parks on the channel) until a slot
+	//     frees instead of dropping. It also NEVER drops on a full spool QUOTA: the
+	//     single spill worker keeps the batch and retries while the recovery sweeper
+	//     drains + frees space, so ingest self-throttles to the recovery-drain rate
+	//     rather than shedding records. Genuinely lossless whenever a spool is wired;
+	//     the only drops are a genuine (non-quota) disk I/O error or shutdown. Identical
+	//     to spill in the normal regime; differs where spill would drop.
 	//   - block (empty/unknown fallback): when the in-heap buffer is full, Enqueue
 	//     BACK-PRESSURES the request path (bounded wait for the flush to free space;
 	//     durable spill only if the pipeline is genuinely wedged past the wait).
@@ -105,6 +96,17 @@ const (
 	// stack-trace Error was itself a top allocator under the overload it
 	// reports — see Writer.Enqueue.
 	dropLogEvery = 2000
+
+	// maxPublishRetries bounds handlePublishFailure's in-memory re-queue retries per
+	// record. A publish failure re-queues onto recCh for a fast in-memory re-publish
+	// (transient NAK recovery); the cap stops that from becoming an unbounded
+	// busy-spin under a SUSTAINED outage (stream full → every publish 503s, workers
+	// keep draining recCh so a re-queue always wins a slot → the record circulates
+	// forever, pinning its marshaled copy + cratering throughput). After this many
+	// attempts the record is routed to the durable BATCHED spill (spillCh) instead.
+	// 3 keeps genuine transient blips recovering in-memory (fast, no disk) while
+	// bounding a wedged pipeline to a handful of attempts before it drains to spool.
+	maxPublishRetries = 3
 )
 
 // EndpointType is the typed-string alias used to classify the API

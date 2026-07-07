@@ -50,6 +50,14 @@ func (r *Record) AttachPooledRequestBody(handle *[]byte) {
 	r.reqBodyHandle = handle
 }
 
+// ReleaseRequestBuffer returns an UNATTACHED request-body buffer to the pool.
+// This is the not-captured counterpart of the writer's terminal reclaim: when
+// payload capture is off, the handle is never attached to a Record, so no
+// terminal reclaim runs — the request owner returns the buffer itself once the
+// body's last reader (upstream forward, hooks, lazy normalize) has finished.
+// The caller must not read the buffer afterwards. Nil-safe.
+func ReleaseRequestBuffer(hp *[]byte) { releaseRequestBody(hp) }
+
 // releaseRequestBody returns a body buffer to the pool unless it ballooned past
 // the cap (dropped to GC instead).
 func releaseRequestBody(hp *[]byte) {

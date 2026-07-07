@@ -636,6 +636,12 @@ func (f *fakeModelsAndPricing) GetModelByCode(_ context.Context, code string) (*
 	}
 	return nil, errors.New("not found")
 }
+func (f *fakeModelsAndPricing) GetModelByCodeOrAlias(_ context.Context, key string) (*store.Model, error) {
+	if m, ok := f.byCode[key]; ok {
+		return m, nil
+	}
+	return nil, errors.New("not found")
+}
 func (f *fakeModelsAndPricing) ListEnabledModels(_ context.Context) ([]store.Model, error) {
 	return nil, nil
 }

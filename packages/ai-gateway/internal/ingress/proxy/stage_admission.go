@@ -155,10 +155,16 @@ func (st admissionStage) run() bool {
 		s.rec.RequestBody = body
 		s.rec.RequestContentType = s.r.Header.Get("Content-Type")
 		// The captured body IS the pooled buffer; hand its handle to the record so
-		// the audit writer returns it to the pool at terminal resolution. When NOT
-		// captured (this branch skipped), bodyHandle is simply dropped and the
-		// buffer is GC'd — still used by s.body for upstream forwarding this request.
+		// the audit writer returns it to the pool at terminal resolution.
 		s.rec.AttachPooledRequestBody(bodyHandle)
+	} else {
+		// Not captured: the record never references the buffer, so no terminal
+		// reclaim will run. Stash the handle; finalizeAudit returns it to the
+		// pool after the body's last reader (upstream forward, hooks, lazy
+		// normalize — all complete before that defer) has finished. Dropping
+		// it instead would re-allocate the pooled body buffer on every
+		// request instead of reusing it.
+		s.unattachedBodyHandle = bodyHandle
 	}
 
 	// Phase 3.5: Build the canonical request context. One
@@ -233,19 +239,24 @@ func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle
 	// audit writer, which returns the buffer to the pool at the record's terminal
 	// resolution (severing the per-request fresh allocation, the #1 hot-path
 	// allocator). bodyHandle is the pool handle; the caller attaches it to the
-	// audit Record when the body is captured, else drops it (the buffer GC's).
+	// audit Record when the body is captured, stashes it for the finalizeAudit
+	// release when not, and the reject paths below return it directly — a
+	// malformed-body storm must not bypass the pool and re-allocate per request.
 	body, bodyHandle = audit.AcquireRequestBody(buf.Bytes())
 
 	modelID, isStream, err = ExtractIngressModel(in, r, body)
 	if err != nil {
+		audit.ReleaseRequestBuffer(bodyHandle)
 		return nil, nil, "", false, err
 	}
 
 	if modelID == "" {
+		audit.ReleaseRequestBuffer(bodyHandle)
 		return nil, nil, "", false, fmt.Errorf("model is required")
 	}
 
 	if modelID == "auto" && typology.KindFromWireShape(in.WireShape) == typology.EndpointKindEmbeddings {
+		audit.ReleaseRequestBuffer(bodyHandle)
 		return nil, nil, "", false, fmt.Errorf("model \"auto\" is not supported for embeddings")
 	}
 

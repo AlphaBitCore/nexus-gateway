@@ -6,6 +6,7 @@ package proxy
 import (
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 )
 
@@ -15,6 +16,19 @@ import (
 // ServeProxy immediately after the state is built, so it covers every
 // stage's exit path.
 func (s *proxyState) finalizeAudit() {
+	// Return the uncaptured request-body buffer to its pool. Safe here: every
+	// reader of s.body (upstream forward, hooks, lazy normalize via the
+	// respond stage) completed before this defer runs, and the record never
+	// references the buffer — a zero-write hook rewrite clones before stamping
+	// RequestBodyRedacted for exactly this reason. Nil when the body was
+	// captured (writer reclaims via the record) or absent. Accepted residual:
+	// on an errored upstream round-trip the http transport may in principle
+	// still be draining the body reader for a microsecond-scale window
+	// (mirrors the captured path's reclaim-at-marshal exposure).
+	if s.unattachedBodyHandle != nil {
+		audit.ReleaseRequestBuffer(s.unattachedBodyHandle)
+		s.unattachedBodyHandle = nil
+	}
 	// Pure-forward benchmark mode: skip the entire audit tail (no traffic_event).
 	// The record carries pooled request/response body buffers that the async
 	// writer normally returns downstream of Enqueue; since we skip Enqueue, return

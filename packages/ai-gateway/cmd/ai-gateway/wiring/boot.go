@@ -245,6 +245,11 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 		if d.Tp != nil {
 			_ = d.Tp.Shutdown(context.Background())
 		}
+		if d.HealthTracker != nil {
+			// Stop the health writer goroutine for a clean shutdown (symmetry with
+			// NewHealthTracker; prod runs a single process-lifetime instance).
+			d.HealthTracker.Stop()
+		}
 	}
 	return d, cleanup, nil
 }

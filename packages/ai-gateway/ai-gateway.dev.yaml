@@ -241,13 +241,17 @@ audit:
   # constrained one. 0 → 10000. Env: AI_GATEWAY_AUDIT_MAX_QUEUED_RECORDS.
   maxQueuedRecords: 10000
   # Overflow policy. Durable audit is a product promise + compliance requirement,
-  # so the default "block" is NO-LOSS back-pressure: when the buffer fills, the
-  # gateway slows the request path until the audit pipeline drains (NATS disk is
-  # the burst buffer) — never dropping a record. Lossy opt-out for non-compliance
-  # callers: "spill" (async durable NDJSON spill off the request path; bounded drop
+  # so the default "spillBlock" is NO-LOSS with the cheap on-disk spool as the
+  # PRIMARY overflow buffer: when the in-heap buffer fills, records go to the
+  # durable NDJSON spool first (batched, off the publish worker), and the request
+  # path is only back-pressured when that large spool is ALSO saturated — never
+  # dropping a record (the spool is wired via spoolDir below; if no spool is wired
+  # it falls back to block-style back-pressure). "block" is the stricter variant
+  # that back-pressures at the small in-heap queue without using the spool. Lossy
+  # opt-out for non-compliance callers: "spill" (async durable spill; bounded drop
   # only if the spill is also saturated) or "drop" (counted bounded drop, max
-  # throughput). Empty/unknown → "block". Env: AI_GATEWAY_AUDIT_LOSS_MODE.
-  lossMode: block
+  # throughput). Empty/unknown → "spillBlock". Env: AI_GATEWAY_AUDIT_LOSS_MODE.
+  lossMode: spillBlock
   # End-to-end zstd compression of large captured bodies: producer compresses off
   # the request path, body rides the NATS wire compressed, the Hub persists the
   # compressed bytes verbatim (no decompress on ingest), and only the CP view

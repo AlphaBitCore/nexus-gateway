@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func newDiscardLoggerForTest(t *testing.T) *slog.Logger {
@@ -225,4 +227,37 @@ func TestSnapshotCache_NilLoaderPanics(t *testing.T) {
 
 func key(i int) string {
 	return string(rune('a'+i%26)) + string(rune('0'+i/26))
+}
+
+// TestSnapshotCache_LoadHealthMetrics asserts the operator-facing load-health
+// series move: a failed load increments the failure counter (and keeps the
+// previous snapshot); a successful load stamps the last-success gauge.
+func TestSnapshotCache_LoadHealthMetrics(t *testing.T) {
+	fail := true
+	c := NewSnapshotCache(func(ctx context.Context) (map[string]int, error) {
+		if fail {
+			return nil, errors.New("db down")
+		}
+		return map[string]int{"a": 1}, nil
+	}, WithSnapshotName("metrics_test_cache"))
+
+	before := testutil.ToFloat64(loadFailures.WithLabelValues("metrics_test_cache"))
+	if err := c.Load(context.Background()); err == nil {
+		t.Fatal("expected load error")
+	}
+	after := testutil.ToFloat64(loadFailures.WithLabelValues("metrics_test_cache"))
+	if after != before+1 {
+		t.Fatalf("failure counter did not increment: %v -> %v", before, after)
+	}
+
+	fail = false
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if ts := testutil.ToFloat64(lastLoadSuccess.WithLabelValues("metrics_test_cache")); ts <= 0 {
+		t.Fatalf("last-success gauge not stamped: %v", ts)
+	}
+	if c.Size() == 0 {
+		t.Fatal("successful load must install the snapshot")
+	}
 }
