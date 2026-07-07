@@ -70,7 +70,7 @@ When a redacting hook (`Modify`) co-fires with a soft-block hook the aggregate i
 
 ## 6. Config flow
 
-`HookConfigCache` is the bridge from stored config to the resolver: a loader reads the `HookConfig` rows and `Swap`s them into the `PolicyResolver`. On the server-side data planes it reloads when the Hub pushes a config change (via the thing-client `OnConfigChanged` callback) with a TTL backstop; the Agent has no direct database access, so it is push-only. Before the swap, `rulepack.Enrich` binds each installed rule pack into the relevant hook's config under `_rulePackInstalls`, so the `rulepack-engine` hook evaluates packs without holding a database handle inside `Execute`.
+`HookConfigCache` is the bridge from stored config to the resolver: a loader reads the `HookConfig` rows and `Swap`s them into the `PolicyResolver`. On the server-side data planes it reloads when the Hub pushes a config change (via the thing-client `OnConfigChanged` callback), with a background TTL-backstop ticker covering a degraded push channel; the request path never loads — `Resolver()` is a pure snapshot getter, so a slow database cannot stall or stampede request goroutines. The Agent has no direct database access, so it is push-only. Before the swap, `rulepack.Enrich` binds each installed rule pack into the relevant hook's config under `_rulePackInstalls`, so the `rulepack-engine` hook evaluates packs without holding a database handle inside `Execute`.
 
 The AI Gateway invokes the pipeline at both the request and response stages: it builds a sequential pipeline for the stage, ingress, endpoint, and modality, enables `allowModify` and `clearSoftOnApprove`, and executes it against the `HookInput`.
 

@@ -6,6 +6,41 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed — overload now degrades into retryable 429s (in-flight admission gate)
+
+- The AI Gateway bounds concurrent in-flight proxy requests (default
+  `1024 × GOMAXPROCS`; `AI_GATEWAY_MAX_INFLIGHT` overrides, `0` disables). At
+  arrival rates beyond the box's capacity, excess requests are rejected fast
+  with **429 + `Retry-After: 1`** in the caller's ingress error shape (OpenAI /
+  Anthropic / Gemini envelopes) instead of queueing in-heap until the Go memory
+  limit collapses throughput (measured pre-fix: 15.9s p99 at 1.5× capacity;
+  the pre-GOMEMLIMIT failure mode was an OOM kill). 429 was already part of the
+  data-plane contract (per-key rate limits and quota denials); SDK retry logic
+  engages unchanged. Health, metrics, and admin endpoints are never gated. Shed
+  requests are counted on `nexus_ai_gateway_admission_shed_total`.
+
+### Fixed — hook-config reload stampede at high load
+
+- Hook configuration freshness is now push-driven with a background TTL-backstop
+  ticker; the request path never loads configuration. Previously a TTL-stale
+  check on the request path could fan out one full rule-pack database load per
+  in-flight request while a slow load was running, collapsing the gateway at
+  high request rates (measured: p99 120s at 16k req/s with content hooks on;
+  fixed: p99 27ms at the same rate). Rule-pack install ordering also gained a
+  deterministic tiebreaker so no-change config reloads can no longer churn the
+  compiled matchers.
+
+### Performance — content-hook path allocation and CPU
+
+- Bodies-off deployments no longer allocate a fresh request-body buffer per
+  request (the pooled buffer is returned at request end; previously measured at
+  52% of all gateway allocation under content-scan load).
+- Redact-action rule packs skip re-localization entirely on benign traffic
+  (zero matches on a complete scan).
+- Config snapshot loads expose `nexus_configcache_load_failures_total` and
+  `nexus_configcache_last_success_timestamp_seconds` for alerting on a frozen
+  config plane.
+
 ### Fixed — Request/Response hook timing
 
 - **Streamed responses now record response-hook timing, exactly once per hook.**
