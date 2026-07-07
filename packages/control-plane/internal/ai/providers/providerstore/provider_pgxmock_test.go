@@ -14,6 +14,7 @@ import (
 )
 
 func strptr(s string) *string { return &s }
+func boolptr(b bool) *bool    { return &b }
 func anyArgs(n int) []any {
 	a := make([]any, n)
 	for i := range a {
@@ -23,7 +24,7 @@ func anyArgs(n int) []any {
 }
 
 var (
-	provCols     = []string{"id", "name", "displayName", "description", "adapter_type", "baseUrl", "pathPrefix", "apiVersion", "region", "enabled", "headers", "createdAt", "updatedAt"}
+	provCols     = []string{"id", "name", "displayName", "description", "adapter_type", "baseUrl", "pathPrefix", "apiVersion", "region", "enabled", "serves_responses_api", "headers", "createdAt", "updatedAt"}
 	provListCols = append(append([]string{}, provCols...), "model_count")
 	modelCols    = []string{
 		"id", "code", "name", "description", "providerId", "providerModelId", "type", "features",
@@ -43,7 +44,13 @@ var (
 var tNow = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
 
 func provRow(id, name string) []any {
-	return []any{id, name, strptr("d"), strptr("desc"), "openai", "https://api.x", "/" + name, strptr("2024"), strptr("us-east-1"), true, []byte(`{}`), tNow, tNow}
+	return provRowServes(id, name, boolptr(false))
+}
+
+// provRowServes builds a Provider row with an explicit serves_responses_api
+// value so the column round-trips can be asserted (nil = adapter default).
+func provRowServes(id, name string, serves *bool) []any {
+	return []any{id, name, strptr("d"), strptr("desc"), "openai", "https://api.x", "/" + name, strptr("2024"), strptr("us-east-1"), true, serves, []byte(`{}`), tNow, tNow}
 }
 func provListRow(id, name string, mc int) []any { return append(provRow(id, name), mc) }
 func modelRow(id, code string) []any {
@@ -144,13 +151,13 @@ func TestGetProvider(t *testing.T) {
 
 func TestCreateProvider(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).
+	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
 	p, err := s.CreateProvider(context.Background(), CreateParams{Name: "openai"})
 	if err != nil || p == nil || p.Name != "openai" {
 		t.Fatalf("CreateProvider: %+v %v", p, err)
 	}
-	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("dup"))
+	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).WillReturnError(errors.New("dup"))
 	if _, err := s.CreateProvider(context.Background(), CreateParams{}); err == nil {
 		t.Fatal("insert error should surface")
 	}
@@ -163,7 +170,7 @@ func TestCreateProvider(t *testing.T) {
 func TestCreateProviderWithChildren_Full(t *testing.T) {
 	s, m := newMock(t)
 	m.ExpectBegin()
-	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
+	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
 	m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(20)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRow("m1", "gpt-4o")...))
@@ -189,7 +196,7 @@ func TestCreateProviderWithChildren_Full(t *testing.T) {
 func TestCreateProviderWithChildren_NoChildren(t *testing.T) {
 	s, m := newMock(t)
 	m.ExpectBegin()
-	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
+	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
 	m.ExpectCommit()
 	p, models, cred, err := s.CreateProviderWithChildren(context.Background(), CreateParams{Name: "openai"}, nil, nil)
@@ -209,7 +216,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("provider insert", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).WillReturnError(errors.New("boom"))
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).WillReturnError(errors.New("boom"))
 		m.ExpectRollback()
 		if _, _, _, err := s.CreateProviderWithChildren(context.Background(), CreateParams{}, nil, nil); err == nil {
 			t.Fatal("provider insert error should surface")
@@ -218,7 +225,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("model insert", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
 		m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(20)...).WillReturnError(errors.New("bad model"))
 		m.ExpectRollback()
@@ -230,7 +237,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("credential insert", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
 		m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(9)...).WillReturnError(errors.New("bad cred"))
 		m.ExpectRollback()
@@ -242,7 +249,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("commit", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
 		m.ExpectCommit().WillReturnError(errors.New("commit failed"))
 		if _, _, _, err := s.CreateProviderWithChildren(context.Background(), CreateParams{}, nil, nil); err == nil {
@@ -255,20 +262,119 @@ func TestUpdateProvider(t *testing.T) {
 	s, m := newMock(t)
 	region := strptr("eu-west-1")
 	apiV := strptr("2025")
-	m.ExpectQuery(`UPDATE "Provider"`).WithArgs(anyArgs(13)...).
+	m.ExpectQuery(`UPDATE "Provider"`).WithArgs(anyArgs(15)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
 	p, err := s.UpdateProvider(context.Background(), "p1", UpdateParams{Name: strptr("New"), Region: &region, APIVersion: &apiV, UpdateHeaders: true})
 	if err != nil || p == nil {
 		t.Fatalf("UpdateProvider: %+v %v", p, err)
 	}
-	m.ExpectQuery(`UPDATE "Provider"`).WithArgs(anyArgs(13)...).WillReturnError(pgx.ErrNoRows)
+	m.ExpectQuery(`UPDATE "Provider"`).WithArgs(anyArgs(15)...).WillReturnError(pgx.ErrNoRows)
 	if p, err := s.UpdateProvider(context.Background(), "x", UpdateParams{}); err != nil || p != nil {
 		t.Fatalf("missing → (nil,nil), got %+v %v", p, err)
 	}
-	m.ExpectQuery(`UPDATE "Provider"`).WithArgs(anyArgs(13)...).WillReturnError(errors.New("db"))
+	m.ExpectQuery(`UPDATE "Provider"`).WithArgs(anyArgs(15)...).WillReturnError(errors.New("db"))
 	if _, err := s.UpdateProvider(context.Background(), "x", UpdateParams{}); err == nil {
 		t.Fatal("db error should surface")
 	}
+}
+
+// TestProvider_ServesResponsesAPI_RoundTrip pins the serves_responses_api
+// admin write/read path: create persists an explicit override, GET returns it,
+// update sets / clears / leaves it via the three-state pointer semantic, and the
+// scanned value round-trips out of RETURNING. The arg-position assertions prove
+// the column value (and the apply flag) reach the SQL, not just the response.
+func TestProvider_ServesResponsesAPI_RoundTrip(t *testing.T) {
+	t.Run("create persists explicit false (downgrade)", func(t *testing.T) {
+		s, m := newMock(t)
+		// Arg $10 (0-based 9) is serves_responses_api: assert the store sends
+		// the caller's pointer value, and the row scans back as false.
+		args := anyArgs(11)
+		args[9] = boolptr(false)
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(args...).
+			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRowServes("p1", "openai", boolptr(false))...))
+		p, err := s.CreateProvider(context.Background(), CreateParams{Name: "openai", ServesResponsesAPI: boolptr(false)})
+		if err != nil || p == nil || p.ServesResponsesAPI == nil || *p.ServesResponsesAPI != false {
+			t.Fatalf("create did not round-trip serves=false: p=%+v err=%v", p, err)
+		}
+		if err := m.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet (serves value not sent to INSERT): %v", err)
+		}
+	})
+
+	t.Run("create with nil persists adapter default", func(t *testing.T) {
+		s, m := newMock(t)
+		args := anyArgs(11)
+		args[9] = (*bool)(nil)
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(args...).
+			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRowServes("p1", "openai", nil)...))
+		p, err := s.CreateProvider(context.Background(), CreateParams{Name: "openai"})
+		if err != nil || p == nil || p.ServesResponsesAPI != nil {
+			t.Fatalf("create with nil should keep adapter default (nil): p=%+v err=%v", p, err)
+		}
+		if err := m.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet: %v", err)
+		}
+	})
+
+	t.Run("get returns stored true override", func(t *testing.T) {
+		s, m := newMock(t)
+		m.ExpectQuery(`FROM "Provider"\s+WHERE id = \$1`).WithArgs("p1").
+			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRowServes("p1", "openai", boolptr(true))...))
+		p, err := s.GetProvider(context.Background(), "p1")
+		if err != nil || p == nil || p.ServesResponsesAPI == nil || *p.ServesResponsesAPI != true {
+			t.Fatalf("get did not return serves=true: p=%+v err=%v", p, err)
+		}
+	})
+
+	t.Run("update set true sends apply=true, value=true", func(t *testing.T) {
+		s, m := newMock(t)
+		setTrue := boolptr(true)
+		args := anyArgs(15)
+		args[13] = true    // applyServesResponses
+		args[14] = setTrue // servesResponsesVal
+		m.ExpectQuery(`UPDATE "Provider"`).WithArgs(args...).
+			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRowServes("p1", "openai", boolptr(true))...))
+		p, err := s.UpdateProvider(context.Background(), "p1", UpdateParams{ServesResponsesAPI: &setTrue})
+		if err != nil || p == nil || p.ServesResponsesAPI == nil || *p.ServesResponsesAPI != true {
+			t.Fatalf("update set true did not round-trip: p=%+v err=%v", p, err)
+		}
+		if err := m.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet (set true not applied): %v", err)
+		}
+	})
+
+	t.Run("update clear sends apply=true, value=nil", func(t *testing.T) {
+		s, m := newMock(t)
+		var clear *bool // present-but-null → clear back to adapter default
+		args := anyArgs(15)
+		args[13] = true
+		args[14] = (*bool)(nil)
+		m.ExpectQuery(`UPDATE "Provider"`).WithArgs(args...).
+			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRowServes("p1", "openai", nil)...))
+		p, err := s.UpdateProvider(context.Background(), "p1", UpdateParams{ServesResponsesAPI: &clear})
+		if err != nil || p == nil || p.ServesResponsesAPI != nil {
+			t.Fatalf("update clear should reset to adapter default (nil): p=%+v err=%v", p, err)
+		}
+		if err := m.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet (clear not applied): %v", err)
+		}
+	})
+
+	t.Run("update without field sends apply=false (no change)", func(t *testing.T) {
+		s, m := newMock(t)
+		args := anyArgs(15)
+		args[13] = false // applyServesResponses → CASE leaves the column untouched
+		args[14] = (*bool)(nil)
+		m.ExpectQuery(`UPDATE "Provider"`).WithArgs(args...).
+			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRowServes("p1", "openai", boolptr(true))...))
+		p, err := s.UpdateProvider(context.Background(), "p1", UpdateParams{Name: strptr("New")})
+		if err != nil || p == nil {
+			t.Fatalf("update no-change failed: p=%+v err=%v", p, err)
+		}
+		if err := m.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet (no-change apply flag wrong): %v", err)
+		}
+	})
 }
 
 func TestDeleteProvider(t *testing.T) {

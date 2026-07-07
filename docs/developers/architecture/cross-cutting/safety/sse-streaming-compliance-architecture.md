@@ -66,13 +66,17 @@ changes on the ai-gateway path would be lossy for in-flight requests.
 
 The admin's `streamingMode` policy (`agent_settings.streamingMode` /
 per-domain override on `interception_domain`) resolves to one of
-three modes via `shared/transport/streaming/policy.Resolve`:
+three modes via `shared/transport/streaming/policy.Resolve`. A fourth
+row — `modela` — is NOT a `policy.Resolve` output; it is a
+scope-routing-derived overlay applied on top of the admin mode (see
+"Scope-derived routing" below):
 
 | Mode | Behavior | Implemented by |
 |---|---|---|
 | `passthrough` | Bytes copied through without parsing; no hook executor (no compliance inspection). Used for non-AI SSE / cert-pinned clients where compliance can't introspect. | `shared/transport/tlsbump/sse.go::handleSSEResponse case "passthrough"` (agent + compliance-proxy); `ai-gateway/internal/ingress/proxy/proxy_cache_passthrough.go::runPassthroughStream` (ai-gateway) — three-service consistent. |
-| `chunked_async` (live) | Bytes copied through immediately; LivePipeline runs hook executor at every checkpoint (cumulative bytes hit `FirstInspectChars`, then every `ReinspectStepChars`). PreHook callback stamps `ci.Normalized` BEFORE each hook run. Low-latency + full compliance. | **Two implementations on purpose** — see "Two LivePipeline implementations" below. `shared/transport/streaming/live.go` (tlsbump-driven: agent + compliance-proxy transparent-forwarder shape); `ai-gateway/internal/platform/streaming/live.go` (cache-replay path with format transform + hold-back + Modify-rewrite + OpenAI-DONE toggle). |
-| `buffer_full_block` (buffer) | Read full body into memory; run hook executor ONCE on complete content; replay to client only on Approve / Abstain; on a `block` (RejectHard) decision write a single error event. PreHook callback stamps `ci.Normalized` between Phase 1 (read) and Phase 2 (run hooks). Strongest enforcement; highest latency. | `shared/transport/streaming/buffer.go` — tlsbump callers (agent + compliance-proxy) + ai-gateway (`proxy_cache_buffer.go::runBufferStream`). Three-service consistent. **Limitation**: Modify (`redact`) decisions are not supported by this pipeline (no rewrite arm in Phase 3); ai-gateway logs WARN + treats as Approve. |
+| `chunked_async` (live) | Bytes copied through immediately; the LivePipeline runs the hook executor at every checkpoint **observe-only** — it records the audit outcome but NEVER blocks, holds back, or rewrites the wire. An enforcing scope (block/redact) is routed away from this path by scope-derived routing (see below), so live carries only non-enforcing (audit) traffic and always returns Approve. Low-latency real-time write-through. | **Two implementations on purpose** — see "Two LivePipeline implementations" below. `shared/transport/streaming/live.go` (tlsbump-driven: agent + compliance-proxy, **audit-only**); `ai-gateway/internal/platform/streaming/live.go` (cache-replay path with format transform + OpenAI-DONE toggle). |
+| `modela` (redact-scope chunked_async) | Prescan-gated REAL-TIME streaming with a bounded held tail: forwards the response live except a trailing window, runs a cheap union prescan after each unit, and on a confirmed redact/block hit ESCALATES to buffer-the-remainder redaction so the held tail (and the rest) are delivered redacted, never raw. A sub-window value is always fully held when its completing bytes arrive; a value larger than the window leaks a bounded fragment (the disclosed best-effort-wire surface). | **One shared engine, two substrate adapters** (see "The shared Model A engine" below): `shared/transport/streaming/modela/engine.go` drives the algorithm; `ai-gateway/internal/ingress/proxy/proxy_cache_modela_substrate.go` (canonical chunks, fail-CLOSED) and `shared/transport/tlsbump/sse_modela.go` (raw SSE frames, fail-OPEN) supply the transport seams. |
+| `buffer_full_block` (buffer) | Read full body into memory; run hook executor ONCE on complete content; replay to client only on Approve / Abstain; on a `block` (RejectHard) decision write a single error event; on a `redact` (Modify) decision the body is redacted before delivery (the masked copy is what the client receives — so it is also the stored copy). The two services redact via DIFFERENT mechanisms (see "Implemented by"). PreHook callback stamps `ci.Normalized` between Phase 1 (read) and Phase 2 (run hooks). Strongest enforcement; highest latency. | tlsbump (agent + compliance-proxy): `shared/transport/streaming/buffer.go` Phase-3 `Modify` arm splices via the per-host `sse_frame_redactor.go` (`SpliceTextFrames`), which is **fail-OPEN** — on an unreconstructable mask it relays the original + stamps `REDACT_INFLIGHT_UNSUPPORTED` (correct for the agent NE host-packet path; making the compliance-proxy appliance fail-CLOSED here is tracked work). ai-gateway: `proxy_cache_buffer.go::runCanonicalBufferStream` redacts on the canonical waist (`redactCanonicalBuffer`) and re-encodes — fail-CLOSED; it does NOT use the wire FrameRedactor. |
 
 The two adjacent fast-paths:
 
@@ -89,6 +93,82 @@ The two adjacent fast-paths:
   `cache/stream/subscription.go` flow through the same LivePipeline
   as upstream responses, with the cached canonical chunks re-encoded
   into the current ingress's wire shape by a `StreamTranscoder`.
+
+## Scope-derived routing (enforcing scopes never reach the audit-only live path)
+
+The admin streaming mode is a UX/latency preference; an **enforcing response scope
+overrides it**. Because the live path is audit-only and cannot enforce, a scope that
+may block or redact must never land there. The router builds the response pipeline
+once and reads two content-INDEPENDENT predicates — `Pipeline.MayBlock()` /
+`MayRedact()` (`shared/policy/pipeline/enforcement.go`), derived from the bound
+hooks' declared `onMatch` action, an over-approximation that errs toward buffer:
+
+| Resolved scope | Routed mode |
+|---|---|
+| `MayBlock` | `buffer` (zero-leak full-buffer hard block) |
+| `MayRedact` + admin `chunked_async` + a per-host adapter | `modela` (prescan-gated stream + escalate) |
+| `MayRedact` + admin `chunked_async`, no adapter (no per-host text extraction) | `buffer` |
+| `MayRedact` + admin `passthrough` (raw forwarding cannot redact) | `buffer` |
+| non-enforcing | admin mode unchanged (`live` stays audit-only) |
+
+ai-gateway implements this in `stream_shape.go` §B2 (`s.modelAArmed`); tlsbump mirrors
+it in `sse.go::scopeRouteSSEMode` / `overrideStreamingModeForScope` (`sse_modela.go`).
+The same probe pipeline is reused as the Model A prescan/confirm executor.
+
+> **Predicate soundness caveat.** `MayBlock`/`MayRedact` read the *declared*
+> `onMatch` action. A hook whose runtime decision can EXCEED its declared ceiling
+> (e.g. a `webhook-forward` hook with `onMatch.action: approve` whose remote verdict
+> reconciles via `StrictestDecision` to a reject/redact), and a hook with a malformed
+> `onMatch`, are not over-routed to buffer today — closing that gap is tracked work
+> the audit-only-live safety guarantee depends on.
+
+## The shared Model A engine
+
+`shared/transport/streaming/modela/engine.go` is the substrate-agnostic Model A
+algorithm — `Run[U any](ctx, Substrate[U], Config)`. It owns the policy-neutral
+control flow (bounded tail-hold window accounting, the windowed union prescan over
+still-held content, one full confirm on a prescan hit, the escalate-to-buffer
+decision keyed on the enforcing **action**) and nothing transport-specific. The
+`Substrate[U]` interface supplies the seams a concrete transport fills:
+
+| Seam | ai-gateway (canonical) | tlsbump (wire) |
+|---|---|---|
+| unit `U` | `provcore.Chunk` | one parsed `*SSEEvent` (cached with its extracted text) |
+| `Next` / text extraction | `ChunkSubscription` + canonical fields | `SSEParser` + the matched adapter's `ExtractStreamChunk` |
+| deliver / re-encode | `canonicalbridge.StreamTranscoder` | `WriteSSEEvent` |
+| `Confirm` / `Prescan` | the relay hook runner + `MayMatchRawContent` | `bo.policyResolver` pipeline + `MayMatchRawContent` |
+| `Escalate` redaction | `redactCanonicalBuffer` (canonical waist) | `SpliceTextFrames` / `FrameRedactor` over the held+drained remainder |
+| **fail posture** | fail-CLOSED (appliance) | fail-OPEN (agent NE host-packet safety) |
+
+The engine is posture-neutral; fail-open vs fail-closed is injected entirely by the
+substrate. The escalate gate keys on `ActionFromDecision(decision)` (not the raw
+decision enum) so a redact whose spans are masked behind a co-firing soft-block is
+still escalated. A `MaxBufferBytes` eviction of an incomplete content unit, and the
+escalation drain, both bound memory and escalate/block rather than deliver raw.
+
+**Aggregate-count rules are streaming-best-effort on Model A.** The confirm runs over
+the still-held window only (`scanBuf[deliveredScanLen:]`), not the whole transcript, so
+a rule that triggers on a *cumulative count* across the full response ("block if more
+than N occurrences of pattern X") sees only the occurrences inside the held tail at any
+one confirm — occurrences already delivered live are no longer in the window. Such a
+rule may therefore under-count on Model A and fail to fire. This is the same disclosed
+best-effort family as the over-window single-value surface above: strong compliance for
+aggregate-count rules is the buffer or block modes, not Model A.
+
+**Long-pattern coverage and the config-time signal.** The flush-before-deliver lookahead
+is sized per rule set from the longest CONTIGUOUS enforceable pattern (`pipeline.MaxPatternBound`),
+floored at `modela.DefaultMaxPatternBytes`. Two pattern shapes remain best-effort, by design:
+(1) **unbounded** patterns (`*` / `+` / `{n,}`) — their match length has no finite upper
+bound, so no finite window can guarantee they are fully held; this is the normal, expected
+state (token / PEM / JWT rules commonly carry unbounded quantifiers) and the engine package
+header discloses it. (2) A **bounded** pattern whose length meets or exceeds the tail window
+(`modela.DefaultTailWindowBytes`, ~8 KB) — the engine clamps the lookahead below the window,
+so a value that long straddling unit boundaries may leak a bounded fragment. Case (2) is
+rare (realistic patterns sit well under 8 KB); when it occurs the substrate emits a one-time
+operator warning (`modela.WarnStreamingCoverageGap`) at stream setup. For full coverage of
+either shape, route the affected policy through buffered streaming mode (or narrow the rule)
+— the tail window is not an admin knob. The signal is observability-only; it changes no
+enforcement.
 
 ## The `PreHookCallback` contract
 
@@ -166,6 +246,17 @@ LivePipeline fires PreHook at **every** checkpoint with the
 full body and `ci.Normalized` reflects the latest claim, which is what
 the per-checkpoint hook executor needs.
 
+Because the executor runs once per checkpoint, the same hook is scanned many
+times in one stream. The aggregated `finalResult.HookResults` therefore folds the
+per-checkpoint results to **one record per hook** before it is emitted to the
+audit pipeline — latency summed (the real scan CPU across the stream), the last
+checkpoint's decision authoritative — via `foldHookResults` in
+`shared/transport/streaming/live.go` (the agent + compliance-proxy path) and the
+`responseHookAccumulator` on the ai-gateway side. Without the fold a streamed
+response recorded the hook N times (N duplicate rows, an N×-inflated
+`response_hooks_ms` / `response_hooks_us`); the fold keeps one row carrying the
+true total. See `audit-pipeline-architecture.md` for the aggregate columns.
+
 ### Service-side closures
 
 Neither ingress side wires an `OnPayload` closure — the PreHook's
@@ -205,9 +296,11 @@ dormant complexity.
 - `Decision` enum (`Approve` / `Abstain` / `BlockSoft` / `RejectHard` /
   `Modify`) — single source.
 - `responseprehook.Build` — single builder, both impls call it.
-- `nexus_streaming_modify_degraded_total{reason="buffer_mode"}` counter —
-  emitted from `shared.BufferPipeline.Process`, fires for all three
-  services when a Modify decision lands under buffer mode.
+- `nexus_streaming_modify_degraded_total` counter — emitted from
+  `shared.BufferPipeline.Process` (`reason="buffer_mode"`, only the rare no-redactor
+  degrade) and from `sse_frame_redactor.go` (`tlsbump_splice_divergence` /
+  `tlsbump_tool_arg_undeliverable`, each tlsbump fail-open). It is a tlsbump signal:
+  ai-gateway's canonical buffer path does not flow through `shared.BufferPipeline`.
 - `nexus_normalize_panic_total{location="registry"|"on_payload"}` and
   `nexus_prehook_normalize_drop_total{adapter}` counters — both emitted
   from `shared/transport/normalize/responseprehook`. Single source of
@@ -217,6 +310,19 @@ dormant complexity.
   planes route their pre-hook through `responseprehook.Build`.
 - `streampolicy.Store` + `BootStore` — single Store shape, single boot
   helper, three-service aligned.
+- **The Model A streaming-compliance algorithm** (`shared/transport/streaming/modela/engine.go`)
+  — unlike the two transport-specific LivePipelines, the prescan-gated tail-hold /
+  confirm / escalate algorithm IS genuinely unified: one shared engine driven by the
+  canonical substrate (ai-gateway) and the wire substrate (tlsbump), so hooks /
+  compliance behave identically across all three ends while entry + delivery stay
+  per-service. See "The shared Model A engine" above.
+- The per-host wire redactor (`shared/transport/streaming/frame_redactor_splice.go`
+  `SpliceTextFrames` + `FrameRedactor`) — single splice impl for buffer mode and the
+  Model A wire escalation.
+
+Note: tlsbump's shared `LivePipeline` is now **audit-only** (observe-only checkpoints,
+real-time write-through, never blocks/rewrites) — enforcing scopes are routed to
+`buffer` / `modela` upstream, so the live path carries only non-enforcing traffic.
 - Default fall-back arm: unknown enum → passthrough (matches tlsbump's
   `resolveStreamingMode`; pinned by `TestDispatchStreamMode_UnknownEnumFallsBackToPassthrough`).
 - `passthrough` mode relay — single `shared/transport/streaming.Passthrough`,
@@ -242,40 +348,52 @@ and `proxy_cache_dispatch_test.go`.
 
 ## Asymmetries (intentional + visible)
 
-### Buffer mode: Modify decisions degrade to Approve
+### Buffer mode: Modify is redacted (degradation is now narrow)
 
-ai-gateway honors `buffer_full_block` by routing the
-SSE handler through `shared.BufferPipeline` when
-`StreamingPolicy.Get().Mode == ModeBufferFullBlock`. One residual
-asymmetry remains by architecture:
+Buffer mode HONORS a `Modify` (`redact`) decision — it no longer degrades to
+Approve. The two data planes redact via different mechanisms:
 
-`shared.BufferPipeline.Process` Phase 3 handles `RejectHard` (the
-`block` action — a single error event) and the default (Approve /
-Abstain replay) but has no `Modify` arm — buffer mode replays the
-buffered events verbatim, so a hook that returns `Modify` (`redact`)
-with `ModifiedContent` cannot rewrite the body the way `LivePipeline`'s
-held-back deltas can be edited mid-stream before the first flush. (A
-`BlockSoft` decision, if one is produced internally, folds to the
-`block` action and takes the same RejectHard arm — there is no soft
-path.)
+- **tlsbump** (agent + compliance-proxy): `shared.BufferPipeline.Process` Phase 3 has
+  a `Modify` arm that runs the per-host `sseFrameRedactor` (`SpliceTextFrames`) over
+  the buffered timeline — splicing the masked text into the text frames, passing
+  non-text frames byte-verbatim. The masked stream is both delivered and stored. The
+  redactor is **fail-OPEN**: on an unreconstructable mask (tool-arg masking
+  undeliverable on the wire, or a wire/normalized divergence) it relays the original
+  + stamps `REDACT_INFLIGHT_UNSUPPORTED` (correct for the agent NE host-packet path;
+  the compliance-proxy appliance fail-CLOSED variant is tracked work).
+- **ai-gateway**: `runCanonicalBufferStream` does NOT touch the wire frames — it
+  redacts on the canonical waist (`redactCanonicalBuffer`) and re-encodes to the
+  ingress wire, **fail-CLOSED** (a redact the policy demanded but cannot apply is
+  rejected, never forwarded unredacted).
 
-**Three-service unified degradation signal**: the
-degradation is detected inside `shared.BufferPipeline.Process`
-itself — when `result.Decision == Modify` arrives from the executor,
-the pipeline:
+A `BlockSoft` decision folds to the `block` action and takes the RejectHard arm —
+there is no soft delivery path.
 
-1. Emits a `WARN` log line with the `requestId` and rejection reason.
-2. Bumps the Prometheus counter
-   `nexus_streaming_modify_degraded_total{reason="buffer_mode"}`.
+**Degradation signal**: `nexus_streaming_modify_degraded_total` fires only on the
+NARROW residual, not on every Modify. `sse_frame_redactor.go` bumps it with reason
+`tlsbump_splice_divergence` / `tlsbump_tool_arg_undeliverable` on each tlsbump
+fail-open; `shared.BufferPipeline` bumps `buffer_mode` only when a `Modify` lands with
+no FrameRedactor wired (a no-adapter degrade, not a production path — production
+always resolves a per-host adapter). ai-gateway's canonical buffer path does NOT flow
+through `shared.BufferPipeline`, so it never emits this counter. Prometheus scrape
+labels distinguish which data plane saw a tlsbump degradation.
 
-Because all three data planes (`ai-gateway`, `compliance-proxy`,
-`agent`) buffer through the same shared pipeline, the metric and log
-fire from a single source of truth — Prometheus scrape job/instance
-labels distinguish which data plane saw the degradation. The
-ai-gateway `bufferModeExecutor` adapter (struct in
-`proxy_cache_buffer.go`) is now a pure type bridge from
-`StreamHookRunner` (func) to `PipelineExecutor` (interface); it owns
-no log or metric.
+**Enforcement re-emit matches the ingress wire shape**: when buffer
+mode (or the Model-A cache re-emit) re-encodes the redacted canonical
+body with no cross-format transcoder selected (a same-shape route),
+the fallback encoder is chosen by ingress, not hardcoded to chat:
+`fallbackStreamEncoder(ingress, model)` in `proxy_cache_buffer.go`
+returns `NewResponsesStreamEncoder` for a `/v1/responses`
+(`FormatOpenAIResponses`) ingress and `NewChatCompletionsStreamEncoder`
+otherwise. So an enforced `/v1/responses` stream still emits
+`response.*` events with a terminal `response.completed`, never
+`chat.completion.chunk`. Enforcement takes precedence over the native
+Responses passthrough (see *Responses egress: two signals* in
+[provider-adapter-architecture.md](../../services/ai-gateway/provider-adapter-architecture.md));
+because the redacted body is rebuilt from the canonical waist, the
+upstream's built-in-tool / audio events are forfeited under an
+enforcing response scope — the accepted trade for a redacted or blocked
+stream.
 
 **Admin-visible warning surface**: the Control Plane
 streaming-compliance settings endpoint

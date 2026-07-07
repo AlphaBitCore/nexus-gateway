@@ -329,8 +329,8 @@ func (e *AuditEmitter) buildEvent(
 	// populated by shared/traffic tracing during the forward roundtrip.
 	// LatencyBreakdown carries compliance-proxy long-tail keys from
 	// forward_handler (conn_setup_ms, tls_handshake_ms).
-	requestHooksMs := sumHooksPipelineLatencyMs(reqPipeline)
-	responseHooksMs := sumHooksPipelineLatencyMs(respPipeline)
+	requestHooksMs, requestHooksUs := sumHooksPipelineLatency(reqPipeline)
+	responseHooksMs, responseHooksUs := sumHooksPipelineLatency(respPipeline)
 	var upstreamTtfb, upstreamTotal *int
 	if info.PhaseSink != nil {
 		upstreamTtfb = info.PhaseSink.TtfbMs()
@@ -385,6 +385,8 @@ func (e *AuditEmitter) buildEvent(
 		UpstreamTotalMs:     upstreamTotal,
 		RequestHooksMs:      requestHooksMs,
 		ResponseHooksMs:     responseHooksMs,
+		RequestHooksUs:      requestHooksUs,
+		ResponseHooksUs:     responseHooksUs,
 		LatencyBreakdown:    latencyBreakdown,
 		DomainRuleID:        info.DomainRuleID,
 		PathAction:          info.PathAction,
@@ -409,31 +411,37 @@ func stageAction(r *CompliancePipelineResult) decision.Action {
 	return r.Action
 }
 
-// sumHooksPipelineLatencyMs walks the hooks_pipeline JSONB blob (an array
-// of {latencyMs: int, ...} objects produced by stagePayload) and returns
-// the sum of per-hook latency in ms. Returns nil for an empty / unparseable
-// blob so the resulting traffic_event column stays NULL — distinguishing
-// "no hooks ran" from "hooks ran in 0ms".
-func sumHooksPipelineLatencyMs(pipelineJSON []byte) *int {
+// sumHooksPipelineLatency sums the per-hook latency in the hooks_pipeline JSONB
+// blob, returning BOTH the truncated-millisecond and precise-microsecond totals
+// from a SINGLE unmarshal. Hooks run at microsecond scale, so the ms total
+// truncates sub-millisecond hooks to 0 while the us total carries the real value.
+// Each total is nil for an empty / unparseable / empty-array blob so the resulting
+// traffic_event columns stay NULL ("no hooks ran" vs "ran in 0"). Zero/negative
+// per-hook values are skipped.
+func sumHooksPipelineLatency(pipelineJSON []byte) (msSum, usSum *int) {
 	if len(pipelineJSON) == 0 {
-		return nil
+		return nil, nil
 	}
 	var rows []struct {
 		LatencyMs int `json:"latencyMs"`
+		LatencyUs int `json:"latencyUs"`
 	}
 	if err := json.Unmarshal(pipelineJSON, &rows); err != nil {
-		return nil
+		return nil, nil
 	}
 	if len(rows) == 0 {
-		return nil
+		return nil, nil
 	}
-	total := 0
+	ms, us := 0, 0
 	for _, r := range rows {
 		if r.LatencyMs > 0 {
-			total += r.LatencyMs
+			ms += r.LatencyMs
+		}
+		if r.LatencyUs > 0 {
+			us += r.LatencyUs
 		}
 	}
-	return &total
+	return &ms, &us
 }
 
 // classifyComplianceError derives (errorCode, errorReason) from the available

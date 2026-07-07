@@ -276,6 +276,39 @@ func TestCanonicalBuffer_HardBlock_ZeroContent(t *testing.T) {
 	}
 }
 
+// TestCanonicalBuffer_BlockSoftMaskedRedact_RedactDelivers guards the shared redaction
+// LOCUS (redactCanonicalBuffer) on the canonical BUFFER path: when a co-firing soft-block
+// masks a redact, mergeResults now carries the redact's ModifiedContent, so the LOCUS
+// (keyed on CarriesRedaction(), not Decision==Modify) APPLIES the redaction and delivers
+// the masked body — the original PII never reaches the client and the stream is not
+// blocked. Before the #13 fix the dropped ModifiedContent produced a no-op rewrite that
+// failed closed on this canonical path.
+func TestCanonicalBuffer_BlockSoftMaskedRedact_RedactDelivers(t *testing.T) {
+	cache := newBlockSoftPlusRedactResponseHookCache(t)
+	chunks := []provcore.Chunk{
+		{Delta: "contact "},
+		{Delta: "alice@example.com"},
+		{Delta: " now", Done: true},
+	}
+	s, w, usage := bufferTestState(t, cache, openAIChatIngress, nil, chunks)
+
+	s.h.runCanonicalBufferStream(context.Background(), s, w, usage)
+
+	out := w.String()
+	if strings.Contains(out, "alice@example.com") {
+		t.Fatalf("BlockSoft-masked redact leaked the original PII in buffer mode: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED_EMAIL]") {
+		t.Fatalf("BlockSoft-masked redact must DELIVER the masked content, got %q", out)
+	}
+	if strings.Contains(out, `"error"`) {
+		t.Fatalf("a co-firing redact must redact-deliver, not fail closed, got %q", out)
+	}
+	if !s.rec.ResponseHookRewritten || s.rec.ResponseAction != goHooks.ActionRedact {
+		t.Errorf("redact-deliver must stamp ResponseHookRewritten + ResponseAction=redact; got rewritten=%v action=%q", s.rec.ResponseHookRewritten, s.rec.ResponseAction)
+	}
+}
+
 // TestCanonicalBuffer_Approve_ForwardsContent proves the common case: no PII →
 // Approve → the buffered content is delivered to the client unchanged.
 func TestCanonicalBuffer_Approve_ForwardsContent(t *testing.T) {

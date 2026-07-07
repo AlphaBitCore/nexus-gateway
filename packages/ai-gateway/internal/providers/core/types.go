@@ -159,6 +159,14 @@ type CallTarget struct {
 	CredentialName  string // human-readable name of the credential
 	ProviderModelID string // vendor's model ID (e.g. "claude-3-5-sonnet-20241022")
 
+	// ServesResponsesAPI is the per-provider override for whether this
+	// upstream natively serves OpenAI /v1/responses. nil = adapter
+	// RequestShapes default; an explicit value is downgrade-only (false
+	// forces canonical(chat); true cannot exceed the adapter capability).
+	// Resolved once per target in the executor failover loop from the
+	// hydrated routing snapshot — never a per-request DB read.
+	ServesResponsesAPI *bool
+
 	// Extras carries provider-specific configuration that doesn't fit in
 	// the universal fields above. Keys are dot-namespaced: "azure.apiVersion",
 	// "aws.accessKey", "gcp.serviceAccountJSON", etc.
@@ -302,6 +310,14 @@ type Chunk struct {
 	// joiner, which then stamp usage_extraction_status="truncated" rather
 	// than "ok". Unused on genuine streaming chunks.
 	Truncated bool
+	// Verbatim marks a chunk whose RawBytes are already in the client's
+	// egress wire shape and MUST be forwarded byte-for-byte, not re-encoded.
+	// Set by the /v1/responses content copier for a genuine-Responses upstream
+	// so built-in-tool / audio events the canonical waist cannot represent
+	// survive. The live relay honours it only on the non-enforced passthrough
+	// lane; an enforcing scope forces the canonical buffer (decoded fields).
+	// Default false → existing decoders unaffected.
+	Verbatim bool
 }
 
 // ToolCallDelta is a partial OpenAI-canonical tool call patch within a

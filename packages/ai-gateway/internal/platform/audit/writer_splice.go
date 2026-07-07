@@ -137,6 +137,8 @@ func (w *Writer) marshalRecordPlain(rec *Record) (data []byte, buf *bytes.Buffer
 	if err := json.NewEncoder(buf).Encode(msg); err != nil {
 		w.logger.Error("audit: marshal failed", "requestId", rec.RequestID, "error", err)
 		reclaimMsgBuf(buf)
+		w.reclaimRecordBody(rec) // dropped record: return its pooled body to the pool
+		w.releaseRecordMem(rec)  // terminal: the record leaves the pipeline here
 		return nil, nil, false
 	}
 	b := buf.Bytes()

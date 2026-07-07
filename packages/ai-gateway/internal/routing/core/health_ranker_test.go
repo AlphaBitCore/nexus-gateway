@@ -2,17 +2,37 @@ package core
 
 import (
 	"testing"
+	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 )
 
+// awaitStatus polls until a provider reaches the expected health status. The
+// HealthTracker applies records asynchronously (single writer), so a read
+// immediately after recording must wait for the samples to be published.
+func awaitStatus(t *testing.T, tracker *store.HealthTracker, providerID string, want store.HealthStatus) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if tracker.GetHealth(providerID).Status == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("provider %s did not reach %s in time; got %+v", providerID, want, tracker.GetHealth(providerID))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 func TestHealthRanker_Reorder(t *testing.T) {
 	tracker := store.NewHealthTracker()
+	t.Cleanup(tracker.Stop)
 	// Record failures for provider B to make it unhealthy
 	for range 20 {
 		tracker.RecordFailure("provB", "provider-b", 100)
 	}
 	// Provider A is healthy (no records = healthy)
+	awaitStatus(t, tracker, "provB", store.HealthStatusUnavailable)
 
 	ranker := NewHealthRanker(tracker)
 	targets := []RoutingTarget{
@@ -38,7 +58,9 @@ func TestHealthRanker_NilTracker(t *testing.T) {
 }
 
 func TestHealthRanker_SingleTarget(t *testing.T) {
-	ranker := NewHealthRanker(store.NewHealthTracker())
+	tracker := store.NewHealthTracker()
+	t.Cleanup(tracker.Stop)
+	ranker := NewHealthRanker(tracker)
 	targets := []RoutingTarget{{ProviderID: "a"}}
 	result := ranker.Reorder(targets)
 	if len(result) != 1 {
@@ -50,6 +72,7 @@ func TestHealthRanker_SingleTarget(t *testing.T) {
 // > 5% but ≤ 25%) is ranked after healthy but before unavailable.
 func TestHealthRanker_DegradedProvider(t *testing.T) {
 	tracker := store.NewHealthTracker()
+	t.Cleanup(tracker.Stop)
 	// 10 failures + 90 successes = 10% error rate → degraded (>5%, ≤25%)
 	for range 10 {
 		tracker.RecordFailure("provDegraded", "provider-degraded", 100)
@@ -62,6 +85,8 @@ func TestHealthRanker_DegradedProvider(t *testing.T) {
 	for range 20 {
 		tracker.RecordFailure("provUnavailable", "provider-unavailable", 100)
 	}
+	awaitStatus(t, tracker, "provDegraded", store.HealthStatusDegraded)
+	awaitStatus(t, tracker, "provUnavailable", store.HealthStatusUnavailable)
 
 	ranker := NewHealthRanker(tracker)
 	targets := []RoutingTarget{

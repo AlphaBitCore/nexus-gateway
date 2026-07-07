@@ -150,6 +150,12 @@ const (
 	FldAttestationAgentID     FieldID = 100
 	FldSourceProcess          FieldID = 101
 	FldAction                 FieldID = 102
+	// Additive microsecond hook aggregates (siblings of FldRequestHooksMs(96) /
+	// FldResponseHooksMs(97)). New ids — see the FORWARD-INCOMPATIBLE note on
+	// AllFieldIDs: a producer emitting these requires a Hub that decodes them
+	// (deploy order: schema → Hub → producers).
+	FldRequestHooksUs  FieldID = 103
+	FldResponseHooksUs FieldID = 104
 )
 
 // AllFieldIDs returns every registered field-id in wire order. It exists so the
@@ -185,6 +191,7 @@ func AllFieldIDs() []FieldID {
 		FldCredentialID, FldThingID, FldThingName, FldUpstreamTtfbMs, FldUpstreamTotalMs,
 		FldRequestHooksMs, FldResponseHooksMs, FldLatencyBreakdown, FldAttestationVerified,
 		FldAttestationAgentID, FldSourceProcess, FldAction,
+		FldRequestHooksUs, FldResponseHooksUs,
 	}
 }
 
@@ -334,6 +341,8 @@ func (m *TrafficEventMessage) AppendBinary(dst []byte) []byte {
 	dst = optPtrIntAsI64(dst, FldUpstreamTotalMs, m.UpstreamTotalMs)
 	dst = optPtrIntAsI64(dst, FldRequestHooksMs, m.RequestHooksMs)
 	dst = optPtrIntAsI64(dst, FldResponseHooksMs, m.ResponseHooksMs)
+	dst = optPtrIntAsI64(dst, FldRequestHooksUs, m.RequestHooksUs)
+	dst = optPtrIntAsI64(dst, FldResponseHooksUs, m.ResponseHooksUs)
 
 	// Floats (emit if non-zero).
 	dst = optF64(dst, FldReasoningCostUsd, m.ReasoningCostUsd)

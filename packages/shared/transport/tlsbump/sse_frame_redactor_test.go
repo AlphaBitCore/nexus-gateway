@@ -3,6 +3,7 @@ package tlsbump
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -60,7 +61,7 @@ func serialize(e *streaming.SSEEvent) string {
 
 // nil adapter → no redactor (buffer keeps its degrade behavior).
 func TestNewSSEFrameRedactor_NilAdapter(t *testing.T) {
-	if fr := newSSEFrameRedactor(context.Background(), nil, "/v1/chat/completions", nil); fr != nil {
+	if fr := newSSEFrameRedactor(context.Background(), nil, "/v1/chat/completions", false, nil); fr != nil {
 		t.Fatalf("expected nil redactor for nil adapter")
 	}
 }
@@ -68,7 +69,7 @@ func TestNewSSEFrameRedactor_NilAdapter(t *testing.T) {
 // Through the REAL OpenAI adapter: a buffered Modify redacts the text frames.
 func TestSSEFrameRedactor_OpenAIRedacts(t *testing.T) {
 	ctx := context.Background()
-	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", nil)
+	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", false, nil)
 	codec := adapterWireCodec{ctx: ctx, adapter: &openai.Adapter{}, path: "/v1/chat/completions"}
 
 	events := []*streaming.SSEEvent{
@@ -105,7 +106,7 @@ func TestSSEFrameRedactor_OpenAIRedacts(t *testing.T) {
 func TestSSEFrameRedactor_AnthropicRedacts(t *testing.T) {
 	ctx := context.Background()
 	path := "/v1/messages"
-	fr := newSSEFrameRedactor(ctx, &anthropic.Adapter{}, path, nil)
+	fr := newSSEFrameRedactor(ctx, &anthropic.Adapter{}, path, false, nil)
 	codec := adapterWireCodec{ctx: ctx, adapter: &anthropic.Adapter{}, path: path}
 
 	events := []*streaming.SSEEvent{
@@ -140,7 +141,7 @@ func TestSSEFrameRedactor_ToolArgMaskFailsOpen(t *testing.T) {
 	ctx := context.Background()
 	// OpenAI IS a ToolArgMasker; the streaming path still cannot deliver tool
 	// args through verbatim frames, so it must fail open.
-	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", nil)
+	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", false, nil)
 	events := []*streaming.SSEEvent{oaFrame("hello"), doneFrame()}
 	before := serialize(events[0])
 	res := &core.CompliancePipelineResult{
@@ -164,7 +165,7 @@ func TestSSEFrameRedactor_ToolArgMaskFailsOpen(t *testing.T) {
 // GuardToolArgMasking reports unsupported → forward original + stamp.
 func TestSSEFrameRedactor_NonMaskerToolArgFailsOpen(t *testing.T) {
 	ctx := context.Background()
-	fr := newSSEFrameRedactor(ctx, &anthropic.Adapter{}, "/v1/messages", nil)
+	fr := newSSEFrameRedactor(ctx, &anthropic.Adapter{}, "/v1/messages", false, nil)
 	events := []*streaming.SSEEvent{anthropicFrame("hi"), doneFrame()}
 	res := &core.CompliancePipelineResult{
 		Decision:        core.Modify,
@@ -182,7 +183,7 @@ func TestSSEFrameRedactor_NonMaskerToolArgFailsOpen(t *testing.T) {
 // Fail-OPEN: splice cannot reconstruct (fence mismatch) → forward + stamp.
 func TestSSEFrameRedactor_SpliceUnsupportedFailsOpen(t *testing.T) {
 	ctx := context.Background()
-	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", nil)
+	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", false, nil)
 	events := []*streaming.SSEEvent{oaFrame("hello world"), doneFrame()}
 	res := &core.CompliancePipelineResult{
 		Decision:        core.Modify,
@@ -203,7 +204,7 @@ func TestSSEFrameRedactor_SpliceUnsupportedFailsOpen(t *testing.T) {
 
 // nil result → no-op, no panic.
 func TestSSEFrameRedactor_NilResult(t *testing.T) {
-	fr := newSSEFrameRedactor(context.Background(), &openai.Adapter{}, "/v1/chat/completions", nil)
+	fr := newSSEFrameRedactor(context.Background(), &openai.Adapter{}, "/v1/chat/completions", false, nil)
 	events := []*streaming.SSEEvent{oaFrame("x")}
 	out, err := fr.RedactReplay(events, nil)
 	if err != nil || len(out) != 1 {
@@ -258,7 +259,7 @@ func TestSSEFrameRedactor_ConcurrentRedactReplay(t *testing.T) {
 				ModifiedContent: []core.ContentBlock{{Type: "text", Text: "x [P] y"}},
 				TransformSpans:  []normalize.TransformSpan{tspan("messages.0.content.0", 2, 2+len(secret), "[P]")},
 			}
-			fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", nil)
+			fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", false, nil)
 			out, err := fr.RedactReplay(events, res)
 			if err != nil {
 				t.Errorf("goroutine %d error: %v", n, err)
@@ -276,6 +277,126 @@ func TestSSEFrameRedactor_ConcurrentRedactReplay(t *testing.T) {
 			t.Errorf("goroutine %d transcript = %q", n, transcript)
 		}
 	}
+}
+
+// Posture-follows-caller: an unreconstructable masked wire fails CLOSED for the
+// strict (compliance-proxy appliance) caller and fails OPEN for the non-strict
+// (agent NE host-packet) caller, across BOTH root causes (tool-arg undeliverable
+// and splice divergence). Fail-closed returns streaming.ErrRewriteUnsupported
+// with no events (the buffer pipeline then emits the error frame, replaying zero
+// original byte); fail-open returns the ORIGINAL events with a nil error. Both
+// postures always stamp REDACT_INFLIGHT_UNSUPPORTED for audit honesty.
+func TestSSEFrameRedactor_PostureFollowsCaller(t *testing.T) {
+	ctx := context.Background()
+	// A tool-arg span forces the tool-arg-undeliverable cause; a fence-mismatch
+	// ModifiedContent forces the splice-divergence cause.
+	toolArgSpans := []normalize.TransformSpan{tspan("messages.0.content.0.toolUse.input.0", 0, 1, "x")}
+	spliceSpans := []normalize.TransformSpan{tspan("messages.0.content.0", 0, 5, "BYE")}
+
+	cases := []struct {
+		name    string
+		strict  bool
+		spans   []normalize.TransformSpan
+		modText string
+	}{
+		{"toolArg/strict_fail_closed", true, toolArgSpans, "hello"},
+		{"toolArg/nonstrict_fail_open", false, toolArgSpans, "hello"},
+		{"splice/strict_fail_closed", true, spliceSpans, "TOTALLY DIFFERENT"},
+		{"splice/nonstrict_fail_open", false, spliceSpans, "TOTALLY DIFFERENT"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", tc.strict, nil)
+			events := []*streaming.SSEEvent{oaFrame("hello world"), doneFrame()}
+			before := serialize(events[0])
+			res := &core.CompliancePipelineResult{
+				Decision:        core.Modify,
+				ModifiedContent: []core.ContentBlock{{Type: "text", Text: tc.modText}},
+				TransformSpans:  tc.spans,
+			}
+
+			out, err := fr.RedactReplay(events, res)
+
+			// Audit honesty: both postures stamp the unsupported reason.
+			if res.ReasonCode != core.ReasonRedactInflightUnsupported {
+				t.Fatalf("expected REDACT_INFLIGHT_UNSUPPORTED stamp, got %q", res.ReasonCode)
+			}
+
+			if tc.strict {
+				// FAIL-CLOSED: ErrRewriteUnsupported, no events. The buffer
+				// pipeline turns this into an error frame with zero original
+				// replay — no unredacted byte can reach the client.
+				if !errors.Is(err, streaming.ErrRewriteUnsupported) {
+					t.Fatalf("strict caller must return ErrRewriteUnsupported, got %v", err)
+				}
+				if out != nil {
+					t.Fatalf("strict fail-closed must return no events (no original forwarded), got %d", len(out))
+				}
+				return
+			}
+
+			// FAIL-OPEN: nil error, ORIGINAL events forwarded unchanged.
+			if err != nil {
+				t.Fatalf("non-strict caller must fail open with nil error, got %v", err)
+			}
+			if len(out) == 0 || serialize(out[0]) != before {
+				t.Fatalf("fail-open must forward the original frame unchanged")
+			}
+		})
+	}
+}
+
+// Strict fail-closed end-to-end through the buffer pipeline: a strict redactor
+// whose splice cannot reconstruct makes BufferPipeline.Process emit the policy
+// error frame and replay ZERO original byte — the client never sees the
+// unredacted PII. This pins the leak-prevention contract that the strict
+// posture exists for.
+func TestSSEFrameRedactor_StrictFailClosedThroughBuffer(t *testing.T) {
+	ctx := context.Background()
+	pii := "ssn 123-45-6789"
+	exec := redactExecutor{result: &core.CompliancePipelineResult{
+		Decision: core.Modify,
+		// Fence mismatch: ModifiedContent text does not match the wire
+		// transcript, forcing splice divergence → unreconstructable (same shape
+		// the splice fail-open unit test uses, here driven end-to-end).
+		ModifiedContent: []core.ContentBlock{{Type: "text", Text: "TOTALLY DIFFERENT"}},
+		TransformSpans:  []normalize.TransformSpan{tspan("messages.0.content.0", 0, 5, "BYE")},
+	}}
+	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", true, nil)
+
+	pipeline := streaming.NewBufferPipeline(
+		streaming.BufferConfig{MaxBufferSize: 1 << 20}, exec, nil,
+	).WithFrameRedactor(fr)
+
+	body := strings.NewReader(
+		"data: " + oaFrame(pii).Data + "\n\n" +
+			"data: [DONE]\n\n",
+	)
+	var client bytes.Buffer
+	res, err := pipeline.Process(ctx, body, &client, &core.HookInput{Path: "/v1/chat/completions"})
+	if err != nil {
+		t.Fatalf("buffer pipeline error: %v", err)
+	}
+	if res.ReasonCode != core.ReasonRedactInflightUnsupported {
+		t.Fatalf("strict fail-closed must stamp REDACT_INFLIGHT_UNSUPPORTED, got %q", res.ReasonCode)
+	}
+	if strings.Contains(client.String(), "123-45") || strings.Contains(client.String(), "6789") {
+		t.Fatalf("strict fail-closed leaked unredacted PII to client: %q", client.String())
+	}
+	if !strings.Contains(client.String(), "error") {
+		t.Fatalf("strict fail-closed must emit an error frame, got %q", client.String())
+	}
+}
+
+// redactExecutor is a streaming.PipelineExecutor test double that returns a
+// fixed Modify result so the buffer pipeline routes into the frame redactor.
+type redactExecutor struct {
+	result *core.CompliancePipelineResult
+}
+
+func (e redactExecutor) Execute(_ context.Context, _ *core.HookInput) *core.CompliancePipelineResult {
+	return e.result
 }
 
 // Guard: the OpenAI adapter satisfies traffic.ToolArgMasker (anchors the

@@ -22,30 +22,36 @@ func TestNullableString_NonEmptyReturnsFreshPointer(t *testing.T) {
 	}
 }
 
-func TestSumHooksPipelineLatencyMs(t *testing.T) {
+func TestSumHooksPipelineLatency(t *testing.T) {
+	eq := func(t *testing.T, got, want *int) {
+		t.Helper()
+		switch {
+		case got == nil && want == nil:
+		case got == nil || want == nil:
+			t.Errorf("got %v, want %v", got, want)
+		case *got != *want:
+			t.Errorf("got %d, want %d", *got, *want)
+		}
+	}
 	cases := []struct {
-		name string
-		in   []byte
-		want *int
+		name           string
+		in             []byte
+		wantMs, wantUs *int
 	}{
-		{"nil yields nil", nil, nil},
-		{"empty yields nil", []byte{}, nil},
-		{"malformed JSON yields nil", []byte(`{not-json`), nil},
-		{"empty array yields nil", []byte(`[]`), nil},
-		{"sums positive latencies", []byte(`[{"latencyMs":10},{"latencyMs":15}]`), intPtr(25)},
-		{"skips zero / negative", []byte(`[{"latencyMs":10},{"latencyMs":0},{"latencyMs":-5}]`), intPtr(10)},
+		{"nil yields nil/nil", nil, nil, nil},
+		{"empty yields nil/nil", []byte{}, nil, nil},
+		{"malformed JSON yields nil/nil", []byte(`{not-json`), nil, nil},
+		{"empty array yields nil/nil", []byte(`[]`), nil, nil},
+		{"sums both from one parse", []byte(`[{"latencyMs":10,"latencyUs":10200},{"latencyMs":15,"latencyUs":15400}]`), intPtr(25), intPtr(25600)},
+		{"skips zero / negative", []byte(`[{"latencyMs":10,"latencyUs":10000},{"latencyMs":0,"latencyUs":0},{"latencyMs":-5,"latencyUs":-5}]`), intPtr(10), intPtr(10000)},
+		// Sub-millisecond hooks: ms total is 0 (present, ran), us total is precise.
+		{"sub-ms visible only in us", []byte(`[{"latencyMs":0,"latencyUs":200},{"latencyMs":0,"latencyUs":150}]`), intPtr(0), intPtr(350)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := sumHooksPipelineLatencyMs(c.in)
-			switch {
-			case got == nil && c.want == nil:
-				// ok
-			case got == nil || c.want == nil:
-				t.Errorf("got %v, want %v", got, c.want)
-			case *got != *c.want:
-				t.Errorf("got %d, want %d", *got, *c.want)
-			}
+			gotMs, gotUs := sumHooksPipelineLatency(c.in)
+			eq(t, gotMs, c.wantMs)
+			eq(t, gotUs, c.wantUs)
 		})
 	}
 }

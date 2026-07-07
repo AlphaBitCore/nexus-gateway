@@ -6,6 +6,64 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed — overload now degrades into retryable 429s (in-flight admission gate)
+
+- The AI Gateway bounds concurrent in-flight proxy requests (default
+  `1024 × GOMAXPROCS`; `AI_GATEWAY_MAX_INFLIGHT` overrides, `0` disables). At
+  arrival rates beyond the box's capacity, excess requests are rejected fast
+  with **429 + `Retry-After: 1`** in the caller's ingress error shape (OpenAI /
+  Anthropic / Gemini envelopes) instead of queueing in-heap until the Go memory
+  limit collapses throughput (measured pre-fix: 15.9s p99 at 1.5× capacity;
+  the pre-GOMEMLIMIT failure mode was an OOM kill). 429 was already part of the
+  data-plane contract (per-key rate limits and quota denials); SDK retry logic
+  engages unchanged. Health, metrics, and admin endpoints are never gated. Shed
+  requests are counted on `nexus_ai_gateway_admission_shed_total`.
+
+### Fixed — hook-config reload stampede at high load
+
+- Hook configuration freshness is now push-driven with a background TTL-backstop
+  ticker; the request path never loads configuration. Previously a TTL-stale
+  check on the request path could fan out one full rule-pack database load per
+  in-flight request while a slow load was running, collapsing the gateway at
+  high request rates (measured: p99 120s at 16k req/s with content hooks on;
+  fixed: p99 27ms at the same rate). Rule-pack install ordering also gained a
+  deterministic tiebreaker so no-change config reloads can no longer churn the
+  compiled matchers.
+
+### Performance — content-hook path allocation and CPU
+
+- Bodies-off deployments no longer allocate a fresh request-body buffer per
+  request (the pooled buffer is returned at request end; previously measured at
+  52% of all gateway allocation under content-scan load).
+- Redact-action rule packs skip re-localization entirely on benign traffic
+  (zero matches on a complete scan).
+- Config snapshot loads expose `nexus_configcache_load_failures_total` and
+  `nexus_configcache_last_success_timestamp_seconds` for alerting on a frozen
+  config plane.
+
+### Fixed — Request/Response hook timing
+
+- **Streamed responses now record response-hook timing, exactly once per hook.**
+  The streaming response pipeline runs the response stage at every checkpoint, so
+  the live audit-only path previously recorded nothing (`response_hooks_ms` NULL)
+  while the chunked_async path recorded the same hook once per checkpoint (N
+  duplicate rows, an N×-inflated aggregate — observed as a "RESPONSE PIPELINE (63)"
+  list of identical rows). The trace is now folded to one record per hook (summed
+  latency, latest decision) across the ai-gateway live + Model A paths and the
+  shared compliance-proxy/agent path. The audit drawer also collapses any residual
+  duplicates (historical rows) into a single `×N` card.
+
+### Added — microsecond-precision hook timing (additive, backward compatible)
+
+- Per-hook latency is now measured in **microseconds** (`latencyUs`) alongside the
+  existing truncated-millisecond `latencyMs`, with new aggregate columns
+  `request_hooks_us` / `response_hooks_us` beside the unchanged `_ms` columns.
+  Hooks run at microsecond scale, so the millisecond aggregates floored a
+  sub-millisecond hook to `0`; the µs fields carry the real value, surfaced
+  precisely per hook in the control-plane audit drawer. The `_ms` columns / wire
+  ids / values are unchanged. The new binwire field ids are forward-incompatible,
+  so the deploy order is **schema → Hub → producers**.
+
 ### Changed (BREAKING — major version bump)
 - **Hook `onMatch` collapses to a single `action` (approve | redact | block).**
   The orthogonal `onMatch.inflightAction` (approve / block-hard / block-soft /
@@ -40,6 +98,46 @@ All notable changes to this project are documented here. The format follows
   as a 403 reject. The Agent signals a block by dropping the
   connection (no rich error body); the proxies return an attributed 403 whose
   response-stage reason carries rule-ID labels only, never the upstream value.
+### Fixed — co-firing redact + soft-block no longer drops the redaction (security)
+
+- **A redact hook co-firing with a soft-block hook now masks-and-delivers instead of
+  leaking or failing closed.** When a redact hook (`Modify` + masked content/spans) and
+  a soft-block hook fired on the same request or response, the pipeline aggregator
+  promoted the reported `Decision` to `BlockSoft` (the strictest) but DROPPED the redact
+  hook's replacement content, leaving spans without content. Downstream this produced a
+  no-op rewrite that, depending on the path, either failed closed (canonical response)
+  or replayed/forwarded the ORIGINAL unredacted body — a PII leak on the shared buffer
+  pipeline (compliance-proxy appliance included), the agent Model A wire, and both
+  request stages. `mergeResults` now carries the redact's `ModifiedContent`
+  unconditionally, and every redaction consumer gates on the new
+  `decision.CompliancePipelineResult.CarriesRedaction()` predicate (Modify OR a
+  BlockSoft masking a co-firing redact) rather than `Decision==Modify`, so the masked
+  body is applied and delivered on all paths. The audit row stamps the disposition
+  `action=redact` even when the (soft-block) `Decision` ceiling is `BlockSoft`. No
+  config or schema change; behavior is compliance-safe (a hard `block`/`RejectHard`
+  still rejects; a standalone soft-block still delivers-with-warning). The no-redactor
+  buffer degrade is now posture-aware (appliance fail-closed, agent fail-open).
+
+### Changed — three-end streaming-compliance parity via a shared Model A engine
+
+- **The Model A streaming-compliance algorithm is now a single shared engine driving
+  three ends.** The prescan-gated real-time streaming path (bounded tail-hold +
+  union prescan + confirm + escalate-to-buffer redaction) for a redact-scope
+  `chunked_async` stream is extracted into a substrate-agnostic engine
+  (`shared/transport/streaming/modela`). The AI Gateway drives it with a canonical
+  substrate (fail-closed) and the transparent proxy used by the Agent +
+  Compliance Proxy drives it with a raw-SSE-wire substrate (fail-open, NE
+  host-packet safety) — so hooks/compliance behave identically across all three
+  ends while each keeps its own ingress and delivery. The transparent-proxy live
+  path becomes **audit-only** (real-time write-through, observe-only checkpoints,
+  never blocks/rewrites): scope-derived routing sends a `block` scope to buffer and
+  a `redact` scope to Model A (or buffer), so only non-enforcing traffic reaches
+  live. The adoption also closed two latent PII-leak paths in the shipped AI Gateway
+  Model A (a redact masked behind a co-firing soft-block; a memory-pressure eviction
+  of an incomplete content unit). No config or contract change; behavior is
+  compliance-safe (a sub-window value is never delivered raw; storage never persists
+  a raw prefix on an enforcing outcome).
+
 ### Changed — normalized projection is now fully view-time (no migration required)
 
 - **The normalized traffic projection is no longer written on the hot path; it is

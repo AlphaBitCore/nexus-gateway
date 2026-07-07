@@ -114,7 +114,7 @@ func TestSSE_BufferMode_SuccessfulSplice_StampsRedactedBody(t *testing.T) {
 func TestSSEFrameRedactor_AnthropicRedacts_FencePasses(t *testing.T) {
 	ctx := context.Background()
 	path := "/v1/messages"
-	fr := newSSEFrameRedactor(ctx, &anthropic.Adapter{}, path, nil)
+	fr := newSSEFrameRedactor(ctx, &anthropic.Adapter{}, path, false, nil)
 	events := []*streaming.SSEEvent{
 		anthropicFrame("card "),
 		anthropicFrame("4111111111111111"),
@@ -162,8 +162,8 @@ func modifyDegradedValue(t *testing.T, reason string) float64 {
 // degrading to forward-original.
 func TestSSEFrameRedactor_FailOpenBumpsCounter(t *testing.T) {
 	ctx := context.Background()
-	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", nil)
-	before := modifyDegradedValue(t, failOpenReasonSplice)
+	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", false, nil)
+	before := modifyDegradedValue(t, failReasonSplice)
 
 	// ModifiedContent that cannot be reconstructed from the wire (the fence
 	// mismatch) forces the splice-divergence fail-open.
@@ -182,7 +182,7 @@ func TestSSEFrameRedactor_FailOpenBumpsCounter(t *testing.T) {
 	if serialize(out[0]) != serialize(oaFrame("hello")) {
 		t.Fatal("fail-open must forward the original frame unchanged")
 	}
-	if got := modifyDegradedValue(t, failOpenReasonSplice) - before; got != 1 {
+	if got := modifyDegradedValue(t, failReasonSplice) - before; got != 1 {
 		t.Fatalf("fail-open counter delta = %v, want 1", got)
 	}
 }
@@ -191,8 +191,8 @@ func TestSSEFrameRedactor_FailOpenBumpsCounter(t *testing.T) {
 // for the tool-arg-undeliverable fail-open reason.
 func TestSSEFrameRedactor_ToolArgFailOpenBumpsCounter(t *testing.T) {
 	ctx := context.Background()
-	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", nil)
-	before := modifyDegradedValue(t, failOpenReasonToolArg)
+	fr := newSSEFrameRedactor(ctx, &openai.Adapter{}, "/v1/chat/completions", false, nil)
+	before := modifyDegradedValue(t, failReasonToolArg)
 	res := &core.CompliancePipelineResult{
 		Decision:        core.Modify,
 		ModifiedContent: []core.ContentBlock{{Type: "text", Text: "x"}},
@@ -201,7 +201,7 @@ func TestSSEFrameRedactor_ToolArgFailOpenBumpsCounter(t *testing.T) {
 	if _, err := fr.RedactReplay([]*streaming.SSEEvent{oaFrame("hi"), doneFrame()}, res); err != nil {
 		t.Fatalf("fail-open must return nil error, got %v", err)
 	}
-	if got := modifyDegradedValue(t, failOpenReasonToolArg) - before; got != 1 {
+	if got := modifyDegradedValue(t, failReasonToolArg) - before; got != 1 {
 		t.Fatalf("tool-arg fail-open counter delta = %v, want 1", got)
 	}
 }

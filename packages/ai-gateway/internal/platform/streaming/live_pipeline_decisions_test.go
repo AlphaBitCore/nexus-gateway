@@ -496,6 +496,37 @@ func TestLivePipeline_MaxBufferSizeAborts(t *testing.T) {
 	}
 }
 
+// TestLivePipeline_MaxBufferSizeOverflowDuringDrain drives the overflow on a
+// LATER chunk inside the opportunistic drain-then-flush burst (not the first
+// chunk). Every frame individually fits; the cumulative size crosses
+// MaxBufferSize a few frames in. Because the in-memory reader fills the event
+// channel before the main loop drains, the overflow is detected while draining
+// the burst — exercising the drain-path overflow branch (not just the
+// first-chunk path). The observable contract is identical: buffer-exceeded error
+// frame + blocked=true.
+func TestLivePipeline_MaxBufferSizeOverflowDuringDrain(t *testing.T) {
+	// Each frame's raw JSON is ~70 bytes; frame 1 fits under 180, the cumulative
+	// crosses it around frame 3.
+	chunk := strings.Repeat("y", 30)
+	frame := `{"choices":[{"delta":{"content":"` + chunk + `"}}]}`
+	input := makeSSEStream(frame, frame, frame, frame, frame)
+
+	lp := NewLivePipeline(LiveConfig{
+		FirstInspectChars: 100000, // no compliance checkpoint fires
+		MaxBufferSize:     180,    // frame 1 fits (~70), cumulative overflows mid-burst
+	}, approveStreamHook, nil, slog.Default())
+	rec := httptest.NewRecorder()
+	hookCtx := &StreamHookContext{IngressType: "AI_GATEWAY", Path: "/v1/chat/completions"}
+
+	blocked := lp.Process(context.Background(), strings.NewReader(input), rec, hookCtx)
+	if !blocked {
+		t.Fatal("cumulative overflow must be reported as blocked")
+	}
+	if !strings.Contains(rec.Body.String(), "stream buffer exceeded") {
+		t.Errorf("client must receive buffer-exceeded SSE error frame: %q", rec.Body.String())
+	}
+}
+
 // When the last accumulated chunk is short enough that no checkpoint
 // fired during the loop, the post-loop `len(pendingText) > 0` branch
 // runs the final checkpoint. Pins L314-317 (here with Approve →

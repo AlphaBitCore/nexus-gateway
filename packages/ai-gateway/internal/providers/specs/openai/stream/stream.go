@@ -29,7 +29,10 @@ func NewStreamDecoder(log *slog.Logger) *StreamDecoder {
 }
 
 // Open wraps body in the right session for the endpoint:
-//   - EndpointResponsesAPI → responsesStreamSession (Responses-API SSE grammar)
+//   - EndpointResponsesAPI → responsesEgressSession (content-detecting: forwards
+//     genuine Responses frames verbatim, decodes a chat.completion upstream into
+//     canonical so the proxy re-shapes it to Responses events — never leaks the
+//     wrong wire shape to a /v1/responses client)
 //   - everything else      → openaiStreamSession (chat-completions SSE)
 //
 // The dispatch is necessary because /v1/responses sends a completely different
@@ -41,7 +44,7 @@ func (d *StreamDecoder) Open(body io.ReadCloser, endpoint typology.WireShape) (p
 		return nil, fmt.Errorf("openai: nil stream body")
 	}
 	if endpoint == typology.WireShapeOpenAIResponses {
-		return &responsesStreamSession{
+		return &responsesEgressSession{
 			scanner: specutil.NewSSEScanner(body),
 			log:     d.log,
 		}, nil
@@ -94,6 +97,14 @@ func (s *openaiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 		break
 	}
 
+	return chatChunkFromFrame(ev), nil
+}
+
+// chatChunkFromFrame decodes one non-empty OpenAI chat-completions SSE data
+// frame into a canonical Chunk. Extracted so the /v1/responses content copier
+// can reuse the exact chat-decode path when an upstream tagged for Responses
+// actually returns chat.completion.chunk frames (the bulletproof egress).
+func chatChunkFromFrame(ev specutil.SSEEvent) provcore.Chunk {
 	chunk := provcore.Chunk{
 		RawBytes:    formatSSE(ev.Event, ev.Data),
 		NativeEvent: ev.Event,
@@ -164,7 +175,7 @@ func (s *openaiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 		}
 	}
 
-	return chunk, nil
+	return chunk
 }
 
 func (s *openaiStreamSession) Close() error {

@@ -254,6 +254,10 @@ func decodeBinaryRecordInto(e *TrafficEventMessage, data []byte, skipBody bool) 
 			e.RequestHooksMs = pInt(int(r.varint()))
 		case mq.FldResponseHooksMs:
 			e.ResponseHooksMs = pInt(int(r.varint()))
+		case mq.FldRequestHooksUs:
+			e.RequestHooksUs = pInt(int(r.varint()))
+		case mq.FldResponseHooksUs:
+			e.ResponseHooksUs = pInt(int(r.varint()))
 		case mq.FldLatencyBreakdown:
 			e.LatencyBreakdown = r.json()
 		case mq.FldAttestationVerified:

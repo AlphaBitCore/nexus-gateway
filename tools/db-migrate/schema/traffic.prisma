@@ -59,6 +59,12 @@ model traffic_event {
   request_hooks_ms           Int?                      @map("request_hooks_ms")
   /// Aggregate of per-hook latency on the response side.
   response_hooks_ms          Int?                      @map("response_hooks_ms")
+  /// Microsecond-precision hook aggregates (SUM(*_hooks_pipeline[*].latencyUs)).
+  /// Hooks run at microsecond scale, so the _ms columns truncate sub-millisecond
+  /// hooks to 0; these carry the real value. Additive — the _ms columns are
+  /// unchanged. NULL when no hook ran on that stage.
+  request_hooks_us           Int?                      @map("request_hooks_us")
+  response_hooks_us          Int?                      @map("response_hooks_us")
   /// Long-tail per-source phase durations (ms). Closed key set per `source`:
   ///   ai-gateway       → auth_ms / quota_ms / routing_ms / cache_lookup_ms /
   ///                       req_adapter_ms / resp_adapter_ms

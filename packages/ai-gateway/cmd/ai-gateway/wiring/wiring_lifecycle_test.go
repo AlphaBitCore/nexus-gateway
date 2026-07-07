@@ -182,6 +182,7 @@ func TestMountRoutes_nilAiguardNoMountAIGuard(t *testing.T) {
 	hookCache := InitHookConfigCache(nil, hookReg, discardLogger())
 	pcs := payloadcapture.NewStore(payloadcapture.DefaultConfig())
 	ht := store.NewHealthTracker()
+	t.Cleanup(ht.Stop)
 
 	bd := &BootDeps{
 		Cfg: &config.Config{

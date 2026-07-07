@@ -21,11 +21,13 @@ func NewNoop(cfg *HookConfig) (Hook, error) {
 // Execute always returns a successful Approve result.
 func (n *NoopHook) Execute(_ context.Context, _ *HookInput) (*HookResult, error) {
 	start := time.Now()
+	elapsed := time.Since(start)
 	return &HookResult{
 		HookID:           n.cfg.ID,
 		ImplementationID: n.cfg.ImplementationID,
 		HookName:         n.cfg.Name,
 		Decision:         Approve,
-		LatencyMs:        int(time.Since(start).Milliseconds()),
+		LatencyMs:        int(elapsed.Milliseconds()),
+		LatencyUs:        int(elapsed.Microseconds()),
 	}, nil
 }

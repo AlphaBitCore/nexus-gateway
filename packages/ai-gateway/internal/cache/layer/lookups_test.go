@@ -19,9 +19,9 @@ func primeSnapshots(t *testing.T, mock pgxmock.PgxPoolIface, l *Layer) {
 	mock.ExpectQuery(`FROM "Provider"`).
 		WillReturnRows(pgxmock.NewRows(providerCols).
 			AddRow("p1", "openai", strPtr("OpenAI"), "openai",
-				"https://api.openai.com", "/v1", nil, nil, true).
+				"https://api.openai.com", "/v1", nil, nil, true, (*bool)(nil)).
 			AddRow("p2", "anthropic", strPtr("Anthropic"), "anthropic",
-				"https://api.anthropic.com", "/v1", nil, nil, true))
+				"https://api.anthropic.com", "/v1", nil, nil, true, (*bool)(nil)))
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows(modelCols).
 			AddRow(makeModelRow("m1", "gpt-4o", "p1", true)...).

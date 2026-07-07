@@ -218,14 +218,16 @@ func buildUnionPrescan(hooks []boundHook) (matcher.Matcher, bool) {
 // per-hook loop (the original, always-correct path), so a cache miss never blocks
 // the request path on the ~100ms+ compile and a reset never triggers a herd of
 // concurrent compiles.
-func (r *PolicyResolver) unionPrescanFor(hooks []boundHook) matcher.Matcher {
+func (r *PolicyResolver) unionPrescanFor(hooks []boundHook, gen uint64) matcher.Matcher {
 	if !unionPrescanEnabled {
 		return nil // A/B opt-out: per-hook loop
 	}
 	if !stableHookIDs(hooks) {
 		return nil // ambiguous cache key → fall back rather than risk a wrong-set union
 	}
-	gen := r.swapGen.Load()
+	// gen is the generation the hooks were resolved under (passed by the caller from
+	// the same atomic snapshot), NOT a fresh r.swapGen.Load() — so the entry is tagged
+	// with the gen its patterns belong to, closing the cross-generation cache window.
 	key := hookSetSignature(hooks)
 
 	r.union.mu.Lock()
@@ -263,6 +265,54 @@ func (r *PolicyResolver) unionPrescanFor(hooks []boundHook) matcher.Matcher {
 	r.union.byKey[key] = &unionEntry{m: m}
 	r.union.mu.Unlock()
 	return m
+}
+
+// patternBound is one cached MaxPatternBound result for a resolved hook set.
+type patternBound struct {
+	maxBounded   int
+	anyUnbounded bool
+}
+
+// maxPatternBoundFor returns the cached MaxPatternBound for the resolved hook set,
+// computing it ONCE per generation. The bound is a static property of the hook set
+// (it changes only on a config reload), so caching it keeps the O(total patterns)
+// computeMaxPatternBound OFF the per-request streaming hot path — it was profiled
+// re-walking every hook regex per request at ~51% CPU. gen is passed by the caller
+// from the same atomic snapshot the hooks were resolved under (BuildPipeline), so the
+// entry is tagged with the gen its patterns belong to — closing the cross-generation
+// window. Unlike the union prefilter (cgo memory that must be Closed on a generation
+// change), the result is two ints: no single-flight/close machinery is needed, the rare
+// concurrent first-miss computes are harmless (identical within a generation), and a
+// generation change just drops the map on the next access. The key is the resolved
+// hook-set signature (sorted config IDs), the same key the union memo uses; an ambiguous
+// key (empty/duplicate IDs) computes directly without caching.
+func (r *PolicyResolver) maxPatternBoundFor(hooks []boundHook, gen uint64) (int, bool) {
+	if !stableHookIDs(hooks) {
+		return computeMaxPatternBound(hooks) // ambiguous cache key → compute (rare)
+	}
+	key := hookSetSignature(hooks)
+
+	r.boundMu.Lock()
+	if r.boundByKey == nil || r.boundGen != gen {
+		r.boundByKey = make(map[string]patternBound) // drop the previous generation's entries
+		r.boundGen = gen
+	}
+	if b, ok := r.boundByKey[key]; ok {
+		r.boundMu.Unlock()
+		return b.maxBounded, b.anyUnbounded
+	}
+	r.boundMu.Unlock()
+
+	// Compute off the lock (the expensive regex walk), then cache iff this generation
+	// is still current (a racing Swap that advanced boundGen discards our stale result).
+	mb, au := computeMaxPatternBound(hooks)
+
+	r.boundMu.Lock()
+	if r.boundGen == gen && r.boundByKey != nil {
+		r.boundByKey[key] = patternBound{maxBounded: mb, anyUnbounded: au}
+	}
+	r.boundMu.Unlock()
+	return mb, au
 }
 
 // resetUnionsLockedIfGenChanged re-initialises the cache when the generation

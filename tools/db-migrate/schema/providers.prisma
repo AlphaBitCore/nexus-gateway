@@ -35,6 +35,15 @@ model Provider {
   captureRequestBody      Boolean? @map("capture_request_body")
   captureResponseBody     Boolean? @map("capture_response_body")
   rawBodySpillEnabled     Boolean? @map("raw_body_spill_enabled")
+  /// Whether this provider's upstream natively serves the OpenAI
+  /// /v1/responses API (Responses-shape request body + response bytes).
+  /// NULL = adapter RequestShapes default (FormatOpenAI → true; every
+  /// other adapter → false). An explicit value only DOWNGRADES: false
+  /// forces /v1/responses ingress through the canonical(chat) codec even
+  /// for an OpenAI-family adapter (e.g. an OpenAI-compatible endpoint that
+  /// only implements /v1/chat/completions); true cannot grant a capability
+  /// the adapter lacks.
+  servesResponsesApi      Boolean? @map("serves_responses_api")
   createdAt               DateTime @default(now()) @db.Timestamptz(3)
   updatedAt               DateTime @updatedAt @db.Timestamptz(3)
 

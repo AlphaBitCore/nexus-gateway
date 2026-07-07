@@ -154,7 +154,8 @@ func (r *recReader) skipField(id mq.FieldID) {
 	case mq.FldPromptTokens, mq.FldCompletionTokens, mq.FldReasoningTokens,
 		mq.FldCacheCreationTokens, mq.FldCacheReadTokens, mq.FldNormalizedStripCount,
 		mq.FldNormalizedStripBytes, mq.FldCacheMarkerInjected, mq.FldUpstreamTtfbMs,
-		mq.FldUpstreamTotalMs, mq.FldRequestHooksMs, mq.FldResponseHooksMs:
+		mq.FldUpstreamTotalMs, mq.FldRequestHooksMs, mq.FldResponseHooksMs,
+		mq.FldRequestHooksUs, mq.FldResponseHooksUs:
 		r.varint()
 	case mq.FldReasoningCostUsd, mq.FldGatewayCacheSavingsUsd, mq.FldEmbeddingCostUsd,
 		mq.FldAIGuardCostUsd, mq.FldCacheWriteCostUsd, mq.FldCacheReadSavingsUsd,

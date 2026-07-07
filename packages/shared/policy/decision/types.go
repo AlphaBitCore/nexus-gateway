@@ -135,6 +135,47 @@ type CompliancePipelineResult struct {
 	// BlockingRule is the rule-pack attribution that caused the pipeline's
 	// (reject) decision.
 	BlockingRule *BlockingRule `json:"blockingRule,omitempty"`
+	// RedactionApplicable reports whether an ENFORCING per-hook decision
+	// (Modify or BlockSoft) contributed an APPLICABLE redaction artifact that
+	// the aggregate actually carries — ModifiedContent (Modify hooks only; the
+	// merge does not carry a BlockSoft hook's ModifiedContent) or a span whose
+	// ContentAddress is not an audit-only sentinel. It is the single signal
+	// CarriesRedaction() consults for the BlockSoft branch, separating a real
+	// inflight redaction masked behind a co-firing soft-block from an advisory
+	// approve-webhook / modify-webhook span set that cannot be applied. Derived
+	// in pipeline.mergeResults where per-hook decisions are visible; it cannot
+	// be reconstructed post-merge (the aggregate span union mixes advisory and
+	// enforcing spans). json:"-" — it is an in-memory predicate input, not a
+	// persisted/serialized field.
+	RedactionApplicable bool `json:"-"`
+}
+
+// CarriesRedaction reports whether this result requires applying a redaction before
+// delivery — a Modify, OR a BlockSoft that masks a co-firing redact (StrictestDecision
+// promotes the aggregate Decision to BlockSoft while the redact's artifact is carried).
+// Keying on Decision==Modify alone would silently DROP such a redaction and
+// deliver/forward the flagged content raw.
+//
+// The BlockSoft branch gates on RedactionApplicable, NOT on raw span/content presence:
+// a co-firing approve-webhook (or a modify-webhook reconciled under an approve ceiling)
+// emits AUDIT-ONLY spans (ContentAddress = the audit-only sentinel, which ApplySpans
+// never resolves), so keying on len(TransformSpans)>0 would report a redaction the
+// aggregate cannot apply and over-block (fail-closed) a stream that should soft-deliver.
+// RedactionApplicable is true only when an enforcing hook contributed an artifact the
+// aggregate actually carries (see its field doc). A standalone soft-block with no
+// applicable artifact carries no redaction and folds to block per the dispatch sites.
+//
+// Consumers MUST gate redaction on this predicate, not on Decision==Modify, on EVERY
+// path (request + response, stream + non-stream) so a co-firing redact+soft-block masks
+// and delivers rather than leaking or failing closed.
+func (r *CompliancePipelineResult) CarriesRedaction() bool {
+	if r == nil {
+		return false
+	}
+	if r.Decision == Modify {
+		return true
+	}
+	return r.Decision == BlockSoft && r.RedactionApplicable
 }
 
 // HookResult is the output produced by a single hook execution.
@@ -146,7 +187,15 @@ type HookResult struct {
 	Decision         Decision `json:"decision"`
 	Reason           string   `json:"reason,omitempty"`
 	ReasonCode       string   `json:"reasonCode,omitempty"`
-	LatencyMs        int      `json:"latencyMs"`
+	// LatencyMs is the truncated integer-millisecond wall-clock for this hook,
+	// kept for backward compatibility. It is the integer-ms floor of LatencyUs and
+	// is NEVER clamped: per-hook latency is summed downstream, so clamping a
+	// sub-millisecond hook to ≥1 would inflate the aggregate.
+	LatencyMs int `json:"latencyMs"`
+	// LatencyUs is the precise microsecond wall-clock for this hook. Hooks run at
+	// microsecond scale, so LatencyMs truncates to 0 for sub-millisecond hooks;
+	// LatencyUs carries the real value for the audit aggregates and the UI.
+	LatencyUs int `json:"latencyUs"`
 	// Tags emitted by this hook; merged into the pipeline-wide set.
 	Tags            []string       `json:"tags,omitempty"`
 	Error           string         `json:"error,omitempty"` // non-empty if the hook errored

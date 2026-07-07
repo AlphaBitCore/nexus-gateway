@@ -86,7 +86,9 @@ func TestServeProxy_NonStreamHappyPath_DriversHandleNonStream(t *testing.T) {
 	provReg.Freeze()
 
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, execHT, bridge)
 
 	hookCache := compliance.NewHookConfigCache(
 		func(_ context.Context) ([]goHooks.HookConfig, error) { return nil, nil },
@@ -99,6 +101,8 @@ func TestServeProxy_NonStreamHappyPath_DriversHandleNonStream(t *testing.T) {
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -120,7 +124,7 @@ func TestServeProxy_NonStreamHappyPath_DriversHandleNonStream(t *testing.T) {
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: bridge,
 		PayloadCapture: payloadcapture.NewStore(payloadcapture.Config{
@@ -172,7 +176,9 @@ func TestServeProxy_NonStream_UpstreamErrorPath(t *testing.T) {
 	provReg.Freeze()
 
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, execHT, bridge)
 
 	hookCache := compliance.NewHookConfigCache(
 		func(_ context.Context) ([]goHooks.HookConfig, error) { return nil, nil },
@@ -185,6 +191,8 @@ func TestServeProxy_NonStream_UpstreamErrorPath(t *testing.T) {
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -202,7 +210,7 @@ func TestServeProxy_NonStream_UpstreamErrorPath(t *testing.T) {
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: bridge,
 		Logger:          logger,
@@ -261,7 +269,9 @@ func TestServeProxy_NonStream_CacheMISS_DirectPath(t *testing.T) {
 	provReg.Freeze()
 
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, execHT, bridge)
 
 	rcache := cache.New(rdb, cache.Config{Enabled: true}, logger)
 	if rcache == nil {
@@ -279,6 +289,8 @@ func TestServeProxy_NonStream_CacheMISS_DirectPath(t *testing.T) {
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -296,7 +308,7 @@ func TestServeProxy_NonStream_CacheMISS_DirectPath(t *testing.T) {
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: bridge,
 		Cache:           rcache,
@@ -361,7 +373,9 @@ func TestServeProxy_NonStream_BrokerMISS_LeaderWritesCache(t *testing.T) {
 	provReg.Freeze()
 
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, execHT, bridge)
 
 	rcache := cache.New(rdb, cache.Config{Enabled: true}, logger)
 	if rcache == nil {
@@ -381,6 +395,8 @@ func TestServeProxy_NonStream_BrokerMISS_LeaderWritesCache(t *testing.T) {
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -398,7 +414,7 @@ func TestServeProxy_NonStream_BrokerMISS_LeaderWritesCache(t *testing.T) {
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: bridge,
 		Cache:           rcache,
@@ -476,7 +492,9 @@ func TestServeProxy_Stream_DirectPath(t *testing.T) {
 	provReg.Freeze()
 
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, execHT, bridge)
 
 	hookCache := compliance.NewHookConfigCache(
 		func(_ context.Context) ([]goHooks.HookConfig, error) { return nil, nil },
@@ -489,6 +507,8 @@ func TestServeProxy_Stream_DirectPath(t *testing.T) {
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -506,7 +526,7 @@ func TestServeProxy_Stream_DirectPath(t *testing.T) {
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: bridge,
 		Logger:          logger,
@@ -576,7 +596,9 @@ func TestServeProxy_Stream_BrokerMISS_LeaderPath(t *testing.T) {
 	provReg.Freeze()
 
 	bridge := canonicalbridge.New(provbuiltins.SchemaCodecs(logger))
-	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, store.NewHealthTracker(), bridge)
+	execHT := store.NewHealthTracker()
+	t.Cleanup(execHT.Stop)
+	exec := executor.New(provReg, &e2eUpstreamResolver{baseURL: upstream.URL}, execHT, bridge)
 
 	rcache := cache.New(rdb, cache.Config{Enabled: true}, logger)
 	if rcache == nil {
@@ -596,6 +618,8 @@ func TestServeProxy_Stream_BrokerMISS_LeaderPath(t *testing.T) {
 
 	prod := &captureProducer{}
 	auditWriter := audit.NewWriter(prod, "nexus.event.ai-traffic", nil, logger)
+	depsHT := store.NewHealthTracker()
+	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
@@ -613,7 +637,7 @@ func TestServeProxy_Stream_BrokerMISS_LeaderPath(t *testing.T) {
 		Executor:        exec,
 		HookConfigCache: hookCache,
 		ProviderReg:     provReg,
-		HealthTracker:   store.NewHealthTracker(),
+		HealthTracker:   depsHT,
 		AuditWriter:     auditWriter,
 		CanonicalBridge: bridge,
 		Cache:           rcache,

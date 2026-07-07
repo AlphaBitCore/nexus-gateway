@@ -151,6 +151,159 @@ func TestConsumeLoop_CapsBatchAtMaxCount(t *testing.T) {
 	}
 }
 
+// TestConsumeLoop_LingerPublishesPartialBatch deterministically exercises the linger
+// path: a partial batch (< batchMaxCount) that receives no more records publishes when
+// the consumerLinger timer fires (the `case <-timer.C` branch + the arm branch). Without
+// closing stopCh, the ONLY way the partial batch can publish is the linger timer, so a
+// non-empty batch appearing proves that branch ran — no reliance on incidental timing.
+func TestConsumeLoop_LingerPublishesPartialBatch(t *testing.T) {
+	bp := &batchMemProducer{}
+	w := NewWriter(bp, "q", nil, slog.Default())
+	const n = 3 // < batchMaxCount, so it lingers rather than publishing on a full batch
+	w.recCh = make(chan *Record, n)
+	for i := range n {
+		w.recCh <- &Record{RequestID: fmt.Sprintf("r%d", i), Timestamp: time.Now()}
+	}
+	w.wg.Add(1)
+	go w.consumeLoop(0)
+
+	// The partial batch can ONLY publish via the linger timer here (no full batch, no
+	// stop). Wait comfortably longer than consumerLinger (100ms) for it.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		bp.mu.Lock()
+		got := len(bp.batches)
+		bp.mu.Unlock()
+		if got >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(w.stopCh)
+	w.wg.Wait()
+
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	if len(bp.batches) == 0 {
+		t.Fatal("partial batch never published — the linger timer branch did not fire")
+	}
+	if len(bp.batches[0]) != n {
+		t.Fatalf("linger batch = %d records, want %d", len(bp.batches[0]), n)
+	}
+}
+
+// TestDrainOnStop_PublishesRemainderBoundedByMaxCount deterministically covers the
+// shutdown drain (consumeLoop's stopCh case): the remainder is published, bounded at
+// batchMaxCount per publish. Driving drainOnStop directly avoids the main-select race
+// that made this branch flaky under CI when exercised through consumeLoop.
+func TestDrainOnStop_PublishesRemainderBoundedByMaxCount(t *testing.T) {
+	t.Run("partial remainder in one publish", func(t *testing.T) {
+		bp := &batchMemProducer{}
+		w := NewWriter(bp, "q", nil, slog.Default())
+		const n = 5
+		w.recCh = make(chan *Record, n)
+		for i := range n {
+			w.recCh <- &Record{RequestID: fmt.Sprintf("r%d", i), Timestamp: time.Now()}
+		}
+		w.drainOnStop(0, nil)
+		bp.mu.Lock()
+		defer bp.mu.Unlock()
+		if len(bp.batches) != 1 || len(bp.batches[0]) != n {
+			t.Fatalf("drainOnStop should publish one batch of %d, got %d batches", n, len(bp.batches))
+		}
+	})
+
+	t.Run("queue over batchMaxCount splits, capped per publish", func(t *testing.T) {
+		bp := &batchMemProducer{}
+		w := NewWriter(bp, "q", nil, slog.Default())
+		n := batchMaxCount + 88 // forces the in-drain full-batch publish + a final remainder
+		w.recCh = make(chan *Record, n)
+		for i := range n {
+			w.recCh <- &Record{RequestID: fmt.Sprintf("r%d", i), Timestamp: time.Now()}
+		}
+		w.drainOnStop(0, nil)
+		bp.mu.Lock()
+		defer bp.mu.Unlock()
+		total := 0
+		for _, b := range bp.batches {
+			if len(b) > batchMaxCount {
+				t.Fatalf("a drain publish carried %d > cap %d", len(b), batchMaxCount)
+			}
+			total += len(b)
+		}
+		if total != n {
+			t.Fatalf("drainOnStop lost records: published %d, want %d", total, n)
+		}
+		if len(bp.batches) < 2 || len(bp.batches[0]) != batchMaxCount {
+			t.Fatalf("expected a full %d-record publish then the remainder, got batches=%d first=%d", batchMaxCount, len(bp.batches), len(bp.batches[0]))
+		}
+	})
+
+	t.Run("lingering batch published even with empty queue", func(t *testing.T) {
+		bp := &batchMemProducer{}
+		w := NewWriter(bp, "q", nil, slog.Default())
+		w.recCh = make(chan *Record, 1)
+		w.drainOnStop(0, []*Record{{RequestID: "carried", Timestamp: time.Now()}})
+		bp.mu.Lock()
+		defer bp.mu.Unlock()
+		if len(bp.batches) != 1 || len(bp.batches[0]) != 1 {
+			t.Fatalf("a lingering batch must publish on stop even with an empty queue, got %d batches", len(bp.batches))
+		}
+	})
+}
+
+// TestConsumeLoop_FullBatchWhileArmedStopsTimer covers the publish()'s armed-cleanup
+// branch: a partial batch arms the linger timer, then enough records arrive to fill a
+// full batch — publishing it must Stop the armed timer (the `if armed` branch). The
+// initial single record arms the timer (sleep ensures it armed before the flood), then a
+// batchMaxCount flood drives the greedy-drain to a full publish while armed.
+func TestConsumeLoop_FullBatchWhileArmedStopsTimer(t *testing.T) {
+	bp := &batchMemProducer{}
+	w := NewWriter(bp, "q", nil, slog.Default())
+	w.recCh = make(chan *Record, batchMaxCount+8)
+	w.wg.Add(1)
+	go w.consumeLoop(0)
+
+	// One record: the consumer absorbs it and ARMS the linger timer (1 < batchMaxCount).
+	w.recCh <- &Record{RequestID: "arm", Timestamp: time.Now()}
+	time.Sleep(30 * time.Millisecond) // << consumerLinger(100ms): armed, not yet fired
+
+	// Flood a full batch: the recCh arm's greedy drain reaches batchMaxCount and publishes
+	// WHILE armed → publish() takes the `if armed { timer.Stop() }` branch.
+	for i := range batchMaxCount {
+		w.recCh <- &Record{RequestID: fmt.Sprintf("f%d", i), Timestamp: time.Now()}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		bp.mu.Lock()
+		var full bool
+		for _, b := range bp.batches {
+			if len(b) == batchMaxCount {
+				full = true
+			}
+		}
+		bp.mu.Unlock()
+		if full {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(w.stopCh)
+	w.wg.Wait()
+
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	var sawFull bool
+	for _, b := range bp.batches {
+		if len(b) == batchMaxCount {
+			sawFull = true
+		}
+	}
+	if !sawFull {
+		t.Fatalf("expected a full %d-record publish while the linger timer was armed", batchMaxCount)
+	}
+}
+
 // TestPublishBatch_ChunksByBytes: with a low byte cap the chunk boundary is
 // driven by accumulated marshaled bytes, not count.
 func TestPublishBatch_ChunksByBytes(t *testing.T) {

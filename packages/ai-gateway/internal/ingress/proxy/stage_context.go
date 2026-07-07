@@ -68,6 +68,10 @@ type proxyState struct {
 	modelID  string
 	isStream bool
 	rctxFull *requestcontext.RequestContext
+	// unattachedBodyHandle is the pooled request-body handle when payload
+	// capture did NOT attach it to the record (bodies-off). finalizeAudit
+	// returns it to the pool at request end; nil when captured or no body.
+	unattachedBodyHandle *[]byte
 
 	// Routing outputs.
 	routeResult *routingcore.RouteResult
@@ -134,7 +138,13 @@ func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Reque
 			fmt.Sprintf("unknown body format %q; supported: openai, anthropic, gemini, azure-openai, minimax, glm, deepseek", raw), ""))
 		return nil, false
 	}
+	// endpoint_type is chat-KIND for routing / cache / hook dispatch (via
+	// KindFromWireShape), but the Responses API carries its own label so the
+	// persisted traffic_event distinguishes /v1/responses from chat completions.
 	endpointType := string(typology.KindFromWireShape(resolved.WireShape))
+	if resolved.WireShape == typology.WireShapeOpenAIResponses {
+		endpointType = string(typology.EndpointKindResponses)
+	}
 
 	// Stamp the effective ingress on the request context so the
 	// VK extractor (vkauth) and format-aware model extractor

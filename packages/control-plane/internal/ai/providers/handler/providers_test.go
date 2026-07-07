@@ -283,10 +283,7 @@ func TestCreateProvider_HappyBareProvider(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectCommit()
 	// incrementConfigVersion → 2 system_metadata calls.
@@ -324,10 +321,7 @@ func TestCreateProvider_HappyWithModelsAndCredential(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	// 1 model insert — 18 params ($1..$18 including 4 capability cols).
 	mock.ExpectQuery(`INSERT INTO "Model"`).
@@ -391,10 +385,7 @@ func TestCreateProvider_HappyModelMissingCodeAndAliases(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -431,10 +422,7 @@ func TestCreateProvider_NameCollision409(t *testing.T) {
 	mock, db := newMockStore(t)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "Provider_name_key"})
 	mock.ExpectRollback()
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
@@ -457,10 +445,7 @@ func TestCreateProvider_ModelCollision409(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -494,10 +479,7 @@ func TestCreateProvider_GenericStoreError500(t *testing.T) {
 	mock, db := newMockStore(t)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("disk full"))
 	mock.ExpectRollback()
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
@@ -519,10 +501,7 @@ func TestCreateProvider_EnabledFalseAndOptionalFieldsBranch(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Credential"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -627,11 +606,7 @@ func TestUpdateProvider_HappyAllFields(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`UPDATE "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`SELECT value FROM system_metadata`).
 		WillReturnRows(pgxmock.NewRows([]string{"value"}))
@@ -672,11 +647,7 @@ func TestUpdateProvider_EmptyStringsTreatedAsAbsent(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`UPDATE "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`SELECT value FROM system_metadata`).
 		WillReturnRows(pgxmock.NewRows([]string{"value"}))
@@ -703,11 +674,7 @@ func TestUpdateProvider_NameCollision409(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`UPDATE "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(&pgconn.PgError{Code: "23505"})
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"taken"}`))
@@ -727,11 +694,7 @@ func TestUpdateProvider_GenericError500(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`UPDATE "Provider"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("disk full"))
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"x"}`))
@@ -1162,6 +1125,109 @@ func TestListProviderCredentials_Happy(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "encryptedKey") {
 		t.Errorf("body must not leak encrypted fields: %s", rec.Body.String())
 	}
+}
+
+// TestProvider_ServesResponsesApi_HTTPRoundTrip proves the new
+// serves_responses_api capability flows admin-API-end to admin-API-end:
+// the create request body reaches the INSERT arg, the GET projection echoes the
+// stored value, and the update body reaches the UPDATE apply-flag + value. The
+// silently-dropped field this fixes would leave the toggle non-persistent.
+func TestProvider_ServesResponsesApi_HTTPRoundTrip(t *testing.T) {
+	t.Run("create threads false to INSERT and echoes it", func(t *testing.T) {
+		mock, db := newMockStore(t)
+		now := nowFixture()
+		insArgs := anyArgs(12)
+		// CreateProviderWithChildren INSERT arg order: id, name, displayName,
+		// description, baseUrl, pathPrefix, adapter_type, apiVersion, region,
+		// enabled, serves_responses_api, headers — so the column is arg[10].
+		insArgs[10] = boolPtr(false)
+		mock.ExpectBegin()
+		mock.ExpectQuery(`INSERT INTO "Provider"`).
+			WithArgs(insArgs...).
+			WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
+		mock.ExpectCommit()
+		mock.ExpectQuery(`SELECT value FROM system_metadata`).
+			WillReturnRows(pgxmock.NewRows([]string{"value"}))
+		mock.ExpectExec(`INSERT INTO system_metadata`).
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+		h := newHandler(db, &hubSpy{}, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+		body := `{"name":"alpha","baseUrl":"https://x","adapterType":"openai","servesResponsesApi":false}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		c, _ := echoCtx(req, rec, "u-1")
+		if err := h.CreateProvider(c); err != nil {
+			t.Fatalf("CreateProvider: %v", err)
+		}
+		// 201 here is itself the proof the value was threaded: the INSERT
+		// expectation pins serves_responses_api=false at arg[10], so a dropped
+		// or wrong value would fail the ordered match → store error → 500.
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status=%d; want 201 (INSERT arg[10]=false unmatched ⇒ value dropped); body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"servesResponsesApi":false`) {
+			t.Errorf("create response must echo servesResponsesApi:false, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("get echoes stored value", func(t *testing.T) {
+		mock, db := newMockStore(t)
+		now := nowFixture()
+		mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
+			WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
+		mock.ExpectQuery(`FROM "Model" WHERE "providerId"`).WithArgs("prov-1").
+			WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+		h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		c, _ := echoCtx(req, rec, "u-1")
+		c.SetParamNames("id")
+		c.SetParamValues("prov-1")
+		if err := h.GetProvider(c); err != nil {
+			t.Fatalf("GetProvider: %v", err)
+		}
+		// makeProviderRow stores serves_responses_api=false.
+		if !strings.Contains(rec.Body.String(), `"servesResponsesApi":false`) {
+			t.Errorf("get must echo stored servesResponsesApi, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("update threads present false to UPDATE apply+value", func(t *testing.T) {
+		mock, db := newMockStore(t)
+		now := nowFixture()
+		mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
+			WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
+		updArgs := anyArgs(15)
+		updArgs[13] = true           // applyServesResponses
+		updArgs[14] = boolPtr(false) // servesResponsesVal
+		mock.ExpectQuery(`UPDATE "Provider"`).
+			WithArgs(updArgs...).
+			WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
+		mock.ExpectQuery(`SELECT value FROM system_metadata`).
+			WillReturnRows(pgxmock.NewRows([]string{"value"}))
+		mock.ExpectExec(`INSERT INTO system_metadata`).
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
+		h := newHandler(db, &hubSpy{}, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+		req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"servesResponsesApi":false}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		c, _ := echoCtx(req, rec, "u-1")
+		c.SetParamNames("id")
+		c.SetParamValues("prov-1")
+		if err := h.UpdateProvider(c); err != nil {
+			t.Fatalf("UpdateProvider: %v", err)
+		}
+		// 200 proves threading: the UPDATE expectation pins applyServesResponses
+		// (arg[13]=true) and the value (arg[14]=false); a no-change or wrong value
+		// would fail the ordered match → store error → 500.
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d; want 200 (UPDATE apply/value args unmatched ⇒ value dropped); body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"servesResponsesApi":false`) {
+			t.Errorf("update response must echo servesResponsesApi:false, got %s", rec.Body.String())
+		}
+	})
 }
 
 // quiet linter for occasional unused fixture helpers in this file

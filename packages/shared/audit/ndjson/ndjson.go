@@ -16,6 +16,7 @@
 package ndjson
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,16 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrSpoolQuotaExceeded is returned (wrapped) by Write / WriteBatch ONLY when the
+// instance spool is already at its total-size quota — a SOFT, transient condition
+// that a recovery sweeper relieves by draining + deleting sealed files. It is
+// deliberately distinct from a genuine I/O failure (open / write / fsync / ENOSPC),
+// which carries a different error: a caller running a no-loss loss mode retries
+// (back-pressures) ONLY on this sentinel, and treats every other error as a hard
+// drop — so a truly broken disk can never wedge the caller forever. Test with
+// errors.Is(err, ErrSpoolQuotaExceeded).
+var ErrSpoolQuotaExceeded = errors.New("audit/ndjson: spool quota exceeded")
 
 // spoolFile is the file surface the writer needs. *os.File satisfies it in
 // production; tests substitute a fake to exercise the write/close/sync error
@@ -163,7 +174,7 @@ func (w *Writer) Write(record []byte) error {
 	// losing a record to a transient stat failure is worse than the small
 	// risk of briefly exceeding the soft quota.
 	if total, err := w.dirSize(); err == nil && total >= w.maxTotalSize {
-		return fmt.Errorf("audit/ndjson: instance spool %d bytes exceeds quota %d", total, w.maxTotalSize)
+		return fmt.Errorf("audit/ndjson: instance spool %d bytes exceeds quota %d: %w", total, w.maxTotalSize, ErrSpoolQuotaExceeded)
 	}
 
 	if w.currentFile != nil && w.currentSize+int64(len(line)) > w.maxFileSize {
@@ -208,7 +219,7 @@ func (w *Writer) WriteBatch(block []byte) error {
 	defer w.mu.Unlock()
 
 	if total, err := w.dirSize(); err == nil && total >= w.maxTotalSize {
-		return fmt.Errorf("audit/ndjson: instance spool %d bytes exceeds quota %d", total, w.maxTotalSize)
+		return fmt.Errorf("audit/ndjson: instance spool %d bytes exceeds quota %d: %w", total, w.maxTotalSize, ErrSpoolQuotaExceeded)
 	}
 
 	if w.currentFile != nil && w.currentSize+int64(len(block)) > w.maxFileSize {
@@ -339,8 +350,17 @@ func (w *Writer) SealedFiles() ([]string, error) {
 	return out, nil
 }
 
-// dirSize sums the sizes of the files in the instance spool directory. Must
-// hold w.mu.
+// dirSize sums the sizes of the RECLAIMABLE spool files in the instance directory
+// — every audit-*.ndjson (the active file plus sealed ones a recovery sweeper can
+// drain and delete). It deliberately EXCLUDES .poison sidecars (and any other
+// non-audit entry): those are dead-lettered records recovery never drains or
+// removes, so counting them against the quota would let undrainable content
+// monotonically consume it. Under a no-loss loss mode that back-pressures on the
+// quota, an undrainable-content-consumed quota would wedge audit intake forever;
+// bounding the quota to reclaimable content keeps back-pressure resolvable while
+// recovery drains (given a non-zero drain rate). Poison growth is bounded instead
+// by the physical disk (a genuine ENOSPC is a hard, counted drop — not this quota)
+// and surfaced via the recovery-poisoned counter. Must hold w.mu.
 func (w *Writer) dirSize() (int64, error) {
 	instanceDir := filepath.Join(w.dir, w.instanceID)
 	entries, err := readDir(instanceDir)
@@ -351,6 +371,10 @@ func (w *Writer) dirSize() (int64, error) {
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "audit-") || !strings.HasSuffix(name, ".ndjson") {
+			continue // exclude .poison + any non-audit file from the reclaimable quota
 		}
 		info, err := entry.Info()
 		if err != nil {

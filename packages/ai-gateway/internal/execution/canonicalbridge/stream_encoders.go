@@ -26,6 +26,17 @@ type openAIStreamEncoder struct {
 	created    int64
 	model      string
 	headerSent bool
+	// scratch is reused across Write calls; each Write truncates it to zero
+	// length before appending its frames. The slice returned by Write aliases
+	// scratch and may be overwritten by the next Write — callers MUST NOT retain
+	// it (the io.Writer "must not retain p" contract; every call site writes it
+	// out synchronously before the next Write).
+	scratch []byte
+	// contentSuffix is the precomputed tail of a content-delta frame — everything
+	// after the (variable) content string. See stream_encoders_fastpath.go
+	// (emitContentDelta) for how the per-token hot path uses it to avoid
+	// marshalling the whole envelope struct graph.
+	contentSuffix []byte
 }
 
 // NewChatCompletionsStreamEncoder returns an encoder that converts canonical
@@ -49,6 +60,36 @@ func NewResponsesStreamEncoder(model string) StreamTranscoder {
 	return newResponsesStreamEncoder(model)
 }
 
+// IngressStreamEncoder returns the encoder that re-encodes canonical
+// provider.Chunk values into the CALLER's ingress-native SSE wire shape. It is
+// the single source of truth for "given canonical chunks, which wire does this
+// ingress speak" — consumed both by [Bridge.NewStreamTranscoder] (the
+// cross-format live path) and by the buffer / Model-A re-emit path
+// (proxy.fallbackStreamEncoder). Keeping one switch eliminates the drift class
+// where a second, partial copy defaulted every non-OpenAI ingress to the
+// chat-completions encoder — which leaked chat.completion.chunk frames to a
+// Gemini / Anthropic / Responses client whenever the enforcing buffer path ran.
+//
+// It NEVER returns nil: the buffer/re-emit caller must always have a concrete
+// encoder. OpenAI-family ingresses (and any unrecognised ingress) get the
+// chat-completions encoder, since canonical IS the chat-completions shape.
+func IngressStreamEncoder(ingress provcore.Format, model string) StreamTranscoder {
+	switch ingress {
+	case provcore.FormatOpenAIResponses:
+		return newResponsesStreamEncoder(model)
+	case provcore.FormatAnthropic:
+		return newAnthropicStreamEncoder()
+	case provcore.FormatGemini, provcore.FormatVertex:
+		return &geminiStreamEncoder{}
+	case provcore.FormatCohere:
+		return &cohereStreamEncoder{}
+	case provcore.FormatReplicate:
+		return &replicateStreamEncoder{}
+	default:
+		return newOpenAIStreamEncoder(model)
+	}
+}
+
 func newOpenAIStreamEncoder(model string) *openAIStreamEncoder {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)
@@ -59,110 +100,84 @@ func newOpenAIStreamEncoder(model string) *openAIStreamEncoder {
 	}
 }
 
-// oaiEnvelope wraps a choices slice in the full OpenAI chat.completion.chunk envelope.
-func (e *openAIStreamEncoder) oaiEnvelope(choices []any) []byte {
-	return oaiDeltaSSE(map[string]any{
-		"id":      e.id,
-		"object":  "chat.completion.chunk",
-		"created": e.created,
-		"model":   e.model,
-		"choices": choices,
+// emit marshals one envelope (single choice + optional usage) and appends the
+// SSE frame to the reused scratch buffer. The payload is ALWAYS produced by
+// json.Marshal (preserving go-json's HTML-safe escape); only the `data: ` /
+// `\n\n` framing is hand-assembled — no user/upstream data is hand-serialised.
+func (e *openAIStreamEncoder) emit(choice oaiStreamChoice, usage *oaiStreamUsage) {
+	data, _ := json.Marshal(oaiStreamEnvelope{
+		Choices: []oaiStreamChoice{choice},
+		Created: e.created,
+		ID:      e.id,
+		Model:   e.model,
+		Object:  "chat.completion.chunk",
+		Usage:   usage,
 	})
+	e.scratch = append(e.scratch, "data: "...)
+	e.scratch = append(e.scratch, data...)
+	e.scratch = append(e.scratch, '\n', '\n')
 }
 
 func (e *openAIStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]byte, error) {
-	var buf bytes.Buffer
+	e.scratch = e.scratch[:0]
 
 	// Emit role-assignment chunk before any content.
 	if !e.headerSent {
 		e.headerSent = true
-		buf.Write(e.oaiEnvelope([]any{
-			map[string]any{
-				"index":         0,
-				"delta":         map[string]any{"role": "assistant", "content": ""},
-				"finish_reason": nil,
-			},
-		}))
+		empty := ""
+		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{Content: &empty, Role: "assistant"}}, nil)
 	}
 
 	// Check content before Done: providers like Gemini 2.5 combine text,
 	// finishReason, and usageMetadata into a single SSE frame, so chunk.Delta
 	// can be non-empty even when chunk.Done is also true.
 	if chunk.Delta != "" {
-		buf.Write(e.oaiEnvelope([]any{
-			map[string]any{
-				"index":         0,
-				"delta":         map[string]any{"content": chunk.Delta},
-				"finish_reason": nil,
-			},
-		}))
+		// Per-token hot path: byte-identical to
+		// emit(oaiStreamChoice{Delta:{Content:&d}}, nil) but skips the envelope
+		// struct reflection (the dominant streaming encode cost).
+		e.emitContentDelta(chunk.Delta)
 	}
 	if len(chunk.ToolCallDeltas) > 0 {
-		buf.Write(e.oaiToolCallEnvelope(chunk.ToolCallDeltas))
+		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{ToolCalls: buildOAIToolCalls(chunk.ToolCallDeltas)}}, nil)
 	}
 	if chunk.ReasoningDelta != "" {
-		buf.Write(e.oaiEnvelope([]any{
-			map[string]any{
-				"index":         0,
-				"delta":         map[string]any{"reasoning_content": chunk.ReasoningDelta},
-				"finish_reason": nil,
-			},
-		}))
+		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{ReasoningContent: chunk.ReasoningDelta}}, nil)
 	}
 	if chunk.Done {
-		// Emit finish_reason=stop chunk before [DONE].
-		finishChunk := map[string]any{
-			"id":      e.id,
-			"object":  "chat.completion.chunk",
-			"created": e.created,
-			"model":   e.model,
-			"choices": []any{
-				map[string]any{
-					"index":         0,
-					"delta":         map[string]any{},
-					"finish_reason": finishReasonOrStop(chunk.FinishReason),
-				},
-			},
-		}
-		if chunk.Usage != nil {
-			u := map[string]any{}
-			if chunk.Usage.PromptTokens != nil {
-				u["prompt_tokens"] = *chunk.Usage.PromptTokens
-			}
-			if chunk.Usage.CompletionTokens != nil {
-				u["completion_tokens"] = *chunk.Usage.CompletionTokens
-			}
-			if chunk.Usage.TotalTokens != nil {
-				u["total_tokens"] = *chunk.Usage.TotalTokens
-			}
-			// Project the same detail sub-blocks the non-stream projector
-			// emits (openai_projection.go projectUsage), so stream clients
-			// can read cache-read + reasoning splits the same way as on a
-			// non-stream response. Without these, gemini-2.5-pro / o1 /
-			// kimi-k2.6 stream responses look reasoning_tokens=0 even when
-			// thoughtsTokenCount /
-			// completion_tokens_details.reasoning_tokens / etc. were
-			// populated on the canonical chunk.
-			if chunk.Usage.CacheReadTokens != nil && *chunk.Usage.CacheReadTokens > 0 {
-				u["prompt_tokens_details"] = map[string]any{
-					"cached_tokens": *chunk.Usage.CacheReadTokens,
-				}
-			}
-			if chunk.Usage.ReasoningTokens != nil && *chunk.Usage.ReasoningTokens > 0 {
-				u["completion_tokens_details"] = map[string]any{
-					"reasoning_tokens": *chunk.Usage.ReasoningTokens,
-				}
-			}
-			finishChunk["usage"] = u
-		}
-		buf.Write(oaiDeltaSSE(finishChunk))
-		// [DONE] appended by LivePipeline.EmitOpenAIDone — return nil after.
+		// Emit finish_reason chunk before [DONE] (appended by
+		// LivePipeline.EmitOpenAIDone). Detail sub-blocks (cache-read +
+		// reasoning) mirror the non-stream projector so stream clients read the
+		// same splits.
+		fr := finishReasonOrStop(chunk.FinishReason)
+		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{}, FinishReason: &fr}, buildOAIStreamUsage(chunk.Usage))
 	}
 
-	if buf.Len() == 0 {
+	if len(e.scratch) == 0 {
 		return nil, nil
 	}
-	return buf.Bytes(), nil
+	return e.scratch, nil
+}
+
+// buildOAIStreamUsage maps a canonical usage into the wire usage block: a token
+// field is set whenever its source pointer is non-nil (so a non-nil 0 still
+// renders), and a detail sub-block appears only when its source is non-nil AND
+// > 0. Returns nil when no usage was reported (the usage key is omitted).
+func buildOAIStreamUsage(u *provcore.Usage) *oaiStreamUsage {
+	if u == nil {
+		return nil
+	}
+	out := &oaiStreamUsage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+	}
+	if u.CacheReadTokens != nil && *u.CacheReadTokens > 0 {
+		out.PromptTokensDetails = &oaiPromptTokensDetails{CachedTokens: *u.CacheReadTokens}
+	}
+	if u.ReasoningTokens != nil && *u.ReasoningTokens > 0 {
+		out.CompletionTokensDetails = &oaiCompletionTokensDetails{ReasoningTokens: *u.ReasoningTokens}
+	}
+	return out
 }
 
 // anthropicStreamEncoder converts canonical chunks to the Anthropic Messages
@@ -580,11 +595,6 @@ func buildGeminiUsage(u *provcore.Usage) map[string]any {
 	return out
 }
 
-func oaiDeltaSSE(payload map[string]any) []byte {
-	data, _ := json.Marshal(payload)
-	return fmt.Appendf(nil, "data: %s\n\n", data)
-}
-
 // finishReasonOrStop returns the canonical OpenAI finish_reason, defaulting to
 // "stop" when the upstream stream never reported one. An empty FinishReason on
 // the terminal chunk is the case for the live cross-format path (whose Done
@@ -645,39 +655,13 @@ func canonicalFinishToCohere(fr string) string {
 	}
 }
 
-func (e *openAIStreamEncoder) oaiToolCallEnvelope(deltas []provcore.ToolCallDelta) []byte {
-	return oaiDeltaSSE(map[string]any{
-		"id":      e.id,
-		"object":  "chat.completion.chunk",
-		"created": e.created,
-		"model":   e.model,
-		"choices": []any{
-			map[string]any{
-				"index":         0,
-				"delta":         map[string]any{"tool_calls": buildToolCallDeltas(deltas)},
-				"finish_reason": nil,
-			},
-		},
-	})
-}
-
-func buildToolCallDeltas(deltas []provcore.ToolCallDelta) []any {
-	type fnCall struct {
-		Name      string `json:"name,omitempty"`
-		Arguments string `json:"arguments,omitempty"`
-	}
-	type tcDelta struct {
-		Index    int    `json:"index"`
-		ID       string `json:"id,omitempty"`
-		Type     string `json:"type,omitempty"`
-		Function fnCall `json:"function"`
-	}
-	calls := make([]any, 0, len(deltas))
+// buildOAIToolCalls converts canonical tool-call deltas into the OpenAI
+// streaming tool_calls shape. Type=function is set only when an id starts a new
+// call; continuation deltas carry just index + arguments.
+func buildOAIToolCalls(deltas []provcore.ToolCallDelta) []oaiToolCall {
+	calls := make([]oaiToolCall, 0, len(deltas))
 	for _, d := range deltas {
-		tc := tcDelta{
-			Index:    d.Index,
-			Function: fnCall{Name: d.Name, Arguments: d.Arguments},
-		}
+		tc := oaiToolCall{Index: d.Index, Function: oaiToolFunc{Name: d.Name, Arguments: d.Arguments}}
 		if d.ID != "" {
 			tc.ID = d.ID
 			tc.Type = "function"

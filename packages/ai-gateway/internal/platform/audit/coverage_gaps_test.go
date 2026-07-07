@@ -74,36 +74,40 @@ func TestAvailableMemoryBytes_MissingFileReturnsZero(t *testing.T) {
 	}
 }
 
-// adaptiveBufferCaps consumes availableMemoryBytes: with a large fixture the recCh
-// cap must land within the adaptive clamp band, proving the parsed value flows into
-// the sizing rather than the fixed fallback.
-func TestAdaptiveBufferCaps_UsesParsedMemory(t *testing.T) {
-	withMeminfo(t, "MemAvailable:   8388608 kB\n") // 8 GiB available
+// adaptiveBufferCaps returns FIXED structural pointer-count depths — deliberately
+// body-size-INDEPENDENT (the byte budget is the memory bound; a count derived from
+// an assumed body size is exactly the sizing that OOM'd). Any meminfo content must
+// not change them.
+func TestAdaptiveBufferCaps_FixedStructuralDepths(t *testing.T) {
+	withMeminfo(t, "MemAvailable:   8388608 kB\n") // 8 GiB available — must not matter
 	recCh, spillCh := adaptiveBufferCaps()
-	if recCh < minRecChCap || recCh > maxRecChCap {
-		t.Fatalf("recCh cap %d outside [%d,%d]", recCh, minRecChCap, maxRecChCap)
-	}
-	if spillCh < minSpillChCap || spillCh > maxSpillChCap {
-		t.Fatalf("spillCh cap %d outside [%d,%d]", spillCh, minSpillChCap, maxSpillChCap)
+	if recCh != recChStructuralCap || spillCh != spillChStructuralCap {
+		t.Fatalf("adaptiveBufferCaps() = (%d,%d), want fixed (%d,%d)",
+			recCh, spillCh, recChStructuralCap, spillChStructuralCap)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// adaptive.go — clampInt below/above/within band.
+// adaptive.go — adaptiveMemBudgetBytes: the in-memory audit BYTE budget is the
+// RAM-fraction of parsed MemAvailable, with a fixed fallback when unreadable.
 // ---------------------------------------------------------------------------
 
-func TestClampInt_Bounds(t *testing.T) {
-	cases := []struct{ v, lo, hi, want int }{
-		{v: -5, lo: 0, hi: 10, want: 0},  // below low
-		{v: 99, lo: 0, hi: 10, want: 10}, // above high
-		{v: 7, lo: 0, hi: 10, want: 7},   // within band
-		{v: 0, lo: 0, hi: 10, want: 0},   // at low edge
-		{v: 10, lo: 0, hi: 10, want: 10}, // at high edge
+func TestAdaptiveMemBudgetBytes_FractionOfParsedMemory(t *testing.T) {
+	withMeminfo(t, "MemAvailable:   8388608 kB\n") // 8 GiB available
+	availBytes := float64(uint64(8388608) * 1024)
+	want := int64(availBytes * auditMemFraction)
+	if got := adaptiveMemBudgetBytes(); got != want {
+		t.Fatalf("adaptiveMemBudgetBytes() = %d, want %d (%.0f%% of 8 GiB)",
+			got, want, auditMemFraction*100)
 	}
-	for _, c := range cases {
-		if got := clampInt(c.v, c.lo, c.hi); got != c.want {
-			t.Errorf("clampInt(%d,%d,%d)=%d want %d", c.v, c.lo, c.hi, got, c.want)
-		}
+}
+
+func TestAdaptiveMemBudgetBytes_FallbackWhenUnreadable(t *testing.T) {
+	orig := meminfoPath
+	meminfoPath = filepath.Join(t.TempDir(), "does-not-exist")
+	t.Cleanup(func() { meminfoPath = orig })
+	if got := adaptiveMemBudgetBytes(); got != int64(fixedBudgetFallback) {
+		t.Fatalf("adaptiveMemBudgetBytes() fallback = %d, want %d", got, int64(fixedBudgetFallback))
 	}
 }
 
@@ -589,8 +593,10 @@ func TestSpillLoop_WriteBatchErrorCountsDrops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ndjson.New: %v", err)
 	}
-	// Pre-seed past the quota so the loop's batched WriteBatch is refused.
-	if err := os.WriteFile(filepath.Join(dir, "gw", "seed.ndjson"), make([]byte, 1100*1024), 0o600); err != nil {
+	// Pre-seed past the quota so the loop's batched WriteBatch is refused. The seed
+	// must be a countable audit-*.ndjson file — the reclaimable-quota gate excludes
+	// non-audit entries (e.g. .poison), so a differently-named filler would not count.
+	if err := os.WriteFile(filepath.Join(dir, "gw", "audit-20260101-0001.ndjson"), make([]byte, 1100*1024), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	w := NewWriter(nil, "q", opsmetrics.NewRegistry(prom), slog.New(slog.NewTextHandler(io.Discard, nil))).

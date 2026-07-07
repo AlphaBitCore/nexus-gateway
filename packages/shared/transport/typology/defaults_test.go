@@ -19,6 +19,11 @@ func TestDefaults_EveryKindHasAtLeastOneRule(t *testing.T) {
 	exempt := map[EndpointKind]bool{
 		EndpointKindVideoGeneration: true,
 		EndpointKindJob:             true,
+		// Label-only refinement: the path table classifies /v1/responses as
+		// chat-kind (defaults.go) for routing / cache / hook dispatch; the
+		// traffic_event endpoint_type stamp overrides the label to "responses".
+		// There is intentionally no dedicated path→responses rule.
+		EndpointKindResponses: true,
 	}
 	for _, k := range AllEndpointKinds {
 		if exempt[k] {

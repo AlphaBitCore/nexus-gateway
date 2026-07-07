@@ -70,8 +70,8 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 	// Claude 4.x; the older 3.x family accepts every combination
 	// unchanged.
 	//
-	//  (a) claude-opus-4-7 deprecated temperature / top_p / top_k
-	//      entirely. Any of them present → 400
+	//  (a) claude-opus-4-7 and claude-opus-4-8 deprecated temperature /
+	//      top_p / top_k entirely. Any of them present → 400
 	//      "`temperature` is deprecated for this model." Strip all three.
 	//
 	//  (b) Every other claude-4.x model (haiku-4-5, opus-4-1, opus-4-5,
@@ -365,7 +365,12 @@ func appendSystemInstruction(existing any, instruction string) any {
 //     yields 400 "<field> is deprecated for this model." (initial
 //     incident: traffic d914275a-0dae-4d13-a811-69e4d432c441).
 func anthropicModelRejectsSamplingParams(model string) bool {
-	return strings.HasPrefix(model, "claude-opus-4-7")
+	// claude-opus-4-7 AND claude-opus-4-8 return 400
+	// "`temperature` is deprecated for this model." on any of
+	// temperature / top_p / top_k (opus-4-8 observed in prod smoke
+	// 2026-07-03; a temperature-sending client 400s on every call).
+	return strings.HasPrefix(model, "claude-opus-4-7") ||
+		strings.HasPrefix(model, "claude-opus-4-8")
 }
 
 // anthropicModelRejectsTempTopPTogether reports whether the model

@@ -777,14 +777,14 @@ func TestPrepareBody_NonChatEndpoint_PassesBodyThrough(t *testing.T) {
 	}
 }
 
-// TestPrepareBody_NonOpenAIWire_NoRewrite asserts that bodies in a
-// non-OpenAI wire format (e.g. when adapters share Format but the body
-// shape isn't OpenAI-compatible) are not rewritten by the generic path.
-// We must reach the same-format passthrough path with a non-OpenAI-wire
-// Format so the !IsOpenAIFamily branch fires.
+// TestPrepareBody_NonOpenAIWire_NoRewrite asserts that a non-OpenAI-family
+// body is NOT rewritten by the generic passthrough when the adapter does not
+// declare PassthroughModelInBody — the Gemini/Bedrock contract (model applied
+// by the transport/codec, not the body). A spec that DOES declare the
+// capability is covered by TestPrepareBody_Anthropic_ModelInBody_Wired.
 func TestPrepareBody_NonOpenAIWire_NoRewrite(t *testing.T) {
-	// Anthropic is not an OpenAI-wire shape — same-Format passthrough hits
-	// the !IsOpenAIFamily branch in rewritePassthroughModel.
+	// specFrom leaves PassthroughModelInBody false, so the model-in-body gate
+	// (OpenAI-family wire OR capability) is not satisfied for FormatAnthropic.
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic), slog.Default())
 	body := []byte(`{"model":"claude-3-5-sonnet","messages":[]}`)
 	got, rw, _, err := ad.PrepareBody(Request{

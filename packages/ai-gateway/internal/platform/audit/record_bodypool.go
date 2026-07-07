@@ -50,6 +50,14 @@ func (r *Record) AttachPooledRequestBody(handle *[]byte) {
 	r.reqBodyHandle = handle
 }
 
+// ReleaseRequestBuffer returns an UNATTACHED request-body buffer to the pool.
+// This is the not-captured counterpart of the writer's terminal reclaim: when
+// payload capture is off, the handle is never attached to a Record, so no
+// terminal reclaim runs — the request owner returns the buffer itself once the
+// body's last reader (upstream forward, hooks, lazy normalize) has finished.
+// The caller must not read the buffer afterwards. Nil-safe.
+func ReleaseRequestBuffer(hp *[]byte) { releaseRequestBody(hp) }
+
 // releaseRequestBody returns a body buffer to the pool unless it ballooned past
 // the cap (dropped to GC instead).
 func releaseRequestBody(hp *[]byte) {
@@ -83,6 +91,13 @@ func (w *Writer) reclaimRecordBody(rec *Record) {
 		rec.ResponseBody = nil // defensive: never read the reclaimed bytes
 	}
 }
+
+// ReclaimRecordBody returns rec's pooled request/response body buffers to their
+// pools. The normal terminal reclaim runs inside the writer downstream of
+// Enqueue; the pure-forward benchmark path skips Enqueue and must return the
+// buffers itself, or the measured hot path re-allocates the ~64 KB request body
+// every request. Idempotent; safe on a nil or un-pooled record.
+func (w *Writer) ReclaimRecordBody(rec *Record) { w.reclaimRecordBody(rec) }
 
 // responseBodyPool reuses the streaming-capture tee's backing array. The SSE
 // capture tee buffers the response body into this array (one alloc per stream

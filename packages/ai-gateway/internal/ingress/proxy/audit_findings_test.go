@@ -178,7 +178,7 @@ func TestStampUnpricedCost(t *testing.T) {
 
 func TestChunkSSEReader_TerminalError_UpstreamError(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{{err: errors.New("boom")}}}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	// Drain until EOF so the terminal error is published.
@@ -201,7 +201,7 @@ func TestChunkSSEReader_TerminalError_ClientAbort(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // client gone
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{{err: context.Canceled}}}
-	rd := newChunkSSEReaderFromSubscription(ctx, sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(ctx, sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	if _, err := rd.Read(make([]byte, 64)); err == nil {
@@ -217,7 +217,7 @@ func TestChunkSSEReader_TerminalError_CleanEOF(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{
 		{chunk: provcore.Chunk{Done: true, RawBytes: []byte("data: [DONE]\n\n")}},
 	}}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	buf := make([]byte, 64)
@@ -244,7 +244,7 @@ func (errTranscoder) Write(_ context.Context, chunk provcore.Chunk) ([]byte, err
 
 func TestChunkSSEReader_TerminalError_TranscoderError(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{{chunk: provcore.Chunk{Delta: "x"}}}}
-	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, errTranscoder{}, provcore.FormatOpenAI)
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, errTranscoder{}, provcore.FormatOpenAI, false)
 	rd.usageSink = &chunkUsageHolder{}
 
 	if _, err := rd.Read(make([]byte, 64)); err == nil {

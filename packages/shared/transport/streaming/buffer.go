@@ -67,6 +67,13 @@ type BufferPipeline struct {
 	// verbatim replay. See FrameRedactor godoc. Nil preserves the
 	// backward-compatible degrade-and-replay-original behavior.
 	frameRedactor FrameRedactor
+	// strictFailClosed governs the no-redactor degrade posture (and mirrors the
+	// per-host redactor's own posture from the caller): the compliance-proxy appliance
+	// (true) fails a redaction it cannot apply CLOSED (error frame, no original replay);
+	// the agent NE host-packet path (false) degrades to a disclosed replay of the
+	// original. Nothing is delivered live in buffer mode, so failing closed here does
+	// not endanger the host packet path; the flag only selects the no-redactor disposition.
+	strictFailClosed bool
 }
 
 // WithPreHook installs a callback that runs between Phase 1 (read full
@@ -83,6 +90,15 @@ func (b *BufferPipeline) WithPreHook(fn PreHookCallback) *BufferPipeline {
 // backward-compatible Modify-degrade behavior. Mirrors WithPreHook.
 func (b *BufferPipeline) WithFrameRedactor(fr FrameRedactor) *BufferPipeline {
 	b.frameRedactor = fr
+	return b
+}
+
+// WithStrictFailClosed selects the no-redactor degrade posture (GAP B): true (the
+// compliance-proxy appliance) fails a redaction it cannot apply CLOSED; false (the agent
+// NE host-packet path, the default) degrades to a disclosed replay of the original.
+// Mirrors the per-host redactor's own caller-driven posture.
+func (b *BufferPipeline) WithStrictFailClosed(strict bool) *BufferPipeline {
+	b.strictFailClosed = strict
 	return b
 }
 
@@ -205,9 +221,15 @@ func (b *BufferPipeline) Process(
 		}
 	}
 
-	// Phase 3: Replay, redact, or reject.
-	switch result.Decision {
-	case core.RejectHard:
+	// Phase 3: Replay, redact, or reject. Gate the redaction arm on CarriesRedaction()
+	// (Modify OR a BlockSoft masking a co-firing redact), NOT Decision==Modify — a
+	// co-firing soft-block promotes the aggregate Decision to BlockSoft while still
+	// carrying the redact's spans + ModifiedContent, so keying on Modify alone would
+	// fall through to the `default` replay arm and deliver the original RAW (the
+	// appliance leak this fixes). A standalone soft-block (no redaction) keeps the
+	// allow-with-warning replay on `default`.
+	switch {
+	case result.Decision == core.RejectHard:
 		b.logger.Info("buffer pipeline: content rejected",
 			"decision", result.Decision,
 			"reason", result.Reason,
@@ -221,15 +243,28 @@ func (b *BufferPipeline) Process(
 		}
 		return result, nil
 
-	case core.Modify:
-		// Modify = inflight redact. With a FrameRedactor wired, rewrite the
-		// buffered timeline so the masked frames (not the original) reach the
-		// client. Without one, preserve the backward-compatible degrade: the
-		// rewrite is silently ignored and the body replays verbatim, surfaced
-		// via WARN + nexus_streaming_modify_degraded_total{reason="buffer_mode"}
-		// so a misconfigured hook is visible to admins.
+	case result.CarriesRedaction():
+		// Inflight redact. With a FrameRedactor wired, rewrite the buffered timeline so
+		// the masked frames (not the original) reach the client. Without one, the
+		// posture decides (GAP B): the compliance-proxy appliance fails CLOSED (a
+		// redaction it cannot apply must never deliver the original); the agent NE path
+		// degrades to a disclosed replay of the original (host-packet safety).
 		if b.frameRedactor == nil {
-			b.logger.Warn("buffer mode: Modify decision degraded to Approve (no frame redactor; rewrite ignored)",
+			if b.strictFailClosed {
+				b.logger.Warn("buffer mode: redaction required but no frame redactor; failing closed (appliance)",
+					"requestId", baseInput.RequestID,
+					"reason", result.Reason,
+				)
+				RecordModifyDegraded(reasonRedactInflightUnsupported)
+				if err := writeErrorAndDone(client); err != nil {
+					return result, fmt.Errorf("buffer pipeline: write error response: %w", err)
+				}
+				if flusher, ok := client.(http.Flusher); ok {
+					flusher.Flush()
+				}
+				return result, nil
+			}
+			b.logger.Warn("buffer mode: redaction required but no frame redactor; degrading to replay (agent fail-open)",
 				"requestId", baseInput.RequestID,
 				"reason", result.Reason,
 			)
@@ -238,18 +273,16 @@ func (b *BufferPipeline) Process(
 		}
 		redacted, rErr := b.frameRedactor.RedactReplay(events, result)
 		if rErr != nil {
-			// Genuinely non-reconstructable wire (or an internal redactor
-			// error) — FAIL CLOSED. The original (unredacted) frames are
-			// never replayed; emit the policy error frame so zero
-			// unredacted content reaches the client, and bump the counter
-			// under the distinct unsupported reason. ResponseBodyRedacted
-			// stays unset (caller's stream-relay guard stores NULL).
+			// Non-reconstructable wire — FAIL CLOSED: the original frames are never replayed;
+			// emit the policy error frame so zero unredacted content reaches the client. No
+			// coarse counter here: the redactor already recorded the more-informative ROOT-CAUSE
+			// label in redactUnsupported on this same fault (bumping the coarse one too
+			// double-counted). ResponseBodyRedacted stays unset (stream-relay guard stores NULL).
 			b.logger.Warn("buffer mode: Modify redaction unsupported; failing closed (no original replay)",
 				"requestId", baseInput.RequestID,
 				"reason", result.Reason,
 				"error", rErr,
 			)
-			RecordModifyDegraded(reasonRedactInflightUnsupported)
 			if err := writeErrorAndDone(client); err != nil {
 				return result, fmt.Errorf("buffer pipeline: write error response: %w", err)
 			}
@@ -258,8 +291,12 @@ func (b *BufferPipeline) Process(
 			}
 			return result, nil
 		}
-		// Supported redaction — replay the masked timeline. No degrade
-		// counter: the rewrite was honored.
+		// Disposition: stamp action=redact when the mask was genuinely applied (a co-firing
+		// BlockSoft that redact-delivered reads redact, not the block ceiling); skip it on the
+		// agent fail-open degrade (RedactReplay relayed the original + ReasonRedactInflightUnsupported).
+		if result.ReasonCode != core.ReasonRedactInflightUnsupported {
+			result.Action = core.ActionRedact
+		}
 		return result, b.replay(ctx, client, redacted)
 
 	default:

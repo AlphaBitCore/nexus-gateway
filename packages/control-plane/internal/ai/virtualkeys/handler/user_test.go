@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
 )
@@ -227,6 +228,33 @@ func TestCreateUserVirtualKey_DBError(t *testing.T) {
 	}
 	if aud.count() != 0 {
 		t.Errorf("expected no audit on DB failure")
+	}
+}
+
+// TestCreateUserVirtualKey_DuplicateName covers the 409 envelope when the
+// INSERT trips the per-owner personal-name unique index: the user is told
+// they already own a key with this name, and no audit entry fires.
+func TestCreateUserVirtualKey_DuplicateName(t *testing.T) {
+	h, mock, _, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
+		WithArgs(anyN(14)...).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "VirtualKey_personal_owner_name_uniq"})
+
+	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{"name":"mine"}`)
+	if err := h.CreateUserVirtualKey(c); err != nil {
+		t.Fatalf("CreateUserVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "duplicate_name") {
+		t.Errorf("body missing duplicate_name type: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "You already have a virtual key with this name") {
+		t.Errorf("body missing per-owner message: %s", rec.Body.String())
+	}
+	if aud.count() != 0 {
+		t.Errorf("expected no audit on rejected create")
 	}
 }
 

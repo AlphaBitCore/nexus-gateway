@@ -245,10 +245,15 @@ type Record struct {
 	//   LatencyBreakdown  — Long-tail per-source phase durations (ms).
 	//                       For ai-gateway: auth_ms, quota_ms, routing_ms,
 	//                       cache_lookup_ms, req_adapter_ms, resp_adapter_ms.
-	UpstreamTtfbMs   *int
-	UpstreamTotalMs  *int
-	RequestHooksMs   *int
-	ResponseHooksMs  *int
+	UpstreamTtfbMs  *int
+	UpstreamTotalMs *int
+	RequestHooksMs  *int
+	ResponseHooksMs *int
+	// Microsecond-precision hook aggregates (additive; siblings of the _ms fields).
+	// Normally nil and derived from HooksPipeline at recordToMessage time;
+	// firstNonNil lets a caller stamp them explicitly.
+	RequestHooksUs   *int
+	ResponseHooksUs  *int
 	LatencyBreakdown map[string]int
 
 	// EmbeddingCostUsd is stamped on every L1 miss that triggered an embedding
@@ -309,6 +314,26 @@ type Record struct {
 	// the re-Normalize/recordToMessage path is never reached for such a record.
 	// In-process only — never serialized.
 	marshaled []byte
+
+	// publishRetries counts how many times handlePublishFailure has re-queued this
+	// record onto recCh for an in-memory re-publish. It bounds the transient retry:
+	// under a SUSTAINED broker outage (stream full → every publish 503s) the workers
+	// keep draining recCh, so a naive re-queue always wins a slot and the record
+	// circulates FOREVER — a busy-spin that pins its marshaled copy in the queue and
+	// craters throughput. After maxPublishRetries in-memory attempts the record is
+	// routed to the durable batched spill instead of re-queued. In-process only —
+	// never serialized.
+	publishRetries int
+
+	// reserved is the byte weight this record holds against the Writer's in-memory
+	// byte budget (Writer.memBudget): Acquired at Enqueue admission from the REAL
+	// captured body sizes, Released exactly once when the record leaves the
+	// in-memory pipeline — published OK, durably spilled, or dropped — via
+	// releaseRecordMem (or transferred to the spill worker's batch aggregate, which
+	// releases at its flush terminal). 0 when the record carried no captured bodies,
+	// the budget is disabled, or the reservation has already been released.
+	// In-process only — never serialized.
+	reserved int64
 
 	// RequestContentType / ResponseContentType travel with the captured
 	// bytes onto traffic_event_payload.{request,response}_content_type.

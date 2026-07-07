@@ -24,6 +24,9 @@ func applyEnvOverrides(cfg *Config) {
 		// best-effort: a malformed value leaves the default (10000) in place.
 		_, _ = fmt.Sscanf(v, "%d", &cfg.Audit.MaxQueuedRecords)
 	}
+	if v := os.Getenv("AI_GATEWAY_AUDIT_MEM_MAX_BYTES"); v != "" {
+		cfg.Audit.MemMaxBytes = v
+	}
 	if v := os.Getenv("AI_GATEWAY_AUDIT_LOSS_MODE"); v != "" {
 		cfg.Audit.LossMode = v
 	}

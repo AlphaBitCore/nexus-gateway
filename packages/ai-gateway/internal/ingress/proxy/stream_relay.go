@@ -55,14 +55,23 @@ func (st streamRelayStage) run() bool {
 		// (which would drain the subscription into the wire reader). It streams
 		// in real time behind a bounded tail + cheap union prescan, escalating to
 		// canonical-buffer redaction on a confirmed hit. The prescan closes over
-		// the response probe's MayMatchRawContent (the cheap union prefilter).
-		s.sseReader = h.runModelAStream(r.Context(), s, tee, usageHolder, h.buildResponsePrescan(r.Context(), s))
+		// the response probe's MayMatchRawContent (the cheap union prefilter); the
+		// derived lookahead sizes the flush-before-deliver boundary guard.
+		prescan, maxPattern := h.buildResponsePrescan(r.Context(), s)
+		s.sseReader = h.runModelAStream(r.Context(), s, tee, usageHolder, prescan, maxPattern)
 	default:
 		// Drain the subscription (replay or live broker pump) into an
 		// io.Reader of SSE-formatted lines so the wire-consuming pipelines
 		// (live / passthrough) can consume it unchanged.
-		sseReader := newChunkSSEReaderFromSubscription(r.Context(), s.sub, s.transcoder, s.ingressFormat)
+		sseReader := newChunkSSEReaderFromSubscription(r.Context(), s.sub, s.transcoder, s.ingressFormat, s.allowVerbatim)
 		sseReader.usageSink = usageHolder
+
+		// respAcc folds the response-hook trace across every checkpoint scan into
+		// ONE record per hook (summed latency, latest decision). The live pipeline
+		// runs the response stage at each checkpoint + EOF, so without this the trace
+		// would either be missing (never appended) or N×-duplicated; appended once
+		// after dispatch (below). Lazy + single-writer — see responseHookAccumulator.
+		var respAcc responseHookAccumulator
 
 		hookCtx := &streaming.StreamHookContext{
 			RequestID:      requestID,
@@ -89,6 +98,10 @@ func (st streamRelayStage) run() bool {
 				// Derived from the Decision so a no-match approve still stamps
 				// ActionApprove (persist) rather than dropping the captured stream.
 				rec.ResponseAction = hookcore.ActionFromDecision(res.Decision)
+				// Fold this checkpoint's per-hook latency into the single response
+				// trace appended once after dispatch (real scan CPU summed across
+				// checkpoints, no N× duplication).
+				respAcc.add(res.HookResults)
 			},
 		}
 
@@ -114,6 +127,11 @@ func (st streamRelayStage) run() bool {
 			MaxBufferBytes:   s.streamMaxBufferBytes,
 		}
 		dispatchStreamMode(r.Context(), s.streamMode, streamDeps)
+		// Record the response-hook trace ONCE, after all checkpoints have run. This
+		// is the live audit-only path's only response-trace write — previously the
+		// streamed response hooks never entered rec.HooksPipeline, leaving
+		// response_hooks_ms NULL. finalize() is nil (no-op) when no response hook ran.
+		rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "response", respAcc.finalize())
 		s.sseReader = sseReader
 	}
 	logger.Debug("stream response capture",

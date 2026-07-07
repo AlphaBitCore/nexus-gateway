@@ -157,6 +157,13 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	// Arm the hook-config TTL-backstop ticker (wiring already did the
+	// fail-hard initial load; this re-load is harmless and the ticker
+	// covers a degraded Hub push channel for the process lifetime).
+	if err := compRes.HookConfigCache.Start(ctx); err != nil {
+		logger.Warn("hook config cache start failed", "error", err)
+	}
+
 	configKeyRecorder := runtimeintrospect.NewKeyStateRecorder()
 	readiness := &atomic.Bool{}
 	readiness.Store(true)

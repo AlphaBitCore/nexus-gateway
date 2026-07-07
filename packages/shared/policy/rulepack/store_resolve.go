@@ -104,13 +104,18 @@ func (s *Store) UpgradeInstallToLatest(ctx context.Context, installID string) (*
 // including the pack name for convenience. Disabled installs are included
 // (callers decide whether to evaluate them; the admin UI needs visibility).
 // Ordered by installedAt ASC so the rule-pack engine scans in install order.
+// The id tiebreaker keeps the order deterministic when several installs share
+// one timestamp (batch-seeded in a single transaction): unstable tie order
+// would reorder the enriched `_rulePackInstalls` payload between loads, making
+// a no-change config reload look like a change and churning the compiled
+// matcher for nothing.
 func (s *Store) ListInstallsForHook(ctx context.Context, hookID string) ([]Install, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT i.id, i."packId", p.name, i."pinVersion", i."boundHookId", i.enabled, i."installedAt"
 		FROM "rule_pack_install" i
 		JOIN "rule_pack" p ON p.id = i."packId"
 		WHERE i."boundHookId" = $1
-		ORDER BY i."installedAt" ASC`, hookID)
+		ORDER BY i."installedAt" ASC, i.id ASC`, hookID)
 	if err != nil {
 		return nil, fmt.Errorf("rulepack.ListInstallsForHook: %w", err)
 	}

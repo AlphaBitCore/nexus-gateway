@@ -71,8 +71,8 @@ func sqlInsertColumns(t *testing.T, sql string) []string {
 // not here (or vice versa) fails the build's tests, not silently in production.
 func TestTrafficEventColumnsParity(t *testing.T) {
 	want := sqlInsertColumns(t, insertTrafficEventSQL)
-	if len(want) != 91 {
-		t.Fatalf("parsed %d columns from insertTrafficEventSQL, want 91", len(want))
+	if len(want) != 93 {
+		t.Fatalf("parsed %d columns from insertTrafficEventSQL, want 93", len(want))
 	}
 	if len(trafficEventColumns) != len(want) {
 		t.Fatalf("trafficEventColumns has %d, SQL has %d", len(trafficEventColumns), len(want))

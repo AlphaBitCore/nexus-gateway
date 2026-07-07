@@ -50,8 +50,8 @@ func TestParseByteSize(t *testing.T) {
 		{" 2GB ", 2 * 1024 * 1024 * 1024},
 	}
 	for _, c := range cases {
-		if got := parseByteSize(c.in, fb); got != c.want {
-			t.Errorf("parseByteSize(%q) = %d, want %d", c.in, got, c.want)
+		if got := ParseByteSize(c.in, fb); got != c.want {
+			t.Errorf("ParseByteSize(%q) = %d, want %d", c.in, got, c.want)
 		}
 	}
 }

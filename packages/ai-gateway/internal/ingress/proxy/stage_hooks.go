@@ -204,7 +204,15 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		h.deps.Metrics.RecordHookRequest(ingressFormat, "request", string(hookResult.Decision))
 	}
 
-	if hookResult.Decision == hookcore.RejectHard {
+	// Refuse on a folded BLOCK action (RejectHard OR a standalone BlockSoft):
+	// ActionFromDecision folds BlockSoft → block, so the request stage dispatches
+	// it exactly like RejectHard (a hard 403), matching the SSE/response path and
+	// error-taxonomy-architecture.md — there is no soft-block client response.
+	// The `!CarriesRedaction()` guard keeps a BlockSoft that MASKS a co-firing redact
+	// out of this arm so it falls through to the redaction arm below and redact-forwards
+	// (the #13 invariant): RejectHard never carries redaction, so its behavior is
+	// unchanged.
+	if hookcore.ActionFromDecision(hookResult.Decision) == hookcore.ActionBlock && !hookResult.CarriesRedaction() {
 		// Write X-Nexus-Hook and via before writeError commits the status
 		// line, so the client sees the marker even on hook-rejected 4xx responses.
 		// X-Nexus-Mode is reserved as an empty position so an outer hop's
@@ -225,7 +233,7 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	// requested but not actionable here". Any other error (malformed,
 	// unknown schema after Extract succeeded) indicates an internal
 	// inconsistency and surfaces as 500.
-	if hookResult.Decision == hookcore.Modify && len(hookResult.ModifiedContent) > 0 {
+	if hookResult.CarriesRedaction() {
 		rewriteStart := time.Now()
 		rewriteContent := rewriteContentWithToolArgs(hookResult.ModifiedContent, normalized, hookResult.TransformSpans)
 		rewritten, n, rErr := trafficAdapter.RewriteRequestBody(r.Context(), body, r.URL.Path, rewriteContent)
@@ -272,11 +280,27 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		default:
 			rec.HookRewriteCount = n
 			rec.HookRewritten = true
+			// Stamp the DISPOSITION action: an applied rewrite is a redact, even when
+			// the aggregate Decision is BlockSoft (a soft-block masking a co-firing
+			// redact) — without this the audit row would read Action=block + a masked
+			// request body.
+			rec.RequestAction = hookcore.ActionRedact
 			// The redacted wire copy is what the raw storage policy
 			// persists under action=redact (rec.RequestBody holds
 			// the pre-hook bytes for normalization and must never reach
 			// raw storage when redaction is demanded — without this stamp
 			// the writer fail-safes the raw copy to NULL).
+			//
+			// Zero-write rewrites return the INPUT slice — which is the pooled
+			// request-body buffer that finalizeAudit releases for reuse when the
+			// body is not captured. The record outlives that release (the async
+			// audit writer holds it), so a stamped alias would let the next
+			// request's bytes bleed into this record's redacted copy. Clone the
+			// rare zero-write case; real rewrites (n > 0) already produced a
+			// fresh buffer via sjson.
+			if n == 0 {
+				rewritten = bytes.Clone(rewritten)
+			}
 			rec.RequestBodyRedacted = rewritten
 			return rewritten, hookResult, false
 		}

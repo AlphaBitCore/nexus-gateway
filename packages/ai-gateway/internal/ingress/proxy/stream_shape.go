@@ -116,14 +116,7 @@ func (st streamShapeStage) run() bool {
 			// encoder so the cached canonical chunks are re-encoded into
 			// the request's wire SSE grammar.
 			if originOK && transcoder == nil && originBodyFormat != ingress.BodyFormat {
-				switch ingress.BodyFormat {
-				case provcore.FormatOpenAIResponses:
-					transcoder = canonicalbridge.NewResponsesStreamEncoder(target.ModelCode)
-				default:
-					if ingress.BodyFormat.IsOpenAIFamily() {
-						transcoder = canonicalbridge.NewChatCompletionsStreamEncoder(target.ModelCode)
-					}
-				}
+				transcoder = canonicalbridge.IngressStreamEncoder(ingress.BodyFormat, target.ModelCode)
 			}
 		}
 	}
@@ -137,10 +130,22 @@ func (st streamShapeStage) run() bool {
 		transcoder = canonicalbridge.NewChatCompletionsStreamEncoder(target.ModelCode)
 	}
 
+	// Verbatim passthrough is allowed only on the non-enforced /v1/responses
+	// live lane and never on the chat-ingress auto-upgrade path: enforcement
+	// (which forces the canonical buffer) and cross-ingress re-encoding must
+	// always win over forwarding the upstream's original Responses frames.
+	// When allowed, the relay forwards a Verbatim chunk's RawBytes byte-for-byte
+	// so built-in-tool / audio events survive; otherwise the chunk's decoded
+	// canonical fields drive the transcoder.
+	allowVerbatim := ingressFormat == provcore.FormatOpenAIResponses &&
+		!s.responseEnforcingBlock && !s.responseEnforcingRedact &&
+		!ResponsesUpgradeFromContext(r.Context())
+
 	s.emitDone = emitDone
 	s.streamMode = streamMode
 	s.streamMaxBufferBytes = streamMaxBufferBytes
 	s.transcoder = transcoder
 	s.ingressFormat = ingressFormat
+	s.allowVerbatim = allowVerbatim
 	return true
 }

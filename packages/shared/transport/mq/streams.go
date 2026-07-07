@@ -30,11 +30,13 @@ const eventsMaxBytesRAMFraction = 0.15
 // on a non-Linux host. Production never reassigns it.
 var meminfoPath = "/proc/meminfo"
 
-// parseByteSize parses a human byte size ("8GB", "512MB", "1073741824") into
+// ParseByteSize parses a human byte size ("8GB", "512MB", "1073741824") into
 // bytes. Returns fallback for an empty or unparseable value. Recognises KB/MB/GB
 // (powers of 1024) and a bare integer (bytes); case-insensitive, trailing "B"
-// optional.
-func parseByteSize(s string, fallback int64) int64 {
+// optional. Exported so every byte-size env knob across services (the NATS
+// stream cap here, the ai-gateway audit memory budget) parses with ONE set of
+// semantics instead of drifting copies.
+func ParseByteSize(s string, fallback int64) int64 {
 	s = strings.TrimSpace(strings.ToUpper(s))
 	if s == "" {
 		return fallback
@@ -68,7 +70,7 @@ func eventsMaxBytes() int64 {
 		v = strings.TrimSpace(os.Getenv("NEXUS_STREAM_MAX_BYTES"))
 	}
 	if v != "" && !strings.EqualFold(v, "auto") {
-		return parseByteSize(v, eventsMaxBytesAuto())
+		return ParseByteSize(v, eventsMaxBytesAuto())
 	}
 	n := eventsMaxBytesAuto()
 	slog.Warn("NEXUS_EVENTS audit-stream cap auto-sized from total RAM",

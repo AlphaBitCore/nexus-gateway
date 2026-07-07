@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // stubHook is a test hook with configurable behavior.
@@ -140,6 +141,45 @@ func TestPipeline_ParallelExecution(t *testing.T) {
 	if elapsed >= maxAllowed {
 		t.Fatalf("parallel execution took %v, expected less than %v (sequential would be ~%v)",
 			elapsed, maxAllowed, 3*delay)
+	}
+}
+
+// TestPipeline_HookLatencyMicroseconds verifies executeOneHook stamps precise
+// microsecond latency (LatencyUs) alongside the truncated millisecond value, and
+// that LatencyMs is the exact integer-ms floor of LatencyUs — i.e. LatencyMs is
+// NOT clamped. A clamp-to-≥1 would break the floor invariant for sub-millisecond
+// hooks and N×-inflate the summed _ms aggregate.
+func TestPipeline_HookLatencyMicroseconds(t *testing.T) {
+	hks := []boundHook{
+		// Real delay: LatencyUs must reflect it.
+		{hook: &stubHook{decision: core.Approve, delay: 3 * time.Millisecond}, config: &core.HookConfig{ID: "slow", Name: "slow", Priority: 1, FailBehavior: "fail-open"}},
+		// Near-instant: on a fast host LatencyUs < 1000, so the floor invariant
+		// forces LatencyMs == 0 (proves no clamp).
+		{hook: &stubHook{decision: core.Approve, delay: 0}, config: &core.HookConfig{ID: "fast", Name: "fast", Priority: 2, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+	if len(result.HookResults) != 2 {
+		t.Fatalf("expected 2 hook results, got %d", len(result.HookResults))
+	}
+	var slow *core.HookResult
+	for i := range result.HookResults {
+		hr := &result.HookResults[i]
+		// Floor invariant: both fields derive from the same elapsed, so ms is the
+		// exact integer-ms floor of us. A clamp would violate this for us<1000.
+		if hr.LatencyMs != hr.LatencyUs/1000 {
+			t.Fatalf("hook %s: LatencyMs=%d is not the floor of LatencyUs=%d (us/1000=%d) — clamp or skew?",
+				hr.HookID, hr.LatencyMs, hr.LatencyUs, hr.LatencyUs/1000)
+		}
+		if result.HookResults[i].HookID == "slow" {
+			slow = hr
+		}
+	}
+	if slow == nil {
+		t.Fatal("missing 'slow' hook result")
+	}
+	if slow.LatencyUs < 2000 {
+		t.Fatalf("slow hook LatencyUs=%d, expected >= 2000 (3ms delay)", slow.LatencyUs)
 	}
 }
 
@@ -775,5 +815,182 @@ func TestPipeline_Sequential_AccumulatesUpstreamTags(t *testing.T) {
 	want := []string{"compliance:pii"}
 	if !equalStringSlice(recorder.observedUpstream, want) {
 		t.Fatalf("hook2 observed UpstreamTags = %v, want %v", recorder.observedUpstream, want)
+	}
+}
+
+// redactStubHook returns a Modify result carrying replacement content (a redact hook).
+type redactStubHook struct {
+	core.AnyEndpointAnyModality
+	content []core.ContentBlock
+}
+
+func (h *redactStubHook) Execute(context.Context, *core.HookInput) (*core.HookResult, error) {
+	return &core.HookResult{Decision: core.Modify, ModifiedContent: h.content}, nil
+}
+
+// TestPipeline_CoFiringRedactSoftBlock_CarriesRedaction pins the #13 core invariant: when
+// a redact hook (Modify + ModifiedContent) co-fires with a soft-block hook, mergeResults
+// promotes the aggregate Decision to BlockSoft (the strictest) but MUST carry the redact's
+// ModifiedContent — previously it was dropped, leaving consumers unable to apply the
+// redaction (fail-closed or leak). CarriesRedaction() must report true so every consumer
+// applies the mask instead of keying on Decision==Modify and forwarding the original raw.
+func TestPipeline_CoFiringRedactSoftBlock_CarriesRedaction(t *testing.T) {
+	hks := []boundHook{
+		{hook: &redactStubHook{content: []core.ContentBlock{{Type: "text", Text: "[REDACTED]"}}}, config: &core.HookConfig{ID: "redact", Name: "redact", Priority: 1, FailBehavior: "fail-open"}},
+		{hook: &stubHook{decision: core.BlockSoft, reason: "soft flag"}, config: &core.HookConfig{ID: "soft", Name: "soft", Priority: 2, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+
+	if result.Decision != core.BlockSoft {
+		t.Fatalf("co-firing redact+soft-block must aggregate to BlockSoft (the ceiling), got %s", result.Decision)
+	}
+	if len(result.ModifiedContent) == 0 {
+		t.Fatal("the redact ModifiedContent must be CARRIED under BlockSoft (not dropped) — the #13 core invariant")
+	}
+	if !result.CarriesRedaction() {
+		t.Fatal("CarriesRedaction() must be true for a BlockSoft masking a co-firing redact")
+	}
+}
+
+// TestPipeline_StandaloneSoftBlock_NoRedaction is the negative: a soft-block with no
+// co-firing redact carries no redaction → CarriesRedaction() false → consumers
+// deliver-with-warning (the original), not fail-closed/masked.
+func TestPipeline_StandaloneSoftBlock_NoRedaction(t *testing.T) {
+	hks := []boundHook{
+		{hook: &stubHook{decision: core.BlockSoft, reason: "soft flag"}, config: &core.HookConfig{ID: "soft", Name: "soft", Priority: 1, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.BlockSoft {
+		t.Fatalf("expected BlockSoft, got %s", result.Decision)
+	}
+	if result.CarriesRedaction() {
+		t.Fatal("a standalone soft-block carries no redaction")
+	}
+}
+
+// spanStubHook returns a configurable decision with optional ModifiedContent and
+// TransformSpans — exercises the applicable-artifact discriminator (#14).
+type spanStubHook struct {
+	core.AnyEndpointAnyModality
+	decision core.Decision
+	content  []core.ContentBlock
+	spans    []normalize.TransformSpan
+}
+
+func (h *spanStubHook) Execute(context.Context, *core.HookInput) (*core.HookResult, error) {
+	return &core.HookResult{Decision: h.decision, ModifiedContent: h.content, TransformSpans: h.spans}, nil
+}
+
+func auditOnlySpan() normalize.TransformSpan {
+	return normalize.TransformSpan{Source: normalize.SourceHook, Action: normalize.ActionRedact, ContentAddress: normalize.AddressAuditOnlySentinel, Start: 0, End: 4}
+}
+
+func applicableSpan() normalize.TransformSpan {
+	return normalize.TransformSpan{Source: normalize.SourceHook, Action: normalize.ActionRedact, ContentAddress: "messages.0.content.0.toolUse.input.0", Start: 0, End: 4}
+}
+
+// TestPipeline_ApproveWebhookAuditSpans_CoFiringSoftBlock_NoRedaction is the #14 fix:
+// an Approve hook emitting AUDIT-ONLY sentinel spans (the approve-webhook+redactions
+// shape) co-firing with a soft-block promotes the aggregate to BlockSoft, but those
+// advisory spans are NOT an applicable redaction — CarriesRedaction() must be false so
+// the appliance soft-delivers instead of failing closed (over-block).
+func TestPipeline_ApproveWebhookAuditSpans_CoFiringSoftBlock_NoRedaction(t *testing.T) {
+	hks := []boundHook{
+		{hook: &spanStubHook{decision: core.Approve, spans: []normalize.TransformSpan{auditOnlySpan()}}, config: &core.HookConfig{ID: "wh", Name: "webhook", Priority: 1, FailBehavior: "fail-open"}},
+		{hook: &stubHook{decision: core.BlockSoft, reason: "soft flag"}, config: &core.HookConfig{ID: "soft", Name: "soft", Priority: 2, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.BlockSoft {
+		t.Fatalf("expected BlockSoft aggregate, got %s", result.Decision)
+	}
+	if result.RedactionApplicable {
+		t.Fatal("an Approve hook's audit-only spans must NOT set RedactionApplicable")
+	}
+	if result.CarriesRedaction() {
+		t.Fatal("approve-webhook audit-only spans masked by soft-block must NOT CarryRedaction (the #14 over-block fix)")
+	}
+	// Audit union still records the advisory spans — the fix changes only the inflight predicate.
+	if len(result.TransformSpans) != 1 {
+		t.Fatalf("advisory span must still be unioned into the audit record, got %d", len(result.TransformSpans))
+	}
+}
+
+// TestPipeline_ModifyWebhookFlatOnly_CoFiringSoftBlock_NoRedaction closes the sibling
+// hole: a Modify hook (e.g. a webhook reconciled under an approve ceiling) carrying ONLY
+// audit-only sentinel spans and NO ModifiedContent is not an applicable inflight
+// redaction, so under a co-firing soft-block CarriesRedaction() must be false.
+func TestPipeline_ModifyWebhookFlatOnly_CoFiringSoftBlock_NoRedaction(t *testing.T) {
+	hks := []boundHook{
+		{hook: &spanStubHook{decision: core.Modify, spans: []normalize.TransformSpan{auditOnlySpan()}}, config: &core.HookConfig{ID: "wh", Name: "webhook", Priority: 1, FailBehavior: "fail-open"}},
+		{hook: &stubHook{decision: core.BlockSoft, reason: "soft flag"}, config: &core.HookConfig{ID: "soft", Name: "soft", Priority: 2, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.BlockSoft {
+		t.Fatalf("expected BlockSoft aggregate, got %s", result.Decision)
+	}
+	if result.CarriesRedaction() {
+		t.Fatal("modify-webhook flat-only spans masked by soft-block must NOT CarryRedaction (sibling of the #14 fix)")
+	}
+}
+
+// TestPipeline_ToolArgOnlyModify_CoFiringSoftBlock_CarriesRedaction is the leak-guard:
+// a real redaction carried by an APPLICABLE span with NO ModifiedContent (the tool-call-
+// argument redaction shape) masked by a co-firing soft-block MUST still CarryRedaction —
+// dropping the span clause would leak it.
+func TestPipeline_ToolArgOnlyModify_CoFiringSoftBlock_CarriesRedaction(t *testing.T) {
+	hks := []boundHook{
+		{hook: &spanStubHook{decision: core.Modify, spans: []normalize.TransformSpan{applicableSpan()}}, config: &core.HookConfig{ID: "redact", Name: "redact", Priority: 1, FailBehavior: "fail-open"}},
+		{hook: &stubHook{decision: core.BlockSoft, reason: "soft flag"}, config: &core.HookConfig{ID: "soft", Name: "soft", Priority: 2, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.BlockSoft {
+		t.Fatalf("expected BlockSoft aggregate, got %s", result.Decision)
+	}
+	if !result.RedactionApplicable || !result.CarriesRedaction() {
+		t.Fatal("a tool-arg-only Modify (applicable span, no ModifiedContent) masked by soft-block MUST CarryRedaction — else it leaks")
+	}
+}
+
+// TestPipeline_SelfRedactingBlockSoft_ApplicableSpan_CarriesRedaction: a single hook
+// emitting BlockSoft WITH an applicable span carries that redaction (the aggregate unions
+// every hook's spans), so CarriesRedaction() is true.
+func TestPipeline_SelfRedactingBlockSoft_ApplicableSpan_CarriesRedaction(t *testing.T) {
+	hks := []boundHook{
+		{hook: &spanStubHook{decision: core.BlockSoft, spans: []normalize.TransformSpan{applicableSpan()}}, config: &core.HookConfig{ID: "soft", Name: "soft", Priority: 1, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.BlockSoft {
+		t.Fatalf("expected BlockSoft, got %s", result.Decision)
+	}
+	if !result.CarriesRedaction() {
+		t.Fatal("a self-redacting BlockSoft with an applicable span must CarryRedaction (leak-guard)")
+	}
+}
+
+// TestPipeline_SelfRedactingBlockSoft_ModifiedContentOnly_NoRedaction pins the merge
+// asymmetry: mergeResults carries ModifiedContent ONLY from Modify hooks, so a BlockSoft
+// hook's ModifiedContent is dropped from the aggregate. CarriesRedaction() must therefore
+// be false (the aggregate cannot apply it) — fold-to-block is the fail-safe disposition,
+// not a claimed-but-unappliable redaction.
+func TestPipeline_SelfRedactingBlockSoft_ModifiedContentOnly_NoRedaction(t *testing.T) {
+	hks := []boundHook{
+		{hook: &spanStubHook{decision: core.BlockSoft, content: []core.ContentBlock{{Type: "text", Text: "[REDACTED]"}}}, config: &core.HookConfig{ID: "soft", Name: "soft", Priority: 1, FailBehavior: "fail-open"}},
+	}
+	p := NewPipeline(hks, 5*time.Second, 30*time.Second, false, testLogger())
+	result := p.Execute(context.Background(), &core.HookInput{})
+	if result.Decision != core.BlockSoft {
+		t.Fatalf("expected BlockSoft, got %s", result.Decision)
+	}
+	if len(result.ModifiedContent) != 0 {
+		t.Fatal("the merge must NOT carry a BlockSoft hook's ModifiedContent into the aggregate")
+	}
+	if result.CarriesRedaction() {
+		t.Fatal("a BlockSoft hook's ModifiedContent is not carried, so CarriesRedaction must be false (fold-to-block fail-safe)")
 	}
 }

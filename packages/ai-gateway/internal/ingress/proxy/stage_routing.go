@@ -177,8 +177,9 @@ func (st routingStage) run() bool {
 	if s.resolved.BodyFormat == provcore.FormatOpenAIResponses &&
 		len(routeResult.Targets) > 0 &&
 		h.deps.CanonicalBridge != nil {
-		targetFormat := provcore.Format(routeResult.Targets[0].AdapterType)
-		if !h.deps.CanonicalBridge.TargetNativelyServesResponsesAPI(targetFormat) {
+		primary := routeResult.Targets[0]
+		targetFormat := provcore.Format(primary.AdapterType)
+		if !h.deps.CanonicalBridge.ServesResponses(targetFormat, primary.ServesResponsesAPI) {
 			if rej := validateResponsesIngressForCrossFormat(s.body); rej != nil {
 				h.writeResponsesFeatureRejection(s.w, s.rec, rej)
 				return false
@@ -212,7 +213,12 @@ func (h *Handler) resolveNoMatchPassthrough(ctx context.Context, requestedModel 
 		}
 	}
 
-	model, err := h.deps.Models.GetModelByCode(ctx, requestedModel)
+	// Resolve by code OR alias: a client may address a model by an
+	// admin-configured alias with no routing rule, which must still route to
+	// the model (the model's ProviderModelID then reaches the wire, and the
+	// passthrough body rewrite swaps the alias for it). O(1) from the
+	// in-memory index — no per-request DB read.
+	model, err := h.deps.Models.GetModelByCodeOrAlias(ctx, requestedModel)
 	if err != nil || model == nil {
 		return nil, &routingFallbackError{
 			status:  http.StatusNotFound,

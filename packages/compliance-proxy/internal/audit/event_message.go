@@ -125,6 +125,8 @@ func toMessage(e AuditEvent, thingID, thingName string) mq.TrafficEventMessage {
 	msg.UpstreamTotalMs = e.UpstreamTotalMs
 	msg.RequestHooksMs = e.RequestHooksMs
 	msg.ResponseHooksMs = e.ResponseHooksMs
+	msg.RequestHooksUs = e.RequestHooksUs
+	msg.ResponseHooksUs = e.ResponseHooksUs
 	if len(e.LatencyBreakdown) > 0 {
 		msg.LatencyBreakdown = e.LatencyBreakdown
 	}

@@ -22,24 +22,16 @@ import { useMutation } from '@/hooks/useMutation';
 import { SEVERITY_OPTIONS } from './severityOptions';
 import styles from './RulePackCreatePage.module.css';
 import {
+  DEFAULT_RULES_JSON,
   draftsToRules,
   emptyRuleDraft,
+  isValidPackName,
+  isValidPackVersion,
   parseRules,
   rulesToDrafts,
   serializeRules,
   type RuleDraft,
 } from './rulePackRules';
-
-const DEFAULT_RULES_JSON = serializeRules([
-  {
-    ruleId: 'example-email',
-    category: 'pii',
-    severity: 'hard',
-    pattern: '[\\w.+-]+@[\\w-]+\\.[\\w.-]+',
-    description: 'Blocks email addresses',
-    labels: ['pii:email'],
-  },
-]);
 
 export function RulePackCreatePage() {
   const { t } = useTranslation();
@@ -59,6 +51,18 @@ export function RulePackCreatePage() {
   const parsedForm = useMemo(() => draftsToRules(ruleDrafts), [ruleDrafts]);
   const rulesValidation = rulesMode === 'json' ? parsedJson : parsedForm;
 
+  // Field-level format validation mirroring the backend contract. Only
+  // surfaced once the field is non-empty so the form does not shout at an
+  // untouched input; the empty case is covered by the required-field checks.
+  const nameError =
+    name.trim() !== '' && !isValidPackName(name.trim())
+      ? t('pages:hooks.rulePacks.createNameInvalid', 'Use "<namespace>/<short-name>" (lowercase), e.g. acme/pii-rules.')
+      : undefined;
+  const versionError =
+    version.trim() !== '' && !isValidPackVersion(version.trim())
+      ? t('pages:hooks.rulePacks.createVersionInvalid', 'Use a v-prefixed semantic version, e.g. v1.0.0.')
+      : undefined;
+
   const { mutate: createPack, loading: creating } = useMutation<RulePackCreateInput, RulePack>(
     (body) => rulePacksApi.create(body),
     {
@@ -74,8 +78,16 @@ export function RulePackCreatePage() {
       setFormError(t('pages:hooks.rulePacks.createNameRequired', 'Name is required'));
       return;
     }
+    if (nameError) {
+      setFormError(nameError);
+      return;
+    }
     if (version.trim() === '') {
       setFormError(t('pages:hooks.rulePacks.createVersionRequired', 'Version is required'));
+      return;
+    }
+    if (versionError) {
+      setFormError(versionError);
       return;
     }
     if (maintainer.trim() === '') {
@@ -141,6 +153,8 @@ export function RulePackCreatePage() {
     name.trim() !== '' &&
     version.trim() !== '' &&
     maintainer.trim() !== '' &&
+    nameError === undefined &&
+    versionError === undefined &&
     rulesValidation.rules !== null &&
     rulesValidation.error === null;
 
@@ -160,10 +174,15 @@ export function RulePackCreatePage() {
         <form onSubmit={onFormSubmit}>
           <Stack gap="md">
           <div className={styles.row}>
-            <FormField label={t('pages:hooks.rulePacks.colName', 'Name')} required>
+            <FormField
+              label={t('pages:hooks.rulePacks.colName', 'Name')}
+              required
+              error={nameError}
+              helpText={t('pages:hooks.rulePacks.createNameHelp', 'Format: <namespace>/<short-name> (lowercase), e.g. acme/pii-rules.')}
+            >
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('pages:rulePacks.slugPlaceholder')} />
             </FormField>
-            <FormField label={t('pages:hooks.rulePacks.colVersion', 'Version')} required>
+            <FormField label={t('pages:hooks.rulePacks.colVersion', 'Version')} required error={versionError}>
               <Input value={version} onChange={(e) => setVersion(e.target.value)} placeholder={t('pages:rulePacks.versionPlaceholder')} />
             </FormField>
           </div>

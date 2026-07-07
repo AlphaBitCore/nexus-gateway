@@ -36,47 +36,60 @@ func egressTarget(adapter string) routingcore.RoutingTarget {
 // TestEgressReshapeNonStream_RoutesByIngressShape pins that the reshape is
 // driven by the ingress shape A, identity for OpenAI-family, with the
 // /v1/responses native-passthrough exception — independent of the target B.
+// responses-shape upstream body ({"object":"response"}) — what a genuine
+// /v1/responses upstream returns; the content classifier forwards it verbatim.
+const egressResponsesBody = `{"object":"response","id":"resp_x","output":[]}`
+
 func TestEgressReshapeNonStream_RoutesByIngressShape(t *testing.T) {
 	cases := []struct {
 		name         string
 		wire         typology.WireShape
 		body         provcore.Format
+		inBody       string // upstream body; "" → egressCanonicalBody (chat.completion)
 		target       routingcore.RoutingTarget
 		wantReshaped bool // expect ResponseCanonicalToIngress invoked
 		wantFormat   provcore.Format
+		wantVerbatim string // when not reshaped, the exact body the caller must receive
 	}{
 		// OpenAI-family ingress: canonical already IS the caller's shape → identity, no call.
-		{"openai-chat identity", typology.WireShapeOpenAIChat, provcore.FormatOpenAI, egressTarget("anthropic"), false, ""},
+		{"openai-chat identity", typology.WireShapeOpenAIChat, provcore.FormatOpenAI, "", egressTarget("anthropic"), false, "", egressCanonicalBody},
 		// Anthropic /v1/messages → MUST reshape to anthropic, for BOTH native and cross targets.
-		{"anthropic native", typology.WireShapeAnthropicMessages, provcore.FormatAnthropic, egressTarget("anthropic"), true, provcore.FormatAnthropic},
-		{"anthropic cross→openai", typology.WireShapeAnthropicMessages, provcore.FormatAnthropic, egressTarget("openai"), true, provcore.FormatAnthropic},
+		{"anthropic native", typology.WireShapeAnthropicMessages, provcore.FormatAnthropic, "", egressTarget("anthropic"), true, provcore.FormatAnthropic, ""},
+		{"anthropic cross→openai", typology.WireShapeAnthropicMessages, provcore.FormatAnthropic, "", egressTarget("openai"), true, provcore.FormatAnthropic, ""},
 		// Gemini /v1beta → MUST reshape to gemini, native and cross.
-		{"gemini native", typology.WireShapeGeminiGenerateContent, provcore.FormatGemini, egressTarget("gemini"), true, provcore.FormatGemini},
-		{"gemini cross→openai", typology.WireShapeGeminiGenerateContent, provcore.FormatGemini, egressTarget("openai"), true, provcore.FormatGemini},
-		// /v1/responses: native passthrough (openai target serves responses) → no reshape;
-		// cross-format → reshape to Responses output[].
-		{"responses native passthrough", typology.WireShapeOpenAIResponses, provcore.FormatOpenAIResponses, egressTarget("openai"), false, ""},
-		{"responses cross→anthropic", typology.WireShapeOpenAIResponses, provcore.FormatOpenAIResponses, egressTarget("anthropic"), true, provcore.FormatOpenAIResponses},
+		{"gemini native", typology.WireShapeGeminiGenerateContent, provcore.FormatGemini, "", egressTarget("gemini"), true, provcore.FormatGemini, ""},
+		{"gemini cross→openai", typology.WireShapeGeminiGenerateContent, provcore.FormatGemini, "", egressTarget("openai"), true, provcore.FormatGemini, ""},
+		// /v1/responses content-driven: a Responses-shape body is verbatim (zero-loss
+		// for built-in tools), independent of the target Format.
+		{"responses body verbatim (openai target)", typology.WireShapeOpenAIResponses, provcore.FormatOpenAIResponses, egressResponsesBody, egressTarget("openai"), false, "", egressResponsesBody},
+		// A chat.completion body on a /v1/responses ingress is re-encoded to the
+		// Responses output[] grammar — even when the target is the "native" openai
+		// adapter (bulletproof: a chat-shaped reply never leaks to a Responses client).
+		{"responses chat-upstream re-encode (openai target)", typology.WireShapeOpenAIResponses, provcore.FormatOpenAIResponses, "", egressTarget("openai"), true, provcore.FormatOpenAIResponses, ""},
+		{"responses cross→anthropic", typology.WireShapeOpenAIResponses, provcore.FormatOpenAIResponses, "", egressTarget("anthropic"), true, provcore.FormatOpenAIResponses, ""},
 		// Non-OpenAI embeddings ingress → embeddings reshape path (chat spy NOT
 		// invoked; the embeddings re-encoder handles canonical→ingress).
-		{"gemini embeddings", typology.WireShapeGeminiEmbedContent, provcore.FormatGemini, egressTarget("openai"), false, ""},
+		{"gemini embeddings", typology.WireShapeGeminiEmbedContent, provcore.FormatGemini, "", egressTarget("openai"), false, "", egressCanonicalBody},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var called bool
 			var gotFormat provcore.Format
 			fb := &fakeBridge{
-				targetNativelyServesResponsesAPI: func(target provcore.Format) bool { return target == provcore.FormatOpenAI },
 				responseCanonicalToIngress: func(ingress provcore.Format, canonical []byte) ([]byte, error) {
 					called = true
 					gotFormat = ingress
 					return []byte(`{"reshaped_to":"` + string(ingress) + `"}`), nil
 				},
 			}
+			inBody := tc.inBody
+			if inBody == "" {
+				inBody = egressCanonicalBody
+			}
 			h := NewHandler(&Deps{CanonicalBridge: fb})
 			out, err := h.egressReshapeNonStream(
 				Ingress{WireShape: tc.wire, BodyFormat: tc.body},
-				tc.target, []byte(egressCanonicalBody))
+				tc.target, []byte(inBody))
 			if err != nil {
 				t.Fatalf("egressReshapeNonStream: %v", err)
 			}
@@ -90,10 +103,28 @@ func TestEgressReshapeNonStream_RoutesByIngressShape(t *testing.T) {
 				if !bytes.Contains(out, []byte(`"reshaped_to":"`+string(tc.wantFormat)+`"`)) {
 					t.Fatalf("reshaped output not returned to caller; got %s", out)
 				}
-			} else if !bytes.Equal(out, []byte(egressCanonicalBody)) {
-				t.Fatalf("identity path must return the canonical body verbatim; got %s", out)
+			} else if !bytes.Equal(out, []byte(tc.wantVerbatim)) {
+				t.Fatalf("identity/verbatim path must return the body unchanged; got %s want %s", out, tc.wantVerbatim)
 			}
 		})
+	}
+}
+
+// TestEgressReshapeNonStream_FailsClosedOnUnclassifiable proves the content
+// classifier refuses to forward an unclassifiable /v1/responses upstream body
+// verbatim — it returns an error so the handler can surface a 502 rather than
+// leaking a garbage / wrong-shape payload to a Responses client.
+func TestEgressReshapeNonStream_FailsClosedOnUnclassifiable(t *testing.T) {
+	fb := &fakeBridge{responseCanonicalToIngress: func(provcore.Format, []byte) ([]byte, error) {
+		t.Fatal("reshape must not be invoked on an unclassifiable body")
+		return nil, nil
+	}}
+	h := NewHandler(&Deps{CanonicalBridge: fb})
+	out, err := h.egressReshapeNonStream(
+		Ingress{WireShape: typology.WireShapeOpenAIResponses, BodyFormat: provcore.FormatOpenAIResponses},
+		egressTarget("openai"), []byte(`{"unexpected":"garbage"}`))
+	if err == nil {
+		t.Fatalf("unclassifiable body must fail closed; got out=%s", out)
 	}
 }
 

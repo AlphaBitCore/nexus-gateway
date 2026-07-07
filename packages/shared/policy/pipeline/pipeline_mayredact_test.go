@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -111,5 +113,113 @@ func TestPipeline_MayRedact_NilConfigSkipped(t *testing.T) {
 	p := newTestPipeline([]boundHook{{hook: &stubHook{decision: core.Approve}, config: nil}})
 	if p.MayRedact() || p.MayBlock() {
 		t.Error("nil-config hook must report neither redact nor block")
+	}
+}
+
+// escalatableHook is a test double for a hook whose runtime decision can exceed
+// its declarative onMatch ceiling (the webhook-forward shape). exceed controls
+// whether it advertises that capability.
+type escalatableHook struct {
+	core.AnyEndpointAnyModality
+	exceed  bool
+	execErr error
+}
+
+func (h *escalatableHook) Execute(context.Context, *core.HookInput) (*core.HookResult, error) {
+	if h.execErr != nil {
+		return nil, h.execErr
+	}
+	return &core.HookResult{Decision: core.Approve}, nil
+}
+
+func (h *escalatableHook) MayExceedOnMatch() bool { return h.exceed }
+
+// malformedOnMatchCfg returns a config whose onMatch.action is an unknown value,
+// so core.ParseOnMatch returns an error. Mirrors a misconfigured hook row.
+func malformedOnMatchCfg() map[string]any {
+	return map[string]any{"onMatch": map[string]any{"action": "bogus-not-an-action"}}
+}
+
+// TestPipeline_MayRedact_MalformedOnMatchEnforces covers MEDIUM-2: a hook whose
+// onMatch cannot be parsed must be treated as enforcing (both block- and
+// redact-capable) so it routes to buffer rather than leaking onto the live path.
+// This mirrors hookIsEnforcing, which already over-routes the same parse error.
+func TestPipeline_MayRedact_MalformedOnMatchEnforces(t *testing.T) {
+	p := newTestPipeline([]boundHook{{
+		hook:   &stubHook{decision: core.Approve},
+		config: &core.HookConfig{ID: "bad", Name: "bad", Config: malformedOnMatchCfg()},
+	}})
+	if !p.MayBlock() {
+		t.Error("MayBlock()=false for a malformed-onMatch hook; it would stream instead of routing to buffer")
+	}
+	if !p.MayRedact() {
+		t.Error("MayRedact()=false for a malformed-onMatch hook; it would stream instead of routing to buffer")
+	}
+}
+
+// TestPipeline_MayRedact_RuntimeEscalatable covers HIGH-1: a hook that can exceed
+// its declared onMatch ceiling at runtime (webhook-forward, which reconciles a
+// remote reply against the ceiling via the strictest of the two) must be treated
+// as both block- and redact-capable even when its declared action is approve, so
+// its runtime enforcement is never under-routed onto the audit-only live path.
+func TestPipeline_MayRedact_RuntimeEscalatable(t *testing.T) {
+	// Declared action is approve (non-enforcing), but the hook advertises that it
+	// can exceed that ceiling at runtime.
+	p := newTestPipeline([]boundHook{{
+		hook:   &escalatableHook{exceed: true},
+		config: &core.HookConfig{ID: "webhook", Name: "webhook", Config: onMatchCfg("approve")},
+	}})
+	if !p.MayBlock() {
+		t.Error("MayBlock()=false for a runtime-escalatable approve-ceiling hook; runtime block would be dropped onto the live path")
+	}
+	if !p.MayRedact() {
+		t.Error("MayRedact()=false for a runtime-escalatable approve-ceiling hook; runtime redact would be dropped onto the live path")
+	}
+}
+
+// TestPipeline_MayRedact_EscalatableOptOut guards the negative side of HIGH-1: a
+// hook that implements core.RuntimeEscalatable but reports false (cannot exceed
+// its ceiling) is governed by its declared action like any ordinary hook — the
+// over-route fires only for genuinely escalatable hooks, not for every
+// implementer of the interface.
+func TestPipeline_MayRedact_EscalatableOptOut(t *testing.T) {
+	p := newTestPipeline([]boundHook{{
+		hook:   &escalatableHook{exceed: false},
+		config: &core.HookConfig{ID: "h", Name: "h", Config: onMatchCfg("approve")},
+	}})
+	if p.MayBlock() || p.MayRedact() {
+		t.Error("a non-escalating (exceed=false) approve-ceiling hook must enforce neither block nor redact")
+	}
+}
+
+// TestPipeline_FailClosedOnError_RuntimeEscalatable covers the error-posture variant
+// (review 17-LOW-1): a runtime-escalatable hook with an approve ceiling that ERRORS
+// under strict posture must fail closed (RejectHard), because its runtime decision
+// could have exceeded the declared ceiling — mirroring the routing predicate so the
+// strict appliance does not fail open on the very hook whose enforcement it cannot see.
+func TestPipeline_FailClosedOnError_RuntimeEscalatable(t *testing.T) {
+	p := newTestPipeline([]boundHook{{
+		hook:   &escalatableHook{exceed: true, execErr: errors.New("transient webhook failure")},
+		config: &core.HookConfig{ID: "webhook", Name: "webhook", Config: onMatchCfg("approve")},
+	}})
+	p.SetStrictFailClosed(true)
+	res := p.Execute(context.Background(), &core.HookInput{Stage: "response"})
+	if res.Decision != core.RejectHard {
+		t.Fatalf("a strict escalatable hook's transient error must fail closed (RejectHard), got %s", res.Decision)
+	}
+}
+
+// TestPipeline_FailClosedOnError_NonEscalatable_StaysOpen is the negative side: a
+// non-escalatable approve-ceiling hook erroring under strict stays fail-open — its
+// declared ceiling means a transient error cannot have leaked any enforcement.
+func TestPipeline_FailClosedOnError_NonEscalatable_StaysOpen(t *testing.T) {
+	p := newTestPipeline([]boundHook{{
+		hook:   &escalatableHook{exceed: false, execErr: errors.New("transient failure")},
+		config: &core.HookConfig{ID: "h", Name: "h", Config: onMatchCfg("approve")},
+	}})
+	p.SetStrictFailClosed(true)
+	res := p.Execute(context.Background(), &core.HookInput{Stage: "response"})
+	if res.Decision == core.RejectHard {
+		t.Fatalf("a non-escalatable approve-ceiling hook's error must NOT fail closed, got %s", res.Decision)
 	}
 }

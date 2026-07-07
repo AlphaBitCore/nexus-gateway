@@ -93,6 +93,8 @@ var trafficEventColumns = []string{
 	"gateway_cache_l2_entry_key",
 	"endpoint_type",
 	"ingress_format",
+	// Microsecond hook aggregates (appended last; siblings of *_hooks_ms).
+	"request_hooks_us", "response_hooks_us",
 }
 
 // trafficEventRowValues returns the column values for one traffic_event row in
@@ -174,6 +176,7 @@ func appendTrafficEventRow(dst []any, e TrafficEventMessage) []any {
 		l2EntryKey,
 		stripNul(e.EndpointType),
 		stripNul(e.IngressFormat),
+		e.RequestHooksUs, e.ResponseHooksUs,
 	)
 }
 

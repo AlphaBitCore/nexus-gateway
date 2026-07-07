@@ -22,9 +22,10 @@ type API interface {
 	// embeddings or model listing keep the legacy OpenAI-only
 	// translation rule.
 	EndpointRoutable(ep typology.WireShape, ingress, target provcore.Format) bool
-	// TargetNativelyServesResponsesAPI reports whether a target
-	// provider wire format natively serves /v1/responses.
-	TargetNativelyServesResponsesAPI(target provcore.Format) bool
+	// ServesResponses reports whether the resolved target serves the
+	// OpenAI /v1/responses wire end-to-end. override is the per-provider
+	// downgrade-only signal (nil = adapter RequestShapes default).
+	ServesResponses(target provcore.Format, override *bool) bool
 	// IngressChatToCanonical converts the client ingress JSON to
 	// canonical OpenAI chat.completions request JSON.
 	IngressChatToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error)

@@ -70,22 +70,40 @@ type AuditConfig struct {
 	// one. 0 falls back to the 10000 default. Env: AI_GATEWAY_AUDIT_MAX_QUEUED_RECORDS.
 	MaxQueuedRecords int `yaml:"maxQueuedRecords"`
 
+	// MemMaxBytes bounds the BYTES the in-memory audit queue may pin (captured
+	// request/response bodies), the memory half of the bounded audit queue: on a
+	// full budget the no-loss modes back-pressure the request path, the lossy
+	// modes shed with a counted drop. Semantics mirror NEXUS_EVENTS_MAX_BYTES on
+	// the Hub side exactly: empty or "auto" (default) auto-sizes to ~15% of the
+	// box's available RAM (2 GiB fallback where /proc/meminfo is unreadable); an
+	// explicit human size ("4GB", "2048MB", raw bytes) pins it — raise it on a
+	// memory-rich box to absorb bigger bursts before throttling, lower it on a
+	// constrained one. Env: AI_GATEWAY_AUDIT_MEM_MAX_BYTES.
+	MemMaxBytes string `yaml:"memMaxBytes"`
+
 	// LossMode is the audit overflow policy. Durable audit is a product promise +
-	// a compliance requirement, so the DEFAULT is "block" — no-loss back-pressure:
-	// when the in-heap buffer is full the gateway slows the request path until the
-	// audit pipeline drains, never dropping a record (NATS disk storage is the
-	// burst buffer). The lossy modes are an explicit opt-out for callers that do
-	// NOT need compliance audit and prefer raw throughput:
-	//   - "block" (default): back-pressure, no loss.
+	// a compliance requirement, so the DEFAULT is "spillblock" — no-loss with the
+	// cheap on-disk spool as the PRIMARY overflow buffer: when the in-heap buffer
+	// fills, records go to the durable NDJSON spool first (batched, off the publish
+	// worker), and the request path is back-pressured only when that large spool is
+	// ALSO saturated — never dropping a record. The lossy modes are an explicit
+	// opt-out for callers that do NOT need compliance audit and prefer raw throughput:
+	//   - "spillblock" (default): spool-first, back-pressure the request path only when
+	//               the spool ALSO saturates — and then it PARKS (never drops): the
+	//               single spill worker holds the batch and retries while the recovery
+	//               sweeper drains the spool and frees space, so ingest self-throttles
+	//               to the recovery-drain rate. Genuinely no-loss whenever a spool is
+	//               wired (the only drops are a real non-quota disk error or shutdown);
+	//               if no spool is wired (empty SpoolDir or a spool-dir creation failure)
+	//               it downgrades to "block" at startup so it never silently drops.
+	//   - "block":  back-pressure at the in-heap queue (never touches the spool), no
+	//               loss and no spool dependency — the stricter no-loss variant.
 	//   - "spill":  async durable NDJSON spill off the request path; bounded drop
 	//               only if the spill is also saturated.
-	//   - "spillblock": like "spill", but when the spill channel is also saturated
-	//               it back-pressures the request path (bounded by backpressureMaxWait
-	//               → durable spill) instead of dropping — lossless up to disk-write
-	//               success, throttling ingest to the disk rate under overload.
 	//   - "drop":   counted bounded drop on overflow; max throughput, lossy.
-	// Empty / unrecognised → "block" (audit must not silently turn lossy from a
-	// config typo). Env: AI_GATEWAY_AUDIT_LOSS_MODE.
+	// Empty / unrecognised → "spillblock" (audit must not silently turn lossy from a
+	// config typo; spillblock is no-loss whenever a spool is wired, else downgrades to
+	// block). Env: AI_GATEWAY_AUDIT_LOSS_MODE.
 	LossMode string `yaml:"lossMode"`
 
 	// Compress enables end-to-end zstd compression of large captured bodies on

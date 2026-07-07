@@ -118,6 +118,151 @@ func TestRunRequestHooks_Modify_RewritesBody(t *testing.T) {
 	}
 }
 
+// newBlockSoftPlusRedactRequestHookCache is the REQUEST-stage co-firing analog of
+// newBlockSoftPlusRedactResponseHookCache: a PII-redact hook (inflight+storage redact)
+// AND an always-on soft-block hook, both at Stage "request". The pipeline aggregator
+// ranks BlockSoft above Modify (StrictestDecision), so the resolved Decision is
+// BLOCK_SOFT while the redact's ModifiedContent/TransformSpans ride along — exactly the
+// co-firing shape that gated on Decision==Modify would have forwarded UNREDACTED upstream
+// before #13. softBlockHook is the package-level impl shared with the response harness.
+func newBlockSoftPlusRedactRequestHookCache(t *testing.T) *compliance.HookConfigCache {
+	t.Helper()
+	reg := builtins.Registry.Clone()
+	reg.Register("softblock-req-hook", func(_ *goHooks.HookConfig) (goHooks.Hook, error) {
+		return softBlockHook{}, nil
+	})
+	reg.Freeze()
+	loader := func(_ context.Context) ([]goHooks.HookConfig, error) {
+		return []goHooks.HookConfig{
+			{
+				ID: "pii-req-1", ImplementationID: "pii-detector", Name: "pii-detect-request",
+				Priority: 10, Enabled: true, Stage: "request", FailBehavior: "fail-closed", TimeoutMs: 1000,
+				ApplicableIngress: []string{"ALL"},
+				Config: map[string]any{
+					"onMatch": map[string]any{"inflightAction": "redact", "storageAction": "redact"},
+					"patternDefinitions": []any{
+						map[string]any{"id": "email", "regex": `[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}`, "flags": "i", "replacement": "[REDACTED_EMAIL]"},
+					},
+				},
+			},
+			{
+				ID: "softblock-req-1", ImplementationID: "softblock-req-hook", Name: "softblock-request",
+				Priority: 5, Enabled: true, Stage: "request", FailBehavior: "fail-closed", TimeoutMs: 1000,
+				ApplicableIngress: []string{"ALL"}, Config: map[string]any{},
+			},
+		}, nil
+	}
+	cache := compliance.NewHookConfigCache(loader, reg, 0, slog.Default())
+	if err := cache.Start(context.Background()); err != nil {
+		t.Fatalf("cache.Start: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	return cache
+}
+
+// TestRunRequestHooks_BlockSoftMaskedRedact_RedactsRequestBody pins #13 leak #4 (ai-gateway
+// request side): when a redact hook co-fires with a soft-block hook, the aggregate Decision
+// is BLOCK_SOFT, so the pre-#13 gate `Decision==Modify` skipped the rewrite and forwarded the
+// ORIGINAL request body upstream. The gate now keys on CarriesRedaction(), so the body is
+// redacted; the audit DISPOSITION is stamped Action=redact (not the BlockSoft ceiling) and the
+// redacted wire copy reaches RequestBodyRedacted. This asserts the unit-level contract; the
+// end-to-end "upstream never sees the original" evidence is in stage_hooks_test.go.
+func TestRunRequestHooks_BlockSoftMaskedRedact_RedactsRequestBody(t *testing.T) {
+	cache := newBlockSoftPlusRedactRequestHookCache(t)
+	h := &Handler{deps: &Deps{
+		HookConfigCache: cache,
+		TrafficAdapter:  &openai.Adapter{},
+		Logger:          slog.Default(),
+	}}
+
+	body := []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"ping alice@example.com"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	auditRec := &audit.Record{RequestID: "req-cofire"}
+
+	rewritten, result, rejected := h.runRequestHooks(req, rec, auditRec, "req-cofire", body, routingcore.RoutingTarget{}, openAIIngress, nil, slog.Default())
+	if rejected {
+		t.Fatalf("co-firing soft-block+redact must redact-and-forward, not reject; response=%s", rec.Body.String())
+	}
+	if rewritten == nil {
+		t.Fatal("expected a redacted request body; got nil — the co-firing BlockSoft skipped the rewrite (leak)")
+	}
+	// The aggregate decision is the soft-block ceiling, but the redact still applied.
+	if result == nil || result.Decision != goHooks.BlockSoft {
+		t.Fatalf("aggregate Decision = %v, want BLOCK_SOFT (soft-block ranks above the redact)", result)
+	}
+	got := gjson.GetBytes(rewritten, "messages.0.content").String()
+	if got != "ping [REDACTED_EMAIL]" {
+		t.Errorf("forwarded body content = %q, want %q (email must be masked)", got, "ping [REDACTED_EMAIL]")
+	}
+	if strings.Contains(string(rewritten), "alice@example.com") {
+		t.Errorf("forwarded body still carries the original email: %s", rewritten)
+	}
+	if !auditRec.HookRewritten {
+		t.Error("audit.HookRewritten should be true on the applied co-firing redact")
+	}
+	// DISPOSITION action is redact even though the aggregate Decision is BLOCK_SOFT.
+	if auditRec.RequestAction != goHooks.ActionRedact {
+		t.Errorf("audit.RequestAction = %q, want %q (an applied rewrite is a redact, not the BlockSoft ceiling)", auditRec.RequestAction, goHooks.ActionRedact)
+	}
+	if auditRec.HookDecision != string(goHooks.BlockSoft) {
+		t.Errorf("audit.HookDecision = %q, want %q", auditRec.HookDecision, string(goHooks.BlockSoft))
+	}
+	if string(auditRec.RequestBodyRedacted) != string(rewritten) {
+		t.Errorf("audit.RequestBodyRedacted = %q, want the redacted wire copy", auditRec.RequestBodyRedacted)
+	}
+}
+
+// TestRunRequestHooks_StandaloneBlockSoft_Refuses pins the #15 fold-to-block fix on the
+// ai-gateway request stage: a standalone soft-block (no co-firing redact) carries no
+// applicable redaction, so ActionFromDecision folds it to the block action and the request
+// is REFUSED (403, rejected=true), never forwarded. Before the fix the refuse arm keyed on
+// Decision==RejectHard only, so a BlockSoft fell through and forwarded the original body.
+func TestRunRequestHooks_StandaloneBlockSoft_Refuses(t *testing.T) {
+	reg := builtins.Registry.Clone()
+	reg.Register("softblock-req-hook", func(_ *goHooks.HookConfig) (goHooks.Hook, error) {
+		return softBlockHook{}, nil
+	})
+	reg.Freeze()
+	loader := func(_ context.Context) ([]goHooks.HookConfig, error) {
+		return []goHooks.HookConfig{
+			{
+				ID: "softblock-req-1", ImplementationID: "softblock-req-hook", Name: "softblock-request",
+				Priority: 5, Enabled: true, Stage: "request", FailBehavior: "fail-closed", TimeoutMs: 1000,
+				ApplicableIngress: []string{"ALL"}, Config: map[string]any{},
+			},
+		}, nil
+	}
+	cache := compliance.NewHookConfigCache(loader, reg, 0, slog.Default())
+	if err := cache.Start(context.Background()); err != nil {
+		t.Fatalf("cache.Start: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	h := &Handler{deps: &Deps{HookConfigCache: cache, TrafficAdapter: &openai.Adapter{}, Logger: slog.Default()}}
+	body := []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"flag me"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	auditRec := &audit.Record{RequestID: "req-standalone-soft"}
+
+	rewritten, result, rejected := h.runRequestHooks(req, rec, auditRec, "req-standalone-soft", body, routingcore.RoutingTarget{}, openAIIngress, nil, slog.Default())
+	if !rejected {
+		t.Fatalf("standalone request BlockSoft must be refused (fold-to-block), got rejected=false")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if rewritten != nil {
+		t.Fatalf("a refused request must not forward a body, got %q", rewritten)
+	}
+	if result == nil || result.Decision != goHooks.BlockSoft {
+		t.Fatalf("aggregate Decision = %v, want BLOCK_SOFT", result)
+	}
+	if auditRec.RequestAction != goHooks.ActionBlock {
+		t.Errorf("audit.RequestAction = %q, want %q (BlockSoft folds to block)", auditRec.RequestAction, goHooks.ActionBlock)
+	}
+}
+
 func TestRunRequestHooks_NoHooks_ReturnsOriginalBody(t *testing.T) {
 	loader := func(_ context.Context) ([]goHooks.HookConfig, error) { return nil, nil }
 	cache := compliance.NewHookConfigCache(loader, builtins.Registry, 0, slog.Default())

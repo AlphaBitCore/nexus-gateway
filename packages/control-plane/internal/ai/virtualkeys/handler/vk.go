@@ -2,11 +2,13 @@ package virtualkey
 
 import (
 	"bytes"
+	"errors"
 	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
@@ -69,6 +71,24 @@ func (h *Handler) GetVirtualKey(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, vk)
+}
+
+// vkNameConflict maps a unique violation on one of the VirtualKey name
+// partial indexes (see tools/db-migrate/schema-extras.sql) to a caller-facing
+// message. Application VK names are unique fleet-wide; personal VK names are
+// unique per owner.
+func vkNameConflict(err error) (string, bool) {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return "", false
+	}
+	switch pgErr.ConstraintName {
+	case "VirtualKey_application_name_uniq":
+		return "An application virtual key with this name already exists", true
+	case "VirtualKey_personal_owner_name_uniq":
+		return "You already have a virtual key with this name", true
+	}
+	return "", false
 }
 
 func (h *Handler) CreateVirtualKey(c echo.Context) error {
@@ -151,6 +171,9 @@ func (h *Handler) CreateVirtualKey(c echo.Context) error {
 		VKStatus:                    vkStatus,
 	})
 	if err != nil {
+		if msg, ok := vkNameConflict(err); ok {
+			return c.JSON(http.StatusConflict, errJSON(msg, "duplicate_name", ""))
+		}
 		h.logger.Error("create virtual key", "error", err)
 		return internalServerError(c, "Internal server error")
 	}

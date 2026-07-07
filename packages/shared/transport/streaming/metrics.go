@@ -34,3 +34,35 @@ var modifyDegradedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 func RecordModifyDegraded(reason string) {
 	modifyDegradedTotal.WithLabelValues(reason).Inc()
 }
+
+// Bounded `cause` label values for modelAEscalationTotal.
+const (
+	// ModelAEscalationConfirmed: a prescan hit was confirmed as an enforcing
+	// (block/redact) action, so the Model A engine handed off to buffer-to-end
+	// redaction — the normal enforcement path.
+	ModelAEscalationConfirmed = "confirmed"
+	// ModelAEscalationMemoryPressure: the held buffer hit MaxBufferBytes while a
+	// content unit was still incomplete, so the engine escalated rather than flush
+	// it raw — a tuning signal (the stream out-grew the buffer ceiling), distinct
+	// from a real policy hit.
+	ModelAEscalationMemoryPressure = "memory_pressure"
+)
+
+// modelAEscalationTotal counts Model A streaming escalations split by CAUSE so an
+// operator can tell a real policy hit ("confirmed") apart from a buffer-ceiling
+// eviction ("memory_pressure") — the latter signals MaxBufferBytes may need raising
+// for that traffic. This is a log/metric dimension only: the cause is NOT persisted
+// on traffic_event (no schema add) and never reuses ResponseHookReasonCode (which the
+// canonical-buffer redaction overwrites). Shared across all three data planes; the
+// Prometheus job/instance labels distinguish which service emitted it.
+var modelAEscalationTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "nexus_streaming_modela_escalation_total",
+	Help: "Count of Model A streaming escalations, split by cause (confirmed enforcing hit vs memory-pressure buffer eviction).",
+}, []string{"cause"})
+
+// RecordModelAEscalation bumps the Model A escalation counter for the given cause
+// (use the ModelAEscalation* constants). Exported so both Model A substrates (the
+// ai-gateway canonical relay and the tlsbump wire path) record without re-registering.
+func RecordModelAEscalation(cause string) {
+	modelAEscalationTotal.WithLabelValues(cause).Inc()
+}

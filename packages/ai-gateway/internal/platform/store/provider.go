@@ -31,6 +31,12 @@ type Provider struct {
 	APIVersion  *string
 	Region      *string
 	Enabled     bool
+	// ServesResponsesAPI is the per-provider override for whether this
+	// upstream natively serves OpenAI /v1/responses. nil = use the adapter
+	// RequestShapes default; the bridge treats an explicit value as a
+	// downgrade-only signal (false forces canonical(chat); true cannot
+	// exceed the adapter's declared capability).
+	ServesResponsesAPI *bool
 }
 
 // Model represents a model record.
@@ -75,13 +81,13 @@ type Model struct {
 // GetProvider fetches a provider by ID.
 func (db *DB) GetProvider(ctx context.Context, id string) (*Provider, error) {
 	row := db.pool.QueryRow(ctx, `
-		SELECT id, name, "displayName", adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled
+		SELECT id, name, "displayName", adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, serves_responses_api
 		FROM "Provider"
 		WHERE id = $1
 	`, id)
 	var p Provider
 	err := row.Scan(&p.ID, &p.Name, &p.DisplayName, &p.AdapterType, &p.BaseURL,
-		&p.PathPrefix, &p.APIVersion, &p.Region, &p.Enabled)
+		&p.PathPrefix, &p.APIVersion, &p.Region, &p.Enabled, &p.ServesResponsesAPI)
 	if err != nil {
 		return nil, fmt.Errorf("store: get provider: %w", err)
 	}

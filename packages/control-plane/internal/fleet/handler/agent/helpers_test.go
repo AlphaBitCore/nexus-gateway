@@ -395,10 +395,11 @@ func makeDeviceAssignmentRow(now time.Time) []any {
 	}
 }
 
-// providerListCols mirrors ListProviders's data-query projection.
+// providerListCols mirrors ListProviders's data-query projection
+// (serves_responses_api sits between enabled and headers).
 var providerListCols = []string{
 	"id", "name", "displayName", "description", "adapter_type", "baseUrl",
-	"pathPrefix", "apiVersion", "region", "enabled", "headers",
+	"pathPrefix", "apiVersion", "region", "enabled", "serves_responses_api", "headers",
 	"createdAt", "updatedAt", "model_count",
 }
 
@@ -407,9 +408,10 @@ func makeProviderRow(now time.Time) []any {
 	desc := "primary provider"
 	apiVer := "2025-01-01"
 	region := "us-east-1"
+	serves := false
 	return []any{
 		"prov-1", "openai", &dn, &desc, "openai", "https://api.openai.com",
-		"/v1", &apiVer, &region, true, json.RawMessage(`{}`),
+		"/v1", &apiVer, &region, true, &serves, json.RawMessage(`{}`),
 		now, now, 5,
 	}
 }

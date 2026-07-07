@@ -32,3 +32,29 @@ func TestActionValid(t *testing.T) {
 		t.Fatal("unknown action must be invalid")
 	}
 }
+
+func TestCarriesRedaction(t *testing.T) {
+	cases := []struct {
+		name string
+		r    *CompliancePipelineResult
+		want bool
+	}{
+		{"nil", nil, false},
+		{"modify", &CompliancePipelineResult{Decision: Modify}, true},
+		// The BlockSoft branch now keys on RedactionApplicable (set by mergeResults),
+		// NOT raw span/content presence — so a co-firing redact masked by soft-block
+		// (flag true) carries, while a soft-block whose only spans are advisory/audit-
+		// only (flag false) does not, even if a ModifiedContent slice is present on the
+		// struct. This documents that the merge-computed flag is authoritative.
+		{"blocksoft-applicable", &CompliancePipelineResult{Decision: BlockSoft, RedactionApplicable: true}, true},
+		{"blocksoft-flag-false-ignores-raw-content", &CompliancePipelineResult{Decision: BlockSoft, ModifiedContent: []ContentBlock{{}}}, false},
+		{"blocksoft-without-redaction", &CompliancePipelineResult{Decision: BlockSoft}, false},
+		{"approve", &CompliancePipelineResult{Decision: Approve}, false},
+		{"rejecthard", &CompliancePipelineResult{Decision: RejectHard}, false},
+	}
+	for _, c := range cases {
+		if got := c.r.CarriesRedaction(); got != c.want {
+			t.Errorf("%s: CarriesRedaction()=%v want %v", c.name, got, c.want)
+		}
+	}
+}

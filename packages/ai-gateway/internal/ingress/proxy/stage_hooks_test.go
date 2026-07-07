@@ -127,6 +127,52 @@ func TestServeProxy_RequestHookModify_ForwardsRewrittenBodyUpstream(t *testing.T
 	}
 }
 
+// TestServeProxy_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream is the
+// end-to-end #13 leak-#4 regression: a redact hook co-firing with a soft-block hook
+// resolves to Decision=BLOCK_SOFT, which the pre-#13 `Decision==Modify` gate skipped —
+// forwarding the caller's ORIGINAL request body (PII intact) upstream. With the gate on
+// CarriesRedaction(), the upstream provider must receive the masked body and never the
+// original email.
+func TestServeProxy_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream(t *testing.T) {
+	var mu sync.Mutex
+	var upstreamGot []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		upstreamGot = b
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"id":"x","object":"chat.completion","model":"gpt-4o",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`))
+	}))
+	defer upstream.Close()
+
+	deps := makeOpenAIDeps(t, upstream.URL, newBlockSoftPlusRedactRequestHookCache(t))
+	h := NewHandler(deps).ServeProxy(Ingress{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+	})
+	w := httptest.NewRecorder()
+	h(w, freshChatRequest(t, `{"model":"gpt-4o","messages":[{"role":"user","content":"ping alice@example.com"}]}`))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s (co-firing soft-block+redact must redact-and-forward)", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	got := string(upstreamGot)
+	mu.Unlock()
+	if !strings.Contains(got, "[REDACTED_EMAIL]") {
+		t.Errorf("upstream body=%s want the redacted placeholder forwarded", got)
+	}
+	if strings.Contains(got, "alice@example.com") {
+		t.Errorf("upstream body=%s must NOT carry the original email (the co-firing BlockSoft leak)", got)
+	}
+}
+
 // TestRunRequestHooks_RewriteUnsupported_FailsClosed pins the degraded
 // Modify path: when the traffic adapter cannot reverse-encode
 // (ErrRewriteUnsupported) the request is rejected (fail CLOSED) rather than

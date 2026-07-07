@@ -26,10 +26,15 @@
 //	                                            via the separate error_envelope path)
 //	response.web_search_call.* / .file_search_call.* / .image_generation_call.* /
 //	response.mcp_call_arguments.* / .code_interpreter_call_code.* /
-//	response.computer_call.*                  → informational built-in tool events;
-//	                                            no canonical emission (these only fire
-//	                                            on same-shape passthrough, which uses
-//	                                            the raw byte copier, not this session)
+//	response.computer_call.*                  → built-in tool events; the canonical
+//	                                            chat waist cannot represent them, so
+//	                                            this Responses→canonical decoder
+//	                                            drops them. They are preserved only
+//	                                            on the verbatim passthrough lane
+//	                                            (responsesEgressSession copier),
+//	                                            which forwards the original frames;
+//	                                            this session runs on the lossy
+//	                                            cross-format / auto-upgrade decode.
 //
 // Unknown event types are logged once (slog WARN) and skipped — the
 // stream MUST never abort on a new event type the upstream introduces.
@@ -229,9 +234,9 @@ func (s *responsesStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 				NativeEvent: evType,
 			}, nil
 		default:
-			// Built-in tool events + unknown future events: silently drop
-			// from canonical emit (built-ins only fire on same-shape
-			// passthrough which doesn't go through this session). Log
+			// Built-in tool events + unknown future events: dropped from the
+			// canonical emit because the chat waist cannot carry them (they are
+			// preserved on the verbatim copier lane, not this lossy decode). Log
 			// unknowns once per stream so operators see drift early.
 			if !isBuiltinToolEvent(evType) {
 				unknownResponsesEventOnce.Do(func() {
@@ -261,9 +266,9 @@ func usagePtrOrNil(u provcore.Usage) *provcore.Usage {
 
 // isBuiltinToolEvent reports whether an event name belongs to one of the
 // OpenAI-native built-in tools (web_search, file_search, image_gen,
-// computer, mcp, code_interpreter). These fire only on same-shape
-// passthrough; the stream session is invoked only on the auto-upgrade /
-// cross-format paths, so seeing one here is a no-op (not an error).
+// computer, mcp, code_interpreter). On this lossy Responses→canonical decode
+// (cross-format / auto-upgrade) they have no canonical representation and are
+// dropped without a warning; the verbatim copier lane preserves them.
 func isBuiltinToolEvent(evType string) bool {
 	prefixes := []string{
 		"response.web_search_call.",

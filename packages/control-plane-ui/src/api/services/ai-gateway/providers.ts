@@ -49,6 +49,15 @@ export interface CreateProviderInput {
    */
   adapterType: string;
   enabled?: boolean;
+  /**
+   * Whether this provider's endpoint serves the OpenAI Responses API
+   * (`/v1/responses`). `null` (or omitted) = use the adapter type's default;
+   * `false` forces a downgrade to `/v1/chat/completions` for
+   * OpenAI-compatible endpoints that only implement chat completions.
+   * Downgrade-only — a `true` value cannot exceed the wire adapter's
+   * actual capabilities.
+   */
+  servesResponsesApi?: boolean | null;
   region?: string;
   apiVersion?: string;
   pathPrefix?: string;

@@ -17,9 +17,55 @@ function hookFields(r: HookExecutionRecord) {
   const reason = r.reason ?? r.Reason ?? '';
   const reasonCode = r.reasonCode ?? r.ReasonCode ?? '';
   const latencyMs = r.latencyMs ?? r.LatencyMs;
+  const latencyUs = r.latencyUs ?? r.LatencyUs;
   const order = r.order ?? r.Order ?? 0;
   const error = r.error ?? r.Error ?? '';
-  return { id, name, impl, decision, reason, reasonCode, latencyMs, order, error };
+  return { id, name, impl, decision, reason, reasonCode, latencyMs, latencyUs, order, error };
+}
+
+type HookFields = ReturnType<typeof hookFields>;
+type CollapsedHook = HookFields & { count: number; latencyMsSum?: number; latencyUsSum?: number };
+
+// formatLatency renders the most precise available value: microseconds when
+// present (hooks run at microsecond scale, so the millisecond value floors a
+// sub-millisecond hook to 0), otherwise the legacy millisecond value. Sub-ms
+// totals show as "210 µs"; larger ones as fractional milliseconds.
+function formatLatency(latencyMs?: number, latencyUs?: number): string | null {
+  if (latencyUs != null && latencyUs > 0) {
+    if (latencyUs < 1000) return `${latencyUs} µs`;
+    return `${(latencyUs / 1000).toFixed(latencyUs < 10000 ? 2 : 1)} ms`;
+  }
+  if (latencyMs != null) return `${latencyMs} ms`;
+  return null;
+}
+
+// collapseDuplicates folds repeated executions of the same hook (same id + impl)
+// into ONE entry carrying the execution count and the summed latency. The data
+// plane already emits one row per hook going forward, but historical rows
+// captured before that fix can list the same hook many times — a streamed
+// response was scanned at every checkpoint. Collapsing keeps the drawer readable
+// while still showing how many times the hook ran (×N) and the total time; the
+// latest scan's decision/reason win.
+function collapseDuplicates(items: HookFields[]): CollapsedHook[] {
+  const byKey = new Map<string, CollapsedHook>();
+  const order: string[] = [];
+  for (const it of items) {
+    const key = `${it.id}|${it.impl}|${it.name}`;
+    const cur = byKey.get(key);
+    if (cur) {
+      cur.count += 1;
+      if (it.latencyMs != null) cur.latencyMsSum = (cur.latencyMsSum ?? 0) + it.latencyMs;
+      if (it.latencyUs != null) cur.latencyUsSum = (cur.latencyUsSum ?? 0) + it.latencyUs;
+      cur.decision = it.decision;
+      cur.reason = it.reason;
+      cur.reasonCode = it.reasonCode;
+      if (it.error) cur.error = it.error;
+    } else {
+      byKey.set(key, { ...it, count: 1, latencyMsSum: it.latencyMs, latencyUsSum: it.latencyUs });
+      order.push(key);
+    }
+  }
+  return order.map((k) => byKey.get(k)!);
 }
 
 export function PipelineTimeline({
@@ -39,9 +85,9 @@ export function PipelineTimeline({
       </div>
     );
   }
-  const ordered = [...rows]
-    .map((r) => ({ raw: r, ...hookFields(r) }))
-    .sort((a, b) => a.order - b.order);
+  const ordered = collapseDuplicates(
+    [...rows].map((r) => hookFields(r)).sort((a, b) => a.order - b.order),
+  );
   return (
     <div>
       <div className={css.detailLabel}>{label} ({ordered.length})</div>
@@ -49,6 +95,7 @@ export function PipelineTimeline({
         {ordered.map((r, idx) => {
           const primary = r.name || r.id || 'hook';
           const showId = !!r.name && r.id;
+          const latency = formatLatency(r.latencyMsSum, r.latencyUsSum);
           return (
             <div
               key={`${r.id || r.name || idx}`}
@@ -57,6 +104,9 @@ export function PipelineTimeline({
               <Stack direction="horizontal" justify="between" align="center" gap="sm">
                 <Stack direction="horizontal" gap="sm" align="center">
                   <strong>{primary}</strong>
+                  {r.count > 1 && (
+                    <span className={css.hookImplText}>×{r.count}</span>
+                  )}
                   {r.impl && (
                     <span className={css.hookImplText}>
                       {r.impl}
@@ -70,11 +120,11 @@ export function PipelineTimeline({
                   id: <span className={css.mono}>{r.id}</span>
                 </div>
               )}
-              {(r.reason || r.reasonCode || r.latencyMs != null || r.error) && (
+              {(r.reason || r.reasonCode || latency || r.error) && (
                 <div className={css.hookDetailText}>
                   {r.reasonCode && <span style={{ marginRight: 'var(--g-space-2)' }}>[{r.reasonCode}]</span>}
                   {r.reason && <span style={{ marginRight: 'var(--g-space-2)' }}>{r.reason}</span>}
-                  {r.latencyMs != null && <span style={{ marginRight: 'var(--g-space-2)' }}>{r.latencyMs} ms</span>}
+                  {latency && <span style={{ marginRight: 'var(--g-space-2)' }}>{latency}</span>}
                   {r.error && <span className={css.hookErrorText}>error: {r.error}</span>}
                 </div>
               )}

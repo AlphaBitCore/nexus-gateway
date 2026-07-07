@@ -125,6 +125,9 @@ func (w *TrafficEventWriter) insertTrafficEvents(ctx context.Context, tx pgx.Tx,
 			// ingress_format ($91). Client-facing wire format; '' for
 			// compliance-proxy / agent. NOT NULL DEFAULT '', bind directly.
 			stripNul(e.IngressFormat),
+			// request_hooks_us / response_hooks_us ($92, $93). Nil *int → SQL NULL,
+			// same NULL-vs-0 semantics as the _ms aggregates.
+			e.RequestHooksUs, e.ResponseHooksUs,
 		)
 	}
 
@@ -196,7 +199,10 @@ INSERT INTO traffic_event (
     -- Client-facing wire format (provcore.Format) the request/response bodies
     -- are stored in. Drives the control-plane view-time normalize. '' for
     -- compliance-proxy / agent transparent forwards.
-    ingress_format
+    ingress_format,
+    -- Microsecond-precision hook aggregates (siblings of request_hooks_ms /
+    -- response_hooks_ms). Appended LAST so existing $N positions never shift.
+    request_hooks_us, response_hooks_us
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -237,7 +243,8 @@ INSERT INTO traffic_event (
     $87, $88,
     $89,
     $90,
-    $91
+    $91,
+    $92, $93
 ) ON CONFLICT (id) DO NOTHING
 `
 

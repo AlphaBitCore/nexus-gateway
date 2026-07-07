@@ -81,16 +81,18 @@ func quietWriter(reg *registry.Registry) *Writer {
 }
 
 // TestWriter_WithLossMode_Selection: the overflow policy resolves to the named
-// mode, and an empty/unknown value falls back to no-loss block (audit must never
-// silently turn lossy from a config typo).
+// mode, and an empty/unknown value falls back to no-loss spillBlock — the durable
+// spool is the primary overflow buffer and the request path is back-pressured only
+// when it too saturates (audit must never silently turn lossy from a config typo;
+// spillBlock is no-loss whenever a spool sink is wired, which prod/rig always do).
 func TestWriter_WithLossMode_Selection(t *testing.T) {
 	cases := map[string]string{
 		lossModeSpill:      lossModeSpill,
 		lossModeDrop:       lossModeDrop,
 		lossModeSpillBlock: lossModeSpillBlock,
 		"block":            lossModeBlock,
-		"":                 lossModeBlock,
-		"garbage":          lossModeBlock,
+		"":                 lossModeSpillBlock,
+		"garbage":          lossModeSpillBlock,
 	}
 	for in, want := range cases {
 		if got := quietWriter(nil).WithLossMode(in).LossMode(); got != want {
@@ -103,11 +105,10 @@ func TestWriter_WithLossMode_Selection(t *testing.T) {
 // current value (default when never set).
 func TestWriter_EffectiveMaxQueue(t *testing.T) {
 	w := quietWriter(nil)
-	// The default cap is sized to available memory (adaptiveBufferCaps), not a fixed
-	// constant, so assert it lands within the adaptive clamp band rather than a magic
-	// number — the whole point of the adaptive sizing is that there is no fixed value.
-	if c := w.effectiveMaxQueue(); c < minRecChCap || c > maxRecChCap {
-		t.Fatalf("default cap = %d, want within adaptive band [%d,%d]", c, minRecChCap, maxRecChCap)
+	// The default cap is the FIXED structural pointer-count depth — body-size-
+	// independent by design (the byte budget is the memory bound, not this count).
+	if c := w.effectiveMaxQueue(); c != recChStructuralCap {
+		t.Fatalf("default cap = %d, want structural cap %d", c, recChStructuralCap)
 	}
 	w.WithMaxQueuedRecords(42)
 	if w.effectiveMaxQueue() != 42 {
