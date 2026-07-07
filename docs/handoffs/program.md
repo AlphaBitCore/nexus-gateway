@@ -67,6 +67,15 @@ as reference; verify against the current repo before building.
     `LOADGEN_PHONE_HOME_CONTRACT.md`, `ARENA_FIRST_RUN_CHECKLIST.md` (incl.
     failure-mode audit appendix). These make the internal AWS backend
     executable by Kanishk without this session's context.
+  - `2bd2460` — **the obs-api side is now FULLY wired**: `ec2.Run()` no longer
+    returns `errRunPending` — it holds the run open for the load window
+    (phone-home; produces no metrics itself), a `driver.PhoneHomeDriver` marker
+    makes the orchestrator source the Summary from `run.AggregateIngested()`,
+    and zero ingested samples fail the run rather than persist empty. Full
+    obs-backend suite race-clean. `dashboard-v1` = Arena B1 + WP1–WP4 +
+    aggregation + completed Run + ops docs = one unified, working AWS backend.
+    **Only Kanishk's loadgen boot-runner + the supervised first live run
+    remain** — everything obs-api needs to serve them is built and tested.
 - Gated, not unbuilt: saturation RPS (Tieben
   — streaming ~04:45 CST, nostream ~09:45 CST, data+report next evening), James
   methodology sign-off (gates B2/public), Pages hosting decision, Docker Hub
@@ -120,9 +129,11 @@ as reference; verify against the current repo before building.
 1. Sync (10:30 CST): ratify phone-home (G1, formality — already implemented);
    tag Tieben on parallel-vs-sequential + mock sizing; Pages decision.
 2. **Kanishk (critical path): loadgen boot-runner** — build against
-   `obs-backend/LOADGEN_PHONE_HOME_CONTRACT.md`; wire `ec2.Run()` to block +
-   call `run.AggregateIngested()`; then the supervised first full run per
-   `obs-backend/ARENA_FIRST_RUN_CHECKLIST.md`.
+   `obs-backend/LOADGEN_PHONE_HOME_CONTRACT.md`, then the supervised first full
+   run per `obs-backend/ARENA_FIRST_RUN_CHECKLIST.md`. NOTE: `ec2.Run()` + the
+   orchestrator wiring are now DONE (`2bd2460`) — obs-api holds the run open and
+   aggregates the samples; the only thing left is the box that boots, pulls the
+   spec, runs `nexus-loadtest --live-json`, and POSTs metrics.
 3. Kanishk: merge `dashboard-v1` (rename → `feat/b1-arena`) into site main
    (Arena Start/Stop + IAM + watchdog already DONE + live-verified).
 4. Tieben's numbers land → set `saturationRps` + preset `rps` in
