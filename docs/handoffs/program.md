@@ -56,6 +56,17 @@ as reference; verify against the current repo before building.
   Kanishk's `ec2.go`/`aws/` (phone-home = loadgen resolves IPs in-VPC, obs-api
   serves only the logical spec). **Critical path now = Kanishk's loadgen
   boot-runner** (the only thing left before a first full live run).
+- **NEW (Jul 7, later): WP1–WP4 MERGED into `dashboard-v1`** (site PR #1, merge
+  `9acc8da`) — the v1 dashboard line now carries Arena B1 + the full contract-v2
+  backend. On top of it (pushed to `origin/dashboard-v1`):
+  - `7a7054f` — `run.AggregateIngested()`: folds ingested phone-home samples
+    into the final `driver.Summary` (mean RPS, max p99/ttft, min okPct, max
+    mem; OOM never inferred). The "summarize" half of the ec2 path; the Run()
+    wiring that calls it stays Kanishk's.
+  - `c011c9d` — 3 ops docs in `obs-backend/`: `OBS_API_AWS_DEPLOY.md`,
+    `LOADGEN_PHONE_HOME_CONTRACT.md`, `ARENA_FIRST_RUN_CHECKLIST.md` (incl.
+    failure-mode audit appendix). These make the internal AWS backend
+    executable by Kanishk without this session's context.
 - Gated, not unbuilt: saturation RPS (Tieben
   — streaming ~04:45 CST, nostream ~09:45 CST, data+report next evening), James
   methodology sign-off (gates B2/public), Pages hosting decision, Docker Hub
@@ -102,15 +113,16 @@ as reference; verify against the current repo before building.
 ## Next steps (queue order — detail in context/10-BACKEND-MASTER-PLAN.md §2)
 
 0. ✅ DONE — Kash: WP1 contract-v2 freeze → WP2 exporter evolution → WP3
-   results.Persist + index.html migration → WP4 `/internal/*` ingest. All on
-   branch `feat/backend-contract-v2` (`d0dcb8c`/`4efbe49`/`6732ea1`/`2da2747`),
-   obs-backend tests green. **Push branch + open PR** (blocked on GitHub write
-   access / fork-PR decision) and merge after `feat/b1-arena`.
+   results.Persist + index.html migration → WP4 `/internal/*` ingest
+   (`d0dcb8c`/`4efbe49`/`6732ea1`/`2da2747`) — **MERGED into `dashboard-v1`
+   via site PR #1** (`9acc8da`). Follow-ups also on `dashboard-v1`:
+   aggregation seam (`7a7054f`) + 3 AWS ops docs (`c011c9d`).
 1. Sync (10:30 CST): ratify phone-home (G1, formality — already implemented);
    tag Tieben on parallel-vs-sequential + mock sizing; Pages decision.
-2. **Kanishk (critical path): loadgen boot-runner** — boot → GET
-   `/internal/pending-run` → `nexus-loadtest --live-json` → POST
-   `/internal/metrics` → supervised first full live run. WP4 target is live.
+2. **Kanishk (critical path): loadgen boot-runner** — build against
+   `obs-backend/LOADGEN_PHONE_HOME_CONTRACT.md`; wire `ec2.Run()` to block +
+   call `run.AggregateIngested()`; then the supervised first full run per
+   `obs-backend/ARENA_FIRST_RUN_CHECKLIST.md`.
 3. Kanishk: merge `dashboard-v1` (rename → `feat/b1-arena`) into site main
    (Arena Start/Stop + IAM + watchdog already DONE + live-verified).
 4. Tieben's numbers land → set `saturationRps` + preset `rps` in

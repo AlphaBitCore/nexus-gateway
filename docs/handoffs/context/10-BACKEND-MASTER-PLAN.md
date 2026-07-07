@@ -175,6 +175,14 @@ G1 ratified by implementation (phone-home, no SSM).
   subscriber. Full `go test ./...` green; readonly-mode build clean.
 - ⏳ Remaining (Kanishk, now unblocked): the fake-loadgen curl-loop end-to-end
   against `OBS_DRIVER=compose` is the loadgen boot-runner's job (WP5 remainder).
+- **MERGED** into `dashboard-v1` via site PR #1 (merge `9acc8da`). Follow-ups
+  on `dashboard-v1`: `run.AggregateIngested()` (`7a7054f`) — folds ingested
+  phone-home samples into the final `driver.Summary` (mean RPS, max p99/ttft,
+  min okPct, max mem; OOM never inferred; empty = absent, not zero-filled) —
+  the "summarize" half Kanishk's `ec2.Run()` wiring calls; and the 3 ops docs
+  (`c011c9d`): `obs-backend/OBS_API_AWS_DEPLOY.md`,
+  `obs-backend/LOADGEN_PHONE_HOME_CONTRACT.md`,
+  `obs-backend/ARENA_FIRST_RUN_CHECKLIST.md`.
 
 ### WP5 — ec2 driver + Arena wiring (Kanishk; Kash reviews)
 **STATUS: Start/Stop/IAM/watchdog/provisioning DONE** — branch `dashboard-v1`
@@ -231,12 +239,15 @@ Arena backend, not a dashboard).
 | G4 | public site-only repo + DNS CNAME | James/infra | WP7 hosting |
 | G5 | Docker Hub org + token | James | PR #81 publish (container side, not this plan) |
 
-Nothing in WP1–WP3 waits on any gate — **start immediately.** WP1–WP3 landed
-(commits `d0dcb8c`/`4efbe49`/`6732ea1`) and **WP4 is now DONE** (`2da2747`) —
-the `/internal/*` ingest surface exists, so the critical path shifts to
-Kanishk's **loadgen boot-runner** (WP5 remainder): boot → pull `pending-run` →
-`nexus-loadtest --live-json` → POST `metrics` → supervised first full live run.
-That is the only thing left between the built Arena and a first live run.
+Nothing in WP1–WP3 waits on any gate — **start immediately.** WP1–WP4 landed
+(`d0dcb8c`/`4efbe49`/`6732ea1`/`2da2747`) and are **merged into `dashboard-v1`**
+(site PR #1, `9acc8da`), plus the aggregation seam (`7a7054f`) and the 3 ops
+docs (`c011c9d`). The critical path is Kanishk's **loadgen boot-runner** (WP5
+remainder): build against `obs-backend/LOADGEN_PHONE_HOME_CONTRACT.md`, wire
+`ec2.Run()` to block + call `run.AggregateIngested()`, then the supervised
+first full run per `obs-backend/ARENA_FIRST_RUN_CHECKLIST.md` (deploy per
+`obs-backend/OBS_API_AWS_DEPLOY.md`). That is the only thing left between the
+built Arena and a first live run.
 
 ---
 
