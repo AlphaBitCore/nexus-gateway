@@ -79,6 +79,14 @@
     "sectionLatencyHealthSubtitle": "Our overhead versus the upstream provider — by the busiest provider in the window.",
     "latencyOurOverheadP95": "Our Overhead P95",
     "latencyUpstreamTotalP95": "Upstream P95",
+    "latencyEndToEndP95": "End-to-End P95",
+    "source_all": "All",
+    "source_vk": "Virtual keys",
+    "source_proxy": "Proxy",
+    "source_agent": "Agent",
+    "sourcePickerLabel": "Traffic source",
+    "complianceWarningTitle": "No compliance hooks are active",
+    "complianceWarningBody": "No traffic in the selected window was covered by compliance hooks. Enable a hook under Compliance → Hooks & Policies to inspect and govern this traffic.",
     "latencySlowestProvider": "Slowest Upstream Provider"
   },
   "providers": {
