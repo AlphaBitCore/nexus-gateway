@@ -1,0 +1,28 @@
+{
+  "_comment": "Minimal instance-role policy for the two arena Nexus boxes to PULL the Nexus images from private ECR. Attach to the boxes' instance profile. Pull-only: no push, no create, no delete. GetAuthorizationToken cannot be resource-scoped (AWS limitation); the layer/image reads are scoped to the five nexus-* repos. Replace <region>/<acct> before applying.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EcrAuthToken",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "PullNexusImagesOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchCheckLayerAvailability"
+      ],
+      "Resource": [
+        "arn:aws:ecr:<region>:<acct>:repository/nexus-hub",
+        "arn:aws:ecr:<region>:<acct>:repository/nexus-console",
+        "arn:aws:ecr:<region>:<acct>:repository/nexus-ai-gateway",
+        "arn:aws:ecr:<region>:<acct>:repository/nexus-compliance-proxy",
+        "arn:aws:ecr:<region>:<acct>:repository/nexus-db-migrate"
+      ]
+    }
+  ]
+}
