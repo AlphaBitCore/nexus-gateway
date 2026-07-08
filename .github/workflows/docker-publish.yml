@@ -1,0 +1,141 @@
+# Build + publish the four Nexus container images to Docker Hub.
+#
+# Trigger: version tags (v*) or manual dispatch. Correctness is gated by
+# ci.yml / go-ci.yml on every PR — this workflow gates PUBLISHING:
+#   Gate A (in-Dockerfile): libhs HSSelfTest during build + binary tag check.
+#   Gate B (here): hs-selfcheck executed inside the built runtime image —
+#           proves hs_compile/hs_alloc_scratch/hs_scan work in the exact
+#           environment we ship. "Build succeeded" alone would miss a
+#           FAT_RUNTIME=ON libhs that silently never scans (PII passthrough).
+#   Gate C (here): full-stack compose smoke — db-init seeds, all four services
+#           report healthy, the runtime hs-selfcheck confirms the scan engine,
+#           and the seeded virtual key authenticates + runs the request
+#           pipeline (see deploy/docker/smoke-redaction.sh). Credential-free;
+#           full PII-redaction E2E is tests/scripts/smoke-gateway.py against a
+#           credentialled deployment.
+#
+# Secrets required: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (alphabitcore org).
+# Arch: linux/amd64 (arm64 is a planned fast-follow — per-arch libhs builds
+# make it additive; see deploy/docker/ai-gateway Dockerfile notes).
+
+name: docker-publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (defaults to the git ref name)"
+        required: false
+
+env:
+  REGISTRY_ORG: alphabitcore
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: nexus-hub
+            dockerfile: packages/nexus-hub/Dockerfile
+            vectorscan: false
+          - image: nexus-console
+            dockerfile: deploy/docker/console/Dockerfile
+            vectorscan: false
+          - image: nexus-ai-gateway
+            dockerfile: packages/ai-gateway/Dockerfile
+            vectorscan: true
+          - image: nexus-compliance-proxy
+            dockerfile: packages/compliance-proxy/Dockerfile
+            vectorscan: true
+          # Deploy-utility image (not a product image) — the Helm db-init hook
+          # needs schema+seed in a runnable image; compose mounts host source.
+          - image: nexus-db-migrate
+            dockerfile: tools/db-migrate/Dockerfile
+            vectorscan: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.REGISTRY_ORG }}/${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+      - name: "Gate B: vectorscan runtime self-check"
+        if: ${{ matrix.vectorscan }}
+        run: |
+          docker run --rm --entrypoint hs-selfcheck \
+            "$REGISTRY_ORG/${{ matrix.image }}:ci"
+
+      - name: Export image for downstream jobs
+        run: |
+          mkdir -p /tmp/images
+          docker save "$REGISTRY_ORG/${{ matrix.image }}:ci" \
+            -o "/tmp/images/${{ matrix.image }}.tar"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.image }}
+          path: /tmp/images/${{ matrix.image }}.tar
+          retention-days: 1
+
+  compose-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
+          path: /tmp/images
+          merge-multiple: true
+
+      - name: Load built images
+        run: for f in /tmp/images/*.tar; do docker load -i "$f"; done
+
+      - name: "Gate C: full-stack smoke (health + PII redaction path)"
+        run: |
+          ./scripts/compose-init.sh
+          NEXUS_IMAGE_TAG=ci \
+            deploy/docker/smoke-redaction.sh
+
+  push:
+    needs: compose-smoke
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [nexus-hub, nexus-console, nexus-ai-gateway, nexus-compliance-proxy, nexus-db-migrate]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.image }}
+          path: /tmp/images
+
+      - name: Load built image
+        run: docker load -i /tmp/images/${{ matrix.image }}.tar
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag + push
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          SHA_TAG="${GITHUB_SHA::12}"
+          for t in "$TAG" "$SHA_TAG" latest; do
+            docker tag "$REGISTRY_ORG/${{ matrix.image }}:ci" \
+                       "$REGISTRY_ORG/${{ matrix.image }}:$t"
+            docker push "$REGISTRY_ORG/${{ matrix.image }}:$t"
+          done

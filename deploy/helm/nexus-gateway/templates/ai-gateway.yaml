@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus.fullname" . }}-ai-gateway
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai-gateway
+spec:
+  replicas: {{ .Values.aiGateway.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: ai-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ai-gateway
+    spec:
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ai-gateway
+          image: {{ include "nexus.image" (dict "root" . "repo" "nexus-ai-gateway") | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            {{- include "nexus.commonEnv" . | nindent 12 }}
+            - name: NEXUS_AI_GATEWAY_PUBLIC_URL
+              value: {{ .Values.authServer.issuer | quote }}
+            - name: ADMIN_KEY_HMAC_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: adminKeyHmacSecret}
+            - name: AI_GATEWAY_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: aiGatewayApiToken}
+          ports:
+            - {name: http, containerPort: 3050}
+          readinessProbe:
+            httpGet: {path: /healthz, port: 3050}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: 3050}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources: {{ toYaml .Values.aiGateway.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus.fullname" . }}-ai-gateway
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai-gateway
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: ai-gateway
+  ports:
+    - {name: http, port: 3050, targetPort: 3050}

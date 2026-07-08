@@ -1,0 +1,75 @@
+{{- if .Values.complianceProxy.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus.fullname" . }}-compliance-proxy
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: compliance-proxy
+spec:
+  replicas: {{ .Values.complianceProxy.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: compliance-proxy
+  template:
+    metadata:
+      labels:
+        {{- include "nexus.labels" . | nindent 8 }}
+        app.kubernetes.io/component: compliance-proxy
+    spec:
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: compliance-proxy
+          image: {{ include "nexus.image" (dict "root" . "repo" "nexus-compliance-proxy") | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            {{- include "nexus.commonEnv" . | nindent 12 }}
+            - name: NEXUS_COMPLIANCE_PROXY_PUBLIC_URL
+              value: {{ printf "http://%s-compliance-proxy:3128" (include "nexus.fullname" .) | quote }}
+            - name: COMPLIANCE_PROXY_PUBLIC_URL
+              value: {{ printf "http://%s-compliance-proxy:3128" (include "nexus.fullname" .) | quote }}
+            - name: COMPLIANCE_PROXY_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ include "nexus.secretName" . }}, key: complianceProxyApiToken}
+          ports:
+            - {name: proxy, containerPort: 3128}
+            - {name: runtime, containerPort: 3040}
+            - {name: metrics, containerPort: 9090}
+          {{- if .Values.complianceProxy.caExistingSecret }}
+          volumeMounts:
+            - {name: ca, mountPath: /etc/compliance-proxy, readOnly: true}
+          {{- end }}
+          readinessProbe:
+            httpGet: {path: /metrics, port: 9090}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources: {{ toYaml .Values.complianceProxy.resources | nindent 12 }}
+      {{- if .Values.complianceProxy.caExistingSecret }}
+      volumes:
+        - name: ca
+          secret:
+            secretName: {{ .Values.complianceProxy.caExistingSecret }}
+            items:
+              - {key: ca.crt, path: ca.crt}
+              - {key: ca.key, path: ca.key}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus.fullname" . }}-compliance-proxy
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: compliance-proxy
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: compliance-proxy
+  ports:
+    - {name: proxy, port: 3128, targetPort: 3128}
+    - {name: runtime, port: 3040, targetPort: 3040}
+    - {name: metrics, port: 9090, targetPort: 9090}
+{{- end }}

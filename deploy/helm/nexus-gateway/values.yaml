@@ -1,0 +1,109 @@
+# Default values for the nexus-gateway chart (dev / demo shape).
+# Production overrides live in values-production.yaml.
+
+images:
+  registry: docker.io/alphabitcore
+  tag: latest
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Shared secrets — every service must agree on these ([MUST MATCH] in
+# .env.example). Leave blank to have the pre-install hook generate them into a
+# Secret once; set them explicitly (or point existingSecret at your own) for
+# GitOps / reproducible installs. NEVER commit real values to a values file.
+secrets:
+  existingSecret: ""            # if set, all secret values are read from it
+  internalServiceToken: ""
+  hubConfigToken: ""            # [MUST MATCH] Hub <-> Control Plane
+  adminKeyHmacSecret: ""
+  credentialEncryptionKey: ""   # 64 hex chars
+  complianceProxyApiToken: ""
+  aiGatewayApiToken: ""
+
+# db-init runs prisma db push + prod seed as a pre-install/pre-upgrade hook Job
+# (mirrors the AMI first-boot-db sequence). Uses the node:20 image + the
+# tools/db-migrate assets baked into a small init image.
+dbInit:
+  enabled: true
+  image: docker.io/alphabitcore/nexus-db-migrate:latest
+  seedDemo: false
+
+console:
+  replicas: 1
+  service:
+    type: ClusterIP
+    httpsPort: 443
+  resources:
+    requests: {cpu: "100m", memory: "128Mi"}
+    limits: {cpu: "1", memory: "512Mi"}
+
+hub:
+  replicas: 1
+  resources:
+    requests: {cpu: "100m", memory: "128Mi"}
+    limits: {cpu: "1", memory: "512Mi"}
+
+aiGateway:
+  # The load-bearing service — scale this independently.
+  replicas: 2
+  resources:
+    requests: {cpu: "250m", memory: "256Mi"}
+    limits: {cpu: "2", memory: "1Gi"}
+
+complianceProxy:
+  # Optional layer: set enabled=false for deployments that don't intercept
+  # egress TLS, and the image is simply never scheduled.
+  enabled: true
+  replicas: 1
+  # Mount a real MITM CA here for production; a self-signed one is generated
+  # into a Secret by the pre-install hook if left empty.
+  caExistingSecret: ""
+  resources:
+    requests: {cpu: "250m", memory: "256Mi"}
+    limits: {cpu: "2", memory: "1Gi"}
+
+ingress:
+  enabled: true
+  className: ""
+  host: nexus.local
+  tls:
+    enabled: false
+    secretName: ""
+  annotations: {}
+
+# TLS the console terminates. For production set console.tls.existingSecret to
+# a real cert; otherwise the pre-install hook seeds a self-signed pair.
+consoleTls:
+  existingSecret: ""
+
+authServer:
+  # Must match the URL clients reach the console on (the OIDC issuer claim).
+  issuer: "https://nexus.local"
+
+# ── Backing stores ────────────────────────────────────────────────────────
+# Enabled = in-cluster subcharts (dev/demo). For production, disable these and
+# fill external.* with managed endpoints.
+postgresql:
+  enabled: true
+  auth:
+    username: nexus
+    database: nexus_gateway
+    # password left to the subchart's generated secret; wired via the chart.
+
+valkey:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+nats:
+  enabled: true
+  config:
+    jetstream:
+      enabled: true
+
+external:
+  # Used only when the matching subchart is disabled.
+  databaseUrl: ""             # postgresql://user:pass@host:5432/nexus_gateway
+  redisAddr: ""               # host:6379
+  natsUrl: ""                 # nats://host:4222

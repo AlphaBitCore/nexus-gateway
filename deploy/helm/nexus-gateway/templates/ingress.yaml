@@ -1,0 +1,34 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "nexus.fullname" . }}
+  labels:
+    {{- include "nexus.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # Everything terminates at the console, which reverse-proxies the
+          # gateway (/v1, /v1beta, ...) and hub (/ws, enrollment) internally —
+          # a single external surface, matching the AMI's nginx.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "nexus.fullname" . }}-console
+                port:
+                  number: {{ .Values.console.service.httpsPort }}
+{{- end }}
