@@ -114,9 +114,12 @@ Covered by `ec2_run_test.go` + orchestrator phone-home tests; race-clean.
 - [ ] **James (G3):** methodology sign-off (gates public launch); decide whether
       agentgateway rows go public (flips the single `PUBLIC_GATEWAYS` allowlist);
       set the V1 publish label (recommend `externally_referenced`).
-- [ ] **James (G5):** confirm `alphabitcore` Docker Hub org + push token → add
-      `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` as Actions secrets so PR #81's
-      publish workflow can run. (Container side — not required for the live run.)
+- [ ] **James (G5) — Docker Hub is now roadmap, NOT the live-run blocker.**
+      Decision of record: the arena Nexus boxes pull from **private Amazon ECR**
+      (`deploy/docker/ecr-publish.sh` + `ecr-pull-policy.json`, authored `c53f96e8`),
+      which needs only arena-account AWS creds — no James gate. Public Docker Hub
+      (`alphabitcore` org + `DOCKERHUB_*` secrets for PR #81's workflow) stays
+      James-gated and is for the public OSS story, not the live run.
 - [ ] **Infra (G4):** create the PUBLIC site-only repo (private-repo-on-free-plan
       blocks Pages — see `context/07-SITE-PUBLISH.md`); add Route53 CNAME
       `benchmark.alphabitcore.com → alphabitcore.github.io`. On split,

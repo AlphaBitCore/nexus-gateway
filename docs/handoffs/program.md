@@ -76,6 +76,23 @@ as reference; verify against the current repo before building.
     aggregation + completed Run + ops docs = one unified, working AWS backend.
     **Only Kanishk's loadgen boot-runner + the supervised first live run
     remain** — everything obs-api needs to serve them is built and tested.
+- **NEW (Jul 8): loadgen landed + Nexus-onto-fleet in motion.**
+  - Kanishk's **loadgen boot-runner** shipped (`db6f35c`, `obs-backend/aws/loadgen/`):
+    pulls `/internal/pending-run`, resolves gateway IPs by tag, drives load,
+    posts `/internal/metrics`. Runs **parallel** today. A1 DONE.
+  - Kash's `runMode` (parallel|sequential) wired end to end (`4e18432`), default
+    **parallel** to match the loadgen; `ec2.Run()` window scales accordingly.
+    Governance-toggle doc `NEXUS_GOVERNANCE_TOGGLE.md` (`fa15837`) answers "how
+    do the two nexus boxes differ" (CP admin-API hook state, per-box bake).
+  - **Nexus reaches the fleet via private ECR** (decision of record; Docker Hub
+    public is roadmap, not the live-run blocker). ECR publish script + pull-only
+    IAM authored on `feature/container-deploy` (`c53f96e8`) — not yet run.
+  - **Open blocker (Kanishk-reported): a failing build test** in the 4-image
+    build path. Kash's Jul 8 diagnostic: RE2 path green; failure is in the
+    vectorscan-tagged / in-Docker gate path (needs libhs — not reproducible
+    without it or Kanishk's exact output). See `CLAUDE-CODE-TASKS.md` Task 1.
+    Two open metric-source gaps in the loadgen (`cpuPct` no source; `memUsedPct`
+    best-effort) must close before publishable numbers.
 - Gated, not unbuilt: saturation RPS (Tieben
   — streaming ~04:45 CST, nostream ~09:45 CST, data+report next evening), James
   methodology sign-off (gates B2/public), Pages hosting decision, Docker Hub
