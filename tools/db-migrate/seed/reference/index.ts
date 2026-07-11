@@ -13,14 +13,27 @@ function camelizeRow(row: Record<string, unknown>): Record<string, unknown> {
   )
 }
 
-export const REFERENCE_TABLES: { fixture: string; delegate: keyof PrismaClient; key: string }[] = [
+export const REFERENCE_TABLES: {
+  fixture: string
+  delegate: keyof PrismaClient
+  key: string
+  /**
+   * Columns carrying per-deployment OPERATIONAL state (runtime-mutated by an
+   * operator) that the seed must NOT re-assert on re-run. Set on CREATE,
+   * stripped from UPDATE. See upsertRows() in loadFixture.ts.
+   */
+  preserveOnUpdate?: readonly string[]
+}[] = [
   { fixture: 'Provider', delegate: 'provider', key: 'id' },
   { fixture: 'Model', delegate: 'model', key: 'id' },
   { fixture: 'interception_domain', delegate: 'interceptionDomain', key: 'id' },
   { fixture: 'interception_path', delegate: 'interceptionPath', key: 'id' },
   { fixture: 'rule_pack', delegate: 'rulePack', key: 'id' },
   // Required config: hooks, scheduled jobs, installed rule-packs.
-  { fixture: 'HookConfig', delegate: 'hookConfig', key: 'id' },
+  // `enabled` is the governance on/off toggle an operator flips at runtime; the
+  // seed re-runs on every container restart and must not reset it — preserve it
+  // on update (create still applies the fixture's disabled-by-default baseline).
+  { fixture: 'HookConfig', delegate: 'hookConfig', key: 'id', preserveOnUpdate: ['enabled'] },
   { fixture: 'rule_pack_install', delegate: 'rulePackInstall', key: 'id' },
   { fixture: 'Job', delegate: 'job', key: 'id' },
   { fixture: 'rule', delegate: 'rule', key: 'id' },
@@ -85,7 +98,7 @@ const COMPOUND_KEY_FIXTURES: Record<string, { whereKey: string; fields: string[]
 }
 
 export async function seedReference(prisma: PrismaClient): Promise<void> {
-  for (const { fixture, delegate, key } of REFERENCE_TABLES) {
+  for (const { fixture, delegate, key, preserveOnUpdate = [] } of REFERENCE_TABLES) {
     const rawRows = readFixture(fixture)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const del = (prisma as any)[delegate] as {
@@ -103,18 +116,21 @@ export async function seedReference(prisma: PrismaClient): Promise<void> {
         for (const k of fields) {
           compoundValue[k] = row[k]
         }
-        await del.upsert({ where: { [whereKey]: compoundValue }, create: row, update: row })
+        const update = preserveOnUpdate.length
+          ? Object.fromEntries(Object.entries(row).filter(([k]) => !preserveOnUpdate.includes(k)))
+          : row
+        await del.upsert({ where: { [whereKey]: compoundValue }, create: row, update })
         n++
       }
       console.log(`[seed:ref] ${fixture}: ${n} rows`)
     } else if (CAMELIZE_FIXTURES.has(fixture)) {
       // Fixture JSON uses DB snake_case column names; Prisma expects camelCase.
       const rows = rawRows.map(camelizeRow)
-      const n = await upsertRows(del, rows, key)
+      const n = await upsertRows(del, rows, key, preserveOnUpdate)
       console.log(`[seed:ref] ${fixture}: ${n} rows`)
     } else {
       // Fixture JSON already matches Prisma field names — pass through directly.
-      const n = await upsertRows(del, rawRows, key)
+      const n = await upsertRows(del, rawRows, key, preserveOnUpdate)
       console.log(`[seed:ref] ${fixture}: ${n} rows`)
     }
   }

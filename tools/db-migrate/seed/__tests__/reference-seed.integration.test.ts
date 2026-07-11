@@ -26,3 +26,17 @@ test('seedReference loads the catalog and is idempotent', { skip: !url ? 'DATABA
   assert.ok((await prisma.iamPolicy.count({ where: { type: 'managed' } })) >= 1)
   assert.ok(await prisma.provider.findFirst({ where: { name: 'openai' } }))
 })
+
+test('re-seed preserves an operator-enabled hook (governance survives box restart)', { skip: !url ? 'DATABASE_URL unset' : false }, async () => {
+  assert.ok(prisma, 'PrismaClient initialized')
+  await seedReference(prisma)
+  const hook = await prisma.hookConfig.findFirst()
+  assert.ok(hook, 'at least one hook seeded')
+  // Operator turns governance ON at runtime (fixture ships enabled=false).
+  await prisma.hookConfig.update({ where: { id: hook.id }, data: { enabled: true } })
+  // db-init re-runs on the next box restart …
+  await seedReference(prisma)
+  // … and must NOT clobber the operator's toggle back to the fixture default.
+  const after = await prisma.hookConfig.findUnique({ where: { id: hook.id } })
+  assert.equal(after?.enabled, true, 'enabled must survive a re-seed')
+})
