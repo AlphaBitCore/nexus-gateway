@@ -159,8 +159,17 @@ for h in (hooks if isinstance(hooks,list) else []): print(h.get('name',''))
   done
 fi
 
-# ── runtime-snapshot verification (propagation to the AI-gateway node) ────────
-echo "→ verifying propagation via runtime snapshot …"
+# ── runtime-snapshot verification: POLL until converged ──────────────────────
+# Hub→gateway config propagation takes a few seconds. A single read immediately
+# after the PUT races the push and sees the OLD state — that false negative is
+# exactly the "governance ON doesn't take effect" ghost from the Jul-10 arena
+# session (tests/scripts/verify_hooks_sync.py proved the toggle works when you
+# poll to convergence instead). So: poll GET /nodes/{id}/runtime every 0.5s
+# (up to ~30s) until meta.desired_ver == meta.reported_ver AND the loaded hook
+# set matches the target state. Caught-up-but-wrong-hooks = REAL bug (exit 1);
+# never-caught-up = propagation problem (exit 1, with last-seen state);
+# node not found = unverifiable (exit 3) so callers can't mistake it for OK.
+echo "→ verifying propagation via runtime snapshot (poll until converged) …"
 GW_NODE_ID="${NEXUS_GW_NODE_ID:-}"
 if [[ -z "$GW_NODE_ID" ]]; then
   GW_NODE_ID=$(curl -sS "$CP_URL/api/admin/nodes" -H "Authorization: Bearer $TOKEN" | python3 -c "
@@ -172,37 +181,62 @@ for n in (nodes if isinstance(nodes,list) else []):
 fi
 
 if [[ -z "$GW_NODE_ID" ]]; then
-  echo "  warning: AI-gateway node not found — set NEXUS_GW_NODE_ID in .env.local" >&2
-else
+  echo "  ERROR: AI-gateway node not found — set NEXUS_GW_NODE_ID in .env.local." >&2
+  echo "  Hooks were toggled but propagation is UNVERIFIED — do not benchmark on this state." >&2
+  exit 3
+fi
+
+# expected hook names for the ON arm (from the snapshot we just restored)
+EXPECT_ON=""
+if [[ "$TARGET" == "on" && -f "$SNAPSHOT_FILE" ]]; then
+  EXPECT_ON=$(paste -sd, "$SNAPSHOT_FILE")
+fi
+
+POLL_MAX="${NEXUS_HOOKS_POLL_MAX:-60}"   # 60 × 0.5s = 30s ceiling
+CONVERGED=0
+LAST_STATE=""
+for _i in $(seq 1 "$POLL_MAX"); do
   RUNTIME=$(curl -sS "$CP_URL/api/admin/nodes/$GW_NODE_ID/runtime" -H "Authorization: Bearer $TOKEN")
-  echo "$RUNTIME" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
+  LAST_STATE=$(printf '%s' "$RUNTIME" | TGT="$TARGET" EXPECT_ON="$EXPECT_ON" python3 -c "
+import sys,json,os
+target=os.environ.get('TGT','off'); expect_on=[s for s in os.environ.get('EXPECT_ON','').split(',') if s]
 try:
-    hooks=d['snapshot']['sources'].get('config.hooks',{}).get('value',[])
+    d=json.load(sys.stdin)
+    meta=d.get('meta',{}) or {}
+    dv,rv=meta.get('desired_ver'),meta.get('reported_ver')
+    hooks=d.get('snapshot',{}).get('sources',{}).get('config.hooks',{}).get('value',[]) or []
+    names={h.get('name','') for h in hooks}
     resp=[h for h in hooks if h.get('stage')=='response']
-    print(f\"  loaded hooks: {len(hooks)} total, {len(resp)} response-stage\")
-    for h in resp: print(f\"    [response] {h.get('name','?')}\")
-except (KeyError,TypeError) as e:
-    print(f'  could not parse runtime snapshot: {e}', file=sys.stderr)
-"
+    caught_up=(dv is not None and dv==rv)
+    if target=='off':
+        ok=caught_up and len(resp)==0
+    else:
+        ok=caught_up and all(n in names for n in expect_on)
+    print(('OK' if ok else 'WAIT') + f'|dv={dv} rv={rv} hooks={len(hooks)} response={len(resp)}')
+except Exception as e:
+    print(f'WAIT|parse-error: {e}')
+" 2>/dev/null || echo "WAIT|curl/parse failure")
+  if [[ "$LAST_STATE" == OK\|* ]]; then CONVERGED=1; break; fi
+  sleep 0.5
+done
+
+STATE_DETAIL="${LAST_STATE#*|}"
+if [[ "$CONVERGED" == "1" ]]; then
+  echo "  converged ✓  ($STATE_DETAIL)"
   if [[ "$TARGET" == "off" ]]; then
-    RESP_COUNT=$(echo "$RUNTIME" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-try: print(len([h for h in d['snapshot']['sources'].get('config.hooks',{}).get('value',[]) if h.get('stage')=='response']))
-except: print(-1)
-" 2>/dev/null)
-    if [[ "$RESP_COUNT" == "0" ]]; then
-      echo "  response-stage hooks: none ✓  (SSE hold-back is OFF — clean A/B arm)"
-    elif [[ "$RESP_COUNT" == "-1" ]]; then
-      echo "  warning: could not parse runtime snapshot" >&2
-    else
-      echo "  warning: $RESP_COUNT response-stage hook(s) still loaded — hold-back STILL active" >&2
-      echo "  the OFF arm will be contaminated; investigate before benchmarking." >&2
-    fi
+    echo "  response-stage hooks: none ✓  (SSE hold-back is OFF — clean A/B arm)"
+  else
+    echo "  restored hook set live on the gateway ✓"
   fi
+else
+  echo "  ERROR: did not converge within $((POLL_MAX / 2))s — last state: $STATE_DETAIL" >&2
+  if [[ "$STATE_DETAIL" == *"dv="*"rv="* ]]; then
+    echo "  If desired_ver == reported_ver above but the hook set is wrong → REAL bug (file it)." >&2
+    echo "  If reported_ver is still behind → propagation stalled; check the gateway's Hub connection." >&2
+  fi
+  echo "  Do not benchmark on this state." >&2
+  exit 1
 fi
 
 echo ""
-echo "hooks are now: $TARGET"
+echo "hooks are now: $TARGET (verified converged)"
