@@ -39,7 +39,7 @@
   "dependencies": {
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "radix-ui": "^1.6.0",
+    "radix-ui": "^1.6.2",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
@@ -48,7 +48,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.3",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.7.2",
     "vitest": "^4.1.9"
   }
