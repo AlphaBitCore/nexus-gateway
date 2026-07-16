@@ -18,3 +18,13 @@ thresholds:
   stream_broken_pct: 0.5
 
 results_dir: "./results"
+
+# Run order for run-suite. LiteLLM runs LAST so its cold connection pool /
+# upstream warmup can't contaminate its numbers (Jul-14 anomaly). Unknown
+# gateways keep their given order; litellm is forced last regardless.
+run_order:
+  - nexus-hooks-on
+  - nexus-hooks-off
+  - bifrost
+  - agentgateway
+  - litellm

@@ -54,6 +54,18 @@ class ScenarioMetrics:
     cache_misses: int = 0
     wall_time_seconds: float = 0.0
 
+    # Optional metadata attached by the run command (None → omitted from output).
+    # governance: PROOF the gateway runtime actually reloaded to the requested
+    # hook mode (the June-16 DB-edit invalidity fix). warmup: warmup phase record.
+    # resource_observations: best-effort docker/upstream telemetry (null, not 0,
+    # when unreadable). anomaly_status/infrastructure_status: honest failure
+    # classification (never call a gateway "slow" without evidence).
+    governance: Optional[dict] = None
+    warmup: Optional[dict] = None
+    resource_observations: Optional[dict] = None
+    anomaly_status: Optional[str] = None          # "anomalous" | None
+    infrastructure_status: Optional[str] = None   # unknown|upstream_limited|... | None
+
     # Raw lists for percentile computation (warmup excluded)
     _ttft_samples: list[float] = field(default_factory=list, repr=False)
     _e2e_samples: list[float] = field(default_factory=list, repr=False)
@@ -149,11 +161,18 @@ class ScenarioMetrics:
             return miss - hit
         return None
 
+    def anomaly_ratio(self) -> Optional[float]:
+        """p95/p50 ratio — the LiteLLM anomaly signal. None if either missing."""
+        p50, p95 = self.ttft_p50, self.ttft_p95
+        if p50 and p95 and p50 > 0:
+            return p95 / p50
+        return None
+
     def to_dict(self) -> dict:
         def _r(v: Optional[float]) -> Optional[float]:
             return round(v, 2) if v is not None else None
 
-        return {
+        out = {
             "gateway": self.gateway_name,
             "scenario": self.scenario_id,
             "mode": self.mode,
@@ -184,3 +203,15 @@ class ScenarioMetrics:
             "ttft_gain_p95_ms": _r(self.ttft_gain_p95),
             "wall_time_seconds": round(self.wall_time_seconds, 3),
         }
+        # Attach optional metadata only when set, so legacy results stay identical.
+        if self.governance is not None:
+            out["governance"] = self.governance
+        if self.warmup is not None:
+            out["warmup"] = self.warmup
+        if self.resource_observations is not None:
+            out["resource_observations"] = self.resource_observations
+        if self.anomaly_status is not None:
+            out["anomaly_status"] = self.anomaly_status
+        if self.infrastructure_status is not None:
+            out["infrastructure_status"] = self.infrastructure_status
+        return out

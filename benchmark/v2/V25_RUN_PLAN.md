@@ -1,7 +1,27 @@
 # v2.5 Benchmark Run Plan
 
-**Date:** 2026-06-19  
+**Date:** 2026-06-19 (reconciled 2026-07-15)  
 **Status:** Ready to execute — one infrastructure blocker remaining (upstream mock URL update)
+
+> **v15 reconciliation (2026-07-15) — read first.**
+> - **Hooks-OFF is now toggled the VALID way.** Do NOT edit the DB and do NOT run a
+>   bare `hooks_toggle.sh off` and then start load blindly — a DB/row change does not
+>   propagate to the running gateway. Use `python cli.py run-nexus-hooks-off …`, which
+>   disables hooks through the Control Plane, **proves the gateway runtime reloaded**
+>   (`desired_ver == reported_ver` + zero response-stage hooks), stamps that proof into
+>   the result, and **re-enables hooks afterward** even on failure. See
+>   [HOOKS_MODE_METHODOLOGY.md](HOOKS_MODE_METHODOLOGY.md). The hooks-OFF lines below
+>   are updated to this command.
+> - **`--duration` / `--warmup` / `--vus` are real flags now** on both `cli.py run` and
+>   `run-nexus-hooks-off` (flag > `BENCH_*` env > YAML). The commands below work as
+>   written.
+> - **Result integrity gate:** run `python scripts/validate_benchmark.py
+>   results/results_*.json` after every run. It BLOCKs invalid governance/methodology
+>   and WARNs LiteLLM stability caveats. There is **no `audit_check.py`** — that name in
+>   older notes was never created; the validator is `scripts/validate_benchmark.py`.
+> - **LiteLLM stability:** run it last, warm it up ≥30s, keep resource telemetry on.
+>   See [LITELLM_STABILITY_GUIDE.md](LITELLM_STABILITY_GUIDE.md). Full checklist:
+>   [RUNBOOK.md](RUNBOOK.md).
 
 ---
 
@@ -55,8 +75,8 @@ comparison (per-hook, VU sweep, before/after) is relative to this baseline.
 python cli.py run --scenario s02 --gateway bifrost   --duration 300 --warmup 30
 python cli.py run --scenario s02 --gateway litellm   --duration 300 --warmup 30
 python cli.py run --scenario s02 --gateway nexus     --duration 300 --warmup 30  # hooks-ON
-# hooks-OFF: run hooks_toggle.sh off on Nexus AMI first (EC2 Instance Connect, not SSM)
-python cli.py run --scenario s02 --gateway nexus     --duration 300 --warmup 30  # hooks-OFF
+# hooks-OFF — VALID path: toggles via CP, proves runtime reload, restores after
+python cli.py run-nexus-hooks-off --scenario s02     --duration 300 --warmup 30  # hooks-OFF
 ```
 
 **Expected:** Nexus hooks-OFF RPS increases (bounded mock response). Bifrost remains
@@ -78,7 +98,7 @@ NEXUS_AUDIT_DISABLED=1 systemctl restart nexus-ai-gateway
 journalctl -u nexus-ai-gateway -n 5 | grep AUDIT_DISABLED  # confirm startup warn
 
 # From runner:
-python cli.py run --scenario s02 --gateway nexus --duration 300 --warmup 30  # hooks-OFF
+python cli.py run-nexus-hooks-off --scenario s02 --duration 300 --warmup 30  # hooks-OFF
 ```
 
 **Expected:** p95 drops from 183ms → 20–30ms if hypothesis holds.
@@ -111,7 +131,7 @@ gap scale with prompt size (100-token prompts vs 12,570-token S-02 prompts).
 python cli.py run --scenario s01 --gateway bifrost   --duration 300 --warmup 30
 python cli.py run --scenario s01 --gateway litellm   --duration 300 --warmup 30
 python cli.py run --scenario s01 --gateway nexus     --duration 300 --warmup 30  # hooks-ON
-python cli.py run --scenario s01 --gateway nexus     --duration 300 --warmup 30  # hooks-OFF
+python cli.py run-nexus-hooks-off --scenario s01     --duration 300 --warmup 30  # hooks-OFF
 ```
 
 ---
@@ -125,10 +145,10 @@ is burstable and throttles silently under sustained high-VU load (depletes CPU c
 
 ```bash
 # Upgrade all instances: stop → change instance type to c6i.2xlarge → start
-# Then:
-BENCH_VUS=6  python cli.py run --scenario s02 --gateway nexus --duration 300 --warmup 30
-BENCH_VUS=12 python cli.py run --scenario s02 --gateway nexus --duration 300 --warmup 30
-BENCH_VUS=24 python cli.py run --scenario s02 --gateway nexus --duration 300 --warmup 30
+# Then (hooks-OFF via the VALID path; --vus is a real flag now):
+python cli.py run-nexus-hooks-off --scenario s02 --vus 6  --duration 300 --warmup 30
+python cli.py run-nexus-hooks-off --scenario s02 --vus 12 --duration 300 --warmup 30
+python cli.py run-nexus-hooks-off --scenario s02 --vus 24 --duration 300 --warmup 30
 ```
 
 **Expected:** RPS scales with VUs until hitting the bottleneck. p95 will show where

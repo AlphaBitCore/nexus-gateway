@@ -25,6 +25,12 @@ def capture(gateway_name: str, config_path: str | None = None) -> dict:
         },
         "git_commit": _git_commit(),
         "config_fingerprint": _fingerprint(config_path) if config_path else "N/A",
+        # Methodology facts the validator gates on (recorded so a result proves
+        # its own validity). BENCH_UNIQUE_PROMPTS=1 is required — without it,
+        # Nexus's broker coalesces identical prompts and the load isn't
+        # comparable. The v2 harness runs gateways one at a time (sequential).
+        "bench_unique_prompts": os.getenv("BENCH_UNIQUE_PROMPTS", "") == "1",
+        "run_mode": "sequential",
     }
     if HAS_PSUTIL:
         mem = psutil.virtual_memory()

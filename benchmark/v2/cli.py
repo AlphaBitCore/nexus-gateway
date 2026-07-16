@@ -127,6 +127,9 @@ def run_single(
     mode: str = typer.Option("cache-disabled", help="cache-disabled | cache-enabled"),
     model: str = typer.Option("gpt-4o-mini", help="Model name"),
     output: str = typer.Option("./results", help="Output directory"),
+    vus: Optional[int] = typer.Option(None, help="Override virtual users"),
+    duration: Optional[int] = typer.Option(None, help="Override test duration (s)"),
+    warmup: Optional[int] = typer.Option(None, help="Override warmup duration (s)"),
 ) -> None:
     """Run a single scenario against one gateway."""
     terminal.print_disclaimer()
@@ -137,8 +140,10 @@ def run_single(
     else:
         config.features.caching_enabled = False
 
-    # Env overrides for ad-hoc fair-comparison runs (low concurrency, short
-    # duration) without editing the per-gateway YAML. Unset => YAML defaults.
+    # Overrides for ad-hoc fair-comparison runs (low concurrency, short
+    # duration) without editing the per-gateway YAML. Precedence, high→low:
+    # explicit CLI flag > BENCH_* env var > YAML default. This is what makes the
+    # V25_RUN_PLAN `run ... --duration 300 --warmup 30` commands work.
     import os
     if os.getenv("BENCH_VUS"):
         config.benchmark.virtual_users = int(os.environ["BENCH_VUS"])
@@ -146,6 +151,12 @@ def run_single(
         config.benchmark.test_duration_seconds = int(os.environ["BENCH_DURATION"])
     if os.getenv("BENCH_WARMUP"):
         config.benchmark.warmup_duration_seconds = int(os.environ["BENCH_WARMUP"])
+    if vus is not None:
+        config.benchmark.virtual_users = vus
+    if duration is not None:
+        config.benchmark.test_duration_seconds = duration
+    if warmup is not None:
+        config.benchmark.warmup_duration_seconds = warmup
 
     if scenario not in SCENARIO_MAP:
         console.print(f"[red]Unknown scenario: {scenario}[/red]")
@@ -185,6 +196,115 @@ def run_single(
     console.print(f"\n[green]Results written to {output}/results_{run_id}.{{json,csv}}[/green]")
 
 
+@app.command("run-nexus-hooks-off")
+def run_nexus_hooks_off(
+    scenario: str = typer.Option("s01", help="Scenario ID: s01-s11"),
+    model: str = typer.Option("gpt-4o-mini", help="Model name"),
+    output: str = typer.Option("./results", help="Output directory"),
+    vus: Optional[int] = typer.Option(None, help="Override virtual users"),
+    duration: Optional[int] = typer.Option(None, help="Override test duration (s)"),
+    warmup: Optional[int] = typer.Option(None, help="Override warmup duration (s)"),
+) -> None:
+    """Run a Nexus scenario in the VALID hooks-OFF mode.
+
+    Disables compliance hooks through the Control Plane API (delegating to
+    hooks_toggle.sh, which proves the gateway runtime actually reloaded — a DB
+    edit would NOT propagate), records that proof in the result, runs the
+    scenario, and GUARANTEES hooks are re-enabled afterward (try/finally) even on
+    failure. If re-enable fails, writes a high-severity artifact and exits
+    nonzero — a governed box is never left silently unhooked.
+    """
+    import os
+    from engine import hooks_control
+    terminal.print_disclaimer()
+
+    if scenario not in SCENARIO_MAP:
+        console.print(f"[red]Unknown scenario: {scenario}[/red]")
+        raise typer.Exit(1)
+    config, adapter = _load_gateway("nexus", model)
+    config.features.caching_enabled = False
+    if vus is not None:
+        config.benchmark.virtual_users = vus
+    if duration is not None:
+        config.benchmark.test_duration_seconds = duration
+    if warmup is not None:
+        config.benchmark.warmup_duration_seconds = warmup
+
+    cp_url = os.getenv("NEXUS_CP_URL", "http://localhost:3001").rstrip("/")
+    audit_disabled = os.getenv("NEXUS_AUDIT_DISABLED", "") == "1"
+    if audit_disabled:
+        console.print("[yellow]WARNING: NEXUS_AUDIT_DISABLED=1 — this taints a governed benchmark; the result will be flagged.[/yellow]")
+
+    # 1) disable hooks through the CP (bash proves convergence via its exit code)
+    console.print("[cyan]Disabling compliance hooks via the Control Plane…[/cyan]")
+    try:
+        hooks_control.set_hooks("off")
+    except Exception as e:
+        console.print(f"[red]hooks OFF failed — NOT starting the run (would measure a governed gateway): {e}[/red]")
+        raise typer.Exit(1)
+
+    # structured runtime proof for the result (best-effort; bash already proved it)
+    off_state = hooks_control.read_runtime_state(cp_url)
+    if off_state.source_ok and off_state.response_hook_count != 0:
+        console.print(f"[red]runtime still shows {off_state.response_hook_count} response-stage hooks after OFF — aborting.[/red]")
+        try:
+            hooks_control.set_hooks("on")
+        finally:
+            raise typer.Exit(1)
+
+    governance = {
+        "requested_mode": "hooks-off",
+        "control_plane_verified": True,  # set_hooks succeeded (bash PUT + verify)
+        "gateway_runtime_verified": bool(off_state.source_ok),
+        "runtime_hook_count": off_state.hook_count,
+        "runtime_response_hook_count": off_state.response_hook_count,
+        "hook_names": off_state.enabled_names,
+        "desired_ver": off_state.desired_ver,
+        "reported_ver": off_state.reported_ver,
+        "audit_disabled_env_present": audit_disabled,
+        "runtime_read_source": "cp-admin" if off_state.source_ok else "bash-exit-code",
+    }
+
+    env = environment_capture.capture("nexus", str(CONFIG_DIR / GATEWAY_MAP["nexus"][0]))
+    run_id = env["run_id"][:8]
+    results: list[ScenarioMetrics] = []
+    try:
+        mod = importlib.import_module(SCENARIO_MAP[scenario])
+        try:
+            _reset_nexus_circuit(config, retries=3, probe=True)
+        except Exception as e:
+            console.print(f"[yellow]circuit reset best-effort failed: {e} (continuing)[/yellow]")
+        console.print(f"\n[bold cyan]Running {scenario.upper()} on nexus [hooks-off, VALID]…[/bold cyan]\n")
+        result = asyncio.run(mod.run(config, adapter, mode="cache-disabled"))
+        results = result if isinstance(result, list) else ([result] if isinstance(result, ScenarioMetrics) else [])
+        for m in results:
+            m.governance = dict(governance)  # stamp proof onto every row
+        for m in results:
+            terminal.print_scenario_result(m, thresholds=getattr(mod, "THRESHOLDS", {}))
+    finally:
+        # ALWAYS re-enable — even on scenario failure. This is the safety guarantee.
+        console.print("[cyan]Re-enabling compliance hooks via the Control Plane…[/cyan]")
+        try:
+            hooks_control.set_hooks("on")
+        except Exception as e:
+            art = Path(output); art.mkdir(parents=True, exist_ok=True)
+            note = art / "HOOKS_NOT_RESTORED.json"
+            import json as _json
+            note.write_text(_json.dumps({
+                "severity": "high", "error": str(e),
+                "remediation": "Governed box may be left UNHOOKED. Run "
+                               "`python scripts/nexus_hooks_control.py on` (or scripts/hooks_toggle.sh on) "
+                               "and confirm via `... status` before any production traffic.",
+            }, indent=2))
+            console.print(f"[bold red]RE-ENABLE FAILED — wrote {note}. Restore hooks manually before prod traffic.[/bold red]")
+            raise typer.Exit(2)
+
+    if results:
+        json_report.write(results, env, output, run_id)
+        csv_report.write(results, output, run_id)
+        console.print(f"\n[green]hooks-off results (with runtime proof) → {output}/results_{run_id}.json[/green]")
+
+
 @app.command("run-suite")
 def run_suite(
     mode: str = typer.Option("cache-disabled", help="cache-disabled | cache-enabled"),
@@ -198,6 +318,19 @@ def run_suite(
 
     gateway_list = [g.strip() for g in gateways.split(",")]
     scenario_list = [s.strip() for s in scenarios.split(",")]
+
+    # Run order: LiteLLM LAST (cold-pool guard, Jul-14 anomaly). Honors
+    # global.yaml `run_order`; falls back to the built-in default.
+    from engine import stability
+    import yaml as _yaml
+    _run_order = None
+    try:
+        _g = _yaml.safe_load((CONFIG_DIR / "global.yaml").read_text())
+        _run_order = (_g or {}).get("run_order")
+    except Exception:
+        _run_order = None
+    gateway_list = stability.order_gateways(gateway_list, _run_order)
+    console.print(f"[dim]run order: {', '.join(gateway_list)}[/dim]")
 
     # Pre-flight config parity check
     configs = [_load_gateway(g, model)[0] for g in gateway_list]
@@ -222,15 +355,21 @@ def run_suite(
             config, adapter = _load_gateway(gw_name, model)
             config.features.caching_enabled = (mode == "cache-enabled")
             console.print(f"\n[bold cyan]{scenario_id.upper()} → {gw_name}[/bold cyan]")
-            result = asyncio.run(mod.run(config, adapter, mode=mode))
-            if isinstance(result, ScenarioMetrics):
-                scenario_results.append(result)
-                all_results.append(result)
-            elif isinstance(result, list):
-                for r in result:
-                    if isinstance(r, ScenarioMetrics):
-                        scenario_results.append(r)
-                        all_results.append(r)
+            # Optional best-effort resource telemetry: set BENCH_<GW>_CONTAINER
+            # (e.g. BENCH_LITELLM_CONTAINER=litellm) to sample docker CPU/mem
+            # during the run; unset → source_status 'unavailable', null metrics.
+            import os as _os
+            _container = _os.getenv(f"BENCH_{gw_name.upper().replace('-', '_')}_CONTAINER")
+            with stability.ResourceSampler(_container) as _sampler:
+                result = asyncio.run(mod.run(config, adapter, mode=mode))
+            batch = result if isinstance(result, list) else ([result] if isinstance(result, ScenarioMetrics) else [])
+            for r in batch:
+                if isinstance(r, ScenarioMetrics):
+                    r.warmup = stability.warmup_record(config.benchmark.warmup_duration_seconds)
+                    r.resource_observations = _sampler.observations(r)
+                    stability.classify_anomaly(r)
+                    scenario_results.append(r)
+                    all_results.append(r)
 
         results_by_scenario[scenario_id.upper()] = scenario_results
         if len(scenario_results) > 1:
