@@ -1,0 +1,26 @@
+# The gateway set + release channel per gateway. resolve_versions.py turns each
+# `channel` into an exact pin in versions.lock. For the `static` resolver, fill in
+# `version` + `image_digest` here (operator pre-pins); for the `docker` resolver,
+# `source` + `channel` are queried for today's digest.
+#
+# Nexus is built FROM SOURCE at a locked commit (no opaque AMI) — record `commit`.
+# Placeholders below are intentionally empty (no fake digests); a run cannot pass
+# validation until they are resolved to real pins.
+gateways:
+  - name: nexus
+    source: build-from-source            # this repo, at `commit`
+    channel: main
+    version: ""
+    image_digest: ""
+    commit: ""
+  - name: bifrost
+    source: docker.io/maximhq/bifrost
+    channel: latest
+    version: ""
+    image_digest: ""
+  - name: litellm
+    source: ghcr.io/berriai/litellm
+    channel: main-latest
+    version: ""
+    image_digest: ""
+  # tensorzero / portkey / kong join as their configs are pinned.

@@ -1,0 +1,28 @@
+# Story A — continuous open-loop latency observatory (defaults).
+# One gateway measured at a time, low fixed OPEN-LOOP arrival rate, dedicated
+# in-VPC mock. No throughput/capacity claims (that is Story B, on the rig).
+run_mode: continuous_latency
+launch_type: fargate            # dedicated vCPU — no burstable credits, no silent throttle
+
+offered_load:
+  model: open_loop              # never closed-loop for a latency claim
+  target_rps: 50                # low, far below every ceiling
+  warmup_seconds: 60            # excluded from metrics
+  duration_seconds: 300
+
+upstream:
+  name: nexus-mock-provider
+  expected_response_id: chatcmpl-llm-mock   # per-request content check; a mis-wired upstream fails loudly
+
+# Fargate allocation (per service, identical across gateways).
+cpu_vcpus: 4
+memory_mb: 8192
+
+# Disk is only a first-order variable when audit writes are on the path (Nexus).
+# Story A low-load latency generally keeps audit off; when measured, set gp3 spec.
+disk:
+  type: gp3
+  iops: 12000
+  throughput_mibps: 1000
+
+loadtest_version: nexus-loadtest@pending   # stamped from the resolved loadtest build

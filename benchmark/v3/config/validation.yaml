@@ -1,0 +1,14 @@
+# Pre-registered validation thresholds (overrides shared/validation/validator.py
+# defaults). These are the CONTRACT: the same rules apply to every gateway — there
+# is no per-gateway exception. Changing a threshold is a reviewed change.
+max_timeout_rate: 0.05                     # > 5% timeouts → run invalid (unstable)
+open_loop_required_modes:
+  - continuous_latency                     # latency claims must be open-loop
+burstable_instance_pattern: "^t[0-9]"      # t2/t3/t3a/t4g… banned on EC2
+floating_tags:
+  - latest
+  - main-latest
+  - main
+  - stable
+  - nightly
+  - edge
