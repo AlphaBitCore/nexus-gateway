@@ -1,3 +1,5 @@
+> **PRE-GATE — NOT PUBLISHABLE.** Internal historical material — predates the `benchmark/v3` validation pipeline. Not for public claims, cross-gateway rankings, or client/marketing material. See [PRE-GATE-NOT-PUBLISHABLE.md](PRE-GATE-NOT-PUBLISHABLE.md) and [../RETIRED_MEASUREMENT_CORE.md](../RETIRED_MEASUREMENT_CORE.md).
+
 # Fair 3-Way Comparison — S-01 (short chat, cache-disabled)
 
 **Generated:** 2026-06-15

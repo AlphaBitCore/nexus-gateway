@@ -1,3 +1,5 @@
+> **PRE-GATE — NOT PUBLISHABLE.** Internal historical material — predates the `benchmark/v3` validation pipeline. Not for public claims, cross-gateway rankings, or client/marketing material. See [PRE-GATE-NOT-PUBLISHABLE.md](PRE-GATE-NOT-PUBLISHABLE.md) and [../RETIRED_MEASUREMENT_CORE.md](../RETIRED_MEASUREMENT_CORE.md).
+
 # Nexus Gateway — Full Benchmark Report
 ## v1 → v1.5 → v2 (S-02 Long-Context)
 

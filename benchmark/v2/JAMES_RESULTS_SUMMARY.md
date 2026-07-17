@@ -1,3 +1,5 @@
+> **PRE-GATE — NOT PUBLISHABLE.** Internal historical material — predates the `benchmark/v3` validation pipeline. Not for public claims, cross-gateway rankings, or client/marketing material. See [results/PRE-GATE-NOT-PUBLISHABLE.md](results/PRE-GATE-NOT-PUBLISHABLE.md) and [RETIRED_MEASUREMENT_CORE.md](RETIRED_MEASUREMENT_CORE.md).
+
 # Nexus Gateway Benchmark — Results Summary (for James)
 
 **One page, plain English. Local validation numbers — the publishable full-scale run happens on AWS.**
