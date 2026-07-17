@@ -1,0 +1,4 @@
+# benchmark/v3 foundation — validation + provenance tooling.
+# Kept minimal; the load/runner deps (httpx etc.) arrive with Story A's runner.
+jsonschema==4.22.0
+PyYAML==6.0.1

@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "nexus-benchmark/v3/provenance.schema.json",
+  "title": "Nexus benchmark v3 — run provenance",
+  "description": "Captured once per run by capture_provenance.py. Everything needed to reproduce and attribute a measurement: exact gateway version/digest, Nexus source commit, CPU model, allocation, disk spec, load config, upstream, and the exact set of services running on the box under test.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "gateway",
+    "nexus_commit",
+    "cpu_model",
+    "launch_type",
+    "loadtest_version",
+    "offered_load",
+    "upstream",
+    "services_running"
+  ],
+  "properties": {
+    "schema": { "const": "provenance/v1" },
+    "captured_at": { "type": ["string", "null"] },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "version", "image_digest"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "image_digest": { "type": "string" },
+        "commit": { "type": ["string", "null"] }
+      }
+    },
+    "nexus_commit": { "type": ["string", "null"] },
+    "cpu_model": { "type": "string" },
+    "cpu_vcpus": { "type": ["integer", "null"] },
+    "memory_mb": { "type": ["integer", "null"] },
+    "launch_type": { "enum": ["fargate", "ec2"] },
+    "instance_type": { "type": ["string", "null"] },
+    "fargate_platform_version": { "type": ["string", "null"] },
+    "task_definition_revision": { "type": ["string", "null"] },
+    "disk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": ["string", "null"] },
+        "iops": { "type": ["integer", "null"] },
+        "throughput_mibps": { "type": ["integer", "null"] }
+      }
+    },
+    "loadtest_version": { "type": "string" },
+    "offered_load": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "target_rps", "warmup_seconds", "duration_seconds"],
+      "properties": {
+        "model": { "type": "string" },
+        "target_rps": { "type": "number" },
+        "warmup_seconds": { "type": "number" },
+        "duration_seconds": { "type": "number" }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "expected_response_id": { "type": ["string", "null"] }
+      }
+    },
+    "services_running": { "type": "array", "items": { "type": "string" } },
+    "region": { "type": ["string", "null"] },
+    "az": { "type": ["string", "null"] }
+  }
+}

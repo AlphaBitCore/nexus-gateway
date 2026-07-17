@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "nexus-benchmark/v3/run.schema.json",
+  "title": "Nexus benchmark v3 — canonical per-run result",
+  "description": "One record per benchmark run (Story A continuous-latency or Story B saturation-campaign). The mandatory validator (shared/validation/validator.py) applies the gateway-agnostic rules; this schema pins shape + enums so a typo or missing field fails loudly before the rules run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "story",
+    "run_id",
+    "run_mode",
+    "gateway",
+    "offered_load",
+    "environment",
+    "upstream",
+    "outcomes",
+    "latency",
+    "validation",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "const": "v3" },
+    "story": { "enum": ["A", "B"] },
+    "run_id": { "type": "string", "minLength": 1 },
+    "run_mode": { "enum": ["continuous_latency", "saturation_campaign", "smoke_test"] },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "image_digest"],
+      "properties": {
+        "name": { "enum": ["nexus", "bifrost", "litellm", "tensorzero", "portkey", "kong", "agentgateway"] },
+        "version": { "type": "string", "minLength": 1 },
+        "image_digest": { "type": "string" },
+        "commit": { "type": "string" },
+        "tuning": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "workers": { "type": "integer", "minimum": 0 },
+            "config_reference": { "type": "string" }
+          }
+        }
+      }
+    },
+    "offered_load": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "target_rps", "duration_seconds", "warmup_seconds"],
+      "properties": {
+        "model": { "enum": ["open_loop", "closed_loop"] },
+        "target_rps": { "type": "number", "minimum": 0 },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "warmup_seconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["launch_type", "cpu_model", "cpu_vcpus", "memory_mb", "disk_type", "services_running"],
+      "properties": {
+        "launch_type": { "enum": ["fargate", "ec2"] },
+        "instance_type": { "type": "string" },
+        "cpu_model": { "type": "string" },
+        "cpu_vcpus": { "type": "integer", "minimum": 0 },
+        "memory_mb": { "type": "integer", "minimum": 0 },
+        "disk_type": { "enum": ["gp3", "ephemeral", "none"] },
+        "disk_iops": { "type": "integer", "minimum": 0 },
+        "disk_throughput_mibps": { "type": "integer", "minimum": 0 },
+        "audit_writes_enabled": { "type": "boolean" },
+        "services_running": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "expected_response_id", "verified"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "expected_response_id": { "type": "string", "minLength": 1 },
+        "verified": { "type": "boolean" }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "success", "timeout", "http_4xx", "http_5xx", "broken_stream", "content_invalid"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "success": { "type": "integer", "minimum": 0 },
+        "timeout": { "type": "integer", "minimum": 0 },
+        "http_4xx": { "type": "integer", "minimum": 0 },
+        "http_5xx": { "type": "integer", "minimum": 0 },
+        "broken_stream": { "type": "integer", "minimum": 0 },
+        "content_invalid": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p50_ms", "p95_ms", "p99_ms", "ttft_p50_ms", "ttft_p95_ms", "co_corrected"],
+      "properties": {
+        "p50_ms": { "type": "number", "minimum": 0 },
+        "p95_ms": { "type": "number", "minimum": 0 },
+        "p99_ms": { "type": "number", "minimum": 0 },
+        "ttft_p50_ms": { "type": "number", "minimum": 0 },
+        "ttft_p95_ms": { "type": "number", "minimum": 0 },
+        "co_corrected": { "type": "boolean" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reasons", "validator_version"],
+      "properties": {
+        "status": { "enum": ["valid", "invalid", "quarantined"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "validator_version": { "type": "string" }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_results_uri", "provenance_uri", "versions_lock_uri"],
+      "properties": {
+        "raw_results_uri": { "type": "string" },
+        "provenance_uri": { "type": "string" },
+        "versions_lock_uri": { "type": "string" }
+      }
+    }
+  }
+}
