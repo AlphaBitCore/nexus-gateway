@@ -12,3 +12,6 @@ floating_tags:
   - stable
   - nightly
   - edge
+# services that must NOT run on the box under test (they skew the measured gateway)
+forbidden_services:
+  - compliance-proxy

@@ -36,6 +36,10 @@ _DEFAULT_OPEN_LOOP_MODES = ("continuous_latency",)
 _DEFAULT_MAX_TIMEOUT_RATE = 0.05
 
 _OUTCOME_KEYS = ("success", "timeout", "http_4xx", "http_5xx", "broken_stream", "content_invalid")
+# Services that must NOT run on the box under test — they are not what the run
+# measures and their load skews the measured gateway (Tieben's fairness bar).
+_DEFAULT_FORBIDDEN_SERVICES = ("compliance-proxy",)
+_DEPLOYMENT_METHODS = ("native", "container")
 
 
 def default_config() -> dict[str, Any]:
@@ -46,6 +50,11 @@ def default_config() -> dict[str, Any]:
         "open_loop_required_modes": list(_DEFAULT_OPEN_LOOP_MODES),
         "burstable_instance_pattern": _DEFAULT_BURSTABLE_RE,
         "floating_tags": sorted(_DEFAULT_FLOATING_TAGS - {""}),
+        # Tieben's fairness bar: a service the run does not measure, running on the box
+        # under test, skews that box's numbers (canonical case: compliance-proxy on the
+        # Nexus box). Deployment method (native vs container) must be known so the
+        # container-overhead-at-high-concurrency variable is attributable.
+        "forbidden_services": list(_DEFAULT_FORBIDDEN_SERVICES),
     }
 
 
@@ -150,6 +159,25 @@ def validate_run(run: dict[str, Any], config: dict[str, Any] | None = None) -> l
     if not isinstance(services, list) or len(services) == 0:
         reasons.append("environment.services_running is empty — running services must be enumerated")
 
+    # 12. No UNMEASURED service on the box under test (Tieben: extra services skew it).
+    forbidden = {s.lower() for s in _cfg(config, "forbidden_services")}
+    if isinstance(services, list):
+        present_forbidden = sorted({s for s in services if str(s).lower() in forbidden})
+        if present_forbidden:
+            reasons.append(
+                f"unmeasured service(s) on the box under test: {present_forbidden} — "
+                "an extra service skews the measured gateway's numbers"
+            )
+
+    # 13. Deployment method must be known (Tieben: container overhead at high concurrency
+    # shows up as a fake gateway difference unless native-vs-container is attributable).
+    dm = env.get("deployment_method")
+    if dm not in _DEPLOYMENT_METHODS:
+        reasons.append(
+            f"environment.deployment_method must be one of {list(_DEPLOYMENT_METHODS)} "
+            f"(got {dm!r}) — container-vs-native overhead is otherwise unattributable"
+        )
+
     return reasons
 
 
@@ -158,6 +186,20 @@ def classify(run: dict[str, Any], config: dict[str, Any] | None = None) -> tuple
     the artifact) is the CLI's job; the pure verdict is valid/invalid."""
     reasons = validate_run(run, config)
     return ("valid" if not reasons else "invalid"), reasons
+
+
+def assert_consistent_deployment(runs: Iterable[dict[str, Any]]) -> None:
+    """Guardrail (Tieben's fairness bar): a cross-gateway comparison must not silently
+    mix native and containerized gateways — Docker's own overhead at high concurrency
+    would surface as a gateway difference that isn't one. Raises if a set mixes methods.
+    A deliberately mixed set must be split into separate, labeled comparisons."""
+    methods = {(r.get("environment", {}) or {}).get("deployment_method") for r in runs}
+    methods.discard(None)
+    if len(methods) > 1:
+        raise ValueError(
+            f"cross-gateway comparison mixes deployment methods {sorted(methods)} — "
+            "container overhead would masquerade as a gateway difference; keep it consistent or split + label"
+        )
 
 
 def assert_no_cross_story(runs: Iterable[dict[str, Any]]) -> None:

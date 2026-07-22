@@ -17,6 +17,7 @@ V3_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(V3_ROOT))
 
 from shared.validation.validator import (  # noqa: E402
+    assert_consistent_deployment,
     assert_no_cross_story,
     classify,
     validate_run,
@@ -52,6 +53,7 @@ def valid_run(gateway: str = "nexus") -> dict:
             "disk_iops": 12000,
             "disk_throughput_mibps": 1000,
             "audit_writes_enabled": False,
+            "deployment_method": "container",
             "services_running": ["nexus-ai-gateway", "nexus-mock-provider"],
         },
         "upstream": {
@@ -185,6 +187,18 @@ class Rules(unittest.TestCase):
         r = self._reasons(lambda r: r["environment"].update(services_running=[]))
         self._assert_flagged(r, "services_running is empty")
 
+    def test_unmeasured_service_on_box_rejected(self):
+        # Tieben's bar: compliance-proxy (unmeasured) on the box under test skews it.
+        r = self._reasons(lambda r: r["environment"]["services_running"].append("compliance-proxy"))
+        self._assert_flagged(r, "unmeasured service")
+
+    def test_deployment_method_required(self):
+        r = self._reasons(lambda r: r["environment"].pop("deployment_method", None))
+        self._assert_flagged(r, "deployment_method")
+        # an unknown value is also rejected
+        r2 = self._reasons(lambda r: r["environment"].update(deployment_method="k8s"))
+        self._assert_flagged(r2, "deployment_method")
+
 
 class Symmetry(unittest.TestCase):
     """The fix for v2's litellm-only gate: an identical bad input must invalidate
@@ -211,6 +225,20 @@ class CrossStory(unittest.TestCase):
     def test_mixed_stories_raises(self):
         with self.assertRaises(ValueError):
             assert_no_cross_story([{"story": "A"}, {"story": "B"}])
+
+
+class CrossDeployment(unittest.TestCase):
+    def _run(self, method):
+        return {"environment": {"deployment_method": method}}
+
+    def test_consistent_deployment_ok(self):
+        assert_consistent_deployment([self._run("container"), self._run("container")])
+
+    def test_mixed_deployment_raises(self):
+        # native + container in one comparison → container overhead would masquerade
+        # as a gateway difference (Tieben's bar).
+        with self.assertRaises(ValueError):
+            assert_consistent_deployment([self._run("native"), self._run("container")])
 
 
 class V2Quarantined(unittest.TestCase):

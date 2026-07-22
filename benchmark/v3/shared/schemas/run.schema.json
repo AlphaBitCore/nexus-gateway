@@ -68,6 +68,7 @@
         "disk_iops": { "type": "integer", "minimum": 0 },
         "disk_throughput_mibps": { "type": "integer", "minimum": 0 },
         "audit_writes_enabled": { "type": "boolean" },
+        "deployment_method": { "enum": ["native", "container"] },
         "services_running": {
           "type": "array",
           "items": { "type": "string" }
