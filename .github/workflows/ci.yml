@@ -29,7 +29,7 @@ jobs:
           # Need full clone for `git ls-files` + `git show :path` patterns
           # used by check-no-redis-pubsub.mjs / check-hardcoded-agent-paths.mjs.
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -124,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -155,7 +155,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -198,7 +198,7 @@ jobs:
           # GO-2026-5856, the crypto/tls advisory fixed in 1.26.5). Bump
           # this when govulncheck flags a newer one.
           go-version: '1.26.5'
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
