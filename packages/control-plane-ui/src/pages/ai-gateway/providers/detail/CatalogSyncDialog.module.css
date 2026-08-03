@@ -1,0 +1,107 @@
+.state {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-5);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.sectionHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-text);
+}
+
+.sectionHint {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+}
+
+.rowBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+  min-width: 0;
+  flex: 1;
+}
+
+.rowName {
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text);
+}
+
+.rowId {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  font-family: var(--g-font-family-mono);
+  word-break: break-all;
+}
+
+.diffList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-0-5);
+  margin-top: var(--g-space-1);
+}
+
+.diffItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--g-space-1);
+  font-size: var(--g-font-size-xs);
+}
+
+.diffField {
+  color: var(--color-text-muted);
+}
+
+.diffFrom {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+  font-family: var(--g-font-family-mono);
+}
+
+.diffArrow {
+  color: var(--color-text-muted);
+}
+
+.diffTo {
+  color: var(--color-text);
+  font-weight: var(--g-font-weight-medium);
+  font-family: var(--g-font-family-mono);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--g-space-2);
+}

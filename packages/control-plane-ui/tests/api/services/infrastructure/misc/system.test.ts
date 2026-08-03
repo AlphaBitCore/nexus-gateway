@@ -75,13 +75,12 @@ describe('systemApi — settings + models + cache', () => {
     expect(m.delete).toHaveBeenCalledWith('/api/admin/models/mdl1');
   });
 
-  it('instances + me + cache preview', () => {
+  it('instances + me (cache preview removed as dead code)', () => {
     systemApi.listInstances();
     systemApi.me();
-    systemApi.previewCacheNormaliser({ body: '{}' } as never);
     expect(m.get).toHaveBeenCalledWith('/api/admin/instances');
     expect(m.get).toHaveBeenCalledWith('/api/admin/me');
-    expect(m.post).toHaveBeenCalledWith('/api/admin/cache/preview', { body: '{}' });
+    expect('previewCacheNormaliser' in systemApi).toBe(false);
   });
 });
 

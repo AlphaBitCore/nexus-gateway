@@ -248,8 +248,6 @@ function SourceBadge({ source }: { source?: string }) {
       return <Badge variant="warning">{t('pages:providers.sourceOverride')}</Badge>;
     case 'adapter-default':
       return <Badge variant="default">{t('pages:providers.sourceAdapter')}</Badge>;
-    case 'global-default':
-      return <Badge variant="default">{t('pages:providers.sourceGlobal')}</Badge>;
     default:
       return <Badge variant="default">{t('pages:providers.sourceCode')}</Badge>;
   }

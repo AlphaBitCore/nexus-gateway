@@ -138,8 +138,16 @@ var ConfigKeyServices = map[string][]string{
 	"quota_overrides":        {"ai-gateway"},
 	"quota_policies":         {"ai-gateway"},
 	// shared by multiple
-	"hooks":                {"ai-gateway", "compliance-proxy", "agent"},
-	"streaming_compliance": {"ai-gateway", "compliance-proxy", "agent"},
+	"hooks": {"ai-gateway", "compliance-proxy", "agent"},
+	// NOT ai-gateway. configdispatch.go states it outright: "ai-gateway
+	// intentionally has NO streaming_compliance applier" — the key is absent from
+	// ValidByThingType["ai-gateway"], and the Control Plane correspondingly
+	// invalidates only compliance-proxy and agent. Listing it here made
+	// WaitForConfigApply block for its full 30s deadline on a service that can
+	// never apply, which then pushed the scenario's AdminAuditLog check outside
+	// its own 30-second lookback window — one wrong map entry failing two
+	// independent assertions.
+	"streaming_compliance": {"compliance-proxy", "agent"},
 	"payload_capture":      {"ai-gateway", "compliance-proxy", "agent"},
 	"interception_domains": {"compliance-proxy", "agent"},
 	"killswitch":           {"compliance-proxy", "agent", "ai-gateway"},

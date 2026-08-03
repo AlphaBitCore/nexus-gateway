@@ -6,63 +6,123 @@
   "adapterType": "glm",
   "models": [
     {
+      "code": "glm-5.1",
+      "name": "GLM-5.1",
+      "description": "Zhipu GLM-5.1 — current flagship.",
+      "providerModelId": "glm-5.1",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 1.4,
+      "outputPricePerMillion": 4.4,
+      "cachedInputReadPricePerMillion": 0.26,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 128000
+    },
+    {
       "code": "glm-5",
       "name": "GLM-5",
-      "description": "Zhipu AI's latest flagship model. Strongest reasoning, coding, and multilingual capabilities.",
+      "description": "Zhipu GLM-5 general-purpose model.",
       "providerModelId": "glm-5",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning",
+        "prompt_caching"
       ],
-      "inputPricePerMillion": 1.0,
+      "inputPricePerMillion": 1,
       "outputPricePerMillion": 3.2,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 128000,
       "cachedInputReadPricePerMillion": 0.2,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "glm-5-code",
+      "name": "GLM-5 Code",
+      "description": "Zhipu GLM-5 tuned for code generation and agentic coding.",
+      "providerModelId": "glm-5-code",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 1.2,
+      "outputPricePerMillion": 5,
+      "cachedInputReadPricePerMillion": 0.3,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "glm-4.7",
       "name": "GLM-4.7",
-      "description": "High-capability GLM-4 generation model with strong reasoning and instruction following.",
+      "description": "Zhipu GLM-4.7 general-purpose model.",
       "providerModelId": "glm-4.7",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning",
+        "prompt_caching"
       ],
       "inputPricePerMillion": 0.6,
       "outputPricePerMillion": 2.2,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 128000,
       "cachedInputReadPricePerMillion": 0.11,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "glm-4.7-flash",
+      "name": "GLM-4.7 Flash",
+      "description": "Free, low-latency GLM-4.7 tier.",
+      "providerModelId": "glm-4.7-flash",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0,
+      "outputPricePerMillion": 0,
+      "cachedInputReadPricePerMillion": 0,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "glm-4.6",
       "name": "GLM-4.6",
-      "description": "Production-tier GLM-4 model balancing quality and cost.",
+      "description": "Zhipu GLM-4.6 general-purpose model.",
       "providerModelId": "glm-4.6",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning",
+        "prompt_caching"
       ],
       "inputPricePerMillion": 0.6,
       "outputPricePerMillion": 2.2,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 128000,
       "cachedInputReadPricePerMillion": 0.11,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "glm-4.6v",
       "name": "GLM-4.6V",
-      "description": "Multimodal GLM-4.6 with vision capabilities.",
+      "description": "Zhipu GLM-4.6 vision model.",
       "providerModelId": "glm-4.6v",
       "type": "chat",
       "features": [
@@ -72,16 +132,15 @@
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 0.9,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 128000,
       "cachedInputReadPricePerMillion": 0.05,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 128000
     },
     {
-      "code": "glm-4.7-flash",
-      "name": "GLM-4.7 Flash",
-      "description": "Free-tier fast GLM-4.7 variant. Optimised for high-throughput workloads.",
-      "providerModelId": "glm-4.7-flash",
+      "code": "glm-4.5-flash",
+      "name": "GLM-4.5 Flash",
+      "description": "Free, low-latency GLM-4.5 tier.",
+      "providerModelId": "glm-4.5-flash",
       "type": "chat",
       "features": [
         "function_calling",
@@ -89,26 +148,9 @@
       ],
       "inputPricePerMillion": 0,
       "outputPricePerMillion": 0,
-      "maxContextTokens": 203000,
-      "maxOutputTokens": 128000,
       "cachedInputReadPricePerMillion": 0,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "glm-4.5-flash",
-      "name": "GLM-4.5 Flash",
-      "description": "Free-tier fast variant for high-volume tasks.",
-      "providerModelId": "glm-4.5-flash",
-      "type": "chat",
-      "features": [
-        "streaming"
-      ],
-      "inputPricePerMillion": 0,
-      "outputPricePerMillion": 0,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 128000,
-      "cachedInputReadPricePerMillion": 0,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 32000
     }
   ]
 }

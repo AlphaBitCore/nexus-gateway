@@ -7,7 +7,7 @@
  */
 import { useTranslation } from 'react-i18next';
 import { Card, Stack } from '@/components/ui';
-import { SettingsCacheTab } from '../../../compliance/cache/SettingsCacheTab';
+import { SettingsCacheTab } from '../settings/SettingsCacheTab';
 import styles from './ProviderPromptCacheSection.module.css';
 
 export function ProviderPromptCacheSection() {

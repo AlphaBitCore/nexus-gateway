@@ -9,6 +9,8 @@ import { formatDateTime, formatTokens } from '@/lib/format';
 import { ComplianceTagChipList } from '../list/ComplianceTagChips';
 import { LatencyWaterfall } from '@/components/charts/LatencyWaterfall';
 import { NormalizedPayloadView } from '../list/NormalizedPayloadView';
+import { modalityOfEndpointKind } from '../list/trafficColumns';
+import { ArtifactViewer } from './ArtifactViewer';
 import { useApi } from '@/hooks/useApi';
 import { systemApi } from '@/api/services';
 import { usePermission } from '@/hooks/usePermission';
@@ -26,6 +28,8 @@ import { PipelineTimeline, BlockingRuleLine } from './HookTimeline';
 import { JsonSection, PayloadSection } from './PayloadSections';
 import { RoutingFlowCard } from './RoutingFlowCard';
 import { CostBreakdown } from './CostBreakdown';
+import { CorrelationSection } from './CorrelationSection';
+import type { LiveTrafficFiltersState } from '../filters/liveTrafficFilters';
 import css from './trafficAuditDrawer.module.css';
 
 export { DRAWER_MS, DRAWER_WIDTH } from '../../governance/adminAuditLogShared';
@@ -37,6 +41,14 @@ interface TrafficEventDrawerProps {
   drawerVisible: boolean;
   onClose: () => void;
   titleId?: string;
+  /**
+   * Correlation pivot: apply a filter patch to the live traffic list (and
+   * close the drawer) so one click jumps from "this event" to the whole
+   * slice for that end-user / session / request. Supplied by the Traffic
+   * tab; omitted by hosts without a filterable list (node-detail drawer),
+   * where correlation ids render copy-only.
+   */
+  onPivot?: (patch: Partial<LiveTrafficFiltersState>) => void;
 }
 
 /* Drawer overlay and aside use inline styles because their opacity/transform
@@ -47,6 +59,7 @@ export function TrafficEventDrawer({
   drawerVisible,
   onClose,
   titleId = 'traffic-event-drawer-title',
+  onPivot,
 }: TrafficEventDrawerProps) {
   const { t } = useTranslation();
   const canDisableL2 = usePermission('semantic-cache:update');
@@ -264,18 +277,30 @@ export function TrafficEventDrawer({
               <FieldGroup
                 title={t('pages:traffic.detail.basic.title')}
                 fields={[
-                  { label: t('pages:traffic.detail.basic.id'), value: e.id, mono: true, fullWidth: true },
                   { label: t('pages:traffic.detail.basic.source'), value: e.source },
                   { label: t('pages:traffic.detail.basic.time'), value: e.timestamp ? formatDateTime(e.timestamp) : null },
                 ]}
                 cols={2}
               />
 
+              {/* Correlation ids with copy + click-to-pivot; the event id
+                  doubles as the gateway request id, so it lives here
+                  instead of the Event Info block. */}
+              <CorrelationSection e={e} isGatewayTraffic={isGatewayTraffic} onPivot={onPivot} />
+
               <FieldGroup
                 title={t('pages:traffic.detail.request.title')}
                 fields={[
                   { label: t('pages:traffic.detail.request.method'), value: e.method },
                   { label: t('pages:traffic.detail.request.status'), value: e.statusCode },
+                  // Request modality — derived from endpoint_type through the same
+                  // mapping the list column uses, so the drawer and the row can never
+                  // disagree about what a request was. Reading endpoint_type directly
+                  // here is what made a /v1/responses row say "responses" in a field
+                  // labelled Modality: it is an endpoint KIND, not a medium.
+                  ...(modalityOfEndpointKind(e.endpointType)
+                    ? [{ label: t('pages:traffic.detail.request.modality'), value: t(`pages:traffic.modality.${modalityOfEndpointKind(e.endpointType)}`) }]
+                    : []),
                   { label: t('pages:traffic.detail.request.path'), value: e.path, mono: true, fullWidth: true },
                   // The URL the gateway actually sent to upstream. Differs
                   // from method/path on cross-format routes (e.g. an OpenAI
@@ -711,6 +736,9 @@ export function TrafficEventDrawer({
                   </div>
                 </div>
               ) : null}
+              {/* Inline artifact preview (image / audio) for multimodal rows,
+                  above the Normalized/Raw text views. */}
+              <ArtifactViewer eventId={e.id} endpointType={e.endpointType} />
               {/* Normalized | Raw sub-tabs. */}
               <Stack direction="horizontal" gap="sm">
                 <button

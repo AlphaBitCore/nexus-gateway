@@ -460,3 +460,60 @@
   font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
 }
+
+/* ── Correlation section ──
+   One row per correlation id: mono value (click-to-pivot when the host
+   page wires onPivot) + a one-click copy button. */
+.corrValue {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.corrRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  min-width: 0;
+}
+
+.corrPivotBtn {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-primary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.corrPivotBtn:hover {
+  text-decoration: underline;
+}
+
+.corrCopyBtn {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-xs);
+  padding: var(--g-space-0-5) var(--g-space-1-5);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.corrCopyBtn:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}

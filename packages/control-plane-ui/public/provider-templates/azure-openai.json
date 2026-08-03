@@ -6,192 +6,335 @@
   "adapterType": "azure-openai",
   "models": [
     {
+      "code": "azure-gpt-5.6-sol",
+      "name": "Azure GPT-5.6 Sol",
+      "description": "GPT-5.6 Sol on Azure OpenAI. Current flagship reasoning tier.",
+      "providerModelId": "gpt-5.6-sol",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 30,
+      "cachedInputReadPricePerMillion": 0.5,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "azure-gpt-5.6-terra",
+      "name": "Azure GPT-5.6 Terra",
+      "description": "GPT-5.6 Terra on Azure OpenAI. Balanced cost and capability.",
+      "providerModelId": "gpt-5.6-terra",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 15,
+      "cachedInputReadPricePerMillion": 0.25,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "azure-gpt-5.6-luna",
+      "name": "Azure GPT-5.6 Luna",
+      "description": "GPT-5.6 Luna on Azure OpenAI. Lowest-cost 5.6 tier.",
+      "providerModelId": "gpt-5.6-luna",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 1,
+      "outputPricePerMillion": 6,
+      "cachedInputReadPricePerMillion": 0.1,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "azure-gpt-5.5",
+      "name": "Azure GPT-5.5",
+      "description": "GPT-5.5 on Azure OpenAI.",
+      "providerModelId": "gpt-5.5",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 30,
+      "cachedInputReadPricePerMillion": 0.5,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "azure-gpt-5.4",
+      "name": "Azure GPT-5.4",
+      "description": "GPT-5.4 on Azure OpenAI.",
+      "providerModelId": "gpt-5.4",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 15,
+      "cachedInputReadPricePerMillion": 0.25,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "azure-gpt-5.4-mini",
+      "name": "Azure GPT-5.4 Mini",
+      "description": "Smaller, cheaper GPT-5.4 tier on Azure OpenAI.",
+      "providerModelId": "gpt-5.4-mini",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.75,
+      "outputPricePerMillion": 4.5,
+      "cachedInputReadPricePerMillion": 0.075,
+      "maxContextTokens": 272000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "azure-gpt-5.4-nano",
+      "name": "Azure GPT-5.4 Nano",
+      "description": "Smallest GPT-5.4 tier on Azure OpenAI.",
+      "providerModelId": "gpt-5.4-nano",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.2,
+      "outputPricePerMillion": 1.25,
+      "cachedInputReadPricePerMillion": 0.02,
+      "maxContextTokens": 272000,
+      "maxOutputTokens": 128000
+    },
+    {
       "code": "azure-gpt-5",
       "name": "Azure GPT-5",
-      "description": "Azure-hosted GPT-5. Latest OpenAI flagship on Azure infrastructure with data residency and compliance controls.",
+      "description": "GPT-5 on Azure OpenAI.",
       "providerModelId": "gpt-5",
       "type": "chat",
       "features": [
         "vision",
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning",
+        "prompt_caching"
       ],
       "inputPricePerMillion": 1.25,
-      "outputPricePerMillion": 10.0,
-      "maxContextTokens": 256000,
-      "maxOutputTokens": 32768,
+      "outputPricePerMillion": 10,
       "cachedInputReadPricePerMillion": 0.125,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 272000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "azure-gpt-5-mini",
       "name": "Azure GPT-5 Mini",
-      "description": "Azure-hosted GPT-5 Mini. Cost-effective GPT-5 class model for high volume.",
+      "description": "Smaller, cheaper GPT-5 tier on Azure OpenAI.",
       "providerModelId": "gpt-5-mini",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning",
+        "prompt_caching"
       ],
       "inputPricePerMillion": 0.25,
-      "outputPricePerMillion": 2.0,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
+      "outputPricePerMillion": 2,
       "cachedInputReadPricePerMillion": 0.025,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 272000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "azure-gpt-4.1",
       "name": "Azure GPT-4.1",
-      "description": "Azure-hosted GPT-4.1 multimodal model.",
+      "description": "GPT-4.1 on Azure OpenAI. 1M-token context.",
       "providerModelId": "gpt-4.1",
       "type": "chat",
       "features": [
         "vision",
         "function_calling",
         "streaming",
-        "json_mode"
+        "prompt_caching"
       ],
-      "inputPricePerMillion": 2.0,
-      "outputPricePerMillion": 8.0,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 8,
       "cachedInputReadPricePerMillion": 0.5,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 1047576,
+      "maxOutputTokens": 32768
+    },
+    {
+      "code": "azure-gpt-4.1-mini",
+      "name": "Azure GPT-4.1 Mini",
+      "description": "Smaller, cheaper GPT-4.1 tier on Azure OpenAI.",
+      "providerModelId": "gpt-4.1-mini",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.4,
+      "outputPricePerMillion": 1.6,
+      "cachedInputReadPricePerMillion": 0.1,
+      "maxContextTokens": 1047576,
+      "maxOutputTokens": 32768
+    },
+    {
+      "code": "azure-gpt-4.1-nano",
+      "name": "Azure GPT-4.1 Nano",
+      "description": "Smallest GPT-4.1 tier on Azure OpenAI.",
+      "providerModelId": "gpt-4.1-nano",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.1,
+      "outputPricePerMillion": 0.4,
+      "cachedInputReadPricePerMillion": 0.025,
+      "maxContextTokens": 1047576,
+      "maxOutputTokens": 32768
     },
     {
       "code": "azure-o3",
       "name": "Azure o3",
-      "description": "Azure-hosted o3 reasoning model. High-capability reasoning with enterprise data governance.",
+      "description": "OpenAI o3 reasoning model on Azure OpenAI.",
       "providerModelId": "o3",
       "type": "chat",
       "features": [
+        "function_calling",
         "streaming",
-        "function_calling"
+        "reasoning"
       ],
-      "inputPricePerMillion": 2.0,
-      "outputPricePerMillion": 8.0,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 100000,
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 8,
       "cachedInputReadPricePerMillion": 0.5,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000
     },
     {
       "code": "azure-o4-mini",
-      "name": "Azure o4 Mini",
-      "description": "Azure-hosted o4 Mini. Compact reasoning model in the o-series family.",
+      "name": "Azure o4-mini",
+      "description": "OpenAI o4-mini reasoning model on Azure OpenAI.",
       "providerModelId": "o4-mini",
       "type": "chat",
       "features": [
-        "streaming"
+        "function_calling",
+        "streaming",
+        "reasoning"
       ],
       "inputPricePerMillion": 1.1,
       "outputPricePerMillion": 4.4,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 100000,
       "cachedInputReadPricePerMillion": 0.275,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000
+    },
+    {
+      "code": "azure-o1",
+      "name": "Azure o1",
+      "description": "Earlier-generation OpenAI o1 reasoning model on Azure OpenAI.",
+      "providerModelId": "o1",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 15,
+      "outputPricePerMillion": 60,
+      "cachedInputReadPricePerMillion": 7.5,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000
     },
     {
       "code": "azure-gpt-4o",
       "name": "Azure GPT-4o",
-      "description": "Azure-hosted GPT-4o. Enterprise-grade with data residency and compliance controls.",
+      "description": "GPT-4o on Azure OpenAI.",
       "providerModelId": "gpt-4o",
       "type": "chat",
       "features": [
         "vision",
         "function_calling",
-        "streaming",
-        "json_mode"
+        "streaming"
       ],
       "inputPricePerMillion": 2.5,
-      "outputPricePerMillion": 10.0,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
+      "outputPricePerMillion": 10,
       "cachedInputReadPricePerMillion": 1.25,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384
     },
     {
       "code": "azure-gpt-4o-mini",
       "name": "Azure GPT-4o Mini",
-      "description": "Azure-hosted GPT-4o Mini. Cost-effective option with enterprise security and compliance.",
+      "description": "Smaller, cheaper GPT-4o tier on Azure OpenAI.",
       "providerModelId": "gpt-4o-mini",
       "type": "chat",
       "features": [
         "vision",
         "function_calling",
-        "streaming",
-        "json_mode"
+        "streaming"
       ],
-      "inputPricePerMillion": 0.15,
-      "outputPricePerMillion": 0.6,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
+      "inputPricePerMillion": 0.165,
+      "outputPricePerMillion": 0.66,
       "cachedInputReadPricePerMillion": 0.075,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "azure-gpt-4-turbo",
-      "name": "Azure GPT-4 Turbo",
-      "description": "Azure-hosted GPT-4 Turbo. Previous generation model with vision, hosted on Azure infrastructure.",
-      "providerModelId": "gpt-4-turbo",
-      "type": "chat",
-      "features": [
-        "vision",
-        "function_calling",
-        "streaming",
-        "json_mode"
-      ],
-      "inputPricePerMillion": 10.0,
-      "outputPricePerMillion": 30.0,
       "maxContextTokens": 128000,
-      "maxOutputTokens": 4096,
-      "cachedInputReadPricePerMillion": 5.0,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
-    },
-    {
-      "code": "azure-o1",
-      "name": "Azure o1",
-      "description": "Azure-hosted o1 reasoning model. Advanced reasoning with enterprise data governance.",
-      "providerModelId": "o1",
-      "type": "chat",
-      "features": [
-        "streaming",
-        "function_calling"
-      ],
-      "inputPricePerMillion": 15.0,
-      "outputPricePerMillion": 60.0,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 100000,
-      "cachedInputReadPricePerMillion": 7.5,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 16384
     },
     {
       "code": "azure-text-embedding-3-small",
       "name": "Azure Text Embedding 3 Small",
-      "description": "Azure-hosted embedding model. Cost-effective embeddings with enterprise compliance.",
+      "description": "OpenAI text-embedding-3-small on Azure OpenAI.",
       "providerModelId": "text-embedding-3-small",
       "type": "embedding",
       "features": [],
       "inputPricePerMillion": 0.02,
-      "maxContextTokens": 8191,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 8191
     },
     {
       "code": "azure-text-embedding-3-large",
       "name": "Azure Text Embedding 3 Large",
-      "description": "Azure-hosted high-accuracy embedding model. Best retrieval quality on Azure infrastructure.",
+      "description": "OpenAI text-embedding-3-large on Azure OpenAI.",
       "providerModelId": "text-embedding-3-large",
       "type": "embedding",
       "features": [],
       "inputPricePerMillion": 0.13,
-      "maxContextTokens": 8191,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 8191
     }
   ]
 }

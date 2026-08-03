@@ -10,6 +10,7 @@ import type {
   Model,
   ProviderHealth,
   SystemSettings,
+  TrafficErrorGroupsResponse,
   TrafficEvent,
   TrafficEventNormalized,
   TrafficStorageResponse,
@@ -67,41 +68,14 @@ export interface StreamingComplianceConfig {
   fail_behavior: 'fail_open' | 'fail_close';
   capture_request_body: boolean;
   capture_response_body: boolean;
-  raw_body_spill_enabled: boolean;
   warnings?: string[];
 }
 
 export type StreamingComplianceUpdateInput = Partial<StreamingComplianceConfig>;
 
-// Legacy prompt-cache types removed. The three-tier replacement
-// (Global / Adapter / Provider) lives in @/api/services/cache.
-
-export interface CachePreviewRequest {
-  traffic_event_id: string;
-}
-
-export interface CachePreviewRuleResult {
-  rule_id: string;
-  adapter_type: string;
-  dry_run: boolean;
-  enabled: boolean;
-  strip_count: number;
-  strip_bytes: number;
-}
-
-export interface CachePreviewResponse {
-  traffic_event_id: string;
-  adapter_type: string;
-  strip_count: number;
-  strip_bytes: number;
-  markers_injected: number;
-  dry_run: boolean;
-  rules_applied: string[];
-  rules: CachePreviewRuleResult[];
-  body_before?: unknown;
-  body_after?: unknown;
-  diff_lines?: string[];
-}
+// Legacy prompt-cache types removed. The tiered replacement (Adapter /
+// Provider) lives in @/api/services/cache. The cache-preview dry-run was
+// removed as dead code (its backend route was never registered).
 
 // SSO config (unified — OIDC + SAML)
 
@@ -286,6 +260,23 @@ export const systemApi = {
     api.get<TrafficEvent>(`/api/admin/traffic/${id}`),
 
   /**
+   * Aggregated error-governance view: failed traffic rows grouped by
+   * (errorCode, statusRange, provider, model) with sparkline buckets and a
+   * computed first-suspect attribution. from/to required (RFC3339).
+   */
+  listTrafficErrorGroups: (params: {
+    from: string;
+    to: string;
+    source?: string;
+    attribution?: string;
+  }) => {
+    const qs = new URLSearchParams({ from: params.from, to: params.to });
+    if (params.source) qs.set('source', params.source);
+    if (params.attribution) qs.set('attribution', params.attribution);
+    return api.get<TrafficErrorGroupsResponse>(`/api/admin/traffic/errors/groups?${qs.toString()}`);
+  },
+
+  /**
    * Fetch the normalized payload sidecar for a traffic event. Returns 404
    * when no traffic_event_normalized row exists (capture disabled, protocol
    * unsupported). The UI's Normalized tab tolerates 404 and falls back to Raw.
@@ -376,9 +367,7 @@ export const systemApi = {
     api.put<PayloadCaptureConfig>('/api/admin/settings/payload-capture', input),
 
   // Legacy prompt-cache endpoints removed. Use @/api/services/cache.cacheApi
-  // for the three-tier replacement.
-  previewCacheNormaliser: (input: CachePreviewRequest) =>
-    api.post<CachePreviewResponse>('/api/admin/cache/preview', input),
+  // for the tiered replacement.
 
   // Global StreamingPolicy default. Per-resource overrides live on
   // interception_domain (compliance-proxy + agent) and Provider (ai-gateway)

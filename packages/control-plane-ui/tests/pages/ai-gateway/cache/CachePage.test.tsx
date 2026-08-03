@@ -124,7 +124,7 @@ vi.mock('@/hooks/usePermission', () => ({
 // SettingsCacheTab is the provider-prompt section; it has its own
 // internal data hooks. Stub it so the test stays focused on the merged
 // page composition.
-vi.mock('../../../../src/pages/compliance/cache/SettingsCacheTab', () => ({
+vi.mock('../../../../src/pages/ai-gateway/cache/settings/SettingsCacheTab', () => ({
   SettingsCacheTab: () => <div data-testid="settings-cache-tab-stub">SettingsCacheTab</div>,
 }));
 

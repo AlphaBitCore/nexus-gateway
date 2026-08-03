@@ -28,7 +28,9 @@ describe('mapLegacyStrategy', () => {
     expect(mapLegacyStrategy('priority')).toBe('single');
     expect(mapLegacyStrategy('round-robin')).toBe('loadbalance');
     expect(mapLegacyStrategy('weighted')).toBe('loadbalance');
-    expect(mapLegacyStrategy('latency')).toBe('single');
+    // 'latency' is a first-class strategy since e89-s3 — it no longer
+    // collapses to 'single'. See routing-rule-config.latency.test.ts.
+    expect(mapLegacyStrategy('latency')).toBe('latency');
     expect(mapLegacyStrategy('cost')).toBe('single');
     expect(mapLegacyStrategy('fallback')).toBe('fallback');
     expect(mapLegacyStrategy('smart')).toBe('smart');

@@ -5,9 +5,7 @@ vi.mock('../../../../src/api/client', () => ({ api: { get: vi.fn().mockResolvedV
 const m = api as unknown as Record<'get' | 'post' | 'put' | 'patch' | 'delete', ReturnType<typeof vi.fn>>;
 beforeEach(() => Object.values(m).forEach((f) => f.mockClear()));
 describe('cacheApi', () => {
-  it('global/adapter/provider/effective/overrides routes', () => {
-    cacheApi.getGlobal();
-    cacheApi.putGlobal({} as never);
+  it('adapter/provider/effective/overrides routes (Tier-1 /cache/global is retired)', () => {
     cacheApi.listAdapters();
     cacheApi.getAdapter('a/b');
     cacheApi.putAdapter('a/b', {} as never);
@@ -16,13 +14,15 @@ describe('cacheApi', () => {
     cacheApi.deleteProvider('p1');
     cacheApi.getEffective('p1');
     cacheApi.listOverrides();
-    expect(m.get).toHaveBeenCalledWith('/api/admin/cache/global');
-    expect(m.put).toHaveBeenCalledWith('/api/admin/cache/global', {});
     expect(m.get).toHaveBeenCalledWith('/api/admin/cache/adapters');
     expect(m.get).toHaveBeenCalledWith('/api/admin/cache/adapter/a%2Fb');
     expect(m.delete).toHaveBeenCalledWith('/api/admin/cache/provider/p1');
     expect(m.get).toHaveBeenCalledWith('/api/admin/cache/effective?provider_id=p1');
     expect(m.get).toHaveBeenCalledWith('/api/admin/cache/overrides');
+    // The retired Tier-1 surface must be gone from the client, not just unused.
+    expect('getGlobal' in cacheApi).toBe(false);
+    expect('putGlobal' in cacheApi).toBe(false);
+    expect(m.get).not.toHaveBeenCalledWith('/api/admin/cache/global');
   });
 });
 describe('familyOf', () => {

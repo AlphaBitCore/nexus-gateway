@@ -130,7 +130,52 @@ export const analyticsApi = {
       window: { start: string; end: string };
       rows: LatencyPhaseRow[];
     }>('/api/admin/analytics/latency-phases', params as Record<string, string>),
+
+  /**
+   * GET /api/admin/analytics/vendor-bill-reconciliation — provider×day rows
+   * comparing our estimated spend against the vendor's authoritative billing
+   * API total. Nullable money fields (vendorReportedUsd/diffUsd/diffPct) stay
+   * null when the day is not finalized or the vendor fetch failed.
+   */
+  vendorBillReconciliation: (params?: { from?: string; to?: string }) =>
+    api.get<VendorBillReconciliationResponse>(
+      '/api/admin/analytics/vendor-bill-reconciliation',
+      params as Record<string, string>,
+    ),
+
+  /**
+   * POST …/vendor-bill-reconciliation/{providerId}/{day}/review — mark a
+   * provider×day row reviewed with an optional note. day is YYYY-MM-DD.
+   */
+  reviewVendorBillReconciliation: (providerId: string, day: string, note?: string) =>
+    api.post<{ status: string; reviewedBy: string; providerId: string; day: string }>(
+      `/api/admin/analytics/vendor-bill-reconciliation/${encodeURIComponent(providerId)}/${encodeURIComponent(day)}/review`,
+      { note: note ?? '' },
+    ),
 };
+
+/** Coverage of a reconciliation row — drives the UI honesty badge. */
+export type VendorBillCoverage = 'scoped' | 'org_only' | 'fetch_failed' | 'priority_tier_undercount';
+
+export interface VendorBillReconciliationRow {
+  providerId: string;
+  providerName?: string;
+  day: string; // YYYY-MM-DD
+  ourBilledUsd: number;
+  vendorReportedUsd: number | null;
+  diffUsd: number | null;
+  diffPct: number | null;
+  scopeKind: string;
+  coverage: VendorBillCoverage;
+  status: 'open' | 'reviewed';
+  reviewedBy: string | null;
+  note: string | null;
+  updatedAt: string;
+}
+
+export interface VendorBillReconciliationResponse {
+  rows: VendorBillReconciliationRow[];
+}
 
 /**
  * One row of /analytics/latency-phases response. Percentile fields are

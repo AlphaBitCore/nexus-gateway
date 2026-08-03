@@ -22,7 +22,7 @@ export function ProviderCredentialsTab({ detail }: ProviderCredentialsTabProps) 
   const {
     id,
     credentials,
-    canUpdate, canDelete, canCreateCredential,
+    canCreateCredential, canUpdateCredential, canDeleteCredential,
     showCredForm, setShowCredForm,
     newCredForm,
     createCredential, credCreating,
@@ -218,10 +218,10 @@ export function ProviderCredentialsTab({ detail }: ProviderCredentialsTabProps) 
                     <td className={styles.td}>{fmtDate(c.lastUsedAt)}</td>
                     <td className={styles.td} onClick={e => e.stopPropagation()}>
                       <Stack direction="horizontal" gap="xs">
-                        {canUpdate && (
+                        {canUpdateCredential && (
                           <Button variant="secondary" size="sm" onClick={() => startEditingCred(c)}>{t('common:edit')}</Button>
                         )}
-                        {canDelete && (
+                        {canDeleteCredential && (
                           <Button variant="danger" size="sm" onClick={() => setDeletingCred(c)}>{t('common:delete')}</Button>
                         )}
                       </Stack>

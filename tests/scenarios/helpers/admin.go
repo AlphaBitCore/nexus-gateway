@@ -255,7 +255,7 @@ func CPDoJSON(ctx context.Context, env *intg.Env, token, method, path string, bo
 	return intg.DoJSON(client, ctx, method, env.CPURL+path, "Bearer "+token, body)
 }
 
-// CPDoWithKey calls a CP admin endpoint using the x-admin-key header
+// CPDoWithKey calls a CP admin endpoint using the X-Nexus-Admin-Key header
 // instead of a JWT bearer — exercises the personal API key auth path
 // (the user-self-service flow's "use" step). Returns (status, body, err).
 func CPDoWithKey(ctx context.Context, env *intg.Env, rawKey, method, path string) (int, []byte, error) {
@@ -267,7 +267,7 @@ func CPDoWithKey(ctx context.Context, env *intg.Env, rawKey, method, path string
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Header.Set("x-admin-key", rawKey)
+	req.Header.Set("X-Nexus-Admin-Key", rawKey)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, err
@@ -653,10 +653,16 @@ func CreateAlertChannel(ctx context.Context, env *intg.Env, token, name, channel
 		config = map[string]any{}
 	}
 	body, _ := json.Marshal(map[string]any{
-		"name":        name,
-		"type":        channelType,
-		"enabled":     true,
-		"severities":  []string{"info", "warning", "error"},
+		"name":    name,
+		"type":    channelType,
+		"enabled": true,
+		// The alert severity enum is critical|high|medium|low|info (alerts
+		// engine types.Parse, which the admin POST uses strictly). This used to
+		// send info|warning|error — two of the three are not severities at all,
+		// so every channel create was a 400 and no caller ever got past it.
+		// A test channel subscribes to the whole set so any severity a scenario
+		// raises routes to it.
+		"severities":  []string{"critical", "high", "medium", "low", "info"},
 		"sourceTypes": []string{},
 		"config":      config,
 	})
@@ -700,7 +706,7 @@ func TestAlertChannel(ctx context.Context, env *intg.Env, token, id string) (int
 		"/api/admin/alerts/channels/"+id+"/test", nil)
 }
 
-// PassthroughOpts is the narrow scenario-facing surface for E48
+// PassthroughOpts is the narrow scenario-facing surface for emergency-
 // passthrough writes. Mirrors the admin_passthrough.go bind.
 type PassthroughOpts struct {
 	Enabled         bool

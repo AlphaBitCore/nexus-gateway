@@ -10,12 +10,8 @@
  */
 import { api } from '../../client';
 
-// ── Tier 1: global ──────────────────────────────────────────────────────
-
-export interface CacheGlobalConfig {
-  normaliser_enabled?: boolean;
-  cache_master_kill_switch?: boolean;
-}
+// Tier 1 (global) is retired: the cache master kill switch and the global
+// normaliser gate are gone, so there is no /cache/global endpoint any more.
 
 // ── Tier 2: per adapter family ──────────────────────────────────────────
 
@@ -52,7 +48,7 @@ export interface CacheProviderConfig {
 
 // ── Effective view + Overrides listing ──────────────────────────────────
 
-export type CacheSource = 'provider-override' | 'adapter-default' | 'global-default' | 'code-default';
+export type CacheSource = 'provider-override' | 'adapter-default' | 'code-default';
 
 export interface CacheEffectiveResponse {
   provider_id: string;
@@ -92,11 +88,6 @@ export interface CacheAdaptersList {
 }
 
 export const cacheApi = {
-  getGlobal: () => api.get<CacheGlobalConfig>('/api/admin/cache/global'),
-
-  putGlobal: (input: CacheGlobalConfig) =>
-    api.put<CacheGlobalConfig>('/api/admin/cache/global', input),
-
   listAdapters: () => api.get<CacheAdaptersList>('/api/admin/cache/adapters'),
 
   getAdapter: (adapterType: string) =>

@@ -3,10 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { Dialog, Button, Input, MultiSelectDropdown, Select, Stack } from '@/components/ui';
 import { systemApi } from '@/api/services';
 import { mergeModelFeatureOptions, MODEL_FEATURE_OPTIONS } from '../_shared/model-feature-options';
+import { modelTypeOptions } from '../_shared/model-type-options';
 import { ProviderModelCapabilitiesPanel } from './ProviderModelCapabilitiesPanel';
 import type { ProviderDetailState } from './useProviderDetail';
 import type { ModelCapabilityJson } from '@/api/types';
 import styles from './ModelFormDrawer.module.css';
+import { PricingSectionHeader, basePriceLabels } from './ModelPricingSection';
 
 export interface ModelFormDrawerProps {
   detail: ProviderDetailState;
@@ -27,12 +29,7 @@ export function ModelFormDrawer({ detail, mode, open, onClose }: ModelFormDrawer
   const { t } = useTranslation();
   const isEdit = mode === 'edit';
 
-  const MODEL_TYPE_OPTIONS = [
-    { value: 'chat', label: t('pages:providers.modelTypeChat') },
-    { value: 'embedding', label: t('pages:providers.modelTypeEmbedding') },
-    { value: 'image', label: t('pages:providers.modelTypeImage') },
-    { value: 'audio', label: t('pages:providers.modelTypeAudio') },
-  ];
+  const MODEL_TYPE_OPTIONS = modelTypeOptions(t);
   const MODEL_STATUS_OPTIONS = [
     { value: 'active', label: t('pages:providers.modelStatusActive') },
     { value: 'deprecated', label: t('pages:providers.modelStatusDeprecated') },
@@ -138,6 +135,9 @@ function submitCreate(detail: ProviderDetailState, capability?: ModelCapabilityJ
     ...(v.modelOutputPrice && { outputPricePerMillion: Number(v.modelOutputPrice) }),
     ...(v.modelCachedInputReadPrice && { cachedInputReadPricePerMillion: Number(v.modelCachedInputReadPrice) }),
     ...(v.modelCachedInputWritePrice && { cachedInputWritePricePerMillion: Number(v.modelCachedInputWritePrice) }),
+    ...(v.modelAudioInputPrice && { audioInputPricePerMillion: Number(v.modelAudioInputPrice) }),
+    ...(v.modelAudioOutputPrice && { audioOutputPricePerMillion: Number(v.modelAudioOutputPrice) }),
+    ...(v.modelCachedAudioReadPrice && { cachedAudioInputReadPricePerMillion: Number(v.modelCachedAudioReadPrice) }),
     ...(v.modelMaxContext && { maxContextTokens: Number(v.modelMaxContext) }),
     ...(v.modelMaxOutput && { maxOutputTokens: Number(v.modelMaxOutput) }),
     features: v.modelSelectedFeatures,
@@ -167,10 +167,14 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
     type: f.watch('modelType'), description: f.watch('modelDescription'),
     inputPrice: f.watch('modelInputPrice'), outputPrice: f.watch('modelOutputPrice'),
     cachedRead: f.watch('modelCachedInputReadPrice'), cachedWrite: f.watch('modelCachedInputWritePrice'),
+    audioInputPrice: f.watch('modelAudioInputPrice'), audioOutputPrice: f.watch('modelAudioOutputPrice'),
+    cachedAudioRead: f.watch('modelCachedAudioReadPrice'),
     maxContext: f.watch('modelMaxContext'), maxOutput: f.watch('modelMaxOutput'),
     features: f.watch('modelSelectedFeatures'), aliases: f.watch('modelAliases'),
   };
   const isEmbedding = v.type === 'embedding';
+  const isRealtime = v.type === 'realtime';
+  const priceLabels = basePriceLabels(t, isRealtime);
   return (
     <>
       <section className={styles.section}>
@@ -191,16 +195,28 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionHeader}>{t('pages:providers.sectionPricing', 'Pricing (per 1M tokens)')}</h3>
+        <PricingSectionHeader modelType={v.type} />
         <div className={styles.grid}>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.inputPricePerM')}</label>
+          <div className={styles.field}><label className={styles.label}>{priceLabels.input}</label>
             <Input value={v.inputPrice} onChange={(e) => f.setValue('modelInputPrice', e.target.value)} type="number" step="0.01" /></div>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.outputPricePerM')}</label>
+          <div className={styles.field}><label className={styles.label}>{priceLabels.output}</label>
             <Input value={v.outputPrice} onChange={(e) => f.setValue('modelOutputPrice', e.target.value)} type="number" step="0.01" /></div>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedInputReadPricePerM')}</label>
+          <div className={styles.field}><label className={styles.label}>{priceLabels.cachedRead}</label>
             <Input value={v.cachedRead} onChange={(e) => f.setValue('modelCachedInputReadPrice', e.target.value)} type="number" step="0.01" /></div>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedInputWritePricePerM')}</label>
-            <Input value={v.cachedWrite} onChange={(e) => f.setValue('modelCachedInputWritePrice', e.target.value)} type="number" step="0.01" /></div>
+          {!isRealtime && (
+            <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedInputWritePricePerM')}</label>
+              <Input value={v.cachedWrite} onChange={(e) => f.setValue('modelCachedInputWritePrice', e.target.value)} type="number" step="0.01" /></div>
+          )}
+          {isRealtime && (
+            <>
+              <div className={styles.field}><label className={styles.label}>{t('pages:providers.audioInputPricePerM', 'Audio Input $/M')}</label>
+                <Input value={v.audioInputPrice} onChange={(e) => f.setValue('modelAudioInputPrice', e.target.value)} type="number" step="0.01" /></div>
+              <div className={styles.field}><label className={styles.label}>{t('pages:providers.audioOutputPricePerM', 'Audio Output $/M')}</label>
+                <Input value={v.audioOutputPrice} onChange={(e) => f.setValue('modelAudioOutputPrice', e.target.value)} type="number" step="0.01" /></div>
+              <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedAudioReadPricePerM', 'Cached Audio Read $/M')}</label>
+                <Input value={v.cachedAudioRead} onChange={(e) => f.setValue('modelCachedAudioReadPrice', e.target.value)} type="number" step="0.01" /></div>
+            </>
+          )}
         </div>
       </section>
 
@@ -232,7 +248,7 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
 
       {(v.type === 'embedding' || v.type === 'chat') && (
         <section className={styles.section}>
-          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', '能力配置')}</h3>
+          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', 'Capabilities')}</h3>
           <ProviderModelCapabilitiesPanel
             modelType={v.type}
             value={capability}
@@ -261,12 +277,16 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
     type: f.watch('editModelType'), status: f.watch('editModelStatus'), description: f.watch('editModelDescription'),
     inputPrice: f.watch('editModelInputPrice'), outputPrice: f.watch('editModelOutputPrice'),
     cachedRead: f.watch('editModelCachedInputReadPrice'), cachedWrite: f.watch('editModelCachedInputWritePrice'),
+    audioInputPrice: f.watch('editModelAudioInputPrice'), audioOutputPrice: f.watch('editModelAudioOutputPrice'),
+    cachedAudioRead: f.watch('editModelCachedAudioReadPrice'),
     maxContext: f.watch('editModelMaxContext'), maxOutput: f.watch('editModelMaxOutput'),
     features: f.watch('editModelFeatures'), aliases: f.watch('editModelAliases'),
     enabled: f.watch('editModelEnabled'), deprecationDate: f.watch('editModelDeprecationDate'),
     replacedBy: f.watch('editModelReplacedBy'),
   };
   const isEmbedding = v.type === 'embedding';
+  const isRealtime = v.type === 'realtime';
+  const priceLabels = basePriceLabels(t, isRealtime);
   return (
     <>
       <section className={styles.section}>
@@ -289,16 +309,28 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionHeader}>{t('pages:providers.sectionPricing', 'Pricing (per 1M tokens)')}</h3>
+        <PricingSectionHeader modelType={v.type} />
         <div className={styles.grid}>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.inputPricePerM')}</label>
+          <div className={styles.field}><label className={styles.label}>{priceLabels.input}</label>
             <Input value={v.inputPrice} onChange={(e) => f.setValue('editModelInputPrice', e.target.value)} type="number" step="0.01" /></div>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.outputPricePerM')}</label>
+          <div className={styles.field}><label className={styles.label}>{priceLabels.output}</label>
             <Input value={v.outputPrice} onChange={(e) => f.setValue('editModelOutputPrice', e.target.value)} type="number" step="0.01" /></div>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedInputReadPricePerM')}</label>
+          <div className={styles.field}><label className={styles.label}>{priceLabels.cachedRead}</label>
             <Input value={v.cachedRead} onChange={(e) => f.setValue('editModelCachedInputReadPrice', e.target.value)} type="number" step="0.01" /></div>
-          <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedInputWritePricePerM')}</label>
-            <Input value={v.cachedWrite} onChange={(e) => f.setValue('editModelCachedInputWritePrice', e.target.value)} type="number" step="0.01" /></div>
+          {!isRealtime && (
+            <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedInputWritePricePerM')}</label>
+              <Input value={v.cachedWrite} onChange={(e) => f.setValue('editModelCachedInputWritePrice', e.target.value)} type="number" step="0.01" /></div>
+          )}
+          {isRealtime && (
+            <>
+              <div className={styles.field}><label className={styles.label}>{t('pages:providers.audioInputPricePerM', 'Audio Input $/M')}</label>
+                <Input value={v.audioInputPrice} onChange={(e) => f.setValue('editModelAudioInputPrice', e.target.value)} type="number" step="0.01" /></div>
+              <div className={styles.field}><label className={styles.label}>{t('pages:providers.audioOutputPricePerM', 'Audio Output $/M')}</label>
+                <Input value={v.audioOutputPrice} onChange={(e) => f.setValue('editModelAudioOutputPrice', e.target.value)} type="number" step="0.01" /></div>
+              <div className={styles.field}><label className={styles.label}>{t('pages:providers.cachedAudioReadPricePerM', 'Cached Audio Read $/M')}</label>
+                <Input value={v.cachedAudioRead} onChange={(e) => f.setValue('editModelCachedAudioReadPrice', e.target.value)} type="number" step="0.01" /></div>
+            </>
+          )}
         </div>
       </section>
 
@@ -330,12 +362,12 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
 
       {(v.type === 'embedding' || v.type === 'chat') && (
         <section className={styles.section}>
-          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', '能力配置')}</h3>
+          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', 'Capabilities')}</h3>
           <ProviderModelCapabilitiesPanel
             modelType={v.type}
             value={detail.editingCapabilityJson}
             onChange={(next) => detail.setEditingCapabilityJson(next)}
-            editable={detail.canUpdate}
+            editable={detail.canUpdateModel}
           />
         </section>
       )}

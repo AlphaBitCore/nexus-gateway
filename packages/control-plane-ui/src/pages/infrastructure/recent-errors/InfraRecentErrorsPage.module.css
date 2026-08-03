@@ -403,3 +403,10 @@
   text-align: center;
   padding: 24px 0;
 }
+
+/* Traffic-errors tab: typed search leads the control bar (list-toolbar
+   convention), bounded so the row reads as one compact line. */
+.teSearch {
+  min-width: 240px;
+  max-width: 320px;
+}

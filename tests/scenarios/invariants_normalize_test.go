@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -49,11 +50,22 @@ func (n normReq) firstUserText() string {
 
 // TestS152_CrossIngressNormalizeParity — cross-cutting normalize invariant.
 //
-// Cross-service: AI Gw normalize layer -> MQ -> traffic_event_normalized
-// (request_normalized). The same prompt via /v1/chat/completions and
-// /v1/responses must canonicalize identically: kind=ai-chat, the same
-// normalizeVersion, and the same extracted user text. A divergence means one
-// ingress's normalizer drifted.
+// Cross-service: AI Gw -> MQ -> traffic_event (raw body) -> CP's VIEW-TIME
+// normalize projection, read through GET /api/admin/traffic/:id/normalized —
+// the same surface the UI's Normalized tab uses. The same prompt via
+// /v1/chat/completions and /v1/responses must canonicalize identically:
+// kind=ai-chat, the same normalizeVersion, and the same extracted user text. A
+// divergence means one ingress's normalizer drifted.
+//
+// This used to read traffic_event_normalized directly, and could not pass:
+// normalization is VIEW-TIME, so that table is a purely OPTIONAL sidecar and is
+// empty in this deployment (0 rows). The Hub writer skips any message carrying
+// no normalized payload and no normalize status, which is every message the
+// gateway sends now, and the flush path says so in its own comment — "normalized
+// projection at view time from the surviving raw body, so a missing sidecar row
+// does not lose the normalized view". Polling the sidecar for 40s therefore
+// waited on a row the architecture had stopped producing, and reported it as
+// "normalize pipeline lagged or did not run".
 func TestS152_CrossIngressNormalizeParity(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -96,8 +108,8 @@ func TestS152_CrossIngressNormalizeParity(t *testing.T) {
 		t.Fatalf("responses send: status=%d err=%v body=%q", s, err, truncate(b, 200))
 	}
 
-	chatN := fetchNormalizedRequest(t, sc, ctx, vk.ID, "/v1/chat/completions")
-	respN := fetchNormalizedRequest(t, sc, ctx, vk.ID, "/v1/responses")
+	chatN := fetchNormalizedRequest(t, sc, ctx, token, vk.ID, "/v1/chat/completions")
+	respN := fetchNormalizedRequest(t, sc, ctx, token, vk.ID, "/v1/responses")
 
 	// Parity assertions.
 	if chatN.Kind != "ai-chat" {
@@ -123,37 +135,59 @@ func TestS152_CrossIngressNormalizeParity(t *testing.T) {
 		chatN.Kind, chatN.NormalizeVersion, chatText == respText && chatText == prompt)
 }
 
-// fetchNormalizedRequest polls traffic_event_normalized (joined to
-// traffic_event) for the latest request_normalized of a VK+path and parses it.
-func fetchNormalizedRequest(t *testing.T, sc *scenarioCtx, ctx context.Context, vkID, path string) normReq {
+// fetchNormalizedRequest resolves the traffic_event for a VK+path and reads its
+// normalized projection from the admin view-time endpoint. traffic_event IS
+// written (the raw row is the source of truth); the projection is recomputed on
+// read, so there is no sidecar row to wait for — only the raw row's own audit
+// latency.
+func fetchNormalizedRequest(t *testing.T, sc *scenarioCtx, ctx context.Context, token, vkID, path string) normReq {
 	t.Helper()
 	const query = `
-		SELECT n.request_normalized::text
-		FROM traffic_event_normalized n
-		JOIN traffic_event e ON e.id = n.traffic_event_id
+		SELECT e.id
+		FROM traffic_event e
 		WHERE e.source = 'ai-gateway'
 		  AND e.identity->'vk'->>'id' = $1
 		  AND e.path = $2
 		  AND e."timestamp" > NOW() - INTERVAL '300 seconds'
-		  AND n.request_normalized IS NOT NULL
-		ORDER BY n.created_at DESC
+		ORDER BY e."timestamp" DESC
 		LIMIT 1`
 	const tries = 20
 	const interval = 2 * time.Second
-	var raw string
+	var eventID string
 	for i := 0; i < tries; i++ {
-		if scanErr := sc.DB.QueryRow(ctx, query, vkID, path).Scan(&raw); scanErr == nil && raw != "" {
+		if scanErr := sc.DB.QueryRow(ctx, query, vkID, path).Scan(&eventID); scanErr == nil && eventID != "" {
 			break
 		}
 		time.Sleep(interval)
 	}
-	if raw == "" {
-		t.Fatalf("no traffic_event_normalized.request_normalized for path=%s VK=%s within %v — normalize pipeline lagged or did not run",
+	if eventID == "" {
+		t.Fatalf("no ai-gateway traffic_event for path=%s VK=%s within %v — the request returned 200, so this says the audit row never landed",
 			path, vkID, time.Duration(tries)*interval)
 	}
-	var n normReq
-	if err := json.Unmarshal([]byte(raw), &n); err != nil {
-		t.Fatalf("parse request_normalized for path=%s: %v (raw=%s)", path, err, truncate([]byte(raw), 240))
+
+	st, body, err := helpers.CPDoJSON(ctx, sc.Env, token, http.MethodGet,
+		"/api/admin/traffic/"+eventID+"/normalized", nil)
+	if err != nil {
+		t.Fatalf("GET /normalized for event %s (path=%s): %v", eventID, path, err)
 	}
-	return n
+	if st != http.StatusOK {
+		t.Fatalf("GET /normalized for event %s (path=%s): status=%d body=%q",
+			eventID, path, st, truncate(body, 240))
+	}
+	// The envelope is {requestStatus, responseStatus, requestNormalized,
+	// responseNormalized}. requestStatus is asserted because a projection that
+	// failed to compute still returns 200 with an empty payload — treating that
+	// as "no divergence" would make the parity check vacuous.
+	var doc struct {
+		RequestStatus     string  `json:"requestStatus"`
+		RequestNormalized normReq `json:"requestNormalized"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse /normalized for path=%s: %v (raw=%s)", path, err, truncate(body, 240))
+	}
+	if doc.RequestStatus != "ok" {
+		t.Fatalf("view-time normalize did not succeed for path=%s: requestStatus=%q (raw=%s)",
+			path, doc.RequestStatus, truncate(body, 240))
+	}
+	return doc.RequestNormalized
 }

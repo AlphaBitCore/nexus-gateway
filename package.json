@@ -24,8 +24,18 @@
     "check:effect-tokens": "node scripts/check-effect-tokens.mjs",
     "check:tz": "bash scripts/check-timezone-correctness.sh",
     "check:terminology": "bash scripts/check-terminology.sh",
+    "check:headers": "bash scripts/check-headers.sh",
+    "check:agent-cross-build": "bash scripts/check-agent-cross-build.sh",
     "check:json-dupkeys": "node scripts/check-json-dupkeys.mjs",
+    "gen:model-catalog": "node tools/db-migrate/gen-model-catalog.mjs",
+    "check:model-catalog": "node tools/db-migrate/gen-model-catalog.mjs --check",
+    "gen:rulepacks": "tsx tools/db-migrate/seed/gen-rulepacks.ts",
+    "check:rulepacks": "tsx tools/db-migrate/seed/gen-rulepacks.ts -- --check",
+    "check:smoke-harness": "python3 scripts/check-smoke-harness.py",
+    "check:quirk-coverage": "node scripts/check-quirk-coverage.mjs --self-test && node scripts/check-quirk-coverage.mjs",
+    "check:quirk-evidence": "node scripts/check-quirk-evidence.mjs --self-test && node scripts/check-quirk-evidence.mjs",
     "check:arch-doc-triggers": "node scripts/check-arch-doc-triggers.mjs",
+    "check:prometheus-naming": "bash scripts/check-prometheus-naming.sh",
     "check:e2e-matrix": "node scripts/check-e2e-matrix-refs.mjs",
     "check:iam-routes": "node scripts/check-iam-route-coverage.mjs",
     "check:doc-lockstep": "node scripts/check-doc-lockstep.mjs",
@@ -56,13 +66,13 @@
     "check:coverage:ui": "bash scripts/check-ui-coverage.sh",
     "check:file-size": "bash scripts/check-file-size-ratchet.sh",
     "check:file-size:staged": "bash scripts/check-file-size-ratchet.sh --staged",
-    "check:all": "npm-run-all -p check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:arch-doc-triggers check:e2e-matrix check:iam-routes check:doc-lockstep check:openapi-semantics check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:comment-program-refs check:no-yaml-secrets check:dev-asset-urls check:coverage check:coverage:core check:coverage:ui check:file-size || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
+    "check:all": "npm-run-all -p check:agent-cross-build check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:model-catalog check:rulepacks check:quirk-coverage check:quirk-evidence check:arch-doc-triggers check:e2e-matrix check:iam-routes check:doc-lockstep check:openapi-semantics check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:comment-program-refs check:no-yaml-secrets check:dev-asset-urls check:coverage check:coverage:core check:coverage:ui check:file-size || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "devDependencies": {
-    "concurrently": "^10.0.3",
+    "concurrently": "^10.0.4",
     "jsdom": "^29.1.1"
   },
   "overrides": {

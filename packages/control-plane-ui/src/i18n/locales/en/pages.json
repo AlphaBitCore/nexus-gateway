@@ -132,12 +132,31 @@
     "addCredential": "Add Credential",
     "noCredentials": "No credentials linked to this provider.",
     "addModel": "Add Model",
+    "catalogSyncButton": "Sync from Catalog",
+    "catalogSyncTitle": "Sync Models from Catalog",
+    "catalogSyncDescription": "Compare this provider's models against the built-in catalog. Nothing is written until you apply.",
+    "catalogSyncApply": "Apply ({{count}})",
+    "catalogSyncApplied": "Models synced from catalog",
+    "catalogSyncPartialFailure": "Applied {{applied}} of {{total}}. Failed: {{failed}}. The model list has been refreshed — reopen the dialog to retry the rest.",
+    "catalogSyncLoadFailed": "Failed to load the catalog for this provider.",
+    "catalogSyncNoTemplate": "No built-in catalog matches this provider. Sync is available for providers created from a built-in template.",
+    "catalogSyncInSync": "This provider already matches the catalog.",
+    "catalogSyncNoValue": "Not set",
+    "catalogSyncSectionNew": "New in catalog ({{count}})",
+    "catalogSyncSectionNewHint": "In the catalog but not on this provider. Selected models are added.",
+    "catalogSyncSectionChanged": "Values differ ({{count}})",
+    "catalogSyncSectionChangedHint": "Already on this provider with different values. Select a model to replace your values with the catalog's.",
+    "catalogSyncSectionProviderOnly": "Only on this provider ({{count}})",
+    "catalogSyncSectionProviderOnlyHint": "Not in the catalog. These are left untouched and are never removed.",
     "editModel": "Edit Model",
     "modelCodeAlreadyExists": "A model with this code already exists — model codes are globally unique.",
     "modelCodeConflict": "Code already exists — rename to continue",
     "modelCodeConflictBanner": "Some selected models use a code that already exists (model codes are globally unique). Rename or deselect them to continue: ",
     "sectionIdentity": "Identity",
     "sectionPricing": "Pricing (per 1M tokens)",
+    "sectionPricingUnits": "Pricing (per 1M billable units)",
+    "pricingUnitsHint": "Models that report token usage are priced per 1M tokens; per-unit models are priced per 1M of their own unit — e.g. $0.04/image → 40000.",
+    "pricingRealtimeHint": "Realtime models bill text and audio tokens at separate rates — all six fields are USD per 1M tokens. When \"Cached Audio Read $/M\" is not set, it falls back to the audio input rate.",
     "sectionLimits": "Limits",
     "sectionFeatures": "Features",
     "sectionCapabilities": "Capabilities",
@@ -224,6 +243,12 @@
     "outputPricePerM": "Output $/M",
     "cachedInputReadPricePerM": "Cache Read $/M",
     "cachedInputWritePricePerM": "Cache Write $/M",
+    "textInputPricePerM": "Text Input $/M",
+    "textOutputPricePerM": "Text Output $/M",
+    "cachedTextReadPricePerM": "Cached Text Read $/M",
+    "audioInputPricePerM": "Audio Input $/M",
+    "audioOutputPricePerM": "Audio Output $/M",
+    "cachedAudioReadPricePerM": "Cached Audio Read $/M",
     "cachedInputReadPriceHelp": "Per-million price for cached input tokens (cache HIT). Optional. Falls back to Input $/M when unset. Typical multipliers: Anthropic ~0.1×, OpenAI ~0.5×, Gemini ~0.25×.",
     "cachedInputWritePriceHelp": "Per-million price for cache creation tokens (cache WRITE). Optional. Falls back to Input $/M when unset. Typical multiplier: Anthropic ~1.25×.",
     "addAnotherModel": "+ Add another model",
@@ -267,6 +292,11 @@
     "modelTypeEmbedding": "Embedding",
     "modelTypeImage": "Image",
     "modelTypeAudio": "Audio",
+    "modelTypeTts": "TTS (Text-to-Speech)",
+    "modelTypeStt": "STT (Speech-to-Text)",
+    "modelTypeRerank": "Rerank",
+    "modelTypeVideo": "Video",
+    "modelTypeRealtime": "Realtime",
     "modelStatusActive": "Active",
     "modelStatusDeprecated": "Deprecated",
     "modelStatusDisabled": "Disabled",
@@ -368,7 +398,6 @@
     "placeholderMaxContext": "128000",
     "placeholderMaxOutput": "4096",
     "editProvider": "Edit Provider",
-    "modelTypeCompletion": "Completion",
     "chartRequests": "Chart Requests",
     "chartErrors": "Chart Errors",
     "testing": "Testing",
@@ -422,7 +451,6 @@
     "providerModelId": "Upstream Model ID",
     "sourceOverride": "Overridden",
     "sourceAdapter": "Adapter default",
-    "sourceGlobal": "Global default",
     "sourceCode": "Code default",
     "cacheResetToDefault": "Reset to default",
     "templateApiTag": "OpenAI API",
@@ -510,12 +538,14 @@
     "strategyConditional": "Conditional",
     "strategyAbSplit": "A/B Split",
     "strategySmart": "Intelligent (AI Router)",
+    "strategyLatency": "Latency-based",
     "policyNarrowing": "Policy narrowing (internal IDs)",
     "providerConfiguration": "Provider Configuration",
     "fallbackChainTitle": "Fallback Chain",
     "loadBalanceTargets": "Load Balance Targets",
     "conditionalRouting": "Conditional Routing",
     "abSplitTargets": "A/B Split Targets",
+    "latencyTargets": "Latency Targets",
     "intelligentRoutingConfig": "Intelligent Routing Configuration",
     "allowModelIds": "Allow model IDs (comma-separated gateway model IDs)",
     "denyModelIds": "Deny model IDs",
@@ -624,7 +654,12 @@
       "chat": "Chat",
       "embedding": "Embedding",
       "image": "Image",
-      "audio": "Audio"
+      "audio": "Audio",
+      "tts": "TTS",
+      "stt": "STT",
+      "rerank": "Rerank",
+      "video": "Video",
+      "realtime": "Realtime"
     },
     "nameCol": "Name",
     "strategyCol": "Strategy",
@@ -652,6 +687,7 @@
       "configurationConditional": "Evaluates branches with \"when\" expressions against the live request context, then runs the matching \"then\" strategy or the mandatory \"default\". Use the structured editor for a default route, ordered branches (field path, operator, value, then target), and optional raw JSON for expressions the form cannot represent yet ($and / $or, nested strategies). Match conditions on the rule still decide whether this rule is considered at all.",
       "configurationAbSplit": "Weighted random choice among flat provider/model pairs — ideal for experiments comparing models or providers at a fixed traffic mix.",
       "configurationSmart": "Uses an AI model (the router) to analyze the user's request and automatically select the best model. Benefits: better model fit and cost/latency tradeoffs for mixed traffic. Costs/risks: extra router LLM call per model:auto request (latency and token spend); if the router fails or times out, the gateway uses Default Model; responses may still be cacheable under the chosen target model like any other route once routing completes.",
+      "configurationLatency": "Routes to the measured-fastest provider among the listed provider/model pairs. Unlike load balancing (fixed weights), traffic goes to the fastest tier by recently observed p95 latency; slower healthy providers serve only as failover. Ties within ~100ms are spread across the fastest targets to avoid overloading one, and new or idle providers get a small bounded share of exploration traffic so their speed can be learned. Health always dominates: a failing provider is still tried last regardless of latency.",
       "configurationPolicy": "Stage-0 rules only. Merges allow/deny lists for gateway model IDs and provider IDs before any stage-1 route rule runs. Allow-lists from multiple matching policy rules intersect; deny-lists union. Stage-1 targets and smart-router candidates must satisfy the effective narrowing.",
       "pipelineStage": "Choose whether this row is stage 0 (policy) or stage 1 (route). 0 — Policy: merged before any route; config must be allow/deny lists (internal gateway model and provider IDs). 1 — Route: evaluated after stage 0; among matches, the gateway picks the highest-Priority rule whose strategy type is not Fallback. Rules with strategy type Fallback supply the post-failure recovery chain only (ordered by Priority among those rules). Recovery targets are precomputed when the request is routed; the proxy only dials providers for them after primary targets are exhausted. To use an internal fallback chain as the primary route (e.g. Sonnet then Haiku), use strategy type Conditional with an empty conditions list and put the Fallback tree under default.",
       "matchConditions": "Narrows which requests may use this rule. All set fields are combined with AND. Models: resolved internal gateway model IDs. Providers: internal Provider.id UUIDs — the request's resolved model must belong to one of these providers. Organizations: VirtualKey.projectId values (UUIDs). Virtual keys: name patterns with optional asterisk wildcards. If you leave every list empty, matching falls back to gateway defaults — use with care.",
@@ -670,6 +706,8 @@
       "abSplitDesc": "Weighted random choice among flat provider/model pairs — ideal for experiments comparing models or providers at a fixed traffic mix.",
       "smartTitle": "Intelligent (AI Router)",
       "smartDesc": "Uses an AI router model to analyze the user's request and automatically select the best target model. Adds one extra LLM call per request; falls back to Default Model if the router fails.",
+      "latencyTitle": "Latency-based",
+      "latencyDesc": "Routes to the measured-fastest target by recent p95 latency instead of a hand-set weight. Ties within ~100ms are spread across targets; new or idle providers get a small bounded share of exploration traffic. Health always wins — a failing provider is still tried last.",
       "policyTitle": "Policy Narrowing",
       "policyDesc": "Stage-0 only. Merges allow/deny lists for gateway model IDs and provider IDs before any stage-1 route rule runs. Allow-lists intersect; deny-lists union."
     },
@@ -944,7 +982,7 @@
       "bindEmptyLabel": "Select rule packs",
       "bindButtonMulti": "Bind {{count}} pack(s)",
       "importLintTitle": "Engine compatibility & performance",
-      "severityTip": "Severity is a classification signal, not the enforced action. The bound hook’s onMatch Action policy decides whether a match blocks, redacts, or is flagged.",
+      "severityTip": "Severity is a classification signal, not the enforced action. The bound hook’s onMatch Action policy decides whether a match blocks, redacts, or is flagged. Exception: on image/video generation endpoints, any content match hard-blocks the prompt regardless of the Action, because the generated output cannot be scanned.",
       "severityHard": "hard — critical",
       "severitySoft": "soft — elevated",
       "severityWarn": "warn — advisory",
@@ -957,7 +995,7 @@
       "placeholderValue": "Value",
       "placeholderOneValuePerLine": "One value per line",
       "onMatchSection": "Action policy",
-      "onMatchHelp": "Controls what happens when this hook matches. Approve forwards and stores the traffic unchanged; redact rewrites the payload (the same sanitized copy is forwarded, returned, and stored); block rejects the request and stores the sanitized copy.",
+      "onMatchHelp": "Controls what happens when this hook matches. Approve forwards and stores the traffic unchanged; redact rewrites the payload (the same sanitized copy is forwarded, returned, and stored); block rejects the request and stores the sanitized copy. On image/video generation endpoints a content match always hard-blocks the prompt regardless of this setting, because the generated output cannot be scanned.",
       "action": "Action",
       "actionApprove": "Approve (forward and store unchanged)",
       "actionRedact": "Redact (rewrite and store sanitized)",
@@ -1029,7 +1067,7 @@
     "noVirtualKeysConfigured": "No virtual keys configured",
     "deleteVirtualKey": "Delete Virtual Key",
     "deleteConfirm": "Are you sure you want to delete virtual key \"{{name}}\"? This action cannot be undone.",
-    "secretKeyTooltip": "Send this value as Authorization: Bearer nvk_... or x-nexus-virtual-key: nvk_... when calling the gateway. Only the prefix is shown here; use Regenerate to rotate. The full secret is shown once at creation or after regenerate.",
+    "secretKeyTooltip": "Send this value as Authorization: Bearer nvk_... or X-Nexus-Virtual-Key: nvk_... when calling the gateway. Only the prefix is shown here; use Regenerate to rotate. The full secret is shown once at creation or after regenerate.",
     "statusTooltip": "Enabled keys authenticate client traffic. Disabled keys reject calls immediately while keeping configuration for audit or re-enable.",
     "expiration": "Expiration",
     "never": "Never",
@@ -1069,7 +1107,7 @@
     "namePlaceholder": "engineering-openai",
     "nameTakenApplication": "An application virtual key with this name already exists. Choose a different name.",
     "projectTooltip": "Project this virtual key belongs to. Used for traffic attribution and quota calculation.",
-    "expirationTooltip": "Application virtual keys require an expiration date capped at 3 months from now. The key cannot be used after it expires.",
+    "expirationTooltip": "Application virtual keys require an expiration date in the future. The key cannot be used after it expires.",
     "disabledKeysTooltip": "Disabled Keys Tooltip",
     "vkType": "Type",
     "vkStatus": "Status",
@@ -1088,7 +1126,8 @@
     "rejectVk": "Reject Virtual Key",
     "rejectConfirm": "Are you sure you want to reject virtual key \"{{name}}\"?",
     "rejectReason": "Reason",
-    "selectProject": "Select a project"
+    "selectProject": "Select a project",
+    "expirationAppHelp": "Application keys must expire; pick any future date."
   },
   "credentials": {
     "title": "Credentials",
@@ -1810,12 +1849,6 @@
     },
     "streamingComplianceTab": "Streaming Compliance",
     "promptCache": {
-      "globalTitle": "Global Defaults",
-      "globalSubtitle": "Configuration that applies to every provider regardless of adapter type.",
-      "normaliserEnabled": "Normaliser pipeline enabled",
-      "normaliserEnabledHint": "Master switch for the L3 prompt-cache normaliser pipeline. When off, no cache_control markers are injected and no strip rules run upstream.",
-      "killSwitch": "Cache master kill switch",
-      "killSwitchHint": "Emergency switch that disables all gateway-side cache behavior for every provider. Use only for incident response.",
       "adapterTitle": "Adapter Family Defaults",
       "adapterSubtitle": "Defaults applied to every provider of the given adapter family. Per-provider overrides can be set on each provider detail page.",
       "adapterAnthropic": "Anthropic",
@@ -1824,7 +1857,7 @@
       "adapterVertex": "Vertex",
       "adapterDefaultsTitle": "{{adapter}} defaults",
       "rulesTitle": "Normalisation rules",
-      "rulesSubtitle": "Bundled rules applied per adapter type. Rules with Key-safe=Yes affect cache-key generation and run on every request; rules with Key-safe=No only run when the global normaliser switch is on.",
+      "rulesSubtitle": "Bundled rules applied per adapter type. Rules with Key-safe=Yes affect cache-key generation and run on every request; rules with Key-safe=No only rewrite the upstream request, and run only when that rule is enabled here.",
       "rulesFilterPlaceholder": "Filter by rule ID or adapter…",
       "rulesCount": "{{shown}} of {{total}} rules",
       "rulesNoMatch": "No rules match the current filter.",
@@ -2364,6 +2397,8 @@
     "clearFilters": "Clear filters",
     "activeFilters": "Active filters ({{count}})",
     "activeFilterLabels": {
+      "noneSentinel": "(none)",
+      "unclassifiedSentinel": "(unclassified)",
       "provider": "Provider",
       "virtualKey": "Virtual key",
       "user": "User",
@@ -2386,7 +2421,11 @@
       "complianceTag": "Compliance tag",
       "range2xx": "2xx success",
       "range4xx": "4xx client error",
-      "range5xx": "5xx server error"
+      "range5xx": "5xx server error",
+      "endUserId": "End-user",
+      "sessionId": "Session",
+      "errorCode": "Error code",
+      "modelExact": "Model (exact)"
     },
     "filterPanelDescription": "Filter by <strong>project</strong>, <strong>virtual key</strong>, <strong>provider</strong>, and <strong>model</strong> (choose a provider first to pick a model). Use the buttons below to apply or open more criteria.",
     "labelProvider": "Provider",
@@ -2505,6 +2544,21 @@
     "colUpstream": "Upstream",
     "colTokens": "Tokens",
     "colHook": "Hook",
+    "colModality": "Modality",
+    "modality": {
+      "chat": "Chat",
+      "embeddings": "Embeddings",
+      "rerank": "Rerank",
+      "image_generation": "Image",
+      "tts": "TTS",
+      "stt": "STT",
+      "video_generation": "Video",
+      "batch": "Batch",
+      "job": "Job",
+      "models": "Models",
+      "guardrail": "Guardrail",
+      "realtime": "Realtime"
+    },
     "colCache": "Cache",
     "emptyTraffic": "No traffic recorded yet",
     "noFilteredDataTitle": "No matching traffic",
@@ -2623,7 +2677,6 @@
       "closeAriaLabel": "Close detail panel",
       "basic": {
         "title": "Event Info",
-        "id": "ID",
         "source": "Source",
         "time": "Time"
       },
@@ -2636,6 +2689,7 @@
         "targetHost": "Target Host",
         "sourceIp": "Source IP",
         "status": "Status",
+        "modality": "Modality",
         "latency": "Latency",
         "errorCode": "Error Code",
         "errorReason": "Error Reason"
@@ -2668,22 +2722,26 @@
           "miss": "MISS"
         },
         "gatewaySkip": {
+          "agentic_tool_use": "Skipped — agentic tool-use turn",
           "disabled": "Skipped — cache disabled",
-          "no_cache": "Skipped — client opt-out",
-          "passthrough": "Skipped — emergency passthrough",
-          "not_cacheable": "Skipped — not cacheable",
-          "time_sensitive": "Skipped — time-sensitive request",
-          "oversize_for_embedding": "Skipped — too large to embed",
-          "valkey_unavailable": "Skipped — cache store unavailable",
-          "embedding_timeout": "Skipped — embedding timed out",
-          "embedding_provider_error": "Skipped — embedding provider error",
+          "embedding_circuit_open": "Skipped — embedding circuit open",
           "embedding_dim_mismatch": "Skipped — embedding dimension mismatch",
+          "embedding_provider_error": "Skipped — embedding provider error",
+          "embedding_timeout": "Skipped — embedding timed out",
+          "embeddings_endpoint": "Skipped — embeddings endpoint (never cached)",
+          "modality_endpoint": "Skipped — multimodal endpoint (never cached)",
+          "no_cache": "Skipped — client opt-out",
+          "no_embeddable_text": "Skipped — no embeddable text",
+          "no_targets": "Skipped — no routing target",
+          "oversize_for_embedding": "Skipped — too large to embed",
+          "passthrough": "Skipped — emergency passthrough",
+          "poisoned": "Skipped — cache entry quarantined",
+          "rerank_endpoint": "Skipped — rerank endpoint (never cached)",
           "semantic_search_error": "Skipped — semantic search error",
           "semantic_search_timeout": "Skipped — semantic search timed out",
-          "semantic_reindex_in_progress": "Skipped — semantic index rebuilding",
           "semantic_unavailable": "Skipped — semantic cache unavailable",
-          "embedding_circuit_open": "Skipped — embedding circuit open",
-          "poisoned": "Skipped — cache entry quarantined"
+          "time_sensitive": "Skipped — time-sensitive request",
+          "valkey_unavailable": "Skipped — cache store unavailable"
         },
         "provider": {
           "hit": "HIT — {{tokens}} cached tokens",
@@ -2750,6 +2808,10 @@
       },
       "compliance": {
         "title": "Pipeline Decisions",
+        "coverage": {
+          "prompt-only": "Coverage: prompt scanned — binary output not inspectable",
+          "none": "Coverage: none — no content hook evaluated this request, nothing was scanned"
+        },
         "bumpStatus": "Bump Status",
         "attestationAgent": "Attestation Agent",
         "requestStage": "Request Stage",
@@ -2896,14 +2958,41 @@
         "REDACT_INFLIGHT_UNSUPPORTED": "Inflight redact unsupported by this protocol — upstream received the original body; audit log is redacted.",
         "REDACT_STORAGE_ONLY_BY_POLICY": "Storage-only redact per operator policy — upstream received the original body; audit log is redacted.",
         "STORAGE_DROPPED_BY_POLICY": "Content dropped from audit log per operator policy — only decision + metadata persisted.",
-        "AIGUARD_SUGGESTED_VS_POLICY": "AI-Guard suggested a decision overridden by policy ceiling — the strictest of the two wins."
+        "AIGUARD_SUGGESTED_VS_POLICY": "AI-Guard suggested a decision overridden by policy ceiling — the strictest of the two wins.",
+        "GENERATIVE_PROMPT_BLOCKED": "An image/video generation prompt matched a content rule and was hard-blocked. Because the generated output cannot be scanned, any content match on the prompt blocks by default — even a hook configured to observe only."
+      },
+      "correlation": {
+        "title": "Correlation",
+        "requestId": "Request ID",
+        "endUserId": "End-user ID",
+        "sessionId": "Session ID",
+        "clientRequestId": "Client request ID",
+        "traceId": "Trace ID",
+        "copy": "Copy",
+        "copied": "Copied",
+        "pivotRequest": "Show only this request",
+        "pivotEndUser": "Show all traffic for this end-user",
+        "pivotSession": "Show all requests in this session"
+      },
+      "artifact": {
+        "title": "Artifact",
+        "loading": "Loading preview…",
+        "error": "Preview unavailable.",
+        "urlMode": "The provider returned this image as a URL (not stored) — see the response body.",
+        "imageAlt": "Generated image"
       }
     },
     "filters": {
       "complianceTagFilter": "Filter by compliance tag",
       "complianceTagPlaceholder": "Enter tag (e.g., severity:confidential) and press Enter"
     },
-    "colPath": "Request Path"
+    "colPath": "Request Path",
+    "labelEndUserId": "End-user ID",
+    "tipEndUserId": "Exact caller-declared end-user id (X-Nexus-End-User-Id).",
+    "placeholderEndUserId": "Full end-user id",
+    "labelSessionId": "Session ID",
+    "tipSessionId": "Exact caller-declared session id (X-Nexus-Session-Id).",
+    "placeholderSessionId": "Full session id"
   },
   "analytics": {
     "subtitle": "Track traffic cost, token usage, latency, and source-level breakdowns across the selected period.",
@@ -3784,7 +3873,7 @@
     "storeResponse": "Store response body",
     "streamingNote": "Response body capture covers both streaming (SSE) and non-streaming responses.",
     "maxBytes": "Inline body size limit (bytes)",
-    "maxBytesHelp": "Bodies up to this size are stored inline in the database. Larger bodies are stored as files in the configured spill backend. Does NOT affect bytes forwarded upstream. Values above 10 MB are clamped server-side. Default: 262144 (256 KiB).",
+    "maxBytesHelp": "Bodies up to this size are stored inline in the database. Larger bodies are stored as files in the node's spill backend when one is configured; with no backend they stay inline. Does NOT affect bytes forwarded upstream. Values above 10 MB are clamped server-side. Default: 262144 (256 KiB).",
     "maxRequestBytes": "Inbound request network cap (bytes)",
     "maxRequestBytesHelp": "Bounds the bytes the data plane reads from the inbound request. Oversized requests are rejected with HTTP 413 before reaching any provider. Values above 100 MB are clamped server-side. Default: 10485760 (10 MiB).",
     "maxResponseBytes": "Upstream response network cap (bytes)",
@@ -4801,7 +4890,34 @@
       "silenceExpires": "Expires",
       "silenceReason": "Reason",
       "silencePermanent": "permanent",
-      "colRepeat": "Repeat"
+      "colRepeat": "Repeat",
+      "tabSystemFaults": "System faults",
+      "tabTrafficErrors": "Traffic errors",
+      "trafficErrors": {
+        "colAttribution": "Attribution",
+        "colErrorCode": "Error code",
+        "colStatus": "Status",
+        "colProvider": "Provider",
+        "colModel": "Model",
+        "colCount": "Count",
+        "colEndUsers": "End-users",
+        "endUsersTooltip": "Distinct caller-declared end-user tags affected; 0 when callers send no tag.",
+        "colLastSeen": "Last seen",
+        "colTrend": "Trend",
+        "colActions": "Actions",
+        "viewInTraffic": "View in Traffic",
+        "unclassified": "(unclassified)",
+        "overflow": "(other classes)",
+        "attributionAll": "All ({{count}})",
+        "searchPlaceholder": "Search code / provider / model / reason",
+        "empty": "No failed traffic in this window.",
+        "attribution": {
+          "ours": "Ours",
+          "client": "Client",
+          "upstream": "Upstream",
+          "mixed": "Mixed"
+        }
+      }
     },
     "crashReports": {
       "title": "Crash Reports",
@@ -5859,6 +5975,7 @@
     "validation": {
       "required": "name, hostPattern, and adapterId are required",
       "adapterConfigJson": "adapterConfig must be valid JSON: {{error}}",
+      "adapterConfigObject": "adapterConfig must be a JSON object",
       "priorityInt": "priority must be an integer",
       "pathPatternRequired": "At least one path pattern is required"
     },
@@ -5897,8 +6014,7 @@
     "failBehavior": "On Hook Failure",
     "failBehaviorHelp": "fail_open: continue on hook error/timeout. fail_close: block (buffer_full_block) or audit-flag (chunked_async).",
     "captureRequest": "Capture request body (default; per-host can override)",
-    "captureResponse": "Capture response body (default; per-host can override)",
-    "rawSpillEnabled": "Spill bodies larger than the inline threshold to SpillStore (default: localfs)."
+    "captureResponse": "Capture response body (default; per-host can override)"
   },
   "identityProvider": {
     "title": "Identity Provider",
@@ -6319,5 +6435,40 @@
   },
   "simulator": {
     "vkPlaceholder": "nvk_xxx"
+  },
+  "vendorBillReconciliation": {
+    "title": "Vendor Bill Reconciliation",
+    "subtitle": "Daily comparison of our estimated spend against each provider's authoritative billing API.",
+    "empty": "No reconciliation rows yet. The daily job populates provider-by-day comparisons for covered providers.",
+    "emptyForPeriod": "No reconciliation rows in this period. Try a longer period — the daily job only reconciles days that are already closed.",
+    "period": {
+      "label": "Reporting period"
+    },
+    "colProvider": "Provider",
+    "colDay": "Day",
+    "colOurs": "Our estimate",
+    "colVendor": "Vendor billed",
+    "colDiff": "Difference",
+    "colDiffPct": "Difference %",
+    "colCoverage": "Coverage",
+    "colStatus": "Status",
+    "colReview": "Review",
+    "statusOpen": "Open",
+    "reviewedBy": "Reviewed by {{who}}",
+    "markReviewed": "Mark reviewed",
+    "notePlaceholder": "Optional note",
+    "coverage": {
+      "scoped": "Scoped",
+      "org_only": "Org-wide (reference only)",
+      "fetch_failed": "Vendor fetch failed",
+      "priority_tier_undercount": "Excludes priority tier"
+    },
+    "notCoveredTitle": "Providers not covered in v1",
+    "notCoveredDesc": "These providers expose no dollar-denominated cost API at day granularity, so they cannot be reconciled automatically yet.",
+    "notCovered": {
+      "gemini": "Google Gemini (direct API) — no cost API; only Vertex/BigQuery exposes cost.",
+      "deepseek": "DeepSeek — balance snapshot only; cost via manual monthly CSV export.",
+      "moonshot": "Moonshot (Kimi) — balance snapshot only; no usage/cost export API."
+    }
   }
 }

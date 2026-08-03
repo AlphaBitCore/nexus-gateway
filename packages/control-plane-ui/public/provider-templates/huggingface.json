@@ -1,7 +1,7 @@
 {
   "name": "huggingface",
   "displayName": "Hugging Face Inference",
-  "description": "Hugging Face TGI \u2014 OpenAI-compatible chat completions on Hugging Face's serverless inference (api-inference.huggingface.co). Model availability and pricing depend on the active provider partnership; admin should verify against https://huggingface.co/docs/api-inference/index before customer-facing use.",
+  "description": "Hugging Face TGI — OpenAI-compatible chat completions on Hugging Face's serverless inference (api-inference.huggingface.co). Model availability and pricing depend on the active provider partnership; admin should verify against https://huggingface.co/docs/api-inference/index before customer-facing use.",
   "baseUrl": "https://api-inference.huggingface.co",
   "adapterType": "huggingface",
   "models": [
@@ -15,9 +15,7 @@
         "function_calling",
         "streaming"
       ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 131072
     },
     {
       "code": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -28,9 +26,7 @@
       "features": [
         "streaming"
       ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 131072
     },
     {
       "code": "Qwen/Qwen2.5-72B-Instruct",
@@ -42,9 +38,7 @@
         "function_calling",
         "streaming"
       ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 131072
     },
     {
       "code": "mistralai/Mistral-7B-Instruct-v0.3",
@@ -55,9 +49,7 @@
       "features": [
         "streaming"
       ],
-      "maxContextTokens": 32768,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 32768
     }
   ]
 }

@@ -6,74 +6,115 @@
   "adapterType": "groq",
   "models": [
     {
-      "code": "llama-3.3-70b-versatile",
-      "name": "Llama 3.3 70B Versatile",
-      "description": "Meta's instruction-tuned 70B Llama 3.3 served on Groq's LPU inference fabric — ~280 tok/s.",
-      "providerModelId": "llama-3.3-70b-versatile",
+      "code": "meta-llama/llama-4-maverick-17b-128e-instruct",
+      "name": "Llama 4 Maverick 17B (Groq)",
+      "description": "Meta Llama 4 Maverick served on Groq LPUs.",
+      "providerModelId": "meta-llama/llama-4-maverick-17b-128e-instruct",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
-        "streaming",
-        "json_mode"
+        "streaming"
       ],
-      "inputPricePerMillion": 0.59,
-      "outputPricePerMillion": 0.79,
+      "inputPricePerMillion": 0.2,
+      "outputPricePerMillion": 0.6,
       "maxContextTokens": 131072,
-      "maxOutputTokens": 32768,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 8192
     },
     {
-      "code": "llama-3.1-8b-instant",
-      "name": "Llama 3.1 8B Instant",
-      "description": "Meta's compact 8B Llama 3.1 — ~675 tok/s. Best for latency-sensitive tasks.",
-      "providerModelId": "llama-3.1-8b-instant",
+      "code": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "name": "Llama 4 Scout 17B (Groq)",
+      "description": "Meta Llama 4 Scout served on Groq LPUs.",
+      "providerModelId": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.11,
+      "outputPricePerMillion": 0.34,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 8192
+    },
+    {
+      "code": "qwen/qwen3-32b",
+      "name": "Qwen3 32B (Groq)",
+      "description": "Alibaba Qwen3 32B served on Groq LPUs.",
+      "providerModelId": "qwen/qwen3-32b",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning"
       ],
-      "inputPricePerMillion": 0.05,
-      "outputPricePerMillion": 0.08,
-      "maxContextTokens": 131072,
-      "maxOutputTokens": 8192,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 0.29,
+      "outputPricePerMillion": 0.59,
+      "maxContextTokens": 131000
     },
     {
       "code": "openai/gpt-oss-120b",
-      "name": "GPT OSS 120B",
-      "description": "OpenAI's open-weight 120B model served on Groq — ~1000 tok/s.",
+      "name": "GPT-OSS 120B (Groq)",
+      "description": "OpenAI's open-weight 120B model served on Groq LPUs.",
       "providerModelId": "openai/gpt-oss-120b",
       "type": "chat",
       "features": [
         "function_calling",
-        "streaming"
+        "streaming",
+        "reasoning"
       ],
-      "maxContextTokens": 131072,
-      "maxOutputTokens": 32768,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
       "inputPricePerMillion": 0.15,
-      "outputPricePerMillion": 0.6
+      "outputPricePerMillion": 0.6,
+      "cachedInputReadPricePerMillion": 0.075,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 32766
     },
     {
       "code": "openai/gpt-oss-20b",
-      "name": "GPT OSS 20B",
-      "description": "OpenAI's open-weight 20B model — fastest in catalogue at ~1000 tok/s.",
+      "name": "GPT-OSS 20B (Groq)",
+      "description": "OpenAI's open-weight 20B model served on Groq LPUs.",
       "providerModelId": "openai/gpt-oss-20b",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 0.075,
+      "outputPricePerMillion": 0.3,
+      "cachedInputReadPricePerMillion": 0.0375,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 32768
+    },
+    {
+      "code": "llama-3.3-70b-versatile",
+      "name": "Llama 3.3 70B Versatile (Groq)",
+      "description": "Meta Llama 3.3 70B served on Groq LPUs.",
+      "providerModelId": "llama-3.3-70b-versatile",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming"
       ],
-      "maxContextTokens": 131072,
-      "maxOutputTokens": 8192,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 0.075,
-      "outputPricePerMillion": 0.3
+      "inputPricePerMillion": 0.59,
+      "outputPricePerMillion": 0.79,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 32768
+    },
+    {
+      "code": "llama-3.1-8b-instant",
+      "name": "Llama 3.1 8B Instant (Groq)",
+      "description": "Meta Llama 3.1 8B served on Groq LPUs. Lowest latency.",
+      "providerModelId": "llama-3.1-8b-instant",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.05,
+      "outputPricePerMillion": 0.08,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 8192
     }
   ]
 }

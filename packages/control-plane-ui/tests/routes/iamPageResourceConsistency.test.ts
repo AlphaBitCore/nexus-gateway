@@ -117,10 +117,21 @@ function permKeysInFile(file: string): string[] {
  */
 const CROSS_RESOURCE_ALLOWLIST: Record<string, Record<string, string>> = {
   'ai-gateway/providers/:id': {
-    // The provider detail page hosts "add model" and "add credential"
-    // affordances for the provider, each gated on its own backend resource.
-    model: 'Add-model affordance (model.create)',
+    // The provider detail page hosts model and credential affordances for the
+    // provider, each gated on its own backend resource. Every model write on
+    // the Models tab (add / edit / enable-disable / delete / catalog sync)
+    // reaches a /models endpoint guarded on the model resource, so all of them
+    // gate on model.* rather than on this page's provider action.
+    model: 'Models tab writes (model.create / model.update / model.delete)',
     credential: 'Add-credential affordance (credential.create)',
+  },
+  'infrastructure/errors': {
+    // The Recent Errors page (observability.read) hosts a Traffic-errors
+    // data-source tab reading traffic_event aggregates via
+    // GET /traffic/errors/groups, guarded on traffic-log.read. The tab strip
+    // is hidden for viewers without that action, so the cross-resource gate
+    // hides the affordance instead of producing a silent 403.
+    'traffic-log': 'Traffic errors tab (traffic-log.read on /traffic/errors/groups)',
   },
   'infrastructure/overrides': {
     // Registry is reachable with settings.read (the list endpoint), but the

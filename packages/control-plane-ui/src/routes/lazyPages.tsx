@@ -18,6 +18,7 @@ export const LazyDashboardPage = L(() => import('../pages/dashboard/DashboardPag
 export const LazyTrafficAnalyticsPage = L(() => import('../pages/traffic/analytics/TrafficAnalyticsPage').then((m) => ({ default: m.TrafficAnalyticsPage })));
 export const LazyAnalyticsPage = L(() => import('../pages/analytics/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
 export const LazyCacheROIDashboard = L(() => import('../pages/analytics/CacheROIDashboard').then((m) => ({ default: m.CacheROIDashboard })));
+export const LazyVendorBillReconciliationPage = L(() => import('../pages/analytics/VendorBillReconciliationPage').then((m) => ({ default: m.VendorBillReconciliationPage })));
 
 // ── AI Gateway ──
 export const LazyConfigProvidersPage = L(() => import('../pages/ai-gateway/providers/list/ProviderList').then((m) => ({ default: m.ConfigProvidersPage })));

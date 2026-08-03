@@ -40,20 +40,20 @@ import (
 // BRAINSTORM (pre): the IP filter has three failure modes that matter
 // to operators, and we want each one observable:
 //
-//   1. **False negative** — hook configured to deny a CIDR that
-//      matches the source IP, but the request still passes. Caused
-//      by (a) hook not refreshed across the Hub shadow path, (b)
-//      source-IP extraction broken, or (c) decision short-circuited
-//      upstream of the hook pipeline. Catching this requires asserting
-//      a non-2xx response AND a `REJECT_HARD` traffic_event row.
-//   2. **False positive** — hook deleted but its decision still binds
-//      because the AI gateway cached the old hook config. Catching
-//      requires the post-delete sanity arm: same request, same VK,
-//      now expecting 200.
-//   3. **Wrong reason code** — the rejection happens but the audit
-//      row records the wrong hook (e.g. a keyword hook fires by
-//      coincidence). Asserting `implementationId='ip-access-filter'`
-//      via decision metadata + reasonCode covers this.
+//  1. **False negative** — hook configured to deny a CIDR that
+//     matches the source IP, but the request still passes. Caused
+//     by (a) hook not refreshed across the Hub shadow path, (b)
+//     source-IP extraction broken, or (c) decision short-circuited
+//     upstream of the hook pipeline. Catching this requires asserting
+//     a non-2xx response AND a `REJECT_HARD` traffic_event row.
+//  2. **False positive** — hook deleted but its decision still binds
+//     because the AI gateway cached the old hook config. Catching
+//     requires the post-delete sanity arm: same request, same VK,
+//     now expecting 200.
+//  3. **Wrong reason code** — the rejection happens but the audit
+//     row records the wrong hook (e.g. a keyword hook fires by
+//     coincidence). Asserting `implementationId='ip-access-filter'`
+//     via decision metadata + reasonCode covers this.
 //
 // Side effects: this test creates a HookConfig row scoped to AI gw
 // only (`applicableIngress=[AI_GATEWAY]`) and registers cleanup so
@@ -231,16 +231,18 @@ func TestS068_IPAccessFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeMetrics post-reject: %v", err)
 	}
-	rejectDelta := postMetrics.CounterSum("hook_pipeline_total", map[string]string{
-		"stage":    "request",
-		"decision": "REJECT_HARD",
-	}) - preMetrics.CounterSum("hook_pipeline_total", map[string]string{
-		"stage":    "request",
-		"decision": "REJECT_HARD",
-	})
+	// The series is nexus_hook_pipeline_total — with the namespace. CounterSum
+	// prefix-matches on the FULL exposed name, so the unprefixed
+	// "hook_pipeline_total" this used to pass matched nothing and the delta was
+	// structurally 0: the assertion could not pass, and it sat next to a log
+	// line reporting rejectDecision=REJECT_HARD, i.e. the block it claimed was
+	// missing had plainly happened.
+	rejectLabels := map[string]string{"stage": "request", "decision": "REJECT_HARD"}
+	rejectDelta := postMetrics.CounterSum(hookPipelineMetric, rejectLabels) -
+		preMetrics.CounterSum(hookPipelineMetric, rejectLabels)
 	if rejectDelta < 1 {
-		t.Errorf("hook_pipeline_total{stage=request,decision=REJECT_HARD} "+
-			"delta=%g (want ≥ 1)", rejectDelta)
+		t.Errorf("%s{stage=request,decision=REJECT_HARD} delta=%g (want ≥ 1)",
+			hookPipelineMetric, rejectDelta)
 	}
 
 	// --- Arm 3: delete hook + sanity 200 -------------------------
@@ -303,3 +305,8 @@ func TestS068_IPAccessFilter(t *testing.T) {
 		hookID, rejectStatus, row.RequestHookDecision,
 		sanityStatus, row.ID, rejectDelta)
 }
+
+// hookPipelineMetric is the FULL exposed name of the hook-pipeline counter:
+// namespace "nexus" + subsystem "hook". Shared by the scenarios that assert on
+// it so the prefix cannot be dropped in one place and kept in another.
+const hookPipelineMetric = "nexus_hook_pipeline_total"

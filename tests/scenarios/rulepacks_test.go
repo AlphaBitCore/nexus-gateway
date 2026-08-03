@@ -25,32 +25,37 @@ import (
 // between pack rules and per-install overrides. Two PM-grade
 // invariants:
 //
-//   1. Override DISABLE: setting Override{Disabled: true} on a rule
-//      MUST cause that rule to disappear from the effective-rules
-//      response (or its `disabled` flag must surface). The data
-//      plane skips disabled rules — if the merge layer silently
-//      ignores the Disabled flag, an admin can't actually disable
-//      a rule that's catching false positives.
-//   2. Override SEVERITY: setting Override{SeverityOverride: "low"}
-//      MUST surface the override severity in effective-rules. The
-//      data plane reads severity to decide block vs warn — silently
-//      ignoring overrides breaks the operator's ability to demote a
-//      rule from block to warn.
+//  1. Override DISABLE: setting Override{Disabled: true} on a rule
+//     MUST cause that rule to disappear from the effective-rules
+//     response (or its `disabled` flag must surface). The data
+//     plane skips disabled rules — if the merge layer silently
+//     ignores the Disabled flag, an admin can't actually disable
+//     a rule that's catching false positives.
+//  2. Override SEVERITY: setting Override{SeverityOverride: "warn"}
+//     MUST surface the override severity in effective-rules. The
+//     data plane reads severity to decide block vs warn — silently
+//     ignoring overrides breaks the operator's ability to demote a
+//     rule from block to warn.
+//
+// The severity vocabulary is hard|soft|warn (rulepack.validateRules), so
+// the demotion under test is hard→warn: literally "block to warn". This
+// scenario used to send high/low, which are not severities at all — the
+// pack create 400'd before any of the merge logic was reached.
 //
 // Cross-service: CP-only (rulepack is CP-side). Hook binding doesn't
 // require a live hook engine for the merge test — the merge is a
 // pure DB join.
 //
 // Assertions:
-//   1. POST /rule-packs creates a synthetic 2-rule pack.
-//   2. POST /hooks/:hookId/rule-packs creates an install bound to a
-//      live builtin hook id (pii-outbound-scanner).
-//   3. GET /rule-pack-installs/:installId/effective-rules returns
-//      both rules with severity matching the pack defaults.
-//   4. PATCH overrides: disable rule 1, demote rule 2's severity.
-//   5. GET effective-rules again: rule 1 absent or disabled flag set;
-//      rule 2's severity is the override value.
-//   6. Cleanup: uninstall + delete pack.
+//  1. POST /rule-packs creates a synthetic 2-rule pack.
+//  2. POST /hooks/:hookId/rule-packs creates an install bound to a
+//     live builtin hook id (pii-outbound-scanner).
+//  3. GET /rule-pack-installs/:installId/effective-rules returns
+//     both rules with severity matching the pack defaults.
+//  4. PATCH overrides: disable rule 1, demote rule 2's severity.
+//  5. GET effective-rules again: rule 1 absent or disabled flag set;
+//     rule 2's severity is the override value.
+//  6. Cleanup: uninstall + delete pack.
 func TestS026_RulePackInstallEffectiveMerge(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -61,16 +66,24 @@ func TestS026_RulePackInstallEffectiveMerge(t *testing.T) {
 	}
 
 	nonce := time.Now().UnixNano()
-	packName := fmt.Sprintf("s026-pack-%d", nonce)
-	packVersion := "1.0.0"
+	// A pack name must be "<namespace>/<short-name>" — rulepack.packNameRE
+	// (`^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$`) rejects a bare name outright, so
+	// the namespace segment is required, not cosmetic. Without the slash the
+	// create returns 400 validation_failed and every arm below is unreachable.
+	packName := fmt.Sprintf("s026/pack-%d", nonce)
+	// v-prefixed semver — rulepack.semverRE is
+	// `^v(\d+)\.(\d+)\.(\d+)(?:[-+][A-Za-z0-9._-]+)?$`, so a bare "1.0.0" is
+	// a 400. Reused verbatim as the install's pinVersion, which must equal
+	// the pack version for the install to resolve.
+	packVersion := "v1.0.0"
 	packBody, _ := json.Marshal(map[string]any{
 		"name":       packName,
 		"version":    packVersion,
 		"maintainer": "scenario-test",
 		"rules": []map[string]any{
-			{"ruleId": "r1-disable-me", "category": "pii", "severity": "high",
+			{"ruleId": "r1-disable-me", "category": "pii", "severity": "hard",
 				"pattern": fmt.Sprintf("secret-disable-me-x%d", nonce)},
-			{"ruleId": "r2-demote-me", "category": "injection", "severity": "high",
+			{"ruleId": "r2-demote-me", "category": "injection", "severity": "hard",
 				"pattern": fmt.Sprintf("secret-demote-me-x%d", nonce)},
 		},
 	})
@@ -137,8 +150,8 @@ func TestS026_RulePackInstallEffectiveMerge(t *testing.T) {
 			len(rulesBefore))
 	}
 	for _, r := range rulesBefore {
-		if sev, _ := r["severity"].(string); sev != "high" {
-			t.Errorf("rule %v severity=%v, want 'high' (pack default)",
+		if sev, _ := r["severity"].(string); sev != "hard" {
+			t.Errorf("rule %v severity=%v, want 'hard' (pack default)",
 				r["ruleId"], sev)
 		}
 	}
@@ -146,7 +159,7 @@ func TestS026_RulePackInstallEffectiveMerge(t *testing.T) {
 	overridesBody, _ := json.Marshal(map[string]any{
 		"overrides": []map[string]any{
 			{"ruleLocalId": "r1-disable-me", "disabled": true},
-			{"ruleLocalId": "r2-demote-me", "severityOverride": "low"},
+			{"ruleLocalId": "r2-demote-me", "severityOverride": "warn"},
 		},
 	})
 	st, body, err = helpers.CPDoJSON(ctx, sc.Env, token,
@@ -180,9 +193,42 @@ func TestS026_RulePackInstallEffectiveMerge(t *testing.T) {
 	if r1Found && !r1Disabled {
 		t.Errorf("r1 still present with disabled=false (override not applied)")
 	}
-	if r2Severity != "low" {
-		t.Errorf("r2 severity after override = %q, want 'low' (override not applied)",
+	if r2Severity != "warn" {
+		t.Errorf("r2 severity after override = %q, want 'warn' (override not applied)",
 			r2Severity)
+	}
+
+	// Invariant 3 (S-13): an override severity outside the closed hard|soft|warn
+	// enum must be REFUSED, not stored. severityEnforces() enforces only
+	// hard|soft and returns false for everything else, so persisting e.g. "high"
+	// silently converts a blocking rule into a non-blocking one: it still
+	// matches and still reports, but no longer blocks or redacts. The authoring
+	// path has guarded this since it was written (rulepack.validSeverities,
+	// whose own comment calls it "a correctness backstop, not cosmetics"); the
+	// override path reaches the same runtime field and must guard it too.
+	badBody, _ := json.Marshal(map[string]any{
+		"overrides": []map[string]any{
+			{"ruleLocalId": "r2-demote-me", "severityOverride": "high"},
+		},
+	})
+	st, body, err = helpers.CPDoJSON(ctx, sc.Env, token,
+		http.MethodPatch,
+		"/api/admin/rule-pack-installs/"+installID+"/overrides",
+		badBody)
+	if err != nil {
+		t.Fatalf("bogus-severity override: %v", err)
+	}
+	if st != http.StatusBadRequest {
+		t.Errorf("bogus severityOverride \"high\": status=%d want 400 (body=%q)",
+			st, truncate(body, 300))
+	}
+	// And it must not have taken effect: r2 keeps the last VALID override.
+	for _, r := range fetchEffectiveRules(t, ctx, sc.Env, token, installID) {
+		if rid, _ := r["ruleId"].(string); rid == "r2-demote-me" {
+			if sev, _ := r["severity"].(string); sev != "warn" {
+				t.Errorf("r2 severity after REJECTED override = %q, want 'warn' (the rejected write must not persist)", sev)
+			}
+		}
 	}
 
 	t.Logf("S-026 OK: pack=%s install=%s effective: %d→%d; r1 present=%v disabled=%v; r2 severity=%s",

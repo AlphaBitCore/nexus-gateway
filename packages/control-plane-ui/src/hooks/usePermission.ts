@@ -109,6 +109,7 @@ export const ACTION_MAP: Record<string, string> = {
   'prompt-cache:update': 'admin:prompt-cache.update',
   'extract-cache:read': 'admin:extract-cache.read',
   'extract-cache:update': 'admin:extract-cache.update',
+  'traffic-log:read': 'admin:traffic-log.read',
   'observability:read': 'admin:observability.read',
   'observability:write': 'admin:observability.write',
   'observability-dlq:read': 'admin:observability-dlq.read',
