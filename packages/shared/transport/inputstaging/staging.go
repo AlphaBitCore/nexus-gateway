@@ -31,6 +31,28 @@ type PlanInput struct {
 	// completion response.  The effective input budget is
 	// max(ModelContextLimit - ReserveOutput, 0).  May be 0.
 	ReserveOutput int
+
+	// ReportOnly reverts Plan to diagnose-without-cutting: overflow is
+	// reported via OverflowKind but the returned Messages may exceed the
+	// budget or be empty, exactly as the strategy selected them.
+	//
+	// By DEFAULT (false) Plan guarantees the returned Messages fit the
+	// budget: oldest messages are dropped first, a single still-oversized
+	// message is tail-truncated via [TruncateToTokens] (newest content
+	// wins), and a strategy that selected nothing from a non-empty
+	// conversation is re-seeded with the newest user message (then
+	// bounded the same way) — callers sending the result to a model never
+	// emit an over-limit or empty prompt. A zero budget returns no
+	// messages. OverflowKind keeps reporting the strategy-stage condition
+	// for observability in both modes.
+	//
+	// Set ReportOnly only when the staged text is key material or when
+	// "selected nothing" must stay a skip signal — e.g. the semantic-
+	// cache embedding input, whose empty-plan result intentionally skips
+	// the cache lookup and whose bytes feed the cache key. ReportOnly
+	// freezes Messages/InputTokens/Truncated, not OverflowKind — the
+	// diagnostic kind may still be refined across versions.
+	ReportOnly bool
 }
 
 // PlanResult is the output of [Plan].
@@ -77,18 +99,24 @@ func Plan(in PlanInput) (PlanResult, error) {
 		budget = 0
 	}
 
+	var res PlanResult
+	var err error
 	switch in.Strategy {
 	case StrategyLastUser:
-		return planLastUser(in.Messages, budget)
+		res, err = planLastUser(in.Messages, budget)
 	case StrategySystemPlusLastUser:
-		return planSystemPlusLastUser(in.Messages, budget)
+		res, err = planSystemPlusLastUser(in.Messages, budget)
 	case StrategyRecentTurns:
-		return planRecentTurns(in.Messages, budget)
+		res, err = planRecentTurns(in.Messages, budget)
 	case StrategyHeadPlusTail:
-		return planHeadPlusTail(in.Messages, budget)
+		res, err = planHeadPlusTail(in.Messages, budget)
 	default: // StrategyFullTruncated — the only remaining valid value after Valid() above
-		return planFullTruncated(in.Messages, budget)
+		res, err = planFullTruncated(in.Messages, budget)
 	}
+	if err != nil || in.ReportOnly {
+		return res, err
+	}
+	return enforceBudget(res, in.Messages, budget), nil
 }
 
 // Suggest recommends a [Strategy] based on the model's context size and
@@ -146,7 +174,7 @@ func planLastUser(msgs []Message, budget int) (PlanResult, error) {
 		}, nil
 	}
 
-	toks := EstimateTokens(lastUser.Content)
+	toks := EstimateTokensConservative(lastUser.Content)
 	truncated := len(msgs) > 1 || msgs[len(msgs)-1].Role != "user"
 
 	if toks > budget {
@@ -205,7 +233,7 @@ func planSystemPlusLastUser(msgs []Message, budget int) (PlanResult, error) {
 	}
 
 	// Check if the single essential message (last user) alone exceeds budget.
-	lastUserToks := EstimateTokens(lastUser.Content)
+	lastUserToks := EstimateTokensConservative(lastUser.Content)
 	if lastUserToks > budget {
 		return PlanResult{
 			Messages:     []Message{*lastUser},
@@ -287,7 +315,7 @@ func planRecentTurns(msgs []Message, budget int) (PlanResult, error) {
 
 		turnToks := 0
 		for k := lo; k <= hi; k++ {
-			turnToks += EstimateTokens(bodyMsgs[k].Content)
+			turnToks += EstimateTokensConservative(bodyMsgs[k].Content)
 		}
 		if keptToks+turnToks > remaining {
 			break
@@ -317,7 +345,11 @@ func planRecentTurns(msgs []Message, budget int) (PlanResult, error) {
 	selected = append(selected, kept...)
 	totalToks := sysToks + keptToks
 
-	if totalToks > budget {
+	// Overflow when the selection exceeds the budget, or when a non-empty
+	// conversation body produced zero turns (the newest turn alone is too
+	// big) — an empty selection is exactly the bounded condition callers
+	// observe via OverflowKind, consistent with the other strategies.
+	if totalToks > budget || (len(bodyMsgs) > 0 && len(kept) == 0) {
 		return PlanResult{
 			Messages:     selected,
 			InputTokens:  totalToks,
@@ -363,7 +395,7 @@ func planHeadPlusTail(msgs []Message, budget int) (PlanResult, error) {
 	var headMsgs []Message
 	headToks := 0
 	for i := 0; i < len(bodyMsgs) && i < 2; i++ {
-		t := EstimateTokens(bodyMsgs[i].Content)
+		t := EstimateTokensConservative(bodyMsgs[i].Content)
 		if headToks+t > headBudget {
 			break
 		}
@@ -378,7 +410,7 @@ func planHeadPlusTail(msgs []Message, budget int) (PlanResult, error) {
 	var tailIdxRev []int // body indices in reverse (end→start)
 	tailToks := 0
 	for i := len(bodyMsgs) - 1; i >= headLen; i-- {
-		t := EstimateTokens(bodyMsgs[i].Content)
+		t := EstimateTokensConservative(bodyMsgs[i].Content)
 		if tailToks+t > tailBudget {
 			break
 		}
@@ -424,7 +456,7 @@ func planFullTruncated(msgs []Message, budget int) (PlanResult, error) {
 	if toks > budget {
 		// Check if even the last single message exceeds budget.
 		if len(msgs) > 0 {
-			lastToks := EstimateTokens(msgs[len(msgs)-1].Content)
+			lastToks := EstimateTokensConservative(msgs[len(msgs)-1].Content)
 			if lastToks > budget {
 				return PlanResult{
 					Messages:     msgs,
@@ -452,11 +484,12 @@ func planFullTruncated(msgs []Message, budget int) (PlanResult, error) {
 
 // --- helpers ---
 
-// estimateTokensForMessages sums EstimateTokens over every message.
+// estimateTokensForMessages sums the conservative (fit) token estimate over
+// every message — staging is a fit decision, so it must never under-count.
 func estimateTokensForMessages(msgs []Message) int {
 	total := 0
 	for i := range msgs {
-		total += EstimateTokens(msgs[i].Content)
+		total += EstimateTokensConservative(msgs[i].Content)
 	}
 	return total
 }

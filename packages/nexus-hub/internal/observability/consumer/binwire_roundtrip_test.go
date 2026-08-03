@@ -66,7 +66,7 @@ func assertConsumerEquivalent(t *testing.T, a, b TrafficEventMessage) {
 func normalizeOpaqueJSON(m *TrafficEventMessage) {
 	rawType := reflect.TypeOf(json.RawMessage(nil))
 	v := reflect.ValueOf(m).Elem()
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		f := v.Field(i)
 		if f.Type() != rawType || !f.CanSet() {
 			continue

@@ -7,7 +7,7 @@
 set -eu
 
 # ─── 1. nexus-agent system user + group ────────────────────────
-# The daemon runs as `nexus-agent` (not root) per E42 FR-L5/L6,
+# The daemon runs as `nexus-agent`, never root,
 # with CAP_NET_ADMIN granted via the systemd unit's
 # AmbientCapabilities. Skip both creates on upgrade (the entries
 # already exist).

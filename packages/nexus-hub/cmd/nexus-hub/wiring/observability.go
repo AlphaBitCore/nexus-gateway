@@ -115,6 +115,7 @@ func InitSelfInstrumentation(
 			BuildTime:      "",
 			StartTime:      processStartTime.Format(time.RFC3339),
 			PublicURL:      cfg.PublicURL,
+			PrivateURL:     sharedopsplatform.EffectivePrivateURL(cfg.PrivateURL, cfg.Server.Host, cfg.Server.Port),
 		})
 		if err := opsStaticWriter.UpsertStaticInfo(ctxPush, hubThingID, info); err != nil {
 			logger.Warn("hub static_info upsert failed at startup", "error", err)

@@ -41,8 +41,15 @@ type ProxyConfig struct {
 	// OnboardingEnabled activates the 407 intercept path. When true,
 	// CONNECT requests for monitored domains return 407 + HTML guide instead
 	// of 200. Toggle at runtime via ProxyServer.SetOnboardingEnabled.
-	OnboardingEnabled     bool
-	OnboardingCPUIBaseURL string
+	OnboardingEnabled bool
+	// OnboardingCPUIBaseURL supplies the Control Plane UI base URL for the
+	// 407 HTML setup-guide link at render time. A provider (not a static
+	// string) because the default value is Hub-resolved (the control-plane
+	// Thing's reported publicUrl via peerurl) and may not be available at
+	// construction. Nil or an empty return degrades the link to a relative
+	// path, exactly as an empty static value did. The 407 render is a cold
+	// path, so a cached resolver call per render is fine.
+	OnboardingCPUIBaseURL func() string
 	Checker               *access.Checker
 	ConnManager           *conn.Manager
 	IdleTimeout           time.Duration // defaults to 300s if zero
@@ -172,8 +179,9 @@ type ProxyServer struct {
 
 	// onboardingEnabled gates the 407 intercept path. Hot-swappable
 	// via SetOnboardingEnabled without locking the hot CONNECT path.
-	onboardingEnabled     atomic.Bool
-	onboardingCPUIBaseURL string
+	onboardingEnabled atomic.Bool
+	// onboardingCPUIBaseURL — see ProxyConfig.OnboardingCPUIBaseURL.
+	onboardingCPUIBaseURL func() string
 
 	// attestationVerifier — see ProxyConfig.AttestationVerifier.
 	attestationVerifier *AttestationVerifier
@@ -320,8 +328,14 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ip = net.ParseIP(r.RemoteAddr)
 		}
 		if err := p.checker.CheckConnect(r.Context(), ip, host, "443"); err == nil {
-			// Domain is monitored — intercept with onboarding guide.
-			setupURL := p.onboardingCPUIBaseURL + "/setup/proxy"
+			// Domain is monitored — intercept with onboarding guide. The CP-UI
+			// base resolves per render (cold path); "" degrades the link to a
+			// relative path just like an unset static value used to.
+			cpUIBase := ""
+			if p.onboardingCPUIBaseURL != nil {
+				cpUIBase = p.onboardingCPUIBaseURL()
+			}
+			setupURL := cpUIBase + "/setup/proxy"
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Proxy-Authenticate", `Basic realm="Nexus Gateway setup required — visit `+setupURL+`"`)
 			w.WriteHeader(http.StatusProxyAuthRequired)
@@ -384,6 +398,24 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// security checks, not allowlist misses, and must remain
 			// enforced even in this mode.
 			if p.allowUnlistedPassthrough && errors.Is(err, access.ErrDomainDenied) {
+				// SSRF guard on the passthrough downgrade: CheckConnect returned
+				// ErrDomainDenied before it reached the private-IP check, so a raw
+				// relay here would still tunnel to a private/reserved target (cloud
+				// metadata, RFC1918, loopback). Run that check explicitly and refuse
+				// the flow if the target resolves into a reserved range — passthrough
+				// relaxes the domain allowlist, never the SSRF protection.
+				if ssrfErr := p.checker.CheckPassthroughTarget(r.Context(), host); ssrfErr != nil {
+					reason := categorizeAccessError(ssrfErr)
+					if metrics.ConnectionsTotal != nil {
+						metrics.ConnectionsTotal.With(reason).Inc()
+					}
+					connLogger.Warn("unlisted passthrough refused: target is private/reserved",
+						"reason", reason,
+						"error", ssrfErr,
+					)
+					http.Error(w, fmt.Sprintf("connection denied: %s", reason), http.StatusForbidden)
+					return
+				}
 				p.serveUnlistedPassthrough(w, r, targetHost, connLogger)
 				return
 			}

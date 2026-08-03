@@ -489,4 +489,80 @@ ca:
 	}
 }
 
+// TestValidate_OpenProxyGuard asserts the fail-closed guard against the
+// open-proxy configuration: allowUnlistedPassthrough=true together with a
+// sourceIpAllowlist that permits every source (a /0 range) must refuse to
+// start. This is the exact combination that turned prod into an open relay.
+func TestValidate_OpenProxyGuard(t *testing.T) {
+	minimalYAML := `
+listener:
+  address: ":3128"
+ca:
+  certPath: "/ca.crt"
+  keyPath: "/ca.key"
+`
+	cases := []struct {
+		name    string
+		access  string
+		wantErr bool
+	}{
+		{
+			name: "passthrough + 0.0.0.0/0 source is refused",
+			access: `accessControl:
+  sourceIpAllowlist: ["0.0.0.0/0"]
+  allowUnlistedPassthrough: true
+`,
+			wantErr: true,
+		},
+		{
+			name: "passthrough + ::/0 source is refused",
+			access: `accessControl:
+  sourceIpAllowlist: ["::/0"]
+  allowUnlistedPassthrough: true
+`,
+			wantErr: true,
+		},
+		{
+			name: "passthrough + restricted source is allowed",
+			access: `accessControl:
+  sourceIpAllowlist: ["172.31.0.0/16", "10.0.0.0/8"]
+  allowUnlistedPassthrough: true
+`,
+			wantErr: false,
+		},
+		{
+			name: "passthrough OFF + 0.0.0.0/0 source is allowed (not an open relay)",
+			access: `accessControl:
+  sourceIpAllowlist: ["0.0.0.0/0"]
+  allowUnlistedPassthrough: false
+`,
+			wantErr: false,
+		},
+		{
+			name: "passthrough + empty source is allowed (empty = deny-all, safe)",
+			access: `accessControl:
+  sourceIpAllowlist: []
+  allowUnlistedPassthrough: true
+`,
+			wantErr: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setRequiredEnvBaseline(t)
+			_, err := Load(writeTempYAML(t, minimalYAML+c.access))
+			if c.wantErr {
+				if err == nil {
+					t.Fatal("expected open-proxy guard to reject; got nil")
+				}
+				if !strings.Contains(err.Error(), "open proxy") {
+					t.Errorf("error should mention open proxy; got %q", err.Error())
+				}
+			} else if err != nil {
+				t.Fatalf("expected config to be accepted; got %v", err)
+			}
+		})
+	}
+}
+
 var _ = time.Second

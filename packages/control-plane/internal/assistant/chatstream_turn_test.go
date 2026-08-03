@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // TestRegisterRoutesMountsSplit verifies the P2b command/data-stream split endpoints
@@ -65,7 +67,7 @@ func TestChatStreamToolRoundStreamsActivity(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	_, out := driveTurn(t, h, "user-1", `{"message":"health?","model":"gpt-x"}`)
 	if !strings.Contains(out, "event: tool_start") || !strings.Contains(out, "observe_health") {
 		t.Fatalf("expected a tool_start event for observe_health, got:\n%s", out)
@@ -133,7 +135,7 @@ func TestChatStream_TurnDeadline(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	h.turnDeadline = 100 * time.Millisecond
 	_, out := driveTurn(t, h, "user-1", `{"message":"hi"}`)
 	if !strings.Contains(out, "turn_deadline") {
@@ -156,7 +158,7 @@ func TestChatStream_OrdinaryFailureIsTurnFailed(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	_, out := driveTurn(t, h, "user-1", `{"message":"hi"}`)
 	if !strings.Contains(out, "turn_failed") {
 		t.Fatalf("an ordinary upstream failure must be turn_failed, got:\n%s", out)

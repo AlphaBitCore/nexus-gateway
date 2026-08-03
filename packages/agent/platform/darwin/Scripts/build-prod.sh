@@ -83,7 +83,7 @@ if [ -n "${DEVELOPER_ID_APPLICATION:-}" ]; then
         --entitlements "$DARWIN_DIR/NexusAgent/NexusAgentDaemon.entitlements" \
         "$APP_DIR/Contents/MacOS/nexus-agent"
 
-    # Embedded Wails Dashboard (E40 C7): a nested .app bundle at
+    # Embedded Wails Dashboard: a nested .app bundle at
     # Contents/Resources/Nexus Agent Dashboard.app launched on
     # demand by the menu-bar app's "Open Dashboard" handler. Must be
     # signed with --options runtime + --timestamp (Apple notary rejects

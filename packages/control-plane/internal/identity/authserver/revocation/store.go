@@ -123,16 +123,22 @@ func (s *Store) ListSince(ctx context.Context, sinceID int64, limit int) ([]Row,
 //
 // Callers (today: IntrospectHandler) treat ok=true as "active=false"
 // per RFC 7662 §2.2.
+// The empty-parameter guard is NULLIF rather than `$n <> ”`. Postgres infers a
+// parameter's type from the column it is compared against, so with a uuid column
+// the `<> ”` arm coerces the empty string to uuid and the WHOLE query fails with
+// SQLSTATE 22P02 — one absent claim (a token with no sid, say) took out the
+// revocation check for every scope at once. NULLIF yields NULL before any cast,
+// and `col = NULL` is NULL, so an absent claim simply matches nothing.
 func (s *Store) IsAccessTokenRevoked(ctx context.Context, jti, userID, deviceID, sessionID string) (bool, error) {
 	const q = `
 		SELECT EXISTS(
 			SELECT 1 FROM "RevokedToken"
 			WHERE "expiresAt" > NOW()
 			  AND (
-			       (scope = 'jti'     AND "targetJti"      IS NOT NULL AND "targetJti"      = $1 AND $1 <> '')
-			    OR (scope = 'user'    AND "targetUserId"   IS NOT NULL AND "targetUserId"   = $2 AND $2 <> '')
-			    OR (scope = 'device'  AND "targetDeviceId" IS NOT NULL AND "targetDeviceId" = $3 AND $3 <> '')
-			    OR (scope = 'session' AND "targetSessionId" IS NOT NULL AND "targetSessionId" = $4 AND $4 <> '')
+			       (scope = 'jti'     AND "targetJti"      IS NOT NULL AND "targetJti"      = NULLIF($1, ''))
+			    OR (scope = 'user'    AND "targetUserId"   IS NOT NULL AND "targetUserId"   = NULLIF($2, ''))
+			    OR (scope = 'device'  AND "targetDeviceId" IS NOT NULL AND "targetDeviceId" = NULLIF($3, ''))
+			    OR (scope = 'session' AND "targetSessionId" IS NOT NULL AND "targetSessionId" = NULLIF($4, '')::uuid)
 			  )
 		)`
 	var ok bool

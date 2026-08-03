@@ -6,12 +6,24 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/errorcode"
 )
 
-// CredentialAuthFailuresCascade fires when the ratio of 401/403 with no
-// Nexus-side classification (so the upstream provider rejected the
-// underlying credential) exceeds threshold per credential_id. Catches
-// credential rotation needs and revoked-by-provider keys.
+// CredentialAuthFailuresCascade fires when the ratio of 401/403 in which the
+// UPSTREAM rejected our credential exceeds threshold per credential_id. It
+// catches keys that have been revoked, expired, or suspended provider-side, and
+// is the signal that a rotation is needed.
+//
+// It used to select those events by "401/403 with no Nexus-side classification",
+// on the contract that an empty error_code meant the upstream rejected us. The
+// gateway classifies every upstream failure, so that condition was unreachable
+// and this rule could not see the cascades it exists to catch.
+//
+// It now selects on errorcode.AuthFailed — the canonical code an adapter stamps
+// when the upstream rejects our key. A 401 the gateway itself produced
+// (AUTH_INVALID_KEY / AUTH_KEY_MISSING: the *caller's* virtual key was wrong)
+// is deliberately excluded; counting it would open a credential's cascade alert
+// because someone typo'd their own key.
 type CredentialAuthFailuresCascade struct{}
 
 func NewCredentialAuthFailuresCascade() *CredentialAuthFailuresCascade {
@@ -64,7 +76,13 @@ func (a *CredentialAuthFailuresCascade) OnEvent(rt *alerteval.Runtime, evt *aler
 	}
 	w := rt.Window("cred:"+credID, 1200)
 	sc := derefInt(t.StatusCode)
-	isAuthFail := (sc == 401 || sc == 403) && derefString(t.ErrorCode) == ""
+	// The upstream rejecting OUR credential is what this rule watches. A 401 the
+	// gateway produced — a caller's virtual key being wrong (AUTH_INVALID_KEY /
+	// AUTH_KEY_MISSING) — says nothing about the credential and must not open its
+	// cascade. This used to key on an empty error_code, which the gateway never
+	// leaves on an upstream failure, so the rule could not see the cascades it
+	// exists to catch.
+	isAuthFail := (sc == 401 || sc == 403) && derefString(t.ErrorCode) == errorcode.AuthFailed
 	if isAuthFail {
 		w.Add(evt.Timestamp, 1, 1)
 	} else {

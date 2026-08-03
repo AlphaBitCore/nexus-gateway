@@ -8,12 +8,19 @@ type CostEstimate struct {
 	MaxOutputTokens      int64
 	InputPricePM         float64 // price per million tokens
 	OutputPricePM        float64
+	// EstimatedUsd is a direct-USD estimate component for endpoints whose
+	// pre-call cost is not token-shaped (video: requested seconds × the
+	// model's per-second price). Additive with the token arithmetic —
+	// token-shaped callers leave it zero, so existing estimates are
+	// unchanged; unit-shaped callers leave the token fields zero.
+	EstimatedUsd float64
 }
 
 // EstimatedCost returns the predicted cost in USD.
 func (e CostEstimate) EstimatedCost() float64 {
-	return (float64(e.EstimatedInputTokens)*e.InputPricePM +
-		float64(e.MaxOutputTokens)*e.OutputPricePM) / 1_000_000
+	return (float64(e.EstimatedInputTokens)*e.InputPricePM+
+		float64(e.MaxOutputTokens)*e.OutputPricePM)/1_000_000 +
+		e.EstimatedUsd
 }
 
 // ActualUsage is the post-call cost for reconciliation.

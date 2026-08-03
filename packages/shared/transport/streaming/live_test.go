@@ -343,21 +343,18 @@ func (f *flakeyWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// TestLivePipeline_WriterError_ClosesUpstream pins the writer-error
-// close fix: when the writer hits an error mid-stream,
-// LivePipeline.Process must close the upstream io.Closer so the
-// reader goroutine's blocking parser.Next returns and wg.Wait can
-// complete. Without this, a writer error against a slow upstream
-// would wedge the goroutine for the full upstream response duration.
+// TestLivePipeline_WriterError_ClosesUpstream pins that a writer error still closes the
+// upstream io.Closer.
 //
-// Using strings.Reader here would not actually test the wedge —
-// strings.Reader returns EOF too fast for the regression-without-fix
-// to manifest.
-// Switched to blockingReader: first Read returns the seed event,
-// subsequent Reads BLOCK until Close fires. Without the
-// CloseUpstreamOnExit call on writer error, the test would time out
-// at the 2-second deadline; with it, Process returns promptly and
-// closeCount > 0.
+// REWRITTEN for finding C-30, rather than left in place: the wedge it was originally written
+// for can no longer happen. It worked by blocking the SECOND upstream.Read until Close fired,
+// which wedged the reader goroutine; with parsing inline there is no second goroutine to
+// wedge, and after a write error Process returns without calling parser.Next() again. So the
+// 2-second deadline no longer discriminates a regression — it is kept only as a liveness
+// guard, and the doc no longer claims otherwise.
+//
+// What still matters, and is still asserted: CloseUpstreamOnExit fires. It is exported and
+// ai-gateway/internal/platform/streaming calls it, and the upstream must not be left open.
 func TestLivePipeline_WriterError_ClosesUpstream(t *testing.T) {
 	mp := &mockPipeline{}
 	// SSE wire fragment large enough for the first Read to yield a
@@ -378,10 +375,13 @@ func TestLivePipeline_WriterError_ClosesUpstream(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Process did not return within 2s after writer error — wedge regression (CloseUpstreamOnExit not firing)")
+		t.Fatal("Process did not return within 2s after a writer error — liveness guard, not a " +
+			"wedge check: with parsing inline there is no reader goroutine left to wedge")
 	}
 	if upstream.closeCount() == 0 {
-		t.Errorf("expected upstream.Close to be called at least once on writer error (S1-code wedge fix); got 0")
+		t.Errorf("expected upstream.Close to be called at least once on writer error; got 0. " +
+			"CloseUpstreamOnExit is exported and ai-gateway's own streaming package calls it, so " +
+			"this stays asserted even though the wedge it was written for cannot recur")
 	}
 }
 

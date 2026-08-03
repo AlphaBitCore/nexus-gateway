@@ -14,13 +14,19 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 )
 
-// sealedDayBucket returns a bucket start time that is guaranteed to be before
-// the latestSealed boundary used by runFixed (now - sealedGrace truncated to
-// targetBucketDur=24h). For the 1d job, sealedGrace = 1h, so latestSealed =
-// now - 1h truncated to 24h = start of today. Any time before today qualifies.
+// sealedDayBucket returns the day bucket the 1d cascade will process.
 func sealedDayBucket() time.Time {
-	// yesterday 00:00 UTC — safely before the current day's latestSealed.
-	return time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	// The one day bucket the 1d cascade processes at any wall clock, derived
+	// from the job's own sealing rule: latestSealed = trunc24h(now - 1h grace),
+	// and runFixed processes exactly the bucket at latestSealed - 24h.
+	//
+	// Hardcoding "yesterday 00:00" instead is wrong for one hour a day: between
+	// 00:00 and 01:00 UTC the grace pulls latestSealed back to yesterday, so a
+	// yesterday cursor is no longer strictly before it, runFixed returns early,
+	// and every expectation in this file goes unmet. That window took main red
+	// on a 00:54 UTC run.
+	latestSealed := time.Now().UTC().Add(-time.Hour).Truncate(24 * time.Hour)
+	return latestSealed.Add(-24 * time.Hour)
 }
 
 // expectCascadeWatermarkAndMin registers pgxmock expectations for the

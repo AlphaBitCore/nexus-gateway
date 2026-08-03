@@ -119,11 +119,7 @@ func (h *Handler) extractRequestContentForHooks(ctx context.Context, adapter tra
 	}
 	extracted, err := adapter.ExtractRequest(ctx, body, path)
 	if err != nil {
-		logger.Debug("request extract for hooks failed",
-			slog.String("adapter", adapter.ID()),
-			slog.String("path", path),
-			slog.String("error", err.Error()),
-		)
+		logExtractFailure(logger, "request", adapter.ID(), path, len(body), err)
 		if h != nil && h.deps != nil && h.deps.Metrics != nil {
 			h.deps.Metrics.RecordTrafficExtract(ingressFormat, "request", "error")
 		}
@@ -150,11 +146,7 @@ func (h *Handler) extractResponseForHooks(ctx context.Context, adapter traffic.A
 	}
 	extracted, err := adapter.ExtractResponse(ctx, body, path)
 	if err != nil {
-		logger.Debug("response extract for hooks failed",
-			slog.String("adapter", adapter.ID()),
-			slog.String("path", path),
-			slog.String("error", err.Error()),
-		)
+		logExtractFailure(logger, "response", adapter.ID(), path, len(body), err)
 		if h != nil && h.deps != nil && h.deps.Metrics != nil {
 			h.deps.Metrics.RecordTrafficExtract(ingressFormat, "response", "error")
 		}

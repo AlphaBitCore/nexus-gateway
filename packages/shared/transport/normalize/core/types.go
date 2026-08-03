@@ -10,6 +10,8 @@ const (
 	KindAICompletion  Kind = "ai-completion"
 	KindAIEmbedding   Kind = "ai-embedding"
 	KindAIImage       Kind = "ai-image"
+	KindAITTS         Kind = "ai-tts"
+	KindAISTT         Kind = "ai-stt"
 	KindHTTPJSON      Kind = "http-json"
 	KindHTTPText      Kind = "http-text"
 	KindHTTPForm      Kind = "http-form"
@@ -22,7 +24,7 @@ const (
 // IsAI reports whether k is one of the ai-* kinds.
 func (k Kind) IsAI() bool {
 	switch k {
-	case KindAIChat, KindAICompletion, KindAIEmbedding, KindAIImage:
+	case KindAIChat, KindAICompletion, KindAIEmbedding, KindAIImage, KindAITTS, KindAISTT:
 		return true
 	}
 	return false

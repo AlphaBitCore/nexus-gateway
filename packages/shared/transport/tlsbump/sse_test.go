@@ -97,7 +97,7 @@ func TestSSE_StripsDynamicConnection_EmptyConnection(t *testing.T) {
 // cpStampMarkers on SSE path — markers appear in response headers before flush
 
 // TestSSEMarkers_FullMarker verifies that cpStampMarkers writes all
-// x-nexus-cp-* headers onto w.Header() before WriteHeader is called,
+// the X-Nexus-* chain markers onto w.Header() before WriteHeader is called,
 // which is the SSE path's equivalent of cpMarkerHook on the non-streaming path.
 func TestSSEMarkers_FullMarker(t *testing.T) {
 	m := &CPMarker{

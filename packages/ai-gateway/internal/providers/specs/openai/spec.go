@@ -22,20 +22,19 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		log = slog.Default()
 	}
 	return provcore.AdapterSpec{
-		Format:                    provcore.FormatOpenAI,
-		Transport:                 NewTransport(log),
-		SchemaCodec:               codec.IdentityCodec(),
-		StreamDecoder:             stream.NewStreamDecoder(log),
-		ErrorNormalizer:           specerrors.ErrorNormalizer{},
-		PassthroughRewrite:        rewrites.ApplyReasoningRewrites,
-		PassthroughRewriteApplies: rewrites.IsReasoningModel,
+		Format:    provcore.FormatOpenAI,
+		Transport: NewTransport(log),
+		// The contract carries OpenAI's per-model wire rules (reasoning
+		// max_tokens rename + sampling strips on both chat and responses
+		// wires; ada-002 embedding strips) into both codec entry points —
+		// no dispatch-level rewrite callback.
+		SchemaCodec:     codec.New(rewrites.OpenAIContract()),
+		StreamDecoder:   stream.NewStreamDecoder(log),
+		ErrorNormalizer: specerrors.ErrorNormalizer{},
 		// OpenAI natively serves chat-completions, responses-api, and embeddings.
 		// Any sibling (Moonshot, Groq, Together, ...) needs its own captured-200
 		// evidence before declaring "responses-api" per
 		// provider-adapter-architecture.md §3a Rule 7.
-		// The IdentityCodec applies per-model wire rules for the embeddings
-		// endpoint (ada-002 dimension/encoding_format strip; text-embedding-3-*
-		// dimension safety-net).
 		RequestShapes: []typology.WireShape{typology.WireShapeOpenAIChat, typology.WireShapeOpenAIResponses, typology.WireShapeOpenAIEmbeddings},
 	}
 }

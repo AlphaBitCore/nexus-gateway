@@ -28,6 +28,21 @@ import (
 // "already gone" rather than an error.
 var ErrNotFound = errors.New("spillstore: not found")
 
+// ErrIntegrity is returned by `Get` when the object WAS located and read but
+// its bytes could not be turned back into the stored body — an encrypted
+// backend whose seal will not open, i.e. corruption or the wrong key.
+//
+// It exists so callers can tell this apart from a transport failure without
+// matching on error text. The distinction is not cosmetic: "the backend could
+// not be reached, check connectivity and credentials" and "this object's bytes
+// are not the bytes that were written" send an operator in opposite directions,
+// and on a compliance product the second one is the alarming reading.
+//
+// Note the asymmetry with the caller-side SHA-256 gate: that one fires when the
+// body decodes but hashes wrong, so the caller can raise it itself. A failed
+// seal never yields bytes to hash, so only the backend can report it.
+var ErrIntegrity = errors.New("spillstore: integrity")
+
 // PutOptions carries metadata that travels onto the resulting SpillRef.
 type PutOptions struct {
 	EventID     string // traffic_event id; appears in the storage key
@@ -52,6 +67,16 @@ type Stats struct {
 	TotalBytes  int64     // sum of object sizes
 	OldestAt    time.Time // oldest object mtime
 	NewestAt    time.Time // newest object mtime
+	// Truncated reports that the walk/listing STOPPED EARLY, so ObjectCount and
+	// TotalBytes are lower bounds rather than totals. Both backends bound their
+	// work — a spill root or bucket prefix can hold millions of objects and Stat
+	// is reachable from an operator-facing introspection call, so an unbounded
+	// scan would turn "how much is spilled?" into a stall. Reporting the bound
+	// is what keeps a partial answer from reading as a complete one.
+	Truncated bool
+	// ScanLimit is the bound that was applied (objects examined), so a reader
+	// knows what Truncated means in numbers rather than in spirit.
+	ScanLimit int
 }
 
 // Presigner is an optional capability backends may satisfy when they

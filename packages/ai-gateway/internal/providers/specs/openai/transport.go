@@ -49,6 +49,12 @@ func (t *Transport) BuildURL(target provcore.CallTarget, endpoint typology.WireS
 
 // PathForEndpoint is the OpenAI-compat URL path table. Exported so
 // other OpenAI-compat transports (DeepSeek) can reuse it.
+//
+// WireShapeOpenAIImages maps to /v1/images/generations only: the images
+// wire shape also covers /v1/images/edits and /v1/images/variations on the
+// ingress side, but those are multipart routes whose upstream path cannot
+// be derived from the wire shape alone — they need ingress-path
+// preservation and ship together with the multipart handling work.
 func PathForEndpoint(endpoint typology.WireShape) (string, bool) {
 	switch endpoint {
 	case typology.WireShapeOpenAIChat:
@@ -61,6 +67,12 @@ func PathForEndpoint(endpoint typology.WireShape) (string, bool) {
 		return "/v1/completions", true
 	case typology.WireShapeOpenAIResponses:
 		return "/v1/responses", true
+	case typology.WireShapeOpenAIImages:
+		return "/v1/images/generations", true
+	case typology.WireShapeOpenAIAudioSpeech:
+		return "/v1/audio/speech", true
+	case typology.WireShapeOpenAIAudioTranscriptions:
+		return "/v1/audio/transcriptions", true
 	}
 	return "", false
 }

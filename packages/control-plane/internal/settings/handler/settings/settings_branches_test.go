@@ -998,7 +998,7 @@ func TestUpdateStreamingComplianceConfig_HappyPath_MergesAndAudits(t *testing.T)
 	if out.FailBehavior != "fail_close" {
 		t.Errorf("FailBehavior = %q; want fail_close", out.FailBehavior)
 	}
-	if !out.CaptureRequestBody || !out.CaptureResponseBody || !out.RawSpillEnabled {
+	if !out.CaptureRequestBody || !out.CaptureResponseBody {
 		t.Errorf("bool flags not set: %+v", out)
 	}
 	if aud.count() != 1 {

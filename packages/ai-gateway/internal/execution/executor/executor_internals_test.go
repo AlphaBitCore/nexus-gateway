@@ -872,3 +872,38 @@ func TestExecute_ResponsesNative_KeepsResponsesWireShape(t *testing.T) {
 		t.Fatalf("native responses body must be forwarded verbatim; got %s", adapter.lastReq.Body)
 	}
 }
+
+// TestExecute_ResponsesNative_SurvivesWireShapeDowngrade pins the mixed-target-
+// list failover fix. When a NON-responses primary leads the target list, the
+// cache-prep leg downgrades base.WireShape to chat (so the canonicalized
+// primary is treated chat-kind), but base.BodyFormat stays
+// FormatOpenAIResponses. A responses-serving target reached after that
+// downgrade (a failover secondary, or — as simulated here — any target on a
+// downgraded base) must still be recognised by BodyFormat and get the verbatim
+// Responses body on the /v1/responses wire. The prior WireShape-keyed check
+// posted the Responses body to the chat URL and 400'd.
+func TestExecute_ResponsesNative_SurvivesWireShapeDowngrade(t *testing.T) {
+	adapter := &mockAdapter{format: provcore.FormatOpenAI, responses: []scripted{
+		{resp: &provcore.Response{StatusCode: 200, Body: []byte(`{"object":"response","output":[]}`)}},
+	}}
+	reg := newRegistry(t, adapter)
+	res := okResolver()
+	bridge := canonicalbridge.New(map[provcore.Format]provcore.SchemaCodec{})
+	exec := New(reg, res, nil, bridge)
+
+	base := provcore.Request{
+		WireShape:  typology.WireShapeOpenAIChat,   // DOWNGRADED by the cache-prep leg
+		BodyFormat: provcore.FormatOpenAIResponses, // NOT downgraded — the true ingress
+		Body:       []byte(`{"model":"gpt-4o","input":"hi"}`),
+	}
+	result := exec.Execute(context.Background(), []routingcore.RoutingTarget{target(providerSlug)}, base, configtypes.DefaultRetryPolicy())
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if adapter.lastReq.WireShape != typology.WireShapeOpenAIResponses {
+		t.Fatalf("responses ingress (detected by BodyFormat) must restore WireShape=openai-responses even after a chat downgrade; got %q → would hit the chat URL", adapter.lastReq.WireShape)
+	}
+	if string(adapter.lastReq.Body) != string(base.Body) {
+		t.Fatalf("verbatim responses body must survive the downgrade; got %s", adapter.lastReq.Body)
+	}
+}

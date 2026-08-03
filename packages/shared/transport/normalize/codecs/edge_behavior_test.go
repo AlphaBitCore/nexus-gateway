@@ -242,12 +242,17 @@ func TestOpenAIChatNonStream_ReasoningEstimateCreatesUsageWhenBodyHasNone(t *tes
 }
 
 func TestOpenAIChatStream_ReasoningDeltaEstimatedWhenUsageOmitsIt(t *testing.T) {
+	// Frames separated by a BLANK line, which is what SSE requires and what every
+	// provider emits. This fixture previously joined the data lines with a single "\n",
+	// making it one three-line frame rather than three frames — it decoded only because
+	// walkSSEFrames used to dispatch per line instead of per frame (findings R-14/R-15).
+	// It was the only fixture in this package framed that way; ten other files use "\n\n".
 	raw := strings.Join([]string{
 		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"ab"}}]}`,
 		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}`,
 		`data: [DONE]`,
 		"",
-	}, "\n")
+	}, "\n\n")
 	p, err := NewOpenAIChatNormalizer().Normalize(context.Background(),
 		[]byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
 	if err != nil {

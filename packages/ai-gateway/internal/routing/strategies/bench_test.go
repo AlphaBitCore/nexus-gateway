@@ -12,7 +12,7 @@ func BenchmarkStrategyEvaluate_Single(b *testing.B) {
 	lookup := func(_ context.Context, providerID, modelID string) (*core.RoutingTarget, error) {
 		return &core.RoutingTarget{ProviderID: providerID, ModelID: modelID, ProviderName: providerID}, nil
 	}
-	RegisterAllStrategies(reg, lookup, nil)
+	RegisterAllStrategies(reg, lookup, nil, nil)
 
 	node := core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}
 	ctx := &core.RoutingContext{}
@@ -28,7 +28,7 @@ func BenchmarkStrategyEvaluate_Fallback(b *testing.B) {
 	lookup := func(_ context.Context, providerID, modelID string) (*core.RoutingTarget, error) {
 		return &core.RoutingTarget{ProviderID: providerID, ModelID: modelID, ProviderName: providerID}, nil
 	}
-	RegisterAllStrategies(reg, lookup, nil)
+	RegisterAllStrategies(reg, lookup, nil, nil)
 
 	node := core.StrategyNode{
 		Type: "fallback",

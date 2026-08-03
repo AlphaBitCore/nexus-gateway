@@ -72,6 +72,10 @@ func decodeBinaryRecordInto(e *TrafficEventMessage, data []byte, skipBody bool) 
 			e.TraceID = pStr(r.str())
 		case mq.FldExternalRequestID:
 			e.ExternalRequestID = pStr(r.str())
+		case mq.FldEndUserID:
+			e.EndUserID = pStr(r.str())
+		case mq.FldSessionID:
+			e.SessionID = pStr(r.str())
 		case mq.FldSourceIP:
 			e.SourceIP = pStr(r.str())
 		case mq.FldTargetHost:
@@ -134,6 +138,10 @@ func decodeBinaryRecordInto(e *TrafficEventMessage, data []byte, skipBody bool) 
 			e.GatewayCacheL2EntryKey = r.str()
 		case mq.FldProviderCacheStatus:
 			e.ProviderCacheStatus = pStr(r.str())
+		case mq.FldArtifactRefs:
+			e.ArtifactRefs = pStr(r.str())
+		case mq.FldComplianceCoverage:
+			e.ComplianceCoverage = pStr(r.str())
 		case mq.FldOriginTZ:
 			e.OriginTZ = pStr(r.str())
 		case mq.FldRoutedProviderID:

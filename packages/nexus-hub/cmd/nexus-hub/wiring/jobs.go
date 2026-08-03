@@ -3,6 +3,7 @@ package wiring
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,11 +22,13 @@ import (
 	defjobs_retention "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/retention"
 	defjobs_rollup "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/rollup"
 	defjobs_semanticcacheflush "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/semanticcacheflush"
+	defjobs_vendorbill "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/vendorbill"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/scheduler"
 	jobstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/siem"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	billsrc "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/vendorbill"
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
@@ -192,6 +195,28 @@ func InitScheduler(
 	sched.Register(defjobs_metrics.NewOpsRollup1mo(pool, cfg.Scheduler.Intervals.OpsRollup1mo, logger))
 	sched.Register(defjobs_retention.NewOpsRetention(pool, cfg.Scheduler.Intervals.OpsRetention, logger))
 	sched.Register(defjobs_retention.NewOpsRawPartition(pool, cfg.Scheduler.Intervals.OpsRawPartition, cfg.Scheduler.Retention.OpsRawDays, logger))
+
+	// Vendor bill reconciliation: daily diff of our estimated spend vs the
+	// provider's authoritative billing API. Admin keys are env-only (never
+	// yaml); a provider without its key is simply skipped. Registered
+	// unconditionally — the job no-ops when no vendor is configured.
+	// The *_SCOPE_* vars are optional but strongly recommended: without them an
+	// org-wide admin key reports the whole account's bill, which reconciles
+	// against nothing meaningful and lands as org_only.
+	billReg := billsrc.NewRegistry(billsrc.Config{
+		OpenAIAdminKey:       os.Getenv("OPENAI_COST_ADMIN_KEY"),
+		OpenAIAPIKeyID:       os.Getenv("OPENAI_COST_API_KEY_ID"),
+		AnthropicAdminKey:    os.Getenv("ANTHROPIC_COST_ADMIN_KEY"),
+		AnthropicWorkspaceID: os.Getenv("ANTHROPIC_COST_WORKSPACE_ID"),
+	})
+	sched.Register(defjobs_vendorbill.NewVendorBillReconcileJob(pool, billReg, 24*time.Hour, logger))
+	// Drift alert: class-1 state-poll over scoped reconciliation rows, dual-floor
+	// (pct AND usd). Raises via the shared Raiser against the vendor.bill_drift rule.
+	sched.Register(defjobs_vendorbill.NewVendorBillDriftAlerts(pool, raiser, alertStore, 24*time.Hour, logger))
+	// Sync-health alert: class-1 state-poll that raises vendor.bill_sync_failed
+	// when a provider's cost-API sync stays fetch_failed past a full run cycle
+	// (persistent breakage the drift alert deliberately ignores as display-only).
+	sched.Register(defjobs_vendorbill.NewVendorBillSyncAlerts(pool, raiser, alertStore, 24*time.Hour, logger))
 
 	sched.Register(defjobs_expiry.NewVKExpiry(pool, raiser, cfg.Scheduler.Intervals.VKExpiry, logger))
 	sched.Register(defjobs_expiry.NewCredentialExpiry(pool, raiser, cfg.Scheduler.Intervals.CredentialExpiry, logger))

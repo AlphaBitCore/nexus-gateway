@@ -135,7 +135,7 @@ type geminiEmbedContentRequest struct {
 
 func (n *GeminiEmbeddingsNormalizer) normalizeSingleRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req geminiEmbedContentRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroEmbeddingPayload("gemini-embeddings", meta), fmt.Errorf("gemini-embeddings: single request unmarshal: %w", err)
 	}
 	if req.Content == nil {
@@ -177,7 +177,7 @@ type geminiEmbedContentResponse struct {
 
 func (n *GeminiEmbeddingsNormalizer) normalizeSingleResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp geminiEmbedContentResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroEmbeddingPayload("gemini-embeddings", meta), fmt.Errorf("gemini-embeddings: single response unmarshal: %w", err)
 	}
 	if resp.Embedding == nil {
@@ -203,7 +203,7 @@ type geminiBatchEmbedRequest struct {
 
 func (n *GeminiEmbeddingsNormalizer) normalizeBatchRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req geminiBatchEmbedRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroEmbeddingPayload("gemini-embeddings", meta), fmt.Errorf("gemini-embeddings: batch request unmarshal: %w", err)
 	}
 	if len(req.Requests) == 0 {
@@ -242,7 +242,7 @@ type geminiBatchEmbedResponse struct {
 
 func (n *GeminiEmbeddingsNormalizer) normalizeBatchResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp geminiBatchEmbedResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroEmbeddingPayload("gemini-embeddings", meta), fmt.Errorf("gemini-embeddings: batch response unmarshal: %w", err)
 	}
 	if len(resp.Embeddings) == 0 {

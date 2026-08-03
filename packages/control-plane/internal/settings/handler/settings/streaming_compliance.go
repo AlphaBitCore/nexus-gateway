@@ -39,7 +39,6 @@ type streamingComplianceResponse struct {
 	FailBehavior        string   `json:"fail_behavior"`
 	CaptureRequestBody  bool     `json:"capture_request_body"`
 	CaptureResponseBody bool     `json:"capture_response_body"`
-	RawSpillEnabled     bool     `json:"raw_body_spill_enabled"`
 	Warnings            []string `json:"warnings,omitempty"`
 }
 
@@ -68,7 +67,6 @@ type streamingComplianceUpdateRequest struct {
 	FailBehavior        *string `json:"fail_behavior"`
 	CaptureRequestBody  *bool   `json:"capture_request_body"`
 	CaptureResponseBody *bool   `json:"capture_response_body"`
-	RawSpillEnabled     *bool   `json:"raw_body_spill_enabled"`
 }
 
 // streamingComplianceDefaults returns the conservative baseline shipped to
@@ -168,9 +166,6 @@ func (h *Handler) UpdateStreamingComplianceConfig(c echo.Context) error {
 	}
 	if body.CaptureResponseBody != nil {
 		merged.CaptureResponseBody = *body.CaptureResponseBody
-	}
-	if body.RawSpillEnabled != nil {
-		merged.RawSpillEnabled = *body.RawSpillEnabled
 	}
 
 	aa := middleware.AdminAuthFromContext(c)

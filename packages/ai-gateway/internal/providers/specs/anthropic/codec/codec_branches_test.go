@@ -7,7 +7,6 @@
 //   - UsageToNormalize: zero vs non-zero
 //   - DecodeResponse: empty body, non-chat endpoint passthrough, decode + cache_creation stamp
 //   - EncodeRequest: parallel_tool_calls disabling, stop sequences, various sampling param combinations
-//   - AnthropicModelMaxOutput: claude-3-7-sonnet and claude-3-haiku coverage
 package codec
 
 import (
@@ -132,20 +131,6 @@ func TestUsageToNormalize_nonZero_returnsPointer(t *testing.T) {
 	}
 	if got.PromptTokens == nil || *got.PromptTokens != 10 {
 		t.Errorf("PromptTokens: got %v, want 10", got.PromptTokens)
-	}
-}
-
-func TestAnthropicModelMaxOutput_claude37Sonnet(t *testing.T) {
-	got := AnthropicModelMaxOutput("claude-3-7-sonnet-20250219")
-	if got != 8192 {
-		t.Errorf("claude-3-7-sonnet: got %d, want 8192", got)
-	}
-}
-
-func TestAnthropicModelMaxOutput_claude3Haiku(t *testing.T) {
-	got := AnthropicModelMaxOutput("claude-3-haiku-20240307")
-	if got != 4096 {
-		t.Errorf("claude-3-haiku: got %d, want 4096", got)
 	}
 }
 

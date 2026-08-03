@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // RegisterProviderDiscoverRoutes — wires 1 route
@@ -128,7 +130,7 @@ func TestProviderDiscoverModels_AIGatewayUnreachable_ReturnsOK_SuccessFalse(t *t
 	// forwardProviderTest: test-connection contract; the caller gets a
 	// structured error body instead of an HTTP error code).
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL: "http://127.0.0.1:1", // no listener
+		AIGatewayBase: peer.Static("http://127.0.0.1:1"), // no listener
 	})
 	body := `{"adapterType":"openai","baseUrl":"https://api.openai.com","apiKey":"sk-x"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -170,7 +172,7 @@ func TestProviderDiscoverModels_AIGatewayResponds_PassesThrough(t *testing.T) {
 	}))
 	defer gw.Close()
 
-	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayURL: gw.URL})
+	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayBase: peer.Static(gw.URL)})
 	body := `{"adapterType":"openai","baseUrl":"https://api.openai.com","apiKey":"sk-x"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -204,7 +206,7 @@ func TestProviderDiscoverModels_AIGatewayResponds_PassesThrough(t *testing.T) {
 
 func TestForwardDiscoverModels_GatewayUnreachable_Returns200WithError(t *testing.T) {
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL: "http://127.0.0.1:1",
+		AIGatewayBase: peer.Static("http://127.0.0.1:1"),
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()

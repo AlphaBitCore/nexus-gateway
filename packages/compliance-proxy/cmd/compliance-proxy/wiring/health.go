@@ -17,8 +17,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
@@ -39,6 +42,10 @@ type HealthDeps struct {
 	CertIssuer        *issuer.Issuer
 	ServiceToken      string
 	ConfigKeyRecorder *runtimeintrospect.KeyStateRecorder
+	SpillAvailability spillfactory.Availability
+	MatcherEngine     matcher.Engine
+	SpillStore        spillstore.SpillStore
+	SpillConfig       spillfactory.FactoryConfig
 }
 
 // connCounter is satisfied by conn.Manager.
@@ -81,6 +88,30 @@ func InitHealthHandler(d HealthDeps) (*http.ServeMux, *runtimeintrospect.Registr
 		SourceName: "config.payload_capture",
 		Fn: func(_ context.Context) (any, error) {
 			return d.PayloadCapture.Get(), nil
+		},
+	})
+	// Registered unconditionally, next to the threshold it qualifies: the
+	// payload_capture source above reports the inline-vs-spill cutoff, and this
+	// one reports whether anything can act on it.
+	introspectReg.Register(runtimeintrospect.SourceFunc{
+		SourceName: "storage.spill",
+		Fn: func(ctx context.Context) (any, error) {
+			// Measured when READ, not at boot: residency is the one part of this
+			// answer that changes while the process runs. Bounded inside
+			// DescribeWithResidency, and a measurement failure degrades to the
+			// boot-time description rather than failing the source.
+			if d.SpillStore == nil {
+				return d.SpillAvailability, nil
+			}
+			return spillfactory.DescribeWithResidency(ctx, d.SpillConfig, d.SpillStore), nil
+		},
+	})
+	// Next to storage.spill for the same reason: a build-time choice with a
+	// runtime cost that no other surface reports.
+	introspectReg.Register(runtimeintrospect.SourceFunc{
+		SourceName: "policy.matcher",
+		Fn: func(_ context.Context) (any, error) {
+			return d.MatcherEngine, nil
 		},
 	})
 	introspectReg.Register(runtimeintrospect.SourceFunc{

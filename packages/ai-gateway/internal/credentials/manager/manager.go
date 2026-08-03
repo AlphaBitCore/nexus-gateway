@@ -111,6 +111,48 @@ func (m *Manager) GetDecrypted(ctx context.Context, credentialID string) (string
 	return v.(string), nil
 }
 
+// GetDecryptedForProvider returns the decrypted API key and display name for
+// one specific credential, enforcing that it belongs to providerID and is
+// still usable. It is the pinned-resolution counterpart of GetForProvider:
+// pool-listed candidates are provider-scoped and enabled+active by
+// construction, but a pinned credential ID crosses a persistence boundary
+// (e.g. an async-job row read back hours later), so ownership and usability
+// are re-checked on EVERY call — the row read hits the in-memory catalog
+// snapshot in the standard wiring, and the plaintext cache still dedupes the
+// decrypt work. Guards:
+//   - a credential belonging to a DIFFERENT provider is rejected — resolving
+//     it would attach that provider's secret to another provider's BaseURL;
+//   - a DISABLED credential is rejected — disable is the admin kill switch
+//     and a pinned follow-up must not outlive it;
+//   - a RETIRED credential is rejected — rotation completed, the key is
+//     revoked provider-side;
+//   - a RETIRING credential still resolves — same provider account
+//     mid-rotation; rejecting it would strand live jobs for the length of
+//     the rotation window.
+func (m *Manager) GetDecryptedForProvider(ctx context.Context, providerID, credentialID string) (string, string, error) {
+	if m.db == nil {
+		return "", "", fmt.Errorf("credentials: database not available")
+	}
+	cred, err := m.db.GetCredentialByID(ctx, credentialID)
+	if err != nil {
+		return "", "", fmt.Errorf("credentials: fetch %s: %w", credentialID, err)
+	}
+	if cred.ProviderID != providerID {
+		return "", "", fmt.Errorf("credentials: credential %s does not belong to provider %s", credentialID, providerID)
+	}
+	if !cred.Enabled {
+		return "", "", fmt.Errorf("credentials: credential %s is disabled", credentialID)
+	}
+	if cred.Status == "retired" {
+		return "", "", fmt.Errorf("credentials: credential %s is retired", credentialID)
+	}
+	key, err := m.GetDecrypted(ctx, credentialID)
+	if err != nil {
+		return "", "", err
+	}
+	return key, cred.Name, nil
+}
+
 // GetForProvider returns the decrypted API key and credential UUID for the first
 // enabled credential belonging to a provider.
 func (m *Manager) GetForProvider(ctx context.Context, providerID string) (string, string, string, error) {

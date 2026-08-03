@@ -17,7 +17,6 @@ var interceptionDomainCols = []string{
 	"streaming_mode", "streaming_chunk_bytes", "streaming_hook_timeout_ms",
 	"streaming_max_buffer_bytes", "streaming_fail_behavior",
 	"capture_request_body", "capture_response_body",
-	"raw_body_spill_enabled",
 }
 
 var interceptionPathCols = []string{
@@ -58,7 +57,7 @@ func TestAgentInterceptionDomainsLoader_SingleDomainNoPaths(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(interceptionDomainCols).AddRow(
 			"dom-1", "openai", "api.openai.com", "EXACT", "openai-compat",
 			[]byte(nil), true, 100, "PROCESS", "FAIL_OPEN", "PUBLIC", updated,
-			nil, nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil,
 		))
 
 	mock.ExpectQuery(`FROM interception_path`).
@@ -89,9 +88,9 @@ func TestAgentInterceptionDomainsLoader_WithPaths(t *testing.T) {
 	mock.ExpectQuery(`FROM interception_domain`).
 		WillReturnRows(pgxmock.NewRows(interceptionDomainCols).
 			AddRow("dom-openai", "openai", "api.openai.com", "EXACT", "openai-compat",
-				[]byte(`{"k":1}`), true, 100, "PROCESS", "FAIL_OPEN", "PUBLIC", domUpdated, nil, nil, nil, nil, nil, nil, nil, nil).
+				[]byte(`{"k":1}`), true, 100, "PROCESS", "FAIL_OPEN", "PUBLIC", domUpdated, nil, nil, nil, nil, nil, nil, nil).
 			AddRow("dom-anthropic", "anthropic", "api.anthropic.com", "EXACT", "openai-compat",
-				[]byte(nil), true, 90, "PROCESS", "FAIL_OPEN", "PUBLIC", domUpdated, nil, nil, nil, nil, nil, nil, nil, nil))
+				[]byte(nil), true, 90, "PROCESS", "FAIL_OPEN", "PUBLIC", domUpdated, nil, nil, nil, nil, nil, nil, nil))
 
 	mock.ExpectQuery(`FROM interception_path`).
 		WillReturnRows(pgxmock.NewRows(interceptionPathCols).
@@ -149,7 +148,7 @@ func TestAgentInterceptionDomainsLoader_NullAdapterConfigOmitted(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(interceptionDomainCols).AddRow(
 			"dom-1", "d", "host", "EXACT", "openai-compat",
 			[]byte(nil), true, 1, "PROCESS", "FAIL_OPEN", "PUBLIC", time.Now().UTC(),
-			nil, nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil,
 		))
 	mock.ExpectQuery(`FROM interception_path`).
 		WillReturnRows(pgxmock.NewRows(interceptionPathCols))

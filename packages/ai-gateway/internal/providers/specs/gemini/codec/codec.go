@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -48,6 +49,9 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 	if endpoint == typology.WireShapeGeminiEmbedContent || endpoint == typology.WireShapeVertexEmbedContent {
 		return encodeGeminiEmbeddingRequest(canonicalBody, target)
 	}
+	if endpoint == typology.WireShapeGeminiImagesGenerateContent {
+		return encodeGeminiImagesRequest(canonicalBody, target)
+	}
 	if endpoint != typology.WireShapeGeminiGenerateContent && endpoint != typology.WireShapeVertexGenerateContent {
 		return provcore.EncodeResult{}, fmt.Errorf("gemini: unsupported endpoint %q for codec", endpoint)
 	}
@@ -56,6 +60,10 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 		return provcore.EncodeResult{}, fmt.Errorf("gemini: empty canonical body")
 	}
 	root := gjson.ParseBytes(canonicalBody)
+
+	// rewrites collects the in-place coercions this encode applied (degraded
+	// tool-schema references) for the x-nexus-coerced report.
+	var rewrites []string
 
 	genCfg := map[string]any{}
 	if v := root.Get("temperature"); v.Exists() {
@@ -112,6 +120,7 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 
 	if tools := root.Get("tools"); tools.IsArray() && len(tools.Array()) > 0 {
 		var decls []map[string]any
+		var schemaErr error
 		tools.ForEach(func(_, t gjson.Result) bool {
 			if t.Get("type").String() != "function" {
 				return true
@@ -125,9 +134,45 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 			params := fn.Get("parameters")
 			var paramsObj any
 			if params.Exists() && params.Raw != "" {
-				_ = json.Unmarshal([]byte(params.Raw), &paramsObj)
+				// A declaration is fixed for the life of a conversation and
+				// arrives again on every turn, so the prepared schema is
+				// reused across turns rather than rebuilt per request. The
+				// result is shared with concurrent encoders and is read-only.
+				//
+				// Tool parameters take the lenient reference mode: an
+				// un-shipped $ref target degrades to a reported open object
+				// instead of failing the request (rationale + the observed
+				// prod 400 live on inlineSchemaRefs). Dangling `#/$defs/...`
+				// still fails loudly; responseSchema below stays strict —
+				// there the schema is the caller's output contract.
+				prepared, err := prepareGeminiSchema([]byte(params.Raw), true)
+				switch {
+				case isSchemaRefFailure(err):
+					// A reference that cannot be folded in leaves the argument
+					// as an empty schema, and the function silently loses it.
+					// Fail where the caller can see it instead.
+					schemaErr = fmt.Errorf("tool %q parameters: %w", name, err)
+					return false
+				case err == nil && prepared.object:
+					paramsObj = prepared.encoded
+					for _, ref := range prepared.droppedRefs {
+						// Caller-controlled: cap on a rune boundary so the
+						// x-nexus-coerced header cannot grow unbounded.
+						if len(ref) > 160 {
+							cut := 157
+							for cut > 0 && !utf8.RuneStart(ref[cut]) {
+								cut--
+							}
+							ref = ref[:cut] + "..."
+						}
+						rewrites = append(rewrites, fmt.Sprintf("tools.%s.parameters.$ref(%s)→object", name, ref))
+					}
+				}
 			}
 			if paramsObj == nil {
+				// Either the caller sent no parameters, or nothing in them
+				// survived into a shape the proto can express. Gemini still
+				// requires a Schema here, so declare the empty object.
 				paramsObj = map[string]any{"type": "object"}
 			}
 			decls = append(decls, map[string]any{
@@ -137,6 +182,9 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 			})
 			return true
 		})
+		if schemaErr != nil {
+			return provcore.EncodeResult{}, schemaErr
+		}
 		if len(decls) > 0 {
 			out["tools"] = []map[string]any{{"functionDeclarations": decls}}
 		}
@@ -184,10 +232,30 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 				gen = map[string]any{}
 			}
 			gen["responseMimeType"] = "application/json"
+			// OpenAI wraps the schema in an envelope
+			// (json_schema.{name,strict,schema}); Gemini's responseSchema is
+			// the bare Schema proto, and the envelope keys are unknown proto
+			// field names that fail the whole request with 400. Unwrap to the
+			// inner schema, then sanitize like tool parameters.
 			if js := rf.Get("json_schema"); js.Exists() {
-				var schema any
-				if err := json.Unmarshal([]byte(js.Raw), &schema); err == nil {
-					gen["responseSchema"] = schema
+				schemaNode := js.Get("schema")
+				if !schemaNode.Exists() {
+					schemaNode = js
+				}
+				// Same pipeline, and the same reuse, as a tool declaration:
+				// the accepted key set is identical on both paths, so a schema
+				// sent to either arrives already prepared if the other has
+				// seen it. The result is read-only.
+				prepared, err := prepareGeminiSchema([]byte(schemaNode.Raw), false)
+				if isSchemaRefFailure(err) {
+					// An unresolvable reference sanitizes to {}, which fails
+					// the object gate below and leaves responseMimeType asking
+					// for JSON with no schema to hold it to — the caller's
+					// contract gone, with a 200 and no signal.
+					return provcore.EncodeResult{}, fmt.Errorf("response_format json_schema: %w", err)
+				}
+				if err == nil && prepared.object {
+					gen["responseSchema"] = prepared.encoded
 				}
 			}
 			out["generationConfig"] = gen
@@ -227,7 +295,7 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 	if err != nil {
 		return provcore.EncodeResult{}, err
 	}
-	return provcore.EncodeResult{Body: body, ContentType: "application/json"}, nil
+	return provcore.EncodeResult{Body: body, ContentType: "application/json", Rewrites: rewrites}, nil
 }
 
 // geminiSupportedRequestFields lists the canonical OpenAI top-level keys
@@ -455,83 +523,6 @@ func openAIMessageToGeminiParts(msg gjson.Result) ([]map[string]any, error) {
 	return parts, nil
 }
 
-// ParseDataURL extracts the media type and base64 payload from a data: URL.
-// Returns ok=false on shapes the codec cannot turn into a Gemini inlineData
-// part (missing comma, missing ;base64, malformed payload). Exported for tests.
-func ParseDataURL(dataURL string) (mediaType, b64 string, ok bool) {
-	if !strings.HasPrefix(dataURL, "data:") {
-		return "", "", false
-	}
-	rest := strings.TrimPrefix(dataURL, "data:")
-	comma := strings.Index(rest, ",")
-	if comma < 0 || comma == len(rest)-1 {
-		return "", "", false
-	}
-	meta, payload := rest[:comma], rest[comma+1:]
-	if !strings.HasSuffix(meta, ";base64") {
-		return "", "", false
-	}
-	mediaType = strings.TrimSuffix(meta, ";base64")
-	if mediaType == "" {
-		mediaType = "application/octet-stream"
-	}
-	return mediaType, payload, payload != ""
-}
-
-// GuessMimeFromURL maps a remote image URL to a best-effort Gemini mimeType
-// by extension (after stripping any query string). Falls back to image/jpeg
-// when the extension is missing or unrecognised so the upstream call still
-// succeeds; operators can override via the Extras pipeline if a specific
-// mimeType is required. Exported for tests.
-func GuessMimeFromURL(u string) string {
-	lower := strings.ToLower(u)
-	if i := strings.Index(lower, "?"); i >= 0 {
-		lower = lower[:i]
-	}
-	if i := strings.Index(lower, "#"); i >= 0 {
-		lower = lower[:i]
-	}
-	switch {
-	case strings.HasSuffix(lower, ".png"):
-		return "image/png"
-	case strings.HasSuffix(lower, ".webp"):
-		return "image/webp"
-	case strings.HasSuffix(lower, ".gif"):
-		return "image/gif"
-	case strings.HasSuffix(lower, ".heic"):
-		return "image/heic"
-	case strings.HasSuffix(lower, ".heif"):
-		return "image/heif"
-	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"):
-		return "image/jpeg"
-	default:
-		return "image/jpeg"
-	}
-}
-
-func StringifyContent(content gjson.Result) string {
-	if !content.Exists() {
-		return ""
-	}
-	if content.Type == gjson.String {
-		return content.String()
-	}
-	if content.IsArray() {
-		var buf string
-		content.ForEach(func(_, part gjson.Result) bool {
-			if part.Get("type").String() == "text" {
-				if buf != "" {
-					buf += "\n"
-				}
-				buf += part.Get("text").String()
-			}
-			return true
-		})
-		return buf
-	}
-	return ""
-}
-
 // DecodeResponse converts a Gemini generateContent response to canonical
 // OpenAI chat-completion shape. Delegates the block-walk to
 // GeminiGenerateNormalizer + ProjectToOpenAIChatCompletion — the same
@@ -550,6 +541,9 @@ func StringifyContent(content gjson.Result) string {
 func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint == typology.WireShapeGeminiEmbedContent || endpoint == typology.WireShapeVertexEmbedContent {
 		return decodeGeminiEmbeddingResponse(nativeBody, reqCtx.RequestBody)
+	}
+	if endpoint == typology.WireShapeGeminiImagesGenerateContent {
+		return decodeGeminiImagesResponse(nativeBody)
 	}
 	if endpoint != typology.WireShapeGeminiGenerateContent && endpoint != typology.WireShapeVertexGenerateContent {
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil

@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"golang.org/x/sync/singleflight"
 )
 
 // KeyResolver resolves an API key and base URL for a given (providerID, modelID)
@@ -46,6 +47,16 @@ type Manager struct {
 	res     KeyResolver
 	metrics *Metrics
 	logger  *slog.Logger
+
+	// createGroup collapses concurrent cachedContent creations that share a
+	// cache key. A burst of identical requests all miss in Redis before the
+	// first create has stored its result, so without collapsing every request
+	// in the burst issues its own create: N Gemini cachedContent objects get
+	// created and billed for their whole TTL while only the last one to write
+	// Redis is ever referenced. Its mutex is touched only on the miss path,
+	// which already pays a Redis round trip and an outbound HTTPS call; the
+	// hit path never reaches it.
+	createGroup singleflight.Group
 
 	// circuit breaker state (updated atomically)
 	cbFailures  atomic.Int64
@@ -189,10 +200,12 @@ func rawIfPresent(body []byte, path string) string {
 	return ""
 }
 
-// asyncCreate fires a background goroutine that calls the Gemini cachedContents
-// API and stores the result in Redis. Respects the circuit breaker. toolsJSON /
-// toolConfigJSON are the raw tool blocks to fold into the cachedContent (empty
-// when the request carries none).
+// asyncCreate schedules a background call to the Gemini cachedContents API,
+// storing the result in Redis. Respects the circuit breaker. Concurrent calls
+// that share a redisKey are collapsed onto a single create, so the work is
+// per distinct cache key rather than per request. toolsJSON / toolConfigJSON
+// are the raw tool blocks to fold into the cachedContent (empty when the
+// request carries none). Never blocks the caller.
 func (m *Manager) asyncCreate(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON, redisKey string, cfg Config) {
 	// Circuit breaker — open window check.
 	if openUntil := m.cbOpenUntil.Load(); openUntil > 0 && time.Now().UnixNano() < openUntil {
@@ -204,62 +217,77 @@ func (m *Manager) asyncCreate(providerID, modelID, systemJSON, toolsJSON, toolCo
 		return
 	}
 
-	go func() {
-		// Use a generous background timeout so a slow Gemini API does not leak
-		// goroutines indefinitely.
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
+	// One goroutine and one upstream create per in-flight cache key, not per
+	// request. DoChan starts the work in its own goroutine and hands every
+	// duplicate caller the same buffered result channel, so discarding the
+	// channel here cannot block or strand the worker. The key is removed as
+	// soon as the create finishes, by which point Redis already holds the
+	// record and the next request hits instead of creating.
+	m.createGroup.DoChan(redisKey, func() (any, error) {
+		m.runCreate(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON, redisKey, cfg)
+		return nil, nil
+	})
+}
 
-		apiKey, baseURL, err := m.res.Resolve(ctx, providerID, modelID)
-		if err != nil {
-			m.logger.Warn("geminicache: resolve apiKey failed",
-				"provider_id", providerID, "model", modelID, "error", err)
-			m.recordFailure(cfg)
-			m.metrics.recordCreateErr(modelID)
-			return
-		}
-		if baseURL == "" {
-			baseURL = "https://generativelanguage.googleapis.com"
-		}
+// runCreate performs one cachedContent creation and stores it in Redis. It is
+// the body executed by the singleflight group in asyncCreate, so at most one
+// invocation per cache key is in flight at a time. Errors are logged and fed
+// to the circuit breaker; nothing is returned because no caller waits.
+func (m *Manager) runCreate(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON, redisKey string, cfg Config) {
+	// Use a generous background timeout so a slow Gemini API does not leak
+	// goroutines indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
-		rec, err := m.api.create(ctx, apiKey, baseURL, modelID, systemJSON, toolsJSON, toolConfigJSON, cfg.ttlSeconds())
-		if err != nil {
-			m.logger.Warn("geminicache: create cachedContent failed",
-				"provider_id", providerID, "model", modelID, "error", err)
-			m.recordFailure(cfg)
-			m.metrics.recordCreateErr(modelID)
-			return
-		}
+	apiKey, baseURL, err := m.res.Resolve(ctx, providerID, modelID)
+	if err != nil {
+		m.logger.Warn("geminicache: resolve apiKey failed",
+			"provider_id", providerID, "model", modelID, "error", err)
+		m.recordFailure(cfg)
+		m.metrics.recordCreateErr(modelID)
+		return
+	}
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com"
+	}
 
-		// Store in Redis with TTL strictly SHORTER than the Gemini
-		// cachedContent TTL. The previous logic added a 5-minute grace
-		// (TTLSeconds + 300) which meant Redis could vend stale names
-		// after Gemini had already evicted them — clients got HTTP 403
-		// "CachedContent not found (or permission denied)". The 5-min
-		// safety margin in the other direction (TTLSeconds - 300)
-		// keeps the Redis entry usable for the bulk of the cache's
-		// lifetime while leaving a buffer for Gemini's best-effort
-		// eviction tolerance. Floor at 60s so a misconfigured tiny
-		// TTL still gets some reuse.
-		if m.rdb != nil {
-			raw, _ := json.Marshal(rec)
-			redisTTLSecs := cfg.ttlSeconds() - 300
-			if redisTTLSecs < 60 {
-				redisTTLSecs = 60
-			}
-			redisTTL := time.Duration(redisTTLSecs) * time.Second
-			if setErr := m.rdb.Set(ctx, redisKey, raw, redisTTL).Err(); setErr != nil {
-				m.logger.Warn("geminicache: Redis SET failed",
-					"key", redisKey, "error", setErr)
-				// Still count as OK since the Gemini object was created.
-			}
-		}
+	rec, err := m.api.create(ctx, apiKey, baseURL, modelID, systemJSON, toolsJSON, toolConfigJSON, cfg.ttlSeconds())
+	if err != nil {
+		m.logger.Warn("geminicache: create cachedContent failed",
+			"provider_id", providerID, "model", modelID, "error", err)
+		m.recordFailure(cfg)
+		m.metrics.recordCreateErr(modelID)
+		return
+	}
 
-		m.resetCircuitBreaker()
-		m.metrics.recordCreateOK(modelID)
-		m.logger.Info("geminicache: cachedContent created",
-			"name", rec.Name, "model", modelID, "token_count", rec.TokenCount)
-	}()
+	// Store in Redis with TTL strictly SHORTER than the Gemini
+	// cachedContent TTL. The previous logic added a 5-minute grace
+	// (TTLSeconds + 300) which meant Redis could vend stale names
+	// after Gemini had already evicted them — clients got HTTP 403
+	// "CachedContent not found (or permission denied)". The 5-min
+	// safety margin in the other direction (TTLSeconds - 300)
+	// keeps the Redis entry usable for the bulk of the cache's
+	// lifetime while leaving a buffer for Gemini's best-effort
+	// eviction tolerance. Floor at 60s so a misconfigured tiny
+	// TTL still gets some reuse.
+	if m.rdb != nil {
+		raw, _ := json.Marshal(rec)
+		redisTTLSecs := cfg.ttlSeconds() - 300
+		if redisTTLSecs < 60 {
+			redisTTLSecs = 60
+		}
+		redisTTL := time.Duration(redisTTLSecs) * time.Second
+		if setErr := m.rdb.Set(ctx, redisKey, raw, redisTTL).Err(); setErr != nil {
+			m.logger.Warn("geminicache: Redis SET failed",
+				"key", redisKey, "error", setErr)
+			// Still count as OK since the Gemini object was created.
+		}
+	}
+
+	m.resetCircuitBreaker()
+	m.metrics.recordCreateOK(modelID)
+	m.logger.Info("geminicache: cachedContent created",
+		"name", rec.Name, "model", modelID, "token_count", rec.TokenCount)
 }
 
 func (m *Manager) recordFailure(cfg Config) {

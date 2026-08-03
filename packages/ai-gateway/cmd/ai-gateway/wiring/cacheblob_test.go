@@ -8,31 +8,17 @@ import (
 )
 
 // TestProjectCacheBlobToNormaliserConfig_emptyBlob verifies a zero-value
-// blob with nil layer produces an empty Config with NormaliserEnabled=false.
+// blob with nil layer produces an empty Config. Fed to the engine this yields
+// hasWork=false — no rule, no marker inject, so the upstream rewrite no-ops.
 func TestProjectCacheBlobToNormaliserConfig_emptyBlob(t *testing.T) {
 	blob := cacheconfig.CacheConfigBlob{}
 	cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
 
-	if cfg.NormaliserEnabled {
-		t.Error("expected NormaliserEnabled=false for empty blob")
-	}
 	if len(cfg.Rules) != 0 {
 		t.Errorf("expected empty Rules, got %v", cfg.Rules)
 	}
 	if len(cfg.Providers) != 0 {
 		t.Errorf("expected empty Providers, got %v", cfg.Providers)
-	}
-}
-
-// TestProjectCacheBlobToNormaliserConfig_normaliserEnabled verifies that
-// Global.NormaliserEnabled is propagated.
-func TestProjectCacheBlobToNormaliserConfig_normaliserEnabled(t *testing.T) {
-	blob := cacheconfig.CacheConfigBlob{
-		Global: cacheconfig.GlobalConfig{NormaliserEnabled: true},
-	}
-	cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
-	if !cfg.NormaliserEnabled {
-		t.Error("expected NormaliserEnabled=true")
 	}
 }
 
@@ -87,7 +73,7 @@ func TestProjectCacheBlobToNormaliserConfig_emptyAdapterRulesSkipped(t *testing.
 func TestProjectCacheBlobToNormaliserConfig_nonAnthropicProvidersSkipped(t *testing.T) {
 	// Pass nil layer — providers section stays empty because layer==nil guard is hit.
 	blob := cacheconfig.CacheConfigBlob{
-		Global: cacheconfig.GlobalConfig{NormaliserEnabled: true},
+		Adapters: map[string]cacheconfig.AdapterConfig{"gemini": {}},
 	}
 	cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
 	if len(cfg.Providers) != 0 {

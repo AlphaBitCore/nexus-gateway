@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
@@ -159,6 +160,47 @@ func TestEgressReshapeNonStream_Guards(t *testing.T) {
 // non-stream direct path and proves the egress reshape is wired: an anthropic
 // /v1/messages request whose upstream (canonical) response is gpt-4o-shaped must
 // reach the client re-encoded to the anthropic ingress, not as canonical OpenAI.
+// TestServeProxy_PrimaryLeg_StripsNexusThinking pins the F1 leak fix on the
+// PRIMARY egress leg. Attempt-0 sends s.cachePreparedBody, which prepareUpstreamBody
+// builds via IngressChatToCanonical + PrepareBody — it never reaches
+// IngressChatToWire, so the nexus_thinking strip must run on THAT path or the
+// Anthropic-private per-block signature carrier egresses to an OpenAI-wire
+// upstream. The fake bridge injects nexus_thinking at canonicalization and wires
+// the REAL StripInternalCarriersForTarget as the strip, so a regression that drops
+// the stage's strip call would leave the carrier in the bytes the executor
+// receives. A pure IngressChatToWire unit test cannot catch this — the leak was on
+// the other encode path.
+func TestServeProxy_PrimaryLeg_StripsNexusThinking(t *testing.T) {
+	realBridge := canonicalbridge.New(nil)
+	fexec := &fakeExecutor{Result: &executor.ExecutionResult{
+		StatusCode: http.StatusOK,
+		Body:       []byte(egressCanonicalBody),
+		Target:     egressTarget("openai"),
+	}}
+	fb := &fakeBridge{
+		ingressChatToCanonical: func(_ provcore.Format, _ []byte, _ provcore.CallTarget) ([]byte, error) {
+			return []byte(`{"model":"gpt-4o","messages":[{"role":"assistant","content":"hi",` +
+				`"reasoning_content":"why","nexus_thinking":[{"thinking":"why","signature":"sig-1"}]}]}`), nil
+		},
+		stripInternalCarriers: realBridge.StripInternalCarriersForTarget,
+	}
+	deps := makeFakeDeps(t, fexec, fb)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages",
+		bytes.NewReader([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)))
+	NewHandler(deps).ServeProxy(Ingress{WireShape: typology.WireShapeAnthropicMessages, BodyFormat: provcore.FormatAnthropic}).ServeHTTP(rec, req)
+
+	if fexec.PreparedCalls == 0 {
+		t.Fatalf("primary prepared-body leg did not fire (status=%d body=%s)", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(fexec.LastPreparedBody, []byte("nexus_thinking")) {
+		t.Fatalf("nexus_thinking egressed to an OpenAI-wire upstream on the primary leg: %s", fexec.LastPreparedBody)
+	}
+	if !bytes.Contains(fexec.LastPreparedBody, []byte("reasoning_content")) {
+		t.Fatalf("reasoning_content (L2 universal) must survive the strip: %s", fexec.LastPreparedBody)
+	}
+}
+
 func TestServeProxy_Direct_NonOpenAIIngress_ReshapesToIngress(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

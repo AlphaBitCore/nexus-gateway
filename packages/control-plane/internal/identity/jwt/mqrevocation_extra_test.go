@@ -276,8 +276,11 @@ func TestMQRevocationChecker_StrictMode_IntrospectAllow(t *testing.T) {
 	var called atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called.Add(1)
-		if got := r.Header.Get("Authorization"); got != "Bearer rs-token" {
-			t.Errorf("Authorization = %q, want Bearer rs-token", got)
+		// Introspect is a service-to-service CP call too, so the credential rides
+		// on X-RS-Token like the replay call's. Previously pinned as
+		// "Bearer rs-token".
+		if got := r.Header.Get("X-RS-Token"); got != "rs-token" {
+			t.Errorf("X-RS-Token = %q, want \"rs-token\"", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"active":true}`))
@@ -285,8 +288,8 @@ func TestMQRevocationChecker_StrictMode_IntrospectAllow(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	ch := jwtverifier.NewMQRevocationChecker(jwtverifier.MQCheckerConfig{
-		IntrospectURL:    server.URL,
-		ReplayAuthHeader: "Bearer rs-token",
+		IntrospectURL: server.URL,
+		ServiceToken:  "rs-token",
 	})
 	// Force strict via the export-test seam.
 	jwtverifier.SetStrict(ch, true)

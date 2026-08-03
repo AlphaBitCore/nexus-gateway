@@ -85,7 +85,10 @@ cors:
   allowedOrigins:
     - "https://nexus.example.com"
   allowedMethods: ["GET", "POST", "OPTIONS"]
-  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  # Extra request headers on top of the built-in always-allowed set
+  # (gateway auth/correlation/feature headers + the forward-header
+  # allowlist). Extends, never replaces.
+  allowedHeaders: []
   maxAgeSec: 600
 
 cache:

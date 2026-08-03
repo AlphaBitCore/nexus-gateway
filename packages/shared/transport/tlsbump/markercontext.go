@@ -15,7 +15,7 @@ type cpMarkerCtxKey struct{}
 // at the point where all three pieces are known (request-id, domain rule UUID,
 // request-side hook outcome). Downstream write sites (upstream.go
 // and sse.go) read it via CPMarkerFromContext to populate the
-// x-nexus-cp-* response headers without re-deriving these values.
+// the X-Nexus-* chain markers without re-deriving these values.
 type CPMarker struct {
 	// RequestID is the compliance-proxy per-request UUID (txID), sourced
 	// from x-nexus-request-id or generated fresh via uuid.NewString().

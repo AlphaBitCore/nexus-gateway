@@ -59,6 +59,11 @@ func (t *Transport) BuildURL(target provcore.CallTarget, endpoint typology.WireS
 			u += "?" + v
 		}
 		return u, nil
+	case typology.WireShapeGeminiImagesGenerateContent:
+		// Image leg of :generateContent (cross-shape image codec). Always
+		// non-stream: the gateway forces multimodal requests non-stream at
+		// admission, and the codec never selects streamGenerateContent.
+		return fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, model), nil
 	case typology.WireShapeGeminiEmbedContent:
 		return fmt.Sprintf("%s/v1beta/models/%s:embedContent", base, model), nil
 	case typology.WireShapeNone:

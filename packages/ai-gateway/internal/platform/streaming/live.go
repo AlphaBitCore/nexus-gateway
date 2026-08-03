@@ -26,7 +26,17 @@ type LiveConfig struct {
 	FirstInspectChars  int // chars before first checkpoint (default 400)
 	ReinspectStepChars int // chars between subsequent checkpoints (default 128)
 	MaxBufferSize      int // max total buffer in bytes (default 8MB)
-	ChannelSize        int // internal event channel buffer (default 64); mirrors shared/transport/streaming.LiveConfig.ChannelSize
+	ChannelSize        int // internal event channel buffer (default 64)
+	// LIVE here: this package still runs a reader goroutine over a channel, and the shared
+	// LivePipeline no longer does. Do not "align" the two by deleting this one — the queue is
+	// what the delivery loop's drain-then-flush burst coalescing reads from, and measurement
+	// says the queue is worth far more than it costs. On darwin/arm64,
+	// `go test -bench='BenchmarkLive(EventHandoff|ClientFlush|ClientWriteNoFlush)'`:
+	// one event across the channel is 33ns and 0 allocations, while one http.Flusher flush
+	// over a real TCP connection is ~1950ns against ~53ns for the same write unflushed —
+	// i.e. ~1900ns per flush. Coalescing one flush in every ~58 frames already pays for the
+	// handoff on every frame. Deleting the goroutine would remove the queue, leaving nothing
+	// to drain and turning every frame into its own flush.
 
 	// EmitOpenAIDone controls whether the pipeline appends the OpenAI
 	// `data: [DONE]\n\n` terminator after the last upstream event.

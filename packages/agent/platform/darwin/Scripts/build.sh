@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E23-S2: Build the macOS .app bundle from Swift Package + Go binary.
+# Build the macOS .app bundle from Swift Package + Go binary.
 # Produces: dist/macos/NexusAgent.app
 #
 # Requires (on the build host):

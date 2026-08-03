@@ -30,12 +30,15 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/rstokenauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/thingtype"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/peerurl"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -73,6 +76,14 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 		return nil, fmt.Errorf("spillstore init: %w", err)
 	}
 
+	// Peer service base URLs are resolved from the Hub-reported Thing
+	// registry (shared/transport/peerurl) at request time — a service never
+	// configures another Nexus service's URL. One resolver serves every
+	// consumer; providers are thin per-thing-type closures over it.
+	peerResolver := peerurl.New(cfg.Registry.NexusHubURL, cfg.Auth.InternalServiceToken)
+	aiGatewayBase := peer.FromResolver(peerResolver, thingtype.AIGateway)
+	complianceProxyBase := peer.FromResolver(peerResolver, thingtype.ComplianceProxy)
+
 	adminHandler := &handler.AdminHandler{
 		DB:                               d.DB,
 		IAM:                              d.IAMEngine,
@@ -84,10 +95,10 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 		SpillStore:                       spillStore,
 		ExcludeInternalOpsFromBilledCost: cfg.CostPolicy.ExcludeInternalOpsFromBilledCost,
 		Proxy: handler.ProxyConfig{
-			ComplianceProxyRuntimeURL: cfg.BFF.ComplianceProxyRuntimeURL,
-			ComplianceProxyAPIToken:   cfg.BFF.ComplianceProxyAPIToken,
-			AIGatewayURL:              cfg.BFF.AIGatewayURL,
-			AIGatewayInternalToken:    cfg.Auth.InternalServiceToken,
+			ComplianceProxyBase:     complianceProxyBase,
+			ComplianceProxyAPIToken: cfg.BFF.ComplianceProxyAPIToken,
+			AIGatewayBase:           aiGatewayBase,
+			AIGatewayInternalToken:  cfg.Auth.InternalServiceToken,
 		},
 		Revocation:      d.RevocationService,
 		RevocationStore: d.RevocationStore,
@@ -107,18 +118,18 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 
 	if d.DB != nil {
 		aiGuardStore := configstore.NewAIGuardStore(d.DB.Pool)
-		var dryRunDispatcher aiguard.DryRunDispatcher
-		if cfg.BFF.AIGatewayURL != "" && cfg.Auth.InternalServiceToken != "" {
-			dispatchTimeout := time.Duration(cfg.AIGuard.DispatchTimeoutSec) * time.Second
-			dryRunDispatcher = &aiguard.HTTPDispatcher{
-				BaseURL: cfg.BFF.AIGatewayURL,
-				Token:   cfg.Auth.InternalServiceToken,
-				HTTPClient: nexushttp.New(nexushttp.Config{
-					Timeout:        dispatchTimeout,
-					Caller:         "cp-dispatch",
-					PropagateReqID: true,
-				}),
-			}
+		// The dispatcher is constructed unconditionally: the gateway URL is
+		// Hub-resolved per dispatch, and a not-yet-resolvable gateway
+		// surfaces as a clean 503 on /dry-run rather than a missing route.
+		dispatchTimeout := time.Duration(cfg.AIGuard.DispatchTimeoutSec) * time.Second
+		dryRunDispatcher := &aiguard.HTTPDispatcher{
+			Base:  aiGatewayBase,
+			Token: cfg.Auth.InternalServiceToken,
+			HTTPClient: nexushttp.New(nexushttp.Config{
+				Timeout:        dispatchTimeout,
+				Caller:         "cp-dispatch",
+				PropagateReqID: true,
+			}),
 		}
 		adminHandler.AIGuard = aiguard.New(aiguard.Deps{
 			Store:      aiGuardStore,
@@ -141,7 +152,7 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 			Hub:                    d.HubClient,
 			Audit:                  d.AuditWriter,
 			Logger:                 d.Logger,
-			AIGatewayURL:           cfg.BFF.AIGatewayURL,
+			AIGatewayBase:          aiGatewayBase,
 			AIGatewayInternalToken: cfg.Auth.InternalServiceToken,
 			Poison:                 semanticPoison,
 		})
@@ -152,9 +163,7 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 			Logger: d.Logger,
 		})
 		adminHandler.RulePacks = rulepacks.New(rulepack.NewStore(d.DB.Pool), d.AuditWriter, d.HubClient)
-		if cfg.BFF.AIGatewayURL != "" {
-			adminHandler.PatternPerf = patternperf.New(cfg.BFF.AIGatewayURL, cfg.Auth.InternalServiceToken, d.Logger)
-		}
+		adminHandler.PatternPerf = patternperf.New(aiGatewayBase, cfg.Auth.InternalServiceToken, d.Logger)
 		adminHandler.Exemption = exemption.New(exemption.Deps{
 			DataLayer: func() exemption.DataLayer {
 				if adminHandler.ExemptionStore != nil {
@@ -191,8 +200,9 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 	// Web assistant ("Chat with Nexus") — streaming chat under the admin group.
 	// Every assistant route additionally gates on the dedicated assistant IAM
 	// resource; each tool self-calls admin APIs under the caller's own IAM. The
-	// system VK + model come from env (secret never in yaml); the AI Gateway +
-	// self-call base URL come from config.
+	// system VK + model come from env (secret never in yaml); the AI Gateway
+	// base URL is Hub-resolved per turn and the self-call base URL is this
+	// process's own port.
 	assistantModel := os.Getenv("NEXUS_ASSISTANT_MODEL")
 	if assistantModel == "" {
 		assistantModel = "claude-sonnet-4-6"
@@ -207,12 +217,12 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 		}
 	}
 	assistantCfg := assistant.Config{
-		AIGatewayURL: cfg.BFF.AIGatewayURL,
-		CPBaseURL:    fmt.Sprintf("http://localhost:%d", cfg.Server.Port),
-		SystemVK:     os.Getenv("NEXUS_ASSISTANT_SYSTEM_VK"),
-		Model:        assistantModel,
-		Models:       assistantModels,
-		Spill:        spillStore,
+		AIGatewayBase: aiGatewayBase,
+		CPBaseURL:     fmt.Sprintf("http://localhost:%d", cfg.Server.Port),
+		SystemVK:      os.Getenv("NEXUS_ASSISTANT_SYSTEM_VK"),
+		Model:         assistantModel,
+		Models:        assistantModels,
+		Spill:         spillStore,
 		// Production posture: tells the agent's system prompt the truth about the
 		// environment AND arms the prod second-confirm challenge on write actions.
 		// Unset ⇒ the assistant presents (and behaves) as non-prod, so prod
@@ -255,7 +265,7 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 	// gateway-side VK stays the upstream credential and no extra IAM action gate
 	// is applied. Final path is unchanged: /api/admin/ai-gateway-simulator/forward.
 	adminGroup.POST("/ai-gateway-simulator/forward",
-		aigwsim.New(aigwsim.Deps{Logger: d.Logger}).AIGatewaySimulatorForward)
+		aigwsim.New(aigwsim.Deps{Logger: d.Logger, GatewayBase: aiGatewayBase}).AIGatewaySimulatorForward)
 
 	// Internal Hub→CP routes.
 	internalGroup := e.Group("/api/internal", rstokenauth.Middleware(cfg.Auth.InternalServiceToken))

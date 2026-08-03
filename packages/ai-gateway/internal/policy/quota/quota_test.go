@@ -31,6 +31,12 @@ func TestCostEstimate_EstimatedCost(t *testing.T) {
 		{"output only", CostEstimate{MaxOutputTokens: 500_000, OutputPricePM: 10}, 5},
 		{"both", CostEstimate{EstimatedInputTokens: 100_000, InputPricePM: 3, MaxOutputTokens: 200_000, OutputPricePM: 15}, 3.3},
 		// 100k*3 + 200k*15 = 300k + 3M = 3.3M / 1M = 3.3
+
+		// Direct-USD component for non-token-shaped endpoints (video:
+		// requested seconds × per-second price computed by the caller).
+		{"direct usd only", CostEstimate{EstimatedUsd: 0.8}, 0.8},
+		// Additive with token arithmetic — neither component clobbers the other.
+		{"usd additive with tokens", CostEstimate{EstimatedInputTokens: 1_000_000, InputPricePM: 2.5, EstimatedUsd: 0.5}, 3.0},
 	}
 	for _, c := range cases {
 		got := c.in.EstimatedCost()

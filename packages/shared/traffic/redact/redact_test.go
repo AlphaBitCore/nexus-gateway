@@ -23,7 +23,19 @@ func TestStorageRawBody(t *testing.T) {
 		{"block uses only the redacted copy", captured, decision.ActionBlock, redacted, redacted},
 		{"redact with no redacted copy drops the raw body", captured, decision.ActionRedact, nil, nil},
 		{"block with no redacted copy drops the raw body", captured, decision.ActionBlock, nil, nil},
-		{"empty action fails closed", captured, decision.Action(""), redacted, nil},
+		// The empty action means APPROVE, and this case used to assert the
+		// opposite ("fails closed" → nil). That earlier reading is the defect
+		// itself: decision.Action is a string, every service's no-hooks-ran path
+		// builds a result with the decision set and the action unset, and dropping
+		// on that is how the compliance proxy came to persist a request body on
+		// every bumped row and a response body on none. Unset means "nothing asked
+		// for this content to be withheld", not "the policy is unknown" — and
+		// capture is gated separately by the payload-capture config, so storing
+		// here cannot override a decision not to capture.
+		{"empty action means approve — no redaction demand", captured, decision.Action(""), redacted, captured},
+		// A non-empty action nobody recognises is a different thing: a producer
+		// bug. It still fails closed, because a body must never be persisted under
+		// a policy nobody can name.
 		{"unknown action fails closed", captured, decision.Action("bogus"), redacted, nil},
 		// Capture disabled (or bodyless request): the storage policy must
 		// never resurrect bytes the capture config chose not to store.
@@ -95,5 +107,40 @@ func TestCollectRuleIDs(t *testing.T) {
 	got := CollectRuleIDs(spans)
 	if len(got) != 2 || got[0] != "pii-email" || got[1] != "pii-phone" {
 		t.Errorf("CollectRuleIDs = %v, want [pii-email pii-phone]", got)
+	}
+}
+
+// StorageRawBodyChecked's second return is what makes an unnameable action
+// reportable instead of a silent NULL column. The plain form cannot tell the two
+// apart, which is why every producer now uses the checked one.
+func TestStorageRawBodyChecked_ReportsOnlyAnUnnameableAction(t *testing.T) {
+	captured := []byte(`{"messages":[{"content":"leak@example.com"}]}`)
+	redacted := []byte(`{"messages":[{"content":"[REDACTED]"}]}`)
+
+	cases := []struct {
+		name     string
+		captured []byte
+		action   decision.Action
+		want     []byte
+		wantOK   bool
+	}{
+		{"approve", captured, decision.ActionApprove, captured, true},
+		{"empty is approve, not a failure", captured, decision.Action(""), captured, true},
+		{"redact", captured, decision.ActionRedact, redacted, true},
+		{"unnameable action is reported", captured, decision.Action("bogus"), nil, false},
+		{"nothing captured is not a policy failure", nil, decision.ActionApprove, nil, true},
+		{"nothing captured under an unnameable action still reports", nil, decision.Action("bogus"), nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := StorageRawBodyChecked(tc.captured, redacted, tc.action)
+			if string(got) != string(tc.want) {
+				t.Errorf("body = %q, want %q", got, tc.want)
+			}
+			if ok != tc.wantOK {
+				t.Errorf("ok = %v, want %v — the flag exists so a producer bug gets a log line, "+
+					"not a NULL body nobody notices", ok, tc.wantOK)
+			}
+		})
 	}
 }

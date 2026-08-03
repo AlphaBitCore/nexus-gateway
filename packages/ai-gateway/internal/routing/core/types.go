@@ -42,6 +42,9 @@ type StrategyNode struct {
 	// ab_split
 	ABTargets []ABTarget `json:"abTargets,omitempty"`
 
+	// latency
+	LatencyTargets []LatencyTarget `json:"latencyTargets,omitempty"`
+
 	// smart (stored flat in config JSON)
 	RouterProviderID  string   `json:"routerProviderId,omitempty"`
 	RouterModelID     string   `json:"routerModelId,omitempty"`
@@ -156,41 +159,6 @@ type VKContext struct {
 	AllowedModels    []store.AllowedModelRef
 }
 
-// RoutingTarget is a resolved provider+model ready for upstream dispatch.
-//
-// Region mirrors Provider.region and is the authoritative deployment
-// region consumed by the data-residency compliance hook. An empty string
-// means the operator has not classified this provider yet; downstream
-// hooks must treat it as "unknown region" rather than "any region".
-type RoutingTarget struct {
-	ProviderID   string
-	ProviderName string
-	// AdapterType is the provider's canonical wire adapter, copied
-	// verbatim from Provider.adapter_type. Downstream consumers (the
-	// target executor, smart router, cross-format filter, and
-	// /internal/routing-simulate) read it instead of deriving the
-	// wire format from ProviderName.
-	AdapterType string
-	// ModelID is the Model row's UUID PK — used for FK references
-	// (allowedModels matching, traffic_event.model_id, audit Record).
-	ModelID string
-	// ModelCode is the customer-facing identifier ("gpt-4o"). Returned
-	// to clients in the `X-Nexus-Routed-Model` response header so they can
-	// correlate logs without exposing the internal UUID.
-	ModelCode       string
-	ModelName       string
-	ProviderModelID string
-	BaseURL         string
-	Region          string
-	Source          string // "primary", "fallback", "recovery"
-	// ServesResponsesAPI mirrors Provider.serves_responses_api (nil = adapter
-	// RequestShapes default). Carried on the routing snapshot so the proxy
-	// stages (cross-format guard, body canonicalization, egress reshape) and
-	// the executor resolve the /v1/responses capability identically without a
-	// per-request DB read.
-	ServesResponsesAPI *bool
-}
-
 // RoutingPlan is the output of route resolution.
 type RoutingPlan struct {
 	Targets         []RoutingTarget
@@ -280,6 +248,8 @@ type NarrowingSummary struct {
 
 // TargetLookup resolves a (providerID, modelID) pair into a RoutingTarget.
 // Injected by the resolver to allow strategy implementations to look up DB records.
+// The latency strategy's LatencyTarget / LatencyStatsFunc / MaxLatencyTargets
+// live in latency.go.
 type TargetLookup func(ctx context.Context, providerID, modelID string) (*RoutingTarget, error)
 
 // CandidateCapability describes what a routing candidate would have accepted

@@ -42,9 +42,10 @@ func primeSnapshots(t *testing.T, mock pgxmock.PgxPoolIface, l *Layer) {
 
 func makeModelRowWithAliases(id, code, providerID string, enabled bool, aliases []string) []any {
 	r := makeModelRow(id, code, providerID, enabled)
-	// Aliases column index: 4 capability columns were appended after aliases
-	// — see modelCols in helpers_test.go for the full column order.
-	r[18] = aliases
+	// Aliases column index — see modelCols in helpers_test.go for the full
+	// column order (3 audio price columns sit between the cache prices and
+	// features; 4 capability columns were appended after aliases).
+	r[21] = aliases
 	return r
 }
 

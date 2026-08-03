@@ -27,6 +27,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/store/metricsstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
@@ -36,11 +37,15 @@ import (
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
-// ProxyConfig holds BFF proxy settings for data-plane services.
+// ProxyConfig holds BFF proxy settings for data-plane services. Peer base
+// URLs are resolved from the Hub at request time (internal/platform/peer over
+// shared/transport/peerurl), never configured locally.
 type ProxyConfig struct {
-	ComplianceProxyRuntimeURL string
-	ComplianceProxyAPIToken   string
-	AIGatewayURL              string
+	// ComplianceProxyBase resolves the compliance-proxy runtime base URL.
+	ComplianceProxyBase     peer.URLProvider
+	ComplianceProxyAPIToken string
+	// AIGatewayBase resolves the AI Gateway base URL.
+	AIGatewayBase peer.URLProvider
 	// AIGatewayInternalToken is the shared internal-service bearer token
 	// (env INTERNAL_SERVICE_TOKEN) the BFF presents on every CP→ai-gateway
 	// /internal/* admin call. Must match the gateway's INTERNAL_SERVICE_TOKEN.
@@ -157,8 +162,8 @@ type AdminHandler struct {
 	RulePacks *rulepacks.Handler
 
 	// PatternPerf owns POST /api/admin/rule-packs/pattern-perf-test — the
-	// authoring-time Vectorscan perf test, proxied to the AI Gateway. Nil when
-	// no AI-Gateway URL is configured.
+	// authoring-time Vectorscan perf test, proxied to the AI Gateway (base
+	// URL Hub-resolved per call). Nil only when the DB is unavailable.
 	PatternPerf *patternperf.Handler
 
 	// Redis is an optional Redis client used to read circuit breaker state and

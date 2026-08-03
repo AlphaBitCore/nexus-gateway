@@ -30,7 +30,14 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		// (generateContent) and the embeddings shape (embedContent /
 		// batchEmbedContents). The codec selects single vs batch via
 		// EncodeResult.URLOverride based on canonical input shape.
-		RequestShapes: []typology.WireShape{typology.WireShapeGeminiGenerateContent, typology.WireShapeGeminiEmbedContent, typology.WireShapeVertexGenerateContent, typology.WireShapeVertexEmbedContent},
+		// WireShapeGeminiImagesGenerateContent is the image leg of the
+		// SAME captured generateContent endpoint (responseModalities:
+		// ["IMAGE"], Nano Banana) — the URL surface is evidenced by the
+		// chat leg's captured 200s and the image modality is
+		// Google-documented; the env-gated gateway smoke (which needs a
+		// live Gemini credential) is the captured-200 gate before any
+		// image traffic can actually route here.
+		RequestShapes: []typology.WireShape{typology.WireShapeGeminiGenerateContent, typology.WireShapeGeminiEmbedContent, typology.WireShapeGeminiImagesGenerateContent, typology.WireShapeVertexGenerateContent, typology.WireShapeVertexEmbedContent},
 	}
 }
 

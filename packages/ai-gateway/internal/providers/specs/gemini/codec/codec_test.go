@@ -20,7 +20,9 @@
 package codec_test
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	gemcodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/codec"
@@ -1056,5 +1058,97 @@ func TestEncodeRequest_functionCallWithNoID_idOmitted(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// The observed prod failure class (2026-07-17, proxy_error 400): a tool schema
+// extracted from an OpenAPI document carries `#/components/...` pointers whose
+// dictionary was never shipped. The tool-parameters path degrades exactly that
+// property to an open object and reports the coercion; the request encodes.
+func TestEncodeRequest_tools_unshippedComponentsRef_degradesAndReports(t *testing.T) {
+	var c gemcodec.Codec
+	body := []byte(`{"model":"g","messages":[{"role":"user","content":"hi"}],
+		"tools":[{"type":"function","function":{"name":"dryRun","description":"d","parameters":{
+			"type":"object",
+			"properties":{
+				"detector_type":{"type":"string"},
+				"context":{"$ref":"#/components/schemas/handler_DryRunContext","description":"routing context"}
+			},
+			"required":["detector_type"]
+		}}}]}`)
+	encRes, err := c.EncodeRequest(typology.WireShapeGeminiGenerateContent, body, provcore.CallTarget{})
+	if err != nil {
+		t.Fatalf("an un-shipped components pointer in tool parameters must not fail the request: %v", err)
+	}
+	params := gjson.GetBytes(encRes.Body, "tools.0.functionDeclarations.0.parameters")
+	if params.Get("properties.context.type").String() != "object" {
+		t.Fatalf("degraded property must be an open object: %s", params.Raw)
+	}
+	if params.Get("properties.context.description").String() != "routing context" {
+		t.Fatalf("description must survive: %s", params.Raw)
+	}
+	if params.Get("properties.detector_type.type").String() != "string" {
+		t.Fatalf("sibling properties untouched: %s", params.Raw)
+	}
+	want := "tools.dryRun.parameters.$ref(#/components/schemas/handler_DryRunContext)→object"
+	if len(encRes.Rewrites) != 1 || encRes.Rewrites[0] != want {
+		t.Fatalf("the coercion must be reported for x-nexus-coerced: %v", encRes.Rewrites)
+	}
+}
+
+// A dangling pointer into a dictionary the tool schema itself carries is a
+// broken schema, and tool parameters still fail loudly on it.
+func TestEncodeRequest_tools_danglingDefsRef_stillFails(t *testing.T) {
+	var c gemcodec.Codec
+	body := []byte(`{"model":"g","messages":[{"role":"user","content":"hi"}],
+		"tools":[{"type":"function","function":{"name":"f","parameters":{
+			"$defs":{"Real":{"type":"string"}},
+			"type":"object","properties":{"a":{"$ref":"#/$defs/Nope"}}
+		}}}]}`)
+	if _, err := c.EncodeRequest(typology.WireShapeGeminiGenerateContent, body, provcore.CallTarget{}); err == nil {
+		t.Fatal("a dangling $defs pointer is a broken schema and must fail the request")
+	}
+}
+
+// response_format json_schema is the caller's OUTPUT contract: degrading a
+// property there is the silent-wrong-answer class, so the strict mode holds
+// and an un-shipped pointer still fails the request loudly.
+func TestEncodeRequest_responseSchema_unshippedComponentsRef_staysFatal(t *testing.T) {
+	var c gemcodec.Codec
+	body := []byte(`{"model":"g","messages":[{"role":"user","content":"hi"}],
+		"response_format":{"type":"json_schema","json_schema":{"schema":{
+			"type":"object","properties":{"row":{"$ref":"#/components/schemas/Row"}}
+		}}}}`)
+	if _, err := c.EncodeRequest(typology.WireShapeGeminiGenerateContent, body, provcore.CallTarget{}); err == nil {
+		t.Fatal("responseSchema must stay strict: an un-shipped pointer is the output contract going silently loose")
+	}
+}
+
+// The caller-controlled $ref is capped (on a rune boundary) in the
+// coercion LABEL only; the degraded schema itself is untouched.
+func TestEncodeRequest_tools_longRefLabelCapped(t *testing.T) {
+	var c gemcodec.Codec
+	longRef := "#/components/schemas/" + strings.Repeat("很", 200)
+	body := []byte(`{"model":"g","messages":[{"role":"user","content":"hi"}],
+		"tools":[{"type":"function","function":{"name":"f","parameters":{
+			"type":"object","properties":{"a":{"$ref":"` + longRef + `"}}
+		}}}]}`)
+	encRes, err := c.EncodeRequest(typology.WireShapeGeminiGenerateContent, body, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encRes.Rewrites) != 1 {
+		t.Fatalf("degradation must be reported once: %v", encRes.Rewrites)
+	}
+	label := encRes.Rewrites[0]
+	if len(label) > 220 {
+		t.Fatalf("label must be capped, got %d bytes", len(label))
+	}
+	if !utf8.ValidString(label) {
+		t.Fatalf("cap must land on a rune boundary: %q", label)
+	}
+	params := gjson.GetBytes(encRes.Body, "tools.0.functionDeclarations.0.parameters")
+	if params.Get("properties.a.type").String() != "object" {
+		t.Fatalf("the schema itself is degraded, never truncated: %s", params.Raw)
 	}
 }

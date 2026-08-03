@@ -13,6 +13,7 @@ import (
 
 	cpmetrics "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
 	"github.com/labstack/echo/v4"
 )
@@ -84,6 +85,18 @@ func (h *Handler) StartChat(c echo.Context) error {
 			"you have too many concurrent sessions; finish or stop existing sessions first")
 	}
 
+	// Resolve the AI Gateway base URL before any inference is attempted — it is
+	// Hub-reported (never configured locally), so a gateway that has not
+	// registered yet surfaces as a clean, retryable 503 instead of a dead turn.
+	// Runs after the auth/serialization refusals so their statuses keep
+	// precedence; the just-claimed slot is released on failure.
+	aiGatewayURL, gwErr := h.resolveAIGatewayBase(c.Request().Context())
+	if gwErr != nil {
+		h.bus.finishTurn(key)
+		recordTurn("unavailable")
+		return peer.ServiceUnavailable(c, "ai-gateway", gwErr)
+	}
+
 	// Claim this instance as the session owner (multi-replica 421 safety net). Detached
 	// short ctx — independent of the turn ctx — so an interrupt/deadline cannot abort
 	// the ownership write while a confirm is about to be parked.
@@ -102,6 +115,7 @@ func (h *Handler) StartChat(c echo.Context) error {
 		authorization: authorization,
 		sourceIP:      c.RealIP(),
 		requestID:     middleware.NexusRequestIDFromContext(c),
+		aiGatewayURL:  aiGatewayURL,
 	}
 	go h.runTurn(turnCtx, turn)
 
@@ -120,6 +134,7 @@ type turnParams struct {
 	authorization string
 	sourceIP      string
 	requestID     string
+	aiGatewayURL  string // Hub-resolved at StartChat time; stable for the turn
 }
 
 // runTurn executes one agent turn in the background, publishing its work to the
@@ -164,7 +179,7 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 		CallerRequestID:     p.requestID,
 		Dispatcher:          h.cfg.Dispatcher,
 		CPBaseURL:           h.cfg.CPBaseURL,
-		AIGatewayURL:        h.cfg.AIGatewayURL,
+		AIGatewayURL:        p.aiGatewayURL,
 		SystemVK:            h.cfg.SystemVK,
 		Model:               p.model,
 		IsProd:              h.cfg.IsProd,

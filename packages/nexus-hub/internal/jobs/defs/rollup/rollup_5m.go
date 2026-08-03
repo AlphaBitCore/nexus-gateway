@@ -22,6 +22,9 @@ const (
 	rollup5mJobName        = "Traffic Rollup (5 minute)"
 	rollup5mJobDescription = "Aggregates traffic_event rows into metric_rollup_5m every minute, catching up from the last committed bucket to the most recent sealed 5-minute bucket."
 
+	// watermarkRollup5m is read BY NAME from the Control Plane's trafficstore
+	// (error-governance rollup read plan) — renaming it silently degrades
+	// that surface to its full-direct fallback.
 	watermarkRollup5m = "rollup-5m"
 	bucketDuration5m  = 5 * time.Minute
 	tableRollup5m     = "metric_rollup_5m"
@@ -211,7 +214,14 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 			-- Latency phase fields.
 			upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 			-- Internal-ops cost rollup fields.
-			embedding_cost_usd, ai_guard_cost_usd
+			embedding_cost_usd, ai_guard_cost_usd,
+			-- Error-class rollup fields: the class key uses the STAMPED names
+			-- (routed falling back to requested), not catalog UUIDs, because
+			-- early rejections carry no resolved IDs and the key must be
+			-- byte-identical to the direct traffic_event GROUP BY the
+			-- error-governance view falls back to.
+			provider_name, routed_provider_name, model_name, routed_model_name,
+			internal_purpose
 		FROM traffic_event
 		WHERE timestamp >= $1 AND timestamp < $2
 	`
@@ -225,6 +235,7 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 	accValues := make(map[accKey5m]float64)
 	accHisto := make(map[accKey5m]metrics.Histogram)
 	accTimestamp := make(map[accKey5m]metrics.TimestampMeta)
+	errClasses := newErrorClassAcc()
 
 	distinctEntities := make(map[distinctKey5m]map[string]struct{})
 	distinctOrgs := make(map[distinctKey5m]map[string]struct{})
@@ -280,6 +291,12 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 			// customer-billable.
 			embeddingCostUsd *float64
 			aiGuardCostUsd   *float64
+			// Error-class rollup fields.
+			providerName       *string
+			routedProviderName *string
+			modelName          *string
+			routedModelName    *string
+			internalPurpose    *string
 		)
 
 		if err := rows.Scan(
@@ -299,6 +316,8 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 			&normStripCount, &normStripBytes, &cacheMarkersInj,
 			&upstreamTtfbMs, &upstreamTotalMs, &requestHooksMs, &responseHooksMs,
 			&embeddingCostUsd, &aiGuardCostUsd,
+			&providerName, &routedProviderName, &modelName, &routedModelName,
+			&internalPurpose,
 		); err != nil {
 			return nil, fmt.Errorf("scan traffic_event: %w", err)
 		}
@@ -355,12 +374,17 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 				embeddingCostUsd, aiGuardCostUsd,
 			)
 		}
+
+		errClasses.observe(statusCode, internalPurpose, errorCode,
+			routedProviderName, providerName, routedModelName, modelName,
+			subDim, timestamp)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate traffic_event: %w", err)
 	}
 
+	errClasses.foldInto(j.logger, accValues, accTimestamp)
 	rollupRows := j.assembleRollupRows(start, accValues, accHisto, accTimestamp,
 		distinctEntities, distinctOrgs, distinctIPs)
 	return deduplicateRows5m(rollupRows), nil
@@ -561,14 +585,24 @@ func (j *Rollup5mJob) emitEventMetrics(
 	// ai-gateway usage_cache.Backfill read these.
 	isSuccess := sc >= 200 && sc < 300 && deref5m(errorCode) == ""
 	if isSuccess && !cacheHitVal {
-		billed := cost
-		// excludeInternalOpsFromBilled defaults false (include in billed).
-		// Operator flips true to exclude — useful when the operator absorbs
-		// those costs separately and doesn't want them tightening customer quotas.
-		if !j.excludeInternalOpsFromBilled {
-			billed += derefFloat5m(embeddingCostUsd) + derefFloat5m(aiGuardCostUsd)
-		}
-		add(metrics.MetricBilledCostUSD, billed)
+		// billed MUST pass through estimated unchanged. The AI Gateway's live
+		// quota counter charges rec.EstimatedCostUsd and nothing else, and its
+		// boot Backfill re-seeds that counter from this metric — so anything
+		// added here makes the counter jump on restart: charged one number
+		// while live, re-seeded from a larger one.
+		//
+		// Internal-ops cost (L2 embedding + AI-Guard) therefore cannot be folded
+		// in. It stays fully visible on the dedicated MetricEmbeddingCostUSD /
+		// MetricAIGuardCostUSD series below — out of the quota-bearing total,
+		// not hidden.
+		//
+		// j.excludeInternalOpsFromBilled is consequently ignored here and is
+		// vestigial. It could never have worked: it lives in the Hub's config,
+		// while the gateway that charges the live counter is never told it
+		// exists, so only one of the two sides could ever honour it. Removing
+		// the knob (and its mirrored copy in the Control Plane's yaml, which
+		// captions the UI) is deliberately left as separate work.
+		add(metrics.MetricBilledCostUSD, cost)
 		add(metrics.MetricBilledTokens, float64(derefInt5m(totalTokens)))
 	}
 

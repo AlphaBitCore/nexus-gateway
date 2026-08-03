@@ -363,6 +363,67 @@ func TestUpsertOverrides_ExecError_Wraps(t *testing.T) {
 	}
 }
 
+// S-13: an override severity outside hard|soft|warn must be refused and NOT
+// written. severityEnforces() accepts only hard|soft, so persisting "high"
+// leaves the rule matching and reporting while it silently stops blocking —
+// the exact runtime downgrade validSeverities exists to prevent on the two
+// authoring paths.
+//
+// The bogus entry is placed SECOND on purpose. No Exec expectations are set,
+// so if validation ever moves inline into the write loop, the first (valid)
+// override is written, pgxmock rejects the unexpected Exec, and the returned
+// error becomes a "rulepack.UpsertOverrides" wrap instead of an
+// *InvalidRulesError — which is what the type assertion below catches. That
+// makes this test sensitive to a partially-applied batch, not just to the
+// rejection itself.
+func TestUpsertOverrides_RejectsOutOfEnumSeverity_AndWritesNothing(t *testing.T) {
+	for _, sev := range []string{"high", "low", "critical", "Hard", "HARD", "block"} {
+		t.Run(sev, func(t *testing.T) {
+			_, store := newMockStore(t)
+			err := store.UpsertOverrides(context.Background(), "inst-1", []rulepack.Override{
+				{RuleLocalID: "r-valid", SeverityOverride: "warn"},
+				{RuleLocalID: "r-bogus", SeverityOverride: sev},
+			})
+			var invalid *rulepack.InvalidRulesError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("severityOverride %q: want *InvalidRulesError (and no write); got %T: %v", sev, err, err)
+			}
+			if len(invalid.Errors) != 1 {
+				t.Fatalf("want exactly the bogus entry reported; got %d: %+v", len(invalid.Errors), invalid.Errors)
+			}
+			got := invalid.Errors[0]
+			if got.Index != 1 || got.RuleID != "r-bogus" {
+				t.Errorf("reported entry = index %d id %q, want index 1 id \"r-bogus\"", got.Index, got.RuleID)
+			}
+			if !strings.Contains(got.Reason, sev) || !strings.Contains(got.Reason, "hard|soft|warn") {
+				t.Errorf("reason %q must name the rejected value and the allowed set", got.Reason)
+			}
+		})
+	}
+}
+
+// The three valid severities and the empty "clear the swap" value must all
+// still be accepted — a gate that rejects everything is as broken as one that
+// rejects nothing.
+func TestUpsertOverrides_AcceptsEveryValidSeverityAndEmpty(t *testing.T) {
+	for _, sev := range []string{"hard", "soft", "warn", ""} {
+		t.Run("sev="+sev, func(t *testing.T) {
+			mock, store := newMockStore(t)
+			mock.ExpectExec(`INSERT INTO "rule_override"`).
+				WithArgs("inst-1", "r1", false, sev).
+				WillReturnResult(pgxmock.NewResult("INSERT", 1))
+			if err := store.UpsertOverrides(context.Background(), "inst-1", []rulepack.Override{
+				{RuleLocalID: "r1", SeverityOverride: sev},
+			}); err != nil {
+				t.Fatalf("severityOverride %q must be accepted: %v", sev, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("the row must actually be written: %v", err)
+			}
+		})
+	}
+}
+
 func TestUpsertOverrides_EmptyList_NoOp(t *testing.T) {
 	_, store := newMockStore(t)
 	if err := store.UpsertOverrides(context.Background(), "inst-1", nil); err != nil {

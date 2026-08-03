@@ -271,3 +271,15 @@ func TestParseRetryAfter_pastHTTPDate_clampsToZero(t *testing.T) {
 		t.Errorf("past date should clamp to 0, got %v", *got)
 	}
 }
+
+// Context-overflow classification: Gemini signals an over-window prompt
+// as 400 INVALID_ARGUMENT with the message "The input token count (N)
+// exceeds the maximum number of tokens allowed (M)" (observed on
+// gemini-2.x 400s). It must map to CodeContextOverflow.
+func TestNormalize_InputTokenCountExceeds_MapsToContextOverflow(t *testing.T) {
+	body := []byte(`{"error":{"code":400,"message":"The input token count (1189176) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}`)
+	pe := gemerrors.ErrorNormalizer{}.Normalize(400, http.Header{}, body)
+	if pe.Code != provcore.CodeContextOverflow {
+		t.Errorf("Code = %q, want %q", pe.Code, provcore.CodeContextOverflow)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	jwtverifier "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
+	"strings"
 )
 
 // testEvent mirrors the wire shape of nexus.auth.revocation events without
@@ -312,8 +313,12 @@ func TestMQRevocationChecker_ReplayCatchup_AppliesMissedEvents(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("replay got method %s, want GET", r.Method)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
-			t.Errorf("replay Authorization = %q, want Bearer secret", got)
+		// X-RS-Token, not Authorization: the replay endpoint is gated by
+		// rstokenauth. This assertion used to pin "Bearer secret" — faithful to
+		// what the client sent, and wrong about what the server reads, which is
+		// how a permanently-401ing catchup stayed green in the suite.
+		if got := r.Header.Get("X-RS-Token"); got != "secret" {
+			t.Errorf("replay X-RS-Token = %q, want \"secret\"", got)
 		}
 		q, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
@@ -352,8 +357,8 @@ func TestMQRevocationChecker_ReplayCatchup_AppliesMissedEvents(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	ch := jwtverifier.NewMQRevocationChecker(jwtverifier.MQCheckerConfig{
-		ReplayURL:        server.URL + "/replay",
-		ReplayAuthHeader: "Bearer secret",
+		ReplayURL:    server.URL + "/replay",
+		ServiceToken: "secret",
 	})
 
 	if err := ch.RunCatchup(context.Background()); err != nil {
@@ -401,5 +406,82 @@ func TestMQRevocationChecker_ReplayCatchup_AppliesMissedEvents(t *testing.T) {
 	}
 	if revoked {
 		t.Fatalf("u42 token newer than cutoff must be allowed")
+	}
+}
+
+// TestRunCatchup_SendsServiceTokenAsRSTokenHeader pins the CREDENTIAL, not just
+// the round trip. The replay endpoint is gated by rstokenauth, which reads
+// X-RS-Token and answers 401 otherwise, so this fake enforces exactly that.
+//
+// The pre-existing catchup test DID pin a header — it pinned the wrong one. Its
+// fake asserted `Authorization: Bearer <token>`, faithfully mirroring the client
+// while knowing nothing about what the real endpoint reads, and it returned
+// events regardless. So the suite stayed green while the deployment took a 401 on
+// every poll for the life of the process: the client sent Authorization to an
+// endpoint that reads X-RS-Token, and sent it to the ADMIN route, whose IAM gate
+// no service token can satisfy. A fake that mirrors the client instead of the
+// server cannot catch either mistake, which is why this one refuses.
+func TestRunCatchup_SendsServiceTokenAsRSTokenHeader(t *testing.T) {
+	const token = "rs-secret-token"
+	var sawRSToken, sawAuthorization string
+	var hits atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		sawRSToken = r.Header.Get("X-RS-Token")
+		sawAuthorization = r.Header.Get("Authorization")
+		if sawRSToken != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"RS_TOKEN_REQUIRED"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}, "lastId": int64(7)})
+	}))
+	t.Cleanup(server.Close)
+
+	ch := jwtverifier.NewMQRevocationChecker(jwtverifier.MQCheckerConfig{
+		ReplayURL:    server.URL + "/api/internal/revocations",
+		ServiceToken: token,
+	})
+	if err := ch.RunCatchup(context.Background()); err != nil {
+		t.Fatalf("RunCatchup with a valid service token must succeed, got: %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("replay hits = %d, want 1", hits.Load())
+	}
+	if sawRSToken != token {
+		t.Errorf("X-RS-Token = %q, want %q — the checker must present the service token in the header rstokenauth reads", sawRSToken, token)
+	}
+	if sawAuthorization != "" {
+		t.Errorf("Authorization = %q, want empty — the service token must not ride on a header the replay endpoint ignores", sawAuthorization)
+	}
+	if got := jwtverifier.LastIDLoad(ch); got != 7 {
+		t.Errorf("lastID = %d, want 7 (a successful catchup must advance the cursor)", got)
+	}
+}
+
+// TestRunCatchup_401IsAnError guards the other direction: when the endpoint
+// refuses the credential, catchup must report it rather than silently treating
+// an empty page as "nothing to backfill".
+func TestRunCatchup_401IsAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	ch := jwtverifier.NewMQRevocationChecker(jwtverifier.MQCheckerConfig{
+		ReplayURL:    server.URL + "/api/internal/revocations",
+		ServiceToken: "wrong",
+	})
+	err := ch.RunCatchup(context.Background())
+	if err == nil {
+		t.Fatal("a 401 from the replay endpoint must surface as an error, not a silent no-op")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error should name the status; got %v", err)
+	}
+	if got := jwtverifier.LastIDLoad(ch); got != 0 {
+		t.Errorf("lastID = %d, want 0 — a refused catchup must not advance the cursor", got)
 	}
 }

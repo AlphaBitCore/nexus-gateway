@@ -142,3 +142,32 @@ func TestRebuild_SnapshotRoundTrip(t *testing.T) {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in[0])
 	}
 }
+
+// Rebuild is a writer and must take writeMu, which the struct doc says
+// "serialises WRITERS ONLY". It did not, and the lost update that allows has a
+// direction: purgeExpired reads the snapshot, filters, then stores, so a Hub
+// revocation push landing in that window is overwritten and the revoked exemption
+// goes live again — the compliance pipeline stays bypassed for that source/host
+// pair. -race cannot catch it (the pointer swap is atomic; this is a lost update,
+// not a data race), so the guard is the lock participation itself.
+func TestRebuild_ParticipatesInTheWriterLock(t *testing.T) {
+	s := NewStore(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	s.writeMu.Lock()
+	published := make(chan struct{})
+	go func() { s.Rebuild(nil); close(published) }()
+
+	select {
+	case <-published:
+		t.Fatal("Rebuild published while another writer held writeMu — a purge running " +
+			"concurrently can overwrite a revocation and resurrect an exemption")
+	case <-time.After(200 * time.Millisecond):
+	}
+	s.writeMu.Unlock()
+
+	select {
+	case <-published:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Rebuild never completed after the lock was released")
+	}
+}

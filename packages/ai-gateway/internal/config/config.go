@@ -30,17 +30,25 @@ type Config struct {
 	// Prod: "https://api.example.com"; dev: "http://localhost:3050".
 	// Reported to the Thing Registry as part of staticInfo so the CP
 	// admin API can surface the real endpoint to UI pages.
-	PublicURL string              `yaml:"publicURL"`
-	Server    ServerConfig        `yaml:"server"`
-	Database  DatabaseConfig      `yaml:"database"`
-	Redis     redisfactory.Config `yaml:"redis"`
-	Auth      AuthConfig          `yaml:"auth"`
-	Log       LogConfig           `yaml:"log"`
-	Registry  RegistryConfig      `yaml:"registry"`
-	MQ        MQConfig            `yaml:"mq"`
-	CORS      CORSConfig          `yaml:"cors"`
-	Cache     CacheConfig         `yaml:"cache"`
-	Otel      OtelConfig          `yaml:"otel"`
+	PublicURL string `yaml:"publicURL"`
+	// PrivateURL is the internal service-to-service base URL peer Nexus
+	// services dial (scheme + host[:port], no trailing slash). Optional:
+	// when empty it is auto-derived as http://<primary-outbound-IPv4>:<port>
+	// (platform.EffectivePrivateURL) — set it only for split-horizon or
+	// non-default topologies. Reported to the Thing Registry as
+	// staticInfo.privateUrl; peers resolve it from the Hub instead of
+	// configuring this service's address themselves.
+	PrivateURL string              `yaml:"privateURL,omitempty"`
+	Server     ServerConfig        `yaml:"server"`
+	Database   DatabaseConfig      `yaml:"database"`
+	Redis      redisfactory.Config `yaml:"redis"`
+	Auth       AuthConfig          `yaml:"auth"`
+	Log        LogConfig           `yaml:"log"`
+	Registry   RegistryConfig      `yaml:"registry"`
+	MQ         MQConfig            `yaml:"mq"`
+	CORS       CORSConfig          `yaml:"cors"`
+	Cache      CacheConfig         `yaml:"cache"`
+	Otel       OtelConfig          `yaml:"otel"`
 	// Audit configures the traffic_event audit pipeline's durable spill: when
 	// the in-memory buffer is full after backpressure, overflow records are
 	// written here as NDJSON instead of dropped silently.
@@ -176,6 +184,12 @@ type CORSConfig struct {
 	Enabled        bool     `yaml:"enabled"`
 	AllowedOrigins []string `yaml:"allowedOrigins"`
 	AllowedMethods []string `yaml:"allowedMethods"`
+	// AllowedHeaders EXTENDS the built-in request-header allowlist (the
+	// gateway's own auth/correlation/feature headers plus the resolved
+	// forward-header allowlist); it cannot shrink it. List only extra
+	// names your browser clients send. Over-listing is harmless — the
+	// gateway ignores names it does not read and the forward-header gate
+	// still default-denies them toward providers.
 	AllowedHeaders []string `yaml:"allowedHeaders"`
 	MaxAgeSec      int      `yaml:"maxAgeSec"`
 }
@@ -429,7 +443,7 @@ func resolveCustodySecrets(cfg *Config) error {
 // validate enforces the business-required configuration set for the
 // AI Gateway. Required-set mirrors the cross-service contract in
 // docs/developers/architecture/cross-cutting/foundation/
-// service-bootstrap-config-architecture.md §5:
+// service-bootstrap-config-architecture.md §6:
 //
 //   - PublicURL: reported as Thing staticInfo so admin UI can render the
 //     gateway URL (integration help cards, smoke-test instructions).
@@ -443,6 +457,9 @@ func resolveCustodySecrets(cfg *Config) error {
 //   - Redis.Addrs: response cache, rate limit, idempotency, quota.
 //   - MQ.Driver (+ MQ.NATS.URL when nats): traffic_event publish to Hub.
 //   - Registry.NexusHubURL: AIG registers as a Thing on boot.
+//   - Server.WriteTimeout: must be > 0; the proxy's absolute per-response
+//     write deadline is only safe on a connection whose per-request deadline
+//     net/http still re-arms.
 //
 // Redis.Addrs accepts either yaml OR env (REDIS_ADDRS) — env-merge
 // happens inside redisfactory.New at wiring time, not config.Load, so
@@ -479,6 +496,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Registry.NexusHubURL == "" {
 		return fmt.Errorf("registry.nexusHubUrl is required (AI Gateway registers as a Thing on boot)")
+	}
+	if cfg.Server.WriteTimeout <= 0 {
+		return fmt.Errorf("server.writeTimeout must be > 0 (got %s): the proxy lifts the write deadline to an absolute time.Now()+upstream budget before writing each response, and net/http re-arms the per-request write deadline only when server.writeTimeout > 0. At 0 (the usual Go idiom for \"no timeout\") nothing re-arms it, so the first response's absolute deadline outlives its request and every later write on that keep-alive connection fails permanently", cfg.Server.WriteTimeout)
 	}
 	return nil
 }

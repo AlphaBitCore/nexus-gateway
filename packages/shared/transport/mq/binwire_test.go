@@ -19,21 +19,37 @@ func TestBinwireFieldRegistryNoDrift(t *testing.T) {
 	}
 }
 
-// TestBinwireFieldIDsUniqueAndContiguous locks the wire-number contract: ids are
-// unique (no two fields share a wire number) and form a contiguous 1..N range (no
-// gap from a retired id silently reused). Both would corrupt cross-version decode.
+// reservedFieldIDs are wire numbers deliberately left unassigned in THIS
+// tree so a concurrently developed branch can land them without a collision.
+// Empty now: 105/106 (artifact_refs / compliance_coverage) and 107/108
+// (end_user_id / session_id) have all landed as Fld* constants — the two
+// branches merged, each keeping its own contiguous ids.
+var reservedFieldIDs = map[FieldID]bool{}
+
+// TestBinwireFieldIDsUniqueAndContiguous locks the wire-number contract: ids
+// are unique (no two fields share a wire number) and fill 1..max with no gap
+// except the documented reservations (an undocumented gap is a typo'd wire
+// number waiting to be silently reused). Both failure modes corrupt
+// cross-version decode.
 func TestBinwireFieldIDsUniqueAndContiguous(t *testing.T) {
 	ids := AllFieldIDs()
 	seen := make(map[FieldID]bool, len(ids))
+	maxID := FieldID(0)
 	for _, id := range ids {
 		if seen[id] {
 			t.Fatalf("duplicate field id %d", id)
 		}
+		if reservedFieldIDs[id] {
+			t.Fatalf("field id %d is reserved for a concurrent branch — allocate the next free number instead", id)
+		}
 		seen[id] = true
+		if id > maxID {
+			maxID = id
+		}
 	}
-	for n := 1; n <= len(ids); n++ {
-		if !seen[FieldID(n)] {
-			t.Fatalf("field id %d missing — ids must be contiguous 1..%d", n, len(ids))
+	for n := FieldID(1); n <= maxID; n++ {
+		if !seen[n] && !reservedFieldIDs[n] {
+			t.Fatalf("field id %d missing — ids must fill 1..%d except documented reservations", n, maxID)
 		}
 	}
 }

@@ -44,56 +44,64 @@ func seedNonStreamCacheEntry(t *testing.T, deps *Deps, body, cachedResp []byte) 
 }
 
 // TestServeProxy_NoCacheHeader_BypassesSeededCacheEntry pins the client
-// opt-out: with a hittable entry seeded, `x-nexus-aigw-no-cache` forces
-// the live upstream (X-Nexus-Cache: MISS); the same request without the
-// header replays the cached response (HIT) — proving the skip decision,
-// not a key mismatch, produced the MISS.
+// opt-out: with a hittable entry seeded, the no-cache header forces the
+// live upstream (X-Nexus-Cache: MISS); the same request without the header
+// replays the cached response (HIT) — proving the skip decision, not a key
+// mismatch, produced the MISS.
+//
+// Both spellings are exercised. The deprecated Aigw- alias must keep
+// skipping: its failure mode is silent (the caller asked to bypass and
+// would be served from cache anyway), so only a test catches its loss.
 func TestServeProxy_NoCacheHeader_BypassesSeededCacheEntry(t *testing.T) {
-	cacheOpt, cleanup := withCache(t)
-	defer cleanup()
-	upstream := openAIChatUpstream(t, `{
-		"id":"live","object":"chat.completion","model":"gpt-4o",
-		"choices":[{"index":0,"message":{"role":"assistant","content":"live-hello"},"finish_reason":"stop"}],
-		"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
-	}`)
-	defer upstream.Close()
+	for _, header := range []string{"X-Nexus-No-Cache", "X-Nexus-Aigw-No-Cache"} {
+		t.Run(header, func(t *testing.T) {
+			cacheOpt, cleanup := withCache(t)
+			defer cleanup()
+			upstream := openAIChatUpstream(t, `{
+				"id":"live","object":"chat.completion","model":"gpt-4o",
+				"choices":[{"index":0,"message":{"role":"assistant","content":"live-hello"},"finish_reason":"stop"}],
+				"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+			}`)
+			defer upstream.Close()
 
-	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), cacheOpt)
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi cache"}]}`)
-	cachedResp := []byte(`{"id":"cached-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"cached-hello"},"finish_reason":"stop"}]}`)
-	seedNonStreamCacheEntry(t, deps, body, cachedResp)
+			deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), cacheOpt)
+			body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi cache"}]}`)
+			cachedResp := []byte(`{"id":"cached-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"cached-hello"},"finish_reason":"stop"}]}`)
+			seedNonStreamCacheEntry(t, deps, body, cachedResp)
 
-	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:  typology.WireShapeOpenAIChat,
-		BodyFormat: provcore.FormatOpenAI,
-	})
+			h := NewHandler(deps).ServeProxy(Ingress{
+				WireShape:  typology.WireShapeOpenAIChat,
+				BodyFormat: provcore.FormatOpenAI,
+			})
 
-	// With the no-cache header: live upstream despite the seeded entry.
-	req := freshChatRequest(t, string(body))
-	req.Header.Set("x-nexus-aigw-no-cache", "1")
-	w := httptest.NewRecorder()
-	h(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "live-hello") {
-		t.Errorf("body=%s want live upstream response (cache skipped)", w.Body.String())
-	}
-	if got := w.Header().Get("X-Nexus-Cache"); got != "MISS" {
-		t.Errorf("X-Nexus-Cache=%q want MISS on the skip path", got)
-	}
+			// With the no-cache header: live upstream despite the seeded entry.
+			req := freshChatRequest(t, string(body))
+			req.Header.Set(header, "1")
+			w := httptest.NewRecorder()
+			h(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "live-hello") {
+				t.Errorf("body=%s want live upstream response (cache skipped)", w.Body.String())
+			}
+			if got := w.Header().Get("X-Nexus-Cache"); got != "MISS" {
+				t.Errorf("X-Nexus-Cache=%q want MISS on the skip path", got)
+			}
 
-	// Without the header: the seeded entry is served — proving it was hittable.
-	w2 := httptest.NewRecorder()
-	h(w2, freshChatRequest(t, string(body)))
-	if w2.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", w2.Code, w2.Body.String())
-	}
-	if !strings.Contains(w2.Body.String(), "cached-hello") {
-		t.Errorf("body=%s want cached response without the header", w2.Body.String())
-	}
-	if got := w2.Header().Get("X-Nexus-Cache"); got != "HIT" {
-		t.Errorf("X-Nexus-Cache=%q want HIT", got)
+			// Without the header: the seeded entry is served — proving it was hittable.
+			w2 := httptest.NewRecorder()
+			h(w2, freshChatRequest(t, string(body)))
+			if w2.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w2.Code, w2.Body.String())
+			}
+			if !strings.Contains(w2.Body.String(), "cached-hello") {
+				t.Errorf("body=%s want cached response without the header", w2.Body.String())
+			}
+			if got := w2.Header().Get("X-Nexus-Cache"); got != "HIT" {
+				t.Errorf("X-Nexus-Cache=%q want HIT", got)
+			}
+		})
 	}
 }
 
@@ -154,6 +162,87 @@ func TestServeProxy_PassthroughBypassCache_BypassesSeededCacheEntry(t *testing.T
 	h(w2, freshChatRequest(t, string(body)))
 	if !strings.Contains(w2.Body.String(), "cached-hello") {
 		t.Errorf("body=%s want cached response after bypass cleared", w2.Body.String())
+	}
+}
+
+// TestServeProxy_PassthroughBypassCache_SuppressesCacheWrite pins the WRITE half
+// of the operator bypass. The cache stage's only gate is now `l1Enabled ||
+// l2Enabled` (the emergency master kill switch is retired), so Emergency
+// Passthrough's bypassCache is what must keep a live response from being
+// persisted while the bypass is active — otherwise an operator who bypassed the
+// cache during an incident would still be populating it with the very responses
+// they were trying to stop serving.
+//
+// Sequence on ONE never-seeded body: (1) bypass ON → MISS; (2) bypass cleared →
+// still MISS, proving request 1 wrote nothing; (3) → HIT, proving request 2 did
+// write and that the cache is genuinely functional (so step 2's MISS is
+// write-suppression, not a broken cache).
+func TestServeProxy_PassthroughBypassCache_SuppressesCacheWrite(t *testing.T) {
+	cacheOpt, cleanup := withCache(t)
+	defer cleanup()
+	upstream := openAIChatUpstream(t, `{
+		"id":"live","object":"chat.completion","model":"gpt-4o",
+		"choices":[{"index":0,"message":{"role":"assistant","content":"live-hello"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+	}`)
+	defer upstream.Close()
+
+	pcache := passthrough.NewCache()
+	future := time.Now().Add(1 * time.Hour)
+	pcache.SetSnapshot(&passthrough.Snapshot{
+		Global: passthrough.TierEntry{
+			Enabled:     true,
+			BypassCache: true,
+			ExpiresAt:   &future,
+			EnabledBy:   "test",
+			Reason:      "incident: stop serving and storing cached answers",
+		},
+	})
+
+	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), cacheOpt, func(d *Deps) {
+		d.PassthroughCache = pcache
+	})
+	// The broker registry is what performs the cache WRITE on a miss; without it
+	// nothing is ever stored and the test could not tell suppression from a
+	// missing writer.
+	withBroker(t)(deps)
+	h := NewHandler(deps).ServeProxy(Ingress{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+	})
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"never seeded"}]}`
+
+	// send issues one request and drains the async broker write it may have queued.
+	send := func() *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		h(w, freshChatRequest(t, body))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+		}
+		deps.BrokerRegistry.Wait() // block until any cache write has landed
+		return w
+	}
+
+	// 1. Bypass ON — live upstream, and nothing may be written.
+	if got := send().Header().Get("X-Nexus-Cache"); got != "MISS" {
+		t.Fatalf("X-Nexus-Cache=%q want MISS while bypass is active", got)
+	}
+
+	// 2. Bypass cleared — a HIT here would mean request 1 wrote through the bypass.
+	pcache.SetSnapshot(&passthrough.Snapshot{})
+	if got := send().Header().Get("X-Nexus-Cache"); got != "MISS" {
+		t.Fatalf("X-Nexus-Cache=%q want MISS: the bypassed request must not have populated the cache", got)
+	}
+
+	// 3. The write from request 2 (bypass off) is now servable — the cache works,
+	//    so step 2's MISS was write-suppression and not a dead cache.
+	w3 := send()
+	if got := w3.Header().Get("X-Nexus-Cache"); got != "HIT" {
+		t.Fatalf("X-Nexus-Cache=%q want HIT once the bypass is off (cache must still write normally)", got)
+	}
+	if !strings.Contains(w3.Body.String(), "live-hello") {
+		t.Errorf("body=%s want the cached upstream response replayed", w3.Body.String())
 	}
 }
 
@@ -306,11 +395,11 @@ func TestServeProxy_SemanticCacheSkip_StillInjectsProviderCacheMarkers(t *testin
 			ModelCode:       "claude-x",
 			AdapterType:     "anthropic",
 		}}}
-		// The real injection engine, configured the way prod is (global
-		// normaliser on + anthropic marker injection on).
+		// The real injection engine, configured the way prod is: the provider's
+		// marker injection is ON, which is by itself the engine's demand signal
+		// (there is no global normaliser switch any more).
 		eng := wirerewrite.New(nil)
 		eng.Reload(wirerewrite.Config{
-			NormaliserEnabled: true,
 			Providers: map[string]wirerewrite.ProviderCacheConfig{
 				"p-anthropic": {CacheMarkerInjectEnabled: true},
 			},
@@ -326,7 +415,7 @@ func TestServeProxy_SemanticCacheSkip_StillInjectsProviderCacheMarkers(t *testin
 	// A long system prompt (markers only inject on cache-worthy prefixes).
 	body := `{"model":"claude-x","messages":[{"role":"system","content":"` + strings.Repeat("stable operator playbook. ", 400) + `"},{"role":"user","content":"hello"}]}`
 	req := freshChatRequest(t, body)
-	req.Header.Set("x-nexus-aigw-no-cache", "1") // → semantic-cache SKIP path
+	req.Header.Set("X-Nexus-No-Cache", "1") // → semantic-cache SKIP path
 	w := httptest.NewRecorder()
 	h(w, req)
 	if w.Code != http.StatusOK {

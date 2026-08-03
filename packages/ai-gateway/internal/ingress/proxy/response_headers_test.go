@@ -120,10 +120,9 @@ func TestSetResponseHeaders_NonStream(t *testing.T) {
 	}
 }
 
-// TestSetResponseHeadersStream_LatencyAbsent verifies that the streaming
-// variant emits the core markers and the stream flag but does NOT emit
-// x-nexus-aigw-latency-ms (per spec §5 — latency is meaningless when
-// headers are sent before the last byte arrives).
+// TestSetResponseHeadersStream verifies that the streaming variant emits the
+// core markers but no Server-Timing: timings are meaningless on a response
+// whose headers are sent before the last byte arrives.
 func TestSetResponseHeadersStream(t *testing.T) {
 	t.Parallel()
 

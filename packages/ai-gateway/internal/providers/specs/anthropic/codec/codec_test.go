@@ -239,69 +239,133 @@ func TestAppendSystemInstruction_fallback(t *testing.T) {
 	}
 }
 
-// TestAnthropicModelMaxOutput pins the per-model fallback values used
-// when a caller forwards an OpenAI-shape request that omits max_tokens.
-// Anthropic rejects requests without max_tokens (unlike OpenAI which
-// treats it as optional), so the codec must synthesize one. The bug
-// was a hardcoded 1024 floor that truncated every response from
-// callers used to OpenAI's "no cap" default; the fix swaps in
-// Anthropic's documented per-family hard max output limit.
-func TestAnthropicModelMaxOutput(t *testing.T) {
-	cases := []struct {
-		model string
-		want  int
-	}{
-		{"claude-haiku-4-5-20251001", 8192},
-		{"claude-haiku-4-5", 8192},
-		{"claude-sonnet-4-5-20250929", 64000},
-		{"claude-sonnet-4-6", 64000},
-		{"claude-opus-4-7", 32000},
-		{"claude-opus-4-1-20250805", 32000},
-		{"claude-3-5-sonnet-20241022", 8192},
-		{"claude-3-opus-20240229", 4096},
-		{"completely-unknown-model", 8192}, // safe across-Claude floor
+// The output cap the codec puts on the wire is driven by the resolved
+// target's catalog capability (CallTarget.MaxOutputTokens) — the same
+// maxOutputTokens the gateway advertises on /v1/models. Named failure modes:
+//   - caller omits max_tokens → Anthropic 400s ("max_tokens: Field required")
+//   - caller echoes back the advertised ceiling → must not be rejected by it
+//   - caller exceeds the ceiling → Anthropic 400s
+//     ("max_tokens: N > M, which is the maximum allowed number of output
+//     tokens for <model>"), observed in prod on claude-opus-4-7
+//   - catalog has no ceiling → some cap must still go on the wire
+
+// TestCodec_EncodeRequest_NoMaxTokens_FillsCatalogCeiling covers the path
+// callers actually hit: an OpenAI-shape request omits max_tokens (legal on
+// the shape they came from), so the codec fills the model's FULL advertised
+// ceiling rather than a floor that would truncate long responses.
+func TestCodec_EncodeRequest_NoMaxTokens_FillsCatalogCeiling(t *testing.T) {
+	canon := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}`)
+	var c Codec
+	encRes, err := c.EncodeRequest(typology.WireShapeAnthropicMessages, canon,
+		provcore.CallTarget{MaxOutputTokens: 128000})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		got := AnthropicModelMaxOutput(tc.model)
-		if got != tc.want {
-			t.Errorf("%s: got %d, want %d", tc.model, got, tc.want)
+	if got := gjson.GetBytes(encRes.Body, "max_tokens").Int(); got != 128000 {
+		t.Errorf("max_tokens = %d, want 128000 (the catalog ceiling)", got)
+	}
+	// Observable in Rewrites so the handler stamps x-nexus-coerced and the
+	// applied cap shows up in traffic_event.
+	if !hasRewrite(encRes.Rewrites, "max_tokens→128000_model_default") {
+		t.Errorf("Rewrites = %v, want the model_default entry", encRes.Rewrites)
+	}
+}
+
+// TestCodec_EncodeRequest_NoMaxTokens_NoCatalogCeiling_UsesFallback covers
+// the nullable-column case: maxOutputTokens is unset, yet Anthropic still
+// requires the field, so the conservative across-Claude floor goes on the wire.
+func TestCodec_EncodeRequest_NoMaxTokens_NoCatalogCeiling_UsesFallback(t *testing.T) {
+	canon := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}`)
+	var c Codec
+	encRes, err := c.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gjson.GetBytes(encRes.Body, "max_tokens").Int(); got != 8192 {
+		t.Errorf("max_tokens = %d, want the 8192 fallback", got)
+	}
+}
+
+// TestCodec_EncodeRequest_MaxTokensOverCeiling_Clamped reproduces the prod
+// 400: a caller reads maxOutputTokens off /v1/models and echoes it back, but
+// the advertised number exceeds what the model accepts. Clamping turns the
+// hard rejection into the most the model can actually produce.
+func TestCodec_EncodeRequest_MaxTokensOverCeiling_Clamped(t *testing.T) {
+	canon := []byte(`{"model":"claude-opus-4-7","max_tokens":131072,"messages":[{"role":"user","content":"hi"}]}`)
+	var c Codec
+	encRes, err := c.EncodeRequest(typology.WireShapeAnthropicMessages, canon,
+		provcore.CallTarget{MaxOutputTokens: 128000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gjson.GetBytes(encRes.Body, "max_tokens").Int(); got != 128000 {
+		t.Errorf("max_tokens = %d, want 128000 (clamped to the ceiling)", got)
+	}
+	if !hasRewrite(encRes.Rewrites, "max_tokens→128000_model_max") {
+		t.Errorf("Rewrites = %v, want the model_max clamp recorded", encRes.Rewrites)
+	}
+}
+
+// TestCodec_EncodeRequest_MaxCompletionTokensOverCeiling_Clamped pins that the
+// OpenAI reasoning-model spelling is clamped identically — it wins over
+// max_tokens, so an unclamped branch here would leak the same 400.
+func TestCodec_EncodeRequest_MaxCompletionTokensOverCeiling_Clamped(t *testing.T) {
+	canon := []byte(`{"model":"claude-opus-4-7","max_completion_tokens":131072,"max_tokens":10,
+		"messages":[{"role":"user","content":"hi"}]}`)
+	var c Codec
+	encRes, err := c.EncodeRequest(typology.WireShapeAnthropicMessages, canon,
+		provcore.CallTarget{MaxOutputTokens: 128000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gjson.GetBytes(encRes.Body, "max_tokens").Int(); got != 128000 {
+		t.Errorf("max_tokens = %d, want 128000", got)
+	}
+}
+
+// TestCodec_EncodeRequest_MaxTokensWithinCeiling_Untouched pins that a legal
+// caller value passes through verbatim and records no rewrite — clamping must
+// never rewrite intent it does not have to.
+func TestCodec_EncodeRequest_MaxTokensWithinCeiling_Untouched(t *testing.T) {
+	canon := []byte(`{"model":"claude-opus-4-7","max_tokens":4096,"messages":[{"role":"user","content":"hi"}]}`)
+	var c Codec
+	encRes, err := c.EncodeRequest(typology.WireShapeAnthropicMessages, canon,
+		provcore.CallTarget{MaxOutputTokens: 128000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gjson.GetBytes(encRes.Body, "max_tokens").Int(); got != 4096 {
+		t.Errorf("max_tokens = %d, want 4096 unchanged", got)
+	}
+	for _, r := range encRes.Rewrites {
+		if strings.Contains(r, "max_tokens") {
+			t.Errorf("a within-ceiling value must record no max_tokens rewrite, got %v", encRes.Rewrites)
 		}
 	}
 }
 
-// TestCodec_EncodeRequest_NoMaxTokens_DefaultsByModel verifies the
-// EncodeRequest path that callers actually hit: an OpenAI-shape
-// request with NO max_tokens AND no max_completion_tokens should emit
-// the Anthropic body with max_tokens set to the model's documented
-// max output limit (not the legacy 1024 floor).
-func TestCodec_EncodeRequest_NoMaxTokens_DefaultsByModel(t *testing.T) {
-	canon := []byte(`{
-		"model": "claude-sonnet-4-6",
-		"messages": [{"role": "user", "content": "hi"}]
-	}`)
+// TestCodec_EncodeRequest_MaxTokens_NoCatalogCeiling_NotClamped pins that an
+// unknown ceiling forwards the caller's value untouched: inventing a bound we
+// cannot justify would truncate responses the model may well support.
+func TestCodec_EncodeRequest_MaxTokens_NoCatalogCeiling_NotClamped(t *testing.T) {
+	canon := []byte(`{"model":"claude-opus-4-7","max_tokens":131072,"messages":[{"role":"user","content":"hi"}]}`)
 	var c Codec
 	encRes, err := c.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
-	out := encRes.Body
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := gjson.GetBytes(out, "max_tokens").Int(); got != 64000 {
-		t.Errorf("max_tokens = %d, want 64000 (sonnet-4 family default)", got)
+	if got := gjson.GetBytes(encRes.Body, "max_tokens").Int(); got != 131072 {
+		t.Errorf("max_tokens = %d, want 131072 forwarded untouched", got)
 	}
-	// The synthesized max_tokens backstop must be observable in Rewrites so
-	// the handler stamps x-nexus-coerced and traffic_event / debug surfaces
-	// show that the gateway applied a model-default cap.
-	wantRewrite := "max_tokens→64000_model_default"
-	found := false
-	for _, r := range encRes.Rewrites {
-		if r == wantRewrite {
-			found = true
-			break
+}
+
+func hasRewrite(rewrites []string, want string) bool {
+	for _, r := range rewrites {
+		if r == want {
+			return true
 		}
 	}
-	if !found {
-		t.Errorf("Rewrites = %v, want to contain %q", encRes.Rewrites, wantRewrite)
-	}
+	return false
 }
 
 // TestCodec_EncodeRequest_jsonSchemaUnsupported pins SDD §2.5 hard rule:
@@ -1172,30 +1236,230 @@ func TestAnthropicModelRejectsTempTopPTogether(t *testing.T) {
 	}
 }
 
-// TestAnthropicModelRejectsSamplingParams pins the prefix-list. New
-// observed-rejecting families must extend the switch in codec.go and
-// add a case here so the policy is reviewable in one place.
+// TestAnthropicModelRejectsSamplingParams pins the allowlist and, above
+// all, its default: a Claude model nobody has probed must be stripped, so
+// that shipping a new Claude cannot 400 every temperature-sending client.
+// Admitting a family to claudeModelsAcceptingSamplingParams needs a direct
+// probe showing it accepts the params, plus a case here.
 func TestAnthropicModelRejectsSamplingParams(t *testing.T) {
 	cases := []struct {
 		model string
 		want  bool
+		why   string
 	}{
-		{"claude-opus-4-7", true},
-		{"claude-opus-4-7-20260101", true}, // dated variant in the same family
-		{"claude-opus-4-8", true},          // prod smoke 2026-07-03: 400 "temperature is deprecated"
-		{"claude-opus-4-8-20260101", true}, // dated variant in the same family
-		{"claude-opus-4-1-20250805", false},
-		{"claude-opus-4-5-20250929", false}, // not yet observed; needs empirical confirmation
-		{"claude-sonnet-4-6", false},
-		{"claude-haiku-4-5", false},
-		{"claude-3-5-sonnet-20241022", false},
-		{"", false},
-		{"completely-unknown-model", false},
+		// Probed against api.anthropic.com: each param alone yields 400
+		// "`temperature` is deprecated for this model."
+		{"claude-opus-4-7", true, "probed: rejects"},
+		{"claude-opus-4-8", true, "probed: rejects"},
+		{"claude-sonnet-5", true, "probed: rejects"},
+		{"claude-fable-5", true, "probed: rejects — the vendor deprecation table omits this model"},
+		{"claude-opus-4-8-20260101", true, "dated variant inherits its family"},
+
+		// Probed: accepts the params on their own.
+		{"claude-opus-4-6", false, "probed: accepts"},
+		{"claude-opus-4-5", false, "probed: accepts"},
+		{"claude-opus-4-5-20251101", false, "dated variant inherits its family"},
+		{"claude-sonnet-4-6", false, "probed: accepts"},
+		{"claude-sonnet-4-5", false, "probed: accepts"},
+		{"claude-haiku-4-5", false, "probed: accepts"},
+		{"claude-opus-4-1", false, "probed: accepts"},
+		{"claude-3-5-sonnet-20241022", false, "3.x accepts; retired upstream but proxy-reachable"},
+
+		// The allowlist's reason for existing: an unknown Claude defaults
+		// to stripping, so a release we have never probed degrades to a
+		// working request instead of a 400.
+		{"claude-opus-9", true, "unprobed future Claude defaults to strip"},
+		{"claude-sonnet-6", true, "unprobed future Claude defaults to strip"},
+
+		// Not Claude: some other endpoint behind the anthropic adapter.
+		// We have not probed it and must not strip what it may honour.
+		{"my-self-hosted-model", false, "non-Claude endpoint keeps its params"},
+		{"", false, "non-Claude endpoint keeps its params"},
 	}
 	for _, tc := range cases {
 		got := anthropicModelRejectsSamplingParams(tc.model)
 		if got != tc.want {
-			t.Errorf("anthropicModelRejectsSamplingParams(%q)=%v want %v", tc.model, got, tc.want)
+			t.Errorf("anthropicModelRejectsSamplingParams(%q)=%v want %v (%s)", tc.model, got, tc.want, tc.why)
 		}
+	}
+}
+
+// TestCodec_EncodeRequest_StripsSamplingParamsForClaude5 pins the wire
+// outcome for the two families whose omission from the old denylist 400'd
+// every client that set temperature: the fields must be gone from the body
+// and each strip must surface as a rewrite.
+func TestCodec_EncodeRequest_StripsSamplingParamsForClaude5(t *testing.T) {
+	for _, model := range []string{"claude-sonnet-5", "claude-fable-5", "claude-opus-9"} {
+		t.Run(model, func(t *testing.T) {
+			canon := []byte(`{
+				"model": "` + model + `",
+				"messages": [{"role":"user","content":"hi"}],
+				"temperature": 0.5,
+				"top_p": 0.9,
+				"top_k": 40
+			}`)
+			encRes, err := Codec{}.EncodeRequest(typology.WireShapeAnthropicMessages, canon,
+				provcore.CallTarget{ProviderModelID: model})
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			for _, field := range []string{"temperature", "top_p", "top_k"} {
+				if gjson.GetBytes(encRes.Body, field).Exists() {
+					t.Errorf("%s survived to the wire for %s: %s", field, model, encRes.Body)
+				}
+			}
+			for _, want := range []string{"temperature→removed", "top_p→removed", "top_k→removed"} {
+				found := false
+				for _, r := range encRes.Rewrites {
+					if r == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("missing rewrite %q for %s; got %v", want, model, encRes.Rewrites)
+				}
+			}
+		})
+	}
+}
+
+// TestCodec_EncodeRequest_reconstructsSignedThinkingBlock pins the
+// canonical→wire half of the thinking round-trip: a canonical assistant
+// message carrying a per-block nexus_thinking carrier — the shape the
+// Anthropic ingress converter produces from a client's thinking history —
+// must rebuild a leading `thinking` content block with its signature,
+// which Anthropic validates on passed-back thinking.
+func TestCodec_EncodeRequest_reconstructsSignedThinkingBlock(t *testing.T) {
+	canon := []byte(`{
+		"model":"claude-opus-4-8",
+		"max_tokens":64,
+		"messages":[
+			{"role":"user","content":"solve it"},
+			{"role":"assistant","content":"the answer is 42","reasoning_content":"step 1. step 2.","nexus_thinking":[{"thinking":"step 1. step 2.","signature":"sig-abc"}]}
+		]
+	}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The assistant message's content array leads with a signed thinking block.
+	var asst gjson.Result
+	for _, m := range gjson.GetBytes(encRes.Body, "messages").Array() {
+		if m.Get("role").String() == "assistant" {
+			asst = m
+		}
+	}
+	first := asst.Get("content.0")
+	if first.Get("type").String() != "thinking" {
+		t.Fatalf("thinking block must lead the content array: %s", encRes.Body)
+	}
+	if first.Get("thinking").String() != "step 1. step 2." {
+		t.Fatalf("thinking text must be reconstructed: %s", encRes.Body)
+	}
+	if first.Get("signature").String() != "sig-abc" {
+		t.Fatalf("signature must be reconstructed for Anthropic to validate: %s", encRes.Body)
+	}
+	// The visible answer still follows.
+	if !strings.Contains(string(encRes.Body), "the answer is 42") {
+		t.Fatalf("visible text must survive: %s", encRes.Body)
+	}
+}
+
+// TestCodec_EncodeRequest_multiBlockThinking_roundtrip pins F2 on the wire
+// side: a canonical assistant message whose nexus_thinking carries TWO signed
+// blocks plus a redacted block must rebuild THREE leading content blocks, each
+// with its own signature in order — never collapsed to one — and re-emit the
+// redacted block as redacted_thinking with its data.
+func TestCodec_EncodeRequest_multiBlockThinking_roundtrip(t *testing.T) {
+	canon := []byte(`{
+		"model":"claude-opus-4-8",
+		"max_tokens":64,
+		"messages":[
+			{"role":"assistant","content":"done","reasoning_content":"first\nsecond","nexus_thinking":[
+				{"thinking":"first","signature":"sig-a"},
+				{"thinking":"second","signature":"sig-b"},
+				{"redacted_data":"opaque-xyz"}
+			]}
+		]
+	}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := gjson.GetBytes(encRes.Body, "messages.0.content")
+	blocks := content.Array()
+	if len(blocks) < 3 {
+		t.Fatalf("three thinking blocks must lead the content array: %s", encRes.Body)
+	}
+	if blocks[0].Get("type").String() != "thinking" || blocks[0].Get("thinking").String() != "first" || blocks[0].Get("signature").String() != "sig-a" {
+		t.Fatalf("block 0 must reconstruct with its own signature: %s", encRes.Body)
+	}
+	if blocks[1].Get("type").String() != "thinking" || blocks[1].Get("thinking").String() != "second" || blocks[1].Get("signature").String() != "sig-b" {
+		t.Fatalf("block 1 must reconstruct with its OWN signature, not block 0's: %s", encRes.Body)
+	}
+	if blocks[2].Get("type").String() != "redacted_thinking" || blocks[2].Get("data").String() != "opaque-xyz" {
+		t.Fatalf("redacted block must re-emit as redacted_thinking with its data: %s", encRes.Body)
+	}
+}
+
+// TestCodec_EncodeRequest_reconstructsThinkingOnToolCallsTurn pins the
+// reconstruction on the assistant-with-tool_calls branch: the signed thinking
+// block must lead the content array, followed by the tool_use block.
+func TestCodec_EncodeRequest_reconstructsThinkingOnToolCallsTurn(t *testing.T) {
+	canon := []byte(`{
+		"model":"claude-opus-4-8",
+		"max_tokens":64,
+		"messages":[
+			{"role":"assistant","reasoning_content":"plan it","nexus_thinking":[{"thinking":"plan it","signature":"sig-t"}],
+			 "tool_calls":[{"id":"tu_1","type":"function","function":{"name":"search","arguments":"{\"q\":\"x\"}"}}]}
+		]
+	}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := gjson.GetBytes(encRes.Body, "messages.0.content").Array()
+	if len(blocks) < 2 {
+		t.Fatalf("thinking block must lead, tool_use follow: %s", encRes.Body)
+	}
+	if blocks[0].Get("type").String() != "thinking" || blocks[0].Get("signature").String() != "sig-t" {
+		t.Fatalf("signed thinking block must lead the tool_calls turn: %s", encRes.Body)
+	}
+	var sawToolUse bool
+	for _, b := range blocks {
+		if b.Get("type").String() == "tool_use" && b.Get("name").String() == "search" {
+			sawToolUse = true
+		}
+	}
+	if !sawToolUse {
+		t.Fatalf("tool_use block must follow the thinking block: %s", encRes.Body)
+	}
+}
+
+// TestCodec_EncodeRequest_crossFormatReasoning_unsignedBlock pins the
+// cross-format case: an upstream that emitted reasoning_content but no
+// signature (DeepSeek / OpenAI) yields an unsigned thinking block, which
+// Anthropic accepts on a request body it did not itself sign.
+func TestCodec_EncodeRequest_crossFormatReasoning_unsignedBlock(t *testing.T) {
+	canon := []byte(`{
+		"model":"claude-opus-4-8",
+		"max_tokens":64,
+		"messages":[{"role":"assistant","content":"done","reasoning_content":"thought about it"}]
+	}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := gjson.GetBytes(encRes.Body, "messages.0.content.0")
+	if first.Get("type").String() != "thinking" || first.Get("thinking").String() != "thought about it" {
+		t.Fatalf("cross-format reasoning must still reconstruct: %s", encRes.Body)
+	}
+	if first.Get("signature").Exists() {
+		t.Fatalf("no signature available → unsigned block: %s", encRes.Body)
 	}
 }

@@ -140,7 +140,7 @@ func encodeGeminiErrorEnvelope(pe *provcore.ProviderError) []byte {
 // values so OpenAI-style clients see something recognisable.
 func openaiErrorType(pe *provcore.ProviderError) string {
 	switch pe.Code {
-	case provcore.CodeInvalidRequest:
+	case provcore.CodeInvalidRequest, provcore.CodeContextOverflow:
 		return "invalid_request_error"
 	case provcore.CodeAuthFailed:
 		return "authentication_error"
@@ -165,7 +165,7 @@ func openaiErrorType(pe *provcore.ProviderError) string {
 // future divergence in OpenAI's SDK error enums lands in one place.
 func responsesAPIErrorType(pe *provcore.ProviderError) string {
 	switch pe.Code {
-	case provcore.CodeInvalidRequest:
+	case provcore.CodeInvalidRequest, provcore.CodeContextOverflow:
 		return "invalid_request_error"
 	case provcore.CodeAuthFailed:
 		return "authentication_error"
@@ -190,7 +190,7 @@ func responsesAPIErrorType(pe *provcore.ProviderError) string {
 // strings it would from api.anthropic.com.
 func anthropicErrorType(pe *provcore.ProviderError) string {
 	switch pe.Code {
-	case provcore.CodeInvalidRequest:
+	case provcore.CodeInvalidRequest, provcore.CodeContextOverflow:
 		return "invalid_request_error"
 	case provcore.CodeAuthFailed:
 		return "authentication_error"

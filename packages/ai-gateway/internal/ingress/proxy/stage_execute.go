@@ -91,9 +91,10 @@ func (st executeStage) run() bool {
 	if s.gatewayCacheStatus == audit.GatewayCacheMiss && s.cacheKey != "" && h.deps.BrokerRegistry != nil {
 		// canonicalMsgs feeds the broker-path L2 write-back —
 		// without this thread-through the broker leg silently
-		// skipped scheduleL2Write and L2 stayed empty.
+		// skipped scheduleL2Write and L2 stayed empty. Post-rewrite
+		// requests read the renormalized (redacted) canonical.
 		var brokerCanonMsgs []normcore.Message
-		if np := s.rctxFull.Normalized(); np != nil {
+		if np := s.cacheNormalized(); np != nil {
 			brokerCanonMsgs = np.Messages
 		}
 		h.runViaBroker(s.r, s.w, s.rec, s.routeResult, s.body, s.isStream, s.resolved, s.reqHookResult, s.cacheKey, s.cachePreparedBody, s.cachePreparedRewrites, s.cachePreparedURLOverride, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger, brokerCanonMsgs)

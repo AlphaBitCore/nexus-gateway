@@ -37,12 +37,12 @@ func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
 }
 
 // trafficEventRow builds a column set + value row matching scanOneTrafficEvent's
-// 89 destinations. Only the non-nullable scan targets carry values; everything
+// 93 destinations. Only the non-nullable scan targets carry values; everything
 // else is SQL NULL (nil) which the pointer / json.RawMessage / []string targets
 // accept. extra appends additional nil columns for GetTrafficEvent's payload
 // JOIN (request/response body + spill refs).
 func trafficEventRow(extra int) *pgxmock.Rows {
-	const n = 91
+	const n = 96
 	cols := make([]string, n+extra)
 	vals := make([]any, n+extra)
 	for i := range cols {
@@ -52,7 +52,7 @@ func trafficEventRow(extra int) *pgxmock.Rows {
 	vals[0] = "evt1"       // ID (string)
 	vals[1] = "ai-gateway" // Source (string)
 	vals[2] = tNow         // Timestamp (time.Time)
-	vals[68] = tNow        // CreatedAt (time.Time) — index +2 after request/response_hooks_us
+	vals[73] = tNow        // CreatedAt (time.Time) — index shifts +1 per new column (end_user_id/session_id + artifact_refs/compliance_coverage/endpoint_type inserted before created_at)
 	return pgxmock.NewRows(cols).AddRow(vals...)
 }
 
@@ -63,13 +63,13 @@ func trafficEventRow(extra int) *pgxmock.Rows {
 // routes and renders raw generic-http JSON. This pins that mapping.
 func TestGetTrafficEventForNormalize(t *testing.T) {
 	s, m := newMock(t)
-	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct", "req_spill", "resp_spill"}
+	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct", "req_spill", "resp_spill", "endpoint_type"}
 	reqSpill := []byte(`{"backend":"localfs","key":"req-k","sha256":"abc"}`)
 	m.ExpectQuery(`COALESCE\(a.ingress_format`).WithArgs("evt1").
 		WillReturnRows(pgxmock.NewRows(cols).AddRow(
 			"anthropic", "claude-opus-4-7", "/v1/messages",
 			[]byte(`{"contents":1}`), "", []byte(`{"content":[]}`), "",
-			"application/json", "application/json", reqSpill, nil))
+			"application/json", "application/json", reqSpill, nil, "chat"))
 
 	in, err := s.GetTrafficEventForNormalize(context.Background(), "evt1")
 	if err != nil {
@@ -126,6 +126,7 @@ func allFiltersParams() TrafficEventListParams {
 	return TrafficEventListParams{
 		DBSources: []string{"ai-gateway"}, Provider: "openai", EntityID: "e1", OrgID: "o1",
 		EntityType: "user", ProjectID: "p1", VirtualKeyID: "vk1", ModelUsed: "gpt", RequestID: "r1",
+		EndUserID: "eu1", SessionID: "sess1",
 		HookDecision: "allow", ResponseHookDecision: "allow", StatusCode: ip(200), CacheStatus: sp("HIT"),
 		TargetHost: "api.openai.com", Path: "/v1/chat", SourceProcess: "curl", BumpStatus: "bumped",
 		ComplianceTags: []string{"pii"}, APIKeyFingerprint: "fp", UsageExtractionStatus: "ok",
@@ -136,15 +137,120 @@ func allFiltersParams() TrafficEventListParams {
 
 func TestListTrafficEvents_AllFilters(t *testing.T) {
 	s, m := newMock(t)
-	// 25 where-args (every filter set, StatusCode wins over StatusRange,
-	// ExcludeInternal adds no placeholder); data query adds limit+offset → 27.
-	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE`).WithArgs(anyArgs(25)...).
+	// 27 where-args (every filter set, StatusCode wins over StatusRange,
+	// ExcludeInternal adds no placeholder); data query adds limit+offset → 29.
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE`).WithArgs(anyArgs(27)...).
 		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
-	m.ExpectQuery(`FROM traffic_event a\s+LEFT JOIN "Model"`).WithArgs(anyArgs(27)...).
+	m.ExpectQuery(`FROM traffic_event a\s+LEFT JOIN "Model"`).WithArgs(anyArgs(29)...).
 		WillReturnRows(trafficEventRow(0))
 	ev, total, err := s.ListTrafficEvents(context.Background(), allFiltersParams())
 	if err != nil || total != 1 || len(ev) != 1 || ev[0].ID != "evt1" {
 		t.Fatalf("ListTrafficEvents all-filters: %+v total=%d err=%v", ev, total, err)
+	}
+}
+
+// TestListTrafficEvents_CorrelationFilters pins the correlation-pivot
+// contract: filtering by endUserId / sessionId must emit exact-match
+// predicates on the indexed end_user_id / session_id columns, and the
+// stored tags must scan back onto the DTO so the drawer's Correlation
+// section can render them.
+func TestListTrafficEvents_CorrelationFilters(t *testing.T) {
+	s, m := newMock(t)
+	// Build a row with correlation values at their scan positions
+	// (18 trace_id, 19 external_request_id, 20 end_user_id, 21 session_id).
+	const n = 96
+	cols := make([]string, n)
+	vals := make([]any, n)
+	for i := range cols {
+		cols[i] = fmt.Sprintf("c%d", i)
+		vals[i] = nil
+	}
+	vals[0], vals[1], vals[2], vals[73] = "evt1", "ai-gateway", tNow, tNow
+	vals[20], vals[21] = sp("cust-42"), sp("conv-7")
+	row := pgxmock.NewRows(cols).AddRow(vals...)
+
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE .*a\.end_user_id = \$\d+ AND a\.session_id = \$\d+`).
+		WithArgs(pgxmock.AnyArg(), "cust-42", "conv-7").
+		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	m.ExpectQuery(`a\.end_user_id = \$\d+ AND a\.session_id = \$\d+.*ORDER BY a\.timestamp DESC`).
+		WithArgs(pgxmock.AnyArg(), "cust-42", "conv-7", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(row)
+
+	ev, total, err := s.ListTrafficEvents(context.Background(), TrafficEventListParams{
+		DBSources: []string{"ai-gateway"}, EndUserID: "cust-42", SessionID: "conv-7", Limit: 20,
+	})
+	if err != nil || total != 1 || len(ev) != 1 {
+		t.Fatalf("correlation filter list: %+v total=%d err=%v", ev, total, err)
+	}
+	if ev[0].EndUserID == nil || *ev[0].EndUserID != "cust-42" {
+		t.Errorf("EndUserID = %v, want cust-42 (must scan through for the drawer)", ev[0].EndUserID)
+	}
+	if ev[0].SessionID == nil || *ev[0].SessionID != "conv-7" {
+		t.Errorf("SessionID = %v, want conv-7 (must scan through for the drawer)", ev[0].SessionID)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+// TestListTrafficEvents_EndpointTypeFilter pins the modality filter: an
+// EndpointType param must emit an exact-match predicate on endpoint_type and
+// the row's modality must scan back onto the DTO for the list column.
+func TestListTrafficEvents_EndpointTypeFilter(t *testing.T) {
+	s, m := newMock(t)
+	const n = 96
+	cols := make([]string, n)
+	vals := make([]any, n)
+	for i := range cols {
+		cols[i] = fmt.Sprintf("c%d", i)
+		vals[i] = nil
+	}
+	// endpoint_type scans right after artifact_refs/compliance_coverage at
+	// SELECT index 47; created_at is at 73.
+	vals[0], vals[1], vals[2], vals[73] = "evt1", "ai-gateway", tNow, tNow
+	vals[47] = sp("image_generation")
+	row := pgxmock.NewRows(cols).AddRow(vals...)
+
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE .*a\.endpoint_type = \$\d+`).
+		WithArgs(pgxmock.AnyArg(), "image_generation").
+		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	m.ExpectQuery(`a\.endpoint_type = \$\d+.*ORDER BY a\.timestamp DESC`).
+		WithArgs(pgxmock.AnyArg(), "image_generation", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(row)
+
+	ev, total, err := s.ListTrafficEvents(context.Background(), TrafficEventListParams{
+		DBSources: []string{"ai-gateway"}, EndpointType: "image_generation", Limit: 20,
+	})
+	if err != nil || total != 1 || len(ev) != 1 {
+		t.Fatalf("endpoint-type filter list: %+v total=%d err=%v", ev, total, err)
+	}
+	if ev[0].EndpointType == nil || *ev[0].EndpointType != "image_generation" {
+		t.Errorf("EndpointType = %v, want image_generation (must scan through for the column)", ev[0].EndpointType)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+// TestListTrafficEvents_UnclassifiedErrorCodeSentinel pins the
+// error-governance drill-down contract for unclassified classes: the
+// __unclassified__ sentinel must emit an IS NULL / empty predicate (no bind
+// arg) instead of an exact match that can never hit NULL rows.
+func TestListTrafficEvents_UnclassifiedErrorCodeSentinel(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE .*\(a\.error_code IS NULL OR a\.error_code = ''\)`).
+		WithArgs(anyArgs(1)...).
+		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(0))
+	m.ExpectQuery(`a\.error_code IS NULL OR a\.error_code = ''`).
+		WithArgs(anyArgs(3)...).
+		WillReturnRows(trafficEventRow(0))
+	if _, _, err := s.ListTrafficEvents(context.Background(), TrafficEventListParams{
+		DBSources: []string{"ai-gateway"}, ErrorCode: ErrorCodeUnclassified, Limit: 20,
+	}); err != nil {
+		t.Fatalf("unclassified sentinel: %v", err)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
 	}
 }
 
@@ -176,7 +282,7 @@ func TestListTrafficEvents_Errors(t *testing.T) {
 	if _, _, err := s2.ListTrafficEvents(context.Background(), TrafficEventListParams{DBSources: []string{"agent"}}); err == nil {
 		t.Fatal("data error must surface")
 	}
-	// Scan error (1-col row vs 89 dests).
+	// Scan error (1-col row vs 93 dests).
 	s3, m3 := newMock(t)
 	m3.ExpectQuery(`SELECT COUNT`).WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
 	m3.ExpectQuery(`FROM traffic_event a`).WithArgs(anyArgs(3)...).WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("x"))

@@ -1,6 +1,9 @@
 // Package store provides read-only database access for the AI gateway.
-// Dashboard Backend owns all writes; the proxy only reads. All queries use
-// hand-written SQL with pgx (no ORM, no sqlc per V2 convention).
+// Dashboard Backend owns all writes; the proxy only reads — with ONE named
+// exception: the asyncjob subpackage writes the gateway-owned
+// gateway_async_job correlation table (async submits need read-your-write;
+// see that package's doc). All queries use hand-written SQL with pgx (no
+// ORM, no sqlc per V2 convention).
 package store
 
 import (

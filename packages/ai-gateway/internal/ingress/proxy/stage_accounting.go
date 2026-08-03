@@ -16,6 +16,13 @@ import (
 // ServeProxy immediately after the state is built, so it covers every
 // stage's exit path.
 func (s *proxyState) finalizeAudit() {
+	// Return the per-VK generative concurrency slot (nil for non-generative or
+	// uncapped kinds). This defer covers every pipeline exit — success, error,
+	// panic-unwind — so an expensive generative slot is never leaked.
+	if s.releaseGenerativeCap != nil {
+		s.releaseGenerativeCap()
+		s.releaseGenerativeCap = nil
+	}
 	// Return the uncaptured request-body buffer to its pool. Safe here: every
 	// reader of s.body (upstream forward, hooks, lazy normalize via the
 	// respond stage) completed before this defer runs, and the record never

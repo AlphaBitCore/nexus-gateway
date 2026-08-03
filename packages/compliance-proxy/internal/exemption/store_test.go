@@ -215,9 +215,7 @@ func TestStore_Expiry_Cleanup(t *testing.T) {
 	cancel()
 
 	// Store should have purged the expired entry.
-	s.mu.RLock()
-	count := len(s.items)
-	s.mu.RUnlock()
+	count := len(s.load().items)
 	if count != 0 {
 		t.Fatalf("items count = %d after cleanup, want 0", count)
 	}
@@ -361,16 +359,14 @@ func TestRebuild_DropsUnparseableEffectiveFromKeepsEntry(t *testing.T) {
 // surface.
 func TestSnapshot_SkipsExpiredEntries(t *testing.T) {
 	s := NewStore(testLogger())
-	// Bypass Rebuild's drop-past-expiry filter by writing into items
+	// Bypass Rebuild's drop-past-expiry filter by publishing a snapshot
 	// directly — we want an expired item to exist at Snapshot time.
-	s.mu.Lock()
-	s.items["expired-1"] = &Exemption{
+	s.current.Store(&snapshot{items: []*Exemption{{
 		ID:         "expired-1",
 		SourceIP:   "10.0.0.1",
 		TargetHost: "api.example.com",
 		ExpiresAt:  time.Now().Add(-1 * time.Hour),
-	}
-	s.mu.Unlock()
+	}}})
 
 	snap := s.Snapshot()
 	if len(snap.Entries) != 0 {

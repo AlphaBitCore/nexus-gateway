@@ -1,9 +1,11 @@
 package wirerewrite
 
 import (
-	"github.com/goccy/go-json"
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // --- NormalizeKey (L0) ---
@@ -66,35 +68,38 @@ func TestNormalizeKey_CchStrip_TwoRequests_SameKey(t *testing.T) {
 
 // --- NormalizeUpstream (L3) ---
 
-func TestNormalizeUpstream_GlobalSwitchOff(t *testing.T) {
-	// AC2: when normaliser_enabled=false, NormalizeUpstream returns original unchanged.
-	enabled := true
-	cfg := Config{
-		NormaliserEnabled: false,
-		Rules: map[string]map[string]RuleOverride{
-			"anthropic": {
-				RuleAnthropicCchStrip: {Enabled: &enabled},
-			},
-		},
-	}
+func TestNormalizeUpstream_NoDemand_BodyByteIdentical(t *testing.T) {
+	// hasWork=false: no strip rule enabled (bundled rules ship disabled) and no
+	// Provider with marker injection. The upstream rewrite must be a true no-op:
+	// the body is forwarded byte-identical and the Result is zero-valued.
 	eng := New(nil)
-	eng.Reload(cfg)
+	eng.Reload(Config{})
 
-	body := []byte(`{"system":[{"type":"text","text":"test cch=aabbcc; end"}]}`)
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "", body)
-	if string(out) != string(body) {
-		t.Fatal("expected original body when global switch off")
+	// Body carries BOTH a strip target (cch=) and an inject target (system block),
+	// so a spurious run would be visible in the bytes.
+	body := []byte(`{"system":[{"type":"text","text":"test cch=aabbcc; end"}],"messages":[{"role":"user","content":"hi"}]}`)
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, "prov-1", body)
+
+	if !bytes.Equal(out, body) {
+		t.Fatalf("no demand: body must be byte-identical\n want: %s\n got:  %s", body, out)
 	}
-	if result.StripCount != 0 {
-		t.Fatalf("expected StripCount=0 when switch off, got %d", result.StripCount)
+	if result.StripCount != 0 || result.StripBytes != 0 {
+		t.Fatalf("no demand: want zero strips, got count=%d bytes=%d", result.StripCount, result.StripBytes)
+	}
+	if result.MarkersInjected != 0 {
+		t.Fatalf("no demand: want 0 markers injected, got %d", result.MarkersInjected)
+	}
+	if result.DryRun || len(result.TransformSpans) != 0 {
+		t.Fatalf("no demand: want zero Result, got %+v", result)
 	}
 }
 
-func TestNormalizeUpstream_CchStrip_Enabled(t *testing.T) {
-	// AC3: when global switch ON and cch= rule enabled, token is removed upstream.
+func TestNormalizeUpstream_EnabledRuleAloneIsTheDemand(t *testing.T) {
+	// A single operator-enabled strip rule is the ONLY input — no global flag
+	// exists any more. Enabling the rule must be sufficient to make the engine
+	// run and actually strip the cch= nonce from the upstream-bound body.
 	enabled := true
 	cfg := Config{
-		NormaliserEnabled: true,
 		Rules: map[string]map[string]RuleOverride{
 			"anthropic": {
 				RuleAnthropicCchStrip: {Enabled: &enabled},
@@ -114,6 +119,74 @@ func TestNormalizeUpstream_CchStrip_Enabled(t *testing.T) {
 	}
 	if result.StripBytes == 0 {
 		t.Fatal("expected StripBytes>0")
+	}
+}
+
+func TestNormalizeUpstream_ProviderInjectAloneIsTheDemand(t *testing.T) {
+	// Footgun regression guard: a Provider with cache_control marker injection
+	// ON and NO strip rule enabled anywhere. Injection must still happen —
+	// under the retired design the (default-off) global normaliser switch
+	// silently suppressed marker injection for exactly this configuration,
+	// so the operator turned caching "on" and got nothing.
+	cfg := Config{
+		Providers: map[string]ProviderCacheConfig{
+			"prov-1": {CacheMarkerInjectEnabled: true},
+		},
+		// Rules deliberately empty: bundled strip rules stay at their
+		// EnabledByDefault=false, so upstreamRules is empty.
+	}
+	eng := New(nil)
+	eng.Reload(cfg)
+
+	if resolved := eng.compiled.Load(); len(resolved.upstreamRules) != 0 {
+		t.Fatalf("precondition: no strip rule may be enabled, got %v", resolved.upstreamRules)
+	}
+
+	body := []byte(`{"model":"claude-opus-4","system":[{"type":"text","text":"big system prompt"}],"messages":[{"role":"user","content":"hi"}]}`)
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, "prov-1", body)
+
+	if result.MarkersInjected == 0 {
+		t.Fatalf("marker inject alone must satisfy the demand gate; got 0 markers, body=%s", out)
+	}
+	if !strings.Contains(string(out), `"cache_control"`) {
+		t.Fatalf("expected cache_control injected into upstream body, got %s", out)
+	}
+	if result.StripCount != 0 {
+		t.Fatalf("no strip rule enabled: want StripCount=0, got %d", result.StripCount)
+	}
+}
+
+func TestNormalizeKey_RunsRegardlessOfUpstreamDemandGate(t *testing.T) {
+	// L0 cache-key normalisation is independent of the upstream-rewrite gate:
+	// NormalizeKey never consults hasWork. A refactor that folded the gate into
+	// NormalizeKey would silently destabilise cache keys (every Claude Code
+	// session's rotating cch= nonce would become part of the key → 0% hit rate).
+	// Construct the snapshot directly: a key-safe strip rule present, but the
+	// demand gate OFF.
+	eng := New(nil)
+	rule := bundledRules()[0] // claude-code-cch-strip, KeyNormalizeSafe=true
+	rule.Enabled = true
+	eng.compiled.Store(&resolvedConfig{
+		hasWork: false,
+		keyRules: map[AdapterType][]ruleEntry{
+			AdapterAnthropic: {{rule: rule, breaker: newCircuitBreaker()}},
+		},
+		upstreamRules:         map[AdapterType][]ruleEntry{},
+		providerInjectEnabled: map[string]bool{},
+		providerBoundary3:     map[string]bool{},
+	})
+
+	body := []byte(`{"system":[{"type":"text","text":"prompt cch=deadbeef; end"}]}`)
+
+	keyBody := eng.NormalizeKey(AdapterAnthropic, body)
+	if strings.Contains(string(keyBody), "cch=") {
+		t.Fatalf("NormalizeKey must strip the cch= nonce even when hasWork=false, got %s", keyBody)
+	}
+
+	// ...while NormalizeUpstream, which DOES consult the gate, stays a no-op.
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, "", body)
+	if !bytes.Equal(out, body) || result.StripCount != 0 {
+		t.Fatalf("NormalizeUpstream must no-op when hasWork=false; got %s (strip=%d)", out, result.StripCount)
 	}
 }
 
@@ -164,7 +237,7 @@ func TestNormalizeUpstream_PanicFailsOpen(t *testing.T) {
 	}
 	// Manually inject a panic-inducing run function.
 	resolved := &resolvedConfig{
-		enabled: true,
+		hasWork: true,
 		upstreamRules: map[AdapterType][]ruleEntry{
 			AdapterOpenAI: {panicEntry},
 		},
@@ -391,9 +464,11 @@ func TestInjectCacheMarkers_Boundary3Respected(t *testing.T) {
 }
 
 func TestNormalizeUpstream_L4_Inject_PerProvider(t *testing.T) {
-	// L4 injection triggers when provider is configured.
+	// L4 injection triggers when provider is configured — and ONLY for that
+	// provider. The demand gate is satisfied fleet-wide by prov-1's inject
+	// setting, so a non-injecting provider on the same engine must still come
+	// through clean (the gate is not a per-provider licence to inject).
 	cfg := Config{
-		NormaliserEnabled: true,
 		Providers: map[string]ProviderCacheConfig{
 			"prov-1": {CacheMarkerInjectEnabled: true},
 		},
@@ -422,37 +497,35 @@ func TestNormalizeUpstream_L4_Inject_PerProvider(t *testing.T) {
 	}
 }
 
-// TestNormalizeUpstream_RuntimeToggle_HotReload proves the global normaliser_enabled
-// switch takes effect at RUNTIME on a live engine — a second and third Reload on the
-// SAME engine re-apply the changed value without recreating it. This is the regression
-// guard for the "toggling normaliser_enabled requires a gateway restart" bug: it would
-// fail if NormalizeUpstream captured the flag once instead of reading the atomic
-// compiled snapshot on every call.
+// TestNormalizeUpstream_RuntimeToggle_HotReload proves an operator's rule toggle
+// takes effect at RUNTIME on a live engine — a second and third Reload on the SAME
+// engine re-apply the changed value without recreating it. Regression guard for
+// "toggling the rule requires a gateway restart": it would fail if NormalizeUpstream
+// captured the demand gate / rule set once instead of reading the atomic compiled
+// snapshot on every call.
 func TestNormalizeUpstream_RuntimeToggle_HotReload(t *testing.T) {
-	enabled := true
-	withSwitch := func(on bool) Config {
+	withRule := func(on bool) Config {
 		return Config{
-			NormaliserEnabled: on,
 			Rules: map[string]map[string]RuleOverride{
-				"anthropic": {RuleAnthropicCchStrip: {Enabled: &enabled}},
+				"anthropic": {RuleAnthropicCchStrip: {Enabled: &on}},
 			},
 		}
 	}
 	body := []byte(`{"system":[{"type":"text","text":"prompt cch=deadbeef; end"}]}`)
 	eng := New(nil)
 
-	// Start OFF: body passes through unchanged.
-	eng.Reload(withSwitch(false))
+	// Start OFF: no demand, body passes through unchanged.
+	eng.Reload(withRule(false))
 	if out, _ := eng.NormalizeUpstream(AdapterAnthropic, "", body); string(out) != string(body) {
-		t.Fatal("switch OFF: expected original body")
+		t.Fatal("rule OFF: expected original body")
 	}
 	// Hot-enable: the SAME engine must now strip, no restart.
-	eng.Reload(withSwitch(true))
+	eng.Reload(withRule(true))
 	if out, r := eng.NormalizeUpstream(AdapterAnthropic, "", body); strings.Contains(string(out), "cch=") || r.StripCount == 0 {
 		t.Fatalf("hot-enable: expected cch= stripped after runtime Reload(true), got %s (strip=%d)", out, r.StripCount)
 	}
 	// Hot-disable: flip back OFF at runtime, pass-through restored.
-	eng.Reload(withSwitch(false))
+	eng.Reload(withRule(false))
 	if out, r := eng.NormalizeUpstream(AdapterAnthropic, "", body); string(out) != string(body) || r.StripCount != 0 {
 		t.Fatalf("hot-disable: expected original body after runtime Reload(false), got %s (strip=%d)", out, r.StripCount)
 	}

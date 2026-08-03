@@ -25,7 +25,6 @@ type rawConfig struct {
 	FailBehavior        string `json:"fail_behavior,omitempty"`
 	CaptureRequestBody  *bool  `json:"capture_request_body,omitempty"`
 	CaptureResponseBody *bool  `json:"capture_response_body,omitempty"`
-	RawSpillEnabled     *bool  `json:"raw_body_spill_enabled,omitempty"`
 }
 
 // LoadGlobalDefault reads SystemMetadataKey from the system_metadata
@@ -95,16 +94,13 @@ func DecodeGlobalPolicy(raw json.RawMessage) (Policy, error) {
 	if cfg.CaptureResponseBody != nil {
 		out.CaptureResponseBody = *cfg.CaptureResponseBody
 	}
-	if cfg.RawSpillEnabled != nil {
-		out.RawSpillEnabled = *cfg.RawSpillEnabled
-	}
 	if !out.IsValid() {
 		return DefaultPolicy(), fmt.Errorf("policy.DecodeGlobalPolicy: row %q is invalid: %+v", SystemMetadataKey, out)
 	}
 	return out, nil
 }
 
-// OverrideFromColumns assembles an Override from the eight nullable
+// OverrideFromColumns assembles an Override from the seven nullable
 // per-resource columns. Values that fail validation (mode not one of
 // the three enum literals, FailBehavior similar) are dropped silently
 // so a single bad row cannot poison every host's policy — the resolver
@@ -117,7 +113,6 @@ func OverrideFromColumns(
 	failBehavior *string,
 	captureRequestBody *bool,
 	captureResponseBody *bool,
-	rawSpillEnabled *bool,
 ) *Override {
 	o := &Override{}
 	any := false
@@ -160,11 +155,6 @@ func OverrideFromColumns(
 	if captureResponseBody != nil {
 		v := *captureResponseBody
 		o.CaptureResponseBody = &v
-		any = true
-	}
-	if rawSpillEnabled != nil {
-		v := *rawSpillEnabled
-		o.RawSpillEnabled = &v
 		any = true
 	}
 	if !any {

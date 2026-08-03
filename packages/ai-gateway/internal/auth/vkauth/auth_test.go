@@ -353,7 +353,7 @@ func TestExtractVKToken_BearerWithOnlySpaces(t *testing.T) {
 
 func TestExtractVKToken_TrimsHeaderWhitespace(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	r.Header.Set("x-nexus-virtual-key", "  nvk_padded  ")
+	r.Header.Set("X-Nexus-Virtual-Key", "  nvk_padded  ")
 	if got := extractVKToken(context.Background(), r); got != "nvk_padded" {
 		t.Errorf("got %q, want nvk_padded", got)
 	}

@@ -160,7 +160,7 @@ func TestUpdateVirtualKey_HubNotifyFailure502(t *testing.T) {
 		WithArgs(anyN(10)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "new", strPtr("u-other"))...))
 
-	body := `{"enabled":false,"allowedModels":["m-2"]}`
+	body := `{"enabled":false,"allowedModels":[{"providerId":"p","modelId":"m-2"}]}`
 	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")
@@ -214,7 +214,7 @@ func TestUpdateUserVirtualKey_HubNotifyFailure502(t *testing.T) {
 		WithArgs(anyN(10)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "new", strPtr("admin-1"))...))
 
-	body := `{"enabled":false,"allowedModels":["m-x"]}`
+	body := `{"enabled":false,"allowedModels":[{"providerId":"p","modelId":"m-x"}]}`
 	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")

@@ -44,6 +44,8 @@ func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 		// Fall through to chat logic below.
 	case typology.WireShapeCohereEmbed:
 		return canonicalToCohereEmbed(canonicalBody, target)
+	case typology.WireShapeCohereRerank:
+		return encodeCohereRerank(canonicalBody, target)
 	default:
 		return provcore.EncodeResult{}, fmt.Errorf("cohere: unsupported endpoint %q", endpoint)
 	}
@@ -74,6 +76,9 @@ func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint == typology.WireShapeCohereEmbed {
 		return cohereEmbedResponseToCanonical(nativeBody, reqCtx.RequestBody)
+	}
+	if endpoint == typology.WireShapeCohereRerank {
+		return decodeCohereRerankResponse(nativeBody)
 	}
 	if endpoint != typology.WireShapeCohereChat {
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil

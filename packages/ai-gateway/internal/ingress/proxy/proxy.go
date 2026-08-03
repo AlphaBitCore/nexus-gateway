@@ -5,7 +5,6 @@
 package proxy
 
 import (
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -22,9 +21,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store/asyncjob"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/generativecaps"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
@@ -55,12 +57,26 @@ func NewUpstreamClient() *http.Client {
 
 // Deps holds all injected dependencies for the proxy handler.
 type Deps struct {
-	Models          ModelLookup               // was accessed via DB.GetModel etc.
-	VKAuth          VKAuthenticator           // was *vkauth.Authenticator
-	RateLimiter     RateLimiter               // was *ratelimit.Limiter
-	CredManager     CredentialLookup          // was *credentials.Manager — used by models handler
-	Router          RouteResolver             // typically *routingcore.Resolver
-	Executor        executor.API              // upstream dispatch with retry/credential/health; production wires *executor.TargetExecutor
+	Models      ModelLookup      // was accessed via DB.GetModel etc.
+	VKAuth      VKAuthenticator  // was *vkauth.Authenticator
+	RateLimiter RateLimiter      // was *ratelimit.Limiter
+	CredManager CredentialLookup // was *credentials.Manager — used by models handler
+	Router      RouteResolver    // typically *routingcore.Resolver
+	Executor    executor.API     // upstream dispatch with retry/credential/health; production wires *executor.TargetExecutor
+	// Resolver turns a (providerID, modelID) pair into a fully-resolved
+	// [provcore.CallTarget] (BaseURL + decrypted key + Format + provider
+	// model id). It is the SAME resolver instance the executor holds — the
+	// STT streaming-proxy path (ServeSTT) resolves its single upstream target
+	// through it directly rather than the byte-slice executor, whose
+	// retry-by-re-read loop cannot serve a one-shot io.Reader audio body.
+	// Nil disables STT target resolution (the route degrades to a 502).
+	Resolver provtarget.Resolver
+	// AsyncJobs is the gateway-owned async-job correlation store the
+	// ServeVideo* handler family writes at submit and reads on every
+	// poll/content/delete (authz binding + credential pin + render bound).
+	// Nil = no database: every video route serves 503
+	// VIDEO_STORE_UNAVAILABLE (the correlation guarantee cannot be honored).
+	AsyncJobs       asyncjob.Store
 	HookConfigCache *pipeline.HookConfigCache // shared hook config cache
 	ProviderReg     *provcore.Registry        // adapter-based provider registry
 	HealthTracker   *store.HealthTracker      // stays concrete — used by background flush
@@ -213,14 +229,20 @@ type Handler struct {
 	// overload degrades into fast retryable 429s instead of unbounded in-heap
 	// queueing toward the GOMEMLIMIT collapse.
 	gate *admissionGate
+	// genConcurrency bounds simultaneous in-flight generative requests per
+	// (endpoint-kind, VK) — the per-VK concurrency cap the global gate lacks,
+	// closing the expensive-generative billing-DoS surface (e88 NFR-4). Never
+	// touched by non-generative traffic.
+	genConcurrency *generativecaps.VKConcurrency
 }
 
 // NewHandler creates a Handler with the given dependencies.
 func NewHandler(deps *Deps) *Handler {
 	return &Handler{
-		deps:          deps,
-		lazyCanonical: os.Getenv("NEXUS_LAZY_CANONICAL") != "0",
-		gate:          newAdmissionGate(),
+		deps:           deps,
+		lazyCanonical:  os.Getenv("NEXUS_LAZY_CANONICAL") != "0",
+		gate:           newAdmissionGate(),
+		genConcurrency: generativecaps.NewVKConcurrency(),
 	}
 }
 
@@ -251,10 +273,6 @@ func (h *Handler) streamCaptureHardCap() int64 {
 // Ingress; downstream pipeline stages read it from the request
 // context via [IngressFromContext].
 //
-// `x-nexus-aigw-body-format` is honoured as an explicit override only when
-// the route's ingress is the OpenAI-compat family; on native routes
-// the path is authoritative.
-//
 // The handler drives the request through an explicit stage chain — one
 // type per stage, each in its stage_<name>.go file: admission (VK auth,
 // rate limit, body read, canonical request context) → routing (target
@@ -278,10 +296,7 @@ func (h *Handler) ServeProxy(in Ingress) http.HandlerFunc {
 			}
 			defer h.gate.release()
 		}
-		s, ok := h.newProxyState(in, w, r)
-		if !ok {
-			return // invalid body-format override; 400 already written
-		}
+		s := h.newProxyState(in, w, r)
 		// Centralized audit + latency via defer, covering every stage exit.
 		defer s.finalizeAudit()
 		for _, stage := range []proxyStage{
@@ -346,61 +361,4 @@ func buildProviderRequest(r *http.Request, in Ingress, body []byte, isStream boo
 		Stream:           isStream,
 		MaxResponseBytes: maxResp,
 	}
-}
-
-// parseRulePolicy unmarshals a routing rule's stored retryPolicy JSON
-// into a *cfgpolicy.RetryPolicy. Returns nil for empty/null/invalid
-// JSON; an unparseable value is logged but does not fail the request —
-// the rule simply inherits the YAML default.
-func (h *Handler) parseRulePolicy(raw json.RawMessage) *cfgpolicy.RetryPolicy {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var p cfgpolicy.RetryPolicy
-	if err := json.Unmarshal(raw, &p); err != nil {
-		if h != nil && h.deps != nil && h.deps.Logger != nil {
-			h.deps.Logger.Warn("routing rule retryPolicy JSON unparseable; falling back to YAML default",
-				slog.String("error", err.Error()),
-				slog.String("raw", string(raw)),
-			)
-		}
-		return nil
-	}
-	return &p
-}
-
-// effectiveRetryPolicy returns the policy the executor should honor for
-// this request: the YAML default field-merged with the matched rule's
-// per-rule override (if any). When the deps are missing a default
-// (e.g. tests that did not wire RoutingDefaultPolicy), this falls back
-// to cfgpolicy.DefaultRetryPolicy() so the executor never runs with a
-// zero-valued policy (which would clamp MaxAttemptsPerTarget to 1 with
-// nil RetryOn — "retry everything once" — instead of the documented
-// platform defaults).
-func (h *Handler) effectiveRetryPolicy(raw json.RawMessage, logger *slog.Logger) cfgpolicy.RetryPolicy {
-	base := cfgpolicy.DefaultRetryPolicy()
-	if h != nil && h.deps != nil {
-		// Treat an all-zero RoutingDefaultPolicy as "not wired" — main.go
-		// always populates it from cfg.Routing.DefaultRetryPolicy, which
-		// the config loader merges against DefaultRetryPolicy() so a
-		// real deployment always carries non-zero fields.
-		dp := h.deps.RoutingDefaultPolicy
-		if dp.MaxAttemptsPerTarget != 0 || dp.RetryOn != nil ||
-			dp.BackoffInitial != 0 || dp.BackoffMax != 0 || dp.BackoffJitter != 0 {
-			base = dp
-		}
-	}
-	rule := h.parseRulePolicy(raw)
-	policy := base.MergedWith(rule)
-	policy.MaxAttemptsPerTarget = cfgpolicy.ClampMaxAttempts(policy.MaxAttemptsPerTarget)
-	if logger != nil && rule != nil {
-		logger.Debug("retry policy merged",
-			slog.Int("maxAttemptsPerTarget", policy.MaxAttemptsPerTarget),
-			slog.Any("retryOn", policy.RetryOn),
-			slog.Duration("backoffInitial", policy.BackoffInitial),
-			slog.Duration("backoffMax", policy.BackoffMax),
-			slog.Float64("backoffJitter", policy.BackoffJitter),
-		)
-	}
-	return policy
 }

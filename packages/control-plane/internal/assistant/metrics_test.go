@@ -18,6 +18,8 @@ import (
 
 	cpmetrics "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/metrics"
 	metricsreg "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // freshMetrics rebinds the package-level assistant instruments onto a brand-new
@@ -92,7 +94,7 @@ func TestMetrics_NavigateTurnIncrementsTurnToolNav(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	driveTurn(t, h, "user-1", `{"message":"show me cost"}`)
 
 	if v := counterVal(t, reg, "nexus_assistant_turns_total", map[string]string{"result": "ok"}); v != 1 {
@@ -134,7 +136,7 @@ func TestMetrics_UnknownToolClampsLabel(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	driveTurn(t, h, "user-1", `{"message":"call a fake tool"}`)
 
 	if v := counterVal(t, reg, "nexus_assistant_tool_invocations_total", map[string]string{"tool": "unknown", "result": "error"}); v != 1 {

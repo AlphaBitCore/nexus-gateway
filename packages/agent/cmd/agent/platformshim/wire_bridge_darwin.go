@@ -20,6 +20,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/darwin"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	localfsspill "github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/localfs"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillsweep"
@@ -55,6 +56,11 @@ type DarwinBridgeArgs struct {
 	// per-request signing cost. Wired by cmd_run.go once enrollment confirms
 	// an Ed25519 cert is on disk.
 	AttestationSigner *attestation.Signer
+	// AuditLossMode is the raw cfg string for the audit-overflow policy
+	// (shared/audit/lossmode: spillblock | block | spill | drop). Empty resolves to the
+	// shared no-loss default; the agent ships "spill" because a no-loss mode must block
+	// until the record is durable and the agent may never stall the host path.
+	AuditLossMode string
 }
 
 // WireDarwinBackpressure threads the audit-queue backpressure store into
@@ -102,6 +108,12 @@ func WireDarwinBridge(ctx context.Context, plat api.Platform, args DarwinBridgeA
 		upstreamOpts.RequestInjector = args.AttestationSigner.InjectInto
 		logger.Info("attestation: request injector installed on UpstreamTransport")
 	}
+	// The ONE audit writer this process's inspect path uses — see
+	// wiring.NewBridgeAuditWriter for why building one per flow was a leak on the
+	// user's own machine. Closed via the returned Closer so events still batched in
+	// its channel at shutdown reach SQLite instead of vanishing.
+	var auditWriter sharedaudit.Writer
+
 	upstreamTransport, upErr := tlsbump.NewUpstreamTransportWith(100, 90*time.Second, 10*time.Second, upstreamOpts)
 	if upErr != nil {
 		logger.Warn("bridge: tlsbump.NewUpstreamTransportWith failed; raw-relay path stays active", "error", upErr)
@@ -124,6 +136,8 @@ func WireDarwinBridge(ctx context.Context, plat api.Platform, args DarwinBridgeA
 			}, logger)
 		}
 
+		auditWriter = wiring.NewBridgeAuditWriter(args.AuditQueue, args.AuditLossMode, logger)
+
 		bridgeDeps := &agentproxy.BridgeDeps{
 			Logger:              logger,
 			TLSEngine:           dwn.TLSEngine(),
@@ -134,7 +148,7 @@ func WireDarwinBridge(ctx context.Context, plat api.Platform, args DarwinBridgeA
 			NormalizeRegistry:   args.NormalizeRegistry,
 			PayloadCaptureStore: args.PayloadCaptureStore,
 			SpillStore:          spill,
-			AuditQueue:          args.AuditQueue,
+			AuditWriter:         auditWriter,
 			StreamingPolicy:     args.StreamingPolicyStore,
 			PerHookTimeout:      5 * time.Second,
 			TotalTimeout:        30 * time.Second,
@@ -150,10 +164,41 @@ func WireDarwinBridge(ctx context.Context, plat api.Platform, args DarwinBridgeA
 	br, brErr := dwn.StartBridge(ctx, args.BridgeAddr)
 	if brErr != nil {
 		logger.Warn("bridge: StartBridge failed; bridge will fail-open to Swift raw-relay", "error", brErr)
+		// No accept loop means no flow will ever reach the writer built above —
+		// close it here rather than leave its goroutines running for the process's life.
+		closeAuditWriter(auditWriter)
 		return nil
 	}
 	if br != nil {
 		logger.Info("bridge: macOS NE inspect flows accept loop running", "addr", args.BridgeAddr)
 	}
-	return br
+	return &bridgeCloser{bridge: br, auditWriter: auditWriter}
+}
+
+// bridgeCloser shuts the NE accept loop AND drains the inspect path's audit
+// writer. Both matter at shutdown and for different reasons: the listener frees
+// the socket, the writer commits whatever is still batched in its channel — an
+// audit row that never reached SQLite is a lost row, not a slow one.
+type bridgeCloser struct {
+	bridge      io.Closer
+	auditWriter sharedaudit.Writer
+}
+
+func (c *bridgeCloser) Close() error {
+	closeAuditWriter(c.auditWriter)
+	if c.bridge != nil {
+		return c.bridge.Close()
+	}
+	return nil
+}
+
+// closeAuditWriter drains a writer on a bounded context. Shutdown must not hang
+// on a SQLite commit — the agent's never-stall-the-host rule outlives the flows.
+func closeAuditWriter(w sharedaudit.Writer) {
+	if w == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = w.Close(ctx)
 }

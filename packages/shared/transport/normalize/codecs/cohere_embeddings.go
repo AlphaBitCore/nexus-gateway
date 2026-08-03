@@ -84,7 +84,7 @@ type cohereEmbeddingsRequest struct {
 
 func (n *CohereEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req cohereEmbeddingsRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroEmbeddingPayload("cohere-embeddings", meta), fmt.Errorf("cohere-embeddings: request unmarshal: %w", err)
 	}
 	if len(req.Texts) == 0 {
@@ -118,7 +118,7 @@ type cohereEmbedMeta struct {
 
 func (n *CohereEmbeddingsNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp cohereEmbeddingsResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroEmbeddingPayload("cohere-embeddings", meta), fmt.Errorf("cohere-embeddings: response unmarshal: %w", err)
 	}
 	// Cohere embed response must have either embeddings field or meta — check

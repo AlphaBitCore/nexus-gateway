@@ -41,7 +41,7 @@ func newCapFixture() *capFixture {
 		narrowingEngine: &matcher.NarrowingEngine{},
 		capCache:        capCache,
 	}
-	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil)
+	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 	return &capFixture{store: fs, registry: reg, resolver: resolver, capCache: capCache}
 }
 
@@ -420,7 +420,7 @@ func TestCapabilityPreFilter_DisabledWhenNilCache(t *testing.T) {
 		narrowingEngine: &matcher.NarrowingEngine{},
 		capCache:        nil, // disabled
 	}
-	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil)
+	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 
 	fs.providers["openai"] = &store.Provider{
 		ID:          "openai",

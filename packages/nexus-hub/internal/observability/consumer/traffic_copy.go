@@ -93,8 +93,13 @@ var trafficEventColumns = []string{
 	"gateway_cache_l2_entry_key",
 	"endpoint_type",
 	"ingress_format",
-	// Microsecond hook aggregates (appended last; siblings of *_hooks_ms).
+	// Microsecond hook aggregates (siblings of *_hooks_ms).
 	"request_hooks_us", "response_hooks_us",
+	// Multimodal audit stamps: JSON artifact reference array + request-time
+	// compliance-coverage enum; NULL for non-multimodal traffic.
+	"artifact_refs", "compliance_coverage",
+	// Caller-declared correlation tags (appended last); NULL when absent.
+	"end_user_id", "session_id",
 }
 
 // trafficEventRowValues returns the column values for one traffic_event row in
@@ -177,6 +182,8 @@ func appendTrafficEventRow(dst []any, e TrafficEventMessage) []any {
 		stripNul(e.EndpointType),
 		stripNul(e.IngressFormat),
 		e.RequestHooksUs, e.ResponseHooksUs,
+		stripNulPtr(e.ArtifactRefs), stripNulPtr(e.ComplianceCoverage),
+		stripNulPtr(e.EndUserID), stripNulPtr(e.SessionID),
 	)
 }
 

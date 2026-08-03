@@ -159,6 +159,30 @@ func (r *Resolved) Request(formatSlug string) map[string]struct{} {
 	return emptySet
 }
 
+// AllRequestHeaders returns the union of every format's request-side
+// allowlist, sorted, lower-cased. This is the "headers a client may need to
+// send for SOME ingress" view that the CORS request allowlist is built from:
+// preflight happens before format dispatch, so the browser-facing answer has
+// to be the union — a per-format subset would reject at preflight a header
+// the matching adapter would happily forward.
+func (r *Resolved) AllRequestHeaders() []string {
+	if r == nil {
+		return nil
+	}
+	set := map[string]struct{}{}
+	for _, names := range r.request {
+		for n := range names {
+			set[n] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Response returns the effective response sets for a Format slug.
 func (r *Resolved) Response(formatSlug string) ResolvedResponseSet {
 	if r == nil {

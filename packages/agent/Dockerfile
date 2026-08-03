@@ -13,7 +13,7 @@
 # The runtime image carries iptables/nftables because the Linux agent intercepts
 # via netfilter redirect (see agent-linux-platform-architecture.md); `run`
 # therefore needs NET_ADMIN. `enroll` only needs HTTP to the Hub.
-FROM golang:1.25-bookworm AS build
+FROM golang:1.26.5-bookworm AS build
 WORKDIR /src
 COPY packages/shared/ packages/shared/
 COPY packages/agent/ packages/agent/
@@ -28,6 +28,18 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/nexus-agent /usr/local/bin/nexus-agent
 COPY packages/agent/agent.dev.yaml /etc/nexus-agent/agent.yaml
+# agent.dev.yaml keeps its cert paths inside the working tree on purpose — that is a
+# macOS-workstation convenience so parallel branches don't fight over
+# /Library/Application Support. Two of the three are created by `enroll`, so they
+# work anywhere. caCertFile is READ, never written: baked as-is the daemon dies at
+# boot with `hubhttp: read CA file ".nexus-agent/gateway-ca.pem": no such file or
+# directory`, which made every container built from this image unable to `run`.
+#
+# Blanked here rather than repointed, because a pin to a path nothing provisions is
+# a boot failure and not security. The image installs ca-certificates, so an empty
+# value means "use the system trust store"; a deployment that needs a private Hub CA
+# mounts one and sets the key, which is what "overridable in CI" below is for.
+RUN sed -i 's|^caCertFile:.*|caCertFile: ""|' /etc/nexus-agent/agent.yaml
 # Config + cert live under /etc/nexus-agent (mountable / overridable in CI).
 ENV NEXUS_AGENT_CONFIG=/etc/nexus-agent/agent.yaml
 WORKDIR /etc/nexus-agent

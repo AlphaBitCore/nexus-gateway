@@ -28,7 +28,7 @@ func mockLookup(_ context.Context, providerID, modelID string) (*core.RoutingTar
 
 func newTestRegistry() *StrategyRegistry {
 	reg := NewStrategyRegistry()
-	RegisterAllStrategies(reg, mockLookup, nil)
+	RegisterAllStrategies(reg, mockLookup, nil, nil)
 	return reg
 }
 
@@ -370,7 +370,7 @@ func TestABSplit_LookupFailure_EmitsTrace(t *testing.T) {
 	failingLookup := func(_ context.Context, providerID, modelID string) (*core.RoutingTarget, error) {
 		return nil, errStub
 	}
-	RegisterAllStrategies(reg, failingLookup, nil)
+	RegisterAllStrategies(reg, failingLookup, nil, nil)
 
 	var trace []core.TraceEntry
 	targets, err := reg.Evaluate(

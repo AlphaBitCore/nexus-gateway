@@ -91,7 +91,7 @@ type glmEmbeddingsRequest struct {
 
 func (n *GLMEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req glmEmbeddingsRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroEmbeddingPayload("glm-embeddings", meta), fmt.Errorf("glm-embeddings: request unmarshal: %w", err)
 	}
 	if len(req.Input) == 0 || string(req.Input) == "null" {
@@ -139,7 +139,7 @@ type glmEmbedUsage struct {
 
 func (n *GLMEmbeddingsNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp glmEmbeddingsResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroEmbeddingPayload("glm-embeddings", meta), fmt.Errorf("glm-embeddings: response unmarshal: %w", err)
 	}
 	if resp.Object == "" && resp.Model == "" && resp.Usage == nil {

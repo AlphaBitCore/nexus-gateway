@@ -7,20 +7,22 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )
 
-// ProjectCacheBlobToNormaliserConfig converts the 3-tier cache blob into the
+// ProjectCacheBlobToNormaliserConfig converts the cache blob into the
 // wirerewrite.Config the L0/L3 pipeline consumes:
 //
-//  1. NormaliserEnabled  ← Tier 1.
-//  2. Rules[adapterType] ← Tier 2 per-adapter rules sub-map.
-//  3. Providers[providerID] ← effective Anthropic/Bedrock marker config.
+//  1. Rules[adapterType] ← Tier 2 per-adapter rules sub-map.
+//  2. Providers[providerID] ← effective Anthropic/Bedrock marker config.
+//
+// There is no global normaliser switch: the engine derives its own hasWork gate
+// from these two inputs (an enabled strip rule, or a Provider with marker
+// injection on), so enabling either feature IS the demand.
 //
 // Gemini-family Tier 2/3 fields drive the separate geminicache.ManagerSet and
 // are intentionally NOT projected here.
 func ProjectCacheBlobToNormaliserConfig(blob cacheconfig.CacheConfigBlob, layer *cachelayer.Layer) wirerewrite.Config {
 	out := wirerewrite.Config{
-		NormaliserEnabled: blob.Global.NormaliserEnabled,
-		Rules:             map[string]map[string]wirerewrite.RuleOverride{},
-		Providers:         map[string]wirerewrite.ProviderCacheConfig{},
+		Rules:     map[string]map[string]wirerewrite.RuleOverride{},
+		Providers: map[string]wirerewrite.ProviderCacheConfig{},
 	}
 
 	for adapter, ac := range blob.Adapters {

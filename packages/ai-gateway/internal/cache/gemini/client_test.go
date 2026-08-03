@@ -3,12 +3,14 @@ package geminicache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -497,6 +499,122 @@ func TestAsyncCreate_FullPath_WritesToRedis(t *testing.T) {
 	}
 }
 
+// A burst of identical requests all miss in Redis before the first create has
+// stored its result. Each surplus create would produce a separate Gemini
+// cachedContent object, billed for its full TTL and never referenced again
+// because only the last writer's name reaches Redis. The burst must therefore
+// produce exactly one upstream create, and Redis must hold that create's name.
+func TestAsyncCreate_ConcurrentIdenticalMissesCreateOnce(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+
+	var creates atomic.Int64
+	firstSeen := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := creates.Add(1)
+		once.Do(func() { close(firstSeen) })
+		// Hold the create open until every caller in the burst has had its
+		// chance to miss, so the test fails if the collapse is removed.
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(fmt.Appendf(nil,
+			`{"name":"cachedContents/burst-%d","expireTime":"","usageMetadata":{"totalTokenCount":42}}`, n))
+	}))
+	defer srv.Close()
+
+	res := newCaptureResolver("k", srv.URL, nil)
+	m := New(rdb, res, NewMetrics(prometheus.NewRegistry()), Config{
+		Enabled: true, MinSystemChars: 1, TTLSeconds: 3600,
+	}, nil)
+
+	const burst = 32
+	body := []byte(`{"systemInstruction":{"parts":[{"text":"shared system prompt"}]},"contents":[]}`)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range burst {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, _, err := m.Inject(context.Background(), "p1", "gemini-2.0-flash", body); err != nil {
+				t.Errorf("Inject: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	<-firstSeen
+	rk := contentHash("p1", "gemini-2.0-flash", `{"parts":[{"text":"shared system prompt"}]}`, "", "")
+	deadline := time.Now().Add(3 * time.Second)
+	var stored string
+	for time.Now().Before(deadline) {
+		if v, err := rdb.Get(context.Background(), rk).Result(); err == nil {
+			stored = v
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if stored == "" {
+		t.Fatal("expected the collapsed create to populate Redis")
+	}
+	// Give any surplus create that slipped past the collapse time to land.
+	time.Sleep(300 * time.Millisecond)
+	if got := creates.Load(); got != 1 {
+		t.Fatalf("%d concurrent identical misses produced %d upstream cachedContents creates; want exactly 1", burst, got)
+	}
+	var rec cachedRecord
+	if err := json.Unmarshal([]byte(stored), &rec); err != nil {
+		t.Fatalf("unmarshal stored: %v", err)
+	}
+	if rec.Name != "cachedContents/burst-1" {
+		t.Errorf("stored name = %q; want the single create's name", rec.Name)
+	}
+}
+
+// After a collapsed create completes, the key leaves the singleflight group, so
+// a later miss on the same key must be able to create again — otherwise an
+// evicted Redis entry could never be regenerated.
+func TestAsyncCreate_CollapseReleasesKeyAfterCompletion(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+
+	var creates atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := creates.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(fmt.Appendf(nil,
+			`{"name":"cachedContents/seq-%d","expireTime":"","usageMetadata":{"totalTokenCount":1}}`, n))
+	}))
+	defer srv.Close()
+
+	res := newCaptureResolver("k", srv.URL, nil)
+	m := New(rdb, res, NewMetrics(prometheus.NewRegistry()), Config{
+		Enabled: true, MinSystemChars: 1, TTLSeconds: 3600,
+	}, nil)
+	body := []byte(`{"systemInstruction":{"parts":[{"text":"regenerate me"}]},"contents":[]}`)
+	rk := contentHash("p1", "gemini-2.0-flash", `{"parts":[{"text":"regenerate me"}]}`, "", "")
+
+	for i := 1; i <= 2; i++ {
+		if _, _, err := m.Inject(context.Background(), "p1", "gemini-2.0-flash", body); err != nil {
+			t.Fatalf("Inject %d: %v", i, err)
+		}
+		res.waitForCalls(t, int64(i), 2*time.Second)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := rdb.Get(context.Background(), rk).Result(); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		// Simulate a Gemini-side eviction so the next request misses again.
+		rdb.Del(context.Background(), rk)
+	}
+
+	if got := creates.Load(); got != 2 {
+		t.Fatalf("sequential misses produced %d creates; want 2 (the key must leave the group when the create finishes)", got)
+	}
+}
+
 func TestAsyncCreate_TTLFloorAt60s(t *testing.T) {
 	// TTLSeconds=120 → redisTTLSecs = -180 → floored to 60s.
 	_, rdb := newMiniRedis(t)
@@ -757,7 +875,6 @@ func TestManagerSet_SetConfig_BuildsGeminiAndVertex_SkipsOthers(t *testing.T) {
 	enabled := true
 	min := 1234
 	blob := cacheconfig.CacheConfigBlob{
-		Global: cacheconfig.GlobalConfig{},
 		Adapters: map[string]cacheconfig.AdapterConfig{
 			"gemini": {CacheEnabled: &enabled, MinSystemChars: &min},
 			"vertex": {CacheEnabled: &enabled},

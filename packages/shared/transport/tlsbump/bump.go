@@ -169,7 +169,7 @@ type bumpOptions struct {
 	// WithAttestationVerifier; agent does not.
 	attestationVerifier AttestationVerifierFunc
 
-	// identity is the via-name stamped on x-nexus-via and x-nexus-cp-* /
+	// identity is the via-name stamped on the X-Nexus-Via chain and per-hop markers /
 	// x-nexus-agent-* response headers. Caller-supplied via WithIdentity:
 	// "compliance-proxy" for cp listener, "agent" for the macOS agent
 	// bridge. Defaults to "compliance-proxy" when unset; call sites
@@ -280,7 +280,7 @@ func WithRejectConfig(cfg RejectConfig) BumpOption {
 	}
 }
 
-// WithIdentity sets the via-name stamped on x-nexus-via and x-nexus-cp-*
+// WithIdentity sets the via-name stamped on the X-Nexus-Via chain and per-hop
 // response markers. cp callers pass "compliance-proxy"; the macOS agent
 // bridge passes "agent". When unset the marker hook falls back to
 // "compliance-proxy" for back-compat with cp's older behaviour.

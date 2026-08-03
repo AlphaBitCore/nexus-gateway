@@ -185,7 +185,7 @@ func TestInitHookRegistry_buildsRegistry(t *testing.T) {
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeoutSec:  90,
-	})
+	}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestInitHookRegistry_buildsRegistry(t *testing.T) {
 // but db.Pool is nil, the inner loader returns an error from Pool.Query.
 // This exercises lines 58-67 in hooks.go.
 func TestInitHookConfigCache_withNilPoolDBReloadReturnsError(t *testing.T) {
-	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,27 +282,38 @@ func newTestCacheLayerWithAnthropicProvider(t *testing.T) (*cachelayer.Layer, pg
 }
 
 // TestProjectCacheBlobToNormaliserConfig_withAnthropicProvider verifies the
-// provider projection path when the layer contains anthropic providers.
+// provider projection: the anthropic provider's RESOLVED marker settings land
+// in cfg.Providers (that entry is now the engine's demand signal — with Tier 1
+// gone, a projected CacheMarkerInjectEnabled=true is the only thing that turns
+// the upstream rewrite on for a marker-only deployment). openai is not an
+// Anthropic-wire adapter and must be skipped entirely.
 func TestProjectCacheBlobToNormaliserConfig_withAnthropicProvider(t *testing.T) {
 	l, _ := newTestCacheLayerWithAnthropicProvider(t)
 
+	on := true
 	blob := cacheconfig.CacheConfigBlob{
-		Global: cacheconfig.GlobalConfig{NormaliserEnabled: true},
+		Adapters: map[string]cacheconfig.AdapterConfig{
+			"anthropic": {MarkerInjectEnabled: &on, MarkerBoundary3Enabled: &on},
+		},
 	}
 	cfg := ProjectCacheBlobToNormaliserConfig(blob, l)
-	if !cfg.NormaliserEnabled {
-		t.Error("expected NormaliserEnabled=true")
+
+	got, ok := cfg.Providers["prov-anthropic"]
+	if !ok {
+		t.Fatalf("anthropic provider must be projected, got %v", cfg.Providers)
 	}
-	// The anthropic provider should appear in cfg.Providers.
-	// (openai is not anthropic/bedrock → skipped). An empty slice is also a
-	// valid path (Resolve returned defaults); the key behavior verified is
-	// that the projection runs without panic.
-	_ = cfg.Providers
+	if !got.CacheMarkerInjectEnabled || !got.CacheMarkerBoundary3Enabled {
+		t.Errorf("resolved marker settings not projected: %+v", got)
+	}
+	if _, ok := cfg.Providers["prov-openai"]; ok {
+		t.Errorf("openai is not an Anthropic-wire adapter and must be skipped, got %v", cfg.Providers)
+	}
 }
 
 // TestProjectCacheBlobToNormaliserConfig_withBedrockProvider verifies the
-// bedrock provider projection path AND asserts the projected config mirrors
-// the input blob's NormaliserEnabled=false.
+// bedrock provider projection path: bedrock speaks the Anthropic Messages wire,
+// so it is projected too, and with no marker config anywhere it resolves to the
+// code default (inject OFF) — i.e. the projection never invents demand.
 func TestProjectCacheBlobToNormaliserConfig_withBedrockProvider(t *testing.T) {
 	mock, l := newLayerWithMock(t)
 	provRows := pgxmock.NewRows(providerColsForLayer).
@@ -312,12 +323,14 @@ func TestProjectCacheBlobToNormaliserConfig_withBedrockProvider(t *testing.T) {
 		t.Fatalf("ReloadProviders: %v", err)
 	}
 
-	blob := cacheconfig.CacheConfigBlob{
-		Global: cacheconfig.GlobalConfig{NormaliserEnabled: false},
+	cfg := ProjectCacheBlobToNormaliserConfig(cacheconfig.CacheConfigBlob{}, l)
+
+	got, ok := cfg.Providers["prov-bedrock"]
+	if !ok {
+		t.Fatalf("bedrock provider must be projected (Anthropic Messages wire), got %v", cfg.Providers)
 	}
-	cfg := ProjectCacheBlobToNormaliserConfig(blob, l)
-	if cfg.NormaliserEnabled {
-		t.Errorf("cfg.NormaliserEnabled: got true, want false (input blob.Global.NormaliserEnabled=false)")
+	if got.CacheMarkerInjectEnabled || got.CacheMarkerBoundary3Enabled {
+		t.Errorf("empty blob must resolve to marker inject OFF (code default), got %+v", got)
 	}
 }
 
@@ -348,7 +361,7 @@ func TestInitAuditWriter_spillstoreError(t *testing.T) {
 		Enabled: true,
 		Backend: "azure-blob", // azure-blob with no credentials → spillfactory.New error
 	}
-	w, normReg, err := InitAuditWriter(nil, spillCfg, config.AuditConfig{}, payloadcapture.NewStore(payloadcapture.DefaultConfig()), opsReg, discardLogger())
+	w, normReg, _, _, err := InitAuditWriter(nil, spillCfg, config.AuditConfig{}, payloadcapture.NewStore(payloadcapture.DefaultConfig()), opsReg, discardLogger())
 	if err == nil {
 		t.Fatalf("expected spillfactory error on azure-blob with no credentials, got nil (w=%v normReg=%v); review spillfactory contract", w, normReg)
 	}
@@ -1191,7 +1204,7 @@ func TestInitAuditWriter_withLocalfsSpillStore(t *testing.T) {
 		Localfs: spillfactory.LocalfsOptions{Root: dir},
 	}
 	pcs := payloadcapture.NewStore(payloadcapture.DefaultConfig())
-	w, normReg, err := InitAuditWriter(nil, spillCfg, config.AuditConfig{}, pcs, opsReg, discardLogger())
+	w, normReg, _, _, err := InitAuditWriter(nil, spillCfg, config.AuditConfig{}, pcs, opsReg, discardLogger())
 	if err != nil {
 		t.Fatalf("unexpected error with localfs spill store: %v", err)
 	}
@@ -1209,7 +1222,7 @@ func TestInitAuditWriter_withLocalfsSpillStore(t *testing.T) {
 // TestInitHookRegistry_webhookForwardBuildHookSucceeds verifies that the
 // replaced webhook-forward factory can build a hook without error.
 func TestInitHookRegistry_webhookForwardBuildHookSucceeds(t *testing.T) {
-	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 10})
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 10}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1475,7 +1488,9 @@ func TestCredentialStoreAdapter_ResolveForProvider_withCredIDSuccess(t *testing.
 	if credID != "cred-with-key" {
 		t.Errorf("expected credID=cred-with-key, got %q", credID)
 	}
-	_ = extra // extra is "" per the success return
+	if extra != "RealCred" {
+		t.Errorf("expected credName=RealCred (the pinned branch surfaces the display name for audit), got %q", extra)
+	}
 }
 
 // Compile-time interface assertions for type stubs.

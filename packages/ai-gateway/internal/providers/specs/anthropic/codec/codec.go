@@ -40,9 +40,11 @@ func errUnsupportedField(field string) error {
 //   - temperature / top_p / max_tokens / stream fields
 //   - stop sequences → "stop_sequences"
 //
-// Tool calling, image parts, and thinking mode are passed through when
-// the caller sends a native Anthropic body (BodyFormat = anthropic;
-// passthrough fast-path in specAdapter skips the codec entirely).
+// A native Anthropic body (BodyFormat = anthropic) skips the canonical
+// round-trip and takes the codec's RewriteNative differential instead — the
+// codec stays in the path (dispatch calls RewriteNative on the native leg).
+// Tool calling, image parts, and thinking mode ride through verbatim there;
+// only the model stamp and the D3 sampling / max_tokens coercions apply.
 type Codec struct{}
 
 // NewCodec returns an Anthropic SchemaCodec for use by spec.go and bedrock.
@@ -66,21 +68,21 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 		return provcore.EncodeResult{}, fmt.Errorf("anthropic: missing model")
 	}
 
-	// Per-model sampling-param policy. Two distinct rules apply to
-	// Claude 4.x; the older 3.x family accepts every combination
-	// unchanged.
+	// Per-model sampling-param policy. Two distinct rules apply:
 	//
-	//  (a) claude-opus-4-7 and claude-opus-4-8 deprecated temperature /
-	//      top_p / top_k entirely. Any of them present → 400
-	//      "`temperature` is deprecated for this model." Strip all three.
+	//  (a) Families that reject temperature / top_p / top_k outright —
+	//      any one of them present → 400 "`temperature` is deprecated
+	//      for this model." Strip all three. Membership is decided by
+	//      allowlist, so an unrecognised model lands here and degrades
+	//      to a working request rather than a 400; see
+	//      claudeModelsAcceptingSamplingParams.
 	//
-	//  (b) Every other claude-4.x model (haiku-4-5, opus-4-1, opus-4-5,
-	//      opus-4-6, sonnet-4-5, sonnet-4-6, …) accepts EITHER
-	//      temperature OR top_p but rejects the combination with 400
-	//      "`temperature` and `top_p` cannot both be specified for this
-	//      model." When the caller sent both, keep temperature (the
-	//      OpenAI-SDK default that's almost always set on purpose) and
-	//      drop top_p. top_k is independent and stays.
+	//  (b) The families that still accept them take EITHER temperature
+	//      OR top_p but reject the combination with 400 "`temperature`
+	//      and `top_p` cannot both be specified for this model." When
+	//      the caller sent both, keep temperature (the OpenAI-SDK
+	//      default that's almost always set on purpose) and drop top_p.
+	//      top_k is independent and stays.
 	//
 	// Both rules emit rewrites so the handler stamps x-nexus-coerced
 	// for caller observability — mirrors spec_adapter.applyOpenAIReasoningRewrites.
@@ -91,25 +93,38 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 
 	out := map[string]any{"model": model}
 
+	// Anthropic is the one supported wire that REQUIRES max_tokens (verified
+	// against api.anthropic.com: omitting it returns 400 "max_tokens: Field
+	// required", while OpenAI / Gemini / DeepSeek all accept its absence), so
+	// this codec must always emit one.
+	//
+	// The ceiling comes from the catalog capability on the resolved target —
+	// the same maxOutputTokens the gateway advertises on /v1/models. Keeping a
+	// private per-family table here would restate a fact the catalog already
+	// owns, and the two copies drift: a caller that trusts an advertised
+	// ceiling and echoes it back must never be rejected by the very cap we
+	// published.
+	//
 	// max_completion_tokens (OpenAI 2024-09 successor to max_tokens for
 	// reasoning models) takes precedence over max_tokens when both are
-	// present, matching OpenAI's own resolution. Anthropic requires
-	// max_tokens, so always emit one — when the caller omitted both,
-	// fall back to the model's documented per-family hard max (NOT a
-	// fixed 1024 floor that would truncate every long response from a
-	// caller that's used to OpenAI's "no max_tokens = no cap" default).
+	// present, matching OpenAI's own resolution.
+	limit := target.MaxOutputTokens
 	switch {
 	case root.Get("max_completion_tokens").Exists():
-		out["max_tokens"] = root.Get("max_completion_tokens").Int()
+		out["max_tokens"] = clampMaxTokens(root.Get("max_completion_tokens").Int(), limit, &rewrites)
 	case root.Get("max_tokens").Exists():
-		out["max_tokens"] = root.Get("max_tokens").Int()
+		out["max_tokens"] = clampMaxTokens(root.Get("max_tokens").Int(), limit, &rewrites)
 	default:
-		capped := AnthropicModelMaxOutput(model)
-		out["max_tokens"] = capped
-		// Anthropic requires max_tokens; the caller omitted it, so the codec
-		// applied the model-default cap. Record it as a rewrite so the handler
-		// stamps x-nexus-coerced and the cap is observable in traffic_event.
-		rewrites = append(rewrites, fmt.Sprintf("max_tokens→%d_model_default", capped))
+		// The caller omitted it (legal on the OpenAI shape they came from), so
+		// fill the model's full ceiling rather than a fixed floor that would
+		// truncate every long response. Recorded as a rewrite so the handler
+		// stamps the applied cap onto the x-nexus-coerced response header.
+		filled := limit
+		if filled <= 0 {
+			filled = anthropicFallbackMaxOutput
+		}
+		out["max_tokens"] = filled
+		rewrites = append(rewrites, fmt.Sprintf("max_tokens→%d_model_default", filled))
 	}
 
 	if v := root.Get("temperature"); v.Exists() {
@@ -346,57 +361,6 @@ func appendSystemInstruction(existing any, instruction string) any {
 	}
 }
 
-// anthropicModelRejectsSamplingParams reports whether the given Anthropic
-// model identifier belongs to a family that returns HTTP 400
-// "`temperature` is deprecated for this model." when temperature, top_p,
-// or top_k are present in the request body — *each parameter on its own*
-// is rejected. The codec strips those fields and emits rewrites instead
-// of letting the upstream 400 the caller.
-//
-// Matching is by prefix because Anthropic ships dated model variants
-// inside one family. The list is intentionally conservative: only
-// prefixes for which we have observed single-parameter 400s are listed.
-// When a new family is observed rejecting these params, extend this
-// list alongside the existing anthropicModelMaxOutput table — they
-// live next to each other so per-model policy stays in one place.
-//
-// Observed (2026-05, direct calls to api.anthropic.com):
-//   - claude-opus-4-7: every one of temperature / top_p / top_k alone
-//     yields 400 "<field> is deprecated for this model." (initial
-//     incident: traffic d914275a-0dae-4d13-a811-69e4d432c441).
-func anthropicModelRejectsSamplingParams(model string) bool {
-	// claude-opus-4-7 AND claude-opus-4-8 return 400
-	// "`temperature` is deprecated for this model." on any of
-	// temperature / top_p / top_k (opus-4-8 observed in prod smoke
-	// 2026-07-03; a temperature-sending client 400s on every call).
-	return strings.HasPrefix(model, "claude-opus-4-7") ||
-		strings.HasPrefix(model, "claude-opus-4-8")
-}
-
-// anthropicModelRejectsTempTopPTogether reports whether the model
-// belongs to a family that ACCEPTS temperature or top_p alone but
-// REJECTS the combination with 400 "`temperature` and `top_p` cannot
-// both be specified for this model." When true, the codec drops top_p
-// when temperature is also present (temperature is kept because the
-// OpenAI SDK default is to set it, while top_p is usually an
-// intentional advanced override).
-//
-// Observed (2026-05, direct calls to api.anthropic.com): the full
-// claude-4.x lineup except 4-7 (which is fully covered by
-// anthropicModelRejectsSamplingParams): claude-haiku-4-5,
-// claude-opus-4-1, claude-opus-4-5, claude-opus-4-6,
-// claude-sonnet-4-5, claude-sonnet-4-6. The 3.x family accepts the
-// combination unchanged.
-func anthropicModelRejectsTempTopPTogether(model string) bool {
-	switch {
-	case strings.HasPrefix(model, "claude-haiku-4-"),
-		strings.HasPrefix(model, "claude-sonnet-4-"),
-		strings.HasPrefix(model, "claude-opus-4-"):
-		return true
-	}
-	return false
-}
-
 // anthropicSupportedRequestFields lists the canonical OpenAI top-level
 // keys anthropic.codec actively maps onto an Anthropic Messages
 // request. Anything else surfaces a one-shot WARN per process via
@@ -460,6 +424,14 @@ func splitMessages(messages gjson.Result) ([]string, []map[string]any, error) {
 		entry := map[string]any{"role": role}
 		if role == "assistant" && msg.Get("tool_calls").Exists() {
 			var parts []map[string]any
+			// Thinking blocks passed back on an assistant turn must lead
+			// the content array and carry their signatures — Anthropic
+			// validates each signature on returned thinking. Per-block
+			// carrier is nexus_thinking (set by the Anthropic-ingress
+			// converter); a cross-format upstream (DeepSeek/OpenAI) yields
+			// one unsigned block from reasoning_content, which Anthropic
+			// accepts on request bodies it did not itself sign.
+			parts = append(parts, reconstructThinkingBlocks(msg)...)
 			if text := stringifyContent(content); text != "" {
 				parts = append(parts, map[string]any{"type": "text", "text": text})
 			}
@@ -488,9 +460,15 @@ func splitMessages(messages gjson.Result) ([]string, []map[string]any, error) {
 			out = append(out, entry)
 			return true
 		}
+		// A plain assistant turn (no tool_calls) that carried thinking
+		// history gets the same leading signed thinking blocks.
+		var thinkPrefix []map[string]any
+		if role == "assistant" {
+			thinkPrefix = reconstructThinkingBlocks(msg)
+		}
 		text := stringifyContent(content)
 		if text != "" && !content.IsArray() {
-			entry["content"] = []map[string]any{{"type": "text", "text": text}}
+			entry["content"] = append(thinkPrefix, map[string]any{"type": "text", "text": text})
 			out = append(out, entry)
 			return true
 		}
@@ -500,11 +478,19 @@ func splitMessages(messages gjson.Result) ([]string, []map[string]any, error) {
 				splitErr = err
 				return false
 			}
+			if len(thinkPrefix) > 0 {
+				parts = append(thinkPrefix, parts...)
+			}
 			if len(parts) > 0 {
 				entry["content"] = parts
 			} else {
 				entry["content"] = []map[string]any{{"type": "text", "text": ""}}
 			}
+			out = append(out, entry)
+			return true
+		}
+		if len(thinkPrefix) > 0 {
+			entry["content"] = thinkPrefix
 			out = append(out, entry)
 			return true
 		}
@@ -744,43 +730,30 @@ func MapStopReason(r string) string {
 	return r
 }
 
-// anthropicModelMaxOutput returns the documented per-model
-// max_tokens output limit for a given Anthropic model name. Anthropic
-// requires `max_tokens` on every request (unlike OpenAI where it's
-// optional), so when a caller forwards an OpenAI-shape request that
-// omits max_tokens, the codec must synthesize one or the upstream
-// rejects with 400 invalid_request.
+// anthropicFallbackMaxOutput is the output cap used ONLY when the catalog
+// leaves maxOutputTokens unset (the column is nullable) and the caller sent
+// no cap of its own. Anthropic rejects the request outright without the
+// field, so some number must go on the wire; 8192 is the conservative
+// across-Claude floor that every Claude model accepts. It is deliberately
+// not a per-model table — the catalog owns per-model ceilings, and a second
+// table here would drift from the value /v1/models advertises.
+const anthropicFallbackMaxOutput = 8192
+
+// clampMaxTokens bounds a caller-supplied output cap to the model's
+// advertised ceiling. Anthropic hard-rejects an over-ceiling request
+// (400 "max_tokens: N > M, which is the maximum allowed number of output
+// tokens for <model>"), so forwarding the caller's number verbatim turns a
+// satisfiable request into a failure. Clamping instead yields the most the
+// model can actually produce, and the rewrite makes the coercion visible via
+// the x-nexus-coerced response header rather than silently changing intent.
 //
-// Values follow Anthropic's published per-model max output token
-// limits (docs.anthropic.com, "Models overview"). Matching is by
-// prefix because Anthropic ships dated model variants
-// (claude-haiku-4-5-20251001, claude-sonnet-4-5-20250929, …) that
-// share the same per-family ceiling. Order matters: more-specific
-// prefixes (haiku, opus) before less-specific (sonnet) so the haiku
-// 4-5 rule doesn't get shadowed by a hypothetical "claude-4" generic
-// rule someone might add later.
-//
-// Unknown models fall back to 8192 — the conservative across-Claude
-// floor that no Claude model rejects. That's safer than emitting a
-// huge value the upstream might cap, but high enough that callers
-// rarely notice the implicit limit on a typical chat response.
-func AnthropicModelMaxOutput(model string) int {
-	switch {
-	case strings.HasPrefix(model, "claude-haiku-4-"):
-		return 8192
-	case strings.HasPrefix(model, "claude-opus-4-"):
-		return 32000
-	case strings.HasPrefix(model, "claude-sonnet-4-"):
-		return 64000
-	// Legacy 3.x families — listed for completeness so an operator
-	// running an old model name doesn't trip the 8192 default.
-	case strings.HasPrefix(model, "claude-3-5-sonnet"),
-		strings.HasPrefix(model, "claude-3-7-sonnet"):
-		return 8192
-	case strings.HasPrefix(model, "claude-3-opus"):
-		return 4096
-	case strings.HasPrefix(model, "claude-3-haiku"):
-		return 4096
+// limit <= 0 means the catalog has no ceiling for this model; the caller's
+// value is then forwarded untouched — inventing a bound we cannot justify
+// would truncate responses the model may well support.
+func clampMaxTokens(requested int64, limit int, rewrites *[]string) int64 {
+	if limit <= 0 || requested <= int64(limit) {
+		return requested
 	}
-	return 8192
+	*rewrites = append(*rewrites, fmt.Sprintf("max_tokens→%d_model_max", limit))
+	return int64(limit)
 }

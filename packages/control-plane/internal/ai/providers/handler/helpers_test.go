@@ -196,14 +196,17 @@ func makeProviderRow(now time.Time) []any {
 	}
 }
 
-// modelCols mirrors the 25-column modelColumns projection (includes 4
+// modelCols mirrors the 28-column modelColumns projection (includes 4
 // capability matrix columns: inputModalities, outputModalities,
-// lifecycle, capabilityJson; and 2 cached price columns
-// cachedInputReadPricePerMillion + cachedInputWritePricePerMillion).
+// lifecycle, capabilityJson; 2 cached price columns
+// cachedInputReadPricePerMillion + cachedInputWritePricePerMillion; and
+// 3 realtime audio price columns audioInputPricePerMillion +
+// audioOutputPricePerMillion + cachedAudioInputReadPricePerMillion).
 var modelCols = []string{
 	"id", "code", "name", "description", "providerId", "providerModelId",
 	"type", "features", "inputPricePerMillion", "outputPricePerMillion",
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"maxContextTokens", "maxOutputTokens", "status", "deprecationDate",
 	"replacedBy", "aliases",
 	"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
@@ -218,6 +221,7 @@ func makeModelRow(now time.Time) []any {
 		"chat", []string{"vision", "tools"},
 		f64Ptr(2.5), f64Ptr(10.0),
 		f64Ptr(0.3), f64Ptr(3.75),
+		f64Ptr(32.0), f64Ptr(64.0), f64Ptr(0.4),
 		intPtr(128000), intPtr(16384),
 		"active", &now,
 		&replacedBy, []string{"gpt4o"},

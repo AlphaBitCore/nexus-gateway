@@ -13,9 +13,10 @@ package proxy
 //     caller proceeds to broker dispatch.
 //
 // After a successful broker dispatch the handler calls scheduleL2Write which
-// fires semantic.Writer.Write in a detached goroutine with a 5-second deadline.
-// The write is best-effort: any error is logged inside Writer and never surfaces
-// to the response path.
+// fires semantic.Writer.Write in a detached goroutine with a 5-second deadline,
+// under a process-wide cap on how many may be outstanding at once. The write is
+// best-effort: any error is logged inside Writer and never surfaces to the
+// response path.
 
 import (
 	"context"
@@ -186,6 +187,12 @@ func buildEmbeddingInput(msgs []normcore.Message, strategy inputstaging.Strategy
 		Messages:          stagingMsgs,
 		ModelContextLimit: contextLimit,
 		Strategy:          strategy,
+		// ReportOnly: the staged text is semantic-cache key material and an
+		// empty plan must stay a skip-the-cache signal. Plan's default budget
+		// enforcement (re-seed + in-message cut) would silently change
+		// embedding inputs and therefore cache-hit patterns. The hard bound
+		// for this path is the explicit TruncateToTokens below.
+		ReportOnly: true,
 	})
 	if planErr != nil || len(plan.Messages) == 0 {
 		return "", false
@@ -455,7 +462,18 @@ func (h *Handler) scheduleL2Write(
 		OriginWireShape:    origin.WireShape,
 	}
 
+	// Bound the detached write set: the 5-second deadline caps how long one
+	// write lives, not how many exist, and each entry pins its whole
+	// WriteRequest — response body included — meanwhile. Shedding is safe by
+	// construction; L2 is best-effort, so a dropped write-back only costs an
+	// equivalent later request its hit. See proxy_l2_writegate.go.
+	if !acquireL2WriteSlot() {
+		l2WriteShedTotal.Inc()
+		return
+	}
+
 	go func() {
+		defer releaseL2WriteSlot()
 		wCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if _, err := h.deps.SemanticWriter.Write(wCtx, writeReq); err != nil {

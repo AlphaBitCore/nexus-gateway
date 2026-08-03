@@ -21,7 +21,7 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 	return provcore.AdapterSpec{
 		Format:          provcore.FormatMistral,
 		Transport:       openai.NewTransport(log),
-		SchemaCodec:     openai.IdentityCodec(),
+		SchemaCodec:     openai.NewIdentityCodec(openai.Contract{}),
 		StreamDecoder:   openai.NewStreamDecoder(log),
 		ErrorNormalizer: openai.ErrorNormalizerInstance(),
 	}

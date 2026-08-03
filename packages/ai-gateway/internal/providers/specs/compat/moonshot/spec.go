@@ -20,11 +20,14 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		log = slog.Default()
 	}
 	return provcore.AdapterSpec{
-		Format:             provcore.FormatMoonshot,
-		Transport:          openai.NewTransport(log),
-		SchemaCodec:        openai.IdentityCodec(),
-		StreamDecoder:      openai.NewStreamDecoder(log),
-		ErrorNormalizer:    openai.ErrorNormalizerInstance(),
-		PassthroughRewrite: ApplyRewrites,
+		Format:    provcore.FormatMoonshot,
+		Transport: openai.NewTransport(log),
+		// The contract carries the kimi fixed-temp strips into both codec
+		// entry points — the cross-format canonical door (bodies bridged
+		// from /v1/messages and the other non-OpenAI ingresses) and the
+		// native-leg differential. No dispatch-level rewrite callback.
+		SchemaCodec:     openai.NewIdentityCodec(Contract()),
+		StreamDecoder:   openai.NewStreamDecoder(log),
+		ErrorNormalizer: openai.ErrorNormalizerInstance(),
 	}
 }

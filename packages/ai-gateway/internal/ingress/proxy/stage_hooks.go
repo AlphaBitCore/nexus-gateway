@@ -46,10 +46,15 @@ func (st requestHooksStage) run() bool {
 	// further branching.
 	if pt := s.resolvedReq.Passthrough(); pt.AnyBypassActive() && pt.BypassHooks {
 		s.rec.HookDecision = "BYPASSED"
-		// No hook evaluated this request, so there is no redaction demand:
-		// the captured body is persisted as-is (approve). Without this the
-		// zero-value action would drop the raw body in StorageRawBody.
-		s.rec.RequestAction = hookcore.ActionApprove
+		// RequestAction stays unset: no hook evaluated this request, which is
+		// exactly what an empty action means to redact.StorageRawBodyChecked, the
+		// one gate every service persists through.
+		// Coverage honesty: emergency passthrough scanned nothing → a
+		// multimodal row must read "none" (the badge must not silently vanish
+		// exactly when compliance was bypassed).
+		if cov := multimodalCoverage(typology.KindFromWireShape(s.resolved.WireShape), false, false); cov != "" {
+			s.rec.ComplianceCoverage = cov
+		}
 	} else {
 		rewrittenBody, reqHookResult, rejected := h.runRequestHooks(s.r, s.w, s.rec, s.requestID, s.body, requestHookTarget, s.resolved, s.phaseTimer, s.logger)
 		if rejected {
@@ -127,9 +132,14 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		}
 		// No hook ran → no redaction demand → persist the captured body as-is.
 		rec.RequestAction = hookcore.ActionApprove
+		// Coverage honesty (multimodal only): no pipeline was configured, so
+		// NOTHING was scanned — record "none", never let the operator assume
+		// a hook policy covered this request.
+		if multimodalUserTextPaths(endpointType) != nil {
+			rec.ComplianceCoverage = "none"
+		}
 		return nil, nil, false
 	}
-
 	// [perf] Raw-body prefilter — skip the ~21%-CPU gjson extraction on benign
 	// traffic. When the body carries no JSON backslash escape (so each extracted
 	// content segment is a verbatim, contiguous substring of the raw bytes) AND
@@ -145,16 +155,26 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	prefiltered := perfHookPrefilter() &&
 		bytes.IndexByte(body, '\\') < 0 &&
 		!pipeline.MayMatchRawContent(body)
-	if prefiltered {
+	switch {
+	case prefiltered:
 		if h.deps.Metrics != nil {
 			h.deps.Metrics.RecordTrafficExtract(ingressFormat, "request", "prefiltered")
 		}
-	} else {
+	case multimodalUserTextPaths(endpointType) != nil:
+		// Multimodal JSON routes extract gateway-locally (see helper).
+		normalized = h.extractMultimodalForHooks(endpointType, ingressFormat, body, pt)
+	default:
 		extractStart := time.Now()
 		normalized = h.extractRequestContentForHooks(r.Context(), trafficAdapter, ingressFormat, body, r.URL.Path, logger)
 		if pt != nil {
 			pt.MarkBetween(traffic.PhaseHookExtract, time.Since(extractStart))
 		}
+	}
+
+	// Compliance-coverage stamp (multimodal only), request-time so every exit
+	// (approve / block / redact-fail-closed) carries it. See multimodalCoverage.
+	if cov := multimodalCoverage(endpointType, pipeline.HasContentScanningHook(), prefiltered || normalized != nil); cov != "" {
+		rec.ComplianceCoverage = cov
 	}
 
 	input := &hookcore.HookInput{
@@ -168,8 +188,9 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		BodySize:       int64(len(body)),
 		SourceIP:       middleware.ClientIP(r),
 		ProviderRegion: target.Region,
-		// Hook configs (`targetModels: [...]`) are authored by admins
-		// using customer-facing codes ("gpt-4o"), not internal UUIDs.
+		// The customer-facing model code ("gpt-4o", not the internal
+		// UUID): informational context for hooks that forward it (e.g.
+		// the webhook payload's model field).
 		Model: target.ModelCode,
 		// Endpoint/modality context lets BuildPipeline gate Class-A text hooks
 		// out of non-text endpoints; text modality (all current AI-gateway
@@ -285,25 +306,23 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 			// redact) — without this the audit row would read Action=block + a masked
 			// request body.
 			rec.RequestAction = hookcore.ActionRedact
-			// The redacted wire copy is what the raw storage policy
-			// persists under action=redact (rec.RequestBody holds
-			// the pre-hook bytes for normalization and must never reach
-			// raw storage when redaction is demanded — without this stamp
-			// the writer fail-safes the raw copy to NULL).
-			//
-			// Zero-write rewrites return the INPUT slice — which is the pooled
-			// request-body buffer that finalizeAudit releases for reuse when the
-			// body is not captured. The record outlives that release (the async
-			// audit writer holds it), so a stamped alias would let the next
-			// request's bytes bleed into this record's redacted copy. Clone the
-			// rare zero-write case; real rewrites (n > 0) already produced a
-			// fresh buffer via sjson.
+			// The redacted wire copy is the only bytes raw storage may persist
+			// under action=redact; without this stamp the writer fail-safes the
+			// raw copy to NULL. A zero-write rewrite returns the INPUT slice —
+			// the pooled request-body buffer finalizeAudit releases for reuse —
+			// so it must be cloned or the next request's bytes bleed into this
+			// record's redacted copy (real rewrites already own a fresh buffer).
 			if n == 0 {
 				rewritten = bytes.Clone(rewritten)
 			}
 			rec.RequestBodyRedacted = rewritten
 			return rewritten, hookResult, false
 		}
+	}
+
+	// Generative prompt hard-block (D5) — see maybeBlockGenerativePrompt.
+	if h.maybeBlockGenerativePrompt(w, rec, endpointType, hookResult, logger) {
+		return nil, hookResult, true
 	}
 	return nil, hookResult, false
 }

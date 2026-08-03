@@ -452,9 +452,15 @@ func keyPtr(k string) *string { return &k }
 // Stat returns runtime metadata. Iterates ListObjectsV2 (capped at 10000
 // entries to avoid runaway scans on a misconfigured prefix).
 func (s *Store) Stat(ctx context.Context) (spillstore.Stats, error) {
-	stats := spillstore.Stats{Backend: BackendName}
-	var continuation *string
+	// The page bound was already here; what was missing is saying so. Stopping
+	// after maxPages and returning the partial numbers unlabelled makes a lower
+	// bound read as a total — the same defect shape as a silent drop.
 	const maxPages = 10
+	// ListObjectsV2 returns up to 1000 keys per page unless MaxKeys narrows it,
+	// so the bound in objects is maxPages * that page size.
+	const listPageSize = 1000
+	stats := spillstore.Stats{Backend: BackendName, ScanLimit: maxPages * listPageSize}
+	var continuation *string
 	for range maxPages {
 		out, err := s.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
 			Bucket:            &s.bucket,
@@ -462,6 +468,11 @@ func (s *Store) Stat(ctx context.Context) (spillstore.Stats, error) {
 			ContinuationToken: continuation,
 		})
 		if err != nil {
+			// Partial counts from the pages that did succeed, and they are a LOWER
+			// BOUND — the same reason the maxPages arm sets this. Returning them
+			// with Truncated unset would put an affirmative "this is the complete
+			// count" next to a partial one.
+			stats.Truncated = true
 			return stats, fmt.Errorf("s3.Stat: list: %w", err)
 		}
 		for _, obj := range out.Contents {
@@ -479,9 +490,11 @@ func (s *Store) Stat(ctx context.Context) (spillstore.Stats, error) {
 			}
 		}
 		if out.IsTruncated == nil || !*out.IsTruncated {
-			break
+			return stats, nil
 		}
 		continuation = out.NextContinuationToken
 	}
+	// Fell out of the loop with more pages available: the listing was cut short.
+	stats.Truncated = true
 	return stats, nil
 }

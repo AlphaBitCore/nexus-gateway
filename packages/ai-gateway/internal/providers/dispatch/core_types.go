@@ -79,6 +79,7 @@ var LimitedReadAll = core.LimitedReadAll
 var LimitedReadAllN = core.LimitedReadAllN
 var ExtractUsage = core.ExtractUsage
 var NewRegistry = core.NewRegistry
+var SurgicalModelStamp = core.SurgicalModelStamp
 
 // Registry is a type alias for core.Registry.
 type Registry = core.Registry

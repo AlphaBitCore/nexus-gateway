@@ -47,9 +47,15 @@ func TestNewSpec_AllComponentsWired(t *testing.T) {
 }
 
 func TestNewSpec_RequestShapes(t *testing.T) {
+	// Voyage serves embeddings and rerank (/v1/rerank); both wire shapes must be
+	// advertised so the router resolves them to this adapter.
 	spec := voyage.NewSpec(slog.Default())
-	if len(spec.RequestShapes) != 1 || spec.RequestShapes[0] != typology.WireShapeVoyageEmbeddings {
-		t.Errorf("RequestShapes=%v want [embeddings]", spec.RequestShapes)
+	got := map[typology.WireShape]bool{}
+	for _, s := range spec.RequestShapes {
+		got[s] = true
+	}
+	if len(spec.RequestShapes) != 2 || !got[typology.WireShapeVoyageEmbeddings] || !got[typology.WireShapeVoyageRerank] {
+		t.Errorf("RequestShapes=%v want [voyage-embeddings voyage-rerank]", spec.RequestShapes)
 	}
 }
 

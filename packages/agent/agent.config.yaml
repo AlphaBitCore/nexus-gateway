@@ -41,6 +41,13 @@ heartbeatIntervalSec: 60
 auditDrainIntervalSec: 30
 auditBatchSize: 200
 auditRetentionDays: 30
+# Audit-overflow policy (shared/audit/lossmode): spillblock | block | spill | drop.
+# "spill" on purpose: a no-loss mode must block until the record is durable, and a SQLite write
+# under WAL contention can wait out the 5s busy_timeout — on the agent that would be a frozen
+# host network caused by audit bookkeeping. Overflow is written durably OFF the caller's
+# goroutine and a drop is counted only when that path is also saturated. Set spillblock/block
+# only where those stalls are acceptable.
+auditLossMode: spill
 
 # Policy engine default action (overridden by Hub-pushed shadow config).
 # The retired policy_rules shadow key was deleted in PR-0 with no live

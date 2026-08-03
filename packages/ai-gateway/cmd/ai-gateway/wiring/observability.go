@@ -19,6 +19,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillsweep"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
@@ -69,7 +70,7 @@ func InitAuditWriter(
 	payloadCaptureStore *payloadcapture.Store,
 	opsReg *registry.Registry,
 	logger *slog.Logger,
-) (*audit.Writer, *normcore.Registry, error) {
+) (*audit.Writer, *normcore.Registry, spillfactory.Availability, spillstore.SpillStore, error) {
 	auditWriter := audit.NewWriter(mqProducer, "nexus.event.ai-traffic", opsReg, logger)
 
 	// Bound the in-heap audit record buffer (overflow → durable spill). Each queued
@@ -83,8 +84,14 @@ func InitAuditWriter(
 	// the empty/unknown fallback. Log the RESOLVED mode (after that fallback) so a
 	// config typo that silently reverted to block is visible rather than mysterious.
 	auditWriter.WithLossMode(auditCfg.LossMode)
+	// Two values: what the operator wrote, and what it resolved to (a typo falls
+	// back to the no-loss default). Deliberately NOT an "effective" value here —
+	// the durable spool is wired further down this function, so anything computed
+	// at this point would report a posture the process is not running. The mode
+	// actually in force is announced by ensureStarted's downgrade WARN, at the one
+	// moment it is known.
 	logger.Info("audit overflow policy resolved",
-		"configured", auditCfg.LossMode, "effective", auditWriter.LossMode())
+		"configured", auditCfg.LossMode, "resolved", auditWriter.LossMode())
 
 	// In-memory audit byte budget — the memory half of the bounded audit queue.
 	// Same semantics as NEXUS_EVENTS_MAX_BYTES: empty/"auto" auto-sizes to ~15% of
@@ -119,8 +126,12 @@ func InitAuditWriter(
 
 	spillStore, err := spillfactory.New(spillCfg, logger)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, spillfactory.Availability{}, nil, err
 	}
+	// Describe BEFORE the nil check: the nil case is the one an operator cannot
+	// otherwise see, because a configured inline-vs-spill threshold then does
+	// nothing at all.
+	spillAvailability := spillfactory.Describe(spillCfg, spillStore)
 	if spillStore != nil {
 		auditWriter.WithSpillStore(spillStore)
 		// Process-lifetime sweep so the backend's retention horizon and
@@ -177,7 +188,7 @@ func InitAuditWriter(
 	slog.Info("normalize registry built", "adapters", normalizeRegistry.All())
 
 	auditWriter.WithPayloadCaptureStore(payloadCaptureStore)
-	return auditWriter, normalizeRegistry, nil
+	return auditWriter, normalizeRegistry, spillAvailability, spillStore, nil
 }
 
 // InitMetricsRecorder creates the AI Gateway business metrics recorder.

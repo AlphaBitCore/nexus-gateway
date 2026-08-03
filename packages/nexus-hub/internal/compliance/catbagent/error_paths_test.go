@@ -244,7 +244,7 @@ func TestInterceptionDomains_Load_DomainScanError(t *testing.T) {
 			AddRow(
 				"dom-1", "openai", "api.openai.com", "EXACT", "openai-compat",
 				[]byte(nil), true, 100, "PROCESS", "FAIL_OPEN", "PUBLIC", updated,
-				nil, nil, nil, nil, nil, nil, nil, nil,
+				nil, nil, nil, nil, nil, nil, nil,
 			).
 			RowError(0, errors.New("scan: updated_at type mismatch")))
 
@@ -288,7 +288,7 @@ func TestInterceptionDomains_Load_PathQueryError(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(interceptionDomainCols).AddRow(
 			"dom-1", "openai", "api.openai.com", "EXACT", "openai-compat",
 			[]byte(nil), true, 100, "PROCESS", "FAIL_OPEN", "PUBLIC", updated,
-			nil, nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil,
 		))
 	want := errors.New("statement timeout")
 	mock.ExpectQuery(`FROM interception_path`).WillReturnError(want)
@@ -316,7 +316,7 @@ func TestInterceptionDomains_Load_PathScanError(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(interceptionDomainCols).AddRow(
 			"dom-1", "openai", "api.openai.com", "EXACT", "openai-compat",
 			[]byte(nil), true, 100, "PROCESS", "FAIL_OPEN", "PUBLIC", updated,
-			nil, nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil,
 		))
 	mock.ExpectQuery(`FROM interception_path`).
 		WillReturnRows(pgxmock.NewRows(interceptionPathCols).
@@ -342,7 +342,7 @@ func TestInterceptionDomains_Load_PathRowsErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(interceptionDomainCols).AddRow(
 			"dom-1", "openai", "api.openai.com", "EXACT", "openai-compat",
 			[]byte(nil), true, 100, "PROCESS", "FAIL_OPEN", "PUBLIC", updated,
-			nil, nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil,
 		))
 	mock.ExpectQuery(`FROM interception_path`).
 		WillReturnRows(pgxmock.NewRows(interceptionPathCols).CloseError(want))

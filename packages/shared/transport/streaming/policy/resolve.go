@@ -12,7 +12,6 @@ type Override struct {
 	FailBehavior        *FailBehavior
 	CaptureRequestBody  *bool
 	CaptureResponseBody *bool
-	RawSpillEnabled     *bool
 }
 
 // Resolve merges `override` over `globalDefault`. A nil `override` means
@@ -44,9 +43,6 @@ func Resolve(globalDefault Policy, override *Override) Policy {
 	}
 	if override.CaptureResponseBody != nil {
 		merged.CaptureResponseBody = *override.CaptureResponseBody
-	}
-	if override.RawSpillEnabled != nil {
-		merged.RawSpillEnabled = *override.RawSpillEnabled
 	}
 	return merged
 }

@@ -23,6 +23,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -62,11 +63,12 @@ import (
 // suite can assert which path fired.
 
 type fakeExecutor struct {
-	Result          *executor.ExecutionResult
-	Calls           int
-	PreparedCalls   int
-	LastTargets     []routingcore.RoutingTarget
-	LastPreparedLen int
+	Result           *executor.ExecutionResult
+	Calls            int
+	PreparedCalls    int
+	LastTargets      []routingcore.RoutingTarget
+	LastPreparedLen  int
+	LastPreparedBody []byte
 }
 
 func (f *fakeExecutor) Execute(
@@ -92,6 +94,7 @@ func (f *fakeExecutor) ExecuteWithPreparedBody(
 	f.PreparedCalls++
 	f.LastTargets = targets
 	f.LastPreparedLen = len(preparedBody)
+	f.LastPreparedBody = preparedBody
 	return f.Result
 }
 
@@ -103,9 +106,11 @@ type fakeBridge struct {
 	endpointRoutable                 func(ep typology.WireShape, ingress, target provcore.Format) bool
 	targetNativelyServesResponsesAPI func(target provcore.Format) bool
 	ingressChatToCanonical           func(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error)
+	ingressImagesToCanonical         func(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error)
 	responseCanonicalToIngress       func(ingress provcore.Format, canonical []byte) ([]byte, error)
 	responseAcrossFormats            func(from typology.WireShape, to typology.WireShape, body []byte) ([]byte, error)
 	newStreamTranscoder              func(ingress, target provcore.Format, model string) canonicalbridge.StreamTranscoder
+	stripInternalCarriers            func(canon []byte, target provcore.Format) []byte
 }
 
 func (b *fakeBridge) EndpointRoutable(ep typology.WireShape, ingress, target provcore.Format) bool {
@@ -206,6 +211,51 @@ func (b *fakeBridge) IngressEmbeddingsToCanonical(_ provcore.Format, body []byte
 
 func (b *fakeBridge) ResponseCanonicalToIngressEmbeddings(_ provcore.Format, canonical []byte) ([]byte, error) {
 	return canonical, nil
+}
+
+func (b *fakeBridge) ImagesWireShapeForTarget(target provcore.Format) typology.WireShape {
+	switch target {
+	case provcore.FormatGemini:
+		return typology.WireShapeGeminiImagesGenerateContent
+	case provcore.FormatOpenAI:
+		return typology.WireShapeOpenAIImages
+	}
+	return typology.WireShapeNone
+}
+
+func (b *fakeBridge) IngressImagesToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error) {
+	if b.ingressImagesToCanonical != nil {
+		return b.ingressImagesToCanonical(ingress, body, ct)
+	}
+	return body, nil
+}
+
+func (b *fakeBridge) IngressImagesToWire(_, _ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, []string, error) {
+	return body, nil, nil
+}
+
+func (b *fakeBridge) RerankWireShapeForTarget(target provcore.Format) typology.WireShape {
+	switch target {
+	case provcore.FormatCohere:
+		return typology.WireShapeCohereRerank
+	case provcore.FormatVoyage:
+		return typology.WireShapeVoyageRerank
+	}
+	return typology.WireShapeNone
+}
+
+func (b *fakeBridge) IngressRerankToCanonical(_ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, error) {
+	return body, nil
+}
+
+func (b *fakeBridge) IngressRerankToWire(_, _ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, []string, error) {
+	return body, nil, nil
+}
+func (b *fakeBridge) StripInternalCarriersForTarget(canon []byte, target provcore.Format) []byte {
+	if b.stripInternalCarriers != nil {
+		return b.stripInternalCarriers(canon, target)
+	}
+	return canon
 }
 
 // shared deps assembler
@@ -351,14 +401,24 @@ func TestServeProxy_Fake_ClientCanceled_499(t *testing.T) {
 	}
 }
 
-// TestServeProxy_Fake_AllTargetsExhausted_TerminalRateLimited exercises
-// the PROVIDER_RATE_LIMITED 429 branch: last attempt's StatusCode == 429
-// short-circuits the 502 envelope path.
+// TestServeProxy_Fake_AllTargetsExhausted_TerminalRateLimited pins the
+// business outcome of exhausting every target against a rate-limited
+// provider: the client must be told 429 so it backs off, never 502, which
+// would claim the provider is down and produce no backoff.
+//
+// The fixture mirrors what the executor really emits for a rate-limited
+// call — Dispatched with the canonical code — because the handler decides
+// on the classification, not on the raw upstream status.
 func TestServeProxy_Fake_AllTargetsExhausted_TerminalRateLimited(t *testing.T) {
 	fexec := &fakeExecutor{Result: &executor.ExecutionResult{
 		Error: executor.ErrAllTargetsExhausted,
 		Attempts: []executor.Attempt{
-			{StatusCode: http.StatusTooManyRequests, Error: "rate limited"},
+			{
+				StatusCode: http.StatusTooManyRequests,
+				Code:       provcore.CodeRateLimited,
+				Dispatched: true,
+				Error:      "rate limited",
+			},
 		},
 	}}
 	fbridge := &fakeBridge{}
@@ -374,6 +434,112 @@ func TestServeProxy_Fake_AllTargetsExhausted_TerminalRateLimited(t *testing.T) {
 
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status=%d want 429; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "PROVIDER_RATE_LIMITED") {
+		t.Errorf("body=%s want PROVIDER_RATE_LIMITED", w.Body.String())
+	}
+}
+
+// The two rate-limit signals are complementary, and the case above carries
+// both, so it cannot tell which one the handler reads. These two separate them:
+// each fixture is a shape the real normalizers emit, and each isolates one
+// signal by making the other say "not a rate limit".
+//
+// Anthropic answers overload with type "overloaded_error" on HTTP 529. The
+// normalizer maps the type to rate_limited and keeps Status at the raw 529, so
+// only the canonical code identifies this as a rate limit. Deciding on status
+// alone reports a backoff-able overload as a dead provider.
+func TestServeProxy_Fake_AllTargetsExhausted_RateLimitedOnNon429Status(t *testing.T) {
+	fexec := &fakeExecutor{Result: &executor.ExecutionResult{
+		Error: executor.ErrAllTargetsExhausted,
+		Attempts: []executor.Attempt{
+			{
+				StatusCode: 529,
+				Code:       provcore.CodeRateLimited,
+				Dispatched: true,
+				Error:      "overloaded",
+			},
+		},
+	}}
+	deps := makeFakeDeps(t, fexec, &fakeBridge{})
+
+	h := NewHandler(deps).ServeProxy(Ingress{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+	})
+	w := httptest.NewRecorder()
+	h(w, freshChatRequest(t, `{"model":"claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}`))
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d want 429: an overload the classifier already called a rate limit must reach the client as one; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// A rate-limited exhaust is counted, never logged per attempt. The counter is
+// O(1) and an aggregate is the right instrument for a failure mode whose whole
+// shape is its rate; one event per attempt is unbounded volume on the hottest
+// failure path, which is why this return precedes the log call.
+func TestServeProxy_Fake_AllTargetsExhausted_RateLimitedIsCountedNotLogged(t *testing.T) {
+	fexec := &fakeExecutor{Result: &executor.ExecutionResult{
+		Error: executor.ErrAllTargetsExhausted,
+		Attempts: []executor.Attempt{
+			{
+				StatusCode: http.StatusTooManyRequests,
+				Code:       provcore.CodeRateLimited,
+				Dispatched: true,
+				Error:      "rate limited",
+			},
+		},
+	}}
+	deps := makeFakeDeps(t, fexec, &fakeBridge{})
+	var logs bytes.Buffer
+	deps.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	h := NewHandler(deps).ServeProxy(Ingress{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+	})
+	w := httptest.NewRecorder()
+	h(w, freshChatRequest(t, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d want 429; body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(logs.String(), msgUpstreamRateLimited) {
+		t.Errorf("a rate-limited exhaust emitted a per-attempt event; a storm of them is unbounded volume on the hot path:\n%s", logs.String())
+	}
+}
+
+// The mirror case: a provider replies HTTP 429 but types the body as something
+// else — an Anthropic "api_error", a Gemini "UNAVAILABLE". The normalizers
+// derive Code from the type and leave Status at the raw 429, and the fallback
+// that would map a 429 to rate_limited is skipped once a recognised type has
+// set Code. So the wire says rate limit and the code does not, and deciding on
+// the code alone tells the client the provider is down — the exact 502-instead-
+// of-429 this branch exists to prevent, on a narrower input.
+func TestServeProxy_Fake_AllTargetsExhausted_429StatusWithNonRateLimitedCode(t *testing.T) {
+	fexec := &fakeExecutor{Result: &executor.ExecutionResult{
+		Error: executor.ErrAllTargetsExhausted,
+		Attempts: []executor.Attempt{
+			{
+				StatusCode: http.StatusTooManyRequests,
+				Code:       provcore.CodeUpstreamError,
+				Dispatched: true,
+				Error:      "api_error",
+			},
+		},
+	}}
+	deps := makeFakeDeps(t, fexec, &fakeBridge{})
+
+	h := NewHandler(deps).ServeProxy(Ingress{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+	})
+	w := httptest.NewRecorder()
+	h(w, freshChatRequest(t, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d want 429: the wire said rate limit, so the client must back off whatever the body typed the cause as; body=%s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "PROVIDER_RATE_LIMITED") {
 		t.Errorf("body=%s want PROVIDER_RATE_LIMITED", w.Body.String())
@@ -1124,6 +1290,8 @@ func TestServeProxy_Fake_AuthFails(t *testing.T) {
 // `Metrics != nil` arms fire. Returns no useful information; we're
 // only here for coverage.
 type noopMetrics struct{}
+
+func (noopMetrics) RecordError(_, _ string) {}
 
 func (noopMetrics) RecordRequest(_, _, _ string, _ int, _ time.Duration, _ metricspkg.Usage) {
 }

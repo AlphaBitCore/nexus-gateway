@@ -17,6 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	localfsspill "github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/localfs"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillsweep"
@@ -51,6 +52,12 @@ type BridgeDepsArgs struct {
 	// "http://host:port"). Empty = direct egress (default). Raw cfg string;
 	// parsed + validated here via tlsbump.ParseEgressProxy.
 	UpstreamProxy string
+	// AuditLossMode is the raw cfg string for the audit-overflow policy
+	// (shared/audit/lossmode: spillblock | block | spill | drop). Empty resolves to the
+	// shared no-loss default. The agent's shipped config selects "spill" because a
+	// no-loss mode must block until the record is durable, and the agent may never
+	// stall the host path — see QueueWriter's documentation.
+	AuditLossMode string
 }
 
 // BuildBridgeDeps assembles the shared/tlsbump-backed proxy.BridgeDeps the
@@ -135,7 +142,7 @@ func BuildBridgeDeps(args BridgeDepsArgs) (*agentproxy.BridgeDeps, error) {
 		NormalizeRegistry:   args.NormalizeRegistry,
 		PayloadCaptureStore: args.PayloadCaptureStore,
 		SpillStore:          spill,
-		AuditQueue:          args.AuditQueue,
+		AuditWriter:         NewBridgeAuditWriter(args.AuditQueue, args.AuditLossMode, logger),
 		StreamingPolicy:     args.StreamingPolicyStore,
 		PerHookTimeout:      5 * time.Second,
 		TotalTimeout:        30 * time.Second,
@@ -149,15 +156,32 @@ func BuildBridgeDeps(args BridgeDepsArgs) (*agentproxy.BridgeDeps, error) {
 // listener separately (platformshim.WireDarwinBridge), so this is a no-op on
 // darwin. A deps-build failure is fail-open: inspect flows fall through to
 // passthrough.
-func WireInspectBridge(plat platform.Platform, args BridgeDepsArgs) {
+//
+// Returns the inspect path's audit writer so the caller can drain it at shutdown;
+// nil on darwin, on a deps-build failure, and on a platform that does not receive
+// bridge deps. Draining matters on an audit-durability path: the writer batches
+// into SQLite behind a channel, so events still in that channel at shutdown are
+// lost unless Close commits them.
+func WireInspectBridge(plat platform.Platform, args BridgeDepsArgs) sharedaudit.Writer {
 	if runtime.GOOS == "darwin" {
-		return
+		return nil
 	}
 	logger := args.Logger
-	if bridgeDeps, depErr := BuildBridgeDeps(args); depErr != nil {
+	bridgeDeps, depErr := BuildBridgeDeps(args)
+	if depErr != nil {
 		logger.Warn("bridge deps build failed; inspect flows fall through to passthrough", "error", depErr)
-	} else if r, ok := plat.(api.BridgeDepsReceiver); ok {
-		r.SetBridgeDeps(bridgeDeps)
-		logger.Info("inspect flows wired through shared/tlsbump.BumpConnection")
+		return nil
 	}
+	r, ok := plat.(api.BridgeDepsReceiver)
+	if !ok {
+		// Deps built but nothing will use them: close the writer rather than
+		// leave its goroutines running for a path that never receives a flow.
+		if bridgeDeps.AuditWriter != nil {
+			_ = bridgeDeps.AuditWriter.Close(context.Background())
+		}
+		return nil
+	}
+	r.SetBridgeDeps(bridgeDeps)
+	logger.Info("inspect flows wired through shared/tlsbump.BumpConnection")
+	return bridgeDeps.AuditWriter
 }

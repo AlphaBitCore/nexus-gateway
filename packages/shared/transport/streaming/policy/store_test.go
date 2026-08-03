@@ -65,7 +65,6 @@ func TestDecodeGlobalPolicy_AllFieldsOverridden(t *testing.T) {
 	// drops one would silently inherit the default for that knob.
 	captureReq := true
 	captureResp := false
-	rawSpill := true
 	raw := []byte(`{
 		"default_mode": "chunked_async",
 		"chunk_bytes": 8192,
@@ -100,9 +99,6 @@ func TestDecodeGlobalPolicy_AllFieldsOverridden(t *testing.T) {
 	}
 	if got.CaptureResponseBody != captureResp {
 		t.Errorf("CaptureResponseBody: %v", got.CaptureResponseBody)
-	}
-	if got.RawSpillEnabled != rawSpill {
-		t.Errorf("RawSpillEnabled: %v", got.RawSpillEnabled)
 	}
 }
 
@@ -139,7 +135,21 @@ func TestStore_ApplyShadowState_ValidPayload(t *testing.T) {
 	}
 }
 
-func TestStore_ApplyShadowState_EmptyResetsToDefault(t *testing.T) {
+// TestStore_ApplyShadowState_EmptyKeepsCurrent — an empty payload KEEPS the
+// current policy. It used to assert the opposite ("empty resets to default"),
+// and that assertion is what the live defect looked like from inside the suite.
+//
+// streaming_compliance is a Type-B key in configkey.go — "invalidation trigger —
+// state stays null/{}" — so an empty payload is not "no configuration", it is
+// what the Hub sends on EVERY push. Resetting on it meant: the compliance proxy
+// loaded the admin's chunked_async at boot (10:30:50.045) and this path replaced
+// it with the built-in passthrough 70 ms later, after which every SSE stream was
+// relayed uninspected — passthrough neither accumulates nor can reject.
+//
+// The receiver's job on a trigger is to re-read its authoritative source. The
+// Store has none, so the rule here is the narrower one that is always right: a
+// trigger never resets state.
+func TestStore_ApplyShadowState_EmptyKeepsCurrent(t *testing.T) {
 	s := NewStore(DefaultPolicy())
 	// Push a real config first.
 	if err := s.ApplyShadowState(context.Background(), json.RawMessage(`{"default_mode":"buffer_full_block"}`)); err != nil {
@@ -148,12 +158,14 @@ func TestStore_ApplyShadowState_EmptyResetsToDefault(t *testing.T) {
 	if s.Get().Mode != ModeBufferFullBlock {
 		t.Fatalf("initial set didn't take")
 	}
-	// Empty payload should reset to DefaultPolicy.
-	if err := s.ApplyShadowState(context.Background(), nil); err != nil {
-		t.Fatalf("ApplyShadowState (empty): %v", err)
-	}
-	if s.Get().Mode != ModePassThrough {
-		t.Errorf("empty payload should restore default (passthrough), got %q", s.Get().Mode)
+	for _, empty := range []json.RawMessage{nil, json.RawMessage(""), json.RawMessage("null"), json.RawMessage("{}")} {
+		if err := s.ApplyShadowState(context.Background(), empty); err != nil {
+			t.Fatalf("ApplyShadowState (%q): %v", string(empty), err)
+		}
+		if got := s.Get().Mode; got != ModeBufferFullBlock {
+			t.Fatalf("payload %q reset the mode to %q — a trigger carries no state and must not "+
+				"revert the admin's configuration", string(empty), got)
+		}
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // RegisterEmbeddingProbeRoutes — wires the route
@@ -146,7 +148,7 @@ func TestProviderEmbeddingProbe_GatewayUnreachable_Returns200WithFalse(t *testin
 		WillReturnRows(pgxmock.NewRows(credentialMetadataCols))
 
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL: "http://127.0.0.1:1", // no listener
+		AIGatewayBase: peer.Static("http://127.0.0.1:1"), // no listener
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
@@ -196,7 +198,7 @@ func TestProviderEmbeddingProbe_GatewayResponds_PassesThrough(t *testing.T) {
 	}))
 	defer gw.Close()
 
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayURL: gw.URL})
+	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayBase: peer.Static(gw.URL)})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
 	c, _ := echoCtx(req, rec, "u-1")
@@ -223,7 +225,7 @@ func TestProviderEmbeddingProbe_GatewayResponds_PassesThrough(t *testing.T) {
 
 func TestForwardEmbeddingProbe_GatewayUnreachable_Returns200WithFalse(t *testing.T) {
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL: "http://127.0.0.1:1",
+		AIGatewayBase: peer.Static("http://127.0.0.1:1"),
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
@@ -245,7 +247,7 @@ func TestForwardEmbeddingProbe_GatewayUnreachable_Returns200WithFalse(t *testing
 
 func TestForwardEmbeddingProbe_BadGatewayURL_Returns200WithFalse(t *testing.T) {
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL: "://bad-url",
+		AIGatewayBase: peer.Static("://bad-url"),
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
@@ -273,7 +275,7 @@ func TestForwardEmbeddingProbe_GatewayResponds_PassesThrough(t *testing.T) {
 	}))
 	defer gw.Close()
 
-	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayURL: gw.URL})
+	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayBase: peer.Static(gw.URL)})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
 	c, _ := echoCtx(req, rec, "u-1")

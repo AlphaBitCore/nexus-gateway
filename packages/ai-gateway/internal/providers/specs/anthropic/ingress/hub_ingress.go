@@ -186,11 +186,41 @@ func anthropicMessageToOpenAI(msg gjson.Result) []map[string]any {
 	var images []map[string]any
 	var toolUseBlocks []gjson.Result
 	var toolResults []map[string]any
+	// Assistant thinking history: without collecting it here the blocks
+	// are silently dropped at Anthropic-ingress→canonical, and a
+	// cross-format target that needs the reasoning back (DeepSeek's
+	// thinking mode) gets an empty "" back-fill masking real text. The
+	// text becomes reasoning_content — the L2 universal field the response
+	// side already uses (see OpenAIChatCompletionToMessagesResponse). Each
+	// block keeps its OWN signature (Anthropic validates a signature
+	// against the exact thinking content it signed) under the
+	// nexus_thinking message field, which the bridge drops before a
+	// non-Anthropic upstream sees it (see addReasoning).
+	var reasoningLines []string
+	var thinkingBlocks []map[string]any
 
 	content.ForEach(func(_, part gjson.Result) bool {
 		switch part.Get("type").String() {
 		case "text":
 			textLines = append(textLines, part.Get("text").String())
+		case "thinking":
+			t := part.Get("thinking").String()
+			if t != "" {
+				reasoningLines = append(reasoningLines, t)
+			}
+			block := map[string]any{"thinking": t}
+			if sig := part.Get("signature").String(); sig != "" {
+				block["signature"] = sig
+			}
+			thinkingBlocks = append(thinkingBlocks, block)
+		case "redacted_thinking":
+			// Anthropic emits redacted_thinking for safety-filtered
+			// reasoning; it carries opaque `data`, no plaintext. Preserve
+			// it verbatim as a block so the round-trip re-emits it, but it
+			// contributes no reasoning_content text.
+			thinkingBlocks = append(thinkingBlocks, map[string]any{
+				"redacted_data": part.Get("data").String(),
+			})
 		case "image":
 			src := part.Get("source")
 			switch src.Get("type").String() {
@@ -255,6 +285,7 @@ func anthropicMessageToOpenAI(msg gjson.Result) []map[string]any {
 			"role":       "assistant",
 			"tool_calls": tcalls,
 		}
+		addReasoning(entry, reasoningLines, thinkingBlocks)
 		if len(textLines) > 0 || len(images) > 0 {
 			var parts []any
 			for _, line := range textLines {
@@ -279,7 +310,13 @@ func anthropicMessageToOpenAI(msg gjson.Result) []map[string]any {
 	}
 
 	entry := map[string]any{"role": role}
-	if len(images) == 0 && len(textLines) <= 1 && len(textLines) == 1 {
+	// Thinking legitimately appears only on assistant turns (the Gemini
+	// sibling gates the same way); never stamp reasoning onto a user
+	// message even if a malformed part slipped through.
+	if role == "assistant" {
+		addReasoning(entry, reasoningLines, thinkingBlocks)
+	}
+	if len(images) == 0 && len(textLines) == 1 {
 		entry["content"] = textLines[0]
 		return []map[string]any{entry}
 	}

@@ -8,10 +8,8 @@
 package proxy
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
@@ -23,6 +21,7 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -45,11 +44,11 @@ type proxyState struct {
 	w http.ResponseWriter
 	r *http.Request
 
-	// in is the route-table Ingress the handler closure was built with
-	// (pre header-override). resolved is the per-request effective copy
-	// after the `x-nexus-aigw-body-format` override; the cache stage may
-	// downgrade resolved.WireShape for cross-format dispatch while
-	// egress reshaping still reads the immutable context ingress.
+	// in is the route-table Ingress the handler closure was built with —
+	// shared across every request on the route, never mutated. resolved is
+	// the per-request copy: the cache stage may downgrade
+	// resolved.WireShape for cross-format dispatch while egress reshaping
+	// still reads the immutable context ingress.
 	in       Ingress
 	resolved Ingress
 
@@ -68,6 +67,18 @@ type proxyState struct {
 	modelID  string
 	isStream bool
 	rctxFull *requestcontext.RequestContext
+	// releaseGenerativeCap returns the per-VK generative concurrency slot
+	// acquired in the admission stage. Nil for non-generative kinds (and for
+	// generative kinds with no configured cap). Called once in finalizeAudit
+	// — the same defer that covers every exit path (success, error, panic) —
+	// so a slot is never stranded.
+	releaseGenerativeCap func()
+
+	// postHookNormalized memoizes the canonical rebuilt from the
+	// hook-rewritten body for cache consumers (see cacheNormalized).
+	// Set-flag distinguishes "computed nil (skip)" from "not yet computed".
+	postHookNormalized    *normcore.NormalizedPayload
+	postHookNormalizedSet bool
 	// unattachedBodyHandle is the pooled request-body handle when payload
 	// capture did NOT attach it to the record (bodies-off). finalizeAudit
 	// returns it to the pool at request end; nil when captured or no body.
@@ -107,14 +118,10 @@ type proxyState struct {
 	execAttempts int
 }
 
-// newProxyState performs the pre-pipeline setup: resolve the effective
-// ingress (honouring the `x-nexus-aigw-body-format` override on the
-// OpenAI-compat family), stamp the request context with the ingress,
-// phase sink and timer, build the request-scoped logger, and open the
-// audit record. Returns ok=false after writing the 400 response when the
-// override header names an unknown body format — no audit record exists
-// at that point, matching the pre-resolution contract.
-func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Request) (*proxyState, bool) {
+// newProxyState performs the pre-pipeline setup: stamp the request
+// context with the ingress, phase sink and timer, build the
+// request-scoped logger, and open the audit record.
+func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Request) *proxyState {
 	// All persisted timestamps are UTC instants — see docs/developers/workflow/timezone.md.
 	// Latency math is also fine off UTC since time.Time carries a
 	// monotonic clock reading independent of location.
@@ -125,19 +132,10 @@ func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Reque
 	// it carries both the request id and the cross-service trace id.
 	traceID := requestID
 
-	// Detect the effective ingress body format, honouring the
-	// `x-nexus-aigw-body-format` override on the OpenAI-compat family.
-	resolved, ok := in.applyHeaderOverride(r)
-	if !ok {
-		// Pre-resolution validation (invalid x-nexus-aigw-body-format header):
-		// no rec/ingress yet, so emit the OpenAI proxy-error shape directly.
-		raw := strings.TrimSpace(r.Header.Get("x-nexus-aigw-body-format"))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write(openAIProxyErrorBody(http.StatusBadRequest, "",
-			fmt.Sprintf("unknown body format %q; supported: openai, anthropic, gemini, azure-openai, minimax, glm, deepseek", raw), ""))
-		return nil, false
-	}
+	// Ingress detection is path-authoritative: the route table's descriptor
+	// is the whole answer. resolved starts as a copy of it and only the
+	// cache stage's cross-format downgrade rewrites it later.
+	resolved := in
 	// endpoint_type is chat-KIND for routing / cache / hook dispatch (via
 	// KindFromWireShape), but the Responses API carries its own label so the
 	// persisted traffic_event distinguishes /v1/responses from chat completions.
@@ -222,5 +220,5 @@ func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Reque
 		phaseTimer:   phaseTimer,
 		logger:       logger,
 		rec:          rec,
-	}, true
+	}
 }

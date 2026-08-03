@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 func TestWebCanvasEmitsDirectives(t *testing.T) {
@@ -69,7 +71,7 @@ func TestChatStreamEmitsNavigate(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	_, out := driveTurn(t, h, "user-1", `{"message":"show me cost"}`)
 	if !strings.Contains(out, "event: navigate") || !strings.Contains(out, "\"view\":\"cost\"") {
 		t.Fatalf("expected a navigate directive for the cost view, got:\n%s", out)

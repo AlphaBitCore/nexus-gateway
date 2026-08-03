@@ -665,9 +665,10 @@ func nullableInt(p *int) any {
 	return *p
 }
 
-// nullableStatusCode 把 0 当成 "未捕获" (SQLite NULL) — 真实 HTTP
-// 状态码永远 > 0,所以 0 等价于 "没拿到 / 不适用",存 NULL 让
-// downstream (UI / Hub 查询) 能区分 "没数据" 和 "确实是 0"。
+// nullableStatusCode treats 0 as "not captured" (SQLite NULL) — a real HTTP
+// status code is always > 0, so 0 means "not obtained / not applicable" and
+// storing NULL lets downstream consumers (UI / Hub queries) distinguish
+// "no data" from "literally zero".
 func nullableStatusCode(sc int) any {
 	if sc <= 0 {
 		return nil

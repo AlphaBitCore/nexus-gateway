@@ -6,6 +6,7 @@ package errors
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -45,6 +46,16 @@ func (ErrorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 	switch status {
 	case http.StatusBadRequest:
 		pe.Code = provcore.CodeInvalidRequest
+		// Context overflow rides the invalid_request envelope with a
+		// dedicated code ("context_length_exceeded", documented) or the
+		// message "This model's maximum context length is N tokens..."
+		// (observed on gpt-4o 400s; OpenAI-compat upstreams reuse the
+		// phrasing). Classified separately so the executor can fail over
+		// to a larger-context target.
+		if gjson.GetBytes(body, "error.code").String() == "context_length_exceeded" ||
+			strings.Contains(pe.Message, "maximum context length") {
+			pe.Code = provcore.CodeContextOverflow
+		}
 	case http.StatusUnauthorized, http.StatusForbidden:
 		pe.Code = provcore.CodeAuthFailed
 	case http.StatusTooManyRequests:

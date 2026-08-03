@@ -48,6 +48,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("AI_GATEWAY_PUBLIC_URL"); v != "" {
 		cfg.PublicURL = v
 	}
+	if v := os.Getenv("AI_GATEWAY_PRIVATE_URL"); v != "" {
+		cfg.PrivateURL = v
+	}
 	// ADMIN_KEY_HMAC_SECRET / CREDENTIAL_ENCRYPTION_KEY / CREDENTIAL_KEY_MAP are
 	// crown jewels resolved through the SecretCustody loader in Load(),
 	// not read raw here, so they can be KMS-wrapped at rest.

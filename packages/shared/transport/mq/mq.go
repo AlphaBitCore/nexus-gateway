@@ -18,6 +18,15 @@ type Producer interface {
 
 	// Enqueue sends a message to a queue. One consumer in the group receives it.
 	// Persistent: messages survive consumer restarts and are delivered at-least-once.
+	//
+	// Implementations MUST NOT retain data past the return: the payload has to be
+	// copied or written to the wire before Enqueue completes. Producers reuse the
+	// marshal buffer that backs data across messages, so an implementation that
+	// stored the slice would serve one message's bytes and then silently observe
+	// the next message's. The NATS implementation satisfies this because
+	// jetstream.Publish is a synchronous request/reply and nats.go copies the
+	// payload into the connection write buffer inside it; a fake or in-memory
+	// implementation that keeps messages must copy.
 	Enqueue(ctx context.Context, queue string, data []byte) error
 
 	// Close flushes pending messages and releases resources.

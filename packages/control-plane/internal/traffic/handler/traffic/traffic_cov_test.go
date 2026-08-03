@@ -25,14 +25,14 @@ import (
 )
 
 // trafficEventCovRow builds the column set + value row matching GetTrafficEvent's
-// 89 base scan destinations plus the 6 payload-JOIN columns
+// 95 base scan destinations plus the 6 payload-JOIN columns
 // (inline_request_body, inline_response_body, request_spill_ref,
 // response_spill_ref, inline_request_encoding, inline_response_encoding). Base
-// columns 0/1/2/68 carry the non-nullable values (ID, Source, Timestamp,
+// columns 0/1/2/72 carry the non-nullable values (ID, Source, Timestamp,
 // CreatedAt); every other base column is SQL NULL. The caller fills the 6
-// payload columns (indices 91..96) to drive the body/spill branches.
+// payload columns (indices 95..100) to drive the body/spill branches.
 func trafficEventCovRow(id string, reqBody, respBody, reqSpill, respSpill []byte, reqEnc, respEnc string) *pgxmock.Rows {
-	const n = 91
+	const n = 96 // base SELECT cols: 91 + end_user_id/session_id + artifact_refs/compliance_coverage/endpoint_type
 	const extra = 6
 	cols := make([]string, n+extra)
 	vals := make([]any, n+extra)
@@ -43,13 +43,13 @@ func trafficEventCovRow(id string, reqBody, respBody, reqSpill, respSpill []byte
 	vals[0] = id
 	vals[1] = "ai-gateway"
 	vals[2] = tNowCov
-	vals[68] = tNowCov // CreatedAt — index +2 after request/response_hooks_us
-	vals[91] = nullableBytes(reqBody)
-	vals[92] = nullableBytes(respBody)
-	vals[93] = nullableBytes(reqSpill)
-	vals[94] = nullableBytes(respSpill)
-	vals[95] = reqEnc
-	vals[96] = respEnc
+	vals[73] = tNowCov // CreatedAt — SELECT index 73 after the +5 columns
+	vals[96] = nullableBytes(reqBody)
+	vals[97] = nullableBytes(respBody)
+	vals[98] = nullableBytes(reqSpill)
+	vals[99] = nullableBytes(respSpill)
+	vals[100] = reqEnc
+	vals[101] = respEnc
 	return pgxmock.NewRows(cols).AddRow(vals...)
 }
 
@@ -247,6 +247,7 @@ var normalizeInputCols = []string{
 	"ingress_format", "model", "path",
 	"req_body", "req_enc", "resp_body", "resp_enc",
 	"req_ct", "resp_ct", "req_spill", "resp_spill",
+	"endpoint_type",
 }
 
 func TestGetTrafficEventNormalized_InlineRecompute_ReturnsComputed(t *testing.T) {
@@ -260,7 +261,7 @@ func TestGetTrafficEventNormalized_InlineRecompute_ReturnsComputed(t *testing.T)
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"anthropic", "claude-opus-4-7", "/v1/messages",
 			reqBody, "", respBody, "",
-			"application/json", "text/event-stream", nil, nil))
+			"application/json", "text/event-stream", nil, nil, ""))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-norm/normalized")
 	c.SetParamNames("id")
@@ -297,7 +298,7 @@ func TestGetTrafficEventNormalized_NoInlineBody_FallsBackToSidecar(t *testing.T)
 		WithArgs("evt-fb").
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"anthropic", "claude-opus-4-7", "/v1/messages",
-			nil, "", nil, "", "", "", nil, nil))
+			nil, "", nil, "", "", "", nil, nil, ""))
 	// Second query: stored sidecar row is returned.
 	normCols := []string{"traffic_event_id", "request_normalized", "response_normalized",
 		"request_status", "response_status", "request_error_reason", "response_error_reason",
@@ -334,7 +335,7 @@ func TestGetTrafficEventNormalized_NoInlineNoSidecar_Returns404(t *testing.T) {
 	mock.ExpectQuery(`COALESCE\(a.ingress_format`).
 		WithArgs("evt-empty").
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
-			"anthropic", "m", "/v1/messages", nil, "", nil, "", "", "", nil, nil))
+			"anthropic", "m", "/v1/messages", nil, "", nil, "", "", "", nil, nil, ""))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-empty").
 		WillReturnError(errNoRowsStub())
@@ -353,7 +354,7 @@ func TestGetTrafficEventNormalized_SidecarFallbackDBError_Returns500(t *testing.
 	mock.ExpectQuery(`COALESCE\(a.ingress_format`).
 		WithArgs("evt-fb-err").
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
-			"anthropic", "m", "/v1/messages", nil, "", nil, "", "", "", nil, nil))
+			"anthropic", "m", "/v1/messages", nil, "", nil, "", "", "", nil, nil, ""))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-fb-err").
 		WillReturnError(errStub("db down"))

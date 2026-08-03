@@ -41,8 +41,24 @@ func SuggestModelType(id string) string {
 	switch {
 	case strings.Contains(l, "embed"):
 		return "embedding"
-	case strings.Contains(l, "whisper"), strings.Contains(l, "tts"),
-		strings.Contains(l, "audio"), strings.Contains(l, "transcribe"):
+	// realtime must precede the audio arm: gpt-realtime-whisper /
+	// gpt-realtime-translate are realtime-family models, not REST audio.
+	case strings.Contains(l, "realtime"):
+		return "realtime"
+	case strings.Contains(l, "rerank"):
+		return "rerank"
+	case strings.Contains(l, "sora"), strings.Contains(l, "veo"),
+		strings.Contains(l, "video"):
+		return "video"
+	case strings.Contains(l, "tts"):
+		return "tts"
+	case strings.Contains(l, "whisper"), strings.Contains(l, "transcribe"):
+		return "stt"
+	// The bare "audio" arm runs AFTER the precise tts/stt/realtime arms so a
+	// speech id is typed precisely; what remains ("gpt-audio-*", "audio-preview")
+	// is a chat-completions-with-audio model whose coarse "audio" type the admin
+	// can refine on save.
+	case strings.Contains(l, "audio"):
 		return "audio"
 	case strings.Contains(l, "dall-e"), strings.Contains(l, "image"):
 		return "image"

@@ -73,6 +73,12 @@ var defaultRules = []Rule{
 	{Method: "POST", PathPattern: "/v1*/models/*:embedContent", Kind: EndpointKindEmbeddings, Shape: WireShapeGeminiEmbedContent},
 	{Method: "POST", PathPattern: "/v1*/models/*:batchEmbedContents", Kind: EndpointKindEmbeddings, Shape: WireShapeGeminiEmbedContent},
 
+	// ── Rerank ──────────────────────────────────────────────────────
+	// Canonical rerank ingress: a Cohere-shaped body (query + documents).
+	// The wire shape is Cohere's because OpenAI ships no rerank API; the
+	// body IS the canonical (see provider-adapter-architecture.md §3a).
+	{Method: "POST", PathPattern: "/v1/rerank", Kind: EndpointKindRerank, Shape: WireShapeCohereRerank},
+
 	// ── Audio (STT) ─────────────────────────────────────────────────
 	{Method: "POST", PathPattern: "/v1/audio/transcriptions", Kind: EndpointKindSTT, Shape: WireShapeOpenAIAudioTranscriptions},
 	{Method: "POST", PathPattern: "/v1/audio/translations", Kind: EndpointKindSTT, Shape: WireShapeOpenAIAudioTranscriptions},
@@ -85,8 +91,33 @@ var defaultRules = []Rule{
 	{Method: "POST", PathPattern: "/v1/images/edits", Kind: EndpointKindImageGeneration, Shape: WireShapeOpenAIImages},
 	{Method: "POST", PathPattern: "/v1/images/variations", Kind: EndpointKindImageGeneration, Shape: WireShapeOpenAIImages},
 
+	// ── Video generation (async job family) ────────────────────────
+	// Submit carries the multipart body; poll / content / delete are
+	// body-less relays keyed by the job id, hence WireShapeNone. A
+	// TRAILING glob "*" stops at "/" (see globMatch), so
+	// "/v1/videos/*" covers only the single-segment {id} poll/delete
+	// and the content sub-path needs its own rule. "/v1/videos" itself
+	// (the list surface, deliberately unserved) matches neither rule
+	// and stays unclassified.
+	{Method: "POST", PathPattern: "/v1/videos", Kind: EndpointKindVideoGeneration, Shape: WireShapeOpenAIVideos},
+	{Method: "GET", PathPattern: "/v1/videos/*/content", Kind: EndpointKindVideoGeneration, Shape: WireShapeNone},
+	{Method: "GET", PathPattern: "/v1/videos/*", Kind: EndpointKindVideoGeneration, Shape: WireShapeNone},
+	{Method: "DELETE", PathPattern: "/v1/videos/*", Kind: EndpointKindVideoGeneration, Shape: WireShapeNone},
+
 	// ── Batch ───────────────────────────────────────────────────────
 	{Method: "POST", PathPattern: "/v1/batches", Kind: EndpointKindBatch, Shape: WireShapeOpenAIBatches},
+
+	// ── Guardrail ───────────────────────────────────────────────────
+	// Standalone compliance-verdict endpoint: text in, allow/block/redact
+	// verdict out, no upstream relay. WireShapeNone because nothing is routed
+	// to a provider — it runs the hook pipeline directly.
+	{Method: "POST", PathPattern: "/v1/guardrail", Kind: EndpointKindGuardrail, Shape: WireShapeNone},
+
+	// ── Realtime (WebSocket session) ────────────────────────────────
+	// The realtime voice relay upgrade endpoint. GET because the WS
+	// handshake is a GET; WireShapeNone because the upgrade carries no
+	// HTTP body and session frames are relayed verbatim (no codec).
+	{Method: "GET", PathPattern: "/v1/realtime", Kind: EndpointKindRealtime, Shape: WireShapeNone},
 
 	// ── Catalog / models ────────────────────────────────────────────
 	// /v1/models is GET-only and carries no body, so WireShape is the

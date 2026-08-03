@@ -28,5 +28,26 @@ func (n *StrategyNode) UnmarshalJSON(data []byte) error {
 			n.ABTargets = probe.ABTargets
 		}
 	}
+	// Like ab_split above, the admin UI authors latency targets under the
+	// generic "targets" key, which the base unmarshal decodes into Targets
+	// ([]StrategyNode, dropping providerId/modelId into empty-Type phantom
+	// nodes) rather than LatencyTargets. Hydrate LatencyTargets from "targets"
+	// when an explicit "latencyTargets" key was not supplied so UI-authored
+	// rules resolve. The phantom Targets entries are left populated but are
+	// never consumed for a latency node — dispatch and enumeration key on Type.
+	if n.Type == "latency" && len(n.LatencyTargets) == 0 {
+		var probe struct {
+			LatencyTargets []LatencyTarget `json:"targets"`
+		}
+		if err := json.Unmarshal(data, &probe); err == nil {
+			n.LatencyTargets = probe.LatencyTargets
+		}
+	}
+	// Bound the latency fan-out: the strategy resolves and ranks every listed
+	// target on each request, so an oversized list is capped here (overflow
+	// dropped) rather than multiplying the per-request hot-path cost unbounded.
+	if n.Type == "latency" && len(n.LatencyTargets) > MaxLatencyTargets {
+		n.LatencyTargets = n.LatencyTargets[:MaxLatencyTargets]
+	}
 	return nil
 }

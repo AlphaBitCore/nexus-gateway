@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E40 Phase 3 D2: Build the Linux agent + tray + dashboard artifacts.
+# Build the Linux agent + tray + dashboard artifacts.
 #
 # Produces in $REPO_ROOT/dist/linux/staging/:
 #   nexus-agent         — Go daemon (cmd/agent)

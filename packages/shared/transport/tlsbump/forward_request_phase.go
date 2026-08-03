@@ -2,7 +2,6 @@ package tlsbump
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -66,7 +65,6 @@ func (x *bumpedExchange) runRequestPhase() bool {
 	// Run the request-side LLM signal detector on the same adapter
 	// so provider/model/api-key class are stamped onto the hook
 	// input before any hook sees the request.
-	var content *normalize.NormalizedPayload
 	var reqMeta traffic.RequestMeta
 	var resolvedAdapter traffic.Adapter
 	if bo.adapterRegistry != nil && x.matchedDomain != nil && x.matchedDomain.AdapterID != "" {
@@ -74,20 +72,17 @@ func (x *bumpedExchange) runRequestPhase() bool {
 			resolvedAdapter = factory()
 			// (domainRuleID was set during domain resolution on
 			// matchedDomain != nil; no need to reassign here.)
-			// Hot-path normalize: the Registry's Tier 1+2+3 chain
-			// produces a structured NormalizedPayload with
-			// role-aware Messages. When no tier claims the body,
-			// the adapter's ExtractRequest → Segments →
-			// PayloadFromTextSegments chain recovers hookable
-			// text for the PII pipeline.
-			content = runtimeNormalize(x.r.Context(), bo.normalizeRegistry, resolvedAdapter, bodyBytes, x.r.URL.Path, x.r.Header.Get("Content-Type"), normalize.DirectionRequest, logger, x.txID)
+			// DetectRequestMeta stays here unconditionally: provider / model /
+			// api-key class land on the audit row whether or not any hook runs.
+			// The normalize call does NOT — it is deferred to after BuildPipeline
+			// below (finding C-18), because its only consumer is
+			// reqInput.Normalized, which nothing reads unless a pipeline executes.
 			reqMeta = resolvedAdapter.DetectRequestMeta(x.r, bodyBytes)
 		}
 	}
 
 	reqInput := &core.HookInput{
 		Stage:             "request",
-		Normalized:        content,
 		SourceIP:          bo.sourceIP,
 		TargetHost:        x.flow.targetHost,
 		Method:            x.r.Method,
@@ -170,6 +165,23 @@ func (x *bumpedExchange) runRequestPhase() bool {
 			return true
 		}
 	} else if reqPipeline != nil {
+		// Normalize only now that a pipeline is known to exist (finding C-18). The
+		// Registry's Tier 1+2+3 chain produces a structured NormalizedPayload with
+		// role-aware Messages; when no tier claims the body, the adapter's
+		// ExtractRequest -> Segments -> PayloadFromTextSegments chain recovers
+		// hookable text for the PII pipeline. Both are pure decode work whose only
+		// consumer is reqInput.Normalized, read by the hooks this branch runs — with
+		// no hooks bound the whole result was previously computed and discarded.
+		//
+		// Nothing between reqInput's construction and here reads .Normalized, and the
+		// audit row does not carry it: the emitter reads AuditInfo.RequestNormalized,
+		// which the bumped path never stamps. So the deferral is invisible to audit,
+		// including on the build-failure branch above.
+		var content *normalize.NormalizedPayload
+		if resolvedAdapter != nil {
+			content = runtimeNormalize(x.r.Context(), bo.normalizeRegistry, resolvedAdapter, bodyBytes, x.r.URL.Path, x.r.Header.Get("Content-Type"), normalize.DirectionRequest, logger, x.txID)
+			reqInput.Normalized = content
+		}
 		reqPipeline.SetClearSoftOnApprove(true)
 		result := reqPipeline.Execute(x.flow.ctx, reqInput)
 		// Capture the result so the CPMarker built before upstream can
@@ -280,7 +292,7 @@ func (x *bumpedExchange) runRequestPhase() bool {
 	// requestPipelineResult is reqHookResult so the SSE / non-SSE
 	// post-upstream emit can record request-stage executions on
 	// traffic_event.request_hooks_pipeline.
-	x.r = x.r.WithContext(context.WithValue(x.r.Context(), requestAuditKey{}, &requestAuditCtx{
+	x.auditCtx = &requestAuditCtx{
 		input:                 reqInput,
 		info:                  auditInfo,
 		requestBody:           captureBodyIfEnabled(x.pcCfg.StoreRequestBody, bodyBytes),
@@ -288,6 +300,6 @@ func (x *bumpedExchange) runRequestPhase() bool {
 		requestPipelineResult: x.reqHookResult,
 		matchedDomain:         x.matchedDomain,
 		adapter:               resolvedAdapter,
-	}))
+	}
 	return false
 }

@@ -33,7 +33,7 @@ func PrependVia(h http.Header, svc string) {
 // some hops have a value to report for the marker and others do not.
 //
 // Semantics (matches the X-Nexus-Hook + X-Nexus-Mode contract documented in
-// nexus-response-markers.md):
+// nexus-headers.md):
 //   - First hop (header absent on entry): h.Set(key, value)
 //   - Later hop (header present on entry, even if value is ""): prepend
 //     value + ", " + existing so the new value lands at position 0 and the
@@ -57,13 +57,52 @@ func PrependChain(h http.Header, key, value string) {
 	h.Set(key, value+", "+cur)
 }
 
+// AcceptHeaders is the canonical list of request headers the AI Gateway
+// itself reads. It seeds the CORS request allowlist
+// (Access-Control-Allow-Headers): a name missing from that allowlist is
+// rejected at preflight for browser-origin callers, so the read site
+// downstream never fires — silently. Build the CORS value from this slice
+// plus the forward-header allowlist's request side (headers the gateway
+// relays to providers, resolved at startup) — never hand-maintain the list
+// elsewhere. Operator config may EXTEND the resulting set, never replace it:
+// an operator-authored replacement can only under-list (breaking the
+// gateway's own reads at preflight) or over-list (harmless), so only the
+// extend direction is exposed.
+//
+// This is the request-direction mirror of ExposeHeaders. Vendor header names
+// keep their vendor spelling (`x-api-key`, not `X-Api-Key`) — the mixed-case
+// rule governs the `X-Nexus-*` namespace only.
+var AcceptHeaders = []string{
+	"Content-Type",
+	// Virtual-key carriers. Authorization: Bearer is the universal one; each
+	// vendor name is accepted on its matching ingress, mirroring that
+	// vendor's SDK convention (see vkauth.extractVKToken).
+	"Authorization",
+	"X-Nexus-Virtual-Key",
+	"x-api-key",      // Anthropic ingress
+	"x-goog-api-key", // Gemini ingress
+	"api-key",        // Azure OpenAI ingress
+	// Correlation. X-Nexus-Request-Id is honoured-or-generated; X-Request-Id
+	// carries the caller's own id to traffic_event.external_request_id;
+	// X-Nexus-End-User-Id carries the caller's end-user tag to
+	// traffic_event.end_user_id (header wins over the protocol-native field).
+	"X-Nexus-Request-Id",
+	"X-Request-Id",
+	"X-Nexus-End-User-Id",
+	"X-Nexus-Session-Id",
+	// Response-cache opt-out. The Aigw-prefixed name is the deprecated
+	// spelling, kept while the read side dual-reads it; drop both together.
+	"X-Nexus-No-Cache",
+	"X-Nexus-Aigw-No-Cache",
+}
+
 // HeaderExpose is the standard CORS header name.
 const HeaderExpose = "Access-Control-Expose-Headers"
 
 // ExposeHeaders is the canonical list of Nexus marker headers exposed to
 // browser-side JS via Access-Control-Expose-Headers. Build the CORS value
 // from this slice — never hand-maintain the list elsewhere.
-// Documented in docs/developers/architecture/cross-cutting/foundation/nexus-response-markers.md.
+// Documented in docs/developers/architecture/cross-cutting/foundation/nexus-headers.md.
 var ExposeHeaders = []string{
 	// Cross-service correlation + chain. X-Nexus-Request-Id is the single
 	// canonical correlation ID; there is no separate trace ID header.
@@ -147,8 +186,9 @@ type HookOutcomeInput struct {
 //     to [a-z0-9-]+ (unsafe characters dropped) to prevent header/log injection.
 //
 // Multi-hop assembly is the caller's job via PrependChain — the outer hop
-// prepends its FormatHookOutcome to the existing X-Nexus-Hook chain so the
-// final value reads innermost-last (same 1:1 alignment as X-Nexus-Via).
+// prepends its FormatHookOutcome to the existing X-Nexus-Hook chain, so the
+// hop closest to the client lands at position 0 (same 1:1 alignment as
+// X-Nexus-Via).
 func FormatHookOutcome(in HookOutcomeInput) string {
 	if in.Rejected != "" {
 		reason := sanitizeSlug(in.RejectReason)

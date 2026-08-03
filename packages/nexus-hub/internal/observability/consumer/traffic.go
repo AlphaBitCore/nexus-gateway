@@ -322,7 +322,7 @@ func (w *TrafficEventWriter) Start(ctx context.Context) error {
 		// concurrent flushes are independent. batch.Stop() runs once, after all this
 		// queue's workers exit.
 		var wg sync.WaitGroup
-		for i := 0; i < workers; i++ {
+		for range workers {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()

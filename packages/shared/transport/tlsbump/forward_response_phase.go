@@ -1,15 +1,13 @@
 package tlsbump
 
 import (
-	"bytes"
-	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // runResponseStage is the post-upstream compliance phase: SSE/streaming
@@ -61,21 +59,30 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 		isSSE = true
 	}
 
-	// INFO (not Debug): the SSE-vs-buffered routing decision is the load-
-	// bearing fork for "did we stream the chat reply promptly or buffer it
-	// and make the client give up". Logging it at default level for every
-	// response makes a mis-routed streaming endpoint (a streaming Content-Type
-	// not in isStreamingContentType → buffered → client cancels) verifiable
-	// from agent.log alone, without re-instrumenting after the fact.
-	logger.Info("post-upstream response routing",
-		"path", x.r.URL.Path,
-		"status_code", resp.StatusCode,
-		"content_type", contentType,
-		"is_sse", isSSE,
-		"route", responseRouteName(isSSE, audCtx),
-		"audit_ctx_nil", audCtx == nil,
-		"tx_id", x.txID,
-	)
+	// Debug, and guarded (finding C-9). This fired at INFO on EVERY response with
+	// seven attributes, each of which slog boxes at the call site whether or not
+	// the level is enabled — the same double cost C-9 removed from the two
+	// runtimeNormalize lines and C-4 from the request-entry pair.
+	//
+	// It was kept at INFO on the argument that the SSE-vs-buffered fork must be
+	// answerable from agent.log alone after an incident. That argument is exactly
+	// the one the owner overruled when C-9 was reopened — "logs should carry only
+	// important information, do not grow the volume" — and it is weaker here than
+	// it looks: a line that fires on every single response is not something an
+	// operator greps for a rare mis-route, it is what they grep past. The one
+	// genuinely operational signal it carried is the buffered-stream smell, which
+	// is now raised on its own below, only when it is true.
+	if logger.Enabled(x.r.Context(), slog.LevelDebug) {
+		logger.Debug("post-upstream response routing",
+			"path", x.r.URL.Path,
+			"status_code", resp.StatusCode,
+			"content_type", contentType,
+			"is_sse", isSSE,
+			"route", responseRouteName(isSSE, audCtx),
+			"audit_ctx_nil", audCtx == nil,
+			"tx_id", x.txID,
+		)
+	}
 
 	if isSSE {
 		// Build a response HookInput for SSE processing.
@@ -141,175 +148,59 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 	// with no hooks stays on the stream-through fast path.
 	needBuffer := respPipeline != nil || providerDetected
 
-	// Diagnostic at INFO: which non-SSE arm this response takes, and a
-	// "buffering a streaming response" smell flag. The buffered AI arm below
-	// does io.ReadAll on the body; if the upstream is actually a streaming
-	// reply whose Content-Type wasn't recognized by isStreamingContentType,
-	// buffering it here blocks until the whole stream ends before the client
-	// sees a byte — the suspected mechanism behind clients canceling long
-	// chat streams. maybe_buffered_stream surfaces that smell so it's
-	// verifiable from agent.log without re-instrumenting.
-	logger.Info("response stage: non-SSE arm",
-		"path", x.r.URL.Path,
-		"arm", responseArmName(pErr, needBuffer),
-		"provider_detected", providerDetected,
-		"has_response_pipeline", respPipeline != nil,
-		"content_type", contentType,
-		"maybe_buffered_stream", needBuffer && looksLikeStreamingResponse(resp),
-		"tx_id", x.txID,
-	)
+	// Debug, and guarded (finding C-9), for the same reason as the routing line
+	// above: seven attributes boxed on every non-SSE response to record which of
+	// three arms ran, which is a debugging aid rather than something an operator
+	// acts on. The outcome reaches the audit row.
+	if logger.Enabled(x.r.Context(), slog.LevelDebug) {
+		logger.Debug("response stage: non-SSE arm",
+			"path", x.r.URL.Path,
+			"arm", responseArmName(pErr, needBuffer),
+			"provider_detected", providerDetected,
+			"has_response_pipeline", respPipeline != nil,
+			"content_type", contentType,
+			"tx_id", x.txID,
+		)
+	}
 
 	//nolint:gocritic // ifElseChain: the three arms (pipeline-build error / buffered AI path / stream-through fast path) each carry distinct ~50-line bodies; flattening to switch hurts readability without removing nesting.
 	if pErr != nil {
-		logger.Warn("failed to build response pipeline",
-			"target", x.flow.targetHost,
-			"transactionId", audCtx.info.TransactionID,
-			"error", pErr,
-		)
-		if bo.strictFailClosed {
-			// Refuse rather than relay an uninspected upstream
-			// response body. The client headers have NOT been written yet at
-			// this point (the buffered relay runs later), so a 502 is safe to
-			// send. Close the upstream body here: the early return skips
-			// the relay's deferred close, and leaking the connection
-			// would add FD pressure to an already-degraded appliance.
-			_ = resp.Body.Close()
-			if bo.auditEmitter != nil {
-				// EmitDual so the synthesized refusal lands in the RESPONSE
-				// column (the build failure is response-stage), with the real
-				// request-stage result alongside — same shape as the SSE
-				// strict abort.
-				bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, &core.CompliancePipelineResult{Decision: compliance.RejectHard}, "BUMP_PIPELINE_BUILD_FAILED", http.StatusBadGateway, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), nil, traffic.UsageMeta{})
-			}
-			WriteRejectResponse(x.w, x.r, bo.rejectConfig, audCtx.info.TransactionID, "compliance pipeline unavailable (fail-closed)", "PIPELINE_BUILD_FAILED", http.StatusBadGateway)
+		if x.handlePipelineBuildFailure(pErr, resp, audCtx) {
 			return true
 		}
-		// Non-strict (agent host path): emit an approve audit and fall
-		// through to relay — fail-open preserves host networking.
-		if bo.auditEmitter != nil {
-			approveResult := &core.CompliancePipelineResult{Decision: compliance.Approve}
-			// EmitDual so the request-stage StorageAction governs the
-			// persisted request body even on this approve fast path.
-			bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, approveResult, "BUMP_SUCCESS", resp.StatusCode, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), nil, traffic.UsageMeta{})
-		}
 	} else if needBuffer {
-		// Read response body so we can (a) run response hooks if
-		// any, and/or (b) extract LLM usage via the adapter. Bounded
-		// by MaxResponseBytes (mirrors the request-side readBody cap)
-		// so a malicious upstream cannot OOM the proxy with an
-		// unbounded buffered response.
-		respBody, readErr := readResponseBodyBounded(resp.Body, x.pcCfg.MaxResponseBytes)
-		if readErr != nil {
-			logger.Error("failed to read response body for compliance",
-				"target", x.flow.targetHost,
-				"error", readErr,
-			)
-			// Restore an empty body so the relay doesn't read from a closed reader.
-			resp.Body = io.NopCloser(bytes.NewReader(nil))
-			// Emit audit with approve (best-effort: body unreadable, let through).
-			if bo.auditEmitter != nil {
-				approveResult := &core.CompliancePipelineResult{Decision: compliance.Approve}
-				// EmitDual so the request-stage StorageAction governs the
-				// persisted request body even when the response is unreadable.
-				bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, approveResult, "BUMP_SUCCESS", resp.StatusCode, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), nil, traffic.UsageMeta{Status: traffic.UsageStatusNoBody})
-			}
-		} else {
-			// Decompress once before normalize / usage / capture.
-			// Go's http.Transport only auto-decompresses gzip;
-			// some origins ship brotli (br) or zstd-encoded SSE,
-			// so respBody after io.ReadAll may be compressed bytes.
-			// decompressForCapture is idempotent — respBody stays
-			// the original compressed bytes for the relay so the
-			// client receives the encoding it requested.
-			decompressedBody := decompressForCapture(respBody, resp, logger)
-			// Extract usage signals on the AI path. Done once per
-			// request on the already-buffered body.
-			var usage traffic.UsageMeta
-			var respContent *normalize.NormalizedPayload
-			if adapter := audCtx.adapter; adapter != nil {
-				if providerDetected {
-					usage = adapter.DetectResponseUsage(resp, decompressedBody)
-				}
-				// Hot-path normalize (response side): the Registry's
-				// Tier 1+2+3 chain produces structured Messages;
-				// when no tier claims, the adapter's ExtractResponse
-				// → Segments chain recovers hookable text.
-				respContent = runtimeNormalize(x.r.Context(), bo.normalizeRegistry, adapter, decompressedBody, x.r.URL.Path, contentType, normalize.DirectionResponse, logger, audCtx.info.TransactionID)
-			}
-
-			var respResult *core.CompliancePipelineResult
-			if respPipeline != nil {
-				respInput := &core.HookInput{
-					Stage:             "response",
-					Normalized:        respContent,
-					SourceIP:          audCtx.input.SourceIP,
-					TargetHost:        audCtx.input.TargetHost,
-					Method:            audCtx.input.Method,
-					Path:              audCtx.input.Path,
-					IngressType:       audCtx.input.IngressType,
-					BodySize:          int64(len(respBody)),
-					ContentType:       contentType,
-					DetectedProvider:  audCtx.info.RequestMeta.Provider,
-					DetectedModel:     audCtx.info.RequestMeta.Model,
-					ApiKeyClass:       audCtx.info.RequestMeta.ApiKeyClass,
-					ApiKeyFingerprint: audCtx.info.RequestMeta.ApiKeyFingerprint,
-					EndpointType:      x.endpointType,
-				}
-				respPipeline.SetClearSoftOnApprove(true)
-				respResult = respPipeline.Execute(x.flow.ctx, respInput)
-			} else {
-				respResult = &core.CompliancePipelineResult{Decision: compliance.Approve}
-			}
-
-			if bo.auditEmitter != nil {
-				// Reuse the already-decompressed body; calling
-				// decompressForCapture again would be redundant.
-				captureBody := decompressedBody
-				// EmitDual: the response pipeline's decision belongs in the
-				// RESPONSE-stage columns; the request-stage result rides
-				// alongside. The single-stage Emit previously used here put a
-				// response-hook reject into the request column, so the Traffic
-				// page misattributed which stage blocked.
-				bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, respResult, "BUMP_SUCCESS", resp.StatusCode, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), captureBodyIfEnabled(audCtx.storeResponseBody, captureBody), usage)
-			}
-
-			// If a response hook hard-rejects, return HTTP 451 to the client
-			// instead of forwarding the upstream response. The response body has
-			// already been buffered, so we can safely suppress it and write an
-			// error response in its place.
-			if respResult.Decision == compliance.RejectHard {
-				logger.Info("response blocked by compliance (REJECT_HARD)",
-					"target", x.flow.targetHost,
-					"transactionId", audCtx.info.TransactionID,
-					"reason", respResult.Reason,
-				)
-				stampRejectMarkers(x.w.Header(), bo.identity, audCtx.info.TransactionID, x.domainRuleID, cpHookOutcomeFromResult(respResult))
-				if bo.richReject {
-					// respResult.Reason carries the hook's rule-ID/label only —
-					// never the upstream's original sensitive value — so the
-					// attributed body cannot echo what was matched.
-					WriteRejectResponse(x.w, x.r, bo.rejectConfig, audCtx.info.TransactionID,
-						respResult.Reason, respResult.ReasonCode, http.StatusUnavailableForLegalReasons)
-				} else {
-					// Agent on-host interceptor: minimal 403 with no attribution body.
-					http.Error(x.w, "Forbidden", http.StatusForbidden)
-				}
-				resp.Body = io.NopCloser(bytes.NewReader(nil))
-				return true
-			}
-			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		// The buffered-AI arm lives in forward_response_buffered.go: this file owns arm
+		// SELECTION, that one owns the capture / normalize / emit contract.
+		if x.runBufferedResponseArm(resp, audCtx, respPipeline, providerDetected, contentType) {
+			return true
 		}
 	} else {
 		// Non-AI traffic with no response hooks — stream through.
 		// Emit audit with non_llm usage status. No response body
 		// buffered on this fast path, so ResponseBody stays nil
 		// regardless of the capture flag.
+		//
+		// The emission is DEFERRED to after relayResponse (finding C-34). Emitting
+		// here — which is what this arm used to do — builds the row before a single
+		// response byte has been read, and two of its columns are populated off the
+		// body read: PhaseSink stamps upstream TTFB on the first Read returning
+		// content and refreshes upstream-total on every Read, so both landed as NULL
+		// for every stream-through row, forever. latency_ms was worse than NULL: it
+		// was computed before the transfer, so a large download's row under-reported
+		// its own duration by the whole transfer time.
+		//
+		// serveRequest invokes this with `defer`, not a straight-line call, so a
+		// panic in the relay cannot lose the row — which is what made deferring
+		// acceptable at all on a compliance product. The arms above keep emitting
+		// inline because they have already read the body.
 		//nolint:gocritic // elseif: the comment block above documents the entire branch ("non-AI fast path"), not just the inner auditEmitter check; flattening to `else if` would orphan that documentation.
 		if bo.auditEmitter != nil {
-			approveResult := &core.CompliancePipelineResult{Decision: compliance.Approve}
-			// EmitDual so the request-stage StorageAction governs the
-			// persisted request body even on this non-AI fast path.
-			bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, approveResult, "BUMP_SUCCESS", resp.StatusCode, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), nil, traffic.UsageMeta{Status: traffic.UsageStatusNonLLM})
+			x.deferredAudit = func() {
+				approveResult := uninspectedResponse()
+				// EmitDual so the request-stage StorageAction governs the
+				// persisted request body even on this non-AI fast path.
+				bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, approveResult, "BUMP_SUCCESS", resp.StatusCode, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), nil, traffic.UsageMeta{Status: traffic.UsageStatusNonLLM})
+			}
 		}
 	}
 	return false

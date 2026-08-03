@@ -356,6 +356,20 @@ type ModelPrices struct {
 	OutputUsdPerM           *float64
 	CachedInputReadUsdPerM  *float64
 	CachedInputWriteUsdPerM *float64
+
+	// Audio-token rates — realtime models bill audio input/output tokens at
+	// rates distinct from (typically ~8× above) their text rates, and a
+	// single realtime response bills text and audio components
+	// simultaneously, so these cannot ride the one-unit-per-model-row
+	// reinterpretation the other modalities use. Nil = the model has no
+	// audio pricing (non-realtime models). CachedAudioInputReadUsdPerM nil
+	// falls back to AudioInputUsdPerM ("no discount"), mirroring the text
+	// cache-rate fallback above; the PRIMARY audio rates have no fallback —
+	// a realtime model without them is not realtime-priced (the relay
+	// refuses the session under an enforced cost quota).
+	AudioInputUsdPerM           *float64
+	AudioOutputUsdPerM          *float64
+	CachedAudioInputReadUsdPerM *float64
 }
 
 // Cost is the four-component cost breakdown. Fields are 0 when the

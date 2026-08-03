@@ -406,8 +406,16 @@ func TestForwardHandler_DomainBlock_Refuses403(t *testing.T) {
 }
 
 // TestForwardHandler_DomainPassthrough_SkipsCompliance: a matched domain
-// whose path action is PASSTHROUGH must forward without running hooks or
-// emitting audit for that request, while still relaying the upstream body.
+// whose path action is PASSTHROUGH must forward without running hooks and
+// without a compliance-decision row, while still relaying the upstream body.
+//
+// This used to assert ZERO audit events, which conflated two different things:
+// "no compliance-decision row" (right, nothing was inspected) with "no record at
+// all" (wrong). Measured live, that silence meant a bumped POST — decrypted, its
+// URL and body in hand — left no trace in traffic_event across 64s of polling,
+// while an exemption grant and an emergency bypass both record their
+// non-inspection. The assertion is now the sharper one: exactly one event, and
+// it is a PATH_PASSTHROUGH marker, not an inspection result.
 func TestForwardHandler_DomainPassthrough_SkipsCompliance(t *testing.T) {
 	writer := &recordingAuditWriter{}
 	rt := &capturingRoundTripper{makeResp: jsonUpstream}
@@ -431,8 +439,51 @@ func TestForwardHandler_DomainPassthrough_SkipsCompliance(t *testing.T) {
 	if got := rt.calls(); got != 1 {
 		t.Fatalf("upstream forwards = %d, want 1", got)
 	}
+	events := writer.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want exactly 1 — the uninspected relay of a request WITH A BODY must be recorded, "+
+			"the way an exemption grant and an emergency bypass are", len(events))
+	}
+	ev := events[0]
+	if ev.RequestHookDecision != "PATH_PASSTHROUGH" {
+		t.Errorf("decision = %q, want PATH_PASSTHROUGH — the row records that inspection was skipped, "+
+			"and must not look like an inspection result", ev.RequestHookDecision)
+	}
+	if ev.BumpStatus != "BUMP_SUCCESS" {
+		t.Errorf("bumpStatus = %q, want BUMP_SUCCESS — the bump DID happen; what was skipped is inspection", ev.BumpStatus)
+	}
+	if ev.Path != "/v1/chat" || ev.Method != http.MethodPost {
+		t.Errorf("row = %s %q, want POST /v1/chat — the marker is worthless without what was relayed", ev.Method, ev.Path)
+	}
+	if ev.RequestHookReason == nil || !strings.Contains(*ev.RequestHookReason, "PASSTHROUGH") {
+		t.Errorf("reason = %v, want it to name the path rule so an auditor knows WHY", ev.RequestHookReason)
+	}
+}
+
+// TestForwardHandler_DomainPassthrough_BodylessGetIsNotAudited is the other half
+// of the bound. Every seeded explicit PASSTHROUGH rule is an asset pattern
+// (/_next/, /static/, /assets/, /fonts/ on bolt.new), so a marker per passthrough
+// would bury the decisions under script and image fetches. A bodyless GET
+// carried nothing, so there is nothing to have missed.
+func TestForwardHandler_DomainPassthrough_BodylessGetIsNotAudited(t *testing.T) {
+	writer := &recordingAuditWriter{}
+	rt := &capturingRoundTripper{makeResp: jsonUpstream}
+	bo := &bumpOptions{
+		policyResolver: decidingResolver(t, "request", core.RejectHard, "should never run", "NEVER"),
+		auditEmitter:   compliance.NewAuditEmitter(writer, discardSlog()),
+		domainEngine:   singleDomainEngine(t, domain.PathActionPassthrough),
+	}
+	h := buildForwardHandler(context.Background(), "api.example.com:443", &UpstreamTransport{transport: rt}, discardSlog(), bo)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://api.example.com/assets/app.js", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
 	if events := writer.snapshot(); len(events) != 0 {
-		t.Fatalf("audit events = %d, want 0 — PASSTHROUGH skips compliance audit for the request", len(events))
+		t.Fatalf("audit events = %d, want 0 — a bodyless asset fetch carries nothing a compliance auditor needs, "+
+			"and there is one per page load", len(events))
 	}
 }
 

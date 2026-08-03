@@ -40,7 +40,6 @@ func ToDomainPolicy(domains []InterceptionDomainDTO) []domain.InterceptionDomain
 			StreamingFailBehavior:   d.StreamingFailBehavior,
 			CaptureRequestBody:      d.CaptureRequestBody,
 			CaptureResponseBody:     d.CaptureResponseBody,
-			RawBodySpillEnabled:     d.RawBodySpillEnabled,
 		}
 		row.Paths = make([]domain.InterceptionPath, 0, len(d.Paths))
 		for _, p := range d.Paths {

@@ -240,3 +240,15 @@ func TestErrorNormalizer_unknownType_httpStatusFallback(t *testing.T) {
 		t.Errorf("code: got %q, want %q", pe.Code, provcore.CodeUpstreamError)
 	}
 }
+
+// Context-overflow classification: Anthropic signals an over-window
+// prompt as invalid_request_error with the message "prompt is too long:
+// N tokens > M maximum" (observed on claude 400s). It must map to
+// CodeContextOverflow, not the terminal invalid_request bucket.
+func TestNormalize_PromptTooLong_MapsToContextOverflow(t *testing.T) {
+	body := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210245 tokens > 200000 maximum"}}`)
+	pe := anterrors.ErrorNormalizer{}.Normalize(400, http.Header{}, body)
+	if pe.Code != provcore.CodeContextOverflow {
+		t.Errorf("Code = %q, want %q", pe.Code, provcore.CodeContextOverflow)
+	}
+}

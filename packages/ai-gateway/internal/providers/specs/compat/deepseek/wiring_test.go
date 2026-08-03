@@ -53,33 +53,57 @@ func TestNewSpec_CustomLogKept(t *testing.T) {
 	}
 }
 
-// TestSchemaCodec_IsIdentity pins the binding contract from
-// spec.go's docstring: "the SchemaCodec is identity because the
-// on-the-wire shape already matches OpenAI". A canonical body
-// carrying DeepSeek-specific fields (model="deepseek-reasoner",
-// reasoning_content delta, prompt_cache_hit_tokens-style fields)
-// must pass through EncodeRequest and DecodeResponse byte-identical
-// — any future change that injects format translation would break
-// this assertion before it breaks DeepSeek smoke runs.
+// TestSchemaCodec_IsIdentity pins the structural contract: the wire shape
+// stays OpenAI (no format translation — a rule-free model passes through
+// byte-identical), while the thinking-model structural rules DO fire on
+// the canonical door. That firing is the migration's point: bodies
+// bridged from /v1/messages previously reached DeepSeek unfixed and the
+// forced tool_choice 400'd upstream.
 func TestSchemaCodec_IsIdentity(t *testing.T) {
 	codec := deepseek.NewSpec(nil).SchemaCodec
 
 	t.Run("encode_request_passes_through_unchanged", func(t *testing.T) {
-		canon := []byte(`{"model":"deepseek-reasoner","messages":[{"role":"user","content":"hi"}],"max_tokens":4096,"stream":false}`)
-		encRes, err := codec.EncodeRequest(typology.WireShapeOpenAIChat, canon, provcore.CallTarget{ProviderModelID: "deepseek-reasoner"})
+		canon := []byte(`{"model":"deepseek-chat","messages":[{"role":"user","content":"hi"}],"max_tokens":4096,"stream":false}`)
+		encRes, err := codec.EncodeRequest(typology.WireShapeOpenAIChat, canon, provcore.CallTarget{ProviderModelID: "deepseek-chat"})
 		out := encRes.Body
 		rewrites := encRes.Rewrites
 		if err != nil {
 			t.Fatalf("EncodeRequest err=%v", err)
 		}
 		if string(out) != string(canon) {
-			t.Errorf("body mutated by identity codec:\n got: %s\nwant: %s", out, canon)
+			t.Errorf("body mutated for a rule-free model:\n got: %s\nwant: %s", out, canon)
 		}
-		// Identity codec contributes no extra rewrites — the Transport
-		// layer owns Authorization. A non-empty rewrites slice here would
-		// signal a regression that injected format-translation logic.
+		// A rule-free model contributes no rewrites — the Transport layer
+		// owns Authorization. A non-empty rewrites slice here would signal
+		// injected format-translation logic.
 		if len(rewrites) != 0 {
 			t.Errorf("identity codec leaked rewrites: %v", rewrites)
+		}
+	})
+
+	t.Run("encode_request_thinking_model_gets_structural_fixes", func(t *testing.T) {
+		// The cross-format leg (/v1/messages ingress → deepseek target)
+		// reaches this door; the forced tool_choice must be stripped and
+		// reported here too, or the bridged request 400s upstream.
+		canon := []byte(`{"model":"deepseek-reasoner","messages":[{"role":"user","content":"hi"}],"tool_choice":"required","tools":[{"type":"function","function":{"name":"f"}}]}`)
+		encRes, err := codec.EncodeRequest(typology.WireShapeOpenAIChat, canon, provcore.CallTarget{ProviderModelID: "deepseek-reasoner"})
+		if err != nil {
+			t.Fatalf("EncodeRequest err=%v", err)
+		}
+		if gjson.GetBytes(encRes.Body, "tool_choice").Exists() {
+			t.Errorf("forced tool_choice must be stripped on the canonical door: %s", encRes.Body)
+		}
+		if !gjson.GetBytes(encRes.Body, "tools").Exists() {
+			t.Errorf("tools must survive — the model can still call them: %s", encRes.Body)
+		}
+		found := false
+		for _, r := range encRes.Rewrites {
+			if r == "tool_choice→removed" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the strip must be reported: %v", encRes.Rewrites)
 		}
 	})
 

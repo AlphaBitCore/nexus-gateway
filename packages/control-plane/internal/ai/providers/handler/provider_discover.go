@@ -9,6 +9,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
@@ -64,7 +65,11 @@ func (h *Handler) ProviderDiscoverModels(c echo.Context) error {
 // the handler returns HTTP 200 with success:false + error detail so the caller
 // can surface a user-readable message rather than receiving an opaque 5xx.
 func (h *Handler) forwardDiscoverModels(c echo.Context, adapterType, baseURL, apiKey string) error {
-	gwURL := strings.TrimRight(h.proxy.AIGatewayURL, "/") + "/internal/provider-discover-models"
+	gwBase, err := h.aiGatewayBase(c.Request().Context())
+	if err != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", err)
+	}
+	gwURL := strings.TrimRight(gwBase, "/") + "/internal/provider-discover-models"
 
 	payload, _ := json.Marshal(map[string]string{
 		"adapterType": adapterType,

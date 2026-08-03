@@ -11,13 +11,16 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/hookstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
-// ProxyConfig holds the AI Gateway URL needed for hook test forwarding.
+// ProxyConfig holds the AI Gateway seam needed for hook test forwarding.
 type ProxyConfig struct {
-	AIGatewayURL string
+	// AIGatewayBase resolves the AI Gateway base URL from the Hub at
+	// request time (never configured locally).
+	AIGatewayBase peer.URLProvider
 	// AIGatewayInternalToken is the shared internal-service bearer token
 	// presented on the CP→ai-gateway /internal/hooks-test call.
 	AIGatewayInternalToken string
@@ -357,7 +360,11 @@ func (h *Handler) HookTest(c echo.Context) error {
 // forwardHookTest proxies an admin hook test to the AI gateway's internal
 // endpoint.
 func (h *Handler) forwardHookTest(c echo.Context, hc *hookstore.HookConfig) error {
-	gwURL := trimRight(h.proxy.AIGatewayURL, "/") + "/internal/hooks-test"
+	gwBase, gwErr := h.proxy.AIGatewayBase(c.Request().Context())
+	if gwErr != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", gwErr)
+	}
+	gwURL := trimRight(gwBase, "/") + "/internal/hooks-test"
 
 	rawBody, _ := io.ReadAll(io.LimitReader(c.Request().Body, 256*1024))
 

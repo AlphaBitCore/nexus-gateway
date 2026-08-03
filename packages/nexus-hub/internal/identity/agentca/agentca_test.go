@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -211,21 +212,23 @@ func TestSignAttestationCSR_ParseFailure(t *testing.T) {
 	}
 }
 
-func TestSignAttestationCSR_EntropyFailure(t *testing.T) {
-	// Force x509.CreateCertificate to fail by starving its entropy
-	// source — same caRandReader seam the package uses elsewhere.
+func TestSignAttestationCSR_SigningFailure(t *testing.T) {
+	// Force x509.CreateCertificate to fail through the caCreateCertificate
+	// seam — the FIPS module ignores a starved caRandReader.
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	ca, _ := New(dir, logger)
 
 	csrPEM, _ := makeEd25519CSR(t, "x")
-	original := caRandReader
-	caRandReader = failReader{err: errors.New("entropy starved")}
-	t.Cleanup(func() { caRandReader = original })
+	original := caCreateCertificate
+	caCreateCertificate = func(io.Reader, *x509.Certificate, *x509.Certificate, any, any) ([]byte, error) {
+		return nil, errors.New("signing refused")
+	}
+	t.Cleanup(func() { caCreateCertificate = original })
 
 	_, err := ca.SignAttestationCSR(csrPEM, "x")
 	if err == nil {
-		t.Fatal("expected entropy-error wrap")
+		t.Fatal("expected a signing-error wrap")
 	}
 	if !contains(err.Error(), "sign attestation CSR") {
 		t.Errorf("error should wrap 'sign attestation CSR'; got %q", err.Error())
@@ -548,22 +551,24 @@ func TestGenerate_WriteFileError(t *testing.T) {
 	}
 }
 
-// TestGenerate_EntropyError covers the `ecdsa.GenerateKey` error
-// branch in generate() (ca.go:193). With caRandReader failing, the CA
-// key generation must error out before any disk I/O happens.
-func TestGenerate_EntropyError(t *testing.T) {
+// TestGenerate_KeyGenError covers the key-generation error branch in
+// generate(). When the CA key cannot be minted the call must error out
+// before any disk I/O happens.
+func TestGenerate_KeyGenError(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	ca := &CA{logger: logger, dir: dir}
 
-	orig := caRandReader
-	caRandReader = failReader{err: errors.New("ca entropy fail")}
-	t.Cleanup(func() { caRandReader = orig })
+	orig := caGenerateKey
+	caGenerateKey = func(elliptic.Curve, io.Reader) (*ecdsa.PrivateKey, error) {
+		return nil, errors.New("ca key generation refused")
+	}
+	t.Cleanup(func() { caGenerateKey = orig })
 
 	certPath := filepath.Join(dir, "ca.pem")
 	keyPath := filepath.Join(dir, "ca-key.pem")
 	if err := ca.generate(certPath, keyPath); err == nil {
-		t.Fatal("expected ecdsa.GenerateKey entropy error")
+		t.Fatal("expected a key-generation error")
 	}
 	// Neither file should be written when key gen fails up-front.
 	if fileExists(certPath) {

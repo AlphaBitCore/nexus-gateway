@@ -4,10 +4,9 @@
 # Env var overrides (applied after YAML): CONTROL_PLANE_PORT,
 # CONTROL_PLANE_PUBLIC_URL, DATABASE_URL, REDIS_* (see
 # packages/shared/storage/redisfactory for the full universal Redis env
-# contract), LOG_LEVEL, COMPLIANCE_PROXY_URL,
-# AI_GATEWAY_URL, NEXUS_HUB_URL, CREDENTIAL_ENCRYPTION_KEY,
+# contract), LOG_LEVEL, NEXUS_HUB_URL, CREDENTIAL_ENCRYPTION_KEY,
 # CREDENTIAL_KEY_MAP, CONTROL_PLANE_CRYPTO_PRODUCTION,
-# ADMIN_KEY_HMAC_SECRET, INTERNAL_SERVICE_TOKEN, AGENT_CA_DIR, COMPLIANCE_PROXY_RUNTIME_URL,
+# ADMIN_KEY_HMAC_SECRET, INTERNAL_SERVICE_TOKEN, AGENT_CA_DIR,
 # COMPLIANCE_PROXY_API_TOKEN, OTEL_ENDPOINT, OTEL_SERVICE_NAME,
 # MQ_DRIVER, NATS_URL, AUTH_SERVER_ISSUER, AUTH_SERVER_KEYSTORE_DIR.
 
@@ -69,13 +68,11 @@ log:
   level: "info"
   format: "json"
 
-# Back-end-for-frontend: URLs the CP proxies admin calls to.
-bff:
-  complianceProxyUrl: "http://127.0.0.1:3040"
-  aiGatewayUrl: "http://127.0.0.1:3050"
-  complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
-  # complianceProxyApiToken is env-only (COMPLIANCE_PROXY_API_TOKEN); the
-  # yaml field is ignored by the loader.
+# Back-end-for-frontend. Peer service URLs (ai-gateway, compliance-proxy)
+# are NOT configured here: each peer reports its address to the Hub and CP
+# resolves it at request time (shared/transport/peerurl).
+# complianceProxyApiToken is env-only (COMPLIANCE_PROXY_API_TOKEN); the
+# yaml field is ignored by the loader.
 
 # Hub registration (thingclient). Symmetric with ai-gateway /
 # compliance-proxy. Env override: NEXUS_HUB_URL.
@@ -106,3 +103,21 @@ mq:
     # max_connections) live in the appliance (nexus-ami/scripts/install-nats.sh)
     # and docker-compose.yml.
     url: "nats://localhost:4222"
+
+# Body spill: bodies at or above the inline-vs-spill threshold are written to an
+# object store and the audit row keeps a reference instead of the bytes.
+#
+# Stated explicitly, and disabled, on purpose. This template previously carried NO
+# spill block at all, so the shipping posture of a compliance product was readable
+# only by inferring a Go default from source — the same silence finding S-3 exists
+# to remove, one layer up. `enabled: false` means every captured body stays inline
+# on traffic_event_payload, bounded by payloadCapture.maxInlineBodyBytes.
+#
+# The SHIPPING posture for a real deployment is `control-plane.prod.yaml.example`, which
+# enables the s3 backend. It is not the default here because s3 needs a bucket that
+# only the operator can create, and a spill backend pointing at a bucket that does
+# not exist fails every capture. All four server services must agree on one backend
+# and one root, or the control-plane read path cannot resolve a ref another node
+# wrote (see spillstore-architecture.md section 3).
+spill:
+  enabled: false

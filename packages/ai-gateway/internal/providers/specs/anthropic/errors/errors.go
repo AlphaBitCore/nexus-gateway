@@ -3,6 +3,7 @@ package errors
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -58,6 +59,13 @@ func (ErrorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 
 	if code, _, ok := MapErrorType(pe.Type); ok {
 		pe.Code = code
+		// Context overflow arrives as invalid_request_error with the
+		// message "prompt is too long: N tokens > M maximum" (observed on
+		// claude 400s). Classified separately so the executor can fail
+		// over to a larger-context target.
+		if code == provcore.CodeInvalidRequest && strings.Contains(pe.Message, "prompt is too long") {
+			pe.Code = provcore.CodeContextOverflow
+		}
 		if code == provcore.CodeRateLimited {
 			if ra := ParseRetryAfter(headers.Get("retry-after")); ra != nil {
 				pe.RetryAfter = ra

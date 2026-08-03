@@ -81,7 +81,17 @@ func (sw *statusWriter) Unwrap() http.ResponseWriter {
 // Compile-time assertions that the wrapper exposes the same optional
 // capabilities the underlying ResponseWriter has, so SSE / streaming
 // downstream consumers can satisfy the type assertions they rely on.
+//
+// The Unwrap assertion carries the same weight as the Flusher one:
+// http.ResponseController walks Unwrap() until it finds a writer implementing
+// the capability it wants, so this wrapper's Unwrap is the only thing
+// connecting a handler's SetWriteDeadline (and Hijack) to the real connection.
+// Dropping it breaks nothing visible — the wrapper still satisfies
+// http.ResponseWriter and the build stays green — while every response written
+// after a long upstream call starts failing against the flat
+// server.writeTimeout at runtime.
 var (
-	_ http.Flusher        = (*statusWriter)(nil)
-	_ http.ResponseWriter = (*statusWriter)(nil)
+	_ http.Flusher                              = (*statusWriter)(nil)
+	_ http.ResponseWriter                       = (*statusWriter)(nil)
+	_ interface{ Unwrap() http.ResponseWriter } = (*statusWriter)(nil)
 )

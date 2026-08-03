@@ -30,6 +30,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
@@ -173,16 +174,18 @@ func (h *SemanticCacheHandler) PrewarmCache(c echo.Context) error {
 		// perform the authoritative check via its live ConfigCache.
 	}
 
-	// Guard: AI Gateway URL must be configured.
-	if h.aiGatewayURL == "" {
-		return c.JSON(http.StatusServiceUnavailable, map[string]any{
-			"error": "AI Gateway URL not configured; cannot forward prewarm request",
-			"code":  "gateway_unavailable",
-		})
+	// Resolve the AI Gateway base URL (Hub-reported; never configured
+	// locally). A nil provider or failed resolution is transient: 503.
+	if h.aiGatewayBase == nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", peer.ErrUnavailable)
+	}
+	gwBase, gwErr := h.aiGatewayBase(c.Request().Context())
+	if gwErr != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", gwErr)
 	}
 
 	// Forward to AI Gateway internal endpoint.
-	gwURL := strings.TrimRight(h.aiGatewayURL, "/") + "/internal/semantic-prewarm"
+	gwURL := strings.TrimRight(gwBase, "/") + "/internal/semantic-prewarm"
 
 	// Build the forwarded request body. We forward the entries array and
 	// the dryRun flag. Credentials are not forwarded — the AI GW resolves

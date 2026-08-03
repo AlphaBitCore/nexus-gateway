@@ -1,6 +1,7 @@
 package tlsbump
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"strings"
@@ -38,11 +39,43 @@ func isStreamingContentType(ct string) bool {
 		strings.Contains(ct, "application/connect+json")
 }
 
+// bodyLooksLikeEventStream reports whether an ALREADY-BUFFERED body is in fact
+// an SSE event stream. It exists because the pre-read heuristic below cannot
+// answer that question: chunked / no-Content-Length describes almost every
+// dynamically generated JSON response, so it is true for ordinary traffic and
+// carries no information about whether a stream was buffered by mistake.
+// Measured on four ordinary non-stream chat completions: true on all four.
+//
+// Deciding after the read is definitive rather than heuristic — the bytes are
+// already in hand, and this is the one condition worth an operator's attention
+// on this path: a real event stream that isStreamingContentType did not
+// recognise, so the client waited for the whole stream before seeing a byte.
+//
+// The check is line-anchored on SSE field names. A JSON body mentioning data or
+// event carries them as quoted keys ("data":), never as a bare field at the
+// start of a line, so the quote is what keeps this from firing on JSON.
+func bodyLooksLikeEventStream(b []byte) bool {
+	const window = 256 // an SSE stream declares itself in its first frame
+	if len(b) > window {
+		b = b[:window]
+	}
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		line = bytes.TrimLeft(line, "\r \t")
+		for _, field := range [][]byte{[]byte("data:"), []byte("event:"), []byte("retry:")} {
+			if bytes.HasPrefix(line, field) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // looksLikeStreamingResponse is a heuristic for "this response is probably a
 // stream even though its Content-Type wasn't recognised by
 // isStreamingContentType": chunked transfer encoding or no fixed
-// Content-Length. Used only for the diagnostic smell flag — never for
-// routing — so a false positive is harmless.
+// Content-Length. It is TRUE for ordinary JSON API responses, so it may only be
+// used as context on a line that already fires for another reason — never as a
+// trigger. bodyLooksLikeEventStream above is the one to use for a decision.
 func looksLikeStreamingResponse(resp *http.Response) bool {
 	if resp == nil {
 		return false
@@ -77,4 +110,22 @@ func responseArmName(pErr error, needBuffer bool) string {
 	default:
 		return "stream-through-fast"
 	}
+}
+
+// requestCouldCarryContent reports whether a request may carry a body worth a
+// compliance decision. Used to keep the uninspected-passthrough audit row to
+// flows that could have contained a prompt or PII, rather than every asset
+// fetch on an intercepted host.
+//
+// ContentLength < 0 means "unknown" (chunked), which counts: an unknown-length
+// body is still a body.
+func requestCouldCarryContent(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return false
+	}
+	return r.ContentLength != 0
 }

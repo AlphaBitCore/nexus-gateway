@@ -3,6 +3,8 @@ package wiring
 import (
 	"context"
 	"log/slog"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
@@ -12,6 +14,21 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
+
+// effectivePrivateURL resolves the privateURL this proxy reports: the yaml/env
+// override when set, else auto-derived from the runtime-API listen port (the
+// surface peer services call — admin + runtime share it, path-differentiated).
+func effectivePrivateURL(cfg *config.Config) string {
+	host, port := "", 0
+	if h, p, err := net.SplitHostPort(cfg.RuntimeAPI.ListenAddress); err == nil {
+		host = h
+		port, _ = strconv.Atoi(p)
+	}
+	// The bind host travels with the port: the runtime API binds loopback in
+	// every shipped config, and a loopback-bound socket refuses dials to the
+	// machine's LAN IP — so loopback binds must ADVERTISE loopback.
+	return platform.EffectivePrivateURL(cfg.PrivateURL, host, port)
+}
 
 // ThingClientResult holds the running thingclient and associated state.
 type ThingClientResult struct {
@@ -107,6 +124,7 @@ func InitThingClient(ctx context.Context, d ThingClientDeps) ThingClientResult {
 		BuildTime:      "",
 		StartTime:      d.ProcessStartTime.Format(time.RFC3339),
 		PublicURL:      cfg.PublicURL,
+		PrivateURL:     effectivePrivateURL(cfg),
 	})
 	go func() {
 		// Give the WS pump a moment to attach before the first push.
@@ -152,6 +170,7 @@ func CaptureThingClientResult(
 		ServiceVersion: "compliance-proxy/0.1.0",
 		StartTime:      processStartTime.Format(time.RFC3339),
 		PublicURL:      cfg.PublicURL,
+		PrivateURL:     effectivePrivateURL(cfg),
 	})
 	go func() {
 		time.Sleep(500 * time.Millisecond)

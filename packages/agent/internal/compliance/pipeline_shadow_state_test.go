@@ -709,7 +709,6 @@ func TestDomainEngine_PerHostOverridesPropagate(t *testing.T) {
 				StreamingFailBehavior:   strPtr("fail-open"),
 				CaptureRequestBody:      boolPtr(true),
 				CaptureResponseBody:     boolPtr(false),
-				RawBodySpillEnabled:     boolPtr(true),
 			},
 		},
 	}

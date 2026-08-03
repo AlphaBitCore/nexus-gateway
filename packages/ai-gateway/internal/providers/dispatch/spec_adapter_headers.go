@@ -111,6 +111,23 @@ func FilterResponseHeaders(allowlist *forwardheader.Resolved, format Format, src
 	return out
 }
 
+// ApplyAuth sets this adapter's provider authentication headers (Bearer /
+// api-key / x-goog-api-key / SigV4, per the wire) on a caller-constructed
+// outbound request, delegating to the spec's Transport. It is exported so a
+// caller that builds its own upstream request by hand — the STT streaming-proxy
+// forward, which hand-builds a multipart request rather than going through
+// Execute — reuses the exact same per-provider auth scheme the chat path
+// applies, so a new STT provider's auth is picked up with no second
+// implementation to drift.
+//
+// Exposed as a method on the concrete adapter (assertable via an optional
+// interface), NOT on the [Adapter] interface, so no test double of Adapter has
+// to grow it — the same reasoning [FilterResponseHeaders] documents for staying
+// a free function.
+func (a *specAdapter) ApplyAuth(r *http.Request, target CallTarget) error {
+	return a.spec.Transport.ApplyAuth(r, target)
+}
+
 // canonicalLower returns the lower-cased canonical form of an HTTP
 // header name. Reserved as a single chokepoint so future name
 // normalization (e.g. tightening for non-ASCII inputs) lands here.

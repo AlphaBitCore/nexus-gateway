@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -42,7 +43,15 @@ func (store *Store) LoadPolicies(ctx context.Context, principalType, principalID
 		}
 		var doc iam.PolicyDocument
 		if err := json.Unmarshal(docBytes, &doc); err != nil {
-			continue // skip malformed policies
+			// Skipping keeps authz alive for the principal's other policies,
+			// but a silently dropped document distorts the effective set (a
+			// dropped Deny widens access; a dropped Allow locks out). The API
+			// write path validates this shape, so a row can only get here via
+			// seed / direct-DB / schema evolution — log loudly so operators
+			// see the drop instead of debugging phantom authz decisions.
+			slog.Default().Error("iam: malformed policy document skipped from effective set",
+				"policyId", id, "policyName", name, "source", "direct", "error", err)
+			continue
 		}
 		policies = append(policies, iam.LoadedPolicy{
 			ID: id, Name: name, Document: doc, Source: "direct",
@@ -83,6 +92,9 @@ func (store *Store) LoadPolicies(ctx context.Context, principalType, principalID
 		seen[id] = true
 		var doc iam.PolicyDocument
 		if err := json.Unmarshal(docBytes, &doc); err != nil {
+			// Same loud-drop rationale as the direct-attachment loop above.
+			slog.Default().Error("iam: malformed policy document skipped from effective set",
+				"policyId", id, "policyName", name, "source", "group", "group", groupName, "error", err)
 			continue
 		}
 		policies = append(policies, iam.LoadedPolicy{

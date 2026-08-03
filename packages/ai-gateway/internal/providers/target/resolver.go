@@ -30,6 +30,18 @@ type ResolveHints struct {
 	// Deployment, when non-empty, pins the Azure OpenAI deployment name
 	// returned in CallTarget.Extras["azure.apiVersion"] / ProviderModelID.
 	Deployment string
+	// CredentialID, when non-empty, pins credential resolution to exactly
+	// this credential, bypassing pool selection entirely. Async-job
+	// followers (video poll/content/delete) set it to the job row's
+	// submit-time credential so the follow-up reaches the SAME provider
+	// account that owns the job — pool re-selection hours later could pick
+	// a different credential and 404 a live job. A pinned credential that
+	// has been disabled, retired, deleted, or belongs to a different
+	// provider surfaces the resolve error unsubstituted — never a pool
+	// fallback (the caller maps it to a 502 with the job row intact; the
+	// job is not orphaned by the gateway and becomes reachable again when
+	// an operator restores a credential for that provider account).
+	CredentialID string
 }
 
 // Resolver produces a provider [provcore.CallTarget] ready to pass
@@ -83,6 +95,12 @@ type ModelRow struct {
 	ProviderID      string
 	ProviderModelID string
 	Disabled        bool
+	// MaxOutputTokens mirrors the catalog's maxOutputTokens column (0 when
+	// the column is null). It is the same number the gateway advertises to
+	// callers on /v1/models, so an adapter that must synthesize a
+	// protocol-required output cap reads it here rather than carrying its
+	// own copy of the fact.
+	MaxOutputTokens int
 }
 
 // CredentialCandidate is one entry in the multi-credential pool.
@@ -165,6 +183,7 @@ func (r *PgResolver) Resolve(ctx context.Context, providerID, modelID string, hi
 		CredentialID:       credID,
 		CredentialName:     credName,
 		ProviderModelID:    mr.ProviderModelID,
+		MaxOutputTokens:    mr.MaxOutputTokens,
 		ServesResponsesAPI: pr.ServesResponsesAPI,
 	}
 	if len(pr.Extras) > 0 {
@@ -183,9 +202,18 @@ func (r *PgResolver) Resolve(ctx context.Context, providerID, modelID string, hi
 }
 
 // resolveCredential picks a credential for providerID according to hints.
-// It lists all eligible candidates, applies circuit-state from Redis,
-// and uses credpool.Select with hints.StickyKey for consistent routing.
+// A pinned CredentialID short-circuits pool selection; otherwise it lists
+// all eligible candidates, applies circuit-state from Redis, and uses
+// credpool.Select with hints.StickyKey for consistent routing.
 func (r *PgResolver) resolveCredential(ctx context.Context, providerID string, hints ResolveHints) (apiKey, credID, credName string, err error) {
+	if hints.CredentialID != "" {
+		// Pinned: no candidate listing, no circuit filter — the pin means
+		// "this exact provider account or fail". Circuit-open is deliberately
+		// NOT consulted: a poll against a tripped credential should surface
+		// the provider error rather than silently resolve a different
+		// account that cannot see the job.
+		return r.Credentials.ResolveForProvider(ctx, providerID, hints.CredentialID)
+	}
 	candidates, err := r.Credentials.ListForProvider(ctx, providerID)
 	if err != nil || len(candidates) == 0 {
 		// Fall back to single-credential path on error or empty list.

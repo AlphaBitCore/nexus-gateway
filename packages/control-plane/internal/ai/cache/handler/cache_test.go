@@ -118,12 +118,11 @@ func newHandler(t *testing.T, pool pgxmock.PgxPoolIface, hub HubConfigChanger, s
 	return newWithPool(pool, hub, audit.NewWriter(spy, "audit", slog.Default()), slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// expectAssembleBlobOK queues mock rows for the 3 SELECTs of
-// AssembleCacheConfigBlob (global / adapters / providers — all empty
-// except provider row if includeProvider provided).
+// expectAssembleBlobOK queues mock rows for the 2 SELECTs of
+// AssembleCacheConfigBlob (adapters / providers — all empty except provider
+// row if includeProvider provided). Tier 1 is retired: no cache_global_config
+// query is issued any more.
 func expectAssembleBlobOK(mock pgxmock.PgxPoolIface, includeProvider string) {
-	mock.ExpectQuery(`FROM cache_global_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	mock.ExpectQuery(`FROM cache_adapter_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}))
 	rows := pgxmock.NewRows([]string{"provider_id", "config"})
@@ -311,7 +310,7 @@ func TestPropagateCacheConfig_AssembleErrWraps(t *testing.T) {
 	mock, db := newMockDB(t)
 	hub := &fakeHub{}
 	h := newHandler(t, db, hub, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).WillReturnError(errors.New("planner err"))
+	mock.ExpectQuery(`FROM cache_adapter_config`).WillReturnError(errors.New("planner err"))
 	err := h.propagateCacheConfig(context.Background(), "u", "alice")
 	if err == nil || !strings.Contains(err.Error(), "assemble cache blob") {
 		t.Fatalf("expected wrapped err; got %v", err)
@@ -348,148 +347,6 @@ func TestPropagateCacheConfig_Success(t *testing.T) {
 	}
 	if hub.hits != 1 {
 		t.Errorf("expected 1 hub hit; got %d", hub.hits)
-	}
-}
-
-func TestCacheGetGlobal_Happy(t *testing.T) {
-	mock, db := newMockDB(t)
-	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).
-			AddRow([]byte(`{"normaliser_enabled":true,"cache_master_kill_switch":false}`)))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/cache/global", nil)
-	rec := httptest.NewRecorder()
-	c := echoContext(req, rec, "alice", "user-1")
-	if err := h.CacheGetGlobal(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	var got cacheconfig.GlobalConfig
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !got.NormaliserEnabled {
-		t.Errorf("body = %s", rec.Body.String())
-	}
-}
-
-func TestCacheGetGlobal_DBErr500(t *testing.T) {
-	mock, db := newMockDB(t)
-	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).WillReturnError(errors.New("planner err"))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/cache/global", nil)
-	rec := httptest.NewRecorder()
-	c := echoContext(req, rec, "alice", "user-1")
-	if err := h.CacheGetGlobal(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d", rec.Code)
-	}
-}
-
-// CachePutGlobal — bind err / DB err / hub err / audit success
-
-func TestCachePutGlobal_BindErr(t *testing.T) {
-	_, db := newMockDB(t)
-	h := newHandler(t, db, nil, nil)
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/cache/global", strings.NewReader("not-json"))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := echoContext(req, rec, "alice", "user-1")
-	if err := h.CachePutGlobal(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d", rec.Code)
-	}
-}
-
-func TestCachePutGlobal_DBErr500(t *testing.T) {
-	mock, db := newMockDB(t)
-	h := newHandler(t, db, nil, nil)
-	mock.ExpectExec(`INSERT INTO cache_global_config`).
-		WithArgs(pgxmock.AnyArg(), "user-1").
-		WillReturnError(errors.New("dup key"))
-
-	body := bytes.NewReader([]byte(`{"normaliser_enabled":true}`))
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/cache/global", body)
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := echoContext(req, rec, "alice", "user-1")
-	if err := h.CachePutGlobal(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d", rec.Code)
-	}
-}
-
-func TestCachePutGlobal_HubPropErr502(t *testing.T) {
-	mock, db := newMockDB(t)
-	spy := &auditSpy{}
-	hub := &fakeHub{err: errors.New("hub down")}
-	h := newHandler(t, db, hub, spy)
-
-	mock.ExpectExec(`INSERT INTO cache_global_config`).
-		WithArgs(pgxmock.AnyArg(), "user-1").
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	expectAssembleBlobOK(mock, "")
-
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/cache/global",
-		bytes.NewReader([]byte(`{"normaliser_enabled":true}`)))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := echoContext(req, rec, "alice", "user-1")
-	if err := h.CachePutGlobal(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if spy.count() != 0 {
-		t.Errorf("audit must not fire on hub err; count=%d", spy.count())
-	}
-	if !strings.Contains(rec.Body.String(), "propagation_error") {
-		t.Errorf("missing propagation_error; body = %s", rec.Body.String())
-	}
-}
-
-func TestCachePutGlobal_HappyAuditFires(t *testing.T) {
-	mock, db := newMockDB(t)
-	spy := &auditSpy{}
-	hub := &fakeHub{resp: &hub.ConfigChangeResponse{OK: true}}
-	h := newHandler(t, db, hub, spy)
-
-	mock.ExpectExec(`INSERT INTO cache_global_config`).
-		WithArgs(pgxmock.AnyArg(), "user-1").
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	expectAssembleBlobOK(mock, "")
-
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/cache/global",
-		bytes.NewReader([]byte(`{"normaliser_enabled":true,"cache_master_kill_switch":false}`)))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := echoContext(req, rec, "alice", "user-1")
-	if err := h.CachePutGlobal(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if spy.count() != 1 {
-		t.Fatalf("audit count = %d", spy.count())
-	}
-	entry := spy.last()
-	if entry["entityId"] != "global" {
-		t.Errorf("audit entityId = %v", entry["entityId"])
-	}
-	if entry["action"] != "update" {
-		t.Errorf("audit action = %v", entry["action"])
 	}
 }
 
@@ -1108,7 +965,7 @@ func TestCacheGetEffective_BlobErr500(t *testing.T) {
 	mock.ExpectQuery(`SELECT name FROM "Provider"`).
 		WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("Gemini Prov"))
-	mock.ExpectQuery(`FROM cache_global_config`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`FROM cache_adapter_config`).WillReturnError(errors.New("boom"))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/cache/effective?provider_id=prov-1", nil)
 	rec := httptest.NewRecorder()
@@ -1151,6 +1008,13 @@ func TestCacheGetEffective_Happy(t *testing.T) {
 	if _, ok := got.Effective["cache_enabled"]; !ok {
 		t.Errorf("missing cache_enabled in effective; got %+v", got.Effective)
 	}
+	// Tier 1 is retired: the effective response of this KEPT endpoint must no
+	// longer emit the two global-tier keys (response-shape change per CHANGELOG).
+	for _, retired := range []string{"normaliser_enabled", "cache_master_kill_switch"} {
+		if _, present := got.Effective[retired]; present {
+			t.Errorf("retired key %q still emitted in effective response; got %+v", retired, got.Effective)
+		}
+	}
 }
 
 func TestCacheGetEffective_NameErrIsLoggedNotFatal(t *testing.T) {
@@ -1181,7 +1045,7 @@ func TestCacheGetEffective_NameErrIsLoggedNotFatal(t *testing.T) {
 func TestCacheListOverrides_BlobErr500(t *testing.T) {
 	mock, db := newMockDB(t)
 	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`FROM cache_adapter_config`).WillReturnError(errors.New("boom"))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/cache/overrides", nil)
 	rec := httptest.NewRecorder()
@@ -1199,8 +1063,6 @@ func TestCacheListOverrides_EmptyFiltersOut(t *testing.T) {
 	// short-circuit).
 	mock, db := newMockDB(t)
 	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	mock.ExpectQuery(`FROM cache_adapter_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}))
 	mock.ExpectQuery(`FROM cache_provider_config`).
@@ -1227,8 +1089,6 @@ func TestCacheListOverrides_OrphanSkipped(t *testing.T) {
 	// Non-empty override + Provider row not found → silently skip.
 	mock, db := newMockDB(t)
 	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	mock.ExpectQuery(`FROM cache_adapter_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}))
 	mock.ExpectQuery(`FROM cache_provider_config`).
@@ -1257,8 +1117,6 @@ func TestCacheListOverrides_OrphanGenericErrAlsoSkipped(t *testing.T) {
 	// Non-empty override + Provider lookup err → silently skip.
 	mock, db := newMockDB(t)
 	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	mock.ExpectQuery(`FROM cache_adapter_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}))
 	mock.ExpectQuery(`FROM cache_provider_config`).
@@ -1284,8 +1142,6 @@ func TestCacheListOverrides_HappyMultiKnobDiff(t *testing.T) {
 	// coverage). Verifies every recordDiff branch fires.
 	mock, db := newMockDB(t)
 	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	mock.ExpectQuery(`FROM cache_adapter_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}))
 	mock.ExpectQuery(`FROM cache_provider_config`).
@@ -1349,8 +1205,6 @@ func TestCacheListOverrides_SortedByProviderName(t *testing.T) {
 	// Two provider overrides with names "B" and "A" → final list sorted A then B.
 	mock, db := newMockDB(t)
 	h := newHandler(t, db, nil, nil)
-	mock.ExpectQuery(`FROM cache_global_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	mock.ExpectQuery(`FROM cache_adapter_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}))
 	mock.ExpectQuery(`FROM cache_provider_config`).
@@ -1409,8 +1263,6 @@ func TestRegisterRoutes_IAMDeniesUnauthenticated(t *testing.T) {
 	probes := []struct {
 		method, path string
 	}{
-		{http.MethodGet, "/api/admin/cache/global"},
-		{http.MethodPut, "/api/admin/cache/global"},
 		{http.MethodGet, "/api/admin/cache/adapters"},
 		{http.MethodGet, "/api/admin/cache/adapter/openai"},
 		{http.MethodPut, "/api/admin/cache/adapter/openai"},
@@ -1428,6 +1280,22 @@ func TestRegisterRoutes_IAMDeniesUnauthenticated(t *testing.T) {
 		if rec.Code != http.StatusForbidden && rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s: code = %d (want 401/403); body = %s",
 				p.method, p.path, rec.Code, rec.Body.String())
+		}
+	}
+
+	// The retired Tier-1 routes must no longer be mounted at all. A mounted-but-
+	// denied route returns 401/403 (an IAM decision); an unmounted route returns
+	// 404 from Echo's router BEFORE any middleware runs. 404 is the proof the
+	// GET/PUT /cache/global handlers are gone, not merely gated.
+	for _, p := range []struct{ method, path string }{
+		{http.MethodGet, "/api/admin/cache/global"},
+		{http.MethodPut, "/api/admin/cache/global"},
+	} {
+		req := httptest.NewRequest(p.method, p.path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s: code = %d (want 404, route must be retired)", p.method, p.path, rec.Code)
 		}
 	}
 }

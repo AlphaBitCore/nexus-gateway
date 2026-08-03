@@ -53,7 +53,7 @@ func TestGetTrafficEventNormalized_SpillFetch_Recompute(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil))
+			"application/json", "", spillRef, nil, ""))
 	// No sidecar query expected — the spill fetch satisfies tier (b).
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-spill/normalized")
@@ -97,7 +97,7 @@ func TestGetTrafficEventNormalized_SpillFetch_RawSSE(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"", "text/event-stream", nil, spillRef))
+			"", "text/event-stream", nil, spillRef, ""))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-sse-spill/normalized")
 	c.SetParamNames("id")
@@ -134,7 +134,7 @@ func TestGetTrafficEventNormalized_SpillGone_FallsBackToSidecar(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil))
+			"application/json", "", spillRef, nil, ""))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-gone").
 		WillReturnRows(pgxmock.NewRows(normSidecarCols).AddRow(
@@ -175,7 +175,7 @@ func TestGetTrafficEventNormalized_SpillIntegrityFail_GracefulUnavailable(t *tes
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil))
+			"application/json", "", spillRef, nil, ""))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-tamper").
 		WillReturnError(errNoRowsStub())
@@ -208,7 +208,7 @@ func TestGetTrafficEventNormalized_ResponseSpillGone_RequestInlineStill200(t *te
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			reqBody, "", nil, "",
-			"application/json", "text/event-stream", nil, respSpill))
+			"application/json", "text/event-stream", nil, respSpill, ""))
 	// No sidecar query: the inline request body satisfies tier (a) for the row.
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-mixed/normalized")
@@ -245,7 +245,7 @@ func TestGetTrafficEventNormalized_BadSpillRef_GracefulFallback(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", []byte("not-json"), nil))
+			"application/json", "", []byte("not-json"), nil, ""))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-badref").
 		WillReturnError(errNoRowsStub())
@@ -273,7 +273,7 @@ func TestGetTrafficEventNormalized_SpillReadError_GracefulFallback(t *testing.T)
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil))
+			"application/json", "", spillRef, nil, ""))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-readerr").
 		WillReturnRows(pgxmock.NewRows(normSidecarCols).AddRow(
@@ -316,7 +316,7 @@ func TestGetTrafficEventNormalized_DSARScrubbedBody_EmptyNormalized(t *testing.T
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "application/json", nil, nil))
+			"application/json", "application/json", nil, nil, ""))
 	// Post-erasure sidecar row: normalized copies NULL (step 1b). The row still
 	// exists (old-agent capture), but carries no text.
 	mock.ExpectQuery(`FROM traffic_event_normalized`).

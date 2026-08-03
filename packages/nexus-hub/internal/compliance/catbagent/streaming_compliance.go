@@ -58,7 +58,6 @@ type agentStreamingComplianceWire struct {
 	FailBehavior        string `json:"fail_behavior,omitempty"`
 	CaptureRequestBody  *bool  `json:"capture_request_body,omitempty"`
 	CaptureResponseBody *bool  `json:"capture_response_body,omitempty"`
-	RawSpillEnabled     *bool  `json:"raw_body_spill_enabled,omitempty"`
 }
 
 // Load reads system_metadata["streaming_compliance.config"] and returns

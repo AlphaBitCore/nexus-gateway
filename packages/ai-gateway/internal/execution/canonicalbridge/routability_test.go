@@ -175,7 +175,7 @@ func TestIngressChatToWire_CanonicalErrorPropagates(t *testing.T) {
 	// FormatBedrock has no ingress→canonical mapper (only same-format
 	// passthrough). Forcing ingress=Bedrock, target=OpenAI exercises
 	// the canonical-conversion error branch.
-	_, err := b.IngressChatToWire(provcore.FormatBedrock, provcore.FormatOpenAI, []byte(`{}`), provcore.CallTarget{
+	_, _, err := b.IngressChatToWire(provcore.FormatBedrock, provcore.FormatOpenAI, []byte(`{}`), provcore.CallTarget{
 		Format: provcore.FormatOpenAI,
 	}, false)
 	if err == nil {
@@ -205,7 +205,7 @@ func TestIngressChatToWire_MissingTargetCodec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = b.IngressChatToWire(provcore.FormatAnthropic, provcore.FormatOpenAI, body, provcore.CallTarget{
+	_, _, err = b.IngressChatToWire(provcore.FormatAnthropic, provcore.FormatOpenAI, body, provcore.CallTarget{
 		Format:          provcore.FormatOpenAI,
 		ProviderModelID: "gpt-4o-mini",
 	}, false)
@@ -675,4 +675,8 @@ func TestResponsesStreamEncoder_UsageCacheAndReasoning(t *testing.T) {
 	if got := gjson.Get(completedData, "response.usage.output_tokens_details.reasoning_tokens").Int(); got != 2 {
 		t.Errorf("reasoning_tokens = %d, want 2; data=%s", got, completedData)
 	}
+}
+
+func (c *errCodec) RewriteNative(_ typology.WireShape, nativeBody []byte, _ provcore.CallTarget, _ bool) (provcore.EncodeResult, error) {
+	return provcore.EncodeResult{Body: nativeBody}, nil
 }

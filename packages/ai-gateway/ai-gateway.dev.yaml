@@ -79,7 +79,11 @@ log:
   # warn by default: debug logs every upstream request/response body (spec_adapter
   # debugBody), which floods the log file and steals hot-path CPU under load. Raise
   # to debug per session (or via the Hub log_level shadow) when actively debugging.
-  level: "warn"
+  # info at boot to match *.prod.yaml.example and the level the Hub shadow
+  # pushes anyway: the yaml governs only the boot window, and leaving it at warn
+  # hid every boot posture line (audit overflow policy, spillstore backend,
+  # streaming policy) in exactly the environment where they are read.
+  level: "info"
   format: "text"
   # Relative to cwd (packages/ai-gateway when using VS Code launch).
   file: "logs/ai-gateway.log"
@@ -98,14 +102,17 @@ cors:
   allowedOrigins:
     - "http://localhost:3000"
   allowedMethods: ["GET", "POST", "OPTIONS"]
-  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  # Extra request headers on top of the built-in always-allowed set
+  # (gateway auth/correlation/feature headers + the forward-header
+  # allowlist). Extends, never replaces.
+  allowedHeaders: []
   maxAgeSec: 600
 
 cache:
   # Response cache stores non-stream upstream JSON keyed by SHA-256 of
   # (provider, model, post-hook body bytes). Override TTL via env
   # AI_GATEWAY_CACHE_TTL (any time.ParseDuration value). Streaming and
-  # requests carrying x-nexus-aigw-no-cache always bypass.
+  # requests carrying X-Nexus-No-Cache always bypass.
   #
   # Shadow-overridable via Hub admin UI (config_key: cache) — the
   # response-cache normaliser config (rule enable/disable, TTL strategy)
@@ -240,8 +247,12 @@ audit:
   # pause. Raise on a memory-rich box for extra absorption headroom; lower on a
   # constrained one. 0 → 10000. Env: AI_GATEWAY_AUDIT_MAX_QUEUED_RECORDS.
   maxQueuedRecords: 10000
-  # Overflow policy. Durable audit is a product promise + compliance requirement,
-  # so the default "spillBlock" is NO-LOSS with the cheap on-disk spool as the
+  # Overflow policy (shared/audit/lossmode): spillblock | block | spill | drop.
+  # The values are matched exactly and in lower case; anything else resolves to
+  # the no-loss default rather than being rejected, so a typo can never make the
+  # audit trail lossy.
+  # Durable audit is a product promise + compliance requirement,
+  # so the default "spillblock" is NO-LOSS with the cheap on-disk spool as the
   # PRIMARY overflow buffer: when the in-heap buffer fills, records go to the
   # durable NDJSON spool first (batched, off the publish worker), and the request
   # path is only back-pressured when that large spool is ALSO saturated — never
@@ -250,8 +261,8 @@ audit:
   # that back-pressures at the small in-heap queue without using the spool. Lossy
   # opt-out for non-compliance callers: "spill" (async durable spill; bounded drop
   # only if the spill is also saturated) or "drop" (counted bounded drop, max
-  # throughput). Empty/unknown → "spillBlock". Env: AI_GATEWAY_AUDIT_LOSS_MODE.
-  lossMode: spillBlock
+  # throughput). Empty/unknown → "spillblock". Env: AI_GATEWAY_AUDIT_LOSS_MODE.
+  lossMode: spillblock
   # End-to-end zstd compression of large captured bodies: producer compresses off
   # the request path, body rides the NATS wire compressed, the Hub persists the
   # compressed bytes verbatim (no decompress on ingest), and only the CP view

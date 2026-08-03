@@ -12,7 +12,7 @@ import (
 func TestExtractVKToken_NexusHeaderAlwaysWins(t *testing.T) {
 	ctx := WithIngressFormat(context.Background(), provcore.FormatAnthropic)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	req.Header.Set("x-nexus-virtual-key", "nvk_primary")
+	req.Header.Set("X-Nexus-Virtual-Key", "nvk_primary")
 	req.Header.Set("x-api-key", "nvk_fallback")
 	req.Header.Set("Authorization", "Bearer nvk_bearer")
 
@@ -91,7 +91,7 @@ func TestExtractVKToken_FormatCarrier_IgnoredOnOpenAIRoute(t *testing.T) {
 
 func TestExtractVKToken_NoIngressFormat_OnlyStandardCarriers(t *testing.T) {
 	// No ingress context (e.g. /v1/ai-guard/classify) → only
-	// x-nexus-virtual-key + Bearer are honoured.
+	// X-Nexus-Virtual-Key + Bearer are honoured.
 	req := httptest.NewRequest(http.MethodPost, "/v1/ai-guard/classify", nil)
 	req.Header.Set("x-api-key", "nvk_xapikey")
 	if got := extractVKToken(context.Background(), req); got != "" {

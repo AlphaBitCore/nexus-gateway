@@ -142,11 +142,18 @@ type LocalfsOptions struct {
 // but does mean some queued uploads land in S3 without their Hub-side
 // audit row catching up.
 func New(cfg FactoryConfig, logger *slog.Logger) (spillstore.SpillStore, error) {
-	if !cfg.Enabled {
-		return nil, nil
-	}
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if !cfg.Enabled {
+		// Say so. Both enabled paths below announce themselves, so silence here
+		// made "spill is off" indistinguishable from "this build does not log
+		// spill at all" — and the consequence is not obvious: with no backend
+		// every captured body stays inline no matter what the admin-facing
+		// inline-vs-spill threshold is set to.
+		logger.Info("spillstore disabled by config; captured bodies stay inline regardless of the inline-vs-spill threshold",
+			"enabled", false)
+		return nil, nil
 	}
 	var inner spillstore.SpillStore
 	switch cfg.Backend {

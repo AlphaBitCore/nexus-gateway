@@ -438,6 +438,26 @@ func TestValidate_RequiredFields(t *testing.T) {
 			},
 			wantInErr: "registry.nexusHubUrl is required",
 		},
+		{
+			// 0 is the standard Go idiom for "no write timeout", but this
+			// server cannot honour it: net/http re-arms the per-request write
+			// deadline only when server.writeTimeout > 0, so the absolute
+			// deadline the proxy arms per response would outlive its request
+			// and permanently break every later write on that keep-alive
+			// connection. It has to be rejected at boot, not discovered in prod.
+			name: "server.writeTimeout explicitly 0",
+			mutate: func(t *testing.T) string {
+				return writeYAML(t, "server:\n  writeTimeout: 0s\n")
+			},
+			wantInErr: "server.writeTimeout must be > 0",
+		},
+		{
+			name: "server.writeTimeout negative",
+			mutate: func(t *testing.T) string {
+				return writeYAML(t, "server:\n  writeTimeout: -1s\n")
+			},
+			wantInErr: "server.writeTimeout must be > 0",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -455,6 +475,34 @@ func TestValidate_RequiredFields(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidate_WriteTimeoutFloorAcceptsShippedAndDefault pins the other side
+// of the server.writeTimeout floor: it must reject only the unusable 0, never
+// a real deployment. Covers both the value every shipped yaml carries and the
+// built-in default that applies when the key is absent entirely.
+func TestValidate_WriteTimeoutFloorAcceptsShippedAndDefault(t *testing.T) {
+	t.Run("shipped yaml value", func(t *testing.T) {
+		setRequiredEnvBaseline(t)
+		cfg, err := Load(writeYAML(t, "server:\n  writeTimeout: \"360s\"\n"))
+		if err != nil {
+			t.Fatalf("the writeTimeout every shipped config sets must boot, got: %v", err)
+		}
+		if cfg.Server.WriteTimeout != 360*time.Second {
+			t.Errorf("Server.WriteTimeout: got %s, want 360s", cfg.Server.WriteTimeout)
+		}
+	})
+
+	t.Run("key absent falls back to a usable default", func(t *testing.T) {
+		setRequiredEnvBaseline(t)
+		cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+		if err != nil {
+			t.Fatalf("a config that omits server.writeTimeout must boot on the default, got: %v", err)
+		}
+		if cfg.Server.WriteTimeout <= 0 {
+			t.Fatalf("the default Server.WriteTimeout must satisfy its own floor, got %s", cfg.Server.WriteTimeout)
+		}
+	})
 }
 
 // TestValidate_CredentialKeyMapOnlyBoots is the regression guard: a

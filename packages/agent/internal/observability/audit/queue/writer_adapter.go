@@ -2,14 +2,15 @@ package queue
 
 import (
 	"context"
-	"github.com/goccy/go-json"
-	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/event"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/lossmode"
 )
 
 // QueueWriter adapts the agent's local sqlite-backed Queue to the
@@ -21,17 +22,18 @@ import (
 // SQLite write lock under a burst of N concurrent inspect flows. That
 // added N ms of tail latency to user-visible page loads.
 //
-// Backpressure: the channel is bounded (default 4096). When full,
-// Enqueue drops the event with a WARN log + drops counter increment
-// rather than block the inspect goroutine. Drops are visible on the
-// Stats / Diagnostics page and indicate audit pipeline starvation
-// (Hub upload backlog, disk slow, etc.) — never user-network slowdown.
+// Overflow: the channel is bounded (default 4096) and a full channel runs the CONFIGURED
+// overflow policy — see writer_overflow.go and shared/audit/lossmode. This comment previously
+// said Enqueue "drops the event with a WARN log", and that was true when dropping was the only
+// thing it could do; it is now one of four selectable modes, and the shipped default (spill)
+// writes the row durably off the caller's goroutine instead. Drops and durable overflow writes
+// are counted separately — Drops() and OverflowWrites() — because "under pressure but losing
+// nothing" and "discarding records" are very different situations for an operator to see.
 //
 // Crash safety: events sitting in the channel at hard-crash time are
-// lost (the durability boundary is sqlite, not the channel). For a
-// home / single-user agent this is acceptable — audit is best-effort,
-// not transactional. Close() flushes pending events synchronously so
-// graceful shutdown does not drop.
+// lost (the durability boundary is sqlite, not the channel). Close() flushes pending events
+// synchronously so graceful shutdown does not drop. Whether overflow is allowed to lose records
+// is now a configuration question rather than a property of this type.
 type QueueWriter struct {
 	queue *Queue
 	ch    chan event.Event
@@ -46,6 +48,15 @@ type QueueWriter struct {
 	// Surfaced by future Diagnostics so operators can see pipeline
 	// starvation independent of Hub upload health.
 	drops atomic.Int64
+	// overflowWrites counts events that took the DURABLE overflow path instead of the
+	// batching channel. Reported beside drops so "under pressure, nothing lost" is
+	// distinguishable from "records discarded" — the old single counter could not tell
+	// those apart.
+	overflowWrites atomic.Int64
+	// lossMode is the audit-overflow policy (shared/audit/lossmode); overflowCh is the
+	// bounded relief buffer its durable arms hand work to. See writer_overflow.go.
+	lossMode   lossmode.Mode
+	overflowCh chan event.Event
 	// flushBatch + flushInterval control the background flush cadence.
 	// Defaults: 100 events / 100 ms. Tuned so a quiet machine writes
 	// every 100 ms (UI sees fresh rows fast) while a busy machine
@@ -77,7 +88,17 @@ func NewQueueWriterWithOptions(q *Queue, bufferSize, flushBatch int, flushInterv
 		flushBatch:    flushBatch,
 		flushInterval: flushInterval,
 		flushReq:      make(chan chan struct{}, 4),
+		overflowCh:    make(chan event.Event, overflowQueueDepth),
+		// Spill, not the shared no-loss default, and the reason is CLAUDE.md's agent rule:
+		// the macOS network extension sits in the host's outbound packet path, so a no-loss
+		// mode — which must block until the record is durable, and a SQLite write under WAL
+		// contention can wait out the 5 s busy_timeout — would turn audit bookkeeping into a
+		// frozen network. Spill does the durable write off the caller's goroutine and counts
+		// a drop only when that path is also saturated. The no-loss modes stay selectable via
+		// WithLossMode for a deployment that wants them and accepts the stalls.
+		lossMode: lossmode.Spill,
 	}
+	w.startOverflowWorker()
 	w.wg.Add(1)
 	go w.flushLoop()
 	return w
@@ -96,8 +117,9 @@ func NewQueueWriterWithOptions(q *Queue, bufferSize, flushBatch int, flushInterv
 //     pointer if non-zero, nil if zero (mirrors how the MITM relay
 //     pre-T33 populated them so the agent + cp wire shape matches).
 //
-// Non-blocking: a full channel triggers a drop + WARN log rather than
-// blocking the inspect goroutine.
+// A full channel runs the configured overflow policy rather than always dropping. Every arm of
+// that policy is BOUNDED: CLAUDE.md forbids stalling the host path, so even the no-loss modes give
+// up after a short window here and count the loss rather than freezing the user's network.
 func (w *QueueWriter) Enqueue(e sharedaudit.AuditEvent) {
 	if w == nil || w.queue == nil {
 		return
@@ -107,17 +129,10 @@ func (w *QueueWriter) Enqueue(e sharedaudit.AuditEvent) {
 	case w.ch <- row:
 		// queued for the background flush loop — returns immediately
 	default:
-		// Channel is full — drop with a single WARN per drop so log
-		// volume stays bounded under sustained pressure.
-		n := w.drops.Add(1)
-		slog.Warn("audit writer: channel full, dropping event",
-			"event_id", row.ID,
-			"target_host", row.TargetHost,
-			"method", row.Method,
-			"path", row.Path,
-			"action", row.Action,
-			"drops_total", n,
-		)
+		// Channel full: run the configured overflow policy rather than always dropping.
+		// See writer_overflow.go — this branch used to BE lossmode.Drop with no way to
+		// select anything else.
+		w.handleOverflow(row)
 	}
 }
 
@@ -127,74 +142,6 @@ func (w *QueueWriter) Drops() int64 {
 		return 0
 	}
 	return w.drops.Load()
-}
-
-// flushLoop consumes the channel, batches up to flushBatch events into
-// a single sqlite transaction, and commits on either the batch-size or
-// the flushInterval trigger — whichever fires first. Exits on done
-// signal after draining whatever is still in the channel.
-func (w *QueueWriter) flushLoop() {
-	defer w.wg.Done()
-	ticker := time.NewTicker(w.flushInterval)
-	defer ticker.Stop()
-	batch := make([]event.Event, 0, w.flushBatch)
-	flush := func() {
-		if len(batch) == 0 {
-			return
-		}
-		if err := w.queue.RecordBatch(batch); err != nil {
-			slog.Warn("audit writer: batch insert failed — rows dropped",
-				"error", err,
-				"batch_size", len(batch),
-			)
-		}
-		batch = batch[:0]
-	}
-	for {
-		select {
-		case <-w.done:
-			// Drain remaining events (whatever was in the channel at
-			// Close time) then return.
-			for {
-				select {
-				case e := <-w.ch:
-					batch = append(batch, e)
-					if len(batch) >= w.flushBatch {
-						flush()
-					}
-				default:
-					flush()
-					return
-				}
-			}
-		case e := <-w.ch:
-			batch = append(batch, e)
-			if len(batch) >= w.flushBatch {
-				flush()
-			}
-		case <-ticker.C:
-			flush()
-		case resp := <-w.flushReq:
-			// Synchronous barrier: drain anything that's still
-			// in the channel (so the flush covers events that
-			// arrived between Flush() and this case firing),
-			// then flush, then signal the caller.
-			for {
-				select {
-				case e := <-w.ch:
-					batch = append(batch, e)
-					if len(batch) >= w.flushBatch {
-						flush()
-					}
-				default:
-					flush()
-					close(resp)
-					goto nextIter
-				}
-			}
-		nextIter:
-		}
-	}
 }
 
 func (w *QueueWriter) buildRow(e sharedaudit.AuditEvent) event.Event {

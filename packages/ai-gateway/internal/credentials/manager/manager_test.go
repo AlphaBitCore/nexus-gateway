@@ -673,3 +673,98 @@ func TestManager_ClearCache(t *testing.T) {
 		t.Errorf("expected cleared cache, got %q", got)
 	}
 }
+
+// GetDecryptedForProvider — the pinned-resolution guard set. Each rejected
+// state is a named failure mode: cross-provider confusion would send one
+// provider's secret to another's host; disabled is the admin kill switch;
+// retired means the key is revoked provider-side. Retiring must KEEP
+// resolving (same account mid-rotation — rejecting it strands live jobs).
+func TestGetDecryptedForProvider_Guards(t *testing.T) {
+	src := newFakeSource()
+	cred := makeCred(t, "c-1", "prov-A", "primary", "v1", testKeyHex, "sk-live")
+	src.byID["c-1"] = cred
+	d, err := creddecrypt.NewDecryptor(testKeyHex)
+	if err != nil {
+		t.Fatalf("NewDecryptor: %v", err)
+	}
+	m := NewManager(src, d)
+
+	t.Run("happy path returns key and name", func(t *testing.T) {
+		key, name, err := m.GetDecryptedForProvider(context.Background(), "prov-A", "c-1")
+		if err != nil || key != "sk-live" || name != "primary" {
+			t.Fatalf("= (%q, %q, %v), want (sk-live, primary, nil)", key, name, err)
+		}
+	})
+
+	t.Run("cross-provider pin rejected", func(t *testing.T) {
+		_, _, err := m.GetDecryptedForProvider(context.Background(), "prov-B", "c-1")
+		if err == nil || !strings.Contains(err.Error(), "does not belong to provider") {
+			t.Fatalf("err = %v, want ownership rejection", err)
+		}
+	})
+
+	t.Run("disabled rejected even with warm plaintext cache", func(t *testing.T) {
+		// The happy-path run above cached the plaintext; disabling the row
+		// must still reject — the guard reads the row fresh on every call,
+		// so the admin kill switch is not outlived by the cache TTL.
+		src.mu.Lock()
+		cred.Enabled = false
+		src.mu.Unlock()
+		_, _, err := m.GetDecryptedForProvider(context.Background(), "prov-A", "c-1")
+		if err == nil || !strings.Contains(err.Error(), "disabled") {
+			t.Fatalf("err = %v, want disabled rejection", err)
+		}
+		src.mu.Lock()
+		cred.Enabled = true
+		src.mu.Unlock()
+	})
+
+	t.Run("retired rejected, retiring resolves", func(t *testing.T) {
+		src.mu.Lock()
+		cred.Status = "retired"
+		src.mu.Unlock()
+		if _, _, err := m.GetDecryptedForProvider(context.Background(), "prov-A", "c-1"); err == nil || !strings.Contains(err.Error(), "retired") {
+			t.Fatalf("err = %v, want retired rejection", err)
+		}
+		src.mu.Lock()
+		cred.Status = "retiring"
+		src.mu.Unlock()
+		key, _, err := m.GetDecryptedForProvider(context.Background(), "prov-A", "c-1")
+		if err != nil || key != "sk-live" {
+			t.Fatalf("retiring must resolve (mid-rotation account): (%q, %v)", key, err)
+		}
+	})
+
+	t.Run("missing row surfaces fetch error", func(t *testing.T) {
+		_, _, err := m.GetDecryptedForProvider(context.Background(), "prov-A", "c-gone")
+		if err == nil || !strings.Contains(err.Error(), "fetch c-gone") {
+			t.Fatalf("err = %v, want fetch error", err)
+		}
+	})
+
+	t.Run("nil db errors", func(t *testing.T) {
+		var empty Manager
+		if _, _, err := empty.GetDecryptedForProvider(context.Background(), "p", "c"); err == nil {
+			t.Fatal("nil-db manager must error")
+		}
+	})
+}
+
+// A pinned credential that passes every guard but fails to decrypt (corrupt
+// ciphertext / wrong key) must surface the decrypt error — the guards are not
+// a substitute for the decrypt failure mode.
+func TestGetDecryptedForProvider_DecryptErrorSurfaces(t *testing.T) {
+	src := newFakeSource()
+	cred := makeCred(t, "c-bad", "prov-A", "corrupt", "v1", testKeyHex, "sk-x")
+	cred.EncryptionTag = "00000000000000000000000000000000" // breaks GCM auth
+	src.byID["c-bad"] = cred
+	d, err := creddecrypt.NewDecryptor(testKeyHex)
+	if err != nil {
+		t.Fatalf("NewDecryptor: %v", err)
+	}
+	m := NewManager(src, d)
+	_, _, err = m.GetDecryptedForProvider(context.Background(), "prov-A", "c-bad")
+	if err == nil || !strings.Contains(err.Error(), "decrypt c-bad") {
+		t.Fatalf("err = %v, want the decrypt error surfaced", err)
+	}
+}

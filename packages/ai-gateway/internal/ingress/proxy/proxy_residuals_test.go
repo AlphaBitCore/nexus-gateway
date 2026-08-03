@@ -461,6 +461,7 @@ type stubMetricsForEstimate struct {
 
 func (s *stubMetricsForEstimate) RecordRequest(_, _, _ string, _ int, _ time.Duration, _ metrics.Usage) {
 }
+func (s *stubMetricsForEstimate) RecordError(_, _ string)             {}
 func (s *stubMetricsForEstimate) RecordHookRequest(_, _, _ string)    {}
 func (s *stubMetricsForEstimate) RecordTrafficExtract(_, _, _ string) {}
 func (s *stubMetricsForEstimate) RecordEstimate(_, _, _ string, _ time.Duration) {

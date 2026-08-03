@@ -6,7 +6,11 @@ package cacheconfig
 //
 //	provider_override[K] ?? adapter_default[K] ?? global_default[K] ?? code_default[K]
 //
-// Tier 1 only carries pipeline-wide knobs (NormaliserEnabled, CacheMasterKillSwitch).
+// There is no Tier 1 any more: the two pipeline-wide knobs it used to carry
+// (the cache master kill switch and the global normaliser gate) are retired —
+// emergency cache-off is served by Emergency Passthrough / the fleet
+// disable-all, and the upstream rewrite is demand-driven off the Tier-2/3
+// rule + marker-inject settings.
 // Tier 2 and Tier 3 use pointer fields where nil == "not set at this tier".
 // Each knob's source is recorded in Sources for UI badge rendering.
 func Resolve(blob CacheConfigBlob, providerID, adapterType string) ProviderEffective {
@@ -14,17 +18,6 @@ func Resolve(blob CacheConfigBlob, providerID, adapterType string) ProviderEffec
 	eff.ProviderID = providerID
 	eff.AdapterType = adapterType
 	eff.Sources = map[string]Source{}
-
-	// ── Tier 1 (global) ────────────────────────────────────────────────
-	// Booleans in GlobalConfig are non-pointer; we treat the row's absence
-	// as "use code default". The blob always carries a GlobalConfig (the
-	// row is a singleton seeded at migration); fields that were never set
-	// by an admin will be their JSON zero value, which is also our code
-	// default, so the source tag is the dominant signal of intent.
-	eff.NormaliserEnabled = blob.Global.NormaliserEnabled
-	eff.CacheMasterKillSwitch = blob.Global.CacheMasterKillSwitch
-	eff.Sources["normaliser_enabled"] = SourceGlobalDefault
-	eff.Sources["cache_master_kill_switch"] = SourceGlobalDefault
 
 	// ── Tier 2 (adapter family) ─────────────────────────────────────────
 	adapter := blob.Adapters[adapterType]

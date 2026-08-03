@@ -367,16 +367,6 @@ func registerAGCacheConfig(l *cfgloader.Loader, d Deps) {
 		if err := json.Unmarshal(raw, &blob); err != nil {
 			return nil, fmt.Errorf("cache parse: %w", err)
 		}
-		// Emergency master kill switch (Tier-1 global). Wire it into the L1
-		// Cache object, which the proxy cache stage reads to gate BOTH L1 and
-		// L2 response caching. Without this the switch was parsed but never
-		// consulted by the data plane. Provider-side caching (L3 markers /
-		// Gemini context cache) is intentionally NOT gated here — it makes the
-		// upstream cache (cost/latency only), never serves a stored response,
-		// so it is not "gateway response caching" the emergency switch targets.
-		if d.ResponseCache != nil {
-			d.ResponseCache.SetMasterKill(blob.Global.CacheMasterKillSwitch)
-		}
 		if d.GeminiCacheMgrSet != nil {
 			d.GeminiCacheMgrSet.SetConfig(blob)
 		}

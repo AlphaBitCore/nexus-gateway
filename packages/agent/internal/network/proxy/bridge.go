@@ -13,7 +13,6 @@ import (
 	"time"
 
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
-	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
@@ -54,7 +53,19 @@ type BridgeDeps struct {
 	// is the single source of truth across all three services
 	// (agent / compliance-proxy / ai-gateway).
 	StreamingPolicy *streampolicy.Store
-	AuditQueue      *auditqueue.Queue
+	// AuditWriter is the PROCESS-WIDE audit sink, built once at wiring time
+	// (wiring.BuildBridgeDeps / platformshim.WireDarwinBridge) and closed once at
+	// shutdown. It is a field rather than a `*auditqueue.Queue` + a constructor call
+	// inside BumpFlow on purpose: the queue writer owns a 4096-slot event channel, a
+	// 256-slot overflow channel and two goroutines, so building one per flow leaked
+	// ~3.8 MB and 2 goroutines for every intercepted HTTPS connection, permanently,
+	// on the user's own laptop. Those numbers are measured on a running daemon, not
+	// estimated. Handing BumpFlow a Writer it cannot construct is what keeps that
+	// from coming back.
+	//
+	// The audit-overflow policy (shared/audit/lossmode) is selected on this writer at
+	// wiring time, so it is not a BridgeDeps concern either.
+	AuditWriter sharedaudit.Writer
 
 	// Per-hook + total timeouts feed into PolicyResolver.BuildPipeline so
 	// the agent matches compliance-proxy's hook-execution budgets. Defaults
@@ -64,15 +75,32 @@ type BridgeDeps struct {
 }
 
 // loggingQueueWriter wraps the agent's audit Queue writer so every
-// per-request Enqueue lands an INFO log line with the audit row's
-// identity (host + method + path + classification inputs). The chain
-// is otherwise opaque end-to-end:
+// per-request Enqueue lands an INFO log line proving the row entered the
+// queue. The chain is otherwise opaque end-to-end:
 //
 //	tlsbump.forward_handler.Emit → compliance.AuditEmitter.buildEvent
 //	  → writer_adapter.Enqueue → Queue.Record → SQLite
 //
-// The log line is the canonical diagnostic anchor — every per-request
-// emit produces exactly one INFO entry, queryable by host or txid.
+// The log line is the canonical diagnostic anchor — every per-request emit
+// produces exactly one INFO entry, correlatable by event id or trace id.
+//
+// The Enqueue call site passes ONLY those two ids. The line as emitted also
+// carries flow_id / dst_host / dst_port, which BumpFlow pre-binds on the flow
+// logger — measured on a live containerized agent, so this comment states what
+// the log actually looks like rather than what the call site alone suggests.
+//
+// It previously passed 14 attributes
+// (host, method, path, hook decision, bump status, domain rule, path action,
+// process, bundle, provider, model, latency), every one of which is a column
+// on the audit row this line announces — so they were duplicated into the log
+// on every intercepted request. That cost lands differently here than on a
+// server: the agent runs on user laptops with no admission control in front of
+// it, so a busy browsing session turns into thousands of 14-field structured
+// writes — CPU wakeups, disk I/O and battery, on hardware the user is holding.
+//
+// Dropping them loses no information: the ids point at the row that holds
+// every one of them. What is preserved is the property the anchor exists for —
+// one INFO line per request, greppable, without needing the level raised.
 type loggingQueueWriter struct {
 	next   sharedaudit.Writer
 	logger *slog.Logger
@@ -86,18 +114,6 @@ func (w *loggingQueueWriter) Enqueue(e sharedaudit.AuditEvent) {
 	logger.Info("audit emit (per-request)",
 		"event_id", e.ID,
 		"trace_id", e.TraceID,
-		"target_host", e.TargetHost,
-		"method", e.Method,
-		"path", e.Path,
-		"hook_decision", e.RequestHookDecision,
-		"bump_status", e.BumpStatus,
-		"domain_rule_id", e.DomainRuleID,
-		"path_action", e.PathAction,
-		"source_process", e.SourceProcess,
-		"source_bundle", e.SourceProcessBundle,
-		"provider", e.Provider,
-		"model", e.Model,
-		"latency_ms", e.LatencyMs,
 	)
 	if w.next != nil {
 		w.next.Enqueue(e)
@@ -140,8 +156,8 @@ var bumpConnectionFn = tlsbump.BumpConnection
 // inspect-mode flow off to shared/tlsbump.BumpConnection.
 //
 // Audit model (cp-aligned, per-request): tlsbump's compliance.AuditEmitter
-// is wired directly to the agent's local SQLite AuditQueue via
-// auditqueue.NewQueueWriter(deps.AuditQueue). Every HTTP request inside
+// is wired to the process-wide deps.AuditWriter, which persists into the
+// agent's local SQLite audit queue. Every HTTP request inside
 // the bumped TLS connection produces one Emit() call, which writes one
 // SQLite row carrying method, path, hookDecision, provider, model,
 // bodies, source process / bundle / user, domain rule id, path action,
@@ -167,8 +183,8 @@ func BumpFlow(
 	if deps.Upstream == nil {
 		return fmt.Errorf("BumpFlow: nil Upstream")
 	}
-	if deps.AuditQueue == nil {
-		return fmt.Errorf("BumpFlow: nil AuditQueue (per-request emit requires a queue sink)")
+	if deps.AuditWriter == nil {
+		return fmt.Errorf("BumpFlow: nil AuditWriter (per-request emit requires an audit sink)")
 	}
 
 	logger := deps.Logger
@@ -251,11 +267,12 @@ func BumpFlow(
 	// getCert just returns the pre-minted cert; no per-Hello probe.
 	getCert := staticCertGetter(mintedTLSCert)
 
-	// Wrap the queue writer so every Enqueue logs at INFO with
-	// host + method + path + classification inputs, making "rows
-	// missing" reports diagnosable via grep on agent.log.
+	// Wrap the PROCESS-WIDE audit writer so every Enqueue lands one INFO line,
+	// making "rows missing" reports diagnosable via grep on agent.log. The wrapper
+	// is per-flow because it binds this flow's logger; the writer it wraps is not
+	// (see BridgeDeps.AuditWriter for what building one per flow cost).
 	queueWriter := &loggingQueueWriter{
-		next:   auditqueue.NewQueueWriter(deps.AuditQueue),
+		next:   deps.AuditWriter,
 		logger: logger,
 	}
 	emitter := pipeline.NewAuditEmitter(queueWriter, logger)

@@ -37,6 +37,12 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
 	}
+	// Rerank requests ({query, documents}, no messages) scan the query and
+	// every document; without this branch the messages check below would
+	// ErrUnknownSchema and the hook pipeline would scan nothing.
+	if isRerankBody(body) {
+		return extractRerankRequest(body), nil
+	}
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() {
 		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
@@ -251,7 +257,12 @@ func (a *Adapter) DetectResponseUsage(_ *http.Response, body []byte) traffic.Usa
 	return usage
 }
 
-func (a *Adapter) RewriteRequestBody(_ context.Context, body []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
+func (a *Adapter) RewriteRequestBody(_ context.Context, body []byte, _ string, content traffic.NormalizedContent) ([]byte, int, error) {
+	// Rerank supports real redaction write-back (query + documents); Cohere
+	// chat does not (its redaction path runs via the OpenAI-canonical adapter).
+	if gjson.ValidBytes(body) && isRerankBody(body) {
+		return rewriteRerankRequest(body, content)
+	}
 	return body, 0, traffic.ErrRewriteUnsupported
 }
 func (a *Adapter) RewriteResponseBody(_ context.Context, body []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {

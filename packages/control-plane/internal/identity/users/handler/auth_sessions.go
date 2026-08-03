@@ -68,11 +68,24 @@ func (h *Handler) RegisterAuthSessionRoutes(g *echo.Group, iamMW func(string) ec
 	g.GET("/revocations", h.ListRevocations, iamMW(iam.ResourceRevocation.Action(iam.VerbRead)))
 }
 
-// RegisterInternalAuthRoutes wires the Hub -> CP internal revoke-device route.
-// The caller's group MUST already be gated by rstokenauth.Middleware; this
-// method does not add its own auth.
+// RegisterInternalAuthRoutes wires the service-to-service auth routes. The
+// caller's group MUST already be gated by rstokenauth.Middleware; this method
+// does not add its own auth.
+//
+// The replay route is registered here IN ADDITION to the admin one above,
+// because the two have different callers with different credentials. The admin
+// route serves the UI and gates on admin:revocation.read. The revocation
+// checker is a service: it holds the internal service token and no IAM
+// identity, so it could never satisfy that gate — it polled the admin URL and
+// took a 401 every 60 s, forever, meaning revocations missed during an MQ
+// outage were never backfilled. The only symptom was a WARN nobody reads.
+//
+// ListRevocations reads nothing from the admin context (it is a store read
+// keyed by `since` and `limit`), so serving it without an admin identity is
+// safe rather than merely convenient.
 func (h *Handler) RegisterInternalAuthRoutes(g *echo.Group) {
 	g.POST("/auth/revoke-device", h.RevokeDeviceInternal) // iam-exempt: internal Hub->CP route, gated by rstokenauth not iamMW
+	g.GET("/revocations", h.ListRevocations)              // iam-exempt: internal CP->CP replay route, gated by rstokenauth not iamMW
 }
 
 // sessionRow is the JSON wire shape returned by ListAuthSessions. CreatedAt

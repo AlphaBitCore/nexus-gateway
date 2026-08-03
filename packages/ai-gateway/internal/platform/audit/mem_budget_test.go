@@ -121,13 +121,23 @@ func TestMemBudget_BlockModeBackpressuresAtFullBudget(t *testing.T) {
 		w.Enqueue(bodyRecord("parked", 64)) // must park until the holder releases
 		close(second)
 	}()
+	// Poll for the back-pressure signal rather than assert it at a fixed instant:
+	// the parked goroutine must be scheduled, TryAcquire, and incMemBackpressure
+	// before the counter reads >= 1, and under coverage instrumentation on a slow
+	// CI runner that can take longer than a fixed 100 ms window (the deflaked
+	// failure mode). The assertion is unchanged — the producer MUST back-pressure —
+	// only the wait is generous.
+	if !waitFor(2*time.Second, func() bool {
+		return counterValue(t, prom, "nexus_audit_mem_backpressure_total") >= 1
+	}) {
+		t.Fatalf("mem_backpressure_total never reached 1 — parked producer did not back-pressure")
+	}
+	// And it must still be PARKED (not admitted past the exhausted budget): the
+	// reservation is held by the stalled holder, so `second` cannot have closed.
 	select {
 	case <-second:
 		t.Fatal("Enqueue admitted past an exhausted byte budget (no back-pressure)")
-	case <-time.After(100 * time.Millisecond):
-	}
-	if got := counterValue(t, prom, "nexus_audit_mem_backpressure_total"); got < 1 {
-		t.Fatalf("mem_backpressure_total = %v, want >= 1 while parked", got)
+	default:
 	}
 
 	close(prod.gate) // the holder publishes → releases 64 bytes → parked producer wakes
@@ -222,18 +232,21 @@ func TestMemBudget_SpillFlushReleasesBatchAggregate(t *testing.T) {
 	}
 }
 
-// Shutdown must unblock a producer parked on the byte budget and still lose
-// nothing: the record that could not be admitted spills durably instead.
-func TestMemBudget_ShutdownUnblocksParkedEnqueueIntoDurableSpill(t *testing.T) {
+// A producer parks on the byte budget only when there is no durable spool —
+// with one, an exhausted budget spills instead of waiting. Shutdown must
+// unblock that parked producer rather than hang the process, and the record it
+// could not admit is the one discard a no-loss mode cannot avoid: the process
+// is going away, so waiting is not on offer and there is nowhere to put it.
+// That discard must be counted, never silent.
+func TestMemBudget_ShutdownUnblocksParkedEnqueue(t *testing.T) {
 	prom := prometheus.NewRegistry()
-	spool, err := sharedndjson.New(t.TempDir(), "gw", 64, 1, nil)
-	if err != nil {
-		t.Fatalf("ndjson.New: %v", err)
-	}
 	prod := &stallProducer{gate: make(chan struct{})}
 	w := NewWriter(prod, "q", opsmetrics.NewRegistry(prom),
 		slog.New(slog.NewTextHandler(io.Discard, nil))).
-		WithNDJSONSpill(spool).WithLossMode(lossModeBlock)
+		WithLossMode(lossModeBlock)
+	if w.ndjsonSpill != nil {
+		t.Fatal("precondition: this test needs NO spool, so the budget parks")
+	}
 	tinyBudgetWriter(w, 64)
 	w.Start()
 
@@ -263,14 +276,51 @@ func TestMemBudget_ShutdownUnblocksParkedEnqueueIntoDurableSpill(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not complete after the gate opened")
 	}
-	if got := counterValue(t, prom, "nexus_audit_mq_spilled_total"); got < 1 {
-		t.Fatalf("spilled_total = %v, want >= 1 (the straggler must spill durably, not vanish)", got)
-	}
-	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 0 {
-		t.Fatalf("dropped_total = %v, want 0 (shutdown must not lose the straggler)", got)
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got < 1 {
+		t.Fatalf("dropped_total = %v, want >= 1: the shutdown discard must be counted, not silent", got)
 	}
 	if got := w.memBudget.InUse(); got != 0 {
 		t.Fatalf("InUse after shutdown = %d, want 0", got)
+	}
+}
+
+// The companion to the test above: give the same writer a spool and the
+// straggler never parks at all. It spills durably and Enqueue returns, so
+// shutdown has nothing queued behind an exhausted budget to unblock.
+func TestMemBudget_ExhaustedBudgetWithSpoolSpillsRatherThanParks(t *testing.T) {
+	prom := prometheus.NewRegistry()
+	spool, err := sharedndjson.New(t.TempDir(), "gw", 64, 1, nil)
+	if err != nil {
+		t.Fatalf("ndjson.New: %v", err)
+	}
+	prod := &stallProducer{gate: make(chan struct{})}
+	w := NewWriter(prod, "q", opsmetrics.NewRegistry(prom),
+		slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithNDJSONSpill(spool).WithLossMode(lossModeBlock)
+	tinyBudgetWriter(w, 64)
+	w.Start()
+	defer func() { close(prod.gate); w.Close() }()
+
+	w.Enqueue(bodyRecord("holder", 64)) // fills the budget; publish stalls
+
+	returned := make(chan struct{})
+	go func() {
+		w.Enqueue(bodyRecord("straggler", 64))
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Enqueue parked on the byte budget while a durable spool was available")
+	}
+
+	if !waitFor(2*time.Second, func() bool {
+		return counterValue(t, prom, "nexus_audit_mq_spilled_total") >= 1
+	}) {
+		t.Fatal("the straggler was neither queued nor spilled")
+	}
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 0 {
+		t.Fatalf("dropped_total = %v, want 0: spilling is not dropping", got)
 	}
 }
 

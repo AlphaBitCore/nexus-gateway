@@ -2,6 +2,7 @@ package tlsbump
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -11,7 +12,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
@@ -55,9 +55,23 @@ type bumpedExchange struct {
 	resolvedPathAction domain.PathAction
 	domainRuleID       string
 
+	// auditCtx is built at the end of the request phase and stamped onto the
+	// context by stampCPMarker, in the SAME WithContext as the CPMarker (finding
+	// C-3). The two used to be separate stamps and therefore two http.Request
+	// clones, even though stampCPMarker runs immediately after the request phase
+	// with nothing reading the context in between. Holding it here for one call
+	// keeps both values immutable once stamped — the alternative, a mutable holder
+	// in the context, would be readable from the SSE goroutines while still being
+	// written.
+	auditCtx *requestAuditCtx
 	// endpointType classified from (method, path) so both hook pipelines
 	// apply the same endpoint-aware filtering.
 	endpointType typology.EndpointKind
+
+	// deferredAudit holds the audit emission for the stream-through fast path, which
+	// must run AFTER relayResponse rather than before it (finding C-34). Nil on every
+	// other arm, which emits inline because it has already read the body.
+	deferredAudit func()
 
 	// reqHookResult is populated when a domain rule matches and the
 	// request hook pipeline runs. The CPMarker built before upstream
@@ -127,8 +141,11 @@ func (x *bumpedExchange) prepare() {
 	// populates with upstream TTFB and upstream-total. The same
 	// pointer is stamped onto AuditInfo so buildEvent can read it
 	// at emit time across every Emit / EmitDual call site.
+	// The sink is created here but NOT stamped here: stampCPMarker carries it into its
+	// existing clone (finding C-3). In-package phases read x.phaseSink directly, and the only
+	// context reader is the tracing RoundTripper, which runs inside forwardUpstream — after
+	// stampCPMarker on every path that forwards upstream.
 	x.phaseSink = traffic.NewPhaseSink()
-	x.r = x.r.WithContext(traffic.WithPhaseSink(x.r.Context(), x.phaseSink))
 	// Stamp conn_setup_ms (cheap server-side bookkeeping) and
 	// — on the FIRST request of this bumped tunnel only —
 	// tls_handshake_ms (sourced from BumpConnection). Subsequent
@@ -169,15 +186,19 @@ func (x *bumpedExchange) prepare() {
 	x.r.URL.Scheme = "https"
 	x.r.URL.Host = x.flow.targetHost
 
-	logger.Debug("request entry",
-		"method", x.r.Method,
-		"path", x.r.URL.Path,
-		"host", x.r.Host,
-		"target", x.flow.targetHost,
-		"complianceEnabled", x.complianceEnabled,
-		"contentType", x.r.Header.Get("Content-Type"),
-		"txID", x.txID,
-	)
+	// Guarded: slog boxes every argument whether or not the level is enabled —
+	// measured at 6 allocations/request here. Same pattern as forward_handler_helpers.
+	if logger.Enabled(x.r.Context(), slog.LevelDebug) {
+		logger.Debug("request entry",
+			"method", x.r.Method,
+			"path", x.r.URL.Path,
+			"host", x.r.Host,
+			"target", x.flow.targetHost,
+			"complianceEnabled", x.complianceEnabled,
+			"contentType", x.r.Header.Get("Content-Type"),
+			"txID", x.txID,
+		)
+	}
 }
 
 // resolveDomainPolicy resolves the matched InterceptionDomain
@@ -217,12 +238,15 @@ func (x *bumpedExchange) resolveDomainPolicy() bool {
 			// Untracked.
 			x.domainRuleID = x.matchedDomain.ID
 		}
-		logger.Debug("domain/path resolved",
-			"matchedDomain", domainName(x.matchedDomain),
-			"pathAction", x.resolvedPathAction,
-			"complianceEnabledAfter", x.complianceEnabled,
-			"txID", x.txID,
-		)
+		// Same guard and reason as the entry Debug above.
+		if logger.Enabled(x.r.Context(), slog.LevelDebug) {
+			logger.Debug("domain/path resolved",
+				"matchedDomain", domainName(x.matchedDomain),
+				"pathAction", x.resolvedPathAction,
+				"complianceEnabledAfter", x.complianceEnabled,
+				"txID", x.txID,
+			)
+		}
 		switch x.resolvedPathAction {
 		case domain.PathActionBlock:
 			logger.Warn("request blocked by interception path policy",
@@ -245,6 +269,23 @@ func (x *bumpedExchange) resolveDomainPolicy() bool {
 				"action", "PASSTHROUGH",
 			)
 			x.complianceEnabled = false
+			// Record that this flow went UNINSPECTED, the way its siblings do
+			// (exemption grant, emergency bypass) — but only when it could have
+			// CARRIED something. A bodyless GET is an asset fetch and says
+			// nothing a compliance auditor needs; a request with a body was
+			// decrypted, possibly carried a prompt or PII, and was relayed
+			// without inspection, which is exactly the event the other two
+			// emitters exist to record.
+			//
+			// The volume argument is why this is the condition and not "explicit
+			// path rule vs domain default": the seeded explicit PASSTHROUGH rules
+			// ARE the asset patterns (/_next/, /static/, /assets/, /fonts/ on
+			// bolt.new), so keying on explicitness would flood exactly the hosts
+			// it was meant to protect.
+			if requestCouldCarryContent(x.r) && bo.auditEmitter != nil {
+				bo.auditEmitter.EmitPathPassthrough(bo.sourceIP, x.flow.targetHost,
+					x.r.Method, x.r.URL.Path, domainName(x.matchedDomain))
+			}
 		}
 	}
 	_ = matchedZone // network_zone audit tagging lands in a follow-up
@@ -256,20 +297,6 @@ func (x *bumpedExchange) resolveDomainPolicy() bool {
 	x.endpointType, _, _ = typology.ClassifyPath(x.r.Method, x.r.URL.Path)
 
 	return false
-}
-
-// stampCPMarker stashes the per-request marker state on the context so
-// that downstream response write sites (the buffered relay in upstream.go
-// and the SSE handler in sse.go) can inject x-nexus-cp-* headers without
-// re-deriving these values. The marker is always set — even on the
-// compliance-disabled fast path — so callers never need to handle a nil
-// check for the basic request-id field.
-func (x *bumpedExchange) stampCPMarker() {
-	x.r = x.r.WithContext(contextWithCPMarker(x.r.Context(), &CPMarker{
-		RequestID:    x.txID,
-		DomainRuleID: x.domainRuleID,
-		HookOutcome:  cpHookOutcomeFromResult(x.reqHookResult),
-	}))
 }
 
 // forwardUpstream sends the (possibly hook-rewritten) request upstream.
@@ -303,7 +330,7 @@ func (x *bumpedExchange) forwardUpstream() (*http.Response, bool) {
 					// EmitDual so the request-stage StorageAction still
 					// governs the persisted request body on this failure path.
 					usage := traffic.UsageMeta{Status: traffic.UsageStatusNoBody}
-					bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, &core.CompliancePipelineResult{Decision: compliance.Approve}, "BUMP_SUCCESS", http.StatusBadGateway, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), nil, usage)
+					bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, uninspectedResponse(), "BUMP_SUCCESS", http.StatusBadGateway, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), nil, usage)
 				}
 			}
 		}
@@ -311,34 +338,4 @@ func (x *bumpedExchange) forwardUpstream() (*http.Response, bool) {
 		return nil, false
 	}
 	return resp, true
-}
-
-// relayResponse copies the upstream response to the client, injecting the
-// x-nexus-* marker headers via markerHook.
-func (x *bumpedExchange) relayResponse(resp *http.Response) {
-	if err := copyResponse(x.w, resp, markerHook(x.r.Context(), x.flow.bo.identity)); err != nil {
-		ct := resp.Header.Get("Content-Type")
-		// Rich diagnostic: a failed relay on a streaming endpoint is the
-		// "we lost the chat reply" case. Record WHO canceled (client vs us),
-		// the Content-Type + a streaming smell (to see whether a streaming
-		// reply was mis-routed to this buffered/copy relay because its CT
-		// isn't in isStreamingContentType), and timing — so the mechanism is
-		// verifiable from agent.log alone. The audit ROW, when an audit
-		// context exists, was already emitted by runResponseStage before this
-		// relay; when it does NOT exist runResponseStage logged the UNAUDITED
-		// warning, so this failure leaves a paper trail either way.
-		x.flow.logger.Error("failed to copy upstream response",
-			"target", x.flow.targetHost,
-			"method", x.r.Method,
-			"path", x.r.URL.Path,
-			"status_code", resp.StatusCode,
-			"content_type", ct,
-			"is_sse", isStreamingContentType(ct),
-			"maybe_buffered_stream", looksLikeStreamingResponse(resp),
-			"cancel_cause", cancelCause(x.r.Context()),
-			"duration_ms", int(time.Since(x.requestStart).Milliseconds()),
-			"error", err,
-		)
-		// Response may be partially written; nothing more we can do.
-	}
 }

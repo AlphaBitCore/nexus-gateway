@@ -18,6 +18,7 @@ func (db *DB) GetModelByCode(ctx context.Context, code string) (*Model, error) {
 		SELECT m.id, m.code, m.name, m."providerId", p.name, p.adapter_type, p."displayName", p."baseUrl",
 		       m."providerModelId", m.type, m.enabled,
 		       "inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+		       "audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		       COALESCE(features, '{}'), "maxContextTokens", "maxOutputTokens",
 		       COALESCE(aliases, '{}'),
 		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
@@ -29,10 +30,12 @@ func (db *DB) GetModelByCode(ctx context.Context, code string) (*Model, error) {
 	`, code)
 	var m Model
 	var inPrice, outPrice, cacheReadPrice, cacheWritePrice *string
+	var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 	var maxCtx, maxOut pgtype.Int4
 	err := row.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName, &m.ProviderBaseURL,
 		&m.ProviderModelID,
-		&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
+		&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
+		&audioInPrice, &audioOutPrice, &cachedAudioReadPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
 		&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson)
 	if err != nil {
 		return nil, fmt.Errorf("store: get model by code: %w", err)
@@ -48,6 +51,15 @@ func (db *DB) GetModelByCode(ctx context.Context, code string) (*Model, error) {
 	}
 	if f, ok := ParseDecimal(cacheWritePrice); ok {
 		m.CachedInputWritePricePM = &f
+	}
+	if f, ok := ParseDecimal(audioInPrice); ok {
+		m.AudioInputPricePM = &f
+	}
+	if f, ok := ParseDecimal(audioOutPrice); ok {
+		m.AudioOutputPricePM = &f
+	}
+	if f, ok := ParseDecimal(cachedAudioReadPrice); ok {
+		m.CachedAudioInputReadPricePM = &f
 	}
 	m.MaxContextTokens = intFromPgInt4(maxCtx)
 	m.MaxOutputTokens = intFromPgInt4(maxOut)
@@ -68,6 +80,7 @@ func (db *DB) ResolveModelCandidates(ctx context.Context, code string) ([]Model,
 		SELECT m.id, m.code, m.name, m."providerId", p.name, p.adapter_type, p."displayName", p."baseUrl",
 		       m."providerModelId", m.type, m.enabled,
 		       "inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+		       "audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		       COALESCE(features, '{}'), "maxContextTokens", "maxOutputTokens",
 		       COALESCE(aliases, '{}'),
 		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
@@ -86,10 +99,12 @@ func (db *DB) ResolveModelCandidates(ctx context.Context, code string) ([]Model,
 	for rows.Next() {
 		var m Model
 		var inPrice, outPrice, cacheReadPrice, cacheWritePrice *string
+		var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 		var maxCtx, maxOut pgtype.Int4
 		if err := rows.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName, &m.ProviderBaseURL,
 			&m.ProviderModelID,
-			&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
+			&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
+			&audioInPrice, &audioOutPrice, &cachedAudioReadPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
 			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson); err != nil {
 			return nil, fmt.Errorf("store: scan model candidate: %w", err)
 		}
@@ -105,6 +120,15 @@ func (db *DB) ResolveModelCandidates(ctx context.Context, code string) ([]Model,
 		if f, ok := ParseDecimal(cacheWritePrice); ok {
 			m.CachedInputWritePricePM = &f
 		}
+		if f, ok := ParseDecimal(audioInPrice); ok {
+			m.AudioInputPricePM = &f
+		}
+		if f, ok := ParseDecimal(audioOutPrice); ok {
+			m.AudioOutputPricePM = &f
+		}
+		if f, ok := ParseDecimal(cachedAudioReadPrice); ok {
+			m.CachedAudioInputReadPricePM = &f
+		}
 		m.MaxContextTokens = intFromPgInt4(maxCtx)
 		m.MaxOutputTokens = intFromPgInt4(maxOut)
 		out = append(out, m)
@@ -118,6 +142,7 @@ func (db *DB) ListEnabledModels(ctx context.Context) ([]Model, error) {
 		SELECT m.id, m.code, m.name, m."providerId", p.name, p.adapter_type, p."displayName", p."baseUrl",
 		       m."providerModelId", m.type, m.enabled,
 		       "inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+		       "audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		       COALESCE(features, '{}'), "maxContextTokens", "maxOutputTokens",
 		       COALESCE(aliases, '{}'),
 		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
@@ -136,10 +161,12 @@ func (db *DB) ListEnabledModels(ctx context.Context) ([]Model, error) {
 	for rows.Next() {
 		var m Model
 		var inPrice, outPrice, cacheReadPrice, cacheWritePrice *string
+		var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 		var maxCtx, maxOut pgtype.Int4
 		if err := rows.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName, &m.ProviderBaseURL,
 			&m.ProviderModelID,
-			&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
+			&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
+			&audioInPrice, &audioOutPrice, &cachedAudioReadPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
 			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson); err != nil {
 			return nil, fmt.Errorf("store: scan model: %w", err)
 		}
@@ -154,6 +181,15 @@ func (db *DB) ListEnabledModels(ctx context.Context) ([]Model, error) {
 		}
 		if f, ok := ParseDecimal(cacheWritePrice); ok {
 			m.CachedInputWritePricePM = &f
+		}
+		if f, ok := ParseDecimal(audioInPrice); ok {
+			m.AudioInputPricePM = &f
+		}
+		if f, ok := ParseDecimal(audioOutPrice); ok {
+			m.AudioOutputPricePM = &f
+		}
+		if f, ok := ParseDecimal(cachedAudioReadPrice); ok {
+			m.CachedAudioInputReadPricePM = &f
 		}
 		m.MaxContextTokens = intFromPgInt4(maxCtx)
 		m.MaxOutputTokens = intFromPgInt4(maxOut)

@@ -118,3 +118,14 @@ func (c *Checker) CheckConnect(ctx context.Context, sourceIP net.IP, host, port 
 
 	return nil
 }
+
+// CheckPassthroughTarget runs the target-side SSRF guard (private/reserved IP
+// check) for a host about to be relayed via unlisted passthrough. CheckConnect
+// returns ErrDomainDenied at the domain gate BEFORE it reaches the private-IP
+// check, so the passthrough downgrade in the server must run this explicitly —
+// otherwise an unlisted CONNECT could be tunneled to a private/reserved address
+// (cloud metadata 169.254.169.254, RFC1918, loopback). Returns ErrPrivateIP
+// (or a DNS resolve error) when the target must not be relayed; nil when safe.
+func (c *Checker) CheckPassthroughTarget(ctx context.Context, host string) error {
+	return c.privateIPCheck.ResolveAndCheck(ctx, host)
+}

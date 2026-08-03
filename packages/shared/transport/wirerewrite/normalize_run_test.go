@@ -169,7 +169,7 @@ func TestReload_PreservesBreakerForKeyNormalizeSafeFalseRule(t *testing.T) {
 		KeyNormalizeSafe: false,
 	}
 	eng.compiled.Store(&resolvedConfig{
-		enabled:  true,
+		hasWork:  true,
 		keyRules: map[AdapterType][]ruleEntry{}, // empty: rule not in keyRules
 		upstreamRules: map[AdapterType][]ruleEntry{
 			AdapterOpenAI: {{rule: fakeRule, breaker: originalBreaker}},
@@ -181,7 +181,7 @@ func TestReload_PreservesBreakerForKeyNormalizeSafeFalseRule(t *testing.T) {
 	// Reload with empty config — bundled rules won't include "fake-upstream-only-rule",
 	// so the preserved breaker becomes orphaned but the preservation loop
 	// statement at engine.go:96-98 still executes.
-	eng.Reload(Config{NormaliserEnabled: true})
+	eng.Reload(Config{})
 
 	// Sanity: post-Reload state is internally consistent.
 	resolved := eng.compiled.Load()
@@ -200,7 +200,6 @@ func TestReload_DryRunAlwaysOverrideApplied(t *testing.T) {
 	enabled := true
 	dry := true
 	cfg := Config{
-		NormaliserEnabled: true,
 		Rules: map[string]map[string]RuleOverride{
 			"anthropic": {
 				RuleAnthropicCchStrip: {Enabled: &enabled, DryRunAlways: &dry},
@@ -312,7 +311,6 @@ func TestNormalizeKey_DryRunAlwaysRuleSkipped(t *testing.T) {
 func TestNormalizeUpstream_BreakerOpenSkipsRule(t *testing.T) {
 	enabled := true
 	cfg := Config{
-		NormaliserEnabled: true,
 		Rules: map[string]map[string]RuleOverride{
 			"anthropic": {RuleAnthropicCchStrip: {Enabled: &enabled}},
 		},
@@ -565,7 +563,6 @@ func TestCountInjectedMarkers_NegativeDiffClampsToZero(t *testing.T) {
 // Anthropic Messages format, so the same per-Provider toggle applies.
 func TestNormalizeUpstream_L4_Inject_BedrockWire(t *testing.T) {
 	cfg := Config{
-		NormaliserEnabled: true,
 		Providers: map[string]ProviderCacheConfig{
 			"bedrock-prov": {CacheMarkerInjectEnabled: true},
 		},

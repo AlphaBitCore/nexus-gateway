@@ -15,30 +15,39 @@ import (
 type Model struct {
 	ID string `json:"id"`
 	// Code is the customer-facing model identifier (e.g. "gpt-4o"). Globally unique.
-	Code                            string           `json:"code"`
-	Name                            string           `json:"name"`
-	Description                     *string          `json:"description"`
-	ProviderID                      string           `json:"providerId"`
-	ProviderModelID                 string           `json:"providerModelId"`
-	Type                            string           `json:"type"`
-	Features                        []string         `json:"features"`
-	InputPricePerMillion            *float64         `json:"inputPricePerMillion"`
-	OutputPricePerMillion           *float64         `json:"outputPricePerMillion"`
-	CachedInputReadPricePerMillion  *float64         `json:"cachedInputReadPricePerMillion,omitempty"`
-	CachedInputWritePricePerMillion *float64         `json:"cachedInputWritePricePerMillion,omitempty"`
-	MaxContextTokens                *int             `json:"maxContextTokens"`
-	MaxOutputTokens                 *int             `json:"maxOutputTokens"`
-	Status                          string           `json:"status"`
-	DeprecationDate                 *time.Time       `json:"deprecationDate"`
-	ReplacedBy                      *string          `json:"replacedBy"`
-	Aliases                         []string         `json:"aliases"`
-	InputModalities                 []string         `json:"inputModalities"`
-	OutputModalities                []string         `json:"outputModalities"`
-	Lifecycle                       string           `json:"lifecycle"`
-	CapabilityJson                  *json.RawMessage `json:"capabilityJson,omitempty"`
-	Enabled                         bool             `json:"enabled"`
-	CreatedAt                       time.Time        `json:"createdAt"`
-	UpdatedAt                       time.Time        `json:"updatedAt"`
+	Code                            string   `json:"code"`
+	Name                            string   `json:"name"`
+	Description                     *string  `json:"description"`
+	ProviderID                      string   `json:"providerId"`
+	ProviderModelID                 string   `json:"providerModelId"`
+	Type                            string   `json:"type"`
+	Features                        []string `json:"features"`
+	InputPricePerMillion            *float64 `json:"inputPricePerMillion"`
+	OutputPricePerMillion           *float64 `json:"outputPricePerMillion"`
+	CachedInputReadPricePerMillion  *float64 `json:"cachedInputReadPricePerMillion,omitempty"`
+	CachedInputWritePricePerMillion *float64 `json:"cachedInputWritePricePerMillion,omitempty"`
+	// Audio-token rates for realtime models, which bill text and audio
+	// components of one response simultaneously at different rates.
+	// NULL on every non-realtime model. CachedAudioInputReadPricePerMillion
+	// NULL = no discount; cost calculation falls back to
+	// AudioInputPricePerMillion (mirrors the cachedInputRead fallback for text).
+	AudioInputPricePerMillion           *float64 `json:"audioInputPricePerMillion,omitempty"`
+	AudioOutputPricePerMillion          *float64 `json:"audioOutputPricePerMillion,omitempty"`
+	CachedAudioInputReadPricePerMillion *float64 `json:"cachedAudioInputReadPricePerMillion,omitempty"`
+
+	MaxContextTokens *int             `json:"maxContextTokens"`
+	MaxOutputTokens  *int             `json:"maxOutputTokens"`
+	Status           string           `json:"status"`
+	DeprecationDate  *time.Time       `json:"deprecationDate"`
+	ReplacedBy       *string          `json:"replacedBy"`
+	Aliases          []string         `json:"aliases"`
+	InputModalities  []string         `json:"inputModalities"`
+	OutputModalities []string         `json:"outputModalities"`
+	Lifecycle        string           `json:"lifecycle"`
+	CapabilityJson   *json.RawMessage `json:"capabilityJson,omitempty"`
+	Enabled          bool             `json:"enabled"`
+	CreatedAt        time.Time        `json:"createdAt"`
+	UpdatedAt        time.Time        `json:"updatedAt"`
 }
 
 // ModelListParams holds filter/pagination for listing models.
@@ -55,6 +64,7 @@ type ModelListParams struct {
 var ModelColumns = `id, code, name, description, "providerId", "providerModelId", type, features,
 	"inputPricePerMillion", "outputPricePerMillion",
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"maxContextTokens", "maxOutputTokens",
 	status, "deprecationDate", "replacedBy", aliases,
 	"inputModalities", "outputModalities", lifecycle, "capabilityJson",
@@ -66,6 +76,7 @@ func scanModel(row pgx.Row) (*Model, error) {
 		&m.ID, &m.Code, &m.Name, &m.Description, &m.ProviderID, &m.ProviderModelID,
 		&m.Type, &m.Features, &m.InputPricePerMillion, &m.OutputPricePerMillion,
 		&m.CachedInputReadPricePerMillion, &m.CachedInputWritePricePerMillion,
+		&m.AudioInputPricePerMillion, &m.AudioOutputPricePerMillion, &m.CachedAudioInputReadPricePerMillion,
 		&m.MaxContextTokens, &m.MaxOutputTokens, &m.Status, &m.DeprecationDate, &m.ReplacedBy, &m.Aliases,
 		&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson,
 		&m.Enabled, &m.CreatedAt, &m.UpdatedAt,
@@ -99,6 +110,7 @@ func scanModels(rows pgx.Rows) ([]Model, error) {
 			&m.ID, &m.Code, &m.Name, &m.Description, &m.ProviderID, &m.ProviderModelID,
 			&m.Type, &m.Features, &m.InputPricePerMillion, &m.OutputPricePerMillion,
 			&m.CachedInputReadPricePerMillion, &m.CachedInputWritePricePerMillion,
+			&m.AudioInputPricePerMillion, &m.AudioOutputPricePerMillion, &m.CachedAudioInputReadPricePerMillion,
 			&m.MaxContextTokens, &m.MaxOutputTokens, &m.Status, &m.DeprecationDate, &m.ReplacedBy, &m.Aliases,
 			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson,
 			&m.Enabled, &m.CreatedAt, &m.UpdatedAt,
@@ -215,14 +227,19 @@ type CreateModelParams struct {
 	OutputPricePerMillion           *float64
 	CachedInputReadPricePerMillion  *float64
 	CachedInputWritePricePerMillion *float64
-	MaxContextTokens                *int
-	MaxOutputTokens                 *int
-	Aliases                         []string
-	InputModalities                 []string         // defaults to ["text"] when nil
-	OutputModalities                []string         // defaults to ["text"] when nil
-	Lifecycle                       string           // defaults to "ga" when empty
-	CapabilityJson                  *json.RawMessage // nil = no capability data
-	Enabled                         bool
+	// Audio-token rates for realtime models; nil for every other type.
+	AudioInputPricePerMillion           *float64
+	AudioOutputPricePerMillion          *float64
+	CachedAudioInputReadPricePerMillion *float64
+
+	MaxContextTokens *int
+	MaxOutputTokens  *int
+	Aliases          []string
+	InputModalities  []string         // defaults to ["text"] when nil
+	OutputModalities []string         // defaults to ["text"] when nil
+	Lifecycle        string           // defaults to "ga" when empty
+	CapabilityJson   *json.RawMessage // nil = no capability data
+	Enabled          bool
 }
 
 // CreateModel inserts a new model. The id column defaults to
@@ -247,16 +264,18 @@ func (store *Store) CreateModel(ctx context.Context, p CreateModelParams) (*Mode
 		INSERT INTO "Model" (id, code, name, description, "providerId", "providerModelId", type, features,
 			"inputPricePerMillion", "outputPricePerMillion",
 			"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+			"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 			"maxContextTokens", "maxOutputTokens",
 			aliases, "inputModalities", "outputModalities", lifecycle, "capabilityJson",
 			enabled, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, NOW(), NOW())
 		RETURNING %s
 	`, ModelColumns)
 	m, err := scanModel(store.pool.QueryRow(ctx, q,
 		uuid.New().String(), p.Code, p.Name, p.Description, p.ProviderID, p.ProviderModelID, p.Type, p.Features,
 		p.InputPricePerMillion, p.OutputPricePerMillion,
 		p.CachedInputReadPricePerMillion, p.CachedInputWritePricePerMillion,
+		p.AudioInputPricePerMillion, p.AudioOutputPricePerMillion, p.CachedAudioInputReadPricePerMillion,
 		p.MaxContextTokens, p.MaxOutputTokens,
 		p.Aliases, p.InputModalities, p.OutputModalities, p.Lifecycle, p.CapabilityJson,
 		p.Enabled,
@@ -278,18 +297,23 @@ type UpdateModelParams struct {
 	OutputPricePerMillion           *float64
 	CachedInputReadPricePerMillion  *float64
 	CachedInputWritePricePerMillion *float64
-	MaxContextTokens                *int
-	MaxOutputTokens                 *int
-	Status                          *string
-	DeprecationDate                 *time.Time
-	ReplacedBy                      *string
-	Aliases                         []string // nil = no change; empty = clear
-	Enabled                         *bool
-	Features                        []string         // nil = no change; empty = clear
-	InputModalities                 *[]string        // nil = no change
-	OutputModalities                *[]string        // nil = no change
-	Lifecycle                       *string          // nil = no change
-	CapabilityJson                  *json.RawMessage // nil = no change; explicit null = clear
+	// Audio-token rates for realtime models. nil = no change.
+	AudioInputPricePerMillion           *float64
+	AudioOutputPricePerMillion          *float64
+	CachedAudioInputReadPricePerMillion *float64
+
+	MaxContextTokens *int
+	MaxOutputTokens  *int
+	Status           *string
+	DeprecationDate  *time.Time
+	ReplacedBy       *string
+	Aliases          []string // nil = no change; empty = clear
+	Enabled          *bool
+	Features         []string         // nil = no change; empty = clear
+	InputModalities  *[]string        // nil = no change
+	OutputModalities *[]string        // nil = no change
+	Lifecycle        *string          // nil = no change
+	CapabilityJson   *json.RawMessage // nil = no change; explicit null = clear
 }
 
 // UpdateModel updates a model using COALESCE — nil params preserve existing values.
@@ -317,18 +341,21 @@ func (store *Store) UpdateModel(ctx context.Context, id string, p UpdateModelPar
 		"outputPricePerMillion" = COALESCE($8, "outputPricePerMillion"),
 		"cachedInputReadPricePerMillion" = COALESCE($9, "cachedInputReadPricePerMillion"),
 		"cachedInputWritePricePerMillion" = COALESCE($10, "cachedInputWritePricePerMillion"),
-		"maxContextTokens" = COALESCE($11, "maxContextTokens"),
-		"maxOutputTokens" = COALESCE($12, "maxOutputTokens"),
-		status = COALESCE($13, status),
-		enabled = COALESCE($14, enabled),
-		aliases = CASE WHEN $15::text[] IS NULL THEN aliases ELSE $15 END,
-		features = CASE WHEN $16::text[] IS NULL THEN features ELSE $16 END,
-		"deprecationDate" = COALESCE($17, "deprecationDate"),
-		"replacedBy" = COALESCE($18, "replacedBy"),
-		"inputModalities" = CASE WHEN $19::text[] IS NULL THEN "inputModalities" ELSE $19 END,
-		"outputModalities" = CASE WHEN $20::text[] IS NULL THEN "outputModalities" ELSE $20 END,
-		lifecycle = COALESCE($21, lifecycle),
-		"capabilityJson" = CASE WHEN $22::jsonb IS NULL THEN "capabilityJson" ELSE $22 END,
+		"audioInputPricePerMillion" = COALESCE($11, "audioInputPricePerMillion"),
+		"audioOutputPricePerMillion" = COALESCE($12, "audioOutputPricePerMillion"),
+		"cachedAudioInputReadPricePerMillion" = COALESCE($13, "cachedAudioInputReadPricePerMillion"),
+		"maxContextTokens" = COALESCE($14, "maxContextTokens"),
+		"maxOutputTokens" = COALESCE($15, "maxOutputTokens"),
+		status = COALESCE($16, status),
+		enabled = COALESCE($17, enabled),
+		aliases = CASE WHEN $18::text[] IS NULL THEN aliases ELSE $18 END,
+		features = CASE WHEN $19::text[] IS NULL THEN features ELSE $19 END,
+		"deprecationDate" = COALESCE($20, "deprecationDate"),
+		"replacedBy" = COALESCE($21, "replacedBy"),
+		"inputModalities" = CASE WHEN $22::text[] IS NULL THEN "inputModalities" ELSE $22 END,
+		"outputModalities" = CASE WHEN $23::text[] IS NULL THEN "outputModalities" ELSE $23 END,
+		lifecycle = COALESCE($24, lifecycle),
+		"capabilityJson" = CASE WHEN $25::jsonb IS NULL THEN "capabilityJson" ELSE $25 END,
 		"updatedAt" = NOW()
 	WHERE id = $1 RETURNING %s`, ModelColumns)
 
@@ -337,6 +364,7 @@ func (store *Store) UpdateModel(ctx context.Context, id string, p UpdateModelPar
 		p.Name, p.Description, p.Type,
 		p.InputPricePerMillion, p.OutputPricePerMillion,
 		p.CachedInputReadPricePerMillion, p.CachedInputWritePricePerMillion,
+		p.AudioInputPricePerMillion, p.AudioOutputPricePerMillion, p.CachedAudioInputReadPricePerMillion,
 		p.MaxContextTokens, p.MaxOutputTokens,
 		p.Status, p.Enabled,
 		p.Aliases, p.Features,

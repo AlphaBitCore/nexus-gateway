@@ -14,11 +14,12 @@ func msg(role, content string) Message {
 // makeConversation builds a synthetic conversation:
 // 1 system + alternating user/assistant pairs.
 // Each message's content is repeated to produce the requested token count.
-// The heuristic is: each "a" character = 0.25 tokens, so
-// content = strings.Repeat("a", tokCount*4) yields ~tokCount tokens.
+// Staging counts with the CONSERVATIVE fit estimate (EstimateTokensConservative),
+// which charges ASCII at 0.5 tokens/char, so content = strings.Repeat("a",
+// tokCount*2) yields exactly tokCount tokens.
 func tokContent(n int) string {
-	// n*4 ASCII chars → n*4*0.25 = n tokens exactly.
-	buf := make([]byte, n*4)
+	// n*2 ASCII chars → n*2*0.5 = n tokens exactly.
+	buf := make([]byte, n*2)
 	for i := range buf {
 		buf[i] = 'a'
 	}
@@ -76,10 +77,13 @@ func TestPlan_InvalidModelContextLimit(t *testing.T) {
 // --- StrategyLastUser ---
 
 func TestPlanLastUser_NoUserMessage(t *testing.T) {
+	// ReportOnly: this test asserts the raw strategy selection (no user
+	// message -> empty result); default enforcement would re-seed.
 	res, err := Plan(PlanInput{
 		Messages:          []Message{msg("system", "You are helpful."), msg("assistant", "Hi")},
 		ModelContextLimit: 1000,
 		Strategy:          StrategyLastUser,
+		ReportOnly:        true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -463,6 +467,9 @@ func TestPlanFullTruncated_Fits(t *testing.T) {
 }
 
 func TestPlanFullTruncated_OverBudget(t *testing.T) {
+	// ReportOnly: this test asserts the raw strategy behavior
+	// (full_truncated reports overflow without cutting); default
+	// enforcement would drop the oldest message to fit.
 	msgs := []Message{
 		msg("system", tokContent(10)),
 		msg("user", tokContent(50)),
@@ -472,6 +479,7 @@ func TestPlanFullTruncated_OverBudget(t *testing.T) {
 		Messages:          msgs,
 		ModelContextLimit: 100,
 		Strategy:          StrategyFullTruncated,
+		ReportOnly:        true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

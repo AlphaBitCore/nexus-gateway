@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // mockUpstream returns a server that answers the AI Gateway chat SSE with a
@@ -35,7 +37,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 	mock := mockUpstream(t)
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	code, out := driveTurn(t, h, "user-1", `{"message":"is the gateway healthy?"}`)
 	if code != http.StatusAccepted {
 		t.Fatalf("StartChat code = %d, want 202; body:\n%s", code, out)
@@ -78,7 +80,7 @@ func TestChatStream_SituationCallCeiling(t *testing.T) {
 	mock := countingUpstream(t, &adminHits)
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 
 	// Same caller across both turns (situation cache is keyed by userId); a fresh
 	// session id per turn so the serialization guard never trips.

@@ -61,7 +61,6 @@ type agentInterceptionDomainRow struct {
 	StreamingFailBehavior   *string `json:"streamingFailBehavior,omitempty"`
 	CaptureRequestBody      *bool   `json:"captureRequestBody,omitempty"`
 	CaptureResponseBody     *bool   `json:"captureResponseBody,omitempty"`
-	RawBodySpillEnabled     *bool   `json:"rawBodySpillEnabled,omitempty"`
 }
 
 type agentInterceptionPathRow struct {
@@ -83,8 +82,7 @@ func (l *AgentInterceptionDomainsLoader) Load(ctx context.Context, _ string) (an
 		       on_adapter_error, network_zone, updated_at,
 		       streaming_mode, streaming_chunk_bytes, streaming_hook_timeout_ms,
 		       streaming_max_buffer_bytes, streaming_fail_behavior,
-		       capture_request_body, capture_response_body,
-		       raw_body_spill_enabled
+		       capture_request_body, capture_response_body
 		FROM interception_domain
 		WHERE enabled = true
 		ORDER BY priority DESC, name ASC
@@ -112,7 +110,6 @@ func (l *AgentInterceptionDomainsLoader) Load(ctx context.Context, _ string) (an
 			&d.StreamingMode, &d.StreamingChunkBytes, &d.StreamingHookTimeoutMs,
 			&d.StreamingMaxBufferBytes, &d.StreamingFailBehavior,
 			&d.CaptureRequestBody, &d.CaptureResponseBody,
-			&d.RawBodySpillEnabled,
 		); err != nil {
 			return nil, 0, fmt.Errorf("catb: scan interception_domain: %w", err)
 		}

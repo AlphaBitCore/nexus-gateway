@@ -127,9 +127,14 @@ type createProviderModelInput struct {
 	Features              []string `json:"features"`
 	InputPricePerMillion  *float64 `json:"inputPricePerMillion"`
 	OutputPricePerMillion *float64 `json:"outputPricePerMillion"`
-	MaxContextTokens      *int     `json:"maxContextTokens"`
-	MaxOutputTokens       *int     `json:"maxOutputTokens"`
-	Aliases               []string `json:"aliases"`
+	// Audio-token rates for realtime models (per 1M tokens).
+	AudioInputPricePerMillion           *float64 `json:"audioInputPricePerMillion"`
+	AudioOutputPricePerMillion          *float64 `json:"audioOutputPricePerMillion"`
+	CachedAudioInputReadPricePerMillion *float64 `json:"cachedAudioInputReadPricePerMillion"`
+
+	MaxContextTokens *int     `json:"maxContextTokens"`
+	MaxOutputTokens  *int     `json:"maxOutputTokens"`
+	Aliases          []string `json:"aliases"`
 }
 
 // createProviderCredentialInput is the inline credential — the wizard has
@@ -238,6 +243,11 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 				"models[].providerModelId, name, and type are required",
 				"validation_error", ""))
 		}
+		if !validModelTypes[m.Type] {
+			return c.JSON(http.StatusBadRequest, errJSON(
+				"models[].type must be one of: chat, embedding, image, audio, tts, stt, rerank, video, realtime",
+				"validation_error", ""))
+		}
 		code := m.Code
 		if code == "" {
 			code = m.ProviderModelID
@@ -255,18 +265,21 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 			aliases = []string{}
 		}
 		modelParams = append(modelParams, modelstore.CreateModelParams{
-			Code:                  code,
-			Name:                  m.Name,
-			Description:           mDesc,
-			ProviderModelID:       m.ProviderModelID,
-			Type:                  m.Type,
-			Features:              features,
-			InputPricePerMillion:  m.InputPricePerMillion,
-			OutputPricePerMillion: m.OutputPricePerMillion,
-			MaxContextTokens:      m.MaxContextTokens,
-			MaxOutputTokens:       m.MaxOutputTokens,
-			Aliases:               aliases,
-			Enabled:               true,
+			Code:                                code,
+			Name:                                m.Name,
+			Description:                         mDesc,
+			ProviderModelID:                     m.ProviderModelID,
+			Type:                                m.Type,
+			Features:                            features,
+			InputPricePerMillion:                m.InputPricePerMillion,
+			OutputPricePerMillion:               m.OutputPricePerMillion,
+			AudioInputPricePerMillion:           m.AudioInputPricePerMillion,
+			AudioOutputPricePerMillion:          m.AudioOutputPricePerMillion,
+			CachedAudioInputReadPricePerMillion: m.CachedAudioInputReadPricePerMillion,
+			MaxContextTokens:                    m.MaxContextTokens,
+			MaxOutputTokens:                     m.MaxOutputTokens,
+			Aliases:                             aliases,
+			Enabled:                             true,
 		})
 	}
 
@@ -579,20 +592,25 @@ func (h *Handler) AddProviderModel(c echo.Context) error {
 	}
 
 	var body struct {
-		Code                            string          `json:"code"`
-		Name                            string          `json:"name"`
-		Description                     string          `json:"description"`
-		ProviderModelID                 string          `json:"providerModelId"`
-		Type                            string          `json:"type"`
-		Features                        []string        `json:"features"`
-		InputPricePerMillion            *float64        `json:"inputPricePerMillion"`
-		OutputPricePerMillion           *float64        `json:"outputPricePerMillion"`
-		CachedInputReadPricePerMillion  *float64        `json:"cachedInputReadPricePerMillion"`
-		CachedInputWritePricePerMillion *float64        `json:"cachedInputWritePricePerMillion"`
-		MaxContextTokens                *int            `json:"maxContextTokens"`
-		MaxOutputTokens                 *int            `json:"maxOutputTokens"`
-		Aliases                         []string        `json:"aliases"`
-		CapabilityJson                  json.RawMessage `json:"capabilityJson"`
+		Code                            string   `json:"code"`
+		Name                            string   `json:"name"`
+		Description                     string   `json:"description"`
+		ProviderModelID                 string   `json:"providerModelId"`
+		Type                            string   `json:"type"`
+		Features                        []string `json:"features"`
+		InputPricePerMillion            *float64 `json:"inputPricePerMillion"`
+		OutputPricePerMillion           *float64 `json:"outputPricePerMillion"`
+		CachedInputReadPricePerMillion  *float64 `json:"cachedInputReadPricePerMillion"`
+		CachedInputWritePricePerMillion *float64 `json:"cachedInputWritePricePerMillion"`
+		// Audio-token rates for realtime models (per 1M tokens).
+		AudioInputPricePerMillion           *float64 `json:"audioInputPricePerMillion"`
+		AudioOutputPricePerMillion          *float64 `json:"audioOutputPricePerMillion"`
+		CachedAudioInputReadPricePerMillion *float64 `json:"cachedAudioInputReadPricePerMillion"`
+
+		MaxContextTokens *int            `json:"maxContextTokens"`
+		MaxOutputTokens  *int            `json:"maxOutputTokens"`
+		Aliases          []string        `json:"aliases"`
+		CapabilityJson   json.RawMessage `json:"capabilityJson"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
@@ -600,6 +618,9 @@ func (h *Handler) AddProviderModel(c echo.Context) error {
 
 	if body.Name == "" || body.Type == "" {
 		return c.JSON(http.StatusBadRequest, errJSON("name and type are required", "validation_error", ""))
+	}
+	if !validModelTypes[body.Type] {
+		return c.JSON(http.StatusBadRequest, errJSON("type must be one of: chat, embedding, image, audio, tts, stt, rerank, video, realtime", "validation_error", ""))
 	}
 	if body.ProviderModelID == "" {
 		body.ProviderModelID = body.Name
@@ -626,9 +647,12 @@ func (h *Handler) AddProviderModel(c echo.Context) error {
 		ProviderID: providerID, ProviderModelID: body.ProviderModelID,
 		Type: body.Type, Features: body.Features,
 		InputPricePerMillion: body.InputPricePerMillion, OutputPricePerMillion: body.OutputPricePerMillion,
-		CachedInputReadPricePerMillion:  body.CachedInputReadPricePerMillion,
-		CachedInputWritePricePerMillion: body.CachedInputWritePricePerMillion,
-		MaxContextTokens:                body.MaxContextTokens, MaxOutputTokens: body.MaxOutputTokens,
+		CachedInputReadPricePerMillion:      body.CachedInputReadPricePerMillion,
+		CachedInputWritePricePerMillion:     body.CachedInputWritePricePerMillion,
+		AudioInputPricePerMillion:           body.AudioInputPricePerMillion,
+		AudioOutputPricePerMillion:          body.AudioOutputPricePerMillion,
+		CachedAudioInputReadPricePerMillion: body.CachedAudioInputReadPricePerMillion,
+		MaxContextTokens:                    body.MaxContextTokens, MaxOutputTokens: body.MaxOutputTokens,
 		Aliases: body.Aliases, CapabilityJson: capJSON, Enabled: true,
 	})
 	if err != nil {

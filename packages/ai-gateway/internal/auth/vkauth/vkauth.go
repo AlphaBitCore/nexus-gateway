@@ -33,7 +33,7 @@ type ingressFormatKey struct{}
 // extractor can tell e.g. "we are serving /v1/messages" from "we are
 // serving /v1/chat/completions". Callers without a native route should
 // leave it unset — the extractor falls back to the OpenAI-compat
-// carrier set (x-nexus-virtual-key, Authorization: Bearer).
+// carrier set (X-Nexus-Virtual-Key, Authorization: Bearer).
 func WithIngressFormat(ctx context.Context, f provcore.Format) context.Context {
 	return context.WithValue(ctx, ingressFormatKey{}, f)
 }
@@ -149,29 +149,40 @@ func NewAuthenticator(lookup VKLookup, keyring *hmackeyring.Keyring, logger *slo
 // `?key=` on the Gemini routes, `api-key` on Azure). Routes without
 // an ingress context — /v1/chat/completions called outside handler
 // tests, /v1/ai-guard/classify, etc. — fall back to the default
-// OpenAI-compat carrier set (Authorization: Bearer, x-nexus-virtual-key).
+// OpenAI-compat carrier set (Authorization: Bearer, X-Nexus-Virtual-Key).
 func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*VKMeta, error) {
+	meta, _, err := a.AuthenticateWithHash(ctx, r)
+	return meta, err
+}
+
+// AuthenticateWithHash is Authenticate plus the matched (DB-stored) HMAC key
+// hash. Long-lived sessions (the realtime WebSocket relay) retain that hash —
+// a non-secret, stable identifier — to re-check VK status periodically via
+// RecheckByHash without holding the raw bearer token in process for the
+// session's lifetime. The hash is the one that actually matched a DB row, so
+// it stays valid across HMAC keyring version additions.
+func (a *Authenticator) AuthenticateWithHash(ctx context.Context, r *http.Request) (*VKMeta, string, error) {
 	raw := extractVKToken(ctx, r)
 	if raw == "" {
-		return nil, ErrMissing
+		return nil, "", ErrMissing
 	}
 
-	vk, err := a.lookupVK(ctx, raw)
+	vk, matchedHash, err := a.lookupVK(ctx, raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if vk == nil {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 
 	if !vk.Enabled {
-		return nil, ErrDisabled
+		return nil, "", ErrDisabled
 	}
 	if vk.ExpiresAt != nil && vk.ExpiresAt.Before(time.Now()) {
-		return nil, ErrExpired
+		return nil, "", ErrExpired
 	}
 	if vk.VKStatus != nil && *vk.VKStatus != "" && *vk.VKStatus != "active" {
-		return nil, fmt.Errorf("%w: status %s", ErrDisabled, *vk.VKStatus)
+		return nil, "", fmt.Errorf("%w: status %s", ErrDisabled, *vk.VKStatus)
 	}
 
 	meta := &VKMeta{
@@ -213,14 +224,14 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*VKM
 	if vk.VKStatus != nil {
 		meta.VKStatus = *vk.VKStatus
 	}
-	return meta, nil
+	return meta, matchedHash, nil
 }
 
 // extractVKToken extracts the VK identifier from request headers,
 // honouring the ingress format's provider-conventional carriers.
 //
 // Priority order (first non-empty wins):
-//  1. `x-nexus-virtual-key` — always honoured, all routes.
+//  1. `X-Nexus-Virtual-Key` — always honoured, all routes.
 //  2. `Authorization: Bearer <token>` — always honoured, all routes.
 //  3. Format-specific carriers, accepted only on the matching native
 //     route:
@@ -233,7 +244,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*VKM
 //     - MiniMax and GLM: no extra carrier (their SDKs speak the
 //     standard `Authorization: Bearer` convention already covered by #2).
 func extractVKToken(ctx context.Context, r *http.Request) string {
-	if vk := r.Header.Get("x-nexus-virtual-key"); vk != "" {
+	if vk := r.Header.Get("X-Nexus-Virtual-Key"); vk != "" {
 		return strings.TrimSpace(vk)
 	}
 	auth := r.Header.Get("Authorization")
@@ -267,12 +278,12 @@ func extractVKToken(ctx context.Context, r *http.Request) string {
 	return ""
 }
 
-// lookupVK resolves a VK token to a database record. Tokens that don't
-// look like a real API key (no nvk_ prefix and length <= 20) are rejected
-// outright — only the hashed-key path is supported.
-func (a *Authenticator) lookupVK(ctx context.Context, token string) (*store.VirtualKey, error) {
+// lookupVK resolves a VK token to a database record plus the hash that
+// matched it. Tokens that don't look like a real API key (no nvk_ prefix and
+// length <= 20) are rejected outright — only the hashed-key path is supported.
+func (a *Authenticator) lookupVK(ctx context.Context, token string) (*store.VirtualKey, string, error) {
 	if !looksLikeRealKey(token) {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	// Try every keyring version, current-first. The
 	// steady-state common case is a one-hash hit under the current version; older
@@ -285,13 +296,13 @@ func (a *Authenticator) lookupVK(ctx context.Context, token string) (*store.Virt
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue // not this version; try an older one
 			}
-			return nil, fmt.Errorf("vkauth: hash lookup: %w", err)
+			return nil, "", fmt.Errorf("vkauth: hash lookup: %w", err)
 		}
 		if vk != nil {
-			return vk, nil
+			return vk, hash, nil
 		}
 	}
-	return nil, ErrInvalid
+	return nil, "", ErrInvalid
 }
 
 // looksLikeRealKey returns true if the token appears to be a real API key.

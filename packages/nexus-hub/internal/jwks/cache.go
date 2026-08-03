@@ -237,7 +237,7 @@ func parseRSAKey(k jwkJSON) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("RSA exponent too large: %d bits", e.BitLen())
 	}
 	ev := e.Int64()
-	if ev < int64(2) || ev > int64(maxInt) {
+	if ev < 2 || ev > maxInt {
 		return nil, fmt.Errorf("RSA exponent out of range: %d", ev)
 	}
 

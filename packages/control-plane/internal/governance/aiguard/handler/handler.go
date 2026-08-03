@@ -11,17 +11,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
@@ -225,7 +228,7 @@ func (h *Handler) PutConfig(c echo.Context) error {
 		"recent_turns": true, "head_plus_tail": true, "full_truncated": true,
 	}
 	if !validStrategies[in.InputStrategy] {
-		in.InputStrategy = "system_plus_last_user"
+		in.InputStrategy = "full_truncated"
 	}
 	if in.ModelContextLimit < 0 {
 		in.ModelContextLimit = 0
@@ -334,6 +337,11 @@ func (h *Handler) DryRun(c echo.Context) error {
 	}
 	resp, err := h.dispatcher.Dispatch(c.Request().Context(), req)
 	if err != nil {
+		// The gateway's Hub-reported URL could not be resolved (peer still
+		// booting / Hub briefly down) — transient, retry: 503, not 502.
+		if errors.Is(err, peer.ErrUnavailable) {
+			return peer.ServiceUnavailable(c, "ai-gateway", err)
+		}
 		return c.JSON(http.StatusBadGateway, map[string]any{
 			"error":   "dispatch_failed",
 			"detail":  err.Error(),
@@ -348,20 +356,26 @@ func (h *Handler) DryRun(c echo.Context) error {
 
 // HTTPDispatcher implements DryRunDispatcher by posting the request
 // to the ai-gateway /v1/ai-guard/classify endpoint with the shared
-// service token header the rstokenauth middleware expects.
+// service token header the rstokenauth middleware expects. The gateway
+// base URL is Hub-resolved per dispatch (never configured locally).
 type HTTPDispatcher struct {
-	BaseURL    string
+	Base       peer.URLProvider
 	Token      string
 	HTTPClient *http.Client
 }
 
-// Dispatch forwards req to the ai-gateway and parses the response.
+// Dispatch forwards req to the ai-gateway and parses the response. A failed
+// base-URL resolution wraps peer.ErrUnavailable so DryRun answers 503.
 func (d *HTTPDispatcher) Dispatch(ctx context.Context, req DryRunRequest) (*DryRunResponse, error) {
+	base, err := d.Base(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", peer.ErrUnavailable, err)
+	}
 	buf, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, d.BaseURL+"/v1/ai-guard/classify", bytes.NewReader(buf))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/v1/ai-guard/classify", bytes.NewReader(buf))
 	if err != nil {
 		return nil, err
 	}

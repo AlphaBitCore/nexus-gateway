@@ -1,16 +1,19 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bytebudget"
 	registry "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -197,11 +200,54 @@ func TestWriter_SpillRecord_NoSpoolReportsDrop(t *testing.T) {
 	}
 }
 
-// TestWriter_SpillOverflow_DropsWithoutSpool: in spill mode with no sink, an
-// overflow record degrades to a counted drop rather than a panic.
+// TestWriter_SpillOverflow_DropsWithoutSpool: in the LOSSY spill mode with no
+// sink, an overflow record degrades to a counted drop — which is the honest
+// answer, because an async spill with nowhere to spill IS a drop
+// (lossmode.WithoutDurableSink maps Spill -> Drop).
+//
+// The previous version of this test called spillOverflow and asserted NOTHING
+// beyond "no panic", so it passed whether the record was dropped, spilled, or
+// silently discarded. Note this arm is the ONLY one that reaches spillOverflow
+// with a nil sink: spillblock is downgraded to block at Start, so it never gets
+// here.
 func TestWriter_SpillOverflow_DropsWithoutSpool(t *testing.T) {
-	w := quietWriter(registry.NewRegistry(prometheus.NewRegistry()))
-	w.spillOverflow(&Record{RequestID: "r"}) // no spool, no spillCh send → dropOverflow
+	prom := prometheus.NewRegistry()
+	w := quietWriter(registry.NewRegistry(prom))
+	w.WithLossMode(lossModeSpill)
+
+	w.spillOverflow(&Record{RequestID: "r"})
+
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 1 {
+		t.Fatalf("dropped counter = %v, want 1 — a lossy-mode drop that is not counted is invisible data loss", got)
+	}
+}
+
+// spillblock with no durable spool must not lose records. The guard is at Start,
+// not at overflow: ensureStarted downgrades the mode to block when no spool is
+// wired, so Enqueue never routes to spillOverflow at all.
+//
+// This is deliberately driven through Enqueue rather than by calling
+// spillOverflow directly. A direct call bypasses ensureStarted and therefore
+// tests a branch production never reaches — which is exactly the mistake that
+// produced an earlier version of this test, and with it a "fix" for a defect
+// that did not exist.
+func TestWriter_SpillBlockWithoutSpool_DowngradesAtStartAndDoesNotDrop(t *testing.T) {
+	prom := prometheus.NewRegistry()
+	w := quietWriter(registry.NewRegistry(prom))
+	w.WithLossMode(lossModeSpillBlock)
+	if w.ndjsonSpill != nil {
+		t.Fatal("precondition: this test needs NO spool wired")
+	}
+
+	w.ensureStarted()
+
+	if got := w.LossMode(); got != lossModeBlock {
+		t.Fatalf("lossMode after Start = %q, want %q: spillblock without a spool must be downgraded to the "+
+			"no-loss mode that needs no spool, or overflow would reach the lossy spill path", got, lossModeBlock)
+	}
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 0 {
+		t.Fatalf("dropped counter = %v after a downgrade that discarded nothing", got)
+	}
 }
 
 // TestWriter_SpillOverflow_SpillBlock_BackpressuresThenDrains: in lossModeSpillBlock,
@@ -301,5 +347,236 @@ func TestAppendPoisonFile_WritesLine(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	if string(b) != `{"id":"big"}`+"\n" {
 		t.Fatalf("poison content = %q", b)
+	}
+}
+
+// TestWriter_SpillRecord_NoSpoolIsLoudNotJustCounted guards finding L-7.
+//
+// spillRecord's nil-spool arm incremented the drop counter and returned, with no
+// log of any kind — while the arm right below it (a spool that exists but fails
+// to write) has always logged a throttled WARN. So the ONE place a no-loss mode
+// still loses a record was the quietest path in the writer: an operator saw a
+// counter move and had nothing anywhere telling them why or what to change. The
+// callers reaching this arm even describe it as "never a drop".
+//
+// The remedy string is asserted, not just the message: a drop line that does not
+// say "configure a spool" leaves the operator with a symptom and no action, which
+// is most of the way back to silence.
+func TestWriter_SpillRecord_NoSpoolIsLoudNotJustCounted(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	w := NewWriter(nil, "nexus.event.ai-traffic", registry.NewRegistry(prometheus.NewRegistry()),
+		slog.New(slog.NewTextHandler(&syncWriter{w: &buf, mu: &mu}, nil)))
+
+	if w.spillRecord(&Record{RequestID: "r-no-spool"}) {
+		t.Fatal("spillRecord with no spool must report failure")
+	}
+
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+
+	if out == "" {
+		t.Fatal("the no-spool drop logged NOTHING: a counted-but-silent drop on the audit path is " +
+			"the exact failure this program exists to remove — the counter moves and no line says why")
+	}
+	if !strings.Contains(out, "level=ERROR") {
+		t.Errorf("the drop was not logged at ERROR: losing an audit record is not a warning-level "+
+			"event on a compliance product. got: %s", out)
+	}
+	if !strings.Contains(out, "no durable spool") {
+		t.Errorf("the log line does not name the CAUSE; got: %s", out)
+	}
+	if !strings.Contains(out, "audit.ndjson.enabled") {
+		t.Errorf("the log line carries no remedy: an operator is left with a symptom and no action. "+
+			"got: %s", out)
+	}
+	if !strings.Contains(out, "r-no-spool") {
+		t.Errorf("the log line does not identify WHICH record was lost; got: %s", out)
+	}
+}
+
+// A spool-write failure and a missing spool are different faults with different
+// remedies, so they must not share a throttle: with one counter, a storm of either
+// suppresses the FIRST occurrence of the other for dropLogEvery records.
+func TestWriter_NoSpoolThrottleIsIndependentOfSpillFailureThrottle(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	w := NewWriter(nil, "nexus.event.ai-traffic", registry.NewRegistry(prometheus.NewRegistry()),
+		slog.New(slog.NewTextHandler(&syncWriter{w: &buf, mu: &mu}, nil)))
+
+	// Simulate a spill-failure storm having already consumed its own throttle, at an
+	// offset that is NOT one short of a throttle boundary. dropLogEvery*3 exactly
+	// looks like a valid setup and is not: sharing the counter would then take it to
+	// 3*dropLogEvery+1, which still satisfies n%dropLogEvery == 1 and logs anyway, so
+	// the test passed against the very mutation it exists to catch. Found by running
+	// that mutation rather than by reading the test.
+	w.spillLogCount.Store(dropLogEvery*3 + 5)
+
+	if w.spillRecord(&Record{RequestID: "r-after-storm"}) {
+		t.Fatal("spillRecord with no spool must report failure")
+	}
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+	if !strings.Contains(out, "r-after-storm") {
+		t.Errorf("the first no-spool drop was suppressed by the spill-failure throttle: the two "+
+			"causes share a counter, so either one can hide the other's first occurrence. got: %s", out)
+	}
+}
+
+// syncWriter serialises writes from the logger so a test reading the buffer
+// cannot race the handler.
+type syncWriter struct {
+	w  *bytes.Buffer
+	mu *sync.Mutex
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+// The two no-loss modes promise that a record is never discarded. These tests
+// pin the two escapes that would otherwise break that promise when the
+// deployment has no writable spool — the state a container or unit without the
+// audit-spool path lands in, and the state spillblock is downgraded into.
+
+// A blocking enqueue with a full queue and NO durable spool must wait for a
+// consumer rather than take a timed escape, because that escape would have to
+// discard the record. Waiting is the contract; discarding is what the lossy
+// modes are for.
+func TestWriter_BlockEnqueue_WithoutSpool_WaitsInsteadOfDropping(t *testing.T) {
+	prom := prometheus.NewRegistry()
+	w := quietWriter(registry.NewRegistry(prom))
+	w.WithLossMode(lossModeBlock)
+	if w.ndjsonSpill != nil {
+		t.Fatal("precondition: this test needs NO spool wired")
+	}
+	w.recCh = make(chan *Record, 1)
+	w.recCh <- &Record{RequestID: "filler"} // queue now full
+
+	// Shrink the bounded wait so the test can outlive it: the point is that with
+	// no durable sink the wait must NOT be bounded at all, because its expiry
+	// would have to discard the record.
+	restore := backpressureMaxWait
+	backpressureMaxWait = 20 * time.Millisecond
+	defer func() { backpressureMaxWait = restore }()
+
+	done := make(chan struct{})
+	go func() { w.blockEnqueue(&Record{RequestID: "blocked"}); close(done) }()
+
+	select {
+	case <-done:
+		t.Fatal("blockEnqueue returned on a full queue with no spool — a no-loss mode discarded a record")
+	case <-time.After(20 * backpressureMaxWait):
+	}
+
+	<-w.recCh // a consumer frees a slot
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("blockEnqueue did not unblock after a slot freed")
+	}
+	if got := <-w.recCh; got.RequestID != "blocked" {
+		t.Fatalf("queue got %q, want the back-pressured record", got.RequestID)
+	}
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 0 {
+		t.Fatalf("dropped counter = %v: a no-loss mode must not discard while waiting", got)
+	}
+}
+
+// With the byte budget exhausted and a durable spool wired, a no-loss mode
+// hands the record to the spool instead of parking the request goroutine. The
+// budget bounds heap; the spool absorbs overflow. Parking while a sink sits
+// idle costs the caller its admission slot for nothing.
+func TestWriter_Enqueue_MemBudgetFull_WithSpool_SpillsWithoutParking(t *testing.T) {
+	prom := prometheus.NewRegistry()
+	w := quietWriter(registry.NewRegistry(prom))
+	w.WithLossMode(lossModeSpillBlock)
+	dir := t.TempDir()
+	spool, err := sharedndjson.New(dir, "gw", 64, 4096, nil)
+	if err != nil {
+		t.Fatalf("spool: %v", err)
+	}
+	w.WithNDJSONSpill(spool)
+	// The budget must be exhausted AND already holding something: an empty
+	// pipeline lets TryAcquire through regardless of size, so that an oversized
+	// record is never wedged forever.
+	budget := bytebudget.New(16, w.stopCh)
+	w.memBudget = budget
+	if !budget.TryAcquire(16) {
+		t.Fatal("precondition: could not exhaust the budget")
+	}
+	w.startOnce.Do(func() {}) // consume the start latch: this test drives Enqueue directly
+
+	done := make(chan struct{})
+	go func() {
+		w.Enqueue(&Record{RequestID: "over-budget", ResponseBody: []byte("body-bytes")})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Enqueue parked on the byte budget while a durable spool was available")
+	}
+
+	if err := spool.Rotate(); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	sealed, _ := spool.SealedFiles()
+	if len(sealed) != 1 {
+		t.Fatalf("want 1 sealed spool file, got %v", sealed)
+	}
+	b, _ := os.ReadFile(sealed[0])
+	if !spoolDecodedContains(b, "over-budget") {
+		t.Fatalf("record not spilled durably: %q", b)
+	}
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 0 {
+		t.Fatalf("dropped counter = %v: spilling is not dropping", got)
+	}
+}
+
+// Same exhausted budget, but no spool: there is nowhere durable to put the
+// record, so the mode's promise leaves only one option — wait. It must not
+// discard, and it must complete once the budget frees.
+func TestWriter_Enqueue_MemBudgetFull_WithoutSpool_WaitsInsteadOfDropping(t *testing.T) {
+	prom := prometheus.NewRegistry()
+	w := quietWriter(registry.NewRegistry(prom))
+	w.WithLossMode(lossModeBlock)
+	if w.ndjsonSpill != nil {
+		t.Fatal("precondition: this test needs NO spool wired")
+	}
+	w.recCh = make(chan *Record, 4)
+	budget := bytebudget.New(16, w.stopCh)
+	w.memBudget = budget
+	w.startOnce.Do(func() {}) // consume the start latch; Enqueue is driven directly
+	if !budget.TryAcquire(16) {
+		t.Fatal("precondition: could not exhaust the budget")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		w.Enqueue(&Record{RequestID: "waiting", ResponseBody: []byte("ten-bytes!")})
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("Enqueue returned with the budget exhausted and no spool — a no-loss mode discarded a record")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	budget.Release(16) // the drain returns budget
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Enqueue did not resume after the byte budget freed")
+	}
+	if got := <-w.recCh; got.RequestID != "waiting" {
+		t.Fatalf("queued %q, want the back-pressured record", got.RequestID)
+	}
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 0 {
+		t.Fatalf("dropped counter = %v: a no-loss mode must not discard while waiting", got)
 	}
 }

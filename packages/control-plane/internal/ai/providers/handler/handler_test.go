@@ -19,6 +19,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 func TestIsValidAdapterType(t *testing.T) {
@@ -92,9 +94,8 @@ func TestNew_AllFieldsThreaded(t *testing.T) {
 	vault := newTestVault(t)
 	multi := newTestMultiVault(t)
 	proxy := ProxyConfig{
-		ComplianceProxyRuntimeURL: "https://cp.example",
-		ComplianceProxyAPIToken:   "tok",
-		AIGatewayURL:              "https://aigw.example",
+		AIGatewayBase:          peer.Static("https://aigw.example"),
+		AIGatewayInternalToken: "tok",
 	}
 	h := New(Deps{
 		Pool:       db.InternalPool(),
@@ -107,8 +108,12 @@ func TestNew_AllFieldsThreaded(t *testing.T) {
 		Redis:      rdb,
 	})
 	if h.providers == nil || h.hub != hub || h.vault != vault || h.multiVault != multi ||
-		h.redis != rdb || h.proxy != proxy || h.audit == nil || h.logger == nil {
+		h.redis != rdb || h.proxy.AIGatewayInternalToken != "tok" || h.audit == nil || h.logger == nil {
 		t.Errorf("New did not thread all fields: %+v", h)
+	}
+	// The Hub-backed URL provider is threaded and resolves at call time.
+	if base, err := h.aiGatewayBase(context.Background()); err != nil || base != "https://aigw.example" {
+		t.Errorf("aiGatewayBase = %q, %v; want threaded provider value", base, err)
 	}
 }
 

@@ -151,3 +151,95 @@ func TestCORS_ExposeMarkerHeaders(t *testing.T) {
 		}
 	})
 }
+
+// TestCORS_VaryOriginOnEveryCORSResponse pins the cache-poisoning guard:
+// any response to a request carrying an Origin varies by that Origin —
+// including the disallowed-origin response, whose distinguishing feature
+// is the ABSENCE of CORS headers. Without Vary on that path a shared
+// cache may store the bare copy and serve it to an allowed origin (or
+// the allowed copy to a disallowed one).
+func TestCORS_VaryOriginOnEveryCORSResponse(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := CORS(CORSConfig{AllowedOrigins: []string{"https://app.example.com"}})(inner)
+
+	for _, tc := range []struct {
+		name   string
+		origin string
+	}{
+		{"allowed origin", "https://app.example.com"},
+		{"disallowed origin", "https://evil.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			req.Header.Set("Origin", tc.origin)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if got := w.Header().Values("Vary"); len(got) == 0 || !strings.Contains(strings.Join(got, ","), "Origin") {
+				t.Errorf("Vary = %v, want Origin present", got)
+			}
+		})
+	}
+
+	// No Origin → not a CORS response → no Vary from this middleware.
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if got := w.Header().Get("Vary"); got != "" {
+		t.Errorf("Vary = %q on a non-CORS request, want empty", got)
+	}
+}
+
+// TestCORS_PreflightDisallowedOriginRevealsNothing pins the preflight
+// gate: a disallowed origin gets a bare 204 — no Allow-Methods /
+// Allow-Headers / Max-Age readout of what the gateway would accept.
+func TestCORS_PreflightDisallowedOriginRevealsNothing(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("inner handler must not run on preflight")
+	})
+	h := CORS(CORSConfig{
+		AllowedOrigins: []string{"https://app.example.com"},
+		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders: []string{"Content-Type"},
+	})(inner)
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	for _, hdr := range []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+		"Access-Control-Max-Age",
+	} {
+		if got := w.Header().Get(hdr); got != "" {
+			t.Errorf("%s = %q for a disallowed origin, want unset", hdr, got)
+		}
+	}
+}
+
+// TestUnionHeaderNames pins the composition contract the CORS request
+// allowlist is built on: case-insensitive dedupe with first-seen spelling
+// winning, blanks dropped, deterministic (sorted) output.
+func TestUnionHeaderNames(t *testing.T) {
+	got := UnionHeaderNames(
+		[]string{"Content-Type", "X-Nexus-Virtual-Key", ""},
+		[]string{"content-type", "anthropic-beta"},
+		[]string{" X-Custom-Tag ", "ANTHROPIC-BETA"},
+	)
+	want := []string{"Content-Type", "X-Custom-Tag", "X-Nexus-Virtual-Key", "anthropic-beta"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v (first-seen spelling, sorted, deduped)", got, want)
+		}
+	}
+}

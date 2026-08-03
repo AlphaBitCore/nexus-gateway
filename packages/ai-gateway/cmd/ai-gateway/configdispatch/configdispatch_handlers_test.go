@@ -878,6 +878,7 @@ func expectModelReload(mock pgxmock.PgxPoolIface) {
 			"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled",
 			"inputPricePerMillion", "outputPricePerMillion",
 			"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+			"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 			"features", "maxContextTokens", "maxOutputTokens", "aliases",
 			"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
 		}))

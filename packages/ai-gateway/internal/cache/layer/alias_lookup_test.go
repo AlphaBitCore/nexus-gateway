@@ -7,8 +7,10 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 )
 
-// aliases is column index 18 in the loadModels SELECT (see makeModelRow).
-const aliasesCol = 18
+// aliases column index in the loadModels SELECT (see modelCols /
+// makeModelRow in helpers_test.go — 3 audio price columns sit between the
+// cache prices and features).
+const aliasesCol = 21
 
 // TestGetModelByCodeOrAlias_ResolvesCodeAndAlias asserts the O(1) code-or-alias
 // index resolves both a model's code and each of its aliases to the same model,

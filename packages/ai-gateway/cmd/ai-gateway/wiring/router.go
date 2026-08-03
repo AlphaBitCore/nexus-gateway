@@ -48,7 +48,14 @@ func InitRouter(
 			Logger:    logger,
 		}
 	}
-	strategies.RegisterAllStrategies(strategyReg, routerResolver.LookupTargetFunc(), smartDeps)
+	// The latency strategy reads the health tracker's windowed p95 to order
+	// targets. A nil tracker → nil stats func → every target reads cold (safe
+	// random load-balance), so the strategy never strands a request.
+	var latencyStats routingcore.LatencyStatsFunc
+	if healthTracker != nil {
+		latencyStats = healthTracker.GetLatencyP95
+	}
+	strategies.RegisterAllStrategies(strategyReg, routerResolver.LookupTargetFunc(), latencyStats, smartDeps)
 	strategyReg.Freeze()
 
 	return strategyReg, healthRanker, routerResolver, capCache

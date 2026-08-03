@@ -2,7 +2,10 @@ package enrollment
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"github.com/goccy/go-json"
@@ -838,54 +841,19 @@ func TestWriteFileAtomic_CloseErrorSurfacedViaSeam(t *testing.T) {
 
 // Enroll / Renew crypto-rand failure arms via randReader seam
 //
-// On a healthy host crypto/rand.Reader never returns an error; the
-// keypair-generation and CSR-creation failure branches in Enroll +
-// Renew need a fault-injecting reader to be observable. Mirrors
-// packages/agent/internal/network/tls/entropy_seam_test.go.
+// Key generation and certificate/CSR signing take their randomness from
+// the FIPS module rather than randReader, so their failure arms are driven
+// through the generateKeyFn / createCertFn / ed25519KeyFn / createCertReqFn
+// seams. Mirrors packages/agent/internal/network/tls/entropy_seam_test.go.
 
-// failReader is an io.Reader that always returns a sentinel error.
-type failReader struct{ err error }
-
-func (f failReader) Read(_ []byte) (int, error) { return 0, f.err }
-
-// byteBudget delegates reads to inner up to remaining bytes then fails
-// with err. Used to step past ecdsa.GenerateKey (~32 bytes for the P256
-// scalar) and force x509.CreateCertificateRequest's signing-randomness
-// read to fail. Per-call counter approaches are unreliable because
-// GenerateKey may retry the scalar a non-deterministic number of times;
-// counting bytes is deterministic since the operations consume a fixed
-// byte total.
-type byteBudget struct {
-	inner     io.Reader
-	err       error
-	remaining int
-}
-
-func (b *byteBudget) Read(p []byte) (int, error) {
-	if b.remaining <= 0 {
-		return 0, b.err
-	}
-	want := len(p)
-	if want > b.remaining {
-		want = b.remaining
-	}
-	n, err := b.inner.Read(p[:want])
-	b.remaining -= n
-	return n, err
-}
-
-// installRandReader replaces randReader with r. Returns a restore func.
-func installRandReader(t *testing.T, r io.Reader) func() {
-	t.Helper()
-	prev := randReader
-	randReader = r
-	return func() { randReader = prev }
-}
-
-// Enroll must surface a wrapped "generate keypair" error when crypto/rand
-// fails on the very first read (ecdsa.GenerateKey arm).
+// Enroll must surface a wrapped "generate keypair" error when ECDSA key
+// generation fails.
 func TestEnroll_GenerateKeypairFailsOnRandStarvation(t *testing.T) {
-	defer installRandReader(t, failReader{err: errors.New("entropy starved")})()
+	origGen := generateKeyFn
+	generateKeyFn = func(elliptic.Curve, io.Reader) (*ecdsa.PrivateKey, error) {
+		return nil, errors.New("key generation refused")
+	}
+	t.Cleanup(func() { generateKeyFn = origGen })
 
 	mgr := NewManager(t.TempDir(), WithHubEnroller(&stubHubEnroller{}))
 	err := mgr.Enroll(context.Background(), "tok", "host", "darwin", "14", "1.0")
@@ -897,18 +865,46 @@ func TestEnroll_GenerateKeypairFailsOnRandStarvation(t *testing.T) {
 // Enroll must surface a wrapped "create device cert" error when crypto/rand
 // succeeds for the keypair + serial but starves during cert signing.
 func TestEnroll_CreateDeviceCertFailsOnRandStarvation(t *testing.T) {
-	// 60-byte budget is enough for P256 GenerateKey (~33 bytes) plus the
-	// 128-bit serial (~16 bytes) but always exhausts before the self-signed
-	// cert's ECDSA signature completes.
-	defer installRandReader(t, &byteBudget{
-		inner:     rand.Reader,
-		err:       errors.New("entropy starved mid-cert"),
-		remaining: 60,
-	})()
+	origSign := createCertFn
+	createCertFn = func(io.Reader, *x509.Certificate, *x509.Certificate, any, any) ([]byte, error) {
+		return nil, errors.New("signing refused mid-cert")
+	}
+	t.Cleanup(func() { createCertFn = origSign })
 
 	mgr := NewManager(t.TempDir(), WithHubEnroller(&stubHubEnroller{}))
 	err := mgr.Enroll(context.Background(), "tok", "host", "darwin", "14", "1.0")
 	if err == nil || !strings.Contains(err.Error(), "create device cert") {
 		t.Fatalf("expected create-device-cert error, got %v", err)
+	}
+}
+
+// generateAttestationKeyMaterial returns ("", nil) on every failure arm — the
+// attestation CSR is best-effort, so a failure must degrade the enrollment to
+// "no attestation material" rather than fail it. One test per arm, driven
+// through the crypto seams (the FIPS module ignores a starved randReader).
+
+func TestGenerateAttestationKeyMaterial_Ed25519KeyError(t *testing.T) {
+	orig := ed25519KeyFn
+	ed25519KeyFn = func(io.Reader) (ed25519.PublicKey, ed25519.PrivateKey, error) {
+		return nil, nil, errors.New("key generation refused")
+	}
+	t.Cleanup(func() { ed25519KeyFn = orig })
+
+	csrPEM, keyPEM := generateAttestationKeyMaterial("host")
+	if csrPEM != "" || keyPEM != nil {
+		t.Fatalf("key-generation failure must degrade to no material; got csr=%q key=%d bytes", csrPEM, len(keyPEM))
+	}
+}
+
+func TestGenerateAttestationKeyMaterial_CSRError(t *testing.T) {
+	orig := createCertReqFn
+	createCertReqFn = func(io.Reader, *x509.CertificateRequest, any) ([]byte, error) {
+		return nil, errors.New("csr refused")
+	}
+	t.Cleanup(func() { createCertReqFn = orig })
+
+	csrPEM, keyPEM := generateAttestationKeyMaterial("host")
+	if csrPEM != "" || keyPEM != nil {
+		t.Fatalf("CSR failure must degrade to no material; got csr=%q key=%d bytes", csrPEM, len(keyPEM))
 	}
 }

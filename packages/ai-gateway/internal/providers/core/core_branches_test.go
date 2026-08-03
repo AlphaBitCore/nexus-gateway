@@ -214,3 +214,7 @@ type stubErrorNormalizer struct{}
 func (s *stubErrorNormalizer) Normalize(_ int, _ http.Header, _ []byte) *ProviderError {
 	return &ProviderError{Code: CodeUpstreamError}
 }
+
+func (s *stubSchemaCodec) RewriteNative(_ typology.WireShape, nativeBody []byte, _ CallTarget, _ bool) (EncodeResult, error) {
+	return EncodeResult{Body: nativeBody}, nil
+}

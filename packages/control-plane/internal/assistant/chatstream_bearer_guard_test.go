@@ -10,7 +10,7 @@ import (
 )
 
 // TestChatStreamRejectsNonBearerPrincipal is the C1 guard: a request authenticated
-// by x-admin-key (or any non-bearer principal) has no forwardable bearer, so the
+// by X-Nexus-Admin-Key (or any non-bearer principal) has no forwardable bearer, so the
 // agent's admin self-calls would all 401 while still billing the system VK. It must
 // be rejected (422) before any inference — never a 202 + zero-capability bill.
 func TestChatStreamRejectsNonBearerPrincipal(t *testing.T) {
@@ -18,7 +18,7 @@ func TestChatStreamRejectsNonBearerPrincipal(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/assistant/sessions/s1/chat", strings.NewReader(`{"message":"hi"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Admin-Key", "some-api-key") // non-bearer principal: no Authorization bearer
+	req.Header.Set("X-Nexus-Admin-Key", "some-api-key") // non-bearer principal: no Authorization bearer
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("id")

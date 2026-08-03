@@ -49,8 +49,9 @@ func EstimateTokens(text string) int {
 	return n
 }
 
-// runeTokenScore returns the heuristic token weight of a single rune. Shared by
-// EstimateTokens and TruncateToTokens so the cut and the count agree exactly.
+// runeTokenScore returns the average-case heuristic token weight of a single
+// rune, backing EstimateTokens. Fit decisions (routing, staging, truncation)
+// use runeTokenScoreConservative instead.
 func runeTokenScore(r rune) float64 {
 	switch {
 	case r < 128:
@@ -65,28 +66,113 @@ func runeTokenScore(r rune) float64 {
 	}
 }
 
+// EstimateTokensConservative returns a deliberately HIGH token estimate,
+// biased so it lands at or above what a real tokenizer charges for realistic
+// text. It is the single entry point every FIT / SAFETY decision must use:
+// routing's context-window filter, the router LLM's own input budget, the
+// AI-Guard context limit, and the message-drop staging that keeps embedding
+// input under a provider's cap. For those callers the asymmetry is total —
+// under-counting selects a model (or keeps content) that then overflows and
+// hard-400s upstream, while over-counting only selects a larger-context model
+// (or trims a little early), which always succeeds. So the estimate is biased
+// up, never down.
+//
+// Precisely: the non-ASCII weight (UTF-8 byte length) is a HARD ceiling — a
+// BPE tokenizer emits at most one token per byte, so no input can exceed it.
+// The ASCII weight (0.5/char) is NOT a hard ceiling — a byte-level fallback
+// could in principle charge up to 1 token per ASCII byte — but 0.5 is double
+// the "4 chars ≈ 1 token" prose average and covers dense code / minified JSON
+// / base64 (~0.3–0.4/char) with headroom; the pathological remainder (near-1
+// tok/char single-character-delimited ASCII) is caught by the context-overflow
+// failover (armContextUpgrade) rather than paid for with a 4× over-count on all
+// ordinary English. The design accepts that residual for the ASCII common case
+// while keeping the non-ASCII path — where the real byte-fallback blow-ups
+// happen — provably bounded.
+//
+// The weights are anchored to how BPE tokenizers actually behave in the worst
+// case — BYTE FALLBACK. When a run of characters is outside the tokenizer's
+// vocabulary it is emitted one token per UTF-8 byte, so a tokenizer can never
+// charge MORE than one token per byte. The average-case [EstimateTokens] misses
+// this by counting per character: a real auto-routed prompt of 61607 Chinese +
+// symbol characters (237619 UTF-8 bytes) was charged 216543 tokens upstream —
+// ~3.5 tokens per CHARACTER — and rejected against a 131072-context model,
+// while 0.25/char had sized it at ~15k. Only a byte-anchored bound survives
+// that content:
+//
+//   - Non-ASCII rune: weighted by its UTF-8 byte length (2–4). This is the
+//     byte-fallback ceiling — CJK, emoji, and rare symbols that a model
+//     tokenizes byte-by-byte can approach it, and no tokenizer exceeds it.
+//     Common in-vocabulary CJK costs far less, so this over-counts it, which
+//     only ever selects a larger model.
+//   - ASCII rune: 0.5 tokens (≈2 chars/token). ASCII stays in vocabulary and
+//     rarely byte-falls-back; 0.5 is double the "4 chars ≈ 1 token" prose
+//     average and covers dense code / minified JSON / base64 (~0.3–0.4/char)
+//     with headroom, without the 4× inflation a full byte count would impose
+//     on ordinary English.
+//
+// Cost estimation and quota pre-charge do NOT use this — they want an accurate
+// or already-conservative estimate for their own reasons (see
+// estimator.pickTokenizer's family divisors and proxy.estimateTokens' bytes/3).
+// This function is exclusively for the "will it fit?" question.
+func EstimateTokensConservative(text string) int {
+	if text == "" {
+		return 0
+	}
+	var score float64
+	for _, r := range text {
+		score += runeTokenScoreConservative(r)
+	}
+	n := int(score)
+	if score > float64(n) {
+		n++
+	}
+	return n
+}
+
+// runeTokenScoreConservative is the upper-bound counterpart of runeTokenScore,
+// anchored to the BPE byte-fallback ceiling (≤ 1 token per UTF-8 byte). See
+// EstimateTokensConservative for why non-ASCII is weighted by byte length.
+func runeTokenScoreConservative(r rune) float64 {
+	if r < 128 {
+		return 0.5
+	}
+	n := utf8.RuneLen(r)
+	if n < 1 {
+		// Invalid/unencodable rune (e.g. RuneError from malformed UTF-8):
+		// charge the maximum UTF-8 width so we never under-count.
+		n = 4
+	}
+	return float64(n)
+}
+
 // TruncateToTokens returns the longest TRAILING suffix of text whose estimated
 // token count stays within maxTokens, applying a safety margin. It is the
-// last-resort hard cut for callers (L2 embedding input, ai-guard classify
-// input) that join inputstaging.Plan output into a single string: Plan drops
-// whole messages but never cuts WITHIN one, so a single oversized message would
-// otherwise be sent to the model over-limit and 400.
+// in-message hard cut behind Plan's default budget enforcement, and the
+// last-resort cut for ReportOnly callers (L2 embedding input) that join
+// Plan output into a single string: the strategies drop whole messages but
+// never cut WITHIN one, so a single oversized message would otherwise be
+// sent to the model over-limit and 400.
 //
 // It keeps the TAIL, not the head: the newest content (the latest user turn)
 // sits at the end of the joined input and is what the embedding / classifier
 // must reflect — dropping recent content to preserve an old system preamble
 // would defeat the purpose. Oldest content (head) is discarded first.
 //
-// Because EstimateTokens is coarse and can UNDER-count dense content, the cut
-// targets ~85% of maxTokens so the provider's real tokenizer is very unlikely
-// to exceed the true limit. Returns text unchanged when it already fits, when
-// maxTokens <= 0, or when text is empty. The returned suffix always lands on a
-// UTF-8 rune boundary.
+// The cut is a FIT decision, so it counts with the CONSERVATIVE (upper-bound)
+// per-rune weights, not the average-case ones: exceeding the real limit hard-
+// 400s the provider (observed for L2 embedding input: dense content the
+// average 0.25/char + 85% margin still let overflow an 8192-token cap). On top
+// of the conservative count it keeps the ~85% target as a second margin, so
+// the provider's real tokenizer is very unlikely to exceed the true limit. The
+// "already fits" fast-path likewise uses the conservative estimate so it never
+// skips a cut that the real tokenizer would need. Returns text unchanged when
+// it already fits, when maxTokens <= 0, or when text is empty. The returned
+// suffix always lands on a UTF-8 rune boundary.
 func TruncateToTokens(text string, maxTokens int) string {
 	if maxTokens <= 0 || text == "" {
 		return text
 	}
-	if EstimateTokens(text) <= maxTokens {
+	if EstimateTokensConservative(text) <= maxTokens {
 		return text
 	}
 	target := float64(maxTokens) * 0.85
@@ -94,10 +180,10 @@ func TruncateToTokens(text string, maxTokens int) string {
 	offset := len(text) // start byte of the kept suffix; len means "nothing yet"
 	for offset > 0 {
 		r, size := utf8.DecodeLastRuneInString(text[:offset])
-		if score+runeTokenScore(r) > target {
+		if score+runeTokenScoreConservative(r) > target {
 			break // including this older rune would exceed the budget — stop
 		}
-		score += runeTokenScore(r)
+		score += runeTokenScoreConservative(r)
 		offset -= size
 	}
 	return text[offset:]

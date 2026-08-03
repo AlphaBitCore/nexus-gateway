@@ -201,3 +201,20 @@ func TestSynthesizeSSEErrorFrame_Gemini(t *testing.T) {
 		t.Errorf("error.status = %q, want RESOURCE_EXHAUSTED", got)
 	}
 }
+
+// Context overflow must surface as invalid_request_error across every
+// cross-format mapper — real OpenAI/Anthropic report an over-window
+// prompt as invalid_request (context_length_exceeded), so an SDK's
+// error branching must not see it as a server-side api_error.
+func TestErrorType_ContextOverflow_MapsToInvalidRequest(t *testing.T) {
+	pe := &provcore.ProviderError{Code: provcore.CodeContextOverflow}
+	if got := openaiErrorType(pe); got != "invalid_request_error" {
+		t.Errorf("openaiErrorType(context_overflow) = %q, want invalid_request_error", got)
+	}
+	if got := anthropicErrorType(pe); got != "invalid_request_error" {
+		t.Errorf("anthropicErrorType(context_overflow) = %q, want invalid_request_error", got)
+	}
+	if got := responsesAPIErrorType(pe); got != "invalid_request_error" {
+		t.Errorf("responsesAPIErrorType(context_overflow) = %q, want invalid_request_error", got)
+	}
+}

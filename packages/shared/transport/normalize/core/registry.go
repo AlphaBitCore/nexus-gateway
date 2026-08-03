@@ -243,8 +243,9 @@ func (r *Registry) Resolve(meta Meta) Normalizer {
 // layer decompresses them, which would otherwise leave normalizers
 // staring at compressed magic bytes.
 func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (NormalizedPayload, error) {
-	if decoded, ok := maybeGunzip(raw); ok {
-		raw = decoded
+	raw, err := prepareInput(raw)
+	if err != nil {
+		return NormalizedPayload{}, err
 	}
 
 	r.mu.RLock()
@@ -344,8 +345,9 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 			// Info-level CLAIM line alone emits tens of thousands of structured
 			// records per second — pure noise no admin reads and a dominant CPU
 			// sink (measured ~15% of total gateway CPU). Admins observe spec
-			// distribution through the normalize_total / payload_bytes metrics,
-			// not a per-request log line.
+			// distribution through traffic_event's own detectedSpec / protocol
+			// fields, not a per-request log line. (This named normalize_total /
+			// payload_bytes until 2026-07-28; neither was ever registered.)
 			slog.Debug("normalize: tier1 below threshold, soft fall-through",
 				"adapter", meta.AdapterType,
 				"direction", meta.Direction,

@@ -1,6 +1,8 @@
 package wiring
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/tls/issuer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 )
 
@@ -106,5 +109,38 @@ func TestInitServers_WithMetricsAddress(t *testing.T) {
 	result := InitServers(d)
 	if result.HealthServer.Addr != "127.0.0.1:9091" {
 		t.Errorf("health server addr = %q; want 127.0.0.1:9091", result.HealthServer.Addr)
+	}
+}
+
+// TestInitServers_ForwardsMatcherEngineToHealth guards the wiring hop the
+// /debug/runtime tests cannot see: InitHealthHandler is reached through
+// InitServers, so a ComplianceResult field that is never copied across produces a
+// registered source that answers with a zero struct. The health handler is the
+// only observable, so the assertion goes through it.
+func TestInitServers_ForwardsMatcherEngineToHealth(t *testing.T) {
+	d := buildServersDeps(t)
+	d.CompRes.MatcherEngine = matcher.Engine{
+		Name:       "test-engine",
+		SinglePass: true,
+		Effect:     "fixture",
+	}
+	result := InitServers(d)
+	if result.HealthMux == nil {
+		t.Fatal("expected non-nil HealthMux")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/runtime", nil)
+	req.Header.Set("Authorization", "Bearer "+d.ServiceToken)
+	rec := httptest.NewRecorder()
+	result.HealthMux.ServeHTTP(rec, req)
+
+	got, err := matcherSourceFrom(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("read policy.matcher: %v", err)
+	}
+	if got.Value.Name != "test-engine" {
+		t.Errorf("policy.matcher name = %q, want the engine InitServers was given; "+
+			"an empty name means ServersDeps.CompRes.MatcherEngine is not forwarded to HealthDeps",
+			got.Value.Name)
 	}
 }

@@ -5,7 +5,9 @@
 // contract:
 //
 //   - spec.go: NewSpec wiring — Format, Transport/Codec/Stream/Errors
-//     all non-nil, PassthroughRewrite linked, nil-logger fallback.
+//     all non-nil, NO transitional rewrite callback (azure is drained:
+//     its per-model rules ride the shared OpenAI codec contract),
+//     nil-logger fallback.
 //   - transport.go: BuildURL deployment from Extras and from
 //     ProviderModelID fallback, default api-version, all endpoint arms
 //     (chat/embeddings/legacy completions/models), trailing-slash
@@ -57,9 +59,8 @@ func TestNewSpec_WiringComplete(t *testing.T) {
 	if spec.ErrorNormalizer == nil {
 		t.Errorf("ErrorNormalizer must be non-nil (reused from spec_openai)")
 	}
-	if spec.PassthroughRewrite == nil {
-		t.Errorf("PassthroughRewrite must be wired so reasoning_effort rewrites apply on Azure too")
-	}
+	// The transitional callback fields no longer exist on AdapterSpec —
+	// the rules ride the codec contract by construction (compile-enforced).
 }
 
 // TestNewSpec_NilLogDefaultsToSlog pins the log == nil branch of NewSpec.

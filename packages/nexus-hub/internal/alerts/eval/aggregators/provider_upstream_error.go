@@ -5,14 +5,29 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/errorcode"
 )
 
-// ProviderUpstreamError fires when status_code >= 500 with no Nexus-side
-// classification (error_code IS NULL) exceeds params.thresholdPct over
-// params.windowSec, per provider. The error_code IS NULL clause is what
-// distinguishes upstream errors from Nexus pre-flight rejections — the
-// latter always carry a structured code (RATE_LIMITED / QUOTA_EXCEEDED /
-// etc.). NULL = "we passed all our checks, the upstream broke".
+// ProviderUpstreamError fires when the share of requests an upstream itself
+// rejected exceeds params.thresholdPct over params.windowSec, per provider.
+//
+// The question it has to answer is "did the upstream break, or did we reject
+// this before ever calling it" — a provider must not be blamed for our own
+// routing, quota or auth decisions. It used to answer that with
+// `error_code IS NULL`, on the contract that Nexus leaves upstream failures
+// unclassified and stamps a code only on its own rejects.
+//
+// The gateway does not honour that contract: it classifies every upstream
+// failure too, so error_code was never NULL on one and this rule counted
+// nothing. It had never fired in production — verified 2026-07-15 against the
+// live database, where zero 5xx rows carry an empty error_code.
+//
+// The distinction is now drawn where it actually lives: which vocabulary the
+// code belongs to. errorcode.IsUpstream reports whether the upstream answered
+// and rejected us, as opposed to a gateway-side decision (ROUTING_NO_MATCH,
+// QUOTA_EXCEEDED, …) or a routing failure that never reached one
+// (no_compatible_provider). An empty code — a producer that forgot to classify
+// — reads as not-upstream rather than silently counting against a provider.
 type ProviderUpstreamError struct{}
 
 func NewProviderUpstreamError() *ProviderUpstreamError { return &ProviderUpstreamError{} }
@@ -40,7 +55,7 @@ func (a *ProviderUpstreamError) OnEvent(rt *alerteval.Runtime, evt *alerteval.Ev
 		return
 	}
 	w := rt.Window("provider:"+provider, 600)
-	if derefInt(t.StatusCode) >= 500 && derefString(t.ErrorCode) == "" {
+	if derefInt(t.StatusCode) >= 500 && errorcode.IsUpstream(derefString(t.ErrorCode)) {
 		w.Add(evt.Timestamp, 1, 1)
 	} else {
 		w.Add(evt.Timestamp, 0, 1)

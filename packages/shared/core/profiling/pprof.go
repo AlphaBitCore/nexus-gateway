@@ -21,8 +21,10 @@ package profiling
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof handlers on http.DefaultServeMux
 	"os"
@@ -33,7 +35,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -76,15 +77,52 @@ func Start(name string) {
 	startHTTP()
 }
 
+// startHTTP binds the profiling endpoint BEFORE claiming it, and treats a bind
+// failure as an error rather than a note.
+//
+// Both matter more than they look. The success line used to be logged ahead of
+// http.ListenAndServe, so a port already held by another process produced
+// "pprof http listening addr=127.0.0.1:6061" immediately followed by a WARN — and
+// an operator who then profiled that address got answers from the OTHER process,
+// with a log line agreeing that this service was serving them. A measurement
+// attributed to the wrong process is worse than no measurement.
+//
+// The failure is an ERROR because reaching here means an operator explicitly set
+// both the master switch and an address: profiling is something they are relying
+// on right now, and a WARN in a boot log nobody is tailing reads as success.
 func startHTTP() {
 	addr := os.Getenv(EnvAddr)
 	if addr == "" {
 		return
 	}
+	// ListenConfig rather than net.Listen: the linter bans the bare form so that
+	// network setup is cancellable. This one genuinely is not — it runs once at
+	// boot, before there is a shutdown context to honour — so Background is the
+	// honest argument rather than a context threaded through for appearances.
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
+	if err != nil {
+		slog.Error("pprof http NOT serving — the address could not be bound; "+
+			"profile that address and you are measuring whatever else holds it",
+			"addr", addr, "error", err)
+		return
+	}
+	// The label states what the OPERATOR configured, not an assumption about it.
+	// This said "(loopback profiling)" for whatever address was given — and
+	// .env.example itself suggests ":6060", a wildcard bind — so the line asserted
+	// that /debug/pprof was unreachable off-box while advertising the opposite. On
+	// an AI Gateway a heap profile contains request-body bytes, so that is a false
+	// assurance about real content, not a cosmetic label.
+	resolved := ln.Addr().String()
+	scope := "REACHABLE OFF-HOST — bind 127.0.0.1 to restrict"
+	if host, _, splitErr := net.SplitHostPort(resolved); splitErr == nil {
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			scope = "loopback only"
+		}
+	}
+	slog.Info("pprof http listening", "addr", resolved, "exposure", scope)
 	go func() {
-		slog.Info("pprof http listening (loopback profiling)", "addr", addr)
-		if err := http.ListenAndServe(addr, nil); err != nil { //nolint:gosec // loopback-only, operator-gated
-			slog.Warn("pprof http server stopped", "error", err)
+		if serveErr := http.Serve(ln, nil); serveErr != nil { //nolint:gosec // operator-gated; exposure is reported on the line above
+			slog.Warn("pprof http server stopped", "addr", addr, "error", serveErr)
 		}
 	}()
 }
@@ -109,16 +147,29 @@ func resolveCPUSeconds() int {
 	return defaultCPUSeconds
 }
 
+// dumpSignalFn is an injection seam: the no-signal branch is the Windows one, and
+// a Unix test must be able to reach it without cross-compiling.
+var dumpSignalFn = dumpSignal
+
 func startSignalDump(name string) {
+	sig, sigName := dumpSignalFn()
+	if sig == nil {
+		// No capture signal on this platform. Said once, at the level an operator
+		// who set NEXUS_PPROF_ENABLED will read: the switch is on, the HTTP
+		// endpoint (if configured) still works, and only the signal path is absent.
+		slog.Info("pprof file dumps unavailable on this platform; use NEXUS_PPROF_ADDR for live profiles",
+			"service", name, "platform", runtime.GOOS)
+		return
+	}
 	dir := resolveDumpDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		slog.Warn("pprof dir create failed; SIGUSR1 dumps disabled", "dir", dir, "error", err)
+		slog.Warn("pprof dir create failed; signal dumps disabled", "dir", dir, "error", err)
 		return
 	}
 	cpuSecs := resolveCPUSeconds()
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGUSR1)
-	slog.Info("pprof file dumps armed — send SIGUSR1 to capture", "dir", dir, "cpuSeconds", cpuSecs, "service", name)
+	signal.Notify(ch, sig)
+	slog.Info("pprof file dumps armed — send "+sigName+" to capture", "dir", dir, "cpuSeconds", cpuSecs, "service", name)
 	go func() {
 		for range ch {
 			dumpProfiles(name, dir, cpuSecs)
