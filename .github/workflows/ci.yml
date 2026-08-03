@@ -188,7 +188,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           # Pinned (not `stable`) so the govulncheck gate is reproducible:
           # the toolchain's own stdlib is what govulncheck scans, so a
