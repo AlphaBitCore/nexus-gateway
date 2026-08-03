@@ -756,7 +756,6 @@ paths:
                             fail_behavior: fail_open
                             capture_request_body: true
                             capture_response_body: true
-                            raw_body_spill_enabled: false
             responses:
                 "400":
                     description: Bad Request
@@ -954,9 +953,6 @@ components:
                 capture_response_body:
                     type: boolean
                     description: Whether the streaming response body is captured.
-                raw_body_spill_enabled:
-                    type: boolean
-                    description: Whether raw bodies spill to object storage.
                 warnings:
                     type: array
                     description: Admin-facing mode-specific advisories (response-only; not persisted).
@@ -970,7 +966,6 @@ components:
                 - fail_behavior
                 - capture_request_body
                 - capture_response_body
-                - raw_body_spill_enabled
         settings_streamingComplianceUpdateRequest:
             type: object
             description: All fields optional; omitted fields keep their existing value. Numeric fields apply only when non-negative.
@@ -1019,8 +1014,3 @@ components:
                         - boolean
                         - "null"
                     description: Whether the streaming response body is captured.
-                raw_body_spill_enabled:
-                    type:
-                        - boolean
-                        - "null"
-                    description: Whether raw bodies spill to object storage.

@@ -70,7 +70,7 @@ func TestLoggingTransport_LogsTimingAndStatus(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+secret)
-	req.Header.Set("x-admin-key", secret)
+	req.Header.Set("X-Nexus-Admin-Key", secret)
 
 	resp, err := client.Do(req)
 	if err != nil {

@@ -111,8 +111,8 @@ func TestClient_SetKillSwitch_SendsBody(t *testing.T) {
 func TestClient_CredentialAttached(t *testing.T) {
 	var sawHeader, sawValue string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-admin-key") != "" {
-			sawHeader, sawValue = "x-admin-key", r.Header.Get("x-admin-key")
+		if r.Header.Get("X-Nexus-Admin-Key") != "" {
+			sawHeader, sawValue = "X-Nexus-Admin-Key", r.Header.Get("X-Nexus-Admin-Key")
 		} else {
 			sawHeader, sawValue = "Authorization", r.Header.Get("Authorization")
 		}
@@ -121,11 +121,11 @@ func TestClient_CredentialAttached(t *testing.T) {
 	defer srv.Close()
 
 	// admin-key surface
-	c := NewClient(Env{Name: "local", CPBaseURL: srv.URL}, fixedTokenSource{header: "x-admin-key", value: "nxk_k"}, srv.Client())
+	c := NewClient(Env{Name: "local", CPBaseURL: srv.URL}, fixedTokenSource{header: "X-Nexus-Admin-Key", value: "nxk_k"}, srv.Client())
 	if _, err := c.Instances(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if sawHeader != "x-admin-key" || sawValue != "nxk_k" {
+	if sawHeader != "X-Nexus-Admin-Key" || sawValue != "nxk_k" {
 		t.Fatalf("admin-key not attached: %s=%s", sawHeader, sawValue)
 	}
 

@@ -31,7 +31,7 @@ func TestAPIKeyTokenSource_Credential(t *testing.T) {
 	src := &apiKeyTokenSource{env: Env{Name: "local"}, store: store}
 
 	h, v, err := src.Credential(context.Background())
-	if err != nil || h != "x-admin-key" || v != "nxk_secret" {
+	if err != nil || h != "X-Nexus-Admin-Key" || v != "nxk_secret" {
 		t.Fatalf("credential = (%q,%q) err=%v", h, v, err)
 	}
 
