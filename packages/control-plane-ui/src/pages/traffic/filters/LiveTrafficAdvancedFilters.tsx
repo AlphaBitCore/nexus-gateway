@@ -68,18 +68,42 @@ export function LiveTrafficAdvancedFilters({
           </FieldCompact>
         </div>
 
-        {/* Correlation */}
+        {/* Correlation — three grains: request ⊂ session ⊂ end-user. All
+            exact-match; end-user/session are caller-declared tags stamped by
+            the gateway from X-Nexus-End-User-Id / X-Nexus-Session-Id. */}
         <div className={css.advGroupTitle}>{t('pages:traffic.correlationTitle')}</div>
-        <FieldCompact label={t('pages:traffic.labelGatewayRequestId')} tip={t('pages:traffic.tipGatewayRequestId')}>
-          <Input
-            type="text"
-            aria-label={t('pages:traffic.labelGatewayRequestId')}
-            value={v.requestId}
-            onChange={(e) => onPatch({ requestId: e.target.value })}
-            placeholder={t('pages:traffic.placeholderRequestId')}
-            className={css.dtInputMono}
-          />
-        </FieldCompact>
+        <div className={css.advInnerGrid}>
+          <FieldCompact label={t('pages:traffic.labelGatewayRequestId')} tip={t('pages:traffic.tipGatewayRequestId')}>
+            <Input
+              type="text"
+              aria-label={t('pages:traffic.labelGatewayRequestId')}
+              value={v.requestId}
+              onChange={(e) => onPatch({ requestId: e.target.value })}
+              placeholder={t('pages:traffic.placeholderRequestId')}
+              className={css.dtInputMono}
+            />
+          </FieldCompact>
+          <FieldCompact label={t('pages:traffic.labelEndUserId')} tip={t('pages:traffic.tipEndUserId')}>
+            <Input
+              type="text"
+              aria-label={t('pages:traffic.labelEndUserId')}
+              value={v.endUserId}
+              onChange={(e) => onPatch({ endUserId: e.target.value })}
+              placeholder={t('pages:traffic.placeholderEndUserId')}
+              className={css.dtInputMono}
+            />
+          </FieldCompact>
+          <FieldCompact label={t('pages:traffic.labelSessionId')} tip={t('pages:traffic.tipSessionId')}>
+            <Input
+              type="text"
+              aria-label={t('pages:traffic.labelSessionId')}
+              value={v.sessionId}
+              onChange={(e) => onPatch({ sessionId: e.target.value })}
+              placeholder={t('pages:traffic.placeholderSessionId')}
+              className={css.dtInputMono}
+            />
+          </FieldCompact>
+        </div>
       </div>
     );
   }

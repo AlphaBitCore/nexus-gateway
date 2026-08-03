@@ -112,6 +112,12 @@ export const SHELL_ROUTES: ShellRouteConfig[] = [
     allowedActions: ['admin:analytics.read'],
     nav: { sectionKey: 'overview', labelKey: 'cacheRoi', to: '/cache-roi', allowedActions: ['admin:analytics.read'], order: 4 },
   },
+  {
+    path: 'vendor-bill-reconciliation',
+    LazyPage: L.LazyVendorBillReconciliationPage,
+    allowedActions: ['admin:analytics.read'],
+    nav: { sectionKey: 'overview', labelKey: 'vendorBillReconciliation', to: '/vendor-bill-reconciliation', allowedActions: ['admin:analytics.read'], order: 5 },
+  },
 
   // ── AI Gateway ──
   // Setup-first ordering: Providers → Credentials → Credential Reliability →

@@ -9,7 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	intg "github.com/AlphaBitCore/nexus-gateway/tests/integration-go/helpers"
 )
 
 // MetricSnapshot captures Prometheus counter / gauge values at a point
@@ -33,6 +36,16 @@ func ScrapeMetrics(ctx context.Context, baseURL string) (*MetricSnapshot, error)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/metrics", nil)
 	if err != nil {
 		return nil, err
+	}
+	// /metrics is authenticated on every service. Without this header the scrape
+	// gets a clean 401 and every scenario that takes a metrics baseline fails
+	// before it tests anything — 13 of the 35 failures in the first full L5 run
+	// were this one missing header, in helpers rather than in the product.
+	//
+	// The token comes from the same Env every other helper reads, so there is one
+	// authority for it rather than a second copy that can drift.
+	if tok := serviceToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -58,6 +71,26 @@ func ScrapeMetrics(ctx context.Context, baseURL string) (*MetricSnapshot, error)
 		}
 	}
 	return snap, nil
+}
+
+// serviceToken resolves the internal service token once per process from the
+// same Env loader the rest of the suite uses. Loaded lazily rather than at
+// package init so a test binary that never scrapes metrics does not require the
+// env files to be present.
+var (
+	serviceTokenOnce sync.Once
+	serviceTokenVal  string
+)
+
+func serviceToken() string {
+	serviceTokenOnce.Do(func() {
+		env, err := intg.LoadEnv()
+		if err != nil || env == nil {
+			return
+		}
+		serviceTokenVal = env.HubServiceToken
+	})
+	return serviceTokenVal
 }
 
 // parseMetricLine handles one Prometheus textual sample. Skips help/type

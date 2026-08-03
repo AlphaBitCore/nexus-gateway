@@ -11,7 +11,7 @@ import {
   Switch,
   Tooltip
 } from '@/components/ui';
-import { type StrategyType, validateSplitWeights } from '../_shared/routing-rule-config';
+import { type StrategyType, validateSplitWeights, isTargetListStrategy } from '../_shared/routing-rule-config';
 import { ConditionalRoutingEditor } from '../editor/ConditionalRoutingEditor';
 import { RoutingPrimaryWinnerCallout } from '../_shared/RoutingPrimaryWinnerCallout';
 import { MatchConditionExtraFields } from '../editor/MatchConditionExtraFields';
@@ -166,6 +166,7 @@ export function RoutingRuleCreate() {
                   {h.pipelineStage === '1' && h.strategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
                   {h.pipelineStage === '1' && h.strategyType === 'conditional' && t('pages:routing.conditionalRouting')}
                   {h.pipelineStage === '1' && h.strategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
+                  {h.pipelineStage === '1' && h.strategyType === 'latency' && t('pages:routing.latencyTargets')}
                   {h.pipelineStage === '1' && h.strategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
                 </div>
                 <Tooltip content={h.pipelineStage === '0' ? strategyConfigHelpBody.policy : strategyConfigHelpBody[h.strategyType]}>
@@ -271,8 +272,7 @@ export function RoutingRuleCreate() {
                 </Stack>
               )}
 
-              {h.pipelineStage === '1' &&
-                (h.strategyType === 'fallback' || h.strategyType === 'loadbalance' || h.strategyType === 'ab_split') && (
+              {h.pipelineStage === '1' && isTargetListStrategy(h.strategyType) && (
                 <>
                   <div className={`${styles.entryRow} ${styles.entryHeaderRow}`}>
                     <span className={styles.flexGrow2}>{t('pages:routing.providerModel')}</span>

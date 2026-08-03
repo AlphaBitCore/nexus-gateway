@@ -12,8 +12,14 @@ smoke-gateway.py does not cover:
                                           Independent of upstream `cached_tokens`
                                           (which smoke-gateway.py already covers).
   G4  Semantic cache (L2, paraphrase)   — prewarm Q→A, then send paraphrase
-                                          → expect `X-Nexus-Cache: HIT` with
-                                          `X-Nexus-Cache-Source: L2-semantic`.
+                                          → expect `X-Nexus-Cache: HIT`. The wire
+                                          carries no L1/L2 source marker (the
+                                          marker catalogue in
+                                          packages/shared/traffic/markers.go
+                                          defines only `X-Nexus-Cache`), but the
+                                          paraphrase differs textually from the
+                                          seed so the L1 extract key cannot
+                                          match — a HIT here proves L2.
 
 Provider cache (Anthropic cache_control + Gemini cachedContents) is already
 exercised by smoke-gateway.py's spec.extract_cached_tokens() in P3A/P3G.
@@ -298,14 +304,18 @@ def test_g4_semantic_cache(gw: str, vk: str):
     s2, hdr2, _ = http_call("POST", gw + "/v1/chat/completions",
                             headers=h, body=json.dumps(body2).encode(), timeout=60)
     cache_status = (hdr2.get("X-Nexus-Cache") or "").upper()
-    cache_source = (hdr2.get("X-Nexus-Cache-Source") or "")
+    # The gateway stamps only `X-Nexus-Cache: HIT|MISS` — there is no header
+    # distinguishing an L1 (extract) hit from an L2 (semantic) hit. That is
+    # fine here: the paraphrase body differs textually from the seed, so the
+    # L1 extract key cannot match; a HIT on this request can only be L2.
     # We accept either HIT (L2 wired and admin-configured to allow) or MISS+WARN
     # (L2 disabled / threshold too high) — both indicate the endpoint shape works.
-    if s2 == 200 and cache_status == "HIT" and "L2" in cache_source.upper():
-        rec("G4", "paraphrase-hit", True, f"X-Nexus-Cache=HIT source={cache_source!r}")
+    if s2 == 200 and cache_status == "HIT":
+        rec("G4", "paraphrase-hit", True,
+            "X-Nexus-Cache=HIT on paraphrased body (L1 key cannot match => L2 semantic)")
     elif s2 == 200:
         rec("G4", "paraphrase-hit", True,
-            f"L2 not HIT (likely disabled in config): cache={cache_status!r} source={cache_source!r}",
+            f"L2 not HIT (likely disabled in config): cache={cache_status!r}",
             warn=True)
     else:
         rec("G4", "paraphrase-hit", False, f"HTTP {s2}")

@@ -29,16 +29,16 @@ import (
 // total cache_lookups across the two calls should be ≥ 2.
 //
 // Assertions:
-//   1. Both responses 200, chat completion envelope shape, content
-//      non-empty.
-//   2. The two responses' chat IDs are IDENTICAL (cache returned the
-//      same upstream-issued ID). This is the strongest "served from
-//      cache" signal — different upstream calls produce different
-//      chat IDs.
-//   3. metric delta: nexus_cache_lookups_total grew by ≥ 2 across
-//      the two-request burst.
-//   4. metric delta: nexus_cache_writes_total grew by ≥ 1 (first
-//      request was a cache write).
+//  1. Both responses 200, chat completion envelope shape, content
+//     non-empty.
+//  2. The two responses' chat IDs are IDENTICAL (cache returned the
+//     same upstream-issued ID). This is the strongest "served from
+//     cache" signal — different upstream calls produce different
+//     chat IDs.
+//  3. metric delta: nexus_cache_lookups_total grew by ≥ 2 across
+//     the two-request burst.
+//  4. metric delta: nexus_cache_writes_total grew by ≥ 1 (first
+//     request was a cache write).
 func TestS060_CacheHitOnRepeat(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -132,17 +132,54 @@ func TestS060_CacheHitOnRepeat(t *testing.T) {
 	}
 	lookupsDelta := postMetrics.CounterSum("nexus_cache_lookups_total", nil) -
 		preMetrics.CounterSum("nexus_cache_lookups_total", nil)
-	writesDelta := postMetrics.CounterSum("nexus_cache_writes_total", nil) -
-		preMetrics.CounterSum("nexus_cache_writes_total", nil)
+	// There is no nexus_cache_writes_total — the response-cache layer registers
+	// lookups / hits / misses / invalidations, and the only *_cache_writes_total
+	// series live under other namespaces (aiguard, l2). The old assertion could
+	// therefore never pass, and never ran, because ScrapeMetrics 401'd first.
+	//
+	// The replacement is NOT a sum over nexus_cache_hits_total either. Today the
+	// only hits/misses series carried is {cache="key_virtual_keys"} — the
+	// virtual-key lookup cache, which advances on EVERY request regardless of
+	// response caching. Asserting on it would have passed no matter what the
+	// response cache did, which is the same defect as the metric it replaced.
+	//
 	if lookupsDelta < 2 {
 		t.Errorf("cache_lookups delta=%g (want ≥ 2 across 2 requests)", lookupsDelta)
 	}
-	if writesDelta < 1 {
-		t.Errorf("cache_writes delta=%g (want ≥ 1 — first request should have written)", writesDelta)
+
+	// The response cache describes its own decision per row:
+	// traffic_event.gateway_cache_status plus gateway_cache_skip_reason. That is
+	// the authoritative signal — better than any counter here, because it is
+	// scoped to THIS request instead of summed across every cache in the process.
+	//
+	// Deliberately NOT nexus_cache_hits_total: the only hits/misses series carried
+	// today is {cache="key_virtual_keys"}, the virtual-key lookup cache, which
+	// advances on every request whatever the response cache does. Asserting on it
+	// would pass regardless — the same defect as the nexus_cache_writes_total it
+	// would have replaced.
+	const skipQ = `
+		SELECT count(*) FILTER (WHERE gateway_cache_skip_reason = 'disabled'), count(*)
+		FROM traffic_event
+		WHERE source = 'ai-gateway'
+		  AND identity->'vk'->>'id' = $1
+		  AND "timestamp" > NOW() - INTERVAL '300 seconds'`
+	var disabledRows, totalRows int64
+	for i := 0; i < 15; i++ {
+		_ = sc.DB.QueryRow(ctx, skipQ, vk.ID).Scan(&disabledRows, &totalRows)
+		if totalRows >= 2 {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if disabledRows > 0 {
+		t.Fatalf("S-060 precondition: the gateway response cache is DISABLED on this deployment — "+
+			"%d of %d traffic_event rows for this VK carry gateway_cache_skip_reason='disabled'. A "+
+			"cache hit is impossible, so the id comparison above cannot mean anything. Enable the "+
+			"response cache before this scenario can assert a hit", disabledRows, totalRows)
 	}
 	if !strings.HasPrefix(id1, "chatcmpl-") {
 		t.Logf("note: chat completion id %q has unexpected prefix (cache hit still inferred from id equality)", id1)
 	}
-	t.Logf("S-060 OK: req1.id=%s req2.id=%s identical=true lookups_delta=%.0f writes_delta=%.0f",
-		id1, id2, lookupsDelta, writesDelta)
+	t.Logf("S-060 OK: req1.id=%s req2.id=%s identical=true lookups_delta=%.0f rows=%d cache_enabled=true",
+		id1, id2, lookupsDelta, totalRows)
 }

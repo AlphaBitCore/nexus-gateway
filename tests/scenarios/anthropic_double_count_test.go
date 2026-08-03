@@ -109,12 +109,22 @@ func TestS079_AnthropicDoubleCountFix(t *testing.T) {
 	})
 
 	// Confirm the Anthropic test model is reachable from this env BEFORE
-	// burning an upstream call — saves a 30-s upstream timeout on
-	// envs without Anthropic credentials wired. The dev/local catalogue
-	// seeds models with the provider-versioned code suffix (e.g.
-	// "claude-haiku-4-5-20251001"); the bare "claude-haiku-4-5" is the
-	// alias the smoke shell test uses, but Model.code resolution is
-	// exact-match so we look up the seeded code directly.
+	// burning an upstream call — saves a 30-s upstream timeout on envs without
+	// Anthropic credentials wired.
+	//
+	// The catalogue is the OPPOSITE way round from what this comment used to
+	// claim ("the dev/local catalogue seeds models with the provider-versioned
+	// code suffix"): `Model.code` is the bare `claude-haiku-4-5`, and the dated
+	// `claude-haiku-4-5-20251001` lives in `Model.aliases`. So the exact-match
+	// lookup on the dated string could never have found a row, and the
+	// precondition's own remedy ("re-run prisma db seed") could not have fixed
+	// it — reseeding produces exactly the shape that was already there.
+	//
+	// The REQUEST deliberately keeps sending the dated alias: alias resolution
+	// on the way to the provider is real coverage, and losing it would be a
+	// regression in what this scenario watches. Only the lookup is corrected,
+	// and it matches either form so a future catalogue that promotes the dated
+	// string to `code` keeps working.
 	const modelCode = "claude-haiku-4-5-20251001"
 	var (
 		inputPricePerM     float64
@@ -128,22 +138,22 @@ func TestS079_AnthropicDoubleCountFix(t *testing.T) {
 			       "cachedInputReadPricePerMillion"::float8,
 			       enabled
 			FROM "Model"
-			WHERE code = $1
+			WHERE code = $1 OR $1 = ANY(aliases)
 			LIMIT 1
 		`, modelCode).Scan(&inputPricePerM, &readPriceRaw, &modelEnabled)
 		if errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("S-079 precondition: Model.code=%q must exist in local catalogue; not seeded — "+
-				"hardened scenario requires Anthropic claude-haiku-4-5 seeded in Model table "+
-				"(re-run `cd tools/db-migrate && npx prisma db seed` against the local DB)", modelCode)
+			t.Fatalf("S-079 precondition: no Model row whose code or aliases is %q — "+
+				"the scenario needs Anthropic claude-haiku-4-5 in the local catalogue "+
+				"(re-run `cd tools/db-migrate && npm run seed` against the local DB)", modelCode)
 		}
 		if err != nil {
 			t.Fatalf("Model lookup for %q: %v", modelCode, err)
 		}
 		if !modelEnabled {
-			t.Fatalf("S-079 precondition: Model.code=%q must be enabled; got enabled=false — "+
-				"hardened scenario requires the model row enabled "+
-				"(UPDATE \"Model\" SET enabled=true WHERE code='%s')",
-				modelCode, modelCode)
+			t.Fatalf("S-079 precondition: the Model row matching %q must be enabled; got enabled=false — "+
+				"the scenario needs the model row enabled "+
+				"(UPDATE \"Model\" SET enabled=true WHERE code='%s' OR '%s' = ANY(aliases))",
+				modelCode, modelCode, modelCode)
 		}
 		cacheReadPricePerM = readPriceRaw
 	}
@@ -261,11 +271,22 @@ func TestS079_AnthropicDoubleCountFix(t *testing.T) {
 		// path the fix lives in. Hardened scenario treats this as a real
 		// regression: the gateway response cache for /v1/messages must
 		// serve req2 from the leader's entry.
+		// The remedy names the REAL knob. It used to say "check
+		// ResponseCacheConfig", a table that does not exist in the schema —
+		// a precondition message pointing at a nonexistent setting costs the
+		// reader exactly as much as no message at all. The L1 exact-match tier
+		// is `extract_cache_config.enabled`, admin-facing at
+		// PUT /api/admin/extract-cache/config, and it ships DEFAULT OFF
+		// (caching is opt-in so a freshly-seeded gateway is a lean passthrough),
+		// so a clean environment fails here until it is turned on.
 		t.Fatalf("S-079 precondition: gateway cache must HIT on the second /v1/messages call; "+
-			"got distinct ids (id1=%s id2=%s) — cache did not serve req2. "+
-			"Hardened scenario requires the gateway response cache enabled for /v1/messages "+
-			"AND Anthropic prompt cache wired in this env (check ResponseCacheConfig + Redis up + "+
-			"per-VK cache routing rule does not opt out).",
+			"got distinct ids (id1=%s id2=%s) — cache did not serve req2. Requires the L1 "+
+			"exact-match tier ON (extract_cache_config.enabled — DEFAULT OFF; enable via "+
+			"PUT /api/admin/extract-cache/config {\"enabled\":true,\"ttlSeconds\":3600,"+
+			"\"applyFreshnessRules\":true}), Redis up, and no per-VK cache routing opt-out. "+
+			"Verify the GATEWAY applied it, not just the DB row: "+
+			"nexus_cache_lookups_total{result=\"miss\"} must advance on a fresh request "+
+			"(result=\"disabled\" means no tier is active).",
 			id1, id2)
 	}
 

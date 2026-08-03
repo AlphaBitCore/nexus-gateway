@@ -130,16 +130,17 @@ export function ReasonCodeChip({ code }: { code: string }) {
     'REDACT_STORAGE_ONLY_BY_POLICY',
     'STORAGE_DROPPED_BY_POLICY',
     'AIGUARD_SUGGESTED_VS_POLICY',
+    'GENERATIVE_PROMPT_BLOCKED',
   ]);
   const tooltip = known.has(code)
     ? (t(`pages:traffic.detail.reasonCodes.${code}`, '') as string)
     : '';
-  const isE46 = known.has(code);
+  const isKnown = known.has(code);
   return (
     <span
       className={`${css.mono} ${css.stageReasonCode}`}
       title={tooltip || undefined}
-      style={isE46 ? {
+      style={isKnown ? {
         background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)',
         border: '1px solid color-mix(in srgb, var(--color-warning) 30%, transparent)',
         padding: 'var(--g-space-0-5) var(--g-space-1-5)',

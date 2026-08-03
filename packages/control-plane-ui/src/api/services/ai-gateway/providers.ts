@@ -26,7 +26,7 @@ export interface ProviderConnectivityResult {
 /** A single model entry returned by the discover-models endpoint. */
 export interface DiscoveredModel {
   id: string;
-  suggestedType: 'chat' | 'embedding' | 'image' | 'audio';
+  suggestedType: 'chat' | 'embedding' | 'image' | 'audio' | 'tts' | 'stt' | 'rerank' | 'video' | 'realtime';
 }
 
 /** Response shape for POST /admin/providers/discover-models. */
@@ -78,6 +78,10 @@ export interface CreateProviderInput {
     outputPricePerMillion?: number;
     cachedInputReadPricePerMillion?: number;
     cachedInputWritePricePerMillion?: number;
+    /** Audio-token rates for realtime models (USD per 1M tokens). */
+    audioInputPricePerMillion?: number;
+    audioOutputPricePerMillion?: number;
+    cachedAudioInputReadPricePerMillion?: number;
     maxContextTokens?: number;
     maxOutputTokens?: number;
     aliases?: string[];
@@ -133,10 +137,13 @@ export const providerApi = {
   getAnalytics: (id: string) =>
     api.get<ProviderAnalytics>(`/api/admin/analytics/provider/${id}`),
 
-  // Built-in provider template catalog is owned by the UI: static JSON under
+  // Built-in provider template catalog is served as static JSON under
   // `public/provider-templates/`. The wizard fetches `index.json` for the list
   // and `<name>.json` for the selected template's full detail (meta + models).
-  // No backend round-trip — adding a template is "drop a JSON file".
+  // No backend round-trip. These files are GENERATED from the single source of
+  // truth `tools/db-migrate/model-catalog.json` (run `npm run gen:model-catalog`
+  // after editing it; `npm run check:model-catalog` guards drift) — do not edit
+  // them by hand; add or change a provider/model in the catalog instead.
   getTemplates: async (): Promise<{ data: ApiProviderTemplate[] }> => {
     const res = await fetch(withPrefix('/provider-templates/index.json'), { cache: 'no-cache' });
     if (!res.ok) throw new Error(`load provider templates index: ${res.status}`);

@@ -16,9 +16,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	intg "github.com/AlphaBitCore/nexus-gateway/tests/integration-go/helpers"
 )
 
 // TestS083_ComplianceProxyConnectPipeline — daemon-bound CONNECT scenario.
@@ -39,14 +42,36 @@ func TestS083_ComplianceProxyConnectPipeline(t *testing.T) {
 	ctx := context.Background()
 
 	proxyAddr := getenvDefault("NEXUS_CP_PROXY_ADDR", "localhost:3128")
-	caPath := getenvDefault("NEXUS_CP_PROXY_CA", "packages/compliance-proxy/dev-certs/ca.crt")
-	provKey := os.Getenv("NEXUS_PROXY_TEST_KEY")
-	baseURL := os.Getenv("NEXUS_PROXY_TEST_BASEURL")
-	model := getenvDefault("NEXUS_PROXY_TEST_MODEL", "gpt-4o-mini")
+	// The default is resolved from the REPO ROOT, not the process CWD. As a
+	// relative path it only worked when `go test` happened to run from the repo
+	// root; from tests/scenarios/ — where this suite actually runs — it never
+	// resolved, so the scenario skipped on "CA not readable" even with the CA
+	// sitting in the tree.
+	caPath := os.Getenv("NEXUS_CP_PROXY_CA")
+	if caPath == "" {
+		root, rootErr := intg.RepoRoot()
+		if rootErr != nil {
+			t.Skipf("cannot locate the repo root to resolve the proxy dev CA: %v", rootErr)
+		}
+		caPath = filepath.Join(root, "packages", "compliance-proxy", "dev-certs", "ca.crt")
+	}
+	// Resolved through Env, not os.Getenv. LoadEnv reads tests/.env.<target> into
+	// a private map and never exports it to the process environment, so the
+	// os.Getenv form this used could only ever see a var an operator had exported
+	// by hand — and the doc comment duly said "locally an operator exports them".
+	// Nobody does, so this scenario skipped on every local run since it was
+	// written while tests/scripts/bump-regression.py, reading OPENAI_API_KEY from
+	// the same file through the SHELL loader (which does export), exercised the
+	// same proxy happily. Env.ProxyBumpKey now resolves NEXUS_PROXY_TEST_KEY first
+	// and falls back to that same OPENAI_API_KEY.
+	provKey := sc.Env.ProxyBumpKey
+	baseURL := sc.Env.ProxyBumpBaseURL
+	model := sc.Env.ProxyBumpModel
 
-	if provKey == "" || baseURL == "" {
-		t.Skip("compliance-proxy CONNECT pipeline needs a plaintext provider key + base URL: " +
-			"set NEXUS_PROXY_TEST_KEY and NEXUS_PROXY_TEST_BASEURL (CI secrets) to exercise the bump")
+	if provKey == "" {
+		t.Skip("compliance-proxy CONNECT pipeline needs a plaintext provider key: set " +
+			"OPENAI_API_KEY in tests/.env.local (the same variable bump-regression.py uses), " +
+			"or NEXUS_PROXY_TEST_KEY in the environment to override")
 	}
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
@@ -89,8 +114,30 @@ func TestS083_ComplianceProxyConnectPipeline(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		// A non-200 from the upstream provider is amber (their problem), not ours.
-		t.Skipf("upstream returned HTTP %d through the proxy — infra-amber (provider/credential), not a proxy-pipeline failure", resp.StatusCode)
+		// Not every non-200 is "their problem". A 404 means we asked for a path
+		// that does not exist — a fixture or base-URL error on OUR side — and
+		// skipping on it hides exactly that mistake: a base URL missing its /v1
+		// produced a 404 here and the scenario filed it as a provider/credential
+		// issue. Same for 400 (a malformed body we built).
+		//
+		// Genuinely amber: 401/403 (credential), 429 (their rate limit), 5xx
+		// (their outage). Those say nothing about the bump pipeline, which by this
+		// point has already proven itself — the CONNECT completed, the bumped TLS
+		// handshake verified against the dev CA, and the request reached the
+		// upstream to be answered at all.
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized,
+			resp.StatusCode == http.StatusForbidden,
+			resp.StatusCode == http.StatusTooManyRequests,
+			resp.StatusCode >= 500:
+			// Name the credential's PROVENANCE. A 401 here says nothing about the
+			// bump; what it usually says is that the key came from somewhere other
+			// than the file you just edited.
+			t.Skipf("upstream returned HTTP %d through the proxy — infra-amber (provider credential / rate limit / outage), not a proxy-pipeline failure. Credential source: %s",
+				resp.StatusCode, sc.Env.ProxyBumpKeySource)
+		default:
+			t.Fatalf("upstream returned HTTP %d for %s through the proxy — a 4xx that is not 401/403/429 means OUR request was wrong (path, base URL or body), not the provider's", resp.StatusCode, endpoint)
+		}
 	}
 
 	// Assert the bumped row landed with source='compliance-proxy'.

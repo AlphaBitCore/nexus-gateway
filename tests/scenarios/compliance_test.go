@@ -89,31 +89,73 @@ func TestS020_KeywordFilterBlocksHard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AIGwPostJSON: %v", err)
 	}
-	if status == 200 {
-		t.Fatalf("expected non-2xx (hook blocked), got 200 (body=%q)", truncate(respBody, 200))
-	}
+	// The HTTP status is asserted against the DECISION, not against a fixed
+	// expectation, because the decision is the thing under test and severity does
+	// not determine it. rulepack_engine.go states the contract: severity gates
+	// ENFORCEMENT only — "hard" and "soft" enforce, and the ACTION applied is the
+	// bound hook's onMatch.Action, not the severity tier. The seeded
+	// keyword-blocker ships onMatch.action=redact, so a severity:hard match
+	// correctly enforces a REDACT and the request continues with 200.
+	//
+	// This scenario used to demand non-2xx, which contradicted its OWN audit
+	// predicate two screens down (that already accepted a redact outcome) and
+	// could not pass against the shipped seed. Pinning the pairing instead makes
+	// it follow the configuration rather than one branch of it: change the hook to
+	// a blocking action and the test still holds.
+	assertDecisionMatchesStatus(t, "S-020", sc, vk.ID, status, respBody)
+}
 
-	// Strongest assertion: traffic_event row records REJECT_HARD with
-	// our VK's identity — proves the hook pipeline actually evaluated
-	// AND made a terminal decision (not just that the request happened
-	// to fail upstream).
-	// RulePackEngine produces REJECT_HARD (for severity:hard rules) or
-	// REDACT (for redact-action). Accept any terminal non-APPROVE
-	// decision.
+// terminalHookDecisions is the set of non-APPROVE decisions the rule-pack path can
+// record, spelled with the CANONICAL names from shared/policy/decision.
+//
+// The two scenarios below previously used 'REDACT' and 'REJECT_SOFT'. Neither
+// exists: the enum is APPROVE / REJECT_HARD / BLOCK_SOFT / MODIFY / ABSTAIN, and
+// the value these hooks actually produce is MODIFY. So the predicate named two
+// values that can never appear and omitted the only one that does — the poll could
+// only ever time out.
+const terminalHookDecisions = `'REJECT_HARD','BLOCK_SOFT','MODIFY'`
+
+// assertDecisionMatchesStatus pins the contract both scenarios exist to prove: the
+// rule pack fired and reached a terminal decision, AND the HTTP status the caller
+// saw is the one that decision implies.
+//
+//	REJECT_HARD → non-2xx (the request must not reach the provider)
+//	MODIFY / BLOCK_SOFT → 200 (enforced by rewriting, then forwarded)
+//
+// Asserting the pairing rather than a literal status is what makes this survive a
+// seed that changes onMatch.Action, instead of silently inverting into a test that
+// passes for the wrong reason.
+func assertDecisionMatchesStatus(t *testing.T, id string, sc *scenarioCtx, vkID string, status int, respBody []byte) {
+	t.Helper()
 	predicate := fmt.Sprintf(`source = 'ai-gateway'
 		 AND identity->'vk'->>'id' = '%s'
-		 AND request_hook_decision IN ('REJECT_HARD','REJECT_SOFT','REDACT')`, vk.ID)
+		 AND request_hook_decision IN (%s)`, vkID, terminalHookDecisions)
 	row, err := intg.WaitForRecentAuditEvent(
 		context.Background(), sc.DB, predicate, nil, 45*time.Second,
 	)
 	if err != nil {
-		t.Fatalf("traffic_event poll: %v", err)
+		t.Fatalf("%s traffic_event poll: %v", id, err)
 	}
 	if row == nil {
-		t.Fatalf("no terminal-decision row for VK %s — prompt-injection rule pack did not fire", vk.ID)
+		t.Fatalf("%s: no terminal-decision row for VK %s — the rule pack did not fire at all "+
+			"(status=%d body=%q)", id, vkID, status, truncate(respBody, 200))
 	}
-	t.Logf("S-020 OK: rule-pack path fired (decision=%s, status=%d, audit=%s)",
-		row.RequestHookDecision, status, row.ID)
+	switch row.RequestHookDecision {
+	case "REJECT_HARD":
+		if status == 200 {
+			t.Fatalf("%s: decision=REJECT_HARD but the caller got 200 — a hard reject that still "+
+				"reaches the provider is the failure this scenario exists to catch (audit=%s)",
+				id, row.ID)
+		}
+	case "MODIFY", "BLOCK_SOFT":
+		if status != 200 {
+			t.Fatalf("%s: decision=%s (enforce-by-rewrite) but the caller got %d — the request was "+
+				"rewritten AND refused, which is neither outcome the contract defines (audit=%s)",
+				id, row.RequestHookDecision, status, row.ID)
+		}
+	}
+	t.Logf("%s OK: rule pack fired, decision=%s consistent with status=%d (audit=%s)",
+		id, row.RequestHookDecision, status, row.ID)
 }
 
 // TestS021_PIIScannerBlocksSSN — PM-grade e2e.
@@ -123,8 +165,12 @@ func TestS020_KeywordFilterBlocksHard(t *testing.T) {
 // sentinel 123-45-6789 and block. Cross-service: AI Gw hook eval →
 // MQ → DB. Cache-bust nonce keeps the request fresh (cache hits
 // would skip the hook pipeline, as discovered in S-020 debug).
-// Assertion: status non-2xx + traffic_event.request_hook_decision
-// in {REJECT_HARD, REJECT_SOFT, REDACT} for our VK.
+//
+// Assertion: the rule pack reaches a TERMINAL decision for our VK and the HTTP
+// status is the one that decision implies. Not "status non-2xx": severity gates
+// enforcement, the bound hook's onMatch.Action picks block-vs-redact, and the
+// shipped pii-scanner redacts. The old wording also named REDACT and REJECT_SOFT,
+// neither of which is in the decision enum.
 func TestS021_PIIScannerBlocksSSN(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -162,29 +208,11 @@ func TestS021_PIIScannerBlocksSSN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AIGwPostJSON: %v", err)
 	}
-	if status == 200 {
-		t.Fatalf("expected non-2xx (PII blocked), got 200 (body=%q)", truncate(respBody, 200))
-	}
-	low := strings.ToLower(string(respBody))
-	if !strings.Contains(low, "pii") && !strings.Contains(low, "ssn") &&
-		!strings.Contains(low, "polic") && !strings.Contains(low, "personal") {
-		t.Logf("note: rejection envelope did not mention PII/SSN keywords (body=%q)", truncate(respBody, 200))
-	}
-
-	predicate := fmt.Sprintf(`source = 'ai-gateway'
-		 AND identity->'vk'->>'id' = '%s'
-		 AND request_hook_decision IN ('REJECT_HARD','REDACT','REJECT_SOFT')`, vk.ID)
-	row, err := intg.WaitForRecentAuditEvent(
-		context.Background(), sc.DB, predicate, nil, 45*time.Second,
-	)
-	if err != nil {
-		t.Fatalf("traffic_event poll: %v", err)
-	}
-	if row == nil {
-		t.Fatalf("no row with a terminal hook decision for VK %s — PII hook did not record block/redact", vk.ID)
-	}
-	t.Logf("S-021 OK: pii-scanner decision=%s (status=%d, audit=%s)",
-		row.RequestHookDecision, status, row.ID)
+	// Same contract as S-020: the seeded pii-scanner ships onMatch.action=redact,
+	// so a match enforces a REDACT and the caller sees 200. Demanding non-2xx here
+	// asserted a configuration this deployment does not have, and the SSN sentinel
+	// being detected is what the scenario is actually for.
+	assertDecisionMatchesStatus(t, "S-021", sc, vk.ID, status, respBody)
 }
 
 // TestS022_HooksApproveCleanPrompt — PM-grade e2e.

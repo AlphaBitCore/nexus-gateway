@@ -123,6 +123,9 @@ export const newModelSchema = z.object({
   modelOutputPrice: z.string().optional().default(''),
   modelCachedInputReadPrice: z.string().optional().default(''),
   modelCachedInputWritePrice: z.string().optional().default(''),
+  modelAudioInputPrice: z.string().optional().default(''),
+  modelAudioOutputPrice: z.string().optional().default(''),
+  modelCachedAudioReadPrice: z.string().optional().default(''),
   modelMaxContext: z.string().optional().default(''),
   modelMaxOutput: z.string().optional().default(''),
   modelSelectedFeatures: z.array(z.string()),
@@ -139,6 +142,9 @@ export const editModelSchema = z.object({
   editModelOutputPrice: z.string().optional().default(''),
   editModelCachedInputReadPrice: z.string().optional().default(''),
   editModelCachedInputWritePrice: z.string().optional().default(''),
+  editModelAudioInputPrice: z.string().optional().default(''),
+  editModelAudioOutputPrice: z.string().optional().default(''),
+  editModelCachedAudioReadPrice: z.string().optional().default(''),
   editModelMaxContext: z.string().optional().default(''),
   editModelMaxOutput: z.string().optional().default(''),
   editModelFeatures: z.array(z.string()),
@@ -185,6 +191,7 @@ export function useProviderDetail() {
       modelName: '', modelProviderModelId: '', modelCode: '', modelType: 'chat',
       modelDescription: '', modelInputPrice: '', modelOutputPrice: '',
       modelCachedInputReadPrice: '', modelCachedInputWritePrice: '',
+      modelAudioInputPrice: '', modelAudioOutputPrice: '', modelCachedAudioReadPrice: '',
       modelMaxContext: '', modelMaxOutput: '', modelSelectedFeatures: [], modelAliases: '',
     },
   });
@@ -196,6 +203,7 @@ export function useProviderDetail() {
       editModelName: '', editModelDescription: '',
       editModelInputPrice: '', editModelOutputPrice: '',
       editModelCachedInputReadPrice: '', editModelCachedInputWritePrice: '',
+      editModelAudioInputPrice: '', editModelAudioOutputPrice: '', editModelCachedAudioReadPrice: '',
       editModelMaxContext: '', editModelMaxOutput: '',
       editModelFeatures: [], editModelType: 'chat',
       editModelStatus: 'active', editModelAliases: '', editModelEnabled: true,
@@ -225,6 +233,18 @@ export function useProviderDetail() {
   const canDelete = usePermission('provider:delete');
   const canCreateCredential = usePermission('credential:create');
   const canCreateModel = usePermission('model:create');
+  // Model rows carry their own IAM resource: the write endpoints behind the
+  // model affordances are PUT/DELETE /models/:id, guarded on model.update /
+  // model.delete — not on the provider action that guards this page. Gating a
+  // model write on the provider permission offers the affordance to a
+  // principal the backend then rejects, mid-write.
+  const canUpdateModel = usePermission('model:update');
+  const canDeleteModel = usePermission('model:delete');
+  // Credential rows carry their own IAM resource for the same reason, and the
+  // dedicated credential detail page already gates on it — only this page's
+  // embedded tab did not.
+  const canUpdateCredential = usePermission('credential:update');
+  const canDeleteCredential = usePermission('credential:delete');
 
   // ── Data fetching ──
   const { data: provider, loading, error, refetch } = useApi<Provider>(
@@ -380,10 +400,13 @@ export function useProviderDetail() {
       editModelOutputPrice: m.outputPricePerMillion != null ? String(m.outputPricePerMillion) : '',
       editModelCachedInputReadPrice: m.cachedInputReadPricePerMillion != null ? String(m.cachedInputReadPricePerMillion) : '',
       editModelCachedInputWritePrice: m.cachedInputWritePricePerMillion != null ? String(m.cachedInputWritePricePerMillion) : '',
+      editModelAudioInputPrice: m.audioInputPricePerMillion != null ? String(m.audioInputPricePerMillion) : '',
+      editModelAudioOutputPrice: m.audioOutputPricePerMillion != null ? String(m.audioOutputPricePerMillion) : '',
+      editModelCachedAudioReadPrice: m.cachedAudioInputReadPricePerMillion != null ? String(m.cachedAudioInputReadPricePerMillion) : '',
       editModelMaxContext: m.maxContextTokens != null ? String(m.maxContextTokens) : '',
       editModelMaxOutput: m.maxOutputTokens != null ? String(m.maxOutputTokens) : '',
       editModelFeatures: Array.isArray(m.features) ? [...m.features] : [],
-      editModelType: ['chat', 'embedding', 'image', 'audio'].includes(m.type) ? m.type : 'chat',
+      editModelType: ['chat', 'embedding', 'image', 'audio', 'tts', 'stt', 'rerank', 'video', 'realtime'].includes(m.type) ? m.type : 'chat',
       editModelStatus: m.status ?? 'active',
       editModelAliases: Array.isArray(m.aliases) ? m.aliases.join(', ') : '',
       editModelEnabled: m.enabled,
@@ -409,6 +432,9 @@ export function useProviderDetail() {
         outputPricePerMillion: v.editModelOutputPrice ? Number(v.editModelOutputPrice) : undefined,
         cachedInputReadPricePerMillion: v.editModelCachedInputReadPrice ? Number(v.editModelCachedInputReadPrice) : undefined,
         cachedInputWritePricePerMillion: v.editModelCachedInputWritePrice ? Number(v.editModelCachedInputWritePrice) : undefined,
+        audioInputPricePerMillion: v.editModelAudioInputPrice ? Number(v.editModelAudioInputPrice) : undefined,
+        audioOutputPricePerMillion: v.editModelAudioOutputPrice ? Number(v.editModelAudioOutputPrice) : undefined,
+        cachedAudioInputReadPricePerMillion: v.editModelCachedAudioReadPrice ? Number(v.editModelCachedAudioReadPrice) : undefined,
         maxContextTokens: v.editModelMaxContext ? Number(v.editModelMaxContext) : undefined,
         maxOutputTokens: v.editModelMaxOutput ? Number(v.editModelMaxOutput) : undefined,
         features: v.editModelFeatures,
@@ -463,6 +489,8 @@ export function useProviderDetail() {
 
     // Permissions
     canUpdate, canDelete, canCreateCredential, canCreateModel,
+    canUpdateModel, canDeleteModel,
+    canUpdateCredential, canDeleteCredential,
 
     // Provider toggle / delete
     toggleEnabled, toggleLoading,
@@ -488,6 +516,7 @@ export function useProviderDetail() {
 
     // Models
     models,
+    refetchModels,
     showModelForm, setShowModelForm,
     newModelForm,
     createModel, modelCreating,

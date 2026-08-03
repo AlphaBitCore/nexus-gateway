@@ -32,7 +32,8 @@ import type {
   DiagGroup,
   DiagLevel,
 } from '@/api/services/infrastructure/diag/diagevents';
-import { PageHeader, Stack } from '@/components/ui';
+import { PageHeader, Stack, Tabs, TabsList, TabsTrigger } from '@/components/ui';
+import { usePermission } from '@/hooks/usePermission';
 import { rangeBounds, computeHero } from './recentErrorsHelpers';
 import { HeroStats } from './HeroStats';
 import { FilterPanel } from './FilterPanel';
@@ -40,6 +41,7 @@ import { IssueList } from './IssueList';
 import { DetailDrawer } from './DetailDrawer';
 import { EventDetail } from './EventDetail';
 import { SilencesPopup } from './SilencesPopup';
+import { TrafficErrorsTab } from './TrafficErrorsTab';
 
 export default function InfraRecentErrorsPage() {
   const { t } = useTranslation('pages');
@@ -251,6 +253,14 @@ export default function InfraRecentErrorsPage() {
 
   const hero = useMemo(() => computeHero(rawGroups), [rawGroups]);
 
+  // The traffic-error data source reads traffic_event via traffic-log:read
+  // while this page's route admits observability.read holders — hide the
+  // tab strip (rather than 403 on fetch) when the viewer lacks the traffic
+  // action; they just see the system-fault view as before.
+  const canReadTrafficLog = usePermission('traffic-log:read');
+  const [dataSource, setDataSource] = useState<'system' | 'traffic'>('system');
+  const showTraffic = canReadTrafficLog && dataSource === 'traffic';
+
   // ── Render ──
   return (
     <Stack gap="lg">
@@ -259,34 +269,51 @@ export default function InfraRecentErrorsPage() {
         subtitle={t('infrastructure.recentErrors.description')}
       />
 
-      <FilterPanel
-        timeRange={timeRange}
-        setTimeRange={setTimeRange}
-        nodeType={nodeType}
-        setNodeType={setNodeType}
-        eventType={eventType}
-        setEventType={setEventType}
-        onRefresh={() => { groups.refetch(); silences.refetch(); }}
-      />
+      {canReadTrafficLog && (
+        <Tabs value={dataSource} onValueChange={(v) => setDataSource(v as 'system' | 'traffic')}>
+          <TabsList>
+            <TabsTrigger value="system">{t('infrastructure.recentErrors.tabSystemFaults')}</TabsTrigger>
+            <TabsTrigger value="traffic" data-testid="traffic-errors-tab-trigger">
+              {t('infrastructure.recentErrors.tabTrafficErrors')}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
 
-      <HeroStats hero={hero} timeRange={timeRange} />
+      {showTraffic ? (
+        <TrafficErrorsTab />
+      ) : (
+        <>
+          <FilterPanel
+            timeRange={timeRange}
+            setTimeRange={setTimeRange}
+            nodeType={nodeType}
+            setNodeType={setNodeType}
+            eventType={eventType}
+            setEventType={setEventType}
+            onRefresh={() => { groups.refetch(); silences.refetch(); }}
+          />
 
-      <IssueList
-        filteredGroups={filteredGroups}
-        rawGroupsLength={rawGroups.length}
-        silencesData={silences.data}
-        search={search}
-        setSearch={setSearch}
-        hideSilenced={hideSilenced}
-        setHideSilenced={setHideSilenced}
-        groupsError={groups.error}
-        groupsLoading={groups.loading}
-        groupsRefetch={groups.refetch}
-        setShowSilencesPopup={setShowSilencesPopup}
-        setDetailGroup={setDetailGroup}
-        silence={silence}
-        unsilence={unsilence}
-      />
+          <HeroStats hero={hero} timeRange={timeRange} />
+
+          <IssueList
+            filteredGroups={filteredGroups}
+            rawGroupsLength={rawGroups.length}
+            silencesData={silences.data}
+            search={search}
+            setSearch={setSearch}
+            hideSilenced={hideSilenced}
+            setHideSilenced={setHideSilenced}
+            groupsError={groups.error}
+            groupsLoading={groups.loading}
+            groupsRefetch={groups.refetch}
+            setShowSilencesPopup={setShowSilencesPopup}
+            setDetailGroup={setDetailGroup}
+            silence={silence}
+            unsilence={unsilence}
+          />
+        </>
+      )}
 
       {detailGroup && (
         <DetailDrawer

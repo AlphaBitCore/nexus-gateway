@@ -21,6 +21,13 @@ export interface WizardModel {
   cachedInputReadPrice: string;
   /** Optional per-million cache WRITE price. Empty string = unset (NULL on submit). */
   cachedInputWritePrice: string;
+  // Audio-token rates (realtime models). Carried invisibly template -> create
+  // payload; the wizard renders no inputs for them — realtime models are
+  // priced in the model drawer (the wizard's generic price fields cannot
+  // express the six-component realtime schedule).
+  audioInputPrice?: string;
+  audioOutputPrice?: string;
+  cachedAudioInputReadPrice?: string;
   maxContextTokens: string;
   maxOutputTokens: string;
   features: string[];

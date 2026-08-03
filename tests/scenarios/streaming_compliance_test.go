@@ -39,17 +39,17 @@ import (
 // no metrics URL — gracefully skipped by helpers).
 //
 // Assertions:
-//   1. GET returns the documented envelope shape with valid enum
-//      values for default_mode and fail_behavior.
-//   2. PUT with default_mode="not-a-mode" returns 400.
-//   3. PUT with valid fields persists, returns the merged config
-//      verbatim.
-//   4. compliance-proxy + ai-gateway streaming_compliance applies
-//      counter ticks within 30 s.
-//   5. AdminAuditLog records an `update` row with entityType
-//      matching streaming-compliance.
-//   6. Cleanup restores the original config so parallel sessions
-//      don't observe a flipped policy.
+//  1. GET returns the documented envelope shape with valid enum
+//     values for default_mode and fail_behavior.
+//  2. PUT with default_mode="not-a-mode" returns 400.
+//  3. PUT with valid fields persists, returns the merged config
+//     verbatim.
+//  4. compliance-proxy + ai-gateway streaming_compliance applies
+//     counter ticks within 30 s.
+//  5. AdminAuditLog records an `update` row with entityType
+//     matching streaming-compliance.
+//  6. Cleanup restores the original config so parallel sessions
+//     don't observe a flipped policy.
 func TestS131_StreamingComplianceConfig(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -103,9 +103,9 @@ func TestS131_StreamingComplianceConfig(t *testing.T) {
 	// change so the hot-reload signal fires.
 	preApplyProxy, _ := helpers.BaselineConfigApply(ctx, sc.Env, "streaming_compliance")
 	target := map[string]any{
-		"default_mode":   "chunked_async",
-		"fail_behavior":  "fail_close",
-		"chunk_bytes":    16384,
+		"default_mode":    "chunked_async",
+		"fail_behavior":   "fail_close",
+		"chunk_bytes":     16384,
 		"hook_timeout_ms": 3000,
 	}
 	putBody, _ := json.Marshal(target)
@@ -138,12 +138,25 @@ func TestS131_StreamingComplianceConfig(t *testing.T) {
 	}
 
 	// (5) AdminAuditLog row for the PUT.
-	deadline := time.Now().Add(10 * time.Second)
+	//
+	// The admin audit write is ASYNCHRONOUS: the row's "timestamp" is the event
+	// time, but it becomes visible later. Measured on this host: 13 s from the PUT
+	// returning 200 to the row being queryable. The poll was 10 s, so it missed
+	// deterministically — the row existed with a timestamp inside the window and
+	// simply had not landed yet, which reads exactly like "the handler never wrote
+	// one".
+	//
+	// The lookback is widened with it. A 30-second window that expires while the
+	// poll is still running turns a slow write into a permanent miss, and this
+	// scenario has already been bitten by that once: an earlier ConfigKeyServices
+	// entry made step (4) block for 30 s, which aged the row out before step (5)
+	// ever looked.
+	deadline := time.Now().Add(45 * time.Second)
 	var auditID string
 	for time.Now().Before(deadline) {
 		_ = sc.DB.QueryRow(ctx, `
 			SELECT id FROM "AdminAuditLog"
-			WHERE "timestamp" > NOW() - INTERVAL '30 seconds'
+			WHERE "timestamp" > NOW() - INTERVAL '180 seconds'
 			  AND action = 'update'
 			  AND ("entityType" ILIKE '%streaming%' OR "entityType" ILIKE '%settings%')
 			ORDER BY "timestamp" DESC LIMIT 1
@@ -154,7 +167,8 @@ func TestS131_StreamingComplianceConfig(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if auditID == "" {
-		t.Errorf("no AdminAuditLog 'update' row for streaming-compliance within 10 s")
+		t.Errorf("no AdminAuditLog 'update' row for streaming-compliance within 45 s — the admin " +
+			"audit write is async (measured ~13 s here), so this means it did not happen at all")
 	}
 
 	t.Logf("S-131 OK: mode=%v failBehavior=%v audit=%s",

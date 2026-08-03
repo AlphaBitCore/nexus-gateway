@@ -172,7 +172,21 @@ export function InterceptionDomainForm({
       adapterConfig = undefined;
     } else {
       try {
-        adapterConfig = JSON.parse(trimmed) as Record<string, unknown>;
+        const parsed: unknown = JSON.parse(trimmed);
+        // Mirror the server's write-time shape guard: the traffic snapshot
+        // hard-parses this blob into an object, so a non-object value is
+        // rejected with 400 — pre-check here for a localized message.
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          addToast(
+            t(
+              'pages:interceptionDomains.validation.adapterConfigObject',
+              'adapterConfig must be a JSON object',
+            ),
+            'error',
+          );
+          return null;
+        }
+        adapterConfig = parsed as Record<string, unknown>;
       } catch {
         addToast(
           t(

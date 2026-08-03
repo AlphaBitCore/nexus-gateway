@@ -8,7 +8,7 @@
     {
       "code": "command-a-03-2025",
       "name": "Command A (2025-03)",
-      "description": "Cohere's current flagship. Excels at tool use, agentic tasks, and RAG — 128k context.",
+      "description": "Cohere's current flagship. Excels at tool use, agentic tasks, and RAG — 256k context.",
       "providerModelId": "command-a-03-2025",
       "type": "chat",
       "features": [
@@ -16,9 +16,10 @@
         "streaming",
         "tool_use"
       ],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 10,
       "maxContextTokens": 256000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 8000
     },
     {
       "code": "command-r7b-12-2024",
@@ -31,9 +32,10 @@
         "streaming",
         "tool_use"
       ],
+      "inputPricePerMillion": 0.0375,
+      "outputPricePerMillion": 0.15,
       "maxContextTokens": 128000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 4096
     },
     {
       "code": "command-r-plus-08-2024",
@@ -46,12 +48,10 @@
         "streaming",
         "tool_use"
       ],
-      "maxContextTokens": 128000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
       "inputPricePerMillion": 2.5,
-      "outputPricePerMillion": 10.0,
-      "status": "deprecated"
+      "outputPricePerMillion": 10,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 4096
     },
     {
       "code": "command-r-08-2024",
@@ -64,9 +64,21 @@
         "streaming",
         "tool_use"
       ],
+      "inputPricePerMillion": 0.15,
+      "outputPricePerMillion": 0.6,
       "maxContextTokens": 128000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 4096
+    },
+    {
+      "code": "embed-v4.0",
+      "name": "Embed v4",
+      "description": "Cohere Embed v4 — 128k context, multimodal retrieval.",
+      "providerModelId": "embed-v4.0",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.12,
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 128000
     }
   ]
 }

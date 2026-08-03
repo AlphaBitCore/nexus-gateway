@@ -10,6 +10,42 @@ import css from '../analytics/TrafficAnalyticsPage.module.css';
 
 /* -- Helpers -- */
 
+// traffic_event.endpoint_type is an ENDPOINT KIND (typology.EndpointKind), not a
+// modality. The two are not the same set, and conflating them put `responses` in
+// the Modality column as if a /v1/responses call were a different medium from a
+// /v1/chat/completions call — it is the same text conversation through a
+// different request shape, which endpointkind.go says outright ("a chat-FAMILY
+// endpoint ... carries its own endpoint_type label so analytics and the route
+// simulator can distinguish Responses traffic"). Analytics needs that
+// distinction; an operator scanning for image/audio/video traffic does not.
+//
+// So the mapping is explicit and lives here rather than in the locale files:
+// translations should carry wording, never product semantics. Every kind maps to
+// exactly one modality, and anything unrecognised maps to nothing so an unknown
+// value can never reach an operator as a raw string.
+const MODALITY_BY_ENDPOINT_KIND: Record<string, string> = {
+  // The four public text ingresses all land as one of these two kinds, and both
+  // are the same modality to a reader.
+  chat: 'chat',
+  responses: 'chat',
+  embeddings: 'embeddings',
+  rerank: 'rerank',
+  image_generation: 'image_generation',
+  tts: 'tts',
+  stt: 'stt',
+  video_generation: 'video_generation',
+  batch: 'batch',
+  job: 'job',
+  models: 'models',
+  guardrail: 'guardrail',
+  realtime: 'realtime',
+};
+
+export function modalityOfEndpointKind(kind?: string | null): string | undefined {
+  if (!kind) return undefined;
+  return MODALITY_BY_ENDPOINT_KIND[kind];
+}
+
 // Names only — when a row's name field is empty we render an em-dash rather
 // than falling back to a raw UUID/id. Operators triage by name; showing
 // truncated IDs added noise without helping identify the entity.
@@ -124,6 +160,23 @@ export function getColumnsForSource(source: TrafficSourceFilter, t: (key: string
     label: t('pages:traffic.colHook'),
     render: (r: TrafficEvent) => r.requestHookDecision ?? '-',
   };
+  // Modality. EVERY row states its own, chat included. Chat rows used to render
+  // a dash "to keep the column quiet for the common case", which is the wrong
+  // trade on an audit surface: a blank cell cannot be told apart from missing
+  // data, so a reader has to already know the convention to interpret it. A dash
+  // now means exactly one thing — this row carries no endpoint_type at all.
+  const modalityCol = {
+    key: 'endpointType',
+    label: t('pages:traffic.colModality'),
+    render: (r: TrafficEvent) => {
+      const modality = modalityOfEndpointKind(r.endpointType);
+      return modality ? (
+        <Badge variant="outline">{t(`pages:traffic.modality.${modality}`, modality)}</Badge>
+      ) : (
+        '-'
+      );
+    },
+  };
 
   if (source === 'vk') {
     return [
@@ -151,6 +204,7 @@ export function getColumnsForSource(source: TrafficSourceFilter, t: (key: string
           return p || m;
         },
       },
+      modalityCol,
       { key: 'user', label: t('pages:traffic.colUser'), render: (r: TrafficEvent) => { const u = idUser(r); return resolvedName(u.name, u.id); } },
       { key: 'orgName', label: t('pages:traffic.colOrganization'), render: (r: TrafficEvent) => resolvedName(r.orgName, r.orgId) },
       { key: 'project', label: t('pages:traffic.colProject'), render: (r: TrafficEvent) => resolvedName(r.identity?.project?.name, r.identity?.project?.id) },

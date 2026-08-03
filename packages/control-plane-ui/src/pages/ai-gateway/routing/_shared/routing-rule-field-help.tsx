@@ -21,6 +21,7 @@ export function useRoutingFieldHelp() {
     configurationConditional: t('pages:routing.help.configurationConditional'),
     configurationAbSplit: t('pages:routing.help.configurationAbSplit'),
     configurationSmart: t('pages:routing.help.configurationSmart'),
+    configurationLatency: t('pages:routing.help.configurationLatency'),
     configurationPolicy: t('pages:routing.help.configurationPolicy'),
     pipelineStage: t('pages:routing.help.pipelineStage'),
     matchConditions: t('pages:routing.help.matchConditions'),
@@ -55,6 +56,8 @@ export const ROUTING_RULE_FIELD_HELP = {
     'Evaluates branches with "when" expressions against the live request context, then runs the matching "then" strategy or the mandatory "default". Use the structured editor for a default route, ordered branches (field path, operator, value, then target), and optional raw JSON for expressions the form cannot represent yet ($and / $or, nested strategies). Match conditions on the rule still decide whether this rule is considered at all.',
   configurationAbSplit:
     'Weighted random choice among flat provider/model pairs — ideal for experiments comparing models or providers at a fixed traffic mix.',
+  configurationLatency:
+    'Routes to the measured-fastest provider among the listed provider/model pairs. Unlike load balancing (fixed weights), traffic goes to the fastest tier by recently observed p95 latency; slower healthy providers serve only as failover. Ties within ~100ms are spread across the fastest targets to avoid overloading one, and new or idle providers get a small bounded share of exploration traffic so their speed can be learned. Health always dominates: a failing provider is still tried last regardless of latency.',
   configurationSmart:
     'Uses an AI model (the router) to analyze the user\'s request and automatically select the best model. Benefits: better model fit and cost/latency tradeoffs for mixed traffic. Costs/risks: extra router LLM call per model:auto request (latency and token spend); if the router fails or times out, the gateway uses Default Model; responses may still be cacheable under the chosen target model like any other route once routing completes.',
   configurationPolicy:
@@ -74,6 +77,7 @@ export const strategyConfigHelpBody: Record<StrategyType, string> = {
   conditional: ROUTING_RULE_FIELD_HELP.configurationConditional,
   ab_split: ROUTING_RULE_FIELD_HELP.configurationAbSplit,
   smart: ROUTING_RULE_FIELD_HELP.configurationSmart,
+  latency: ROUTING_RULE_FIELD_HELP.configurationLatency,
   policy: ROUTING_RULE_FIELD_HELP.configurationPolicy,
 };
 
@@ -87,6 +91,7 @@ export function useStrategyConfigHelp(): Record<StrategyType, string> {
     conditional: help.configurationConditional,
     ab_split: help.configurationAbSplit,
     smart: help.configurationSmart,
+    latency: help.configurationLatency,
     policy: help.configurationPolicy,
   };
 }
@@ -100,6 +105,7 @@ function useStrategyHelp() {
     conditional: { title: t('pages:routing.strategy.conditionalTitle'), description: t('pages:routing.strategy.conditionalDesc') },
     ab_split: { title: t('pages:routing.strategy.abSplitTitle'), description: t('pages:routing.strategy.abSplitDesc') },
     smart: { title: t('pages:routing.strategy.smartTitle'), description: t('pages:routing.strategy.smartDesc') },
+    latency: { title: t('pages:routing.strategy.latencyTitle'), description: t('pages:routing.strategy.latencyDesc') },
     policy: { title: t('pages:routing.strategy.policyTitle'), description: t('pages:routing.strategy.policyDesc') },
   };
 }

@@ -11,6 +11,7 @@ import {
   hydrateConditionalEditorState,
   tryParseConditionalFormFromConfig,
   validateSplitWeights,
+  isTargetListStrategy,
   type StrategyType,
 } from '../_shared/routing-rule-config';
 import { ConditionalRoutingEditor } from '../editor/ConditionalRoutingEditor';
@@ -171,6 +172,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
             {editPipelineStage === '1' && editStrategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
             {editPipelineStage === '1' && editStrategyType === 'conditional' && t('pages:routing.conditionalRouting')}
             {editPipelineStage === '1' && editStrategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
+            {editPipelineStage === '1' && editStrategyType === 'latency' && t('pages:routing.latencyTargets')}
             {editPipelineStage === '1' && editStrategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
           </div>
           <Tooltip content={editPipelineStage === '0' ? strategyConfigHelpBody.policy : strategyConfigHelpBody[editStrategyType]}>
@@ -282,7 +284,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
           </Stack>
         )}
 
-        {editPipelineStage === '1' && (editStrategyType === 'fallback' || editStrategyType === 'loadbalance' || editStrategyType === 'ab_split') && (
+        {editPipelineStage === '1' && isTargetListStrategy(editStrategyType) && (
           <>
             <div className={styles.entryRowHeader}>
               <span className={styles.flexGrow2}>{t('pages:routing.providerModel')}</span>

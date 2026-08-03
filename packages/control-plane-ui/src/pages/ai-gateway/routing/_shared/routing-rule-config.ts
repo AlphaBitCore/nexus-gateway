@@ -11,6 +11,7 @@ export type StrategyType =
   | 'conditional'
   | 'ab_split'
   | 'smart'
+  | 'latency'
   | 'policy';
 
 /**
@@ -27,12 +28,29 @@ export const STRATEGY_TYPES: readonly Exclude<StrategyType, 'policy'>[] = [
   'conditional',
   'ab_split',
   'smart',
+  'latency',
 ];
 
 export interface ProviderModelEntry {
   provider: string;
   model: string;
   weight: string;
+}
+
+/**
+ * Strategies whose stage-1 config is a flat provider/model target list authored
+ * with the shared entry editor: fallback (ordered), loadbalance / ab_split
+ * (weighted), latency (p95-ordered). Single/conditional/smart/policy have their
+ * own editors. Single source of truth so the create + edit forms never drift on
+ * which strategies render the target-list editor.
+ */
+export function isTargetListStrategy(strategyType: StrategyType): boolean {
+  return (
+    strategyType === 'fallback' ||
+    strategyType === 'loadbalance' ||
+    strategyType === 'ab_split' ||
+    strategyType === 'latency'
+  );
 }
 
 /**
@@ -66,7 +84,7 @@ export function mapLegacyStrategy(s: string): StrategyType {
     priority: 'single',
     'round-robin': 'loadbalance',
     weighted: 'loadbalance',
-    latency: 'single',
+    latency: 'latency',
     cost: 'single',
     fallback: 'fallback',
     single: 'single',
@@ -90,7 +108,7 @@ export function splitIdsCsv(text: string): string[] {
 /** Discrete model types the gateway's routing engine knows about
  *  (matcher.go: ctx.RequestedModel.Type comparison). Keep in lockstep
  *  with the Go side; if a new type ships there, surface it here. */
-export const MODEL_TYPE_OPTIONS = ['chat', 'embedding', 'image', 'audio'] as const;
+export const MODEL_TYPE_OPTIONS = ['chat', 'embedding', 'image', 'audio', 'tts', 'stt', 'rerank', 'video', 'realtime'] as const;
 export type ModelType = (typeof MODEL_TYPE_OPTIONS)[number];
 
 export interface MatchConditionsFormState {
@@ -590,6 +608,22 @@ export function parseRoutingConfigForForm(
     return entries.length > 0 ? { entries, singleProvider: '', singleModel: '' } : emptyState;
   }
 
+  if (strategyType === 'latency') {
+    // Latency targets are a weightless provider+model list authored under the
+    // generic `targets` key (the gateway hydrates StrategyNode.LatencyTargets
+    // from it). No weight column — ordering is derived from measured p95.
+    if (cfg.type !== 'latency' || !Array.isArray(cfg.targets)) return emptyState;
+    const entries: ProviderModelEntry[] = (cfg.targets as unknown[]).map((raw) => {
+      const t = raw as Record<string, unknown>;
+      if (typeof t.providerId === 'string' && typeof t.modelId === 'string') {
+        const ui = uiFromApiIds(groups, t.providerId, t.modelId);
+        if (ui) return { ...ui, weight: '50' };
+      }
+      return { provider: String(t.provider ?? ''), model: String(t.model ?? ''), weight: '50' };
+    });
+    return entries.length > 0 ? { entries, singleProvider: '', singleModel: '' } : emptyState;
+  }
+
   const targets = Array.isArray(cfg.targets) ? cfg.targets : [];
   if (targets.length === 0) return emptyState;
   return {
@@ -731,6 +765,15 @@ export function buildRoutingApiConfig(input: {
         .filter((x): x is NonNullable<typeof x> => x !== null);
       if (targets.length === 0) return { ok: false, message: 'Add at least one A/B split target.' };
       return { ok: true, config: { type: 'ab_split', targets } };
+    }
+    case 'latency': {
+      const targets = entries
+        .filter((e) => e.provider.trim() && e.model.trim())
+        .map((e) => resolveProviderModelIds(providerGroups, e.provider.trim(), e.model.trim()))
+        .filter((x): x is { providerId: string; modelId: string } => x !== null)
+        .map((r) => ({ providerId: r.providerId, modelId: r.modelId }));
+      if (targets.length === 0) return { ok: false, message: 'Add at least one latency target.' };
+      return { ok: true, config: { type: 'latency', targets } };
     }
     case 'conditional': {
       if (conditionalForm) {

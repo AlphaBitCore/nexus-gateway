@@ -9,8 +9,10 @@ import { expiryBounds } from '@/pages/ai-gateway/virtual-keys/expiryBounds';
 const vk = {
   id: 'vk-1', name: 'prod-key', keyPrefix: 'nx_abc', sourceApp: 'cli',
   enabled: true, expiresAt: null, createdAt: '2026-05-01T00:00:00Z',
+  vkType: 'application',
   allowedModels: [{ providerId: 'p-openai', modelId: 'gpt-4o' }],
 } as never;
+const personalVk = { ...(vk as object), vkType: 'personal' } as never;
 const project = { id: 'proj-1', name: 'Acme', organization: { id: 'o-1', name: 'AcmeOrg' } } as never;
 const modelsData = {
   data: [
@@ -127,7 +129,9 @@ describe('VirtualKeyInfoTab — edit mode + GroupedModelSelect', () => {
 
   /* ── Expiration: no Never-expires affordance (application VKs) ───────── */
 
-  it('does not render a "Never expires" checkbox in edit mode', () => {
+  it('does not render a "Never expires" checkbox for an application VK', () => {
+    // requireApplicationExpiry rejects a null expiry, so offering the toggle
+    // would present a choice that cannot be saved.
     wrap(baseProps({ isEditing: true }));
     expect(screen.queryByText(i18n.t('pages:virtualKeys.neverExpires'))).not.toBeInTheDocument();
     // Only checkboxes come from the model selector — none for never-expires
@@ -140,19 +144,23 @@ describe('VirtualKeyInfoTab — edit mode + GroupedModelSelect', () => {
     }
   });
 
-  /* ── Expiration: max attribute caps at ~3 months ────────────────────── */
+  it('does render the "Never expires" toggle for a personal VK', () => {
+    // Personal VKs may clear their expiry, so the affordance must be offered —
+    // pinning the vkType condition in both directions.
+    wrap(baseProps({ isEditing: true, vk: personalVk }));
+    expect(screen.queryByText(i18n.t('pages:virtualKeys.neverExpires'))).toBeInTheDocument();
+  });
 
-  it('sets max on the expiration date input to within 3 months from now', () => {
+  /* ── Expiration: open-ended window, floor at tomorrow ────────────────── */
+
+  it('leaves the expiration date input unbounded above', () => {
+    // The server only requires a FUTURE expiry (requireApplicationExpiry); it
+    // imposes no ceiling. A max here would silently re-impose the removed
+    // 3-month cap and block a legitimate date.
     wrap(baseProps({ isEditing: true, editExpiresAt: '2026-09-01' }));
-    // The date input has type="date" and the editExpiresAt value is shown
     const dateInput = screen.getByDisplayValue('2026-09-01') as HTMLInputElement;
-    const maxAttr = dateInput.max;
-    expect(maxAttr).toBeTruthy();
-    const maxMs = new Date(`${maxAttr}T00:00:00Z`).getTime();
-    const threeMonths = new Date();
-    threeMonths.setMonth(threeMonths.getMonth() + 3);
-    expect(maxMs).toBeLessThan(threeMonths.getTime());
-    expect(maxAttr).toBe(expiryBounds().max);
+    expect(dateInput.max).toBe('');
+    expect('max' in expiryBounds()).toBe(false);
   });
 
   it('sets min on the expiration date input to tomorrow', () => {

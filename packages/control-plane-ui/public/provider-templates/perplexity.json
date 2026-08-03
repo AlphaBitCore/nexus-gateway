@@ -6,70 +6,100 @@
   "adapterType": "perplexity",
   "models": [
     {
-      "code": "sonar",
-      "name": "Sonar",
-      "description": "Lightweight cost-effective search model with grounding. Quick factual queries and topic summaries.",
-      "providerModelId": "sonar",
-      "type": "chat",
-      "features": [
-        "streaming",
-        "search"
-      ],
-      "inputPricePerMillion": 1.0,
-      "outputPricePerMillion": 1.0,
-      "maxContextTokens": 127072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
       "code": "sonar-pro",
       "name": "Sonar Pro",
-      "description": "Advanced search with grounding — supports complex queries and follow-ups.",
+      "description": "Perplexity Sonar Pro — grounded search-backed answers with citations.",
       "providerModelId": "sonar-pro",
       "type": "chat",
       "features": [
         "streaming",
         "search"
       ],
-      "inputPricePerMillion": 3.0,
-      "outputPricePerMillion": 15.0,
+      "inputPricePerMillion": 3,
+      "outputPricePerMillion": 15,
       "maxContextTokens": 200000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 8000
+    },
+    {
+      "code": "sonar",
+      "name": "Sonar",
+      "description": "Perplexity Sonar — low-cost grounded search-backed answers.",
+      "providerModelId": "sonar",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "search"
+      ],
+      "inputPricePerMillion": 1,
+      "outputPricePerMillion": 1,
+      "maxContextTokens": 128000
     },
     {
       "code": "sonar-reasoning-pro",
       "name": "Sonar Reasoning Pro",
-      "description": "Precise reasoning with Chain-of-Thought; deeper logical problem-solving and multi-step analysis.",
+      "description": "Perplexity Sonar Reasoning Pro — chain-of-thought over grounded search.",
       "providerModelId": "sonar-reasoning-pro",
       "type": "chat",
       "features": [
         "streaming",
         "search",
-        "thinking"
+        "reasoning"
       ],
-      "inputPricePerMillion": 2.0,
-      "outputPricePerMillion": 8.0,
-      "maxContextTokens": 127072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 8,
+      "maxContextTokens": 128000
+    },
+    {
+      "code": "sonar-reasoning",
+      "name": "Sonar Reasoning",
+      "description": "Perplexity Sonar Reasoning — lower-cost reasoning over grounded search.",
+      "providerModelId": "sonar-reasoning",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "search",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 1,
+      "outputPricePerMillion": 5,
+      "maxContextTokens": 128000
     },
     {
       "code": "sonar-deep-research",
       "name": "Sonar Deep Research",
-      "description": "Expert-level research model conducting exhaustive searches and producing comprehensive reports.",
+      "description": "Perplexity Sonar Deep Research — multi-step research reports.",
       "providerModelId": "sonar-deep-research",
       "type": "chat",
       "features": [
         "streaming",
         "search",
-        "thinking"
+        "reasoning"
       ],
-      "inputPricePerMillion": 2.0,
-      "outputPricePerMillion": 8.0,
-      "maxContextTokens": 127072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 8,
+      "maxContextTokens": 128000
+    },
+    {
+      "code": "pplx-embed-v1-4b",
+      "name": "Perplexity Embed v1 4B",
+      "description": "Perplexity embedding model, 4B parameters.",
+      "providerModelId": "pplx-embed-v1-4b",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.03,
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 32768
+    },
+    {
+      "code": "pplx-embed-v1-0.6b",
+      "name": "Perplexity Embed v1 0.6B",
+      "description": "Perplexity embedding model, 0.6B parameters. Lowest cost.",
+      "providerModelId": "pplx-embed-v1-0.6b",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.004,
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 32768
     }
   ]
 }

@@ -24,15 +24,25 @@ const editDefaults = {
 
 const handlers = { createModel: vi.fn(), handleModelUpdate: vi.fn(), onClose: vi.fn(), setEditingCapabilityJson: vi.fn() };
 
-function Harness({ mode }: { mode: 'create' | 'edit' }) {
+function Harness({
+  mode,
+  canUpdateModel = true,
+  editType,
+}: {
+  mode: 'create' | 'edit';
+  canUpdateModel?: boolean;
+  editType?: string;
+}) {
   const newModelForm = useForm({ defaultValues: createDefaults });
-  const editModelForm = useForm({ defaultValues: editDefaults });
+  const editModelForm = useForm({
+    defaultValues: editType ? { ...editDefaults, editModelType: editType } : editDefaults,
+  });
   const detail = {
     newModelForm, editModelForm,
     editingModelId: 'm-edit',
     createModel: handlers.createModel, handleModelUpdate: handlers.handleModelUpdate,
     modelCreating: false, modelUpdating: false,
-    canCreateModel: true, canUpdate: true,
+    canCreateModel: true, canUpdateModel,
     editingCapabilityJson: undefined, setEditingCapabilityJson: handlers.setEditingCapabilityJson,
   } as never;
   return <ModelFormDrawer detail={detail} mode={mode} open onClose={handlers.onClose} />;
@@ -104,5 +114,33 @@ describe('ModelFormDrawer — edit mode', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+
+describe('ModelFormDrawer — edit-mode capability panel permission gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sys.systemApi.listModelsFlat.mockResolvedValue({ data: [] });
+  });
+
+  function wrapEdit(canUpdateModel: boolean) {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <Harness mode="edit" canUpdateModel={canUpdateModel} editType="embedding" />
+      </I18nextProvider>,
+    );
+  }
+
+  // Saving the panel issues PUT /models/:id, guarded on model.update. An admin
+  // without it must not be given editable capability controls; the provider
+  // permission does not stand in for the model one.
+  it('offers the capability editors to an admin holding model.update', () => {
+    wrapEdit(true);
+    expect(screen.getByText(i18n.t('pages:providers.capabilities.addDimensionButton'))).toBeInTheDocument();
+  });
+
+  it('withholds the capability editors from an admin without model.update', () => {
+    wrapEdit(false);
+    expect(screen.queryByText(i18n.t('pages:providers.capabilities.addDimensionButton'))).not.toBeInTheDocument();
   });
 });

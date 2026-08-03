@@ -6,84 +6,169 @@
   "adapterType": "vertex",
   "models": [
     {
-      "code": "gemini-2.5-pro",
+      "code": "vertex-gemini-3-pro-preview",
+      "name": "Gemini 3 Pro (Vertex)",
+      "description": "Google Gemini 3 Pro on Vertex AI.",
+      "providerModelId": "gemini-3-pro-preview",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 12,
+      "cachedInputReadPricePerMillion": 0.2,
+      "maxContextTokens": 1048576,
+      "maxOutputTokens": 65535
+    },
+    {
+      "code": "vertex-gemini-3.5-flash",
+      "name": "Gemini 3.5 Flash (Vertex)",
+      "description": "Google Gemini 3.5 Flash on Vertex AI.",
+      "providerModelId": "gemini-3.5-flash",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 1.5,
+      "outputPricePerMillion": 9,
+      "cachedInputReadPricePerMillion": 0.15,
+      "maxContextTokens": 1048576,
+      "maxOutputTokens": 65535
+    },
+    {
+      "code": "vertex-gemini-3-flash-preview",
+      "name": "Gemini 3 Flash (Vertex)",
+      "description": "Google Gemini 3 Flash on Vertex AI.",
+      "providerModelId": "gemini-3-flash-preview",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.5,
+      "outputPricePerMillion": 3,
+      "cachedInputReadPricePerMillion": 0.05,
+      "maxContextTokens": 1048576,
+      "maxOutputTokens": 65535
+    },
+    {
+      "code": "vertex-gemini-3.1-flash-lite",
+      "name": "Gemini 3.1 Flash Lite (Vertex)",
+      "description": "Google Gemini 3.1 Flash Lite on Vertex AI.",
+      "providerModelId": "gemini-3.1-flash-lite",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.25,
+      "outputPricePerMillion": 1.5,
+      "cachedInputReadPricePerMillion": 0.025,
+      "maxContextTokens": 1048576,
+      "maxOutputTokens": 65536
+    },
+    {
+      "code": "vertex-gemini-2.5-pro",
       "name": "Gemini 2.5 Pro (Vertex)",
-      "description": "Google's flagship reasoning model on Vertex AI.",
+      "description": "Google Gemini 2.5 Pro on Vertex AI.",
       "providerModelId": "gemini-2.5-pro",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
         "streaming",
-        "tool_use"
+        "reasoning",
+        "prompt_caching"
       ],
-      "maxContextTokens": 2097152,
-      "cachedInputReadPricePerMillion": 0.13,
-      "cachedInputWritePricePerMillion": null,
       "inputPricePerMillion": 1.25,
-      "outputPricePerMillion": 10.0
+      "outputPricePerMillion": 10,
+      "cachedInputReadPricePerMillion": 0.125,
+      "maxContextTokens": 1048576,
+      "maxOutputTokens": 65535
     },
     {
-      "code": "gemini-2.5-flash",
+      "code": "vertex-gemini-2.5-flash",
       "name": "Gemini 2.5 Flash (Vertex)",
-      "description": "Fast, cost-efficient Gemini 2.5 on Vertex AI.",
+      "description": "Google Gemini 2.5 Flash on Vertex AI.",
       "providerModelId": "gemini-2.5-flash",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
         "streaming",
-        "tool_use"
+        "reasoning",
+        "prompt_caching"
       ],
-      "maxContextTokens": 1048576,
-      "cachedInputReadPricePerMillion": 0.03,
-      "cachedInputWritePricePerMillion": null,
       "inputPricePerMillion": 0.3,
-      "outputPricePerMillion": 2.5
-    },
-    {
-      "code": "gemini-2.0-flash",
-      "name": "Gemini 2.0 Flash (Vertex)",
-      "description": "Gemini 2.0 Flash on Vertex AI.",
-      "providerModelId": "gemini-2.0-flash",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
+      "outputPricePerMillion": 2.5,
+      "cachedInputReadPricePerMillion": 0.03,
       "maxContextTokens": 1048576,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 0.15,
-      "outputPricePerMillion": 0.6
+      "maxOutputTokens": 65535
     },
     {
-      "code": "gemini-1.5-pro",
-      "name": "Gemini 1.5 Pro (Vertex)",
-      "description": "Long-context Gemini 1.5 Pro on Vertex AI (kept for legacy deployments).",
-      "providerModelId": "gemini-1.5-pro",
+      "code": "vertex-claude-sonnet-5",
+      "name": "Claude Sonnet 5 (Vertex)",
+      "description": "Anthropic Claude Sonnet 5 on Vertex AI.",
+      "providerModelId": "claude-sonnet-5",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
-        "streaming"
+        "streaming",
+        "reasoning",
+        "prompt_caching"
       ],
-      "maxContextTokens": 2097152,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 10,
+      "cachedInputReadPricePerMillion": 0.2,
+      "cachedInputWritePricePerMillion": 2.5,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
     },
     {
-      "code": "gemini-1.5-flash",
-      "name": "Gemini 1.5 Flash (Vertex)",
-      "description": "Cheaper, faster Gemini 1.5 Flash on Vertex AI.",
-      "providerModelId": "gemini-1.5-flash",
+      "code": "vertex-claude-opus-4-8",
+      "name": "Claude Opus 4.8 (Vertex)",
+      "description": "Anthropic Claude Opus 4.8 on Vertex AI.",
+      "providerModelId": "claude-opus-4-8",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
-        "streaming"
+        "streaming",
+        "reasoning",
+        "prompt_caching"
       ],
-      "maxContextTokens": 1048576,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 25,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 6.25,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "vertex-gemini-embedding-2",
+      "name": "Gemini Embedding 2 (Vertex)",
+      "description": "Google Gemini Embedding 2 on Vertex AI.",
+      "providerModelId": "gemini-embedding-2",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.2,
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 8192
     }
   ]
 }

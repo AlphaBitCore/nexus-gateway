@@ -72,5 +72,6 @@
   "observabilityConfig": "Observabilidad",
   "siem": "SIEM",
   "settingsSection": "CONFIGURACIÓN",
-  "cache": "Caché"
+  "cache": "Caché",
+  "vendorBillReconciliation": "Conciliación de facturas"
 }

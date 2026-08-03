@@ -61,13 +61,13 @@ export function LiveTrafficBasicFilters({
     <>
       {/* Time row — always shown */}
       <div className={css.timeRow}>
-        <FieldCompact label={t('pages:traffic.timeSelect', '时间选择')} tip={t('pages:traffic.tipQuickRange')}>
+        <FieldCompact label={t('pages:traffic.timeSelect', 'Time selection')} tip={t('pages:traffic.tipQuickRange')}>
           <Stack direction="horizontal" gap="xs" className={css.timePresetGroup}>
             <Chip size="sm" active={!customTimeOpen && activePreset === 1} onClick={() => setPresetRange(1)}>1h</Chip>
             <Chip size="sm" active={!customTimeOpen && activePreset === 24} onClick={() => setPresetRange(24)}>24h</Chip>
             <Chip size="sm" active={!customTimeOpen && activePreset === 168} onClick={() => setPresetDays(7)}>7d</Chip>
             <Chip size="sm" active={isCustomTime} onClick={() => setCustomTimeOpen(true)}>
-              {t('pages:traffic.timeRangeCustom', '自定义')}
+              {t('pages:traffic.timeRangeCustom', 'Custom')}
             </Chip>
           </Stack>
         </FieldCompact>

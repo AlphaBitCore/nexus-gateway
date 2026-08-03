@@ -6,134 +6,239 @@
   "adapterType": "bedrock",
   "models": [
     {
-      "code": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-      "name": "Claude 3.5 Sonnet v2 (Bedrock)",
-      "description": "Anthropic Claude 3.5 Sonnet v2 served via Bedrock — same model as direct Anthropic API but with AWS auth + region locality.",
-      "providerModelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "code": "anthropic.claude-opus-4-8",
+      "name": "Claude Opus 4.8 (Bedrock)",
+      "description": "Anthropic Claude Opus 4.8 on Amazon Bedrock.",
+      "providerModelId": "anthropic.claude-opus-4-8",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
         "streaming",
-        "tool_use"
+        "reasoning",
+        "prompt_caching"
       ],
-      "maxContextTokens": 200000,
-      "cachedInputReadPricePerMillion": 0.6,
-      "cachedInputWritePricePerMillion": 7.5,
-      "inputPricePerMillion": 6.0,
-      "outputPricePerMillion": 30.0
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 25,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 6.25,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
     },
     {
-      "code": "anthropic.claude-3-5-haiku-20241022-v1:0",
-      "name": "Claude 3.5 Haiku (Bedrock)",
-      "description": "Faster, cheaper Claude 3.5 Haiku via Bedrock.",
-      "providerModelId": "anthropic.claude-3-5-haiku-20241022-v1:0",
+      "code": "anthropic.claude-opus-4-7",
+      "name": "Claude Opus 4.7 (Bedrock)",
+      "description": "Anthropic Claude Opus 4.7 on Amazon Bedrock.",
+      "providerModelId": "anthropic.claude-opus-4-7",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
         "streaming",
-        "tool_use"
+        "reasoning",
+        "prompt_caching"
       ],
-      "maxContextTokens": 200000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 25,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 6.25,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
     },
     {
-      "code": "anthropic.claude-3-opus-20240229-v1:0",
-      "name": "Claude 3 Opus (Bedrock)",
-      "description": "Claude 3 Opus — Anthropic's largest legacy model, available on Bedrock for enterprise on-prem use.",
-      "providerModelId": "anthropic.claude-3-opus-20240229-v1:0",
+      "code": "anthropic.claude-sonnet-5",
+      "name": "Claude Sonnet 5 (Bedrock)",
+      "description": "Anthropic Claude Sonnet 5 on Amazon Bedrock.",
+      "providerModelId": "anthropic.claude-sonnet-5",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
         "streaming",
-        "tool_use"
+        "reasoning",
+        "prompt_caching"
       ],
-      "maxContextTokens": 200000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 10,
+      "cachedInputReadPricePerMillion": 0.2,
+      "cachedInputWritePricePerMillion": 2.5,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
     },
     {
-      "code": "anthropic.claude-3-haiku-20240307-v1:0",
-      "name": "Claude 3 Haiku (Bedrock)",
-      "description": "Original Claude 3 Haiku via Bedrock — small/cheap.",
-      "providerModelId": "anthropic.claude-3-haiku-20240307-v1:0",
+      "code": "anthropic.claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6 (Bedrock)",
+      "description": "Anthropic Claude Sonnet 4.6 on Amazon Bedrock.",
+      "providerModelId": "anthropic.claude-sonnet-4-6",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 3,
+      "outputPricePerMillion": 15,
+      "cachedInputReadPricePerMillion": 0.3,
+      "cachedInputWritePricePerMillion": 3.75,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 64000
+    },
+    {
+      "code": "anthropic.claude-fable-5",
+      "name": "Claude Fable 5 (Bedrock)",
+      "description": "Anthropic Claude Fable 5 on Amazon Bedrock.",
+      "providerModelId": "anthropic.claude-fable-5",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 10,
+      "outputPricePerMillion": 50,
+      "cachedInputReadPricePerMillion": 1,
+      "cachedInputWritePricePerMillion": 12.5,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "amazon.nova-2-lite-v1:0",
+      "name": "Nova 2 Lite",
+      "description": "Amazon Nova 2 Lite — 1M context at low cost.",
+      "providerModelId": "amazon.nova-2-lite-v1:0",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.3,
+      "outputPricePerMillion": 2.5,
+      "cachedInputReadPricePerMillion": 0.075,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 64000
+    },
+    {
+      "code": "amazon.nova-pro-v1:0",
+      "name": "Nova Pro",
+      "description": "Amazon Nova Pro — highest-capability Nova tier.",
+      "providerModelId": "amazon.nova-pro-v1:0",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.8,
+      "outputPricePerMillion": 3.2,
+      "maxContextTokens": 300000,
+      "maxOutputTokens": 10000
+    },
+    {
+      "code": "amazon.nova-lite-v1:0",
+      "name": "Nova Lite",
+      "description": "Amazon Nova Lite — low-cost multimodal tier.",
+      "providerModelId": "amazon.nova-lite-v1:0",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.06,
+      "outputPricePerMillion": 0.24,
+      "maxContextTokens": 300000,
+      "maxOutputTokens": 10000
+    },
+    {
+      "code": "amazon.nova-micro-v1:0",
+      "name": "Nova Micro",
+      "description": "Amazon Nova Micro — text-only, lowest cost.",
+      "providerModelId": "amazon.nova-micro-v1:0",
       "type": "chat",
       "features": [
         "function_calling",
-        "streaming",
-        "tool_use"
+        "streaming"
       ],
-      "maxContextTokens": 200000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 0.035,
+      "outputPricePerMillion": 0.14,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 10000
     },
     {
       "code": "meta.llama3-3-70b-instruct-v1:0",
-      "name": "Llama 3.3 70B Instruct (Bedrock)",
-      "description": "Meta's Llama 3.3 70B Instruct served via Bedrock.",
+      "name": "Llama 3.3 70B (Bedrock)",
+      "description": "Meta Llama 3.3 70B on Amazon Bedrock.",
       "providerModelId": "meta.llama3-3-70b-instruct-v1:0",
-      "type": "chat",
-      "features": [
-        "streaming"
-      ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "meta.llama3-1-70b-instruct-v1:0",
-      "name": "Llama 3.1 70B Instruct (Bedrock)",
-      "description": "Meta Llama 3.1 70B Instruct via Bedrock.",
-      "providerModelId": "meta.llama3-1-70b-instruct-v1:0",
-      "type": "chat",
-      "features": [
-        "streaming"
-      ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "mistral.mistral-large-2407-v1:0",
-      "name": "Mistral Large (Bedrock)",
-      "description": "Mistral Large 2 (2407) served via Bedrock.",
-      "providerModelId": "mistral.mistral-large-2407-v1:0",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming"
       ],
+      "inputPricePerMillion": 0.72,
+      "outputPricePerMillion": 0.72,
       "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 4096
     },
     {
       "code": "cohere.command-r-plus-v1:0",
-      "name": "Cohere Command R+ (Bedrock)",
-      "description": "Cohere's flagship Command R+ served via Bedrock — RAG and tool use.",
+      "name": "Command R+ (Bedrock)",
+      "description": "Cohere Command R+ on Amazon Bedrock.",
       "providerModelId": "cohere.command-r-plus-v1:0",
       "type": "chat",
       "features": [
         "function_calling",
-        "streaming",
-        "tool_use"
+        "streaming"
       ],
+      "inputPricePerMillion": 3,
+      "outputPricePerMillion": 15,
       "maxContextTokens": 128000,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 4096
     },
     {
       "code": "amazon.titan-text-premier-v1:0",
-      "name": "Amazon Titan Text Premier",
-      "description": "Amazon's first-party Titan Text Premier model.",
+      "name": "Titan Text Premier",
+      "description": "Amazon Titan Text Premier.",
       "providerModelId": "amazon.titan-text-premier-v1:0",
       "type": "chat",
       "features": [
         "streaming"
       ],
-      "maxContextTokens": 32768,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 0.5,
+      "outputPricePerMillion": 1.5,
+      "maxContextTokens": 42000,
+      "maxOutputTokens": 32000
+    },
+    {
+      "code": "mistral.mistral-large-3-675b-instruct",
+      "name": "Mistral Large 3 (Bedrock)",
+      "description": "Mistral Large 3 on Amazon Bedrock.",
+      "providerModelId": "mistral.mistral-large-3-675b-instruct",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.5,
+      "outputPricePerMillion": 1.5,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 8192
+    },
+    {
+      "code": "amazon.titan-embed-text-v2:0",
+      "name": "Titan Text Embeddings v2",
+      "description": "Amazon Titan text embedding model, v2.",
+      "providerModelId": "amazon.titan-embed-text-v2:0",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.02,
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 8192
     }
   ]
 }

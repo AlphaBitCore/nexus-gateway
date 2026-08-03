@@ -1,4 +1,4 @@
-// Cache family — S-066 negative-feedback eviction (E68/E86 gap closure).
+// Cache family — S-066 negative-feedback eviction.
 // Verifies the admin cache-feedback endpoint poisons a cached entry so a
 // would-be HIT turns into a MISS on the next semantically-similar request.
 package scenarios_test
@@ -17,7 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/tests/scenarios/helpers"
 )
 
-// TestS066_CacheNegativeFeedback — PM-grade e2e for E68 negative-feedback.
+// TestS066_CacheNegativeFeedback — PM-grade e2e for negative-feedback eviction.
 //
 // BRAINSTORM (pre): the L2 semantic cache exposes a "thumbs-down" admin
 // channel (POST /api/admin/cache/semantic-feedback) that adds an
@@ -155,7 +155,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 	}
 
 	// ─── Step 3: find the traffic_event row for the cache-hit request ──
-	// gateway_cache_status is the canonical column (E72 rename); legacy
+	// gateway_cache_status is the canonical column; legacy
 	// cache_status is derived from it. We match VK via the identity blob
 	// the same way embeddings_test.go does. Poll up to 30 s (5 × 6 s).
 	var eventID string
@@ -193,7 +193,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 	// stamped by AIGw proxy_l2.go on every L2 HIT. Read it directly — the
 	// stamped value is the exact Redis HASH key the poison check uses.
 	//
-	// E86 hardening: NO SHA-256 fallback path. If the stamp is missing
+	// NO SHA-256 fallback path. If the stamp is missing
 	// after a confirmed cache HIT (id1==id2), that is a backend bug
 	// (proxy_l2.go failed to stamp the column on L2 read) and the test
 	// fails hard so the regression is caught at this layer rather than
@@ -240,7 +240,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 	case http.StatusOK, http.StatusNoContent:
 		// fall through to eviction verification
 	case http.StatusNotFound:
-		// E86 hardening: 404 = E68 cache-feedback handler not mounted on
+		// 404 = the cache-feedback handler is not mounted on
 		// the local CP — that is a wiring regression, not an env quirk.
 		t.Fatalf("S-066: POST /api/admin/cache/semantic-feedback returned 404 — E68 endpoint not wired on the local CP build (body=%q)", truncate(fbResp, 200))
 	case http.StatusServiceUnavailable:
@@ -292,7 +292,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 			expectedPoisonKey, strings.TrimSpace(string(existsOut)), fbStatus)
 	}
 
-	// E86 hardening: id3 != id2 is the load-bearing observable proof that
+	// id3 != id2 is the load-bearing observable proof that
 	// the poison fired — the perturbed-prompt request fell through to a
 	// fresh upstream call. Previously this was only logged; now hard.
 	if id3 == id2 {
@@ -300,22 +300,44 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 			id3, id2, expectedPoisonKey)
 	}
 
-	// E86 hardening: writesDelta ≥ 1 is the corroborating metric signal
-	// (a fresh upstream call writes a new cache entry). Previously logged
-	// only; now asserted. Metric absence is also a hard fail — the
-	// counter is registered at AIGw boot.
+	// Corroborating metric signal: request 3 had to go upstream, so the response
+	// cache must record a MISS for it.
 	postEvictMetrics, err := helpers.ScrapeMetrics(ctx, sc.Env.AIGwURL)
 	if err != nil {
 		t.Fatalf("ScrapeMetrics post-eviction: %v", err)
 	}
-	const writesMetric = "nexus_cache_writes_total"
-	writesDelta := postEvictMetrics.CounterSum(writesMetric, nil) -
-		preEvictMetrics.CounterSum(writesMetric, nil)
-	if writesDelta < 1 {
-		t.Fatalf("S-066: %s delta=%.0f after eviction (want ≥1 — the fresh upstream call must produce a cache write replacing the evicted entry)",
-			writesMetric, writesDelta)
+	// History, because it is the same mistake twice. This first asserted
+	// nexus_cache_writes_total, which has never been registered — and it never
+	// even ran, because ScrapeMetrics 401'd first.
+	// SECOND correction, and the first one was mine. The rewrite above replaced
+	// nexus_cache_writes_total (never registered) with nexus_cache_misses_total,
+	// on the belief that it was the response cache's miss counter. It is not:
+	// the only series of that name is nexus_cache_misses_total{cache=
+	// "key_virtual_keys"}, the VK key-lookup cache. CounterSum with nil labels
+	// does sum it, so this was not "no series" — it was a series belonging to a
+	// different subsystem, which on a warm VK only ever HITS and therefore
+	// stays flat. The assertion could not pass, for a new reason.
+	//
+	// The response cache reports its outcome as a LABEL, not a name:
+	// nexus_cache_lookups_total{result="miss"|"hit"|"disabled"|…}. That is the
+	// series that moved 0→1→hit when the L1 tier was verified by hand.
+	const lookupsMetric = "nexus_cache_lookups_total"
+	missLabels := map[string]string{"result": "miss"}
+	missesDelta := postEvictMetrics.CounterSum(lookupsMetric, missLabels) -
+		preEvictMetrics.CounterSum(lookupsMetric, missLabels)
+	if missesDelta < 1 {
+		t.Fatalf("S-066: %s{result=\"miss\"} delta=%.0f after eviction (want ≥1 — request 3 must "+
+			"have found the evicted entry gone; a hit here would mean the negative feedback did "+
+			"not evict)",
+			lookupsMetric, missesDelta)
 	}
 
-	t.Logf("S-066 OK: id1=%s id2=%s id3=%s evicted=true feedback_status=%d writes_delta=%.0f l2EntryKey=%s eventID=%s",
-		id1, id2, id3, fbStatus, writesDelta, l2EntryKey, eventID)
+	// NOT asserted, and stated rather than left implied: that request 3's response
+	// was then WRITTEN back to replace the evicted entry. This scenario issues no
+	// fourth request, and a write is only observable through a later hit — so the
+	// re-write would need one more identical call to prove. Recorded as a known
+	// gap instead of being inferred from the miss above, which does not imply it.
+	t.Logf("S-066 OK: id1=%s id2=%s id3=%s evicted=true feedback_status=%d misses_delta=%.0f l2EntryKey=%s eventID=%s "+
+		"(re-write after eviction NOT asserted — needs a 4th request to observe a hit)",
+		id1, id2, id3, fbStatus, missesDelta, l2EntryKey, eventID)
 }

@@ -18,11 +18,11 @@
         "json_mode"
       ],
       "inputPricePerMillion": 2.5,
-      "outputPricePerMillion": 10.0,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
+      "outputPricePerMillion": 10,
       "cachedInputReadPricePerMillion": 1.25,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384
     },
     {
       "code": "gpt-4o-mini",
@@ -38,30 +38,27 @@
       ],
       "inputPricePerMillion": 0.15,
       "outputPricePerMillion": 0.6,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
       "cachedInputReadPricePerMillion": 0.075,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384
     },
     {
       "code": "gpt-4-turbo",
       "name": "GPT-4 Turbo",
-      "description": "Previous generation GPT-4 with vision. Good balance of capability and cost.",
+      "description": "Previous generation GPT-4. Good balance of capability and cost. Deprecated — prefer GPT-4o. Text-only: the gpt-4-turbo endpoint rejects image_url content (\"only supported by certain models\").",
       "providerModelId": "gpt-4-turbo",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "json_mode"
       ],
-      "inputPricePerMillion": 10.0,
-      "outputPricePerMillion": 30.0,
+      "inputPricePerMillion": 10,
+      "outputPricePerMillion": 30,
+      "cachedInputWritePricePerMillion": 0,
       "maxContextTokens": 128000,
-      "maxOutputTokens": 4096,
-      "cachedInputReadPricePerMillion": 5.0,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "maxOutputTokens": 4096
     },
     {
       "code": "o1",
@@ -73,13 +70,12 @@
         "streaming",
         "function_calling"
       ],
-      "inputPricePerMillion": 15.0,
-      "outputPricePerMillion": 60.0,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 100000,
+      "inputPricePerMillion": 15,
+      "outputPricePerMillion": 60,
       "cachedInputReadPricePerMillion": 7.5,
-      "cachedInputWritePricePerMillion": null,
-      "status": "disabled"
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100003
     },
     {
       "code": "o3-mini",
@@ -92,11 +88,10 @@
       ],
       "inputPricePerMillion": 1.1,
       "outputPricePerMillion": 4.4,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 100000,
       "cachedInputReadPricePerMillion": 0.55,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100003
     },
     {
       "code": "o3",
@@ -107,12 +102,12 @@
       "features": [
         "streaming"
       ],
-      "inputPricePerMillion": 10.0,
-      "outputPricePerMillion": 40.0,
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 8,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 0,
       "maxContextTokens": 200000,
-      "maxOutputTokens": 100000,
-      "cachedInputReadPricePerMillion": 5.0,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 100003
     },
     {
       "code": "o4-mini",
@@ -123,18 +118,74 @@
       "features": [
         "streaming"
       ],
-      "inputPricePerMillion": 0.6,
-      "outputPricePerMillion": 2.4,
+      "inputPricePerMillion": 1.1,
+      "outputPricePerMillion": 4.4,
+      "cachedInputReadPricePerMillion": 0.275,
+      "cachedInputWritePricePerMillion": 0,
       "maxContextTokens": 200000,
-      "maxOutputTokens": 100000,
-      "cachedInputReadPricePerMillion": 0.3,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "maxOutputTokens": 100003
+    },
+    {
+      "code": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "description": "Latest flagship GPT-5 model for complex reasoning, coding, and professional work.",
+      "providerModelId": "gpt-5.6-sol",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 30,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "description": "Balanced GPT-5.6 tier. Best price-to-performance for production traffic.",
+      "providerModelId": "gpt-5.6-terra",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 15,
+      "cachedInputReadPricePerMillion": 0.25,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
+    },
+    {
+      "code": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "description": "Fast, affordable GPT-5.6 tier for high-volume routing and simple agent steps.",
+      "providerModelId": "gpt-5.6-luna",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 1,
+      "outputPricePerMillion": 6,
+      "cachedInputReadPricePerMillion": 0.1,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "gpt-5.5",
       "name": "GPT-5.5",
-      "description": "Latest flagship GPT-5 model for complex reasoning, coding, and professional work.",
+      "description": "Previous flagship GPT-5 generation for complex reasoning, coding, and professional work.",
       "providerModelId": "gpt-5.5",
       "type": "chat",
       "features": [
@@ -143,12 +194,12 @@
         "streaming",
         "json_mode"
       ],
-      "inputPricePerMillion": 5.0,
-      "outputPricePerMillion": 30.0,
-      "maxContextTokens": 256000,
-      "maxOutputTokens": 32768,
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 30,
       "cachedInputReadPricePerMillion": 0.5,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "gpt-5.4",
@@ -163,11 +214,11 @@
         "json_mode"
       ],
       "inputPricePerMillion": 2.5,
-      "outputPricePerMillion": 15.0,
-      "maxContextTokens": 256000,
-      "maxOutputTokens": 32768,
+      "outputPricePerMillion": 15,
       "cachedInputReadPricePerMillion": 0.25,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 922000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "gpt-5.4-mini",
@@ -183,10 +234,10 @@
       ],
       "inputPricePerMillion": 0.75,
       "outputPricePerMillion": 4.5,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
       "cachedInputReadPricePerMillion": 0.075,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 272000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "gpt-5.4-nano",
@@ -200,10 +251,10 @@
       ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 1.25,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
       "cachedInputReadPricePerMillion": 0.02,
-      "cachedInputWritePricePerMillion": null
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 272000,
+      "maxOutputTokens": 128000
     },
     {
       "code": "gpt-4.1",
@@ -217,12 +268,50 @@
         "streaming",
         "json_mode"
       ],
-      "inputPricePerMillion": 2.0,
-      "outputPricePerMillion": 8.0,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
-      "cachedInputReadPricePerMillion": 1.0,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 8,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 1047576,
+      "maxOutputTokens": 32768
+    },
+    {
+      "code": "gpt-4.1-mini",
+      "name": "GPT-4.1 Mini",
+      "description": "Balanced GPT-4.1 tier with the full 1M-token context window.",
+      "providerModelId": "gpt-4.1-mini",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.4,
+      "outputPricePerMillion": 1.6,
+      "cachedInputReadPricePerMillion": 0.1,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 1047576,
+      "maxOutputTokens": 32768
+    },
+    {
+      "code": "gpt-4.1-nano",
+      "name": "GPT-4.1 Nano",
+      "description": "Cheapest GPT-4.1 tier with the full 1M-token context window.",
+      "providerModelId": "gpt-4.1-nano",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.1,
+      "outputPricePerMillion": 0.4,
+      "cachedInputReadPricePerMillion": 0.025,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 1047576,
+      "maxOutputTokens": 32768
     },
     {
       "code": "text-embedding-3-small",
@@ -232,9 +321,8 @@
       "type": "embedding",
       "features": [],
       "inputPricePerMillion": 0.02,
-      "maxContextTokens": 8191,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 8192
     },
     {
       "code": "text-embedding-3-large",
@@ -244,9 +332,202 @@
       "type": "embedding",
       "features": [],
       "inputPricePerMillion": 0.13,
-      "maxContextTokens": 8191,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "outputPricePerMillion": 0,
+      "maxContextTokens": 8192
+    },
+    {
+      "code": "gpt-image-2",
+      "name": "GPT Image 2",
+      "description": "OpenAI flagship image generation and editing model.",
+      "providerModelId": "gpt-image-2",
+      "type": "image",
+      "features": [
+        "vision"
+      ],
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 30,
+      "cachedInputReadPricePerMillion": 1.25,
+      "cachedInputWritePricePerMillion": 0
+    },
+    {
+      "code": "gpt-image-1.5",
+      "name": "GPT Image 1.5",
+      "description": "Previous-generation flagship image generation and editing model. Text output tokens include model reasoning tokens.",
+      "providerModelId": "gpt-image-1.5",
+      "type": "image",
+      "features": [
+        "vision"
+      ],
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 32,
+      "cachedInputReadPricePerMillion": 1.25,
+      "cachedInputWritePricePerMillion": 0
+    },
+    {
+      "code": "gpt-image-1-mini",
+      "name": "GPT Image 1 Mini",
+      "description": "Cost-efficient image generation and editing model.",
+      "providerModelId": "gpt-image-1-mini",
+      "type": "image",
+      "features": [
+        "vision"
+      ],
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 8,
+      "cachedInputReadPricePerMillion": 0.2,
+      "cachedInputWritePricePerMillion": 0
+    },
+    {
+      "code": "chatgpt-image-latest",
+      "name": "ChatGPT Image (latest)",
+      "description": "Floating alias tracking the image model currently used by ChatGPT. Text output tokens include model reasoning tokens.",
+      "providerModelId": "chatgpt-image-latest",
+      "type": "image",
+      "features": [
+        "vision"
+      ],
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 32,
+      "cachedInputReadPricePerMillion": 1.25,
+      "cachedInputWritePricePerMillion": 0
+    },
+    {
+      "code": "gpt-realtime-2.1",
+      "name": "GPT Realtime 2.1",
+      "description": "Flagship realtime speech-to-speech model with audio, text and image input.",
+      "providerModelId": "gpt-realtime-2.1",
+      "type": "realtime",
+      "features": [
+        "streaming",
+        "vision"
+      ],
+      "inputPricePerMillion": 32,
+      "outputPricePerMillion": 64,
+      "cachedInputReadPricePerMillion": 0.4,
+      "cachedInputWritePricePerMillion": 0
+    },
+    {
+      "code": "gpt-realtime-2.1-mini",
+      "name": "GPT Realtime 2.1 Mini",
+      "description": "Cost-efficient realtime speech-to-speech model with audio, text and image input.",
+      "providerModelId": "gpt-realtime-2.1-mini",
+      "type": "realtime",
+      "features": [
+        "streaming",
+        "vision"
+      ],
+      "inputPricePerMillion": 10,
+      "outputPricePerMillion": 20,
+      "cachedInputReadPricePerMillion": 0.3,
+      "cachedInputWritePricePerMillion": 0
+    },
+    {
+      "code": "gpt-realtime-translate",
+      "name": "GPT Realtime Translate",
+      "description": "Realtime speech translation model. Billed per minute of audio, not per token.",
+      "providerModelId": "gpt-realtime-translate",
+      "type": "realtime",
+      "features": [
+        "streaming"
+      ]
+    },
+    {
+      "code": "gpt-realtime-whisper",
+      "name": "GPT Realtime Whisper",
+      "description": "Realtime speech transcription model. Billed per minute of audio, not per token.",
+      "providerModelId": "gpt-realtime-whisper",
+      "type": "realtime",
+      "features": [
+        "streaming"
+      ]
+    },
+    {
+      "code": "gpt-audio-1.5",
+      "name": "GPT Audio 1.5",
+      "description": "Flagship audio-in / audio-out chat model.",
+      "providerModelId": "gpt-audio-1.5",
+      "type": "audio",
+      "features": [
+        "streaming",
+        "function_calling"
+      ],
+      "inputPricePerMillion": 32,
+      "outputPricePerMillion": 64,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384
+    },
+    {
+      "code": "gpt-audio-mini",
+      "name": "GPT Audio Mini",
+      "description": "Cost-efficient audio-in / audio-out chat model.",
+      "providerModelId": "gpt-audio-mini",
+      "type": "audio",
+      "features": [
+        "streaming",
+        "function_calling"
+      ],
+      "inputPricePerMillion": 10,
+      "outputPricePerMillion": 20,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384
+    },
+    {
+      "code": "gpt-4o-transcribe",
+      "name": "GPT-4o Transcribe",
+      "description": "Speech-to-text transcription model.",
+      "providerModelId": "gpt-4o-transcribe",
+      "type": "stt",
+      "features": [],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 10
+    },
+    {
+      "code": "gpt-4o-mini-transcribe",
+      "name": "GPT-4o Mini Transcribe",
+      "description": "Cost-efficient speech-to-text transcription model.",
+      "providerModelId": "gpt-4o-mini-transcribe",
+      "type": "stt",
+      "features": [],
+      "inputPricePerMillion": 1.25,
+      "outputPricePerMillion": 5
+    },
+    {
+      "code": "gpt-4o-transcribe-diarize",
+      "name": "GPT-4o Transcribe Diarize",
+      "description": "Speech-to-text transcription with speaker diarization.",
+      "providerModelId": "gpt-4o-transcribe-diarize",
+      "type": "stt",
+      "features": [],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 10
+    },
+    {
+      "code": "gpt-4o-mini-tts",
+      "name": "GPT-4o Mini TTS",
+      "description": "Text-to-speech model. Text input tokens in, audio output tokens out.",
+      "providerModelId": "gpt-4o-mini-tts",
+      "type": "tts",
+      "features": [],
+      "inputPricePerMillion": 0.6,
+      "outputPricePerMillion": 12
+    },
+    {
+      "code": "sora-2",
+      "name": "Sora 2",
+      "description": "Video generation model. Billed per second of video, not per token.",
+      "providerModelId": "sora-2",
+      "type": "video",
+      "features": [],
+      "inputPricePerMillion": 100000
+    },
+    {
+      "code": "sora-2-pro",
+      "name": "Sora 2 Pro",
+      "description": "High-fidelity video generation model. Billed per second of video at a resolution-dependent rate, not per token.",
+      "providerModelId": "sora-2-pro",
+      "type": "video",
+      "features": [],
+      "inputPricePerMillion": 100000
     }
   ]
 }

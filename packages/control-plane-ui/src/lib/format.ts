@@ -133,6 +133,52 @@ export function utcToLocalInput(isoString: string, userTZ?: string): string {
   return format(local, "yyyy-MM-dd'T'HH:mm");
 }
 
+/**
+ * Same as [utcToLocalInput] but second-precise. Used where the
+ * datetime-local value must round-trip an exact instant (e.g. the
+ * error-governance drill-down window — minute truncation would shift the
+ * window by up to 59s and break count parity with the aggregation).
+ */
+export function utcToLocalInputSeconds(isoString: string, userTZ?: string): string {
+  const tz = userTZ ?? displayTZ;
+  const local = toZonedTime(new Date(isoString), tz);
+  return format(local, "yyyy-MM-dd'T'HH:mm:ss");
+}
+
+/**
+ * Render an absolute UTC instant as "YYYY-MM-DD" suitable for a
+ * `<input type="date">`'s `value` attribute — the calendar day the instant
+ * falls on in `userTZ`. Inverse of [endOfDayUTC], and the only correct way to
+ * seed a date picker from a stored instant: slicing the ISO string instead
+ * yields the UTC day, which disagrees with every rendered date on the page
+ * whenever the instant's UTC day differs from the viewer's.
+ */
+export function utcToDateInput(value: string | Date, userTZ?: string): string {
+  const tz = userTZ ?? displayTZ;
+  const local = toZonedTime(typeof value === 'string' ? new Date(value) : value, tz);
+  return format(local, 'yyyy-MM-dd');
+}
+
+/**
+ * The calendar day "YYYY-MM-DD" that sits `offset` whole days / months from
+ * today in `userTZ` — e.g. `{ days: 1 }` is tomorrow on the viewer's calendar.
+ * Suitable for a `<input type="date">`'s `min` / `value`.
+ *
+ * The offset is applied as CIVIL arithmetic (calendar fields, anchored in UTC
+ * where no zone transition exists) rather than by adding a fixed number of
+ * milliseconds to an instant, so a DST boundary — where a local day is 23 or 25
+ * hours long — cannot shift the result onto the wrong date. Out-of-range fields
+ * carry: month 13 becomes January of the next year, day 32 becomes the 1st.
+ */
+export function dateInputFromToday(
+  offset: { days?: number; months?: number },
+  userTZ?: string,
+): string {
+  const [y, m, d] = utcToDateInput(new Date(), userTZ).split('-').map(Number);
+  const shifted = new Date(Date.UTC(y, m - 1 + (offset.months ?? 0), d + (offset.days ?? 0)));
+  return shifted.toISOString().slice(0, 10);
+}
+
 /** Compact number: "12.3K", "1.5M" */
 export function formatCompact(n: number, locale?: string): string {
   return new Intl.NumberFormat(locale ?? 'en-US', {

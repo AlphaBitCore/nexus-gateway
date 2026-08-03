@@ -6,7 +6,7 @@ import { Badge, Card, ErrorBanner, Input, Skeleton, Stack, Switch } from '@/comp
 import styles from './SettingsCacheTab.module.css';
 
 /**
- * Bundled rule metadata, mirroring `packages/shared/normaliser/bundled.go`
+ * Bundled rule metadata, mirroring `packages/shared/transport/wirerewrite/bundled.go`
  * one-for-one. Order in this array is the order rules appear on screen.
  * The DB only stores admin overrides (enabled, dry_run_always) keyed by rule_id;
  * regex / body_path / default-enabled live in Go.

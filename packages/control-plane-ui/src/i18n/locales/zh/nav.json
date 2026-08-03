@@ -72,5 +72,6 @@
   "observabilityConfig": "可观测性",
   "siem": "SIEM",
   "settingsSection": "设置",
-  "cache": "缓存"
+  "cache": "缓存",
+  "vendorBillReconciliation": "账单对账"
 }

@@ -16,6 +16,7 @@ const STRATEGY_LABEL_KEY: Record<Exclude<StrategyType, 'policy'>, string> = {
   conditional: 'pages:routing.strategyConditional',
   ab_split: 'pages:routing.strategyAbSplit',
   smart: 'pages:routing.strategySmart',
+  latency: 'pages:routing.strategyLatency',
 };
 
 export interface StrategyOption {

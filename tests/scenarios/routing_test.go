@@ -24,14 +24,14 @@ import (
 //
 // BRAINSTORM (pre): routing_rules is a push config_key (ai-gateway
 // subscribes per thing_config_template). Full e2e:
-//   1. POST /api/admin/routing-rules writes RoutingRule row + audit row.
-//   2. Hub broadcasts routing_rules config_changed.
-//   3. AI Gateway thingclient applies → nexus_thingclient_config_applies_total
-//      {success} ticks.
-//   4. Chat with the rule's VK → routing engine resolves the single
-//      target, stamps routing_rule_id on traffic_event.
-//   5. AdminAuditLog 'create' row appears with entityId=rule.ID.
-//   6. nexus_normalize_total delta ≥ 1 across the chat call.
+//  1. POST /api/admin/routing-rules writes RoutingRule row + audit row.
+//  2. Hub broadcasts routing_rules config_changed.
+//  3. AI Gateway thingclient applies → nexus_thingclient_config_applies_total
+//     {success} ticks.
+//  4. Chat with the rule's VK → routing engine resolves the single
+//     target, stamps routing_rule_id on traffic_event.
+//  5. AdminAuditLog 'create' row appears with entityId=rule.ID.
+//  6. nexus_normalize_total delta ≥ 1 across the chat call.
 //
 // Hermetic via matchConditions.virtualKeys=[vkName] (VK.Name glob).
 func TestS010_SingleStrategy(t *testing.T) {
@@ -158,10 +158,24 @@ func TestS010_SingleStrategy(t *testing.T) {
 	}
 	// Metric delta — chat must have left a counter trace.
 	postMetrics, _ := helpers.ScrapeMetrics(ctx, sc.Env.AIGwURL)
-	normDelta := postMetrics.CounterSum("nexus_normalize_total", nil) -
-		preMetrics.CounterSum("nexus_normalize_total", nil)
+	// nexus_requests_total{endpoint=…,status="2xx"} — the counter the gateway
+	// actually exports, registered since the initial commit.
+	//
+	// This assertion used to bind nexus_normalize_total, which HAS NEVER EXISTED:
+	// the only normalize counters are nexus_normalize_panic_total and
+	// nexus_prehook_normalize_drop_total. The switch was made deliberately, with a
+	// comment calling nexus_requests_total "absent" — and the probe that concluded
+	// that was almost certainly unauthenticated, because /metrics answers 401
+	// without a service token and an unauthenticated scrape shows every metric as
+	// absent. So a 401 talked an earlier session into replacing a working metric
+	// name with one that could never match, and ScrapeMetrics then 401'd too, so
+	// the broken assertion never ran and nobody found out.
+	chatLabels := map[string]string{"endpoint": "chat", "status": "2xx"}
+	normDelta := postMetrics.CounterSum("nexus_requests_total", chatLabels) -
+		preMetrics.CounterSum("nexus_requests_total", chatLabels)
 	if normDelta < 1 {
-		t.Errorf("normalize_total delta=%g (want ≥ 1) — chat did not exercise gateway", normDelta)
+		t.Errorf("nexus_requests_total{endpoint=chat,status=2xx} delta=%g (want ≥ 1) — chat did "+
+			"not exercise the gateway", normDelta)
 	}
 	t.Logf("S-010 OK: rule fired (id=%s) audit=%s traffic=%s normalize_delta=%.0f",
 		rule.ID, auditRow.ID, row.ID, normDelta)

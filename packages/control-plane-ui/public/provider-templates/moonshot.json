@@ -18,11 +18,49 @@
         "prompt_caching"
       ],
       "inputPricePerMillion": 0.95,
-      "outputPricePerMillion": 4.0,
-      "maxContextTokens": 262144,
-      "maxOutputTokens": 16384,
+      "outputPricePerMillion": 4,
       "cachedInputReadPricePerMillion": 0.16,
-      "cachedInputWritePricePerMillion": 0
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 262144,
+      "maxOutputTokens": 16384
+    },
+    {
+      "code": "kimi-k2.7-code",
+      "name": "Kimi K2.7 Code",
+      "description": "Moonshot's most capable coding model. 256K context.",
+      "providerModelId": "kimi-k2.7-code",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.95,
+      "outputPricePerMillion": 4,
+      "cachedInputReadPricePerMillion": 0.19,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 262144,
+      "maxOutputTokens": 16384
+    },
+    {
+      "code": "kimi-k2.7-code-highspeed",
+      "name": "Kimi K2.7 Code Highspeed",
+      "description": "Kimi K2.7 Code at higher throughput. Same model, double the price.",
+      "providerModelId": "kimi-k2.7-code-highspeed",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 1.9,
+      "outputPricePerMillion": 8,
+      "cachedInputReadPricePerMillion": 0.38,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 262144,
+      "maxOutputTokens": 16384
     },
     {
       "code": "kimi-k2.5",
@@ -37,32 +75,11 @@
         "prompt_caching"
       ],
       "inputPricePerMillion": 0.6,
-      "outputPricePerMillion": 3.0,
-      "maxContextTokens": 262144,
-      "maxOutputTokens": 16384,
+      "outputPricePerMillion": 3,
       "cachedInputReadPricePerMillion": 0.1,
-      "cachedInputWritePricePerMillion": 0
-    },
-    {
-      "code": "kimi-k2-thinking",
-      "name": "Kimi K2 Thinking",
-      "description": "Kimi K2 Thinking — 256K context, extended reasoning / chain-of-thought model.",
-      "providerModelId": "kimi-k2-thinking",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming",
-        "vision",
-        "prompt_caching",
-        "reasoning"
-      ],
-      "inputPricePerMillion": 0.95,
-      "outputPricePerMillion": 4.0,
+      "cachedInputWritePricePerMillion": 0,
       "maxContextTokens": 262144,
-      "maxOutputTokens": 16384,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "maxOutputTokens": 16384
     },
     {
       "code": "moonshot-v1-128k",
@@ -74,12 +91,28 @@
         "function_calling",
         "streaming"
       ],
-      "inputPricePerMillion": 2.0,
-      "outputPricePerMillion": 5.0,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 4096,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 5,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 4096
+    },
+    {
+      "code": "moonshot-v1-128k-vision-preview",
+      "name": "Moonshot V1 128K Vision",
+      "description": "Moonshot V1 128K with image input.",
+      "providerModelId": "moonshot-v1-128k-vision-preview",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision"
+      ],
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 5,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 4096
     },
     {
       "code": "moonshot-v1-32k",
@@ -91,12 +124,28 @@
         "function_calling",
         "streaming"
       ],
-      "inputPricePerMillion": 1.0,
-      "outputPricePerMillion": 3.0,
+      "inputPricePerMillion": 1,
+      "outputPricePerMillion": 3,
+      "cachedInputWritePricePerMillion": 0,
       "maxContextTokens": 32768,
-      "maxOutputTokens": 4096,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 4096
+    },
+    {
+      "code": "moonshot-v1-32k-vision-preview",
+      "name": "Moonshot V1 32K Vision",
+      "description": "Moonshot V1 32K with image input.",
+      "providerModelId": "moonshot-v1-32k-vision-preview",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision"
+      ],
+      "inputPricePerMillion": 1,
+      "outputPricePerMillion": 3,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 32768,
+      "maxOutputTokens": 4096
     },
     {
       "code": "moonshot-v1-8k",
@@ -109,11 +158,27 @@
         "streaming"
       ],
       "inputPricePerMillion": 0.2,
-      "outputPricePerMillion": 2.0,
+      "outputPricePerMillion": 2,
+      "cachedInputWritePricePerMillion": 0,
       "maxContextTokens": 8192,
-      "maxOutputTokens": 4096,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxOutputTokens": 4096
+    },
+    {
+      "code": "moonshot-v1-8k-vision-preview",
+      "name": "Moonshot V1 8K Vision",
+      "description": "Moonshot V1 8K with image input.",
+      "providerModelId": "moonshot-v1-8k-vision-preview",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision"
+      ],
+      "inputPricePerMillion": 0.2,
+      "outputPricePerMillion": 2,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 8192,
+      "maxOutputTokens": 4096
     }
   ]
 }

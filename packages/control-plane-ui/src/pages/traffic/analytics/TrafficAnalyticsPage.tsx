@@ -35,7 +35,7 @@ function getSourceTabs(t: (key: string) => string): { value: TrafficSourceFilter
 }
 
 const VALID_TAB_VALUES = new Set<TrafficSourceFilter>(['', 'vk', 'proxy', 'agent']);
-const TAB_LOCAL_FILTER_URL_KEYS = ['thingId', 'thingName', 'eventId', 'status', 'model'];
+const TAB_LOCAL_FILTER_URL_KEYS = ['thingId', 'thingName', 'eventId', 'status', 'model', 'modelExact', 'errorCode', 'provider', 'from', 'to'];
 
 /* -- Main Page -- */
 

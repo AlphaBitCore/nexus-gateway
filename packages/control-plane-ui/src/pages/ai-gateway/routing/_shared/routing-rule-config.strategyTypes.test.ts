@@ -9,7 +9,7 @@ import { STRATEGY_TYPES } from './routing-rule-config';
 // to appear in the current page of rules, silently omitting Fallback Chain and A/B
 // Split and showing raw enum values.
 describe('STRATEGY_TYPES', () => {
-  it('is exactly the six user-selectable strategies, in canonical display order', () => {
+  it('is exactly the seven user-selectable strategies, in canonical display order', () => {
     expect(STRATEGY_TYPES).toEqual([
       'single',
       'fallback',
@@ -17,6 +17,7 @@ describe('STRATEGY_TYPES', () => {
       'conditional',
       'ab_split',
       'smart',
+      'latency',
     ]);
   });
 

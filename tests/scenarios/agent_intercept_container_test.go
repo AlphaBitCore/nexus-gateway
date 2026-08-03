@@ -127,7 +127,11 @@ exec nexus-agent run --config /tmp/agent.yaml`, tok.Token)
 		if strings.Contains(string(logs), "start iptables reconciler") {
 			t.Skipf("daemon could not install iptables chain on this host (no usable NET_ADMIN):\n%s", truncate(logs, 600))
 		}
-		t.Fatalf("daemon did not report chain installed within timeout:\n%s", truncate(logs, 800))
+		// 4000, not 800. The daemon's failure is the LAST thing in these logs, after
+		// enrolment chatter and the OS trust-store update — an 800-char cap cut the
+		// error line in half and left "level=ERROR source=...(truncated)" as the
+		// entire diagnosis. A truncation that removes the cause is not a diagnostic.
+		t.Fatalf("daemon did not report chain installed within timeout:\n%s", truncate(logs, 4000))
 	}
 	sc.Cleanup.Register("unenroll("+deviceID+")", func() error {
 		_, _, _ = helpers.CPDoJSON(context.Background(), sc.Env, token, "POST",
