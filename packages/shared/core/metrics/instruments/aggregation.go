@@ -64,6 +64,10 @@ var metricAggregationKinds = map[string]AggregationKind{
 	MetricHookLatencyHist:  AggregationHistogram,
 	MetricFirstSeen:        AggregationTimestamp,
 	MetricLastSeen:         AggregationTimestamp,
+
+	// Error-class first/last-seen metadata (see error_class.go). The count
+	// sibling MetricTrafficErrorClassCount stays on the Sum default.
+	MetricTrafficErrorClassSeen: AggregationTimestamp,
 }
 
 // AggregationKindFor returns the registered aggregation kind for a metric,

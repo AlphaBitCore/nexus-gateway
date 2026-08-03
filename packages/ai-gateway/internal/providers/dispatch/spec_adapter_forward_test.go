@@ -91,3 +91,7 @@ func (noopStream) Open(io.ReadCloser, typology.WireShape) (StreamSession, error)
 type noopNorm struct{}
 
 func (noopNorm) Normalize(int, http.Header, []byte) *ProviderError { return nil }
+
+func (noopCodec) RewriteNative(_ typology.WireShape, nativeBody []byte, _ CallTarget, _ bool) (EncodeResult, error) {
+	return EncodeResult{Body: nativeBody}, nil
+}

@@ -51,9 +51,9 @@ func TestToDomainPolicy_BasicFieldsRoundTrip(t *testing.T) {
 		t.Errorf("Paths not converted: %+v", d.Paths)
 	}
 	// All override pointers must be nil for a DTO with no overrides set.
-	if d.StreamingMode != nil || d.CaptureRequestBody != nil || d.RawBodySpillEnabled != nil {
-		t.Errorf("absent overrides must remain nil, got %+v / %v / %v",
-			d.StreamingMode, d.CaptureRequestBody, d.RawBodySpillEnabled)
+	if d.StreamingMode != nil || d.CaptureRequestBody != nil {
+		t.Errorf("absent overrides must remain nil, got %+v / %v",
+			d.StreamingMode, d.CaptureRequestBody)
 	}
 }
 
@@ -65,7 +65,6 @@ func TestToDomainPolicy_PerHostOverridesPreserved(t *testing.T) {
 	failBehavior := "fail_close"
 	captureReq := true
 	captureResp := false
-	spill := true
 
 	domains := []InterceptionDomainDTO{
 		{
@@ -81,7 +80,6 @@ func TestToDomainPolicy_PerHostOverridesPreserved(t *testing.T) {
 			StreamingFailBehavior:   &failBehavior,
 			CaptureRequestBody:      &captureReq,
 			CaptureResponseBody:     &captureResp,
-			RawBodySpillEnabled:     &spill,
 		},
 	}
 	got := ToDomainPolicy(domains)
@@ -106,9 +104,6 @@ func TestToDomainPolicy_PerHostOverridesPreserved(t *testing.T) {
 	}
 	if d.CaptureResponseBody == nil || *d.CaptureResponseBody != false {
 		t.Errorf("CaptureResponseBody: got %v, want false", d.CaptureResponseBody)
-	}
-	if d.RawBodySpillEnabled == nil || *d.RawBodySpillEnabled != true {
-		t.Errorf("RawBodySpillEnabled: got %v, want true", d.RawBodySpillEnabled)
 	}
 }
 

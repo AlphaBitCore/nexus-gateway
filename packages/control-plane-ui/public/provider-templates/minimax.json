@@ -6,9 +6,28 @@
   "adapterType": "minimax",
   "models": [
     {
+      "code": "minimax-m3",
+      "name": "MiniMax M3",
+      "description": "MiniMax M3 — current flagship. 1M context with vision and reasoning.",
+      "providerModelId": "MiniMax-M3",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.3,
+      "outputPricePerMillion": 1.2,
+      "cachedInputReadPricePerMillion": 0.06,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
+    },
+    {
       "code": "minimax-m2-7",
       "name": "MiniMax M2.7",
-      "description": "Latest MiniMax release. Currently the recommended default for production traffic.",
+      "description": "MiniMax M2.7 conversational model.",
       "providerModelId": "MiniMax-M2.7",
       "type": "chat",
       "features": [
@@ -18,29 +37,28 @@
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 1.2,
-      "maxContextTokens": 204800,
-      "maxOutputTokens": 16384,
       "cachedInputReadPricePerMillion": 0.06,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 204800,
+      "maxOutputTokens": 16384
     },
     {
       "code": "minimax-m2-5",
       "name": "MiniMax M2.5",
-      "description": "MiniMax M2.5 — better instruction following and tool-use stability at lower cost.",
+      "description": "MiniMax M2.5 conversational model with prompt caching.",
       "providerModelId": "MiniMax-M2.5",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning",
+        "prompt_caching"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 1.2,
-      "maxContextTokens": 196608,
-      "maxOutputTokens": 16384,
       "cachedInputReadPricePerMillion": 0.03,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "cachedInputWritePricePerMillion": 0.375,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 8192
     }
   ]
 }

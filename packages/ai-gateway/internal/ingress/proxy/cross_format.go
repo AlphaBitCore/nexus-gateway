@@ -211,13 +211,20 @@ func (h *Handler) writeResponsesFeatureRejection(w http.ResponseWriter, rec *aud
 }
 
 // writeNoCompatibleProvider emits the canonical 400 body for cross-format
-// rejection.
-func (h *Handler) writeNoCompatibleProvider(w http.ResponseWriter, rec *audit.Record, ingress provcore.Format, provider string) {
+// rejection. The message names the endpoint kind: routability is
+// per-kind (a provider that serves chat fine may have no image leg), so
+// a kind-less message reads as a blanket provider incompatibility and
+// sends the admin down the wrong path.
+func (h *Handler) writeNoCompatibleProvider(w http.ResponseWriter, rec *audit.Record, ingress provcore.Format, provider string, kind typology.EndpointKind) {
 	rec.StatusCode = http.StatusBadRequest
 	rec.HookReasonCode = "no_compatible_provider"
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	msg := fmt.Sprintf("ingress format %q cannot be routed to provider format %q in this release", ingress, provider)
+	kindNoun := "these"
+	if kind != "" {
+		kindNoun = string(kind)
+	}
+	msg := fmt.Sprintf("ingress format %q cannot be routed to provider format %q for %s requests in this release", ingress, provider, kindNoun)
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]any{
 			"type":    "no_compatible_provider",

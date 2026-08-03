@@ -132,7 +132,11 @@ log:
   # admin push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1 + §5.3.
   # warn by default: debug is high-volume under load and floods the log file. Raise
   # to debug per session (or via the Hub log_level shadow) when actively debugging.
-  level: "warn"
+  # info at boot to match *.prod.yaml.example and the level the Hub shadow
+  # pushes anyway: the yaml governs only the boot window, and leaving it at warn
+  # hid every boot posture line (audit overflow policy, spillstore backend,
+  # streaming policy) in exactly the environment where they are read.
+  level: "info"
   format: "text"
   file: "logs/nexus-hub.log"
   stackOnError: true

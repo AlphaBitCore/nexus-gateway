@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E23-S2: Code-sign the .app bundle with a Developer ID Application certificate.
+# Code-sign the .app bundle with a Developer ID Application certificate.
 # Skips silently if DEVELOPER_ID_APPLICATION env var is not set (local dev mode).
 #
 # Usage: bash packages/agent/platform/darwin/Scripts/sign.sh

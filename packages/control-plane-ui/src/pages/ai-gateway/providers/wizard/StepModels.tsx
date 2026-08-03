@@ -125,10 +125,13 @@ export function StepModels({ wizard }: { wizard: ProviderWizardHook }) {
                 onValueChange={setNewModelType}
                 options={[
                   { value: 'chat', label: t('pages:providers.modelTypeChat') },
-                  { value: 'completion', label: t('pages:providers.modelTypeCompletion') },
                   { value: 'embedding', label: t('pages:providers.modelTypeEmbedding') },
                   { value: 'image', label: t('pages:providers.modelTypeImage') },
                   { value: 'audio', label: t('pages:providers.modelTypeAudio', 'Audio') },
+                  { value: 'tts', label: t('pages:providers.modelTypeTts', 'TTS (Text-to-Speech)') },
+                  { value: 'stt', label: t('pages:providers.modelTypeStt', 'STT (Speech-to-Text)') },
+                  { value: 'rerank', label: t('pages:providers.modelTypeRerank') },
+                  { value: 'video', label: t('pages:providers.modelTypeVideo') },
                 ]}
               />
             </FormField>

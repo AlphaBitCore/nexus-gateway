@@ -17,11 +17,16 @@ import (
 // for the full lifetime of the broker so subscribers joining mid-
 // stream get the full replay window.
 type RingBuffer struct {
-	mu      sync.Mutex
-	chunks  []provcore.Chunk
-	done    bool
-	err     error
-	waiters []chan struct{}
+	mu     sync.Mutex
+	chunks []provcore.Chunk
+	done   bool
+	err    error
+	// wake is a broadcast channel shared by every parked reader of the
+	// current generation: closing it wakes all of them at once, and the next
+	// park allocates the next generation. A per-reader channel list would
+	// instead cost one channel plus a slice append per reader per chunk, and
+	// this parks once per chunk per subscriber on a live stream.
+	wake chan struct{}
 }
 
 // NewRingBuffer returns an empty, ready-to-use RingBuffer.
@@ -109,9 +114,12 @@ func (r *RingBuffer) Read(ctx context.Context, idx int) (provcore.Chunk, int, er
 			r.mu.Unlock()
 			return provcore.Chunk{}, idx, io.EOF
 		}
-		// Park waiting for the next Append / AppendTerminal / Fail.
-		ch := make(chan struct{})
-		r.waiters = append(r.waiters, ch)
+		// Park waiting for the next Append / AppendTerminal / Fail. Readers
+		// that park before the same wake share one channel.
+		if r.wake == nil {
+			r.wake = make(chan struct{})
+		}
+		ch := r.wake
 		r.mu.Unlock()
 
 		select {
@@ -123,11 +131,11 @@ func (r *RingBuffer) Read(ctx context.Context, idx int) (provcore.Chunk, int, er
 	}
 }
 
-// wakeAllLocked closes every waiter channel and clears the slice.
-// Must be called with r.mu held.
+// wakeAllLocked wakes every reader parked on the current generation and
+// starts a new one. Must be called with r.mu held.
 func (r *RingBuffer) wakeAllLocked() {
-	for _, ch := range r.waiters {
-		close(ch)
+	if r.wake != nil {
+		close(r.wake)
+		r.wake = nil
 	}
-	r.waiters = nil
 }

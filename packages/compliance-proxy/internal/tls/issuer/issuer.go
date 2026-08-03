@@ -46,6 +46,17 @@ const LeafValidity = 24 * time.Hour
 // in normal operation. Same seam pattern as agent/core/network/tls.
 var certRandReader io.Reader = rand.Reader
 
+// certGenerateKey / certCreateCertificate are the same kind of seam for the
+// two primitives that no longer consume the reader they are handed: since Go
+// 1.26 the FIPS 140-3 module draws ECDSA key material and signature
+// randomness from its own DRBG, so a starved certRandReader cannot reach
+// their error branches. Only rand.Int (serial numbers) and GCM nonce
+// derivation still read the injected reader. Production never reassigns them.
+var (
+	certGenerateKey       = ecdsa.GenerateKey
+	certCreateCertificate = x509.CreateCertificate
+)
+
 // marshalECPrivKeyFn wraps x509.MarshalECPrivateKey so tests can inject a
 // failing variant to exercise the error-handling arm inside NewIssuer that
 // fires after a successful ecdsa.GenerateKey — a path the stdlib never
@@ -160,7 +171,7 @@ func (i *Issuer) SignCert(hostname string) (*tls.Certificate, error) {
 		}
 	}()
 
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), certRandReader)
+	leafKey, err := certGenerateKey(elliptic.P256(), certRandReader)
 	if err != nil {
 		return nil, fmt.Errorf("cert: generate leaf key: %w", err)
 	}
@@ -190,7 +201,7 @@ func (i *Issuer) SignCert(hostname string) (*tls.Certificate, error) {
 	} else {
 		signer = i.caKey
 	}
-	leafDER, err := x509.CreateCertificate(certRandReader, template, i.caCert, &leafKey.PublicKey, signer)
+	leafDER, err := certCreateCertificate(certRandReader, template, i.caCert, &leafKey.PublicKey, signer)
 	if err != nil {
 		return nil, fmt.Errorf("cert: sign leaf cert: %w", err)
 	}

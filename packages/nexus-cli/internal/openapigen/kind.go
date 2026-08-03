@@ -115,7 +115,7 @@ func pascalToken(s string) string {
 
 // deriveKind returns the resource kind for a path: the first path segment after
 // the base prefix. /api/admin/quota-policies/{id} -> "quota-policies";
-// /api/admin/cache/global -> "cache". Returns "" if the path lies outside the
+// /api/admin/cache/adapters -> "cache". Returns "" if the path lies outside the
 // base prefix (the caller treats that as unresolved).
 func deriveKind(path, basePrefix string) string {
 	rest := strings.TrimPrefix(path, strings.TrimRight(basePrefix, "/"))

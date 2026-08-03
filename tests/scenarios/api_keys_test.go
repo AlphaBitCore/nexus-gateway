@@ -8,7 +8,7 @@
 //     leak it (zero-knowledge contract — losing this means an admin
 //     reading the page sees every key in plaintext).
 //   - The created key actually authenticates the user against admin
-//     routes via x-admin-key (proves DB hash + lookup path is wired).
+//     routes via X-Nexus-Admin-Key (proves DB hash + lookup path is wired).
 //   - Regenerate invalidates the old hash AND mints a new working key.
 //   - Delete invalidates the key permanently.
 //
@@ -35,19 +35,19 @@ import (
 // hold simultaneously or the operator-trust model breaks. The most
 // expensive silent failure: the create response *does* return rawKey
 // but the DB hash store is broken (FindByKeyHash returns nil even
-// for valid keys), so all subsequent `x-admin-key: nxk_…` calls 401.
+// for valid keys), so all subsequent `X-Nexus-Admin-Key: nxk_…` calls 401.
 // A 200-status smoke on the POST alone would miss that completely.
 //
 // Cross-service: CP admin API for both the management path
 // (POST/GET/DELETE /api/my/api-keys) AND the use path (any
-// /api/admin/* endpoint via x-admin-key auth). Audit rows on
+// /api/admin/* endpoint via X-Nexus-Admin-Key auth). Audit rows on
 // AdminAuditLog verify the side-channel write isn't silently dropped.
 //
 // Assertions:
 //  1. POST create returns 201 with id + rawKey + keyPrefix.
 //  2. GET list contains the new key with the same keyPrefix and
 //     NO raw key leak (the zero-knowledge contract).
-//  3. The rawKey authenticates against GET /api/me via x-admin-key.
+//  3. The rawKey authenticates against GET /api/me via X-Nexus-Admin-Key.
 //  4. POST regenerate returns a new rawKey; the OLD rawKey now 401s.
 //  5. The NEW rawKey authenticates against GET /api/me.
 //  6. DELETE removes the key; the new rawKey now 401s too.

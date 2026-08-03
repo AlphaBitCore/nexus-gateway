@@ -129,7 +129,7 @@ func tcpLoopbackPair(t *testing.T) tcpPair {
 // given SNI. Mirrors what crypto/tls would write but is small enough to
 // keep test failures debuggable. Returns the complete record including the
 // 5-byte TLS record header.
-func buildClientHello(t *testing.T, sni string) []byte {
+func buildClientHello(t testing.TB, sni string) []byte {
 	t.Helper()
 	// Build SNI extension data: list_len(2) + name_type(1) + name_len(2) + name
 	sniName := []byte(sni)
@@ -758,15 +758,15 @@ func TestBumpFlow_NilUpstream(t *testing.T) {
 	}
 }
 
-func TestBumpFlow_NilAuditQueue(t *testing.T) {
+func TestBumpFlow_NilAuditWriter(t *testing.T) {
 	server, client := net.Pipe()
 	t.Cleanup(func() { _ = server.Close(); _ = client.Close() })
 	eng := newTestEngine(t)
 	// Construct a real but minimal Upstream so the next nil check fires.
 	up := newTestUpstream(t)
 	err := BumpFlow(context.Background(), server, nil, "x", 443, "fl", FlowProcess{}, BridgeDeps{TLSEngine: eng, Upstream: up})
-	if err == nil || !strings.Contains(err.Error(), "nil AuditQueue") {
-		t.Errorf("got %v want nil AuditQueue error", err)
+	if err == nil || !strings.Contains(err.Error(), "nil AuditWriter") {
+		t.Errorf("got %v want nil AuditWriter error", err)
 	}
 }
 
@@ -866,14 +866,14 @@ func TestBumpFlow_NonTLSPort_DialFailure(t *testing.T) {
 
 	eng := newTestEngine(t)
 	up := newTestUpstream(t)
-	queue := newTestAuditQueue(t)
+	writer := newTestAuditWriter(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := BumpFlow(ctx, server, nil, "upstream.invalid", 1080, "fl-err", FlowProcess{}, BridgeDeps{
-		TLSEngine:  eng,
-		Upstream:   up,
-		AuditQueue: queue,
+		TLSEngine:   eng,
+		Upstream:    up,
+		AuditWriter: writer,
 	})
 	if err == nil {
 		t.Fatal("expected opaque relay dial failure")
@@ -893,7 +893,7 @@ func TestBumpFlow_TLSPort_BumpConnectionTLSHandshakeFails(t *testing.T) {
 
 	eng := newTestEngine(t)
 	up := newTestUpstream(t)
-	queue := newTestAuditQueue(t)
+	writer := newTestAuditWriter(t)
 	policyResolver := newTestPolicyResolver(t)
 	domainEngine := domain.NewEngine()
 	registry := traffic.NewAdapterRegistry("test")
@@ -925,7 +925,7 @@ func TestBumpFlow_TLSPort_BumpConnectionTLSHandshakeFails(t *testing.T) {
 		PayloadCaptureStore: captureStore,
 		SpillStore:          spill, // exercises the SpillStore-wired emitter branch
 		StreamingPolicy:     streamPolicy,
-		AuditQueue:          queue,
+		AuditWriter:         writer,
 		// Defaults exercised: PerHookTimeout=0 → 5s, TotalTimeout=0 → 30s.
 	})
 	// Client speaks no TLS → BumpConnection fails at client_pin_check; the
@@ -944,7 +944,7 @@ func TestBumpFlow_TLSPort_CustomTimeouts(t *testing.T) {
 
 	eng := newTestEngine(t)
 	up := newTestUpstream(t)
-	queue := newTestAuditQueue(t)
+	writer := newTestAuditWriter(t)
 	installMockUpstream(t, newDrainConn(nil), nil) // fallback dial → in-memory upstream
 
 	_ = client.Close()
@@ -954,7 +954,7 @@ func TestBumpFlow_TLSPort_CustomTimeouts(t *testing.T) {
 	_ = BumpFlow(ctx, server, nil, "127.0.0.1", 443, "fl-to", FlowProcess{}, BridgeDeps{
 		TLSEngine:      eng,
 		Upstream:       up,
-		AuditQueue:     queue,
+		AuditWriter:    writer,
 		PerHookTimeout: 2 * time.Second,
 		TotalTimeout:   10 * time.Second,
 	})
@@ -976,15 +976,15 @@ func TestBumpFlow_NonTLSPort_OpaqueRelay(t *testing.T) {
 
 	eng := newTestEngine(t)
 	up := newTestUpstream(t)
-	queue := newTestAuditQueue(t)
+	writer := newTestAuditWriter(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := BumpFlow(ctx, agentSide, []byte("ping"), "upstream.invalid", 8080, "fl-1",
 		FlowProcess{Name: "p", Bundle: "b", User: "u"}, BridgeDeps{
-			TLSEngine:  eng,
-			Upstream:   up,
-			AuditQueue: queue,
+			TLSEngine:   eng,
+			Upstream:    up,
+			AuditWriter: writer,
 		})
 	if err != nil {
 		t.Errorf("BumpFlow: %v", err)
@@ -1012,16 +1012,16 @@ func TestBumpFlow_TLSPort_PinCheckFailure_FallbackSucceeds(t *testing.T) {
 
 	eng := newTestEngine(t)
 	up := newTestUpstream(t)
-	queue := newTestAuditQueue(t)
+	writer := newTestAuditWriter(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err := BumpFlow(ctx, agentSide, []byte("PEEKED-HELLO"), "127.0.0.1", 8443, "fl-pin-fallback", FlowProcess{
 		Name: "TestApp", Bundle: "com.example.TestApp", User: "tester",
 	}, BridgeDeps{
-		TLSEngine:  eng,
-		Upstream:   up,
-		AuditQueue: queue,
+		TLSEngine:   eng,
+		Upstream:    up,
+		AuditWriter: writer,
 	})
 	// Fallback succeeded → nil, even though the client TLS handshake failed.
 	if err != nil {
@@ -1206,6 +1206,17 @@ func newTestUpstream(t *testing.T) *tlsbump.UpstreamTransport {
 		t.Fatalf("tlsbump.NewUpstreamTransport: %v", err)
 	}
 	return up
+}
+
+// newTestAuditWriter spawns a fresh in-memory SQLite audit Queue and the ONE
+// writer over it that BridgeDeps carries. It closes the writer before the queue
+// so the writer's flush loop cannot race the queue's Close — the same ordering
+// production shutdown uses.
+func newTestAuditWriter(t *testing.T) sharedaudit.Writer {
+	t.Helper()
+	w := agentaudit.NewQueueWriter(newTestAuditQueue(t))
+	t.Cleanup(func() { _ = w.Close(context.Background()) })
+	return w
 }
 
 // newTestAuditQueue spawns a fresh in-memory SQLite audit Queue for the

@@ -39,7 +39,7 @@ func (h *Handler) writeAuthError(w http.ResponseWriter, rec *audit.Record, err e
 	switch {
 	case errors.Is(err, vkauth.ErrMissing):
 		code = "AUTH_KEY_MISSING"
-		hint = "Include a virtual key via x-nexus-virtual-key header or Authorization: Bearer"
+		hint = "Include a virtual key via X-Nexus-Virtual-Key header or Authorization: Bearer"
 	case errors.Is(err, vkauth.ErrDisabled):
 		code = "AUTH_KEY_DISABLED"
 		hint = "This key has been disabled by an administrator"
@@ -107,6 +107,22 @@ func (h *Handler) checkCompareRateLimit(w http.ResponseWriter, vkMeta *vkauth.VK
 // routing/hooks fall back to their nil-Request behaviour. A malformed
 // or unrecognised body must not block the request — the routing layer
 // makes its own non-smart fallback.
+// requestNormalizeMeta builds the request-direction normalize Meta.
+// Aligned with the audit-path Meta (auditbridge.BuildAuditFn): lowercased
+// AdapterType + stripped ContentType, so the registry selects the
+// identical normalizer everywhere the request body is normalized —
+// admission (buildRequestContext) and the post-rewrite cache canonical
+// (proxyState.cacheNormalized) must never diverge on normalizer choice.
+func requestNormalizeMeta(r *http.Request, ingressFormat provcore.Format, modelID string) normcore.Meta {
+	return normcore.Meta{
+		AdapterType:  strings.ToLower(string(ingressFormat)),
+		Model:        modelID,
+		ContentType:  normcore.StripContentTypeParams(r.Header.Get("Content-Type")),
+		Direction:    normcore.DirectionRequest,
+		EndpointPath: r.URL.Path,
+	}
+}
+
 func (h *Handler) buildRequestContext(r *http.Request, vkMeta *vkauth.VKMeta, body []byte, ingressFormat provcore.Format, modelID, endpointType string) *requestcontext.RequestContext {
 	b := requestcontext.NewBuilder().
 		WithIdentity(vkMeta).
@@ -116,16 +132,7 @@ func (h *Handler) buildRequestContext(r *http.Request, vkMeta *vkauth.VKMeta, bo
 
 	if h.deps.NormalizeRegistry != nil && len(body) > 0 {
 		ctx := r.Context()
-		// Meta aligned with the audit-path Meta (auditbridge.BuildAuditFn):
-		// lowercased AdapterType + stripped ContentType, so the registry selects
-		// the identical normalizer and the audit reuse path stays byte-identical.
-		meta := normcore.Meta{
-			AdapterType:  strings.ToLower(string(ingressFormat)),
-			Model:        modelID,
-			ContentType:  normcore.StripContentTypeParams(r.Header.Get("Content-Type")),
-			Direction:    normcore.DirectionRequest,
-			EndpointPath: r.URL.Path,
-		}
+		meta := requestNormalizeMeta(r, ingressFormat, modelID)
 		compute := func() *normcore.NormalizedPayload {
 			payload, err := h.deps.NormalizeRegistry.Normalize(ctx, body, meta)
 			if err != nil {
@@ -210,6 +217,38 @@ func (h *Handler) resolveRoute(ctx context.Context, rctxFull *requestcontext.Req
 	}
 
 	return h.deps.Router.ResolveTargets(ctx, rctx)
+}
+
+// resolveRouteOrPassthrough resolves the requested model to targets and, when no
+// routing rule matches it (zero targets, or the empty-NoCompatibleProviderError
+// the resolver returns with no rules enabled), falls back to the SAME
+// requested-model passthrough resolution the ServeProxy routing stage uses (see
+// resolveNoMatchPassthrough / stage_routing). Without this the parallel STT /
+// video / realtime handlers 404 on a plain "serve the model I asked for"
+// request whenever no explicit routing rule is authored for that model — while
+// chat / image / TTS on ServeProxy route it out of the box. The parallel
+// modalities are never the embeddings endpoint, so a non-empty capability
+// NoCompatibleProviderError cannot occur here; any error/empty result means "no
+// rule matched", which is exactly the passthrough case.
+func (h *Handler) resolveRouteOrPassthrough(ctx context.Context, rctxFull *requestcontext.RequestContext, in Ingress, modelID string, endpointKind typology.EndpointKind) (*routingcore.RouteResult, error) {
+	routeRes, err := h.resolveRoute(ctx, rctxFull, modelID, endpointKind)
+	if err != nil {
+		// Mirror the ServeProxy routing stage (stage_routing): only an EMPTY
+		// NoCompatibleProviderError — the resolver's "no rules enabled" signal —
+		// degrades to the requested-model passthrough. Any other resolver error
+		// (a strategy evaluation failure, a DB error inside lookupTarget) is a
+		// genuine fault and MUST fail closed: silently passing through would
+		// serve the requested model while dropping the admin-authored routing /
+		// policy narrowing a real error should surface.
+		var ncpErr *routingcore.NoCompatibleProviderError
+		if !errors.As(err, &ncpErr) || len(ncpErr.Available) > 0 {
+			return nil, err
+		}
+		// empty NoCompatibleProviderError → fall through to passthrough
+	} else if routeRes != nil && len(routeRes.Targets) > 0 {
+		return routeRes, nil
+	}
+	return h.resolveNoMatchPassthrough(ctx, modelID, rctxFull.Identity(), in, endpointKind)
 }
 
 // parseEmbeddingRequest extracts the embedding request parameters from

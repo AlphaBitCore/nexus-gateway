@@ -40,6 +40,7 @@ func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) 
 		       m."providerModelId", m.type, m.enabled,
 		       m."inputPricePerMillion", m."outputPricePerMillion",
 		       m."cachedInputReadPricePerMillion", m."cachedInputWritePricePerMillion",
+		       m."audioInputPricePerMillion", m."audioOutputPricePerMillion", m."cachedAudioInputReadPricePerMillion",
 		       COALESCE(m.features, '{}'), m."maxContextTokens", m."maxOutputTokens",
 		       COALESCE(m.aliases, '{}'),
 		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
@@ -58,10 +59,12 @@ func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) 
 	for rows.Next() {
 		var m store.Model
 		var inPrice, outPrice, cachedReadPrice, cachedWritePrice *string
+		var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 		var maxCtx, maxOut pgtype.Int4
 		if err := rows.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName,
 			&m.ProviderBaseURL, &m.ProviderModelID, &m.Type, &m.Enabled,
 			&inPrice, &outPrice, &cachedReadPrice, &cachedWritePrice,
+			&audioInPrice, &audioOutPrice, &cachedAudioReadPrice,
 			&m.Features, &maxCtx, &maxOut, &m.Aliases,
 			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson); err != nil {
 			return nil, fmt.Errorf("cachelayer: scan model: %w", err)
@@ -77,6 +80,15 @@ func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) 
 		}
 		if f, ok := store.ParseDecimal(cachedWritePrice); ok {
 			m.CachedInputWritePricePM = &f
+		}
+		if f, ok := store.ParseDecimal(audioInPrice); ok {
+			m.AudioInputPricePM = &f
+		}
+		if f, ok := store.ParseDecimal(audioOutPrice); ok {
+			m.AudioOutputPricePM = &f
+		}
+		if f, ok := store.ParseDecimal(cachedAudioReadPrice); ok {
+			m.CachedAudioInputReadPricePM = &f
 		}
 		if maxCtx.Valid {
 			v := int(maxCtx.Int32)
@@ -168,9 +180,9 @@ func (l *Layer) loadCredentials(ctx context.Context) (map[string]store.Credentia
 }
 
 // loadVirtualKey looks up a VK by its HMAC hash. Used as the per-key
-// loader by the KeyCache; misses cache the not-found state? No — errors
-// are not cached, so a not-found returns the underlying error and the
-// next call retries.
+// loader by the KeyCache, which caches values but never errors. The
+// "row absent" outcome is therefore recorded by GetVirtualKeyByHash in
+// the separate negative cache (negvk.go) rather than here.
 func (l *Layer) loadVirtualKey(ctx context.Context, keyHash string) (*store.VirtualKey, error) {
 	return l.db.GetVirtualKeyByHash(ctx, keyHash)
 }

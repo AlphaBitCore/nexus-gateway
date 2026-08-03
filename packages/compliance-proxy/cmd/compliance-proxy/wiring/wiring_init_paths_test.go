@@ -182,7 +182,7 @@ func TestRegisterCacheLoaders_DBPresent_EmptyRows_SwapSuccess(t *testing.T) {
 		"enabled", "priority", "updated_at",
 		"streaming_mode", "streaming_chunk_bytes", "streaming_hook_timeout_ms",
 		"streaming_max_buffer_bytes", "streaming_fail_behavior",
-		"capture_request_body", "capture_response_body", "raw_body_spill_enabled",
+		"capture_request_body", "capture_response_body",
 	})
 	emptyPathRows := sqlmock.NewRows([]string{
 		"id", "domain_id", "path_pattern", "hook_ids", "path_action", "enabled", "priority", "updated_at",
@@ -213,7 +213,7 @@ func TestRegisterCacheLoaders_DBPresent_EmptyRows_SwapSuccess(t *testing.T) {
 		"enabled", "priority", "updated_at",
 		"streaming_mode", "streaming_chunk_bytes", "streaming_hook_timeout_ms",
 		"streaming_max_buffer_bytes", "streaming_fail_behavior",
-		"capture_request_body", "capture_response_body", "raw_body_spill_enabled",
+		"capture_request_body", "capture_response_body",
 	})
 	emptyPathRows2 := sqlmock.NewRows([]string{
 		"id", "domain_id", "path_pattern", "hook_ids", "path_action", "enabled", "priority", "updated_at",

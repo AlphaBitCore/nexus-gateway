@@ -14,6 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/routing/routingstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
@@ -116,12 +117,13 @@ var validStrategyTypes = map[string]struct{}{
 	"ab_split":    {},
 	"policy":      {},
 	"smart":       {},
+	"latency":     {},
 }
 
 // strategyTypeList renders validStrategyTypes as a stable, comma-separated
 // string for the 400 error body so an operator sees the accepted set.
 func strategyTypeList() string {
-	ordered := []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "policy", "smart"}
+	ordered := []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "policy", "smart", "latency"}
 	return strings.Join(ordered, ", ")
 }
 
@@ -130,64 +132,6 @@ func strategyTypeList() string {
 func validateStrategyType(strategyType string) (string, bool) {
 	if _, ok := validStrategyTypes[strategyType]; !ok {
 		return fmt.Sprintf("strategyType %q is not a recognized routing strategy (allowed: %s)", strategyType, strategyTypeList()), false
-	}
-	return "", true
-}
-
-// strategyConfigShape is the structural projection of the strategy config
-// JSON the resolver unmarshals into core.StrategyNode. The CP module cannot
-// import the AI-Gateway internal package, so this mirrors the discriminated
-// union's wire shape closely enough to reject configs that the resolver
-// would later fail to parse (e.g. a JSON array, a string, or an object whose
-// strongly-typed fields carry the wrong JSON type). Fields are intentionally
-// a superset projection — anything that parses into core.StrategyNode also
-// parses into this struct.
-type strategyConfigShape struct {
-	Type             string            `json:"type"`
-	ProviderID       string            `json:"providerId"`
-	ModelID          string            `json:"modelId"`
-	Targets          []json.RawMessage `json:"targets"`
-	OnStatusCodes    []int             `json:"onStatusCodes"`
-	Algorithm        string            `json:"algorithm"`
-	WeightedTargets  []json.RawMessage `json:"weightedTargets"`
-	StickyOn         string            `json:"stickyOn"`
-	StickyTTLMs      int               `json:"stickyTtlMs"`
-	Conditions       []json.RawMessage `json:"conditions"`
-	ABTargets        []json.RawMessage `json:"abTargets"`
-	RouterProviderID string            `json:"routerProviderId"`
-	RouterModelID    string            `json:"routerModelId"`
-	MaxTokens        int               `json:"maxTokens"`
-	TimeoutMs        int               `json:"timeoutMs"`
-	AllowModelIDs    []string          `json:"allowModelIds"`
-	DenyModelIDs     []string          `json:"denyModelIds"`
-	AllowProviderIDs []string          `json:"allowProviderIds"`
-	DenyProviderIDs  []string          `json:"denyProviderIds"`
-}
-
-// validateStrategyConfig shape-checks the config JSON RawMessage against the
-// strategy node wire shape. raw == nil/empty/`null` is treated as "no config
-// supplied" and left to the caller's required-field check. A non-object JSON
-// document (array, string, number) or an object whose typed fields carry the
-// wrong JSON type is rejected with a 400, so a malformed config can never be
-// persisted and broadcast fleet-wide. Also enforces that the embedded node
-// `type` (when present) is one of the known strategy node types — the
-// resolver dispatches on this field, and an unknown value resolves to zero
-// targets on every gateway.
-//
-// Returns ("", true) when valid; (operator-facing message, false) otherwise.
-func validateStrategyConfig(raw json.RawMessage) (string, bool) {
-	s := string(raw)
-	if len(raw) == 0 || s == "null" {
-		return "", true
-	}
-	var shape strategyConfigShape
-	if err := json.Unmarshal(raw, &shape); err != nil {
-		return fmt.Sprintf("config is not a valid strategy object: %v", err), false
-	}
-	if shape.Type != "" {
-		if _, ok := validStrategyTypes[shape.Type]; !ok {
-			return fmt.Sprintf("config.type %q is not a recognized strategy node type (allowed: %s)", shape.Type, strategyTypeList()), false
-		}
 	}
 	return "", true
 }
@@ -263,7 +207,11 @@ func (h *Handler) RoutingSimulate(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
 	}
 
-	gwURL := strings.TrimRight(h.proxy.AIGatewayURL, "/") + "/internal/routing-simulate"
+	gwBase, gwErr := h.proxy.AIGatewayBase(c.Request().Context())
+	if gwErr != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", gwErr)
+	}
+	gwURL := strings.TrimRight(gwBase, "/") + "/internal/routing-simulate"
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to encode payload", "server_error", ""))
@@ -362,6 +310,9 @@ func (h *Handler) CreateRoutingRule(c echo.Context) error {
 	}
 	if msg, ok := validateRetryPolicyJSON(body.RetryPolicy); !ok {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "retry_policy_invalid", ""))
+	}
+	if msg, ok := validateFallbackChain(body.FallbackChain); !ok {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "fallback_chain_invalid", ""))
 	}
 
 	stage := 1
@@ -478,6 +429,9 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 	}
 	if body.FallbackChain != nil {
 		raw, _ := json.Marshal(body.FallbackChain)
+		if msg, ok := validateFallbackChain(raw); !ok {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "fallback_chain_invalid", ""))
+		}
 		params.FallbackChain = raw
 	}
 	if body.PipelineStage != nil {

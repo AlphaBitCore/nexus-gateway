@@ -9,6 +9,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 type fallbackModelLookupStub struct {
@@ -42,6 +43,37 @@ func (s fallbackModelLookupStub) FetchModelPricing(ctx context.Context, modelIDs
 	return nil, errors.New("not used")
 }
 
+func TestResolveNoMatchPassthrough_RejectsCrossModality(t *testing.T) {
+	display := "openai"
+	h := &Handler{deps: &Deps{
+		Models: fallbackModelLookupStub{
+			model: &store.Model{
+				ID:                  "img-1",
+				Name:                "gpt-image-1",
+				Type:                "image",
+				ProviderID:          "provider-1",
+				ProviderDisplayName: &display,
+				ProviderModelID:     "gpt-image-1",
+			},
+		},
+	}}
+
+	// An image model addressed on a chat endpoint must be rejected with a
+	// modality-mismatch error rather than forwarded upstream to fail.
+	_, err := h.resolveNoMatchPassthrough(context.Background(), "gpt-image-1", &vkauth.VKMeta{},
+		Ingress{BodyFormat: provcore.FormatOpenAI}, typology.EndpointKindChat)
+	if err == nil {
+		t.Fatal("expected a modality-mismatch error, got nil")
+	}
+	var rfe *routingFallbackError
+	if !errors.As(err, &rfe) {
+		t.Fatalf("expected *routingFallbackError, got %T: %v", err, err)
+	}
+	if rfe.status != http.StatusBadRequest || rfe.code != "MODEL_MODALITY_MISMATCH" {
+		t.Fatalf("got status=%d code=%q, want 400 MODEL_MODALITY_MISMATCH", rfe.status, rfe.code)
+	}
+}
+
 func TestResolveNoMatchPassthrough_SucceedsForAllowedModel(t *testing.T) {
 	display := "deepseek"
 	h := &Handler{deps: &Deps{
@@ -58,7 +90,7 @@ func TestResolveNoMatchPassthrough_SucceedsForAllowedModel(t *testing.T) {
 
 	got, err := h.resolveNoMatchPassthrough(context.Background(), "deepseek-chat", &vkauth.VKMeta{
 		AllowedModels: []store.AllowedModelRef{{ProviderID: "provider-1", ModelID: "deepseek-chat"}},
-	}, Ingress{BodyFormat: provcore.FormatOpenAI})
+	}, Ingress{BodyFormat: provcore.FormatOpenAI}, typology.EndpointKindChat)
 	if err != nil {
 		t.Fatalf("resolveNoMatchPassthrough returned error: %v", err)
 	}
@@ -101,13 +133,74 @@ func TestResolveNoMatchPassthrough_UsesProviderAdapterType(t *testing.T) {
 
 	got, err := h.resolveNoMatchPassthrough(context.Background(), "claude-haiku-4-5-20251001", &vkauth.VKMeta{
 		AllowedModels: []store.AllowedModelRef{{ProviderID: "provider-anthropic", ModelID: "claude-haiku-4-5-20251001"}},
-	}, Ingress{BodyFormat: provcore.FormatOpenAI})
+	}, Ingress{BodyFormat: provcore.FormatOpenAI}, typology.EndpointKindChat)
 	if err != nil {
 		t.Fatalf("resolveNoMatchPassthrough returned error: %v", err)
 	}
 	target := got.Targets[0]
 	if target.AdapterType != "anthropic" {
 		t.Fatalf("target.AdapterType = %q, want %q (provider adapter type wins over ingress format)", target.AdapterType, "anthropic")
+	}
+}
+
+// The passthrough fallback is the default deployment's busiest routing
+// path (only smart-auto-routing enabled → every specific-model request
+// lands here), so the catalog's output ceiling must reach its target too.
+// Carrying it on the snapshot is what lets the cache stage hand the codec
+// a real cap instead of 0.
+func TestResolveNoMatchPassthrough_CarriesMaxOutputTokens(t *testing.T) {
+	display := "anthropic"
+	maxOut := 128000
+	h := &Handler{deps: &Deps{
+		Models: fallbackModelLookupStub{
+			model: &store.Model{
+				ID:                  "model-opus",
+				Name:                "claude-opus-4-7",
+				ProviderID:          "provider-anthropic",
+				ProviderAdapterType: "anthropic",
+				ProviderDisplayName: &display,
+				ProviderModelID:     "claude-opus-4-7",
+				MaxOutputTokens:     &maxOut,
+			},
+		},
+	}}
+
+	got, err := h.resolveNoMatchPassthrough(context.Background(), "claude-opus-4-7", &vkauth.VKMeta{
+		AllowedModels: []store.AllowedModelRef{{ProviderID: "provider-anthropic", ModelID: "claude-opus-4-7"}},
+	}, Ingress{BodyFormat: provcore.FormatOpenAI}, typology.EndpointKindChat)
+	if err != nil {
+		t.Fatalf("resolveNoMatchPassthrough returned error: %v", err)
+	}
+	if got := got.Targets[0].MaxOutputTokens; got != 128000 {
+		t.Fatalf("target.MaxOutputTokens = %d, want the catalog's 128000", got)
+	}
+}
+
+// A NULL maxOutputTokens column must degrade to 0 (the codec's "no ceiling
+// known" signal), not panic on the nil deref.
+func TestResolveNoMatchPassthrough_NullMaxOutputTokens_IsZero(t *testing.T) {
+	display := "anthropic"
+	h := &Handler{deps: &Deps{
+		Models: fallbackModelLookupStub{
+			model: &store.Model{
+				ID:                  "model-nocap",
+				Name:                "claude-nocap",
+				ProviderID:          "provider-anthropic",
+				ProviderAdapterType: "anthropic",
+				ProviderDisplayName: &display,
+				ProviderModelID:     "claude-nocap",
+			},
+		},
+	}}
+
+	got, err := h.resolveNoMatchPassthrough(context.Background(), "claude-nocap", &vkauth.VKMeta{
+		AllowedModels: []store.AllowedModelRef{{ProviderID: "provider-anthropic", ModelID: "claude-nocap"}},
+	}, Ingress{BodyFormat: provcore.FormatOpenAI}, typology.EndpointKindChat)
+	if err != nil {
+		t.Fatalf("resolveNoMatchPassthrough returned error: %v", err)
+	}
+	if got := got.Targets[0].MaxOutputTokens; got != 0 {
+		t.Fatalf("target.MaxOutputTokens = %d, want 0 for a NULL catalog column", got)
 	}
 }
 
@@ -125,7 +218,7 @@ func TestResolveNoMatchPassthrough_RejectsUnauthorizedModel(t *testing.T) {
 
 	_, err := h.resolveNoMatchPassthrough(context.Background(), "deepseek-chat", &vkauth.VKMeta{
 		AllowedModels: []store.AllowedModelRef{{ProviderID: "provider-2", ModelID: "gpt-4o"}},
-	}, Ingress{BodyFormat: provcore.FormatOpenAI})
+	}, Ingress{BodyFormat: provcore.FormatOpenAI}, typology.EndpointKindChat)
 	var routingErr *routingFallbackError
 	if !errors.As(err, &routingErr) {
 		t.Fatalf("expected routingFallbackError, got %T (%v)", err, err)
@@ -140,7 +233,7 @@ func TestResolveNoMatchPassthrough_ReturnsNotFoundWhenModelMissing(t *testing.T)
 		Models: fallbackModelLookupStub{err: errors.New("store: get model by id or name: no rows")},
 	}}
 
-	_, err := h.resolveNoMatchPassthrough(context.Background(), "deepseek-chat", &vkauth.VKMeta{}, Ingress{BodyFormat: provcore.FormatOpenAI})
+	_, err := h.resolveNoMatchPassthrough(context.Background(), "deepseek-chat", &vkauth.VKMeta{}, Ingress{BodyFormat: provcore.FormatOpenAI}, typology.EndpointKindChat)
 	var routingErr *routingFallbackError
 	if !errors.As(err, &routingErr) {
 		t.Fatalf("expected routingFallbackError, got %T (%v)", err, err)

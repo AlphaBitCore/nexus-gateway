@@ -52,11 +52,31 @@ function gitTrackedGoFiles() {
   }
 }
 
+// One `git grep --cached` narrows the candidate set in a single subprocess
+// instead of spawning `git show` once per tracked Go file (thousands of
+// spawns, tens of seconds in pre-commit). The pattern is the SAME fast-text
+// prefilter the per-file scan applies below, so the surviving file set is
+// identical. On any git-grep failure other than "no matches" the full file
+// list is returned, falling back to the exhaustive per-file path.
+function prefilterCandidates(files) {
+  try {
+    const out = execSync(
+      "git grep --cached -l -i -E 'redis|nexus:config|shared/heartbeat|internal/pubsub|internal_registry' -- '*.go'",
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const matched = new Set(out.split('\n').map((s) => s.trim()).filter(Boolean));
+    return files.filter((f) => matched.has(f));
+  } catch (err) {
+    if (err && err.status === 1) return []; // no matches anywhere — nothing can violate
+    return files; // git grep unavailable — scan everything (slow but safe)
+  }
+}
+
 function main() {
   const files = gitTrackedGoFiles();
   const hits = [];
 
-  for (const f of files) {
+  for (const f of prefilterCandidates(files)) {
     if (TEST_PATH_RE.test(f)) continue;
     let text;
     try {

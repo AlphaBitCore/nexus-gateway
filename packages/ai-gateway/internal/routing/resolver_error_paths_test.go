@@ -16,6 +16,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/matcher"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/strategies"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // awaitStatus polls until a provider reaches the expected health status. The
@@ -107,7 +108,7 @@ func newCoverageResolverFixture() *coverageResolverFixture {
 	}
 	reg := strategies.NewStrategyRegistry()
 	resolver := NewResolver(fs, reg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
-	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil)
+	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 	return &coverageResolverFixture{store: fs, registry: reg, resolver: resolver}
 }
 
@@ -133,6 +134,10 @@ func coverageMockLookup(_ context.Context, providerID, modelID string) (*core.Ro
 type coverageFakeSmartStore struct{}
 
 func (s *coverageFakeSmartStore) ListEnabledChatModels(_ context.Context) ([]core.SmartModelRow, error) {
+	return nil, nil
+}
+
+func (s *coverageFakeSmartStore) ListEnabledCandidates(_ context.Context, _ typology.EndpointKind) ([]core.SmartModelRow, error) {
 	return nil, nil
 }
 
@@ -613,6 +618,47 @@ func TestLookupTarget_CarriesRegionPointer(t *testing.T) {
 	}
 }
 
+// TestLookupTarget_CarriesMaxOutputTokens: the catalog's output ceiling
+// must reach the routing snapshot. The proxy's cache stage builds the
+// primary target's upstream body from this snapshot alone, so a ceiling
+// that stops here never reaches the codec that needs it — the codec then
+// clamps nothing (upstream 400) and fills its fallback floor instead of
+// the model's real cap (silent truncation).
+
+func TestLookupTarget_CarriesMaxOutputTokens(t *testing.T) {
+	f := newCoverageResolverFixture()
+	f.addProvider("anthropic", true)
+	f.addModel("claude-opus-4-7", "anthropic", "claude-opus-4-7", true)
+	maxOut := 128000
+	f.store.models["claude-opus-4-7"].MaxOutputTokens = &maxOut
+
+	tg, err := f.resolver.lookupTarget(context.Background(), "anthropic", "claude-opus-4-7")
+	if err != nil {
+		t.Fatalf("lookupTarget: %v", err)
+	}
+	if tg.MaxOutputTokens != 128000 {
+		t.Errorf("MaxOutputTokens = %d, want the catalog's 128000 on the routing snapshot", tg.MaxOutputTokens)
+	}
+}
+
+// TestLookupTarget_NullMaxOutputTokens_IsZero: a catalog row with no
+// ceiling (NULL column) must yield 0 — the codec's documented "no ceiling
+// known" signal — rather than panicking on the nil deref.
+
+func TestLookupTarget_NullMaxOutputTokens_IsZero(t *testing.T) {
+	f := newCoverageResolverFixture()
+	f.addProvider("anthropic", true)
+	f.addModel("claude-unpriced", "anthropic", "claude-unpriced", true)
+
+	tg, err := f.resolver.lookupTarget(context.Background(), "anthropic", "claude-unpriced")
+	if err != nil {
+		t.Fatalf("lookupTarget: %v", err)
+	}
+	if tg.MaxOutputTokens != 0 {
+		t.Errorf("MaxOutputTokens = %d, want 0 for a NULL catalog column", tg.MaxOutputTokens)
+	}
+}
+
 // TestLookupTarget_NotFound: missing provider/model returns an error.
 
 func TestLookupTarget_NotFound(t *testing.T) {
@@ -991,14 +1037,14 @@ func TestRegisterAllStrategies_WithSmartDeps(t *testing.T) {
 	// Verify smart strategy is registered by evaluating a "smart" node and
 	// expecting a non-"unknown strategy" error (the eval may fail for other
 	// reasons without a real LLM, but the type must be found).
-	strategies.RegisterAllStrategies(reg, coverageMockLookup, &strategies.SmartDeps{
+	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil, &strategies.SmartDeps{
 		Store:  &coverageFakeSmartStore{},
 		Lookup: coverageMockLookup,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	// Verify by running with nil smartDeps → no smart strategy → evaluate returns "unknown strategy".
 	reg2 := strategies.NewStrategyRegistry()
-	strategies.RegisterAllStrategies(reg2, coverageMockLookup, nil)
+	strategies.RegisterAllStrategies(reg2, coverageMockLookup, nil, nil)
 	var trace []core.TraceEntry
 	_, err := reg2.Evaluate(context.Background(), core.StrategyNode{Type: "smart"}, &core.RoutingContext{}, &trace, 0)
 	if err == nil || !strings.Contains(err.Error(), "unknown strategy") {
@@ -1017,7 +1063,7 @@ func TestRegisterAllStrategies_WithSmartDeps(t *testing.T) {
 
 func TestFallbackStrategy_RecurseErrorPropagates(t *testing.T) {
 	reg := strategies.NewStrategyRegistry()
-	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil)
+	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil, nil)
 	var trace []core.TraceEntry
 	_, err := reg.Evaluate(
 		context.Background(),
@@ -1038,7 +1084,7 @@ func TestFallbackStrategy_RecurseErrorPropagates(t *testing.T) {
 
 func TestLoadbalanceStrategy_RecurseErrorPropagates(t *testing.T) {
 	reg := strategies.NewStrategyRegistry()
-	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil)
+	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil, nil)
 	var trace []core.TraceEntry
 	_, err := reg.Evaluate(
 		context.Background(),
@@ -1059,7 +1105,7 @@ func TestLoadbalanceStrategy_RecurseErrorPropagates(t *testing.T) {
 
 func TestConditionalStrategy_NoBranchNoDefault_EmitsTrace(t *testing.T) {
 	reg := strategies.NewStrategyRegistry()
-	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil)
+	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil, nil)
 	var trace []core.TraceEntry
 	targets, err := reg.Evaluate(
 		context.Background(),

@@ -79,6 +79,9 @@ func TestResponsePreHookBuilder_CallerShape_Equivalence(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			// Tlsbump-shape call: same Adapter + path + content-type
 			// as agent + compliance-proxy use, plus an OnPayload that
+			// NEITHER of them actually passes — this arm exercises the
+			// option's mechanism, not a shape that ships. See OnPayload's
+			// doc in responseprehook.go.
 			// records the payload as the audit-stamp would. Mutating
 			// auditInfo MUST NOT change ci.Normalized.
 			var auditSeen []byte

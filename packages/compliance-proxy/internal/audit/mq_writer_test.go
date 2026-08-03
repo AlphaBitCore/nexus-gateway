@@ -57,7 +57,10 @@ func (p *memProducer) Enqueue(_ context.Context, queue string, data []byte) erro
 	if failAll {
 		return context.DeadlineExceeded
 	}
-	p.messages = append(p.messages, memMsg{queue: queue, data: data})
+	// Copy: Enqueue's contract forbids retaining data past the return, and the
+	// writer publishes from a pooled buffer it reuses for the next event. A fake
+	// that stored the slice would report the last event's bytes for every message.
+	p.messages = append(p.messages, memMsg{queue: queue, data: append([]byte(nil), data...)})
 	return nil
 }
 func (p *memProducer) Close() error { return nil }

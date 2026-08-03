@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
@@ -188,5 +190,51 @@ func TestShadowProbeAdapter_StaleAfterIsPositive(t *testing.T) {
 	adapter := &shadowProbeAdapter{client: tc}
 	if d := adapter.StaleAfter(); d <= 0 {
 		t.Errorf("StaleAfter() = %v; want > 0", d)
+	}
+}
+
+// The compliance proxy captures bodies too, so it owes the same answer as the
+// gateway: is there anywhere for an oversize body to go? Registered
+// unconditionally, because "no backend" is the state the admin-facing threshold
+// cannot reveal on its own.
+func TestInitHealthHandler_SpillSourceRegisteredWithNoBackend(t *testing.T) {
+	d := buildHealthDeps(t)
+	d.SpillAvailability = spillfactory.Describe(spillfactory.FactoryConfig{}, nil)
+	_, introspectReg := InitHealthHandler(d)
+
+	snap := introspectReg.Snapshot(context.Background())
+	res, ok := snap.Sources["storage.spill"]
+	if !ok {
+		t.Fatal("storage.spill source is absent; a proxy with no spill backend reports nothing about it")
+	}
+	av, ok := res.Value.(spillfactory.Availability)
+	if !ok {
+		t.Fatalf("storage.spill value is %T, want spillfactory.Availability", res.Value)
+	}
+	if av.Configured {
+		t.Fatal("storage.spill reports Configured=true with no store built")
+	}
+	if !strings.Contains(av.Effect, "kept inline") {
+		t.Fatalf("Effect does not state that captured bodies stay inline: %q", av.Effect)
+	}
+}
+
+// The spill posture must be reported even when audit is disabled. It used to be
+// computed inside the audit branch, so a node with a real backend configured but
+// audit off served an empty `effect` from the storage.spill source — the operator
+// got a field with no explanation in it, which is worse than the field being
+// absent because it reads as "nothing to say".
+func TestInitCompliance_DescribesSpillEvenWithAuditDisabled(t *testing.T) {
+	av := spillfactory.Describe(spillfactory.FactoryConfig{}, nil)
+	if av.Effect == "" {
+		t.Fatal("Describe produced an empty Effect for the no-backend case")
+	}
+	d := buildHealthDeps(t)
+	d.SpillAvailability = av
+	_, reg := InitHealthHandler(d)
+
+	got := reg.Snapshot(context.Background()).Sources["storage.spill"].Value.(spillfactory.Availability)
+	if got.Effect == "" {
+		t.Fatal("storage.spill served an empty effect; an operator sees a field with no explanation")
 	}
 }

@@ -20,6 +20,7 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputstaging"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // Stub implementations for L2 interface seams
@@ -743,4 +744,85 @@ func TestScheduleL2Write_VaryByResolvesScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+// L2 write bound — the detached write set must stay capped
+
+// blockingWriter parks every Write until released, modelling an embedding
+// provider slow enough for write-back to fall behind the arrival rate.
+type blockingWriter struct {
+	release chan struct{}
+	called  atomic.Int32
+}
+
+func newBlockingWriter() *blockingWriter {
+	return &blockingWriter{release: make(chan struct{})}
+}
+
+func (b *blockingWriter) Write(ctx context.Context, _ semantic.WriteRequest) (semantic.WriteResult, error) {
+	b.called.Add(1)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return semantic.WriteResult{}, nil
+}
+
+// withL2WriteMax swaps the process-wide cap for the duration of a test.
+func withL2WriteMax(t *testing.T, n int64) {
+	t.Helper()
+	prev := l2WriteMax.Load()
+	l2WriteMax.Store(n)
+	t.Cleanup(func() { l2WriteMax.Store(prev) })
+}
+
+// A burst larger than the cap must admit exactly the cap and drop the rest,
+// counting each drop. Without the bound every request in the burst would hold
+// a goroutine and pin its whole response body for the 5-second write deadline,
+// so the outstanding set — and the heap it retains — would track the arrival
+// rate rather than a constant.
+func TestScheduleL2Write_ShedsBeyondInflightCap(t *testing.T) {
+	const capacity = 4
+	const burst = 20
+	withL2WriteMax(t, capacity)
+
+	w := newBlockingWriter()
+	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
+	shedBefore := testutil.ToFloat64(l2WriteShedTotal)
+
+	for range burst {
+		h.scheduleL2Write(&audit.Record{VirtualKeyID: "vk"},
+			routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
+			sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for w.called.Load() < capacity && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	// Give any write that escaped the cap time to land before asserting.
+	time.Sleep(50 * time.Millisecond)
+	if got := w.called.Load(); got != capacity {
+		t.Fatalf("writes admitted = %d; want exactly the cap %d", got, capacity)
+	}
+	if got := testutil.ToFloat64(l2WriteShedTotal) - shedBefore; got != float64(burst-capacity) {
+		t.Errorf("shed counter delta = %v; want %d", got, burst-capacity)
+	}
+
+	// Slots must come back when the stalled writes drain, otherwise one slow
+	// window would disable L2 write-back for the rest of the process's life.
+	close(w.release)
+	fresh := newStubWriter()
+	h2 := &Handler{deps: &Deps{SemanticWriter: fresh, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
+	for time.Now().Before(deadline) {
+		h2.scheduleL2Write(&audit.Record{VirtualKeyID: "vk"},
+			routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
+			sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+		select {
+		case <-fresh.writeDone:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	t.Fatal("no write was admitted after the stalled writes drained: slots were not released")
 }

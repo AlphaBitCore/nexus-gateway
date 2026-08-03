@@ -73,6 +73,16 @@ type MetricsRecorder interface {
 	// pipeline so operators can distinguish per-format extraction
 	// pressure and error rates.
 	RecordTrafficExtract(ingressFormat, direction, outcome string)
+	// RecordError increments errors_total for a request a provider failed,
+	// labelled by the provider and by the canonical code the executor
+	// classified the terminal attempt as. Label cardinality is bounded by
+	// the canonical code set, which is why the code is passed rather than
+	// the provider's own error text.
+	//
+	// Not called when the client disconnected before the upstream answered:
+	// that is a client-side outcome and must not count against the
+	// provider's availability.
+	RecordError(provider, errorType string)
 
 	// RecordEstimate increments nexus_estimate_requests_total and
 	// observes nexus_estimate_duration_seconds. Called once per

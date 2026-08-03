@@ -11,6 +11,7 @@ import (
 
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
 )
@@ -36,7 +37,7 @@ func failClosedBridgeDeps(t *testing.T, eng *domain.Engine) BridgeDeps {
 	return BridgeDeps{
 		TLSEngine:    tlsEng,
 		Upstream:     up,
-		AuditQueue:   q,
+		AuditWriter:  newTestAuditWriter2(t, q),
 		DomainEngine: eng,
 	}
 }
@@ -160,4 +161,13 @@ func TestBumpFlow_NilDomainEngine_StillOpaqueRelays(t *testing.T) {
 	if !relayDialed.Load() {
 		t.Fatal("nil DomainEngine MUST fail open (opaque relay)")
 	}
+}
+
+// newTestAuditWriter2 wraps an already-constructed queue in the single writer
+// BridgeDeps carries, closing it before the caller's queue cleanup runs.
+func newTestAuditWriter2(t *testing.T, q *auditqueue.Queue) sharedaudit.Writer {
+	t.Helper()
+	w := auditqueue.NewQueueWriter(q)
+	t.Cleanup(func() { _ = w.Close(context.Background()) })
+	return w
 }

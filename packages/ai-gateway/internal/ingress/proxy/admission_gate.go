@@ -106,18 +106,41 @@ func (g *admissionGate) release() { g.inflight.Add(-1) }
 // admissionShedTotal counts requests rejected by the in-flight gate. The
 // counter is the shed path's observability — rejected requests get no audit
 // record on purpose (auditing a shed storm would itself be load).
+// The service is not in the name: which binary emitted this is the `job`
+// label's job, set by the scrape config (prometheus-naming-architecture.md §1).
 var admissionShedTotal = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "nexus_ai_gateway_admission_shed_total",
-	Help: "Requests rejected with 429 by the in-flight admission gate.",
+	Namespace: "nexus",
+	Subsystem: "admission",
+	Name:      "shed_total",
+	Help:      "Requests rejected with 429 by the in-flight admission gate.",
 })
+
+// generativeCapShedTotal counts requests rejected by the per-VK generative
+// concurrency cap, labelled by endpoint kind. Unlike the pre-auth admission
+// shed, these rejections happen post-auth (the VK is known) and produce a
+// normal attributable traffic_event row — the counter is the aggregate view.
+//
+// The name is built from Namespace + Subsystem like its neighbour above, rather
+// than hardcoded. It shipped as "nexus_ai_gateway_generative_cap_shed_total",
+// which carries the SERVICE in the metric name — forbidden by
+// prometheus-naming-architecture.md §1, because the service belongs in the
+// scrape config's `job` label and a subsystem metric emitted by two services
+// must be one series. It sits in the same `admission` subsystem as the pre-auth
+// shed it is contrasted with.
+var generativeCapShedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "nexus",
+	Subsystem: "admission",
+	Name:      "generative_cap_shed_total",
+	Help:      "Generative requests rejected with 429 by the per-VK concurrency cap, by endpoint kind.",
+}, []string{"kind"})
 
 // writeOverloaded writes the fast-reject response in the CALLER's ingress
 // wire shape (same cross-ingress error contract as writeIngressError —
 // anthropic /v1/messages gets {"type":"error",...}, gemini gets its
 // envelope; OpenAI-family and unknown get the OpenAI error shape), plus
 // Retry-After so generic clients back off. The shape is derived from the
-// route's static BodyFormat: the gate runs before per-request state, so the
-// x-nexus-aigw-body-format override (OpenAI-family niche) is not consulted.
+// route's BodyFormat, which is path-authoritative and therefore already
+// known here, before any per-request state exists.
 func writeOverloaded(w http.ResponseWriter, ingress provcore.Format) {
 	const msg = "gateway is at capacity, retry shortly"
 	var body []byte

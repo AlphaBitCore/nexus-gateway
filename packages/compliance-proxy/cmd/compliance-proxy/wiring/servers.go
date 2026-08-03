@@ -74,6 +74,7 @@ func InitProxyServerFull(d ProxyServerDeps) *proxyserver.ProxyServer {
 		ParallelHooks:        d.CompRes.Parallel,
 		StreamingPolicyStore: d.StreamingPolicyStore,
 		AttestationVerifier:  InitAttestationVerifier(d.Cfg, d.Logger),
+		PeerResolver:         d.CompRes.PeerResolver,
 	})
 }
 
@@ -144,6 +145,10 @@ func InitServers(d ServersDeps) ServersResult {
 		CertIssuer:        d.CertResult.Issuer,
 		ServiceToken:      d.ServiceToken,
 		ConfigKeyRecorder: d.ConfigKeyRecorder,
+		SpillAvailability: d.CompRes.SpillAvailability,
+		MatcherEngine:     d.CompRes.MatcherEngine,
+		SpillStore:        d.CompRes.SpillStore,
+		SpillConfig:       d.CompRes.SpillConfig,
 	})
 	healthServer := &http.Server{Addr: d.Cfg.Metrics.Address, Handler: healthMux}
 	return ServersResult{

@@ -19,8 +19,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/cmd/ai-gateway/wiring"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store/asyncjob"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
+	routerllm "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/llm"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/profiling"
@@ -118,6 +120,7 @@ func run() int {
 	}
 
 	aiguard.Register(prometheus.DefaultRegisterer)
+	routerllm.Register(prometheus.DefaultRegisterer)
 	if d.DB != nil {
 		d.AiguardConfigCache = aiguard.NewConfigCache(
 			configstore.NewAIGuardStore(d.DB.Pool), 2*time.Minute, logger)
@@ -157,6 +160,16 @@ func run() int {
 		return server.Shutdown(sc)
 	})
 	g.Go(func() error { return wiring.RunTicker(gctx, 5*time.Minute, d.RateLimiter.Cleanup) })
+	if d.DB != nil {
+		// Async-job retention sweep (gateway-side — the job-status vocabulary
+		// lives only in the asyncjob package; see its sweep.go). One pass at
+		// boot clears backlog, then hourly.
+		jobs := asyncjob.New(d.DB.Pool)
+		g.Go(func() error {
+			asyncjob.Sweep(gctx, jobs, logger)
+			return wiring.RunTicker(gctx, asyncjob.SweepInterval, func() { asyncjob.Sweep(gctx, jobs, logger) })
+		})
+	}
 
 	if err := g.Wait(); err != nil {
 		slog.Error("exit", "error", err)

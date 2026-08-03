@@ -190,7 +190,7 @@ The `consumer.Manager` orchestrates the `hub-db-writer` group's consumers under 
 Producer-side back-pressure:
 
 - **The in-memory segment is byte-bounded** (§4): Enqueue admission reserves each record's real body bytes against the byte budget (`AI_GATEWAY_AUDIT_MEM_MAX_BYTES`, default `auto` ≈ 15% of RAM) and the no-loss modes block there when it is exhausted, so the audit heap can never grow past its RAM share no matter how large individual bodies are — the memory half of the bounded queue. `nexus_audit_mem_backpressure_total` counts those blocking events. The bounded channels absorb short bursts within the budget.
-- **Overflow is governed by `LossMode`** (`AI_GATEWAY_AUDIT_LOSS_MODE`); the config default is **`spillblock`** (zero-loss). On a full in-heap buffer the record is handed to the durable on-disk spool off the request path — identical to `spill` in the normal regime, so the request path is not blocked there. If the spool channel *itself* saturates, the request goroutine **parks on the channel** (pure channel back-pressure — no per-goroutine disk write). And if the on-disk spool reaches its **total-size quota** (`AI_GATEWAY_AUDIT_SPOOL_MAX_TOTAL_MB`), `spillblock` still **never drops**: the single spill worker keeps the batch and retries (`ndjson.ErrSpoolQuotaExceeded` → back-pressure) while the recovery sweeper (§10.3) drains + deletes sealed files and frees space, so ingest self-throttles to the recovery-drain (PG-sustainable) rate instead of shedding records. The quota counts only reclaimable `audit-*.ndjson` content — `.poison` dead-letters are excluded, so undrainable content can never permanently wedge intake. The only `spillblock` drops are a genuine (non-quota) disk I/O error or shutdown. `block` (the empty/unknown fallback) hard-back-pressures from the first full buffer; `spill`/`drop` are the explicit lossy opt-outs for non-compliance callers (a saturated `spill`, or any `drop`, counts on `nexus_audit_mq_dropped_total`). The resolved mode is logged at boot (`audit overflow policy resolved configured=… effective=…`).
+- **Overflow is governed by `LossMode`** (`AI_GATEWAY_AUDIT_LOSS_MODE`); the config default is **`spillblock`** (zero-loss). On a full in-heap buffer the record is handed to the durable on-disk spool off the request path — identical to `spill` in the normal regime, so the request path is not blocked there. If the spool channel *itself* saturates, the request goroutine **parks on the channel** (pure channel back-pressure — no per-goroutine disk write). And if the on-disk spool reaches its **total-size quota** (`AI_GATEWAY_AUDIT_SPOOL_MAX_TOTAL_MB`), `spillblock` still **never drops**: the single spill worker keeps the batch and retries (`ndjson.ErrSpoolQuotaExceeded` → back-pressure) while the recovery sweeper (§10.3) drains + deletes sealed files and frees space, so ingest self-throttles to the recovery-drain (PG-sustainable) rate instead of shedding records. The quota counts only reclaimable `audit-*.ndjson` content — `.poison` dead-letters are excluded, so undrainable content can never permanently wedge intake. The only `spillblock` drops are a genuine (non-quota) disk I/O error or shutdown. `block` hard-back-pressures from the first full buffer; `spill`/`drop` are the explicit lossy opt-outs for non-compliance callers (a saturated `spill`, or any `drop`, counts on `nexus_audit_mq_dropped_total`). The empty/unknown fallback is **`spillblock`**, not `block` — there is one default, not two (§10.4). **With no spool wired at all, `spillblock` is downgraded to `block` at Start**, in `ensureStarted`, with a WARN naming the downgrade — so `LossMode()` after Start already reports the mode actually in force, and overflow never reaches the spill path. Boot logs `configured` (what the operator wrote) and `resolved` (after the typo fallback); it deliberately does not compute an "effective" value there, because the spool is wired later in the same function and any value computed at that point would name a posture the process is not running.
 - **Single-writer spool.** Only the async spill worker writes to (and retries) the spool; request/consume goroutines back-pressure purely by blocking on the bounded in-heap channels. This keeps the per-write quota scan (a directory walk under the ndjson mutex) off every request goroutine, so a full-spool back-pressure cannot thrash the mutex the recovery sweeper needs to free space.
 - `Close()` drains everything: each bounded-queue consumer worker drains its remaining queued records and publishes them (bounded at `batchMaxCount` per publish, `drainOnStop`), the spill worker drains its channel and flushes, and a final sweep durably spills any straggler left in either channel — a clean shutdown never leaves buffered audit unpublished or uncounted (each publish is individually time-bounded, so a wedged broker cannot hang the drain; a quota-full spool at shutdown is a one-shot counted drop). A kill-9 path drops whatever is still in memory.
 
@@ -242,6 +242,110 @@ The producer's durable spool (`shared/audit/ndjson`) guarantees no DATA loss whe
 - **Crash durability.** The spool fsyncs each file on `Rotate()` before it is sealed, so a sealed file the sweeper may read+delete is on stable storage before it can be removed; the still-active file has a residual non-fsynced window bounded by the rotate cadence.
 - **Oversize dead-letter.** A record larger than the broker `max_payload` (less an envelope margin) can never publish; the sweeper writes it to a durable `.poison` sidecar (excluded from `SealedFiles`, retained for operators) and deletes the spool file rather than wedging it forever. `nexus_audit_mq_recovery_poisoned_total > 0` signals the inline-body cap is too high / out-of-band body spill should be enabled.
 - **Backoff.** A sweep with publish failures (e.g. NATS at `MaxBytes` rejecting) backs off exponentially up to 16× the base interval, so a wedged broker does not make the sweeper busy-spin re-reading files it cannot drain; it snaps back to base once publishes succeed. This composes with the consumer-side backlog-aware duty override (§10): the override empties NATS into Postgres faster, which is what gives the sweeper headroom to drain the spool back in.
+
+### 10.4 Audit-overflow policy — one vocabulary, three services
+
+Everything in §10 above describes the AI Gateway. The same question — *what happens to an audit
+record when the in-memory buffer is full?* — is answered by the compliance proxy and the agent too,
+and the policy vocabulary is shared: `packages/shared/audit/lossmode`.
+
+It was not always. The gateway held the four modes as unexported constants with the resolution rule
+inline, while the compliance proxy always spooled to NDJSON and the agent always dropped, neither
+with any way to select something else. Behaviourally those *were* two of the modes — they simply
+could not be configured. Three parallel spellings of one policy is how three services drift apart,
+so the decision is shared and only its execution is per-service.
+
+**The four modes**, strongest to weakest guarantee:
+
+| Mode | On overflow | Guarantee |
+|---|---|---|
+| `spillblock` | Write to the durable sink; back-pressure (park and retry) if the sink is *also* saturated | No loss, whenever a durable sink is wired |
+| `block` | Bounded back-pressure at the in-memory buffer | No loss while the bound holds; past it the gateway falls back to a durable spool write (counting a drop if none is wired), and cp / the agent count a drop |
+| `spill` | Asynchronous durable write off the emitting path; counted drop only if that path is also saturated | Durable but bounded |
+| `drop` | Counted, bounded discard | Lossy opt-out |
+
+**Two safety rules, both asserted by tests:**
+
+- **A config typo may never make the trail lossy.** `Resolve` maps an empty or unrecognised value to
+  `spillblock`, the no-loss default. It has no error return, because there is no failure worth
+  surfacing to a caller — only a safe answer.
+- **A missing sink degrades to back-pressure, never to a drop.** `WithoutDurableSink` turns
+  `spillblock` into `block` (still no loss, just stalling at the buffer instead of at a spool that
+  does not exist) and `spill` into `drop` — because an async spill with nowhere to spill *is* a
+  drop, and any other mapping would make the mode name lie. A service that degrades logs it at
+  startup, since the operator who chose `spillblock` specifically to avoid early stalls needs to
+  know they are not getting it.
+
+`Mode.OnOverflow(hasDurableSink)` returns the one decision — spool, block, or drop — that the
+compliance proxy and the agent switch on. The gateway shares the vocabulary (`Resolve`,
+`WithoutDurableSink`) but still keeps its own overflow switch and enforces the no-sink degradation at
+Start instead; converging it is open work, not a claim this doc should make. What each does *with* that decision differs, because their durable
+sinks are not interchangeable:
+
+| Service | Config key | Shipped default | Durable sink |
+|---|---|---|---|
+| AI Gateway | `audit.lossMode` (env `AI_GATEWAY_AUDIT_LOSS_MODE`) | `spillblock` | NDJSON spool on local disk (§10.3) |
+| Compliance Proxy | `audit.lossMode` | `spillblock` | NDJSON spool on local disk |
+| Agent | `auditLossMode` (top level) | **`spill`**, and defaulted in `applyDefaults` rather than left to `lossmode.Resolve` — see below | The SQLCipher-encrypted SQLite queue, which *is* the durable store — the in-memory channel is only a batching buffer in front of it |
+
+**Why the agent's shipped default is deliberately not the no-loss one.** A no-loss mode must block
+until the record is durable, and a SQLite write under WAL contention can wait out the 5 s
+`busy_timeout`. On the agent that stall lands on the host's own network path (`CLAUDE.md`, the
+macOS network-extension rule), so audit bookkeeping could freeze the user's machine. `spill` writes
+the overflow durably off the caller's goroutine and counts a drop only when that path is also
+saturated. Note the asymmetry this creates on purpose: a *typo* still resolves to the shared no-loss
+default, so the deliberate choice and the accidental one land in different places, and a test pins
+it.
+
+**The agent defaults its own mode, and that is load-bearing.** `lossmode.Resolve("")` returns the
+no-loss default (`spillblock`) — correct for a server, wrong for this process, because a no-loss mode
+blocks the emitting goroutine until the record is durable and on the agent that goroutine sits on the
+host's own outbound packet path. `NewQueueWriter` picks `Spill` in its constructor for exactly that
+reason, but the wiring calls `WithLossMode(cfg.AuditLossMode)` unconditionally, so an **empty** config
+value silently overrode the safe constructor choice with the blocking one. All three shipped templates
+carry `auditLossMode: spill`, so a fresh install was never affected — but an agent **upgraded in
+place** keeps the `agent.yaml` it enrolled with, which predates the key. `applyDefaults` now fills
+`spill` when the key is absent, so the upgrade path matches the templates; an explicit operator choice
+is never overridden. Found by adversarial review, not by a test, because every sibling audit field was
+already defaulted and this one read as if it were too.
+
+**The compliance proxy's shipped `spillblock` CAN back-pressure the request path, and that is the
+deliberate trade.** The proxy is in-path for user HTTPS, so this is the one service where a blocking
+audit mode is visible to a caller: when the channel is full AND the NDJSON spool write itself fails
+(disk full, or the spool's own size cap exhausted), `blockForRoom` parks the request goroutine for up
+to **2 s** before counting a drop. The alternative is losing an audit record on a compliance
+appliance, which is the outcome the product exists to prevent — so the bound, not the absence of
+blocking, is what makes it acceptable. Two consequences an operator should know: the pause is per
+overflowing event, not per request; and it only occurs once the durable spool has ALSO failed, so a
+node that starts pausing is a node whose disk needs attention. Operators who prefer loss to latency
+select `spill` or `drop` explicitly. (The agent is the opposite case — see the paragraph above: its
+bound is 250 ms because its caller is the host's own packet path.)
+
+**Every blocking arm is bounded, so every no-loss mode can lose a record once its bound expires.**
+The bounds differ by service and by what a stall costs there: the agent 250 ms (its blocking arm sits
+behind the host's own packet path, so it must yield fastest), the compliance proxy 2 s, the gateway
+10 s. Past the bound the gateway attempts a durable spool write and counts a drop only if no spool
+exists; cp and the agent count a drop. The agent's is the tightest and the likeliest to fire, not the
+only one — an earlier version of this section said it was the only one, which was wrong.
+
+**One writer per process, not one per flow — and it says which mode it resolved.** All three
+services build their audit writer once at wiring time and close it once at shutdown. On the agent
+this is load-bearing rather than tidy: its writer owns a 4096-slot event channel, a 256-slot
+overflow channel and two goroutines, and the inspect path used to construct one inside `BumpFlow`,
+i.e. per intercepted TLS connection, and never close it. Measured on a live containerized agent,
+30 flows moved the daemon from 70 to 130 goroutines and from 94.9 MB to 209.7 MB of heap, none of
+it released — on the end user's own laptop. The writer is now a field on `BridgeDeps`
+(`wiring.NewBridgeAuditWriter`), so the flow path has nothing to construct, and closing it at
+shutdown also commits whatever is still batched in its channel instead of discarding it. The same
+constructor logs the configured and the resolved loss mode at INFO, which the gateway and the proxy
+already did and the agent did not — the one service whose shipped default deliberately diverges was
+the one that never said so.
+
+Each of those drops is counted and logged as the exception it is rather than papered over —
+`Drops()` counts records lost, `OverflowWrites()` counts records saved by the durable path, and
+keeping them separate is what makes "under pressure" distinguishable from "losing records". A failed
+durable write counts as a drop, never as a success: a dropped audit record leaves no other trace, so
+an uncounted drop is invisible data loss.
 
 ## 11. Agent path is HTTP-then-MQ, not direct MQ
 

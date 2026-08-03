@@ -34,7 +34,11 @@ type NormalizeInput struct {
 	// exactly like a captured-inline row, not just falls back to the sidecar.
 	RequestSpillRef  json.RawMessage
 	ResponseSpillRef json.RawMessage
-	Found            bool // false when the traffic_event row does not exist
+	// EndpointType is the request modality (traffic_event.endpoint_type) — the
+	// canonical discriminator the artifact endpoint switches on to decide how to
+	// extract a previewable artifact from the captured body.
+	EndpointType string
+	Found        bool // false when the traffic_event row does not exist
 }
 
 // GetTrafficEventForNormalize fetches the raw captured request/response bodies
@@ -64,7 +68,8 @@ func (store *Store) GetTrafficEventForNormalize(ctx context.Context, id string) 
 		       p.inline_request_body,  COALESCE(p.inline_request_encoding, ''),
 		       p.inline_response_body, COALESCE(p.inline_response_encoding, ''),
 		       COALESCE(p.request_content_type, ''), COALESCE(p.response_content_type, ''),
-		       p.request_spill_ref, p.response_spill_ref
+		       p.request_spill_ref, p.response_spill_ref,
+		       COALESCE(a.endpoint_type, '')
 		FROM   traffic_event a
 		LEFT JOIN traffic_event_payload p ON p.traffic_event_id = a.id
 		WHERE  a.id = $1
@@ -79,6 +84,7 @@ func (store *Store) GetTrafficEventForNormalize(ctx context.Context, id string) 
 		&reqCol, &reqEncoding, &respCol, &respEnc,
 		&out.RequestContentType, &out.ResponseContentType,
 		&out.RequestSpillRef, &out.ResponseSpillRef,
+		&out.EndpointType,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &NormalizeInput{Found: false}, nil

@@ -1,12 +1,15 @@
 // Package cacheconfig defines the canonical Go type shapes for the
-// three-tier prompt cache configuration.
+// two-tier prompt cache configuration.
 //
-// Tier 1: cache_global_config (singleton) — knobs that affect every Provider.
 // Tier 2: cache_adapter_config (one row per adapter_type) — family defaults
 //
 //	plus the normalisation rule override map.
 //
 // Tier 3: cache_provider_config (one row per Provider with any override).
+//
+// (Historical numbering: Tier 1 — the global singleton carrying the cache
+// master kill switch and the normaliser gate — is retired; the
+// cache_global_config table is orphaned and pending a later drop.)
 //
 // The types live in shared because three independent modules need them:
 //   - control-plane: DB I/O via store.CacheConfig, handler validation, blob
@@ -21,23 +24,6 @@
 // to code default). The Resolve() function in resolve.go composes the
 // three tiers into a final ProviderEffective with concrete values.
 package cacheconfig
-
-// GlobalConfig is the Tier-1 (singleton) blob shape.
-type GlobalConfig struct {
-	// NormaliserEnabled gates NormalizeUpstream (the L3 wire-format rewrite
-	// pipeline). When false, normaliser rules with effect on upstream bytes
-	// are skipped. NormalizeKey (L0 cache-key computation) is unaffected.
-	NormaliserEnabled bool `json:"normaliser_enabled"`
-	// CacheMasterKillSwitch is the emergency switch that disables the gateway's
-	// own response caches — L1 exact-match and L2 semantic — for every provider
-	// regardless of either tier's enable flag. The AI Gateway applies it at the
-	// cache stage (cacheEnabled = (l1||l2) && !CacheMasterKillSwitch). It does
-	// NOT disable provider-side prompt caching (L3 Anthropic markers / Gemini
-	// context cache): that only makes the upstream cache and never serves a
-	// stored gateway response, so it is out of scope for an emergency that
-	// targets stale/poisoned cached answers. Emergency-only.
-	CacheMasterKillSwitch bool `json:"cache_master_kill_switch"`
-}
 
 // AdapterConfig is the Tier-2 blob shape. Field set is per adapter family;
 // fields irrelevant to a particular adapter remain nil-omitted.
@@ -82,7 +68,6 @@ type RuleOverride struct {
 // `cache` to the AI Gateway. The same shape is also what
 // store.CacheConfig.AssembleBlob() returns when CP needs to push.
 type CacheConfigBlob struct {
-	Global    GlobalConfig              `json:"global"`
 	Adapters  map[string]AdapterConfig  `json:"adapters"`  // keyed by adapter_type
 	Providers map[string]ProviderConfig `json:"providers"` // keyed by provider_id; absent entry == no override
 }
@@ -95,8 +80,6 @@ type ProviderEffective struct {
 	AdapterType string
 
 	// Resolved knobs.
-	NormaliserEnabled       bool
-	CacheMasterKillSwitch   bool
 	MarkerInjectEnabled     bool
 	MarkerBoundary3Enabled  bool
 	CacheEnabled            bool
@@ -119,6 +102,5 @@ type Source string
 const (
 	SourceProviderOverride Source = "provider-override"
 	SourceAdapterDefault   Source = "adapter-default"
-	SourceGlobalDefault    Source = "global-default"
 	SourceCodeDefault      Source = "code-default"
 )

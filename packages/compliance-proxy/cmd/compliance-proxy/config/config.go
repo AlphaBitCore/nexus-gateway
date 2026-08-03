@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -21,8 +22,13 @@ type OnboardingConfig struct {
 	// 407 + an HTML guide instead of 200. Toggle off once all endpoints have
 	// the CA cert installed.
 	Enabled bool `yaml:"enabled"`
-	// CPUIBaseURL is the base URL of the Control Plane UI, included in the
-	// 407 HTML body as a link to the setup guide (e.g. https://cp.company.com).
+	// CPUIBaseURL optionally overrides the base URL of the Control Plane UI,
+	// included in the 407 HTML body as a link to the setup guide (e.g.
+	// https://cp.company.com). Leave empty in the common case: the link then
+	// defaults to the Control Plane's publicURL resolved from the Hub (the
+	// control-plane Thing's reported staticInfo), so it never drifts. Set it
+	// only when the UI is fronted at an address different from the reported
+	// one (split-horizon / vanity domain).
 	CPUIBaseURL string `yaml:"cpUIBaseURL"`
 }
 
@@ -44,7 +50,14 @@ type Config struct {
 	// "http://localhost:3040". Reported to the Thing Registry as part
 	// of staticInfo so the CP admin API can render the real endpoint
 	// in proxy-setup UI without hardcoded hostnames.
-	PublicURL     string              `yaml:"publicURL"`
+	PublicURL string `yaml:"publicURL"`
+	// PrivateURL is the internal service-to-service base URL peer Nexus
+	// services dial (scheme + host[:port], no trailing slash). Optional:
+	// when empty it is auto-derived as http://<primary-outbound-IPv4>:<port>
+	// from the runtime-API listen port (platform.EffectivePrivateURL) —
+	// set it only for split-horizon or non-default topologies. Reported
+	// as staticInfo.privateUrl.
+	PrivateURL    string              `yaml:"privateURL,omitempty"`
 	Listener      ListenerConfig      `yaml:"listener"`
 	CA            CAConfig            `yaml:"ca"`
 	Database      DatabaseConfig      `yaml:"database"`
@@ -138,6 +151,10 @@ type ComplianceConfig struct {
 	CheckpointChars int                  `yaml:"checkpointChars"` // default 500
 	Hooks           []HookConfigEntry    `yaml:"hooks"`           // static hook configs (ignored; DB is source of truth)
 	RejectResponse  RejectResponseConfig `yaml:"rejectResponse"`
+	// The trusted AI-Gateway base for compliance-webhook authentication is
+	// NOT configured here: it is resolved from the Hub (the ai-gateway
+	// Thing's reported publicUrl/privateUrl) via shared/transport/peerurl —
+	// a peer's address is never carried in local config, so it cannot drift.
 	// AttestationEnabled is a per-cluster feature flag. When true the
 	// compliance-proxy peeks the X-Nexus-Attestation header on every CONNECT
 	// and, on a verified signature, transparently tunnels the connection
@@ -166,33 +183,10 @@ type HookConfigEntry struct {
 	Config            map[string]interface{} `yaml:"config"`
 }
 
-// AuditConfig controls audit event persistence and pinning behavior.
-type AuditConfig struct {
-	Enabled bool             `yaml:"enabled"`
-	Batch   AuditBatchConfig `yaml:"batch"`
-	NDJSON  NDJSONConfig     `yaml:"ndjson"`
-	Pinning PinningCfg       `yaml:"pinning"`
-}
-
 // DatabaseConfig holds the top-level PostgreSQL connection. Symmetric
 // with nexus-hub and control-plane. Env override: DATABASE_URL.
 type DatabaseConfig struct {
 	URL string `yaml:"url"`
-}
-
-// AuditBatchConfig controls async batch write behavior for the MQ writer.
-type AuditBatchConfig struct {
-	Size              int `yaml:"size"`
-	FlushIntervalMs   int `yaml:"flushIntervalMs"`
-	ChannelBufferSize int `yaml:"channelBufferSize"`
-}
-
-// NDJSONConfig controls the NDJSON fallback writer.
-type NDJSONConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	Dir            string `yaml:"dir"`
-	MaxFileSizeMB  int    `yaml:"maxFileSizeMB"`
-	MaxTotalSizeMB int    `yaml:"maxTotalSizeMB"`
 }
 
 // PinningCfg controls certificate pinning detection and exemptions.
@@ -365,6 +359,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("COMPLIANCE_PROXY_PUBLIC_URL"); v != "" {
 		cfg.PublicURL = v
 	}
+	if v := os.Getenv("COMPLIANCE_PROXY_PRIVATE_URL"); v != "" {
+		cfg.PrivateURL = v
+	}
 	if v := os.Getenv("NEXUS_HUB_URL"); v != "" {
 		cfg.Registry.NexusHubURL = v
 	}
@@ -408,6 +405,25 @@ func applyEnvOverrides(cfg *Config) {
 // Redis.Addrs accepts either yaml OR env (REDIS_ADDRS) — env-merge
 // happens inside redisfactory.New at wiring time, not config.Load, so
 // validate checks both.
+// allowlistPermitsAllSources reports whether any CIDR in the source-IP
+// allowlist is a /0 (all-address) range — the config that lets every source IP
+// pass the IP gate, which is what makes allowUnlistedPassthrough an open relay.
+// A malformed CIDR is ignored here (NewIPAllowlist re-parses at wiring time and
+// surfaces a precise per-CIDR error); this guard only decides the open-proxy
+// combination, so a parse miss must not mask the real validation.
+func allowlistPermitsAllSources(cidrs []string) bool {
+	for _, c := range cidrs {
+		_, ipNet, err := net.ParseCIDR(strings.TrimSpace(c))
+		if err != nil {
+			continue
+		}
+		if ones, _ := ipNet.Mask.Size(); ones == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func validate(cfg *Config) error {
 	if cfg.PublicURL == "" {
 		return fmt.Errorf("publicURL is required (reported to Thing Registry as staticInfo; admin UI uses it to render Compliance Proxy URLs)")
@@ -432,6 +448,19 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Registry.NexusHubURL == "" {
 		return fmt.Errorf("registry.nexusHubUrl is required (Compliance Proxy registers as a Thing on boot)")
+	}
+
+	// Open-proxy guard (fail-closed). allowUnlistedPassthrough tunnels any
+	// non-allowlisted destination as raw TCP with no inspection; combined with a
+	// source-IP allowlist that permits every address (a /0 CIDR) it turns the
+	// proxy into an open relay — an external party can CONNECT through it to
+	// arbitrary hosts. Refuse to start on that combination rather than run an
+	// open proxy: the operator must either disable allowUnlistedPassthrough or
+	// restrict sourceIpAllowlist to the internal/managed-device network. Empty
+	// sourceIpAllowlist is safe (IPAllowlist.Allow denies all when unconfigured),
+	// so only an explicit /0 range trips this.
+	if cfg.AccessControl.AllowUnlistedPassthrough && allowlistPermitsAllSources(cfg.AccessControl.SourceIPAllowlist) {
+		return fmt.Errorf("accessControl.allowUnlistedPassthrough=true together with an unrestricted sourceIpAllowlist (a /0 range such as 0.0.0.0/0 or ::/0) is an open proxy — disable allowUnlistedPassthrough OR restrict sourceIpAllowlist to the internal/managed-device network")
 	}
 
 	// Listener — terminating MITM-TLS CONNECT.

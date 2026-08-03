@@ -86,7 +86,7 @@ type openAIEmbeddingsRequest struct {
 
 func (n *OpenAIEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req openAIEmbeddingsRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroEmbeddingPayload("openai-embeddings", meta), fmt.Errorf("openai-embeddings: request unmarshal: %w", err)
 	}
 	if len(req.Input) == 0 || string(req.Input) == "null" {
@@ -169,7 +169,7 @@ type openAIEmbedUsage struct {
 
 func (n *OpenAIEmbeddingsNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp openAIEmbeddingsResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroEmbeddingPayload("openai-embeddings", meta), fmt.Errorf("openai-embeddings: response unmarshal: %w", err)
 	}
 	if resp.Object == "" && resp.Model == "" && resp.Usage == nil {

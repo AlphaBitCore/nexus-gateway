@@ -12,7 +12,8 @@ package enrollment
 
 import (
 	"crypto/ecdsa"
-	"crypto/rand"
+	"crypto/elliptic"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net"
@@ -48,13 +49,13 @@ func TestGenerateNonce_RandReaderError(t *testing.T) {
 }
 
 // TestGenerateSSODeviceIdentity_EcdsaGenerateKeyError — when
-// ecdsa.GenerateKey fails (entropy starved) the function must surface
+// ECDSA key generation fails the function must surface
 // "generate key:" rather than return a partially-populated PEM block.
 func TestGenerateSSODeviceIdentity_EcdsaGenerateKeyError(t *testing.T) {
-	want := errors.New("ecdsa: no entropy")
-	orig := ssoRandReader
-	ssoRandReader = ssoFailReader{err: want}
-	t.Cleanup(func() { ssoRandReader = orig })
+	want := errors.New("ecdsa: key generation refused")
+	orig := ssoGenerateKey
+	ssoGenerateKey = func(elliptic.Curve, io.Reader) (*ecdsa.PrivateKey, error) { return nil, want }
+	t.Cleanup(func() { ssoGenerateKey = orig })
 
 	keyPEM, certPEM, err := generateSSODeviceIdentity("h")
 	if err == nil {
@@ -71,43 +72,16 @@ func TestGenerateSSODeviceIdentity_EcdsaGenerateKeyError(t *testing.T) {
 	}
 }
 
-// failAfterNReader returns n successful reads then a sentinel error. Used
-// to let ecdsa.GenerateKey succeed (which consumes entropy) and then make
-// x509.CreateCertificateRequest fail on the next read.
-type failAfterNReader struct {
-	src  io.Reader
-	left int
-	err  error
-}
-
-func (f *failAfterNReader) Read(p []byte) (int, error) {
-	if f.left <= 0 {
-		return 0, f.err
-	}
-	if len(p) > f.left {
-		p = p[:f.left]
-	}
-	n, err := f.src.Read(p)
-	f.left -= n
-	if err != nil {
-		return n, err
-	}
-	return n, nil
-}
-
 // TestGenerateSSODeviceIdentity_CreateCertError — after the keypair and
-// serial are minted but before the self-signed cert is created, an entropy
-// hiccup during signing must surface as "create device cert:" not a panic.
+// serial are minted, a signing failure must surface as "create device cert:"
+// not a panic.
 func TestGenerateSSODeviceIdentity_CreateCertError(t *testing.T) {
-	want := errors.New("entropy gone mid-cert")
-	// ecdsa.GenerateKey for P-256 reads ~33 bytes; rand.Int for the 128-bit
-	// serial reads ~16; x509.CreateCertificate then needs another ~32 for
-	// the ECDSA signature nonce. Budget 60 bytes — enough for keygen +
-	// serial, NOT enough for signing — so CreateCertificate hits the
-	// sentinel and exercises the "create device cert" error arm.
-	orig := ssoRandReader
-	ssoRandReader = &failAfterNReader{src: rand.Reader, left: 60, err: want}
-	t.Cleanup(func() { ssoRandReader = orig })
+	want := errors.New("signing refused mid-cert")
+	orig := ssoCreateCertificate
+	ssoCreateCertificate = func(io.Reader, *x509.Certificate, *x509.Certificate, any, any) ([]byte, error) {
+		return nil, want
+	}
+	t.Cleanup(func() { ssoCreateCertificate = orig })
 
 	keyPEM, certPEM, err := generateSSODeviceIdentity("h")
 	if err == nil {

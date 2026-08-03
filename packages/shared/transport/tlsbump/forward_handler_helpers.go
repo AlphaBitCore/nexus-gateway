@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/bodydecompress"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/bodyread"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -22,6 +22,13 @@ import (
 // body. Returns nil if the body is nil. maxBytes <= 0 falls back to the
 // payload-capture default cap so an unset/invalid runtime config can
 // never collapse the read to zero.
+//
+// Finding C-11. This used to be io.ReadAll over a LimitReader, whose geometric growth
+// allocates roughly 2.2x the body across O(log n) allocations. Every bumped request pays it,
+// and a chat request body is the one payload on this path that is reliably several KiB.
+// bodyread.Bounded sizes from Content-Length instead — without trusting it as an allocation
+// primitive, which is a distinction that has already cost this program one OOM vector; see
+// that package's doc comment.
 func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
@@ -29,14 +36,10 @@ func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 	if maxBytes <= 0 {
 		maxBytes = payloadcapture.DefaultMaxRequestBytes
 	}
-	limited := io.LimitReader(r.Body, maxBytes+1)
-	bodyBytes, err := io.ReadAll(limited)
+	bodyBytes, err := bodyread.Bounded(r.Body, r.ContentLength, maxBytes)
 	_ = r.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("read request body: %w", err)
-	}
-	if int64(len(bodyBytes)) > maxBytes {
-		bodyBytes = bodyBytes[:maxBytes]
 	}
 	return bodyBytes, nil
 }
@@ -50,20 +53,22 @@ func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 // Overflow is truncated to maxBytes rather than erroring — the partial body is
 // still useful for usage extraction / capture, and the upstream stream is
 // abandoned along with the connection.
-func readResponseBodyBounded(body io.ReadCloser, maxBytes int64) ([]byte, error) {
-	if body == nil {
+//
+// Finding C-11, response half. Takes the whole response rather than just its body so the
+// declared Content-Length can size the buffer; see readBody and the bodyread package doc.
+// A streaming response never reaches here — the SSE path is chosen before this call — so the
+// declared length is present for essentially every body this reads.
+func readResponseBodyBounded(resp *http.Response, maxBytes int64) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
 		return nil, nil
 	}
 	if maxBytes <= 0 {
 		maxBytes = payloadcapture.DefaultMaxResponseBytes
 	}
-	out, err := io.ReadAll(io.LimitReader(body, maxBytes+1))
-	_ = body.Close()
+	out, err := bodyread.Bounded(resp.Body, resp.ContentLength, maxBytes)
+	_ = resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
-	}
-	if int64(len(out)) > maxBytes {
-		out = out[:maxBytes]
 	}
 	return out, nil
 }
@@ -239,27 +244,40 @@ func runtimeNormalize(
 			case "generic-http":
 				tier = "tier3"
 			}
-			logger.Info("runtimeNormalize: Registry.Normalize CLAIM",
-				"tier", tier,
-				"adapter", adapterType,
-				"direction", direction,
-				"protocol", payload.Protocol,
-				"detectedSpec", payload.DetectedSpec,
-				"kind", payload.Kind,
-				"confidence", payload.Confidence,
-				"transactionId", transactionID,
-			)
+			// Debug, and guarded (finding C-9). Which tier claimed a body and at what
+			// confidence is a debugging aid for normalize misclassification, not an
+			// operational signal: the outcome already reaches the audit row, and this
+			// fired on EVERY normalized request with eight attributes, each of which
+			// slog boxes at the call site whether or not the level is enabled.
+			if logger.Enabled(ctx, slog.LevelDebug) {
+				logger.Debug("runtimeNormalize: Registry.Normalize CLAIM",
+					"tier", tier,
+					"adapter", adapterType,
+					"direction", direction,
+					"protocol", payload.Protocol,
+					"detectedSpec", payload.DetectedSpec,
+					"kind", payload.Kind,
+					"confidence", payload.Confidence,
+					"transactionId", transactionID,
+				)
+			}
 			return &payload
 		}
 		// On Registry-side fall-through or hard errors, the adapter's
 		// segment extraction below still runs — partial coverage is
 		// better than no coverage.
 		if errors.Is(err, normalize.ErrUnsupported) {
-			logger.Info("runtimeNormalize: Registry.Normalize FELL-THROUGH (no tier above threshold)",
-				"adapter", adapterType,
-				"direction", direction,
-				"transactionId", transactionID,
-			)
+			// Same demotion as the CLAIM line above. A fall-through is the DESIGNED
+			// outcome for any wire no tier models — on a transparent MITM that is the
+			// normal case, not an incident — and the adapter's segment extraction still
+			// runs below, so nothing is lost that an operator must react to.
+			if logger.Enabled(ctx, slog.LevelDebug) {
+				logger.Debug("runtimeNormalize: Registry.Normalize FELL-THROUGH (no tier above threshold)",
+					"adapter", adapterType,
+					"direction", direction,
+					"transactionId", transactionID,
+				)
+			}
 		} else {
 			logger.Warn("Registry.Normalize failed",
 				"adapter", adapterType,

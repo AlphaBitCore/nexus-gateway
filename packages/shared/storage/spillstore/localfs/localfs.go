@@ -297,7 +297,12 @@ func (s *Store) Get(ctx context.Context, ref audit.SpillRef) (io.ReadCloser, err
 	}
 	plain, oerr := s.open(sealed)
 	if oerr != nil {
-		return nil, fmt.Errorf("localfs.Get: decrypt: %w", oerr)
+		// Wrapped in ErrIntegrity, not returned bare: the object was found and
+		// read, so a caller classifying by "everything that is not ErrNotFound is
+		// a transport failure" would tell an operator to check connectivity for a
+		// blob whose bytes are wrong. errors.Is keeps that structural rather than
+		// a match on this sentence.
+		return nil, fmt.Errorf("localfs.Get: decrypt: %w: %w", spillstore.ErrIntegrity, oerr)
 	}
 	return io.NopCloser(bytes.NewReader(plain)), nil
 }
@@ -434,28 +439,4 @@ func (s *Store) SweepFiltered(ctx context.Context, olderThan time.Time, filter s
 		}
 	}
 	return deleted, nil
-}
-
-// Stat implements SpillStore.
-func (s *Store) Stat(ctx context.Context) (spillstore.Stats, error) {
-	stats := spillstore.Stats{Backend: BackendName}
-	walkErr := filepath.Walk(s.root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || filepath.Ext(path) != ".bin" {
-			return nil //nolint:nilerr // best-effort stat — skip unreadable paths
-		}
-		stats.ObjectCount++
-		stats.TotalBytes += info.Size()
-		mt := info.ModTime()
-		if stats.OldestAt.IsZero() || mt.Before(stats.OldestAt) {
-			stats.OldestAt = mt
-		}
-		if mt.After(stats.NewestAt) {
-			stats.NewestAt = mt
-		}
-		return nil
-	})
-	if walkErr != nil {
-		return stats, fmt.Errorf("localfs.Stat: %w", walkErr)
-	}
-	return stats, nil
 }

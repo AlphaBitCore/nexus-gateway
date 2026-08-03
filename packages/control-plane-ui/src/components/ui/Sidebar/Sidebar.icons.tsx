@@ -155,6 +155,7 @@ type NavIconName =
   | 'wrench'
   | 'wand'
   | 'sliders'
+  | 'scale'
   | 'scan'
   | 'shield'
   | 'shield-check'
@@ -562,6 +563,18 @@ function SidebarIconGlyph({ name }: { name: NavIconName }) {
           <path d="M9.9 14.1a3 3 0 0 0 4.2 0" />
         </Icon>
       );
+    // Balance scales — the conventional symbol for reconciling two sides
+    // against each other, which is what the vendor-bill report does.
+    case 'scale':
+      return (
+        <Icon>
+          <path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
+          <path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
+          <path d="M7 21h10" />
+          <path d="M12 3v18" />
+          <path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2" />
+        </Icon>
+      );
     case 'scan':
       return (
         <Icon>
@@ -642,6 +655,8 @@ function navIconNameForPath(path: string): NavIconName {
       return 'timer';
     case '/cache-roi':
       return 'layers';
+    case '/vendor-bill-reconciliation':
+      return 'scale';
     case '/iam/roles':
       return 'id-card';
     case '/ai-gateway/providers':

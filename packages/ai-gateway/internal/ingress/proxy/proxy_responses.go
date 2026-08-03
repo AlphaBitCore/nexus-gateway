@@ -38,10 +38,9 @@ import (
 // broker joiner, and the direct-no-broker path). It consumes a
 // [streamcache.ChunkSubscription] regardless of the chunk source.
 //
-// Headers (Content-Type, Cache-Control, Connection, X-Cache,
-// X-Nexus-Cache, X-Nexus-Attempts, x-nexus-aigw-stream,
-// X-Nexus-Hook, X-Nexus-Coerced) MUST be set by the caller
-// before this function flushes the response.
+// Headers (Content-Type, Cache-Control, Connection, X-Nexus-Cache,
+// X-Nexus-Attempts, X-Nexus-Hook, X-Nexus-Coerced) MUST be set by the
+// caller before this function flushes the response.
 //
 // The handler drives the stream through an explicit stage chain — one
 // type per stage, each in its stream_<name>.go file: preamble (SSE
@@ -652,11 +651,32 @@ type streamIdleWriter struct {
 	http.ResponseWriter
 	rc   *http.ResponseController
 	idle time.Duration
+	// rearmAt is the earliest time the next Write will reset the deadline.
+	// See writeDeadlineArmGranularity.
+	rearmAt time.Time
 }
+
+// writeDeadlineArmGranularity bounds how often the connection write deadline is
+// actually reset. One SSE frame is two or three Writes (`event:`, `data:`, the
+// terminating blank line) issued microseconds apart, and each reset is a
+// runtime poller timer operation — measured at ~115ns per call, ~350ns of the
+// ~450ns a frame spent in this writer, on a path that runs once per token.
+// Resetting for the first Write of a frame and skipping the rest keeps the idle
+// budget's meaning while paying that cost once.
+//
+// The deadline this leaves in place is up to one granularity older than a
+// strict per-Write reading would give, so a stalled stream can be cut at most
+// 1ms early out of an idle budget measured in seconds. Erring early rather
+// than late is the safe direction: no stream that would have survived is cut,
+// and a hung connection is never held longer.
+const writeDeadlineArmGranularity = time.Millisecond
 
 func (w *streamIdleWriter) Write(p []byte) (int, error) {
 	if w.idle > 0 {
-		_ = w.rc.SetWriteDeadline(time.Now().Add(w.idle))
+		if now := time.Now(); !now.Before(w.rearmAt) {
+			_ = w.rc.SetWriteDeadline(now.Add(w.idle))
+			w.rearmAt = now.Add(writeDeadlineArmGranularity)
+		}
 	}
 	return w.ResponseWriter.Write(p)
 }

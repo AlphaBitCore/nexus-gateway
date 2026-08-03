@@ -17,6 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/routing/routingstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 )
 
@@ -31,7 +32,9 @@ type HubInvalidator interface {
 
 // ProxyConfig is the BFF proxy snapshot routing-simulate needs.
 type ProxyConfig struct {
-	AIGatewayURL string
+	// AIGatewayBase resolves the AI Gateway base URL from the Hub at
+	// request time (never configured locally).
+	AIGatewayBase peer.URLProvider
 	// AIGatewayInternalToken is the shared internal-service bearer token
 	// presented on the CP→ai-gateway /internal/routing-simulate call.
 	AIGatewayInternalToken string

@@ -72,5 +72,6 @@
   "observabilityConfig": "Observability",
   "siem": "SIEM",
   "settingsSection": "SETTINGS",
-  "cache": "Cache"
+  "cache": "Cache",
+  "vendorBillReconciliation": "Bill Reconciliation"
 }

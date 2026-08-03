@@ -108,7 +108,7 @@ type cohereMessage struct {
 
 func (n *CohereChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req cohereRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroCohere(meta), fmt.Errorf("cohere-chat: request unmarshal: %w", err)
 	}
 	if len(req.Messages) == 0 {
@@ -168,7 +168,7 @@ type cohereUsage struct {
 
 func (n *CohereChatNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp cohereResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroCohere(meta), fmt.Errorf("cohere-chat: response unmarshal: %w", err)
 	}
 	out := core.NormalizedPayload{

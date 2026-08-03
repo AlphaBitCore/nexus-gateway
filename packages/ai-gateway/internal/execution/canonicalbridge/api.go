@@ -62,6 +62,11 @@ type API interface {
 	// EmbeddingsWireShapeForTarget is the embeddings-kind counterpart of
 	// ChatWireShapeForTarget.
 	EmbeddingsWireShapeForTarget(target provcore.Format) typology.WireShape
+	// StripInternalCarriersForTarget removes canonical-only carrier fields
+	// (today: nexus_thinking) that must not egress to an OpenAI-wire target's
+	// verbatim identity codec. The cache-prep primary egress leg calls this
+	// after canonicalizing; the failover leg gets it inside IngressChatToWire.
+	StripInternalCarriersForTarget(canon []byte, target provcore.Format) []byte
 	// IngressEmbeddingsToCanonical converts a client embeddings ingress body
 	// to canonical OpenAI /v1/embeddings request JSON (embeddings counterpart
 	// of IngressChatToCanonical).
@@ -70,6 +75,31 @@ type API interface {
 	// embeddings response into the caller's ingress embeddings shape
 	// (embeddings counterpart of ResponseCanonicalToIngress).
 	ResponseCanonicalToIngressEmbeddings(ingress provcore.Format, canonical []byte) ([]byte, error)
+	// ImagesWireShapeForTarget is the image-kind counterpart of
+	// ChatWireShapeForTarget (OpenAI-family → openai-images; Gemini →
+	// the image leg of :generateContent).
+	ImagesWireShapeForTarget(target provcore.Format) typology.WireShape
+	// IngressImagesToCanonical validates an OpenAI-shaped images ingress
+	// body (validation + identity — the image canonical IS the ingress
+	// shape). Cross-format lane only.
+	IngressImagesToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error)
+	// IngressImagesToWire converts a canonical images body to the target
+	// wire, surfacing the codec's coercion rewrites so failover legs keep
+	// their x-nexus-coerced markers (images counterpart of
+	// IngressChatToWire; validates via IngressImagesToCanonical first).
+	IngressImagesToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, []string, error)
+	// RerankWireShapeForTarget is the rerank-kind counterpart of
+	// ChatWireShapeForTarget (Cohere → cohere-rerank; Voyage → voyage-rerank).
+	// Consumed by both the prepare stage and the executor call-time rewrite.
+	RerankWireShapeForTarget(target provcore.Format) typology.WireShape
+	// IngressRerankToCanonical validates a Cohere-shaped rerank ingress body
+	// (validation + identity — the rerank canonical IS the Cohere ingress
+	// shape, since OpenAI ships no rerank API). Cross-format lane only.
+	IngressRerankToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error)
+	// IngressRerankToWire converts a canonical (Cohere-shaped) rerank body to
+	// the target wire (rerank counterpart of IngressImagesToWire; validates via
+	// IngressRerankToCanonical first).
+	IngressRerankToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, []string, error)
 }
 
 // Compile-time assertion that the production type satisfies the API.

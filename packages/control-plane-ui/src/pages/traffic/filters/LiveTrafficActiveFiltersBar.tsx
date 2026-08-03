@@ -17,17 +17,29 @@ function buildRemovableChips(applied: LiveTrafficFiltersState, fallbackLines: st
   const chips: ActiveFilterChip[] = [];
   const v = (s: string) => s.trim();
   const lbl = (key: string) => tr(`pages:traffic.activeFilterLabels.${key}`);
+  // Error-governance deep-links carry sentinel values for exact class
+  // boundaries; the chip shows a readable label instead of the raw sentinel.
+  const sv = (s: string) => {
+    const val = v(s);
+    if (val === '__none__') return lbl('noneSentinel');
+    if (val === '__unclassified__') return lbl('unclassifiedSentinel');
+    return val;
+  };
   const add = (id: string, label: string, patch: Partial<LiveTrafficFiltersState>) => {
     if (label) chips.push({ id, label, patch });
   };
 
-  add('provider', v(applied.provider) ? `${lbl('provider')}: ${v(applied.provider)}` : '', { provider: '', _providerId: '', modelUsed: '', _modelLabel: '' });
+  add('provider', v(applied.provider) ? `${lbl('provider')}: ${sv(applied.provider)}` : '', { provider: '', _providerId: '', modelUsed: '', _modelLabel: '' });
   add('virtualKeyId', v(applied.virtualKeyId) ? `${lbl('virtualKey')}: ${v(applied._vkLabel) || `${v(applied.virtualKeyId).slice(0, 8)}...`}` : '', { virtualKeyId: '', _vkLabel: '' });
   add('userId', !v(applied.virtualKeyId) && v(applied.userId) ? `${lbl('user')}: ${v(applied._userLabel) || `${v(applied.userId).slice(0, 8)}...`}` : '', { userId: '', _userLabel: '' });
   add('orgId', v(applied.orgId) ? `${lbl('organization')}: ${v(applied._orgLabel) || `${v(applied.orgId).slice(0, 8)}...`}` : '', { orgId: '', _orgLabel: '' });
   add('projectId', v(applied.projectId) ? `${lbl('project')}: ${v(applied._projectLabel) || `${v(applied.projectId).slice(0, 8)}...`}` : '', { projectId: '', _projectLabel: '', virtualKeyId: '', _vkLabel: '' });
   add('modelUsed', v(applied.modelUsed) ? `${lbl('model')}: ${v(applied._modelLabel) || v(applied.modelUsed)}` : '', { modelUsed: '', _modelLabel: '' });
   add('requestId', v(applied.requestId) ? `${lbl('requestId')}: ${v(applied.requestId)}` : '', { requestId: '' });
+  add('endUserId', v(applied.endUserId) ? `${lbl('endUserId')}: ${v(applied.endUserId)}` : '', { endUserId: '' });
+  add('sessionId', v(applied.sessionId) ? `${lbl('sessionId')}: ${v(applied.sessionId)}` : '', { sessionId: '' });
+  add('errorCode', v(applied.errorCode) ? `${lbl('errorCode')}: ${sv(applied.errorCode)}` : '', { errorCode: '' });
+  add('modelExact', v(applied.modelExact) ? `${lbl('modelExact')}: ${sv(applied.modelExact)}` : '', { modelExact: '' });
   add('requestHookDecision', v(applied.requestHookDecision) ? `${lbl('requestHook')}: ${v(applied.requestHookDecision)}` : '', { requestHookDecision: '' });
   add('responseHookDecision', v(applied.responseHookDecision) ? `${lbl('responseHook')}: ${v(applied.responseHookDecision)}` : '', { responseHookDecision: '' });
   add('statusCode', v(applied.statusCode) ? `${lbl('http')} ${v(applied.statusCode)}` : '', { statusCode: '' });

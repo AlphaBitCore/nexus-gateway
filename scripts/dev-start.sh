@@ -83,14 +83,14 @@ ok "Node.js $(node -v) | npm $(npm -v) | Go $(go version | awk '{print $3}') | D
 # placeholders with safe dev defaults so a fresh clone can `go run` every
 # service without hand-editing secrets. Values chosen to match the
 # corresponding dev fallbacks elsewhere in the repo:
-#   ADMIN_KEY_HMAC_SECRET  → a per-developer random value (SEC-M9-01: the CP
+#   ADMIN_KEY_HMAC_SECRET  → a per-developer random value (the CP
 #                            fails closed on an empty secret and has NO committed
 #                            fallback). Both the CP and the AI Gateway read the
 #                            same env value, so VK lookups match.
 #   INTERNAL_SERVICE_TOKEN → matches tests/.env.local.example NEXUS_HUB_SERVICE_TOKEN
 #                            so the test harness and the services agree.
 #   HUB_CONFIG_TOKEN       → the CP→Hub config-write / admin-alerts bearer
-#                            (SEC-W2-02). A fixed dev value, [MUST MATCH] CP & Hub;
+#                            A fixed dev value, [MUST MATCH] CP & Hub;
 #                            distinct from INTERNAL_SERVICE_TOKEN so the dev stack
 #                            exercises the split authority.
 #   CREDENTIAL_ENCRYPTION_KEY → random 32-byte hex (openssl) or a fixed
@@ -109,14 +109,14 @@ else
 
   if command -v openssl >/dev/null 2>&1; then
     DEV_ENCRYPTION_KEY="$(openssl rand -hex 32)"
-    # SEC-M9-01: the HMAC secret must be a real per-developer random value, not a
+    # The HMAC secret must be a real per-developer random value, not a
     # committed constant — the CP now fails closed on an empty/missing secret
     # (ValidateHMACSecret), and a fixed string would let anyone recompute every
     # stored key_hash.
     DEV_HMAC_SECRET="$(openssl rand -hex 32)"
   else
     # openssl missing — derive real entropy from /dev/urandom (universally
-    # present on macOS + Linux) rather than a committed constant. SEC-M2-02:
+    # present on macOS + Linux) rather than a committed constant.
     # the credential vault now rejects degenerate keys (<16 distinct bytes) at
     # boot, so a fixed example like 0123…cdef would fail the service closed.
     DEV_ENCRYPTION_KEY="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
@@ -174,7 +174,7 @@ until docker compose exec -T postgres pg_isready -U postgres >/dev/null 2>&1; do
 done
 ok "PostgreSQL ready (localhost:55532)"
 
-# Wait for Valkey (Redis-wire-compatible; E61-S3 swap, 2026-05-20).
+# Wait for Valkey (Redis-wire-compatible).
 # The docker-compose service is named `valkey` and the in-container CLI is
 # `valkey-cli`; both still speak the Redis protocol so go-redis/v9 clients
 # work unchanged. If you have an old container named `nexus-redis` left over
@@ -280,16 +280,28 @@ fi
 # the Hub `ops-raw-partition` job fails every cycle with "metric_ops_raw is not
 # partitioned (SQLSTATE 42P17)". The file is re-runnable and dev telemetry is
 # disposable (dev-phase policy), so apply it unconditionally after every push.
+#
+# Applied through `prisma db execute`, which resolves the target from
+# DATABASE_URL exactly like the `db push` above and like the container migrator
+# (docker/db-migrator/entrypoint.sh). The previous `docker exec -i
+# nexus-postgres psql -d nexus_gateway` form hardcoded a container name, a role
+# and a database name, so it could not reach a database that was not the local
+# compose container — and it discarded both streams and only warned, which is
+# how a real abort stayed invisible. Never soften this back to a warning: the
+# file is applied as one script and stops at its FIRST failing statement, so the
+# correctness-bearing objects declared further down are simply never created
+# while the bring-up still looks green. Observed once: a duplicate
+# (type='agent', physical_id) pair blocked thing_type_physical_id_uniq and every
+# statement after it, costing 29 indexes — see
+# tools/db-migrate/manual-scripts/clear_duplicate_thing_physical_id_2026_08_03.sql.
 EXTRAS_SQL="$ROOT_DIR/tools/db-migrate/schema-extras.sql"
-if [[ -f "$EXTRAS_SQL" ]]; then
-  if docker exec -i nexus-postgres psql -U postgres -d nexus_gateway -q -v ON_ERROR_STOP=1 < "$EXTRAS_SQL" >/dev/null 2>&1; then
-    ok "Applied schema-extras.sql (metric_ops_raw → RANGE-partitioned)"
-  else
-    warn "Could not apply schema-extras.sql — Hub ops-raw-partition job will error until fixed"
-  fi
-else
-  warn "schema-extras.sql not found at $EXTRAS_SQL — Hub ops-raw-partition job may error"
+if [[ ! -f "$EXTRAS_SQL" ]]; then
+  err "schema-extras.sql not found at $EXTRAS_SQL — the PostgreSQL-native objects (metric_ops_raw partitioning, the partial unique indexes that keep agent identity and virtual-key names unique, the cache view + function) cannot be applied"
 fi
+if ! npx prisma db execute --file schema-extras.sql; then
+  err "Applying schema-extras.sql failed — the error above names the first statement that aborted, and EVERY statement after it was skipped. Fix that statement's cause (a data conflict blocking a unique index is the usual one; see tools/db-migrate/manual-scripts/) and re-run, because the database is now missing PostgreSQL-native objects the services depend on"
+fi
+ok "Applied schema-extras.sql (metric_ops_raw → RANGE-partitioned, partial/expression indexes, cache view + function)"
 
 # ─── 4b. Seed database ─────────────────────────────────────────────────────
 
@@ -312,9 +324,16 @@ elif command -v openssl >/dev/null 2>&1; then
   openssl ecparam -name prime256v1 -genkey -noout -out dev-certs/ca.key 2>/dev/null
   # pathlen:0 — the proxy CA only ever signs leaf certs; the constraint stops
   # a stolen CA key from minting an intermediate CA that devices would trust.
+  # keyUsage is REQUIRED alongside a pathlen constraint: RFC 5280 says a CA that
+  # asserts pathLenConstraint must assert keyCertSign, and strict verifiers
+  # (OpenSSL 3, Python ssl) reject the cert outright with
+  # "Path length given without key usage keyCertSign". Without it the CA works
+  # in some clients and fails in others, which makes proxy testing look like a
+  # code problem.
   openssl req -new -x509 -key dev-certs/ca.key -out dev-certs/ca.crt -days 365 \
     -subj "/O=Nexus Dev/CN=Nexus Compliance Proxy Dev CA" \
-    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" 2>/dev/null
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
   ok "Generated Compliance Proxy dev CA (packages/compliance-proxy/dev-certs/{ca.crt,ca.key})"
 else
   warn "openssl missing — skipping Compliance Proxy dev CA. Run 'make dev-certs' in packages/compliance-proxy/ before starting the proxy."

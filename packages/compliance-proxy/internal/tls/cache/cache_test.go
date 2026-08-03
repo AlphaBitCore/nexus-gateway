@@ -291,7 +291,10 @@ func TestCertCache_RedisMiss_FallsThrough(t *testing.T) {
 
 	// Redis must now hold the entry under the documented key prefix.
 	keys := s.Keys()
-	want := redisKeyPrefix + "miss.example.com"
+	// Asked of the cache rather than reconstructed: entries are scoped by CA
+	// fingerprint, and a test that rebuilds the key by hand would keep passing
+	// while the scheme silently changed.
+	want := cache.redisKey("miss.example.com")
 	found := false
 	for _, k := range keys {
 		if k == want {
@@ -339,7 +342,7 @@ func TestCertCache_RedisGet_CorruptJSON(t *testing.T) {
 	cache := NewCertCache(issuer, NewLRUCache(10), rdb, time.Hour, discardLogger())
 
 	// Poison the cache slot with non-JSON bytes.
-	if err := s.Set(redisKeyPrefix+"poison.example.com", "not-json-at-all"); err != nil {
+	if err := s.Set(cache.redisKey("poison.example.com"), "not-json-at-all"); err != nil {
 		t.Fatalf("seed miniredis: %v", err)
 	}
 
@@ -365,7 +368,7 @@ func TestCertCache_RedisGet_BadBase64(t *testing.T) {
 		Nonce:        "AAAA",
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 	})
-	if err := s.Set(redisKeyPrefix+"badb64.example.com", string(bad)); err != nil {
+	if err := s.Set(cache.redisKey("badb64.example.com"), string(bad)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	cert, err := cache.GetCertByHostname("badb64.example.com")
@@ -387,7 +390,7 @@ func TestCertCache_RedisGet_BadNonce(t *testing.T) {
 		Nonce:        "!!!not-base64!!!",
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 	})
-	if err := s.Set(redisKeyPrefix+"badnonce.example.com", string(bad)); err != nil {
+	if err := s.Set(cache.redisKey("badnonce.example.com"), string(bad)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	cert, err := cache.GetCertByHostname("badnonce.example.com")
@@ -415,7 +418,7 @@ func TestCertCache_RedisGet_DecryptFails(t *testing.T) {
 		Nonce:        base64.StdEncoding.EncodeToString(nonce),
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 	})
-	if err := s.Set(redisKeyPrefix+"baddec.example.com", string(bad)); err != nil {
+	if err := s.Set(cache.redisKey("baddec.example.com"), string(bad)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	cert, err := cache.GetCertByHostname("baddec.example.com")
@@ -446,7 +449,7 @@ func TestCertCache_RedisGet_EmptyPEM(t *testing.T) {
 		CertChainPEM: "garbage-not-pem", // pem.Decode returns nil immediately
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 	})
-	if err := s.Set(redisKeyPrefix+"emptypem.example.com", string(entry)); err != nil {
+	if err := s.Set(cache.redisKey("emptypem.example.com"), string(entry)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	cert, err := cache.GetCertByHostname("emptypem.example.com")
@@ -474,7 +477,7 @@ func TestCertCache_RedisGet_LeafParseFails(t *testing.T) {
 		CertChainPEM: string(bogusPEM),
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 	})
-	if err := s.Set(redisKeyPrefix+"badleaf.example.com", string(entry)); err != nil {
+	if err := s.Set(cache.redisKey("badleaf.example.com"), string(entry)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	cert, err := cache.GetCertByHostname("badleaf.example.com")

@@ -175,7 +175,12 @@ paths:
                                     description: |-
                                         Implementation-specific JSON configuration object, stored
                                         opaquely (the per-implementation JSON schema is served by
-                                        `GET /api/admin/hooks/implementations`). For content-touching
+                                        `GET /api/admin/hooks/implementations`). Must be a JSON
+                                        object; any other JSON shape (array / scalar / string) is
+                                        rejected with `400 validation_error` — the gateway and
+                                        compliance-proxy hard-parse this blob at config load, so a
+                                        non-object value would otherwise freeze hook-config
+                                        propagation and fail open on restart. For content-touching
                                         hooks (pii-detector, keyword-filter, content-safety,
                                         rulepack-engine, quality-checker, webhook-forward) it carries
                                         an `onMatch` block whose single `action` field selects the
@@ -456,8 +461,9 @@ paths:
                                     description: New inline script body.
                                 config:
                                     description: |-
-                                        New implementation-specific JSON configuration; must be
-                                        JSON-serializable. For content-touching hooks it carries the
+                                        New implementation-specific JSON configuration; must be a
+                                        JSON object (any other shape is rejected with
+                                        `400 validation_error`). For content-touching hooks it carries the
                                         `onMatch.action` selector (`approve` / `redact` / `block`); see
                                         the create operation's `config` description.
                                 priority:

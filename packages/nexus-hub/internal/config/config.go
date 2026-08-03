@@ -25,7 +25,13 @@ type HubConfig struct {
 	// Prod: "https://hub.example.com"; dev: "http://localhost:3060".
 	// Reported to the Thing Registry as part of staticInfo so the CP
 	// admin API can surface it to the UI without hardcoded hostnames.
-	PublicURL  string              `yaml:"publicURL"`
+	PublicURL string `yaml:"publicURL"`
+	// PrivateURL is the internal service-to-service base URL peer Nexus
+	// services dial (scheme + host[:port], no trailing slash). Optional:
+	// when empty it is auto-derived as http://<primary-outbound-IPv4>:<port>
+	// (platform.EffectivePrivateURL) — set it only for split-horizon or
+	// non-default topologies. Reported as staticInfo.privateUrl.
+	PrivateURL string              `yaml:"privateURL,omitempty"`
 	Server     ServerConfig        `yaml:"server"`
 	Database   DatabaseConfig      `yaml:"database"`
 	Redis      redisfactory.Config `yaml:"redis"`
@@ -503,6 +509,9 @@ func applyEnvOverrides(cfg *HubConfig) {
 	}
 	if v := os.Getenv("NEXUS_HUB_PUBLIC_URL"); v != "" {
 		cfg.PublicURL = v
+	}
+	if v := os.Getenv("NEXUS_HUB_PRIVATE_URL"); v != "" {
+		cfg.PrivateURL = v
 	}
 	if v := os.Getenv("MQ_DRIVER"); v != "" {
 		cfg.MQ.Driver = v

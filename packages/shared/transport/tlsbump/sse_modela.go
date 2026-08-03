@@ -56,39 +56,6 @@ func overrideStreamingModeForScope(mode string, mayBlock, mayRedact, hasAdapter 
 	return mode
 }
 
-// scopeRouteSSEMode builds the response probe once and applies the scope-derived
-// streaming-mode override. Returns the (possibly overridden) mode and the probe
-// pipeline (non-nil only when it can be reused as the Model A prescan/confirm
-// pipeline). A nil respInput, an unbuildable fail-closed probe (non-strict caller),
-// or no response hooks leaves the live/passthrough flow routed conservatively.
-func scopeRouteSSEMode(bo *bumpOptions, mode string, respInput *core.HookInput, audCtx *requestAuditCtx, logger *slog.Logger) (string, *compliance.Pipeline) {
-	if respInput == nil {
-		return mode, nil
-	}
-	probe, pErr := bo.policyResolver.BuildPipeline(
-		"response", "COMPLIANCE_PROXY",
-		"", nil,
-		bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
-		bo.strictFailClosed,
-		logger,
-	)
-	switch {
-	case pErr != nil:
-		// A fail-closed response hook is unbuildable. Strict (appliance) callers are
-		// already refused by the SSE-entry guard (clean 451); a non-strict (agent)
-		// caller forces BUFFER so enforcing traffic never streams uninspected on the
-		// audit-only live path.
-		if mode == "live" || mode == "passthrough" {
-			return "buffer", nil
-		}
-		return mode, nil
-	case probe != nil:
-		hasAdapter := audCtx != nil && audCtx.adapter != nil
-		return overrideStreamingModeForScope(mode, probe.MayBlock(), probe.MayRedact(), hasAdapter), probe
-	}
-	return mode, nil
-}
-
 // runSSEModelA drives the wire Model-A path: it constructs the wire substrate over
 // the SSE body and runs the shared engine, then emits the audit row with the
 // response-stage compliance result, the captured (best-effort) wire body, and the
@@ -132,7 +99,7 @@ func runSSEModelA(
 		client:   dest,
 		flusher:  flusher,
 		canFlush: canFlush,
-		codec:    adapterWireCodec{ctx: ctx, adapter: sseAdapter, path: ssePath},
+		codec:    adapterWireCodec{ctx: ctx, adapter: sseAdapter, path: ssePath, scratch: new([]byte)},
 		redactor: newSSEFrameRedactor(ctx, sseAdapter, ssePath, bo.strictFailClosed, logger),
 		pipeline: probe,
 		base:     respInput,
@@ -140,6 +107,10 @@ func runSSEModelA(
 		maxBuf:   maxBuf,
 		logger:   logger,
 	}
+	// modela.Run below is synchronous and `sub` never escapes this function, so the
+	// pooled scan buffer is returned on every exit path.
+	defer sub.parser.Release()
+
 	maxPattern := deriveModelAMaxPattern(probe)
 	// Config-time operator signal (#16): tlsbump leaves TailWindowBytes at the engine
 	// default, so compare the derived bound against that default. Off the per-byte path.

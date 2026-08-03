@@ -97,7 +97,7 @@ Key facts:
 
 ## Tech stack
 
-Go 1.25+ (Hub, CP via Echo, AI Gateway, Compliance Proxy, Agent — sharing `packages/shared/` via `go.work`); PostgreSQL via Prisma migrations + hand-written pgx at runtime; Redis (sessions / IAM cache / quota / desired-state, no pub/sub); NATS JetStream via `shared/transport/mq`; React + TypeScript + Vite (Control Plane UI); npm workspaces + `go.work` monorepo.
+Go 1.26+ (Hub, CP via Echo, AI Gateway, Compliance Proxy, Agent — sharing `packages/shared/` via `go.work`); PostgreSQL via Prisma migrations + hand-written pgx at runtime; Redis (sessions / IAM cache / quota / desired-state, no pub/sub); NATS JetStream via `shared/transport/mq`; React + TypeScript + Vite (Control Plane UI); npm workspaces + `go.work` monorepo.
 
 ## Key architecture documents
 

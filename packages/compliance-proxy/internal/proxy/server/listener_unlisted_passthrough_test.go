@@ -90,6 +90,46 @@ func TestServeHTTP_UnlistedPassthrough_Enabled_TakesTunnelPath(t *testing.T) {
 	}
 }
 
+// stubPrivateResolver resolves any host to a reserved link-local address
+// (169.254.169.254 — the cloud metadata endpoint). Used to prove the
+// unlisted-passthrough branch still enforces the SSRF/private-IP guard.
+type stubPrivateResolver struct{}
+
+func (stubPrivateResolver) LookupIPAddr(_ context.Context, _ string) ([]net.IPAddr, error) {
+	return []net.IPAddr{{IP: net.IPv4(169, 254, 169, 254)}}, nil
+}
+
+// TestServeHTTP_UnlistedPassthrough_PrivateTarget_Refused asserts that even
+// with the flag on, a CONNECT whose target resolves into a private/reserved
+// range is refused rather than relayed. CheckConnect returns ErrDomainDenied
+// before its own private-IP check runs, so the passthrough branch must apply
+// the SSRF guard explicitly — otherwise an unlisted CONNECT could tunnel to
+// cloud metadata / RFC1918 / loopback.
+func TestServeHTTP_UnlistedPassthrough_PrivateTarget_Refused(t *testing.T) {
+	c, err := access.NewChecker([]string{"10.0.0.0/8"}, nil, nil)
+	if err != nil {
+		t.Fatalf("access.NewChecker: %v", err)
+	}
+	c.SetResolverForTest(stubPrivateResolver{})
+
+	p := &ProxyServer{
+		logger:                   discardLogger(),
+		checker:                  c,
+		allowUnlistedPassthrough: true,
+	}
+
+	req := newConnectRequest("metadata.internal:443")
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (SSRF guard must refuse a private target even on passthrough)", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "rejected_private_ip") {
+		t.Fatalf("body = %q, want it to mention rejected_private_ip", w.Body.String())
+	}
+}
+
 // TestServeHTTP_UnlistedPassthrough_IPDenied_StillRejected asserts that the
 // flag does not bypass the IP-allowlist gate. IP-denial is a security check,
 // not an allowlist miss, and must remain enforced even in unlisted-passthrough

@@ -1,11 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
+import { setDisplayTZ } from '@/lib/format';
 import { VirtualKeyCreate } from '@/pages/ai-gateway/virtual-keys/VirtualKeyCreate';
 import { expiryBounds } from '@/pages/ai-gateway/virtual-keys/expiryBounds';
+
+/**
+ * The clock and the display zone are pinned so every expiry assertion below is
+ * an exact calendar date. The chosen instant sits early-morning east of UTC —
+ * the admin is already on 2026-07-16 while the instant is still on 2026-07-15
+ * in UTC — so a UTC-anchored picker floor or default would be visibly off by a
+ * day rather than coincidentally correct.
+ */
+const FROZEN_NOW = '2026-07-15T19:30:00Z';
+const DISPLAY_TZ = 'Asia/Shanghai';
+const LOCAL_TODAY = '2026-07-16';
+const LOCAL_TOMORROW = '2026-07-17';
+const LOCAL_ONE_MONTH_OUT = '2026-08-16';
 
 const svc = vi.hoisted(() => ({
   virtualKeyApi: { create: vi.fn() },
@@ -34,9 +48,18 @@ const createLabel = () => i18n.t('pages:virtualKeys.createVirtualKey');
 describe('VirtualKeyCreate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // shouldAdvanceTime keeps userEvent / waitFor progressing under a pinned clock.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(FROZEN_NOW));
+    setDisplayTZ(DISPLAY_TZ);
     apiByKey.models = ok({ data: [] });
     apiByKey.projects = ok({ data: [{ id: 'p1', name: 'Proj', organization: { id: 'o1', name: 'OrgA' } }] });
     svc.virtualKeyApi.create.mockResolvedValue({ key: 'nx_secret_plain', id: 'vk1' });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    setDisplayTZ(null);
   });
 
   it('renders the create form with the name field', () => {
@@ -63,50 +86,32 @@ describe('VirtualKeyCreate', () => {
 
   /* ── Expiration: default pre-filled to ~1 month out ─────────────────── */
 
-  it('pre-fills the expiration date input with a value ~1 month from now', () => {
+  it('pre-fills the expiration date input with one month from the local today', () => {
     wrap();
     const dateInput = screen.getByDisplayValue(/^\d{4}-\d{2}-\d{2}$/);
-    const value = (dateInput as HTMLInputElement).value;
-    // Value must be a YYYY-MM-DD string
-    expect(value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // Must be in the future (at least today)
-    const chosenMs = new Date(`${value}T00:00:00Z`).getTime();
-    expect(chosenMs).toBeGreaterThan(Date.now() - 24 * 60 * 60 * 1000);
-    // Must be approximately 1 month from now (within a 5-day window)
-    const oneMonthMs = (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d.getTime(); })();
-    expect(Math.abs(chosenMs - oneMonthMs)).toBeLessThan(5 * 24 * 60 * 60 * 1000);
+    expect((dateInput as HTMLInputElement).value).toBe(LOCAL_ONE_MONTH_OUT);
   });
 
   /* ── Expiration: max attribute caps at ~3 months ────────────────────── */
 
-  it('sets max on the expiration date input to within 3 months from now', () => {
+  it('leaves the expiration date input unbounded above', () => {
+    // The server only requires a FUTURE expiry (requireApplicationExpiry); it
+    // imposes no ceiling. A max here would silently re-impose the removed
+    // 3-month cap and block a legitimate date.
     wrap();
     const dateInput = screen.getByDisplayValue(/^\d{4}-\d{2}-\d{2}$/);
-    const maxAttr = (dateInput as HTMLInputElement).max;
-    expect(maxAttr).toBeTruthy();
-    const maxMs = new Date(`${maxAttr}T00:00:00Z`).getTime();
-    const threeMonths = new Date();
-    threeMonths.setMonth(threeMonths.getMonth() + 3);
-    // max must be strictly before the server ceiling of now+3months
-    expect(maxMs).toBeLessThan(threeMonths.getTime());
-    // max must be in the future
-    expect(maxMs).toBeGreaterThan(Date.now());
-    // Consistency: matches expiryBounds().max
-    const { max } = expiryBounds();
-    expect(maxAttr).toBe(max);
+    expect((dateInput as HTMLInputElement).max).toBe('');
+    expect('max' in expiryBounds()).toBe(false);
   });
 
-  it('sets min on the expiration date input to tomorrow', () => {
+  it('sets min on the expiration date input to tomorrow on the local calendar', () => {
     wrap();
     const dateInput = screen.getByDisplayValue(/^\d{4}-\d{2}-\d{2}$/);
     const minAttr = (dateInput as HTMLInputElement).min;
-    expect(minAttr).toBeTruthy();
-    // min must be tomorrow or later (not today)
-    const minMs = new Date(`${minAttr}T00:00:00Z`).getTime();
-    expect(minMs).toBeGreaterThan(Date.now() - 24 * 60 * 60 * 1000);
-    // Matches expiryBounds().min
-    const { min } = expiryBounds();
-    expect(minAttr).toBe(min);
+    expect(minAttr).toBe(LOCAL_TOMORROW);
+    // The admin's own today must not be selectable: requireApplicationExpiry
+    // rejects an expiry that is not in the future.
+    expect(minAttr > LOCAL_TODAY).toBe(true);
   });
 
   /* ── Project field: required asterisk ───────────────────────────────── */
@@ -137,8 +142,10 @@ describe('VirtualKeyCreate', () => {
         name: 'prod-key',
         vkType: 'application',
         enabled: true,
-        // expiresAt is always a stamped RFC3339 string — never undefined
-        expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T23:59:59Z$/),
+        // The pre-filled local day, stamped to its last moment in the display
+        // zone: end of 2026-08-16 at +08 is 15:59:59.999Z the same day. Create
+        // binds into a Go time.Time and takes RFC3339 only, so a bare date 400s.
+        expiresAt: '2026-08-16T15:59:59.999Z',
       }),
     ));
     // No neverExpires key in the call

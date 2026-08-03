@@ -31,6 +31,14 @@ const (
 	// the rename is desired it is a Phase 3 DB-schema-migration concern.
 	EndpointKindEmbeddings EndpointKind = "embeddings"
 
+	// EndpointKindRerank covers document-reranking endpoints: /v1/rerank
+	// (canonical, Cohere-shaped), Cohere /v2/rerank, Voyage /v1/rerank, and
+	// provider-specific rerank endpoints. Given a query + candidate documents,
+	// the model returns the documents re-ordered by relevance. The canonical
+	// wire shape is Cohere's (not OpenAI's) — OpenAI ships no rerank API; see
+	// provider-adapter-architecture.md §3a for the documented exception.
+	EndpointKindRerank EndpointKind = "rerank"
+
 	// EndpointKindImageGeneration covers image synthesis endpoints:
 	// /v1/images/generations, /v1/images/edits, /v1/images/variations
 	// (OpenAI), and provider-specific image-gen endpoints.
@@ -45,10 +53,9 @@ const (
 	// endpoints.
 	EndpointKindSTT EndpointKind = "stt"
 
-	// EndpointKindVideoGeneration is a placeholder for provider
-	// video-generation endpoints. Reserved before any provider ships one
-	// in production; consumers should treat it as "valid kind, no rules
-	// match yet" until a provider lands.
+	// EndpointKindVideoGeneration covers the async video-generation job
+	// family: POST /v1/videos (submit) plus its body-less poll / content /
+	// delete siblings, and provider-specific video-generation endpoints.
 	EndpointKindVideoGeneration EndpointKind = "video_generation"
 
 	// EndpointKindBatch covers async batch endpoints: /v1/batches
@@ -70,6 +77,23 @@ const (
 	// endpoint_type label so analytics and the route simulator can distinguish
 	// Responses traffic from /v1/chat/completions.
 	EndpointKindResponses EndpointKind = "responses"
+
+	// EndpointKindGuardrail is the standalone compliance-verdict endpoint
+	// (/v1/guardrail): a caller submits text and receives an allow/block/redact
+	// verdict from the deployment's configured compliance pipeline (rule-pack +
+	// PII + AI-Guard judge), without relaying an LLM completion. It carries no
+	// provider wire shape (WireShapeNone) because nothing is routed upstream, and
+	// it does not participate in the routing / executor / cost-formula / cache
+	// path — it runs the hook pipeline directly and returns the verdict.
+	EndpointKindGuardrail EndpointKind = "guardrail"
+
+	// EndpointKindRealtime is the realtime voice session family
+	// (GET /v1/realtime, WebSocket upgrade): a long-lived bidirectional
+	// relay of the OpenAI Realtime API. A session emits one traffic_event
+	// row per in-band response plus a session row, all labeled with this
+	// kind. WireShapeNone — the upgrade request carries no HTTP body and no
+	// codec ever sees realtime frames (verbatim relay).
+	EndpointKindRealtime EndpointKind = "realtime"
 )
 
 // AllEndpointKinds is the closed enumeration of every defined
@@ -78,6 +102,7 @@ const (
 var AllEndpointKinds = []EndpointKind{
 	EndpointKindChat,
 	EndpointKindEmbeddings,
+	EndpointKindRerank,
 	EndpointKindImageGeneration,
 	EndpointKindTTS,
 	EndpointKindSTT,
@@ -86,6 +111,56 @@ var AllEndpointKinds = []EndpointKind{
 	EndpointKindJob,
 	EndpointKindModels,
 	EndpointKindResponses,
+	EndpointKindGuardrail,
+	EndpointKindRealtime,
+}
+
+// EndpointKindAcceptsModelType reports whether a catalog model of the given
+// type (Model.type: chat/embedding/image/audio/tts/stt/realtime/video/rerank)
+// can serve a
+// request classified as this EndpointKind. It is the routing layer's modality
+// guard: every routing strategy (single, loadbalance, conditional, latency,
+// smart, fallback) and the requested-model passthrough resolve their targets
+// through this, so a request is never dispatched to a model of the wrong
+// modality — e.g. an image model selected for /v1/chat/completions, or a chat
+// model auto-routed onto /v1/images/generations. The catalog `type` vocabulary
+// is coarser than the endpoint vocabulary. Each audio endpoint accepts BOTH the
+// fine type (tts / stt / realtime) and the coarse `audio` type, so a catalog
+// that types its audio models precisely gets clean cross-sub-modality rejection
+// (a stt model on the tts endpoint is refused) while a catalog that still types
+// them coarsely as `audio` keeps routing — the coarse type is the back-compat
+// fallback, the fine type the forward path (the shipped catalog types its
+// audio models precisely). Video generation likewise accepts both `video`
+// (the catalog's Sora type) and `image` (back-compat for rows created before
+// the video type existed). Kinds that do not
+// resolve to a catalog model (guardrail, batch, job, models) impose no
+// constraint and accept any type. An empty modelType is the caller's signal to
+// apply no constraint (see the resolver's modality filter), so it is accepted
+// here too rather than guessed.
+func EndpointKindAcceptsModelType(k EndpointKind, modelType string) bool {
+	if modelType == "" {
+		return true
+	}
+	switch k {
+	case EndpointKindChat, EndpointKindResponses:
+		return modelType == "chat"
+	case EndpointKindEmbeddings:
+		return modelType == "embedding"
+	case EndpointKindImageGeneration:
+		return modelType == "image"
+	case EndpointKindTTS:
+		return modelType == "tts" || modelType == "audio"
+	case EndpointKindSTT:
+		return modelType == "stt" || modelType == "audio"
+	case EndpointKindRealtime:
+		return modelType == "realtime" || modelType == "audio"
+	case EndpointKindVideoGeneration:
+		return modelType == "video" || modelType == "image"
+	case EndpointKindRerank:
+		return modelType == "rerank"
+	default:
+		return true
+	}
 }
 
 // IsValid reports whether k is one of the defined EndpointKind constants.

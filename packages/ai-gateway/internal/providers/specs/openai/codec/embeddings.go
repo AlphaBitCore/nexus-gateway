@@ -1,33 +1,30 @@
-// Package codec — OpenAI embedding request encoding.
+// Package codec — OpenAI embedding request encoding (canonical door).
 //
 // Architecture references:
 //   - docs/dev/architecture/provider-adapter-architecture.md §3a Rules 1-7
 //   - docs/dev/architecture/endpoint-typology-architecture.md §2
 //
-// Per-model wire rules are listed with empirical 400 citations per Rule 7.
+// Per-model wire rules ride the contract (specs/openai/rewrites carries
+// the rules with their empirical 400 citations per Rule 7); this file owns
+// the canonical-door-only validation.
 package codec
 
 import (
 	"fmt"
 	"net/http"
-	"regexp"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
-// ada002Regex matches the text-embedding-ada-002 model family.
-// ada-002 rejects "dimensions" and "encoding_format" — observed 400
-// "Unrecognized request argument supplied: dimensions" (OpenAI API,
-// reproduced against api.openai.com with model=text-embedding-ada-002).
-var ada002Regex = regexp.MustCompile(`^text-embedding-ada-002`)
-
-// encodeOpenAIEmbeddingRequest applies per-model wire rules to a canonical
-// OpenAI-shaped embedding request body. The canonical OpenAI shape IS the
-// OpenAI wire shape for embeddings (Rule 1) so this is mostly a no-op
-// except for ada-002 which rejects parameters newer models accept.
-func encodeOpenAIEmbeddingRequest(canonicalBody []byte, target provcore.CallTarget) (provcore.EncodeResult, error) {
+// encodeEmbeddings applies the contract's per-model wire rules and the
+// resolved-model stamp to a canonical OpenAI-shaped embedding request
+// body. The canonical OpenAI shape IS the OpenAI wire shape for
+// embeddings (Rule 1), so no translation happens; the door owes the same
+// differential RewriteNative's embeddings arm owes, plus the
+// canonical-door-only validation below (the native door forwards what it
+// does not rewrite and lets the upstream validate its own wire).
+func (c *identityCodec) encodeEmbeddings(canonicalBody []byte, target provcore.CallTarget) (provcore.EncodeResult, error) {
 	if len(canonicalBody) == 0 {
 		return provcore.EncodeResult{ContentType: "application/json"}, nil
 	}
@@ -39,36 +36,32 @@ func encodeOpenAIEmbeddingRequest(canonicalBody []byte, target provcore.CallTarg
 		}
 	}
 
-	// Resolve the model ID: prefer target.ProviderModelID (populated by
-	// the routing resolver) then fall back to the body's "model" field.
+	// Resolve the model ID for rule gating: prefer target.ProviderModelID
+	// (populated by the routing resolver) then fall back to the body's
+	// "model" field. The stamp itself only ever writes the resolved
+	// target id — a body-derived fallback must not overwrite anything.
 	modelID := target.ProviderModelID
 	if modelID == "" {
 		modelID = gjson.GetBytes(canonicalBody, "model").Str
 	}
 
-	var rewrites []string
-	body := canonicalBody
+	stamped, err := provcore.SurgicalModelStamp(canonicalBody, target.ProviderModelID)
+	if err != nil {
+		return provcore.EncodeResult{}, err
+	}
+	body, rewrites, ok := c.embeddings.applyBytes(stamped, modelID)
+	if !ok {
+		return c.mapDoorGated(canonicalBody, target, &c.embeddings, false, modelID)
+	}
 
-	if ada002Regex.MatchString(modelID) {
-		// ada-002 rejects dimensions and encoding_format — observed 400
-		// "Unrecognized request argument supplied: dimensions" (OpenAI API).
-		// Strip both fields from the wire body. sjson.DeleteBytes
-		// only errors on malformed path strings; the literal keys here are
-		// guaranteed valid so the error is structurally unreachable.
-		if gjson.GetBytes(body, "dimensions").Exists() {
-			body, _ = sjson.DeleteBytes(body, "dimensions")
-			rewrites = append(rewrites, "dimensions→removed (ada-002: unsupported field)")
-		}
-		if gjson.GetBytes(body, "encoding_format").Exists() {
-			body, _ = sjson.DeleteBytes(body, "encoding_format")
-			rewrites = append(rewrites, "encoding_format→removed (ada-002: unsupported field)")
-		}
-	} else {
-		// text-embedding-3-* and other models: pass through. Apply a
-		// codec safety-net per SDD §T1.2/T5.5: if "dimensions" is
-		// present it must be a positive integer (the routing pre-filter
-		// already validated it against supported_dimensions; this check
-		// catches any malformed pass-through that bypassed pre-filter).
+	if c.embeddings.dueMask(modelID) == 0 {
+		// No per-model rule matched (text-embedding-3-* and other
+		// models): pass through with a codec safety-net per SDD
+		// §T1.2/T5.5 — if "dimensions" is present it must be a positive
+		// integer (the routing pre-filter already validated it against
+		// supported_dimensions; this check catches any malformed
+		// pass-through that bypassed pre-filter). Canonical door only:
+		// contract-external validation never runs on the native door.
 		if dimVal := gjson.GetBytes(body, "dimensions"); dimVal.Exists() {
 			if dimVal.Type != gjson.Number || dimVal.Int() <= 0 {
 				return provcore.EncodeResult{}, &provcore.ProviderError{

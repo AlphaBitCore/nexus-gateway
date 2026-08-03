@@ -791,6 +791,22 @@ func TestTransport_BuildURL_AllEndpoints(t *testing.T) {
 		}
 	})
 
+	t.Run("images_generate_content", func(t *testing.T) {
+		// The cross-shape image leg shares chat's generateContent URL and
+		// is always non-stream — even a stream=true flag (already forced
+		// off at admission) must never select streamGenerateContent, or
+		// cost/artifact accounting would be bypassed.
+		for _, stream := range []bool{false, true} {
+			got, err := tr.BuildURL(provcore.CallTarget{BaseURL: "https://x", ProviderModelID: "nano"}, typology.WireShapeGeminiImagesGenerateContent, stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != "https://x/v1beta/models/nano:generateContent" {
+				t.Errorf("stream=%v url=%q", stream, got)
+			}
+		}
+	})
+
 	t.Run("models", func(t *testing.T) {
 		// BuildURL gates on ProviderModelID for every endpoint, including
 		// /v1beta/models — keep that contract by supplying a placeholder.

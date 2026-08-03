@@ -374,7 +374,7 @@ func TestAdminAuth_APIKey_HappyPath_AsAPIKey(t *testing.T) {
 		Logger:       slog.Default(),
 	})
 
-	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": rawKey})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
 	}
@@ -383,6 +383,78 @@ func TestAdminAuth_APIKey_HappyPath_AsAPIKey(t *testing.T) {
 	}
 	if captured.AuthPrincipalType != "api_key" {
 		t.Errorf("AuthPrincipalType=%q, want api_key", captured.AuthPrincipalType)
+	}
+}
+
+// TestAdminAuth_APIKey_DeprecatedHeaderStillAuthenticates pins the compat
+// window for the pre-namespace `x-admin-key` spelling. The nexus CLI shipped
+// that name, so an operator on an older binary sends it; were the Control Plane
+// to stop reading it, every admin call from that CLI would 401 against a server
+// the operator did not knowingly upgrade past. Retire this test only in the
+// same change that retires the alias.
+func TestAdminAuth_APIKey_DeprecatedHeaderStillAuthenticates(t *testing.T) {
+	t.Parallel()
+
+	f := newAuthFixture(t)
+	rawKey := "nxk_unit-test-key-1"
+	hash := auth.HashAPIKey(rawKey)
+	lookup := &fakeAPIKeyLookup{
+		keys: map[string]*store.APIKeyWithOwner{
+			hash: {
+				ID:      "ak-1",
+				Name:    "ci-runner",
+				Enabled: true,
+			},
+		},
+	}
+
+	e, captured := mountEcho(t, middleware.AdminAuthConfig{
+		JWTVerifier:  f.verifier,
+		APIKeyLookup: lookup,
+		Logger:       slog.Default(),
+	})
+
+	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if captured.KeyID != "ak-1" || captured.AuthPrincipalType != "api_key" {
+		t.Errorf("AdminAuth=%+v, want the deprecated header to resolve the same principal", *captured)
+	}
+}
+
+// TestAdminAuth_APIKey_CanonicalHeaderWinsOverDeprecated pins the precedence in
+// adminAPIKey: when both spellings arrive, the canonical name is the one read.
+// Without this, a client that left a stale x-admin-key in place while adopting
+// the new name would silently authenticate as the wrong key.
+func TestAdminAuth_APIKey_CanonicalHeaderWinsOverDeprecated(t *testing.T) {
+	t.Parallel()
+
+	f := newAuthFixture(t)
+	canonicalKey := "nxk_canonical-key"
+	deprecatedKey := "nxk_deprecated-key"
+	lookup := &fakeAPIKeyLookup{
+		keys: map[string]*store.APIKeyWithOwner{
+			auth.HashAPIKey(canonicalKey):  {ID: "ak-canonical", Name: "canonical", Enabled: true},
+			auth.HashAPIKey(deprecatedKey): {ID: "ak-deprecated", Name: "deprecated", Enabled: true},
+		},
+	}
+
+	e, captured := mountEcho(t, middleware.AdminAuthConfig{
+		JWTVerifier:  f.verifier,
+		APIKeyLookup: lookup,
+		Logger:       slog.Default(),
+	})
+
+	rec := doRequest(e, map[string]string{
+		"X-Nexus-Admin-Key": canonicalKey,
+		"x-admin-key":       deprecatedKey,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if captured.KeyID != "ak-canonical" {
+		t.Errorf("KeyID=%q, want ak-canonical — the canonical header must win", captured.KeyID)
 	}
 }
 
@@ -432,7 +504,7 @@ func TestAdminAuth_APIKey_LazyRehashOnOldVersion(t *testing.T) {
 		Logger:         slog.Default(),
 	})
 
-	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": rawKey})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q (a key sealed under an old version must still admit)", rec.Code, rec.Body.String())
 	}
@@ -472,7 +544,7 @@ func TestAdminAuth_APIKey_NoRehashOnCurrentVersion(t *testing.T) {
 		Logger:         slog.Default(),
 	})
 
-	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": rawKey})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d", rec.Code)
 	}
@@ -510,7 +582,7 @@ func TestAdminAuth_APIKey_DelegatesToOwner(t *testing.T) {
 		Logger:       slog.Default(),
 	})
 
-	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": rawKey})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
 	}
@@ -543,7 +615,7 @@ func TestAdminAuth_APIKey_DisabledKey(t *testing.T) {
 		Logger:       slog.Default(),
 	})
 
-	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": rawKey})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", rec.Code)
 	}
@@ -561,7 +633,7 @@ func TestAdminAuth_APIKey_UnknownKey(t *testing.T) {
 		Logger:       slog.Default(),
 	})
 
-	rec := doRequest(e, map[string]string{"x-admin-key": "nxk_nope"})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": "nxk_nope"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", rec.Code)
 	}
@@ -610,8 +682,8 @@ func TestAdminAuth_BearerPreferredOverAPIKey(t *testing.T) {
 
 	raw := f.signToken(t, validAdminClaims("usr-jwt", "jwt@nexus.ai"))
 	rec := doRequest(e, map[string]string{
-		"Authorization": "Bearer " + raw,
-		"x-admin-key":   rawKey,
+		"Authorization":     "Bearer " + raw,
+		"X-Nexus-Admin-Key": rawKey,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())

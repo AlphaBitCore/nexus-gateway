@@ -11,7 +11,7 @@
 // VK is itself the credential boundary.
 //
 // SSRF posture: the upstream host is NOT caller-controlled — every request is
-// forwarded to the server-configured gateway (configuredGatewayURL), so a
+// forwarded to the server-configured gateway (resolvedGatewayURL), so a
 // caller cannot point the proxy at an arbitrary internal host. The path must be
 // one of the OpenAI-compatible surfaces the simulator actually drives
 // (`/v1/models`, `/v1/chat/completions`, `/v1/messages`, `/v1/usage`, or a
@@ -27,43 +27,48 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/labstack/echo/v4"
 )
 
-// configuredGatewayURL returns the server-configured AI-gateway base URL
-// (env AI_GATEWAY_URL, or the local default) and validates it is a well-formed
-// http(s) URL with a host. The simulator ALWAYS forwards here: the caller
-// cannot choose the upstream host (otherwise any admin-session
-// principal, including a read-only viewer, could drive an arbitrary
-// internal-network SSRF read). A misconfigured AI_GATEWAY_URL is an operator
-// error, surfaced to the caller as a 500 rather than a 400.
-func configuredGatewayURL() (string, error) {
-	raw := strings.TrimSpace(os.Getenv("AI_GATEWAY_URL"))
-	if raw == "" {
-		raw = "http://localhost:3050"
+// resolvedGatewayURL returns the Hub-resolved AI-gateway base URL and
+// validates it is a well-formed http(s) URL with a host. The simulator
+// ALWAYS forwards here: the caller cannot choose the upstream host
+// (otherwise any admin-session principal, including a read-only viewer,
+// could drive an arbitrary internal-network SSRF read). The URL is never
+// configured locally — the gateway reports it to the Hub and this handler
+// resolves it per call (internal/platform/peer). A resolution failure is a
+// transient peer.ErrUnavailable (the caller answers 503); a malformed
+// reported URL is surfaced as a validation error (500).
+func (h *Handler) resolvedGatewayURL(c echo.Context) (string, error) {
+	if h.gatewayBase == nil {
+		return "", peer.ErrUnavailable
+	}
+	raw, err := h.gatewayBase(c.Request().Context())
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", peer.ErrUnavailable, err)
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("configured AI_GATEWAY_URL %q: %w", raw, err)
+		return "", fmt.Errorf("resolved ai-gateway URL %q: %w", raw, err)
 	}
 	switch parsed.Scheme {
 	case "http", "https":
 	default:
-		return "", fmt.Errorf("configured AI_GATEWAY_URL scheme %q is not http/https", parsed.Scheme)
+		return "", fmt.Errorf("resolved ai-gateway URL scheme %q is not http/https", parsed.Scheme)
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("configured AI_GATEWAY_URL %q has no host", raw)
+		return "", fmt.Errorf("resolved ai-gateway URL %q has no host", raw)
 	}
 	return strings.TrimRight(raw, "/"), nil
 }
 
 // simulatorForwardRequest is the JSON body the UI posts. The upstream host is
-// NOT part of it — see configuredGatewayURL. body is sent to the gateway as the
+// NOT part of it — see resolvedGatewayURL. body is sent to the gateway as the
 // upstream request body when method is POST; for GET it's ignored.
 type simulatorForwardRequest struct {
 	Path   string          `json:"path"`
@@ -110,7 +115,7 @@ func isAllowedSimulatorPath(p string) bool {
 
 // validateForwardRequest enforces the caller-controlled SSRF mitigations: the
 // path must be in the simulator allowlist and the method must be GET or POST.
-// The upstream host is not caller-controlled (see configuredGatewayURL).
+// The upstream host is not caller-controlled (see resolvedGatewayURL).
 // Returned errors are written verbatim into the 400 body so a debugging admin
 // can see why the call was rejected.
 func validateForwardRequest(req *simulatorForwardRequest) error {
@@ -142,8 +147,11 @@ func (h *Handler) AIGatewaySimulatorForward(c echo.Context) error {
 	if err := validateForwardRequest(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON(err.Error(), "validation_error", ""))
 	}
-	base, err := configuredGatewayURL()
+	base, err := h.resolvedGatewayURL(c)
 	if err != nil {
+		if errors.Is(err, peer.ErrUnavailable) {
+			return peer.ServiceUnavailable(c, "ai-gateway", err)
+		}
 		return c.JSON(http.StatusInternalServerError, errJSON(err.Error(), "config_error", ""))
 	}
 

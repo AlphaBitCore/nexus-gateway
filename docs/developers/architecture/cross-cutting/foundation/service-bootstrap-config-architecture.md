@@ -94,13 +94,14 @@ Cross-service env vars (shared shape, identical name in every service that has t
 | `NATS_URL` | `cfg.MQ.NATS.URL` |
 | `LOG_LEVEL` / `LOG_FORMAT` | `cfg.Log.{Level,Format}` |
 | `<SERVICE>_PUBLIC_URL` | `cfg.PublicURL` — one per service: `NEXUS_HUB_PUBLIC_URL`, `CONTROL_PLANE_PUBLIC_URL`, `AI_GATEWAY_PUBLIC_URL`, `COMPLIANCE_PROXY_PUBLIC_URL` |
+| `<SERVICE>_PRIVATE_URL` | `cfg.PrivateURL` (optional) — one per service: `NEXUS_HUB_PRIVATE_URL`, `CONTROL_PLANE_PRIVATE_URL`, `AI_GATEWAY_PRIVATE_URL`, `COMPLIANCE_PROXY_PRIVATE_URL`. Overrides the auto-derived internal service-to-service URL reported as `staticInfo.privateUrl` (default follows the bind interface: a specific bind host — e.g. the loopback appliance — is advertised verbatim, a wildcard bind advertises `http://<primary-outbound-IPv4>:<port>`; see A03 §3). Peer service URLs are NOT env config — peers resolve them from the Hub via `shared/transport/peerurl` |
 
 Per-service additions (the full list is in each service's `applyEnvOverrides`):
 
 | Service | Notable additions |
 |---|---|
 | `nexus-hub` | `NEXUS_HUB_ID`, `NEXUS_HUB_ADVERTISE_ADDR`, `NEXUS_HUB_ALLOWED_ORIGINS`, `NEXUS_HUB_PORT`, `NEXUS_HUB_SCHEDULER_*` (retention + interval knobs), `AGENT_CA_{CERT,KEY,DIR}` |
-| `control-plane` | `CONTROL_PLANE_PORT`, `CONTROL_PLANE_CRYPTO_PRODUCTION`, `COMPLIANCE_PROXY_URL`, `AI_GATEWAY_URL`, `COMPLIANCE_PROXY_RUNTIME_URL`, `COMPLIANCE_PROXY_API_TOKEN`, `CREDENTIAL_ENCRYPTION_{KEY,PASSPHRASE,SALT}`, `CREDENTIAL_KEY_MAP`, `AGENT_CA_DIR`, `ADMIN_KEY_HMAC_SECRET`, `AUTH_SERVER_ISSUER`, `AUTH_SERVER_KEYSTORE_DIR`, `OTEL_*` |
+| `control-plane` | `CONTROL_PLANE_PORT`, `CONTROL_PLANE_CRYPTO_PRODUCTION`, `COMPLIANCE_PROXY_API_TOKEN`, `CREDENTIAL_ENCRYPTION_{KEY,PASSPHRASE,SALT}`, `CREDENTIAL_KEY_MAP`, `AGENT_CA_DIR`, `ADMIN_KEY_HMAC_SECRET`, `AUTH_SERVER_ISSUER`, `AUTH_SERVER_KEYSTORE_DIR`, `OTEL_*` (the former `COMPLIANCE_PROXY_URL` / `AI_GATEWAY_URL` / `COMPLIANCE_PROXY_RUNTIME_URL` peer-URL vars are deleted — peer URLs resolve from the Hub via `shared/transport/peerurl`) |
 | `ai-gateway` | `AI_GATEWAY_PORT`, `AI_GATEWAY_CORS_{ENABLED,ALLOWED_ORIGINS}`, `AI_GATEWAY_CACHE_{ENABLED,TTL,PREFIX}`, `ADMIN_KEY_HMAC_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, `CREDENTIAL_KEY_MAP`, `OTEL_*` |
 | `compliance-proxy` | (none beyond the cross-service set) |
 
@@ -131,10 +132,12 @@ The required-set is split into a **cross-service core** (every backend service e
 |---|---|---|
 | `nexus-hub` | `cfg.Hub.ID` | Identifies this Hub instance in `nexus.hub.signal` cross-Hub fanout; defaults to `hub-<hostname>` via `defaults()`. |
 | `control-plane` | `cfg.Registry.NexusHubURL` | CP registers as a Thing on boot. |
-| `ai-gateway` | `cfg.Auth.HMACSecret`, `cfg.Auth.CredentialMasterKey`, `cfg.Registry.NexusHubURL` | HMAC hashes VK + Admin API keys before DB lookup (env-only, `ADMIN_KEY_HMAC_SECRET`). Master key decrypts Hub-pushed provider credentials (env-only, `CREDENTIAL_ENCRYPTION_KEY`). Hub URL because AIG registers as a Thing. |
+| `ai-gateway` | `cfg.Auth.HMACSecret`, `cfg.Auth.CredentialMasterKey`, `cfg.Registry.NexusHubURL`, `cfg.Server.WriteTimeout > 0` | HMAC hashes VK + Admin API keys before DB lookup (env-only, `ADMIN_KEY_HMAC_SECRET`). Master key decrypts Hub-pushed provider credentials (env-only, `CREDENTIAL_ENCRYPTION_KEY`). Hub URL because AIG registers as a Thing. `server.writeTimeout` carries a `defaults()` value, so this is a floor rather than a presence check — see the note below on why `0` is unusable in this service. |
 | `compliance-proxy` | `cfg.Registry.NexusHubURL`, `cfg.Listener.Address`, `cfg.CA.CertPath`, `cfg.CA.KeyPath` | Hub URL for Thing registration. Listener address terminates inbound CONNECT. Sub-CA cert + key fly-issue MITM leaf certs. |
 
 Beyond the required-set, each service's `validate` may also enforce **shape constraints** on optional fields (e.g. CP-proxy validates that `connections.idleTimeout` parses as a `time.Duration > 0` when set, and that `log.level` is one of `trace/debug/info/warn/error`). These guards reject obviously-broken yaml at boot rather than surfacing the failure on first request.
+
+**Why `ai-gateway` floors `server.writeTimeout` at `> 0`.** `0` is the standard Go idiom for "no write timeout", so it is the value an operator naturally reaches for when they want long inferences to survive — but it is the one value this service cannot honour. The proxy write paths lift the connection's write deadline to an *absolute* `time.Now() + upstream budget` before writing each response (a flat `server.writeTimeout` sized for ordinary responses would otherwise sever any inference that spends minutes upstream). `net/http` re-arms the per-request write deadline only when `server.WriteTimeout > 0`; at `0` nothing re-arms it, so the first response's absolute deadline outlives its own request and every subsequent write on that keep-alive connection fails for the rest of the connection's life. The floor rejects that at boot instead of leaving it to be discovered as a connection that mysteriously stops responding in production. Operators wanting a longer ceiling should raise `server.writeTimeout`, not zero it.
 
 Adding to the required-set is a deliberate change. The per-service `validate` is the single place to look — if a field is not checked there, it is not enforced at boot regardless of how load-bearing it might be at runtime.
 

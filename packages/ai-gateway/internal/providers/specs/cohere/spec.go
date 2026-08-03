@@ -18,9 +18,10 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		SchemaCodec:     codec{},
 		StreamDecoder:   NewStreamDecoder(log),
 		ErrorNormalizer: errorNormalizer{},
-		// Cohere natively serves both the chat-completions shape (v2/chat)
-		// and the embeddings shape (v2/embed — requires canonical → Cohere
-		// wire translation via canonicalToCohereEmbed in embed_codec.go).
-		RequestShapes: []typology.WireShape{typology.WireShapeCohereChat, typology.WireShapeCohereEmbed},
+		// Cohere natively serves the chat-completions shape (v2/chat), the
+		// embeddings shape (v2/embed — canonical → Cohere wire via
+		// canonicalToCohereEmbed), and reranking (v2/rerank — the canonical
+		// rerank shape IS the Cohere shape; see rerank_codec.go).
+		RequestShapes: []typology.WireShape{typology.WireShapeCohereChat, typology.WireShapeCohereEmbed, typology.WireShapeCohereRerank},
 	}
 }

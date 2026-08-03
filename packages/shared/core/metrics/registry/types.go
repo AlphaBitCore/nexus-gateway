@@ -129,6 +129,20 @@ type StaticInfo struct {
 	// hostname.
 	PublicURL string `json:"publicUrl,omitempty"`
 
+	// PrivateURL is the internal service-to-service base URL of this
+	// service (scheme + host[:port], no trailing slash) — the address
+	// PEER Nexus services dial, as opposed to PublicURL which external
+	// clients (and the Agent, which runs on end-user devices) use.
+	// Server-side Things populate it from their `privateURL` yaml / env
+	// override when set, else it is auto-derived as
+	// http://<primary-outbound-IPv4>:<service-port>. Empty for client
+	// Things (Agent).
+	//
+	// Consumers: the shared peer-URL resolver — a service resolves a
+	// peer's reported privateUrl from the Hub instead of carrying the
+	// peer's address in its own config (which drifts).
+	PrivateURL string `json:"privateUrl,omitempty"`
+
 	// DeviceFingerprint is a SHA-256 truncated to 128 bits (32 hex chars)
 	// of hardware-stable signals — IOPlatformUUID + IOPlatformSerial +
 	// primary NIC MAC + CPU model on macOS; /etc/machine-id + MAC + CPU

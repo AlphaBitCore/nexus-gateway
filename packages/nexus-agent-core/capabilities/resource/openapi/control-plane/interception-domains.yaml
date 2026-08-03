@@ -244,7 +244,12 @@ paths:
                                         - "null"
                                     description: Identifier of the traffic adapter applied to this domain.
                                 adapterConfig:
-                                    description: Adapter-specific configuration as arbitrary JSON.
+                                    description: >-
+                                        Adapter-specific configuration as a JSON object. Non-object
+                                        values are rejected with 400 validation_error — the traffic
+                                        snapshot hard-parses this blob and would otherwise silently
+                                        skip the whole domain (its traffic no longer intercepted).
+                                    type: object
                                 enabled:
                                     type:
                                         - boolean
@@ -590,7 +595,12 @@ components:
                     type: string
                     description: Identifier of the traffic adapter applied to this domain.
                 adapterConfig:
-                    description: Adapter-specific configuration as arbitrary JSON.
+                    description: >-
+                        Adapter-specific configuration as a JSON object. Non-object
+                        values are rejected with 400 validation_error — the traffic
+                        snapshot hard-parses this blob and would otherwise silently
+                        skip the whole domain (its traffic no longer intercepted).
+                    type: object
                 enabled:
                     type:
                         - boolean
@@ -674,7 +684,8 @@ components:
                 adapterId:
                     type: string
                 adapterConfig:
-                    description: arbitrary JSON value
+                    description: Adapter-specific configuration as a JSON object.
+                    type: object
                 enabled:
                     type: boolean
                 priority:

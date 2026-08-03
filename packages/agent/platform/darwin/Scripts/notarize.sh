@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E23-S4: Submit the signed .pkg to Apple notarization and staple the result.
+# Submit the signed .pkg to Apple notarization and staple the result.
 # Skips silently if Apple credentials are not configured (local dev mode).
 #
 # Usage: bash packages/agent/platform/darwin/Scripts/notarize.sh

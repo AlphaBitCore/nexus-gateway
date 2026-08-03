@@ -635,7 +635,7 @@ func TestServeProxy_CheckQuota_NotifyAndProceed(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
-	if got := w.Header().Get("x-nexus-quota-warning"); got == "" {
+	if got := w.Header().Get("X-Nexus-Quota-Warning"); got == "" {
 		t.Error("expected x-nexus-quota-warning header on notify-and-proceed path")
 	}
 }
@@ -1968,10 +1968,10 @@ func TestServeProxy_CheckQuota_DowngradeSuccess(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200 (downgrade success); body=%s", w.Code, w.Body.String())
 	}
-	if got := w.Header().Get("x-nexus-quota-downgrade"); got != "true" {
+	if got := w.Header().Get("X-Nexus-Quota-Downgrade"); got != "true" {
 		t.Errorf("x-nexus-quota-downgrade=%q want true", got)
 	}
-	if got := w.Header().Get("x-nexus-quota-original-model"); got == "" {
+	if got := w.Header().Get("X-Nexus-Quota-Original-Model"); got == "" {
 		t.Error("expected x-nexus-quota-original-model header")
 	}
 }
@@ -2025,7 +2025,7 @@ func TestServeProxy_CheckQuota_DowngradeToUnpricedRejected(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status=%d want 429 (downgrade-to-unpriced rejected); body=%s", w.Code, w.Body.String())
 	}
-	if got := w.Header().Get("x-nexus-quota-downgrade"); got != "" {
+	if got := w.Header().Get("X-Nexus-Quota-Downgrade"); got != "" {
 		t.Errorf("x-nexus-quota-downgrade=%q want empty (no model was selected)", got)
 	}
 }
@@ -2252,29 +2252,6 @@ func TestServeProxy_NonStream_RateLimited(t *testing.T) {
 
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status=%d want 429 on rate-limit; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestServeProxy_BadBodyFormatHeader drives the header-override failure
-// branch at line 251 — an unknown `x-nexus-aigw-body-format` header
-// produces a 400 with the supported-formats hint.
-func TestServeProxy_BadBodyFormatHeader(t *testing.T) {
-	deps := makeOpenAIDeps(t, "", emptyHookCache(t))
-	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:  typology.WireShapeOpenAIChat,
-		BodyFormat: provcore.FormatOpenAI,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-nexus-aigw-body-format", "not-a-real-format")
-	w := httptest.NewRecorder()
-	h(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d want 400; body=%s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "unknown body format") {
-		t.Errorf("expected hint in body: %s", w.Body.String())
 	}
 }
 

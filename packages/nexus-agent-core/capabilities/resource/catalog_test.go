@@ -13,7 +13,12 @@ import (
 // is regenerated, `go generate ./capabilities/resource` must refresh the
 // embed. Skips on a build with no repo on disk (the distributed CLI).
 func TestResourceEmbedMatchesDocsSource(t *testing.T) {
-	const src = "../../../../../docs/users/api/openapi/control-plane"
+	// Four levels up is the repo root from capabilities/resource/. Five was
+	// silently unreachable, so os.ReadDir always failed and the skip below
+	// fired on every run — including CI, where the repo IS on disk and this
+	// guard is the only thing standing between an edit to the docs spec and a
+	// CLI binary shipping the pre-edit text.
+	const src = "../../../../docs/users/api/openapi/control-plane"
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		t.Skipf("docs source not present: %v", err)

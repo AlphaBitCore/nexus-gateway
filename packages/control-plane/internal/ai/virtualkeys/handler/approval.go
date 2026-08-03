@@ -93,13 +93,13 @@ func (h *Handler) RenewVirtualKey(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
 	}
 	// Renew only ever targets an active APPLICATION key (the store-side query
-	// filters to vk_type='application'), so the same cap as create/update applies.
-	// A zero/omitted expiresAt is the nil case the shared helper rejects.
+	// filters to vk_type='application'), so the same rule as create/update
+	// applies. A zero/omitted expiresAt is the nil case the shared helper rejects.
 	var expiresAt *time.Time
 	if !body.ExpiresAt.IsZero() {
 		expiresAt = &body.ExpiresAt
 	}
-	if msg := capApplicationExpiry(expiresAt); msg != "" {
+	if msg := requireApplicationExpiry(expiresAt); msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
 

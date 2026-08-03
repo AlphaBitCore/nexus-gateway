@@ -37,17 +37,17 @@ import (
 // after VK create, normalize_total++ on chat.
 //
 // e2e assertions in this test:
-//   1. HTTP 200 + OpenAI chat.completion envelope + non-empty content
-//      + populated usage counters.
-//   2. AI Gateway hot-reload signal: config_applies counter delta ≥ 1
-//      within 30 s of VK create — runtime state caught up.
-//   3. AdminAuditLog row: action='create', entityId=vk.ID — write op
-//      left audit trail.
-//   4. traffic_event row: identity->vk->id == vk.ID, status=200,
-//      request_hook_decision='APPROVE' — request hit gateway, ran
-//      hooks, normalised, audited.
-//   5. AI Gateway normalize counter delta ≥ 1 across the chat call.
-//   6. Cleanup: DeleteMyVK leaves no orphan.
+//  1. HTTP 200 + OpenAI chat.completion envelope + non-empty content
+//     + populated usage counters.
+//  2. AI Gateway hot-reload signal: config_applies counter delta ≥ 1
+//     within 30 s of VK create — runtime state caught up.
+//  3. AdminAuditLog row: action='create', entityId=vk.ID — write op
+//     left audit trail.
+//  4. traffic_event row: identity->vk->id == vk.ID, status=200,
+//     request_hook_decision='APPROVE' — request hit gateway, ran
+//     hooks, normalised, audited.
+//  5. AI Gateway normalize counter delta ≥ 1 across the chat call.
+//  6. Cleanup: DeleteMyVK leaves no orphan.
 func TestS001_HelloWorld_FreshVK(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -172,16 +172,24 @@ func TestS001_HelloWorld_FreshVK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeMetrics ai-gw post: %v", err)
 	}
-	normDelta := helpers.Delta(preMetrics, postMetrics,
-		"nexus_normalize_total", nil)
+	// nexus_requests_total{endpoint=…,status="2xx"} — the counter the gateway
+	// actually exports, registered since the initial commit.
+	//
+	// This assertion used to bind nexus_normalize_total, which HAS NEVER EXISTED:
+	// the only normalize counters are nexus_normalize_panic_total and
+	// nexus_prehook_normalize_drop_total. The switch was made deliberately, with a
+	// comment calling nexus_requests_total "absent" — and the probe that concluded
+	// that was almost certainly unauthenticated, because /metrics answers 401
+	// without a service token and an unauthenticated scrape shows every metric as
+	// absent. So a 401 talked an earlier session into replacing a working metric
+	// name with one that could never match, and ScrapeMetrics then 401'd too, so
+	// the broken assertion never ran and nobody found out.
+	labels := map[string]string{"endpoint": "chat", "status": "2xx"}
+	normDelta := postMetrics.CounterSum("nexus_requests_total", labels) -
+		preMetrics.CounterSum("nexus_requests_total", labels)
 	if normDelta < 1 {
-		// Counter labels may vary by adapter; fall back to a sum across
-		// any label combination on the same name.
-		normDelta = postMetrics.CounterSum("nexus_normalize_total", nil) -
-			preMetrics.CounterSum("nexus_normalize_total", nil)
-	}
-	if normDelta < 1 {
-		t.Errorf("nexus_normalize_total delta=%g (want ≥ 1) — chat did not exercise gateway normalize path", normDelta)
+		t.Errorf("nexus_requests_total{endpoint=chat,status=2xx} delta=%g (want ≥ 1) — the chat "+
+			"request did not reach the gateway's request path", normDelta)
 	}
 
 	t.Logf("S-001 OK: HTTP 200, %d tokens, traffic_event=%s, audit=%s, normalize_delta=%.0f",
@@ -205,16 +213,16 @@ func TestS001_HelloWorld_FreshVK(t *testing.T) {
 // BRAINSTORM (pre): provider CRUD is a push-broadcast config_key per
 // thing_config_template (ai-gateway subscribes to `providers`). The
 // full e2e expectation:
-//   1. POST /api/admin/providers writes Provider row in DB + audit row.
-//   2. Hub broadcasts providers config_changed to ai-gateway things.
-//   3. AI Gateway's thingclient applies the new providers blob →
-//      nexus_thingclient_config_applies_total{success} ticks.
-//   4. GET round-trip confirms DB-side fields match input.
-//   5. test-connection probe hits the adapter probe layer and returns
-//      a structured envelope even when the upstream is unreachable.
-//   6. DELETE removes the row + triggers a second hot-reload.
-//   7. GET after DELETE returns 404 — round-trip closed.
-//   8. AdminAuditLog rows for "create" AND "delete" — two write ops.
+//  1. POST /api/admin/providers writes Provider row in DB + audit row.
+//  2. Hub broadcasts providers config_changed to ai-gateway things.
+//  3. AI Gateway's thingclient applies the new providers blob →
+//     nexus_thingclient_config_applies_total{success} ticks.
+//  4. GET round-trip confirms DB-side fields match input.
+//  5. test-connection probe hits the adapter probe layer and returns
+//     a structured envelope even when the upstream is unreachable.
+//  6. DELETE removes the row + triggers a second hot-reload.
+//  7. GET after DELETE returns 404 — round-trip closed.
+//  8. AdminAuditLog rows for "create" AND "delete" — two write ops.
 //
 // Cross-service: CP (admin handler + audit emit) → Hub (admin_audit
 // consumer + providers broadcast) → AI Gateway (thingclient apply) →

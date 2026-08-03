@@ -21,46 +21,6 @@ func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
 	return New(m), m
 }
 
-func TestGetCacheGlobalConfig(t *testing.T) {
-	s, m := newMock(t)
-	m.ExpectQuery(`SELECT config FROM cache_global_config WHERE id = 'singleton'`).
-		WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{"enabled":true}`)))
-	cfg, err := s.GetCacheGlobalConfig(context.Background())
-	if err != nil {
-		t.Fatalf("GetCacheGlobalConfig: %v", err)
-	}
-	_ = cfg
-
-	// Missing singleton row → zero config, no error (seeded-by-migration invariant).
-	m.ExpectQuery(`cache_global_config`).WillReturnError(pgx.ErrNoRows)
-	if _, err := s.GetCacheGlobalConfig(context.Background()); err != nil {
-		t.Fatalf("ErrNoRows should be tolerated, got %v", err)
-	}
-	// Query error surfaces.
-	m.ExpectQuery(`cache_global_config`).WillReturnError(errors.New("db"))
-	if _, err := s.GetCacheGlobalConfig(context.Background()); err == nil {
-		t.Fatal("query error should surface")
-	}
-	// Corrupt JSON → unmarshal error.
-	m.ExpectQuery(`cache_global_config`).WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{bad`)))
-	if _, err := s.GetCacheGlobalConfig(context.Background()); err == nil {
-		t.Fatal("corrupt JSON should surface an unmarshal error")
-	}
-}
-
-func TestPutCacheGlobalConfig(t *testing.T) {
-	s, m := newMock(t)
-	m.ExpectExec(`INSERT INTO cache_global_config`).WithArgs(pgxmock.AnyArg(), "admin").
-		WillReturnResult(pgxmock.NewResult("INSERT", 1))
-	if err := s.PutCacheGlobalConfig(context.Background(), cacheconfig.GlobalConfig{}, "admin"); err != nil {
-		t.Fatalf("PutCacheGlobalConfig: %v", err)
-	}
-	m.ExpectExec(`INSERT INTO cache_global_config`).WithArgs(pgxmock.AnyArg(), "admin").WillReturnError(errors.New("boom"))
-	if err := s.PutCacheGlobalConfig(context.Background(), cacheconfig.GlobalConfig{}, "admin"); err == nil {
-		t.Fatal("exec error should surface")
-	}
-}
-
 func TestGetCacheAdapterConfig(t *testing.T) {
 	s, m := newMock(t)
 	m.ExpectQuery(`FROM cache_adapter_config WHERE adapter_type = \$1`).WithArgs("openai").
@@ -190,36 +150,45 @@ func TestListCacheProviderConfigs(t *testing.T) {
 	}
 }
 
-// TestAssembleCacheConfigBlob asserts the three tiers are read and combined, and
-// that an error from any tier aborts the assembly.
+// TestAssembleCacheConfigBlob asserts the two surviving tiers are read and
+// combined into the shadow blob, and that an error from either tier aborts the
+// assembly. Tier 1 is retired: the mock declares NO cache_global_config
+// expectation, so if the assembler still queried the singleton the mock would
+// fail on an unexpected query — that is the regression guard for the orphaned
+// table being read again.
 func TestAssembleCacheConfigBlob(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`cache_global_config`).WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	m.ExpectQuery(`SELECT adapter_type, config FROM cache_adapter_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}).AddRow("openai", []byte(`{}`)))
+		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}).
+			AddRow("anthropic", []byte(`{"marker_inject_enabled":true}`)))
 	m.ExpectQuery(`SELECT provider_id, config FROM cache_provider_config`).
-		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "config"}).AddRow("p1", []byte(`{}`)))
+		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "config"}).
+			AddRow("p1", []byte(`{"ttl_seconds":7200}`)))
+
 	blob, err := s.AssembleCacheConfigBlob(context.Background())
-	if err != nil || len(blob.Adapters) != 1 || len(blob.Providers) != 1 {
-		t.Fatalf("AssembleCacheConfigBlob: %+v %v", blob, err)
+	if err != nil {
+		t.Fatalf("AssembleCacheConfigBlob: %v", err)
+	}
+	ac, ok := blob.Adapters["anthropic"]
+	if !ok || ac.MarkerInjectEnabled == nil || !*ac.MarkerInjectEnabled {
+		t.Fatalf("Tier-2 anthropic marker_inject_enabled not assembled: %+v", blob.Adapters)
+	}
+	pc, ok := blob.Providers["p1"]
+	if !ok || pc.TTLSeconds == nil || *pc.TTLSeconds != 7200 {
+		t.Fatalf("Tier-3 p1 ttl_seconds not assembled: %+v", blob.Providers)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet/unexpected queries (a cache_global_config read would show here): %v", err)
 	}
 
-	// global error aborts
-	s2, m2 := newMock(t)
-	m2.ExpectQuery(`cache_global_config`).WillReturnError(errors.New("g"))
-	if _, err := s2.AssembleCacheConfigBlob(context.Background()); err == nil {
-		t.Fatal("global error should abort")
-	}
 	// adapter error aborts
 	s3, m3 := newMock(t)
-	m3.ExpectQuery(`cache_global_config`).WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	m3.ExpectQuery(`cache_adapter_config`).WillReturnError(errors.New("a"))
 	if _, err := s3.AssembleCacheConfigBlob(context.Background()); err == nil {
 		t.Fatal("adapter error should abort")
 	}
 	// provider error aborts
 	s4, m4 := newMock(t)
-	m4.ExpectQuery(`cache_global_config`).WillReturnRows(pgxmock.NewRows([]string{"config"}).AddRow([]byte(`{}`)))
 	m4.ExpectQuery(`cache_adapter_config`).WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "config"}))
 	m4.ExpectQuery(`cache_provider_config`).WillReturnError(errors.New("p"))
 	if _, err := s4.AssembleCacheConfigBlob(context.Background()); err == nil {

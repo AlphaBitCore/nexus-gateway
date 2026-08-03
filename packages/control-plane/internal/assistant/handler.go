@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
 	sharediam "github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
@@ -19,12 +21,14 @@ import (
 // Config holds the backend-side settings for the web assistant. The system VK is a
 // secret (env, never yaml) used only for inference and never sent to the browser.
 type Config struct {
-	AIGatewayURL string   // AI Gateway base URL (inference target)
-	CPBaseURL    string   // this CP's own base URL (admin self-call target)
-	SystemVK     string   // backend system Virtual Key for inference
-	Model        string   // default inference model slug
-	Models       []string // optional allow-list of client-selectable models; empty → only Model
-	IsProd       bool
+	// AIGatewayBase resolves the AI Gateway base URL (inference target) from
+	// the Hub at request time — peer URLs are never configured locally.
+	AIGatewayBase peer.URLProvider
+	CPBaseURL     string   // this CP's own base URL (admin self-call target)
+	SystemVK      string   // backend system Virtual Key for inference
+	Model         string   // default inference model slug
+	Models        []string // optional allow-list of client-selectable models; empty → only Model
+	IsProd        bool
 	// DisableBodyReads withholds the raw-body read tools (observe_traffic_event /
 	// observe_traffic_list / resource_read / resource_invoke) from the agent — the
 	// governance posture for deployments that do not want raw traffic bodies
@@ -162,6 +166,16 @@ func writeErrJSON(c echo.Context, status int, typ, msg string) error {
 	return c.JSON(status, map[string]any{"error": map[string]any{"message": msg, "type": typ}})
 }
 
+// resolveAIGatewayBase resolves the AI Gateway base URL for one call. A nil
+// provider (pool-less dev / tests without gateway wiring) resolves to the
+// same transient failure as an unresolved peer.
+func (h *Handler) resolveAIGatewayBase(ctx context.Context) (string, error) {
+	if h.cfg.AIGatewayBase == nil {
+		return "", peer.ErrUnavailable
+	}
+	return h.cfg.AIGatewayBase(ctx)
+}
+
 // validSessionID bounds the client-supplied session id (a path param, since the
 // command/data-stream split needs the id BEFORE the turn's events exist). It is only
 // ever resolved within the caller's own userId namespace, so this is an input-
@@ -184,7 +198,7 @@ func validSessionID(s string) bool {
 
 // callerBearer extracts the forwardable bearer + userId, or returns ok=false with a
 // written HTTP error. The agent self-calls admin APIs AS THE CALLER, which
-// requires a real bearer; a non-bearer principal (x-admin-key / bootstrap / dev /
+// requires a real bearer; a non-bearer principal (X-Nexus-Admin-Key / bootstrap / dev /
 // delegated API key) has none, so its tools would all 401 while still billing the
 // system VK — reject before any inference. The adminGroup's AdminAuth already
 // authenticated the request; this gates whether the assistant is usable for it.

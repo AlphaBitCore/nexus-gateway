@@ -25,7 +25,7 @@ func TestBuildRequestBody_SkipsEmptyTextMessages(t *testing.T) {
 		}},
 	}
 
-	body := BuildRequestBody("rm", Request{SystemPrompt: "pick", UserMessages: userMsgs})
+	body := BuildRequestBody("rm", Request{SystemPrompt: "pick", Messages: userMsgs})
 
 	// system + exactly one user message ("real text"); the image-only
 	// message must NOT appear as a blank-content turn.
@@ -47,7 +47,7 @@ func TestBuildRequestBody_SkipsEmptyTextMessages(t *testing.T) {
 func TestBuildRequestBody_EmptySystemPromptFallsBackToDefault(t *testing.T) {
 	body := BuildRequestBody("rm", Request{
 		SystemPrompt: "",
-		UserMessages: []normalize.Message{
+		Messages: []normalize.Message{
 			{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
 				{Type: normalize.ContentText, Text: "x"},
 			}},
@@ -260,13 +260,10 @@ func TestTryParseRouterJSON_AllFieldsPresent(t *testing.T) {
 // TestBuildRequestBodyWithLogger_InputOverflow_LogsWarnAndFallsThrough
 // exercises the OverflowSingleMessageTooBig path in buildRequestBodyWithLogger.
 // A single user message whose token count exceeds routerContextLimit-routerReserveOutput
-// triggers a logged warn but the request body is still built (fail-open):
-// the smart strategy's upstream fallback handles the bad pick gracefully.
-func TestBuildRequestBodyWithLogger_InputOverflow_LogsWarnAndFallsThrough(t *testing.T) {
-	// Generate a message large enough to exceed the budget.
-	// routerContextLimit=8192, routerReserveOutput=256 → budget=7936 tokens.
-	// EstimateTokens uses 0.25 tok/ASCII char → ~31 744 chars needed.
-	bigText := strings.Repeat("x", 32000) // ≈ 8 000 tokens
+// triggers a logged warn, an overflow metric, and a BOUNDED body: the
+// oversized turn is tail-truncated to the budget rather than sent as-is.
+func TestBuildRequestBodyWithLogger_InputOverflow_BoundedAndProceeds(t *testing.T) {
+	bigText := strings.Repeat("x", 32000) // ≈ 8000 tokens, over the 4096 cap
 
 	userMsgs := []normalize.Message{
 		{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
@@ -274,23 +271,21 @@ func TestBuildRequestBodyWithLogger_InputOverflow_LogsWarnAndFallsThrough(t *tes
 		}},
 	}
 
-	// Use a discard logger — we are pinning the "no panic" and "returns
-	// a valid body" contract; log output is not observable in unit tests.
 	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	body := buildRequestBodyWithLogger("rm", Request{
 		SystemPrompt: "pick",
-		UserMessages: userMsgs,
+		Messages:     userMsgs,
 	}, discardLogger)
 
-	// The function must not panic and must return at least the system
-	// message. The oversized user message is still forwarded (fail-open
-	// semantics — the provider will reject it if truly over-limit, and
-	// the smart strategy fallback recovers).
-	if len(body.Messages) < 1 {
-		t.Fatal("expected at least the system message in the body")
+	if len(body.Messages) != 2 || body.Messages[0].Role != "system" {
+		t.Fatalf("expected system + bounded user message, got %+v", body.Messages)
 	}
-	if body.Messages[0].Role != "system" {
-		t.Errorf("Messages[0].Role = %q, want system", body.Messages[0].Role)
+	got := body.Messages[1].Content
+	if got == bigText {
+		t.Fatalf("oversized message was sent as-is; must be truncated to the budget")
+	}
+	if got == "" || !strings.HasSuffix(bigText, got) {
+		t.Errorf("bounded content must be a non-empty tail of the original")
 	}
 }
 
@@ -306,7 +301,7 @@ func TestBuildRequestBodyWithLogger_SingleUserMessage_KeptDirectly(t *testing.T)
 
 	body := buildRequestBodyWithLogger("rm", Request{
 		SystemPrompt: "pick",
-		UserMessages: userMsgs,
+		Messages:     userMsgs,
 	}, slog.Default())
 
 	if len(body.Messages) != 2 {

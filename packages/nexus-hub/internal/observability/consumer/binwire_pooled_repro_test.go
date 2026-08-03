@@ -32,7 +32,7 @@ func TestBinwirePooledFrameRoundTrip(t *testing.T) {
 	pool := sync.Pool{New: func() any { b := new(bytes.Buffer); b.Grow(64 << 10); return b }}
 	datas := make([][]byte, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -120,7 +120,7 @@ func realisticMsg(i int) mq.TrafficEventMessage {
 	// multi-KB frame (not a trivial one), exercising appendLenPrefixed.
 	var sb bytes.Buffer
 	sb.WriteString(`{"model":"mock-gpt-4o","messages":[`)
-	for j := 0; j < 400; j++ {
+	for j := range 400 {
 		fmt.Fprintf(&sb, `{"role":"user","content":"message %d-%d lorem ipsum dolor sit amet consectetur %d"},`, i, j, i*j)
 	}
 	sb.WriteString(`{"role":"user","content":"end"}],"max_tokens":256}`)

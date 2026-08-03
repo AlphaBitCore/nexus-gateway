@@ -39,6 +39,14 @@ var (
 		return os.CreateTemp(dir, pattern)
 	}
 	randReader io.Reader = rand.Reader
+	// Since Go 1.26 the FIPS 140-3 module supplies key material and signature
+	// randomness from its own DRBG, so a starved randReader can no longer
+	// reach these calls' error branches. Only rand.Int (serial numbers) still
+	// reads the injected reader.
+	generateKeyFn   = ecdsa.GenerateKey
+	createCertFn    = x509.CreateCertificate
+	ed25519KeyFn    = ed25519.GenerateKey
+	createCertReqFn = x509.CreateCertificateRequest
 )
 
 // osFile is the subset of *os.File methods writeFileAtomic uses, named as an
@@ -322,7 +330,7 @@ func (m *Manager) Enroll(ctx context.Context, token, hostname, osName, osVersion
 // and surfaced in the device status UI); Hub does not verify it, so it is
 // self-signed rather than CA-signed. Returns (keyPEM, certPEM).
 func generateDeviceIdentity(hostname string) (keyPEM, certPEM []byte, err error) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), randReader)
+	privateKey, err := generateKeyFn(elliptic.P256(), randReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate keypair: %w", err)
 	}
@@ -340,7 +348,7 @@ func generateDeviceIdentity(hostname string) (keyPEM, certPEM []byte, err error)
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	certDER, err := x509.CreateCertificate(randReader, tmpl, tmpl, &privateKey.PublicKey, privateKey)
+	certDER, err := createCertFn(randReader, tmpl, tmpl, &privateKey.PublicKey, privateKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create device cert: %w", err)
 	}
@@ -360,14 +368,14 @@ func generateDeviceIdentity(hostname string) (keyPEM, certPEM []byte, err error)
 // for the mTLS cert. Returns (csrPEM, privateKeyPEM) — both empty when
 // generation failed; both non-empty on success.
 func generateAttestationKeyMaterial(hostname string) (string, []byte) {
-	_, priv, err := ed25519.GenerateKey(randReader)
+	_, priv, err := ed25519KeyFn(randReader)
 	if err != nil {
 		return "", nil
 	}
 	csrTmpl := &x509.CertificateRequest{
 		Subject: pkix.Name{CommonName: fmt.Sprintf("device-%s-attestation", hostname)},
 	}
-	der, err := x509.CreateCertificateRequest(randReader, csrTmpl, priv)
+	der, err := createCertReqFn(randReader, csrTmpl, priv)
 	if err != nil {
 		return "", nil
 	}

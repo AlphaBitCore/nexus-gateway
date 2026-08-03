@@ -1,0 +1,21 @@
+[Unit]
+Description=Nexus Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus-gateway/env
+ExecStart=/opt/nexus/bin/nexus-hub --config /etc/nexus-gateway/nexus-hub.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/nexus
+
+[Install]
+WantedBy=multi-user.target

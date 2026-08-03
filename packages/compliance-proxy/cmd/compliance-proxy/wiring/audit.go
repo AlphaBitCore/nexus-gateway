@@ -72,12 +72,29 @@ func InitAudit(cfg *config.Config, mqProducer mq.Producer, logger *slog.Logger) 
 			ndjsonWriter,
 			logger,
 		)
+		mqWriter.WithLossMode(cfg.Audit.LossMode)
 		result.Writer = mqWriter
+		// The effective mode is logged alongside the configured one because they differ when a
+		// spooling mode was selected without a spool: spillblock degrades to block (still
+		// no-loss, but it back-pressures earlier) and spill degrades to drop. An operator who
+		// chose spillblock to avoid early stalls needs to see which one they actually got.
+		effective := mqWriter.EffectiveLossMode()
 		slog.Info("audit MQ writer initialized",
 			"queue", "nexus.event.compliance",
 			"batchSize", batchSize,
 			"flushIntervalMs", flushMs,
+			"lossMode", mqWriter.LossMode().String(),
+			"effectiveLossMode", effective.String(),
+			"durableSpool", ndjsonWriter != nil,
 		)
+		if effective.Lossy() {
+			slog.Warn("audit: the effective overflow policy CAN DISCARD audit records",
+				"lossMode", mqWriter.LossMode().String(),
+				"effectiveLossMode", effective.String(),
+				"durableSpool", ndjsonWriter != nil,
+				"hint", "enable audit.ndjson (dir + enabled) for a durable spool, or set audit.lossMode to block",
+			)
+		}
 	}
 
 	return result, nil

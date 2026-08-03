@@ -33,7 +33,13 @@ vi.mock('@/hooks/useMutation', () => ({
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ setQueryData: vi.fn() }),
 }));
-vi.mock('@/hooks/usePermission', () => ({ usePermission: () => true }));
+// Key-aware permission double: every action is granted unless a test denies it,
+// so a test can model the custom policy that separates provider access from
+// model access.
+const { deniedPermissions } = vi.hoisted(() => ({ deniedPermissions: new Set<string>() }));
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: (key: string) => !deniedPermissions.has(key),
+}));
 vi.mock('@/hooks/useSyncFeedback', () => ({ useSyncFeedback: () => vi.fn() }));
 vi.mock('@/hooks/useUnsavedChangesWarning', () => ({ useUnsavedChangesWarning: () => {} }));
 vi.mock('@/api/services', () => ({ providerApi: {}, credentialApi: {}, systemApi: {} }));
@@ -42,6 +48,7 @@ describe('useProviderDetail', () => {
   beforeEach(() => {
     mutateCalls.length = 0;
     navigate.mockClear();
+    deniedPermissions.clear();
     provider = {
       id: 'prov-1', name: 'openai', displayName: 'OpenAI', description: 'd',
       baseUrl: 'https://api', adapterType: 'openai', region: '', apiVersion: '', enabled: true,
@@ -53,6 +60,32 @@ describe('useProviderDetail', () => {
     expect(result.current.credentials.map((c) => c.id)).toEqual(['c1']);
     expect(result.current.models).toHaveLength(1);
     expect(result.current.canUpdate).toBe(true);
+  });
+
+  // The model endpoints (PUT/DELETE /models/:id) are guarded on the model
+  // resource, so a principal granted every provider action but denied
+  // model.update must not be told it may write a model row. Granting
+  // provider.update must not imply it.
+  it('denies model updates to a principal that holds provider.update but not model.update', () => {
+    deniedPermissions.add('model:update');
+    const { result } = renderHook(() => useProviderDetail());
+    expect(result.current.canUpdate).toBe(true);
+    expect(result.current.canUpdateModel).toBe(false);
+  });
+
+  it('denies model deletes to a principal that holds provider.delete but not model.delete', () => {
+    deniedPermissions.add('model:delete');
+    const { result } = renderHook(() => useProviderDetail());
+    expect(result.current.canDelete).toBe(true);
+    expect(result.current.canDeleteModel).toBe(false);
+  });
+
+  it('grants model writes on the model actions alone, without the provider write actions', () => {
+    deniedPermissions.add('provider:update');
+    deniedPermissions.add('provider:delete');
+    const { result } = renderHook(() => useProviderDetail());
+    expect(result.current.canUpdateModel).toBe(true);
+    expect(result.current.canDeleteModel).toBe(true);
   });
 
   it('startEditing seeds the provider form; handleSave maps empties → undefined', () => {

@@ -28,6 +28,20 @@ export default [
         waiverHint: 'The resource engine (catalog/search/distill/cards) and the resource_* agent tools are documented in nexus-operator-toolkit-architecture.md — update its operation-model / tools sections in the same PR.',
     },
     {
+        name: 'vendor-bill-reconciliation',
+        code: [
+            'packages/nexus-hub/internal/vendorbill/**',
+            'packages/nexus-hub/internal/jobs/defs/vendorbill/**',
+            'packages/control-plane/internal/traffic/analytics/handler/vendor_bill_reconciliation.go',
+        ],
+        docs: [
+            'docs/operators/ops/runbooks/vendor-bill-reconciliation.md',
+            'docs/operators/ops/runbooks/alerts.md',
+            'docs/users/features/cp-ui/overview.md',
+        ],
+        waiverHint: 'Vendor-bill reconciliation is operator-facing setup (admin key TYPE per vendor, scope pinning, coverage semantics). Changes to the sources, the job, or the report endpoint must update the vendor-bill-reconciliation runbook, and the alerts runbook if drift-alert behaviour changes.',
+    },
+    {
         name: 'web-assistant',
         code: [
             'packages/control-plane/internal/assistant/**',
@@ -90,6 +104,11 @@ export default [
         name: 'provider-adapter',
         code: [
             'packages/ai-gateway/internal/providers/specs/**',
+            // §3a Rule 7's machine checks — the doc describes their behaviour,
+            // so changing the lints must revisit the doc. The registry
+            // (quirk-coverage.config.mjs) is data and deliberately excluded.
+            'scripts/check-quirk-coverage.mjs',
+            'scripts/check-quirk-evidence.mjs',
         ],
         docs: [
             'docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md',
@@ -105,6 +124,17 @@ export default [
         ],
         docs: [
             'docs/developers/architecture/services/ai-gateway/normalization-architecture.md',
+        ],
+    },
+    {
+        name: 'peer-url-resolution',
+        code: [
+            'packages/shared/transport/peerurl/**',
+            'packages/shared/core/metrics/platform/staticinfo.go',
+        ],
+        docs: [
+            'docs/developers/architecture/cross-cutting/foundation/service-call-framework.md',
+            'docs/developers/architecture/cross-cutting/foundation/thing-model.md',
         ],
     },
     {
@@ -203,6 +233,22 @@ export default [
             'docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md',
             'docs/developers/architecture/cross-cutting/observability/observability-architecture.md',
             'docs/developers/architecture/cross-cutting/observability/admin-audit-log-coverage.md',
+        ],
+    },
+    {
+        // Registered after a spillstore change (the failed-spill inline fallback
+        // being bounded) shipped with its architecture doc still describing the
+        // old, unbounded behaviour. The store had no lockstep entry, so nothing
+        // caught it. The Control Plane read path is included because it owns the
+        // integrity gate and the read-failure diagnosis the doc documents.
+        name: 'spillstore',
+        code: [
+            'packages/shared/storage/spillstore/**',
+            'packages/control-plane/internal/traffic/handler/traffic/traffic_spill.go',
+            'packages/control-plane/internal/traffic/handler/traffic/spill_diag.go',
+        ],
+        docs: [
+            'docs/developers/architecture/cross-cutting/storage/spillstore-architecture.md',
         ],
     },
     {
@@ -318,5 +364,37 @@ export default [
             'docs/developers/specs/e2e-coverage-matrix.md',
         ],
         waiverHint: 'New / changed user-facing capability must update the E2E coverage matrix in the same PR (capability ↔ test arm map). Endpoint-level scenario coverage lives in tests/scenarios/00-catalog.md; this matrix sits above it at the user-perspective layer.',
+    },
+    {
+        name: 'nexus-headers',
+        code: [
+            // Both direction registries + the chain/CORS helpers.
+            'packages/shared/traffic/markers.go',
+            // Marker injection shared by CP + Agent.
+            'packages/shared/transport/tlsbump/markerhook.go',
+            'packages/shared/transport/tlsbump/markercontext.go',
+            // Request-header read sites the §8 roster documents.
+            'packages/ai-gateway/internal/auth/vkauth/**',
+            'packages/ai-gateway/internal/platform/middleware/middleware.go',
+        ],
+        docs: [
+            'docs/developers/architecture/cross-cutting/foundation/nexus-headers.md',
+        ],
+        waiverHint: 'nexus-headers.md is the registry of every Nexus-owned HTTP header, both directions. Adding/renaming/retiring a marker or request header, changing a VK carrier, or changing the CORS composition must update its catalogue (§2 response / §8 request) in the same PR.',
+    },
+    {
+        name: 'container-images-and-release',
+        code: [
+            'docker/**',
+            'deploy/**',
+            'scripts/release/**',
+            '.github/workflows/release.yml',
+            '.github/workflows/buildbase.yml',
+        ],
+        docs: [
+            'docs/developers/architecture/cross-cutting/deployment/container-image-architecture.md',
+            'docs/operators/ops/container-deployment.md',
+        ],
+        waiverHint: 'Image layout, the Vectorscan baseline, the tag contract, and the quickstart compose are documented in container-image-architecture.md (design) and container-deployment.md (operations). Changing the build, the compose topology, or the release pipeline must update at least one of them in the same PR.',
     },
 ];

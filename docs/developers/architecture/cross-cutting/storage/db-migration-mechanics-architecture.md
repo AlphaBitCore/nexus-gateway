@@ -76,6 +76,39 @@ seeding. The file is re-runnable (`DROP … IF EXISTS` / `CREATE … IF NOT EXIS
   a full apply of the historical migration lineage produced; only objects valid
   under the current `schema/` columns are kept.
 
+### Applying it is all-or-nothing, and must fail loudly
+
+Every caller applies the file with `prisma db execute --file schema-extras.sql`,
+which resolves the target from `DATABASE_URL` — the container migrator
+(`docker/db-migrator/entrypoint.sh`), `dev-start.sh` and its PowerShell twin
+`dev-start.ps1`. The file is applied as **one script that stops at its first
+failing statement**, so a single failure is not a single missing object: every
+object declared after it is skipped too, and the objects listed above as
+correctness-bearing sit near the end of the file.
+
+This makes a swallowed error uniquely expensive, because a partial apply looks
+exactly like a successful one — `db push` succeeded, the seed succeeded, the
+services start. A developer database was found in that state carrying only 12 of
+the file's 41 indexes: two `thing` rows shared one `(type='agent', physical_id)`
+pair, `thing_type_physical_id_uniq` could therefore not be created, and the abort
+took the remaining 29 indexes with it — including
+`exemption_request_pending_dedup_uniq`, whose absence turns the agent exemption
+upsert into `no unique or exclusion constraint matching the ON CONFLICT
+specification`. The bring-up had reported success every time because the apply
+step discarded both streams and only warned.
+
+Two rules follow, and both are load-bearing:
+
+- **No caller may downgrade an apply failure to a warning.** The error text names
+  the first statement that aborted; that name is the whole diagnosis.
+- **A data conflict that blocks a unique index is remedied before the apply, not
+  by loosening the index.** The remedy is a one-off script under
+  `manual-scripts/` — for the case above,
+  `clear_duplicate_thing_physical_id_2026_08_03.sql`, which clears `physical_id`
+  on the superseded duplicates rather than deleting rows (the index predicate
+  excludes NULL, and `thing` is the parent of several `ON DELETE CASCADE`
+  children).
+
 ## 4. Seeding a fresh database — three tiers
 
 `tools/db-migrate/seed/seed.ts` brings a freshly-pushed database to a usable state
@@ -104,6 +137,72 @@ source database with `row_to_json` (lossless — it captures every column, unlik
 operational rows (e.g. a runtime version counter, any real secret) and normalizes
 captured-drift values back to product defaults. The 5 rule-pack YAMLs stay under
 `seed/rule-packs/`.
+
+#### Fields the deployment owns
+
+The fixture replaces every field of a row it matches — that is what makes the
+seed the source of truth for a catalog fact. It is exactly wrong for a value
+only the install can know, and one such value exists today:
+`OAuthClient.redirectUris` for `cp-ui`. Every deployment answers on its own
+domain, so its console callback URL is deployment configuration; the fixture
+ships the `localhost` URLs a developer needs and has no way to know the rest.
+
+Such fields are declared in `UNION_FIXTURE_FIELDS` and **merged, not replaced**:
+the seed guarantees its own values are present and removes nothing it did not
+ship. Retracting a value is the admin API's job, which is where the rest of a
+client's runtime state already lives.
+
+The asymmetry is deliberate. The seed cannot tell a URL an admin registered on
+purpose from one left over, and the two mistakes are not equal: re-adding a URL
+an admin removed is a nuisance, while deleting one they still need locks every
+admin out of the console — the authorize endpoint rejects an unregistered
+`redirect_uri`, so the failure is total, and it arrives whenever someone
+re-seeds for an entirely unrelated reason. A replaced `redirectUris` took a
+production console down for eleven hours before anyone noticed.
+
+#### Model identity and model references
+
+`Model` is not a plain keyed upsert. A live database can already hold a catalog
+model under an id the seed has never seen — an admin added it through the provider
+wizard, or the catalog renamed a code the row still carries — so the fixture's id
+and its code can each independently match a different row, and a single-key upsert
+falls through to `create` and dies on the other key's unique constraint. The seed
+therefore **reconciles** each model: it matches on the fixture's id OR its code OR
+any of its aliases OR `(providerId, providerModelId)`, and on a match updates the
+live row **in place, keeping that row's id**. Rewriting the id instead would
+silently orphan `traffic_event.model_id`, `VirtualKey.allowedModels[].modelId` and
+every routing reference — all plain columns with no foreign key, so nothing would
+raise.
+
+The identity list is **every unique key the table declares besides `id`**, and
+that is a rule, not a coincidence: a key left out is still enforced by the
+database at create time, so omitting one converts an adoptable row into a failed
+seed. `(providerId, providerModelId)` is the one most easily forgotten and the
+one the wizard reaches — the admin API exposes Code and ProviderModelID
+independently, so a hand-added `my-gpt-5.6` against `gpt-5.6` matches the fixture
+on neither id nor code. A composite key is one identity: matching its columns as
+alternatives would adopt an unrelated sibling. The same rule gives `rule` its
+`(packId, ruleId)` key.
+
+The consequence is that no other fixture may hardcode a model id: after an
+adoption the fixture's id names nothing. Fixtures that depend on a model
+(`ai_guard_config.model_id`, `RoutingRule`'s `config` / `matchConditions` /
+`fallbackChain`, and demo `VirtualKey.allowedModels`) instead name it by code as
+`model:<code>`. Once the catalog has been seeded, the seed reads the model ids back
+from the database and resolves every such reference to the id the row actually
+holds, so a dependent row follows the surviving model whatever its id. A reference
+naming a code the catalog does not ship fails the seed rather than writing a
+dangling id, and the extractor emits these references instead of capturing the
+source database's ids.
+
+The read-back happens **only when `Model` itself seeded**. A failed `Model` leaves
+the table in whatever state the failure stopped at, and resolving references
+against that would point dependent rows at rows the run never vouched for —
+silently, since none of these columns is a foreign key. So the ids stay unknown
+instead, and every fixture that names a model fails on the reference it could not
+resolve. Those failures are collected like any other and named in the aggregate
+report: the seed was already failing, and this decides only whether it fails
+honestly or writes ids it cannot stand behind.
 
 ### Bootstrap — minimal tenant (always)
 
@@ -139,7 +238,9 @@ keys; it fails fast if either is absent.
 ### Bootstrap flow
 
 - Local / CI: `prisma db push` → apply `schema-extras.sql` → `prisma db seed`
-  (Tier A + bootstrap + Tier B). `dev-start.sh` does exactly this.
+  (Tier A + bootstrap + Tier B). `dev-start.sh` does exactly this, and aborts the
+  bring-up if the extras apply fails (see §3) instead of continuing into the seed
+  against a half-built schema.
 - Production / clean install (incl. the AMI): `prisma db push` → apply
   `schema-extras.sql` → `npm run seed:prod` (`SEED_DEMO=false` — Tier A +
   bootstrap only, no demo rows).
@@ -160,6 +261,13 @@ push` + `schema-extras.sql`.
 recomputes — that an operator runs by hand against a specific environment. These
 are data operations run deliberately with operator judgment, distinct from the
 declarative schema (`schema/` + `schema-extras.sql`) and from the seed.
+
+One category is a **precondition** rather than a backfill: data that blocks a
+`schema-extras.sql` unique index has to be resolved before the file can apply, so
+the script runs first and the apply runs second
+(`clear_duplicate_thing_physical_id_2026_08_03.sql`). These are the scripts to
+reach for when an apply aborts, and the reason the apply must surface its error
+rather than warn.
 
 ## 7. Runtime access and the Go config mirrors
 

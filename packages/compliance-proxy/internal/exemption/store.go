@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,19 +35,48 @@ type Exemption struct {
 
 // Store is a concurrency-safe in-memory store for temporary exemptions with
 // automatic expiry cleanup.
+//
+// The read path takes NO LOCK. IsExempt runs on every bumped request while the
+// writers — a Hub config push (Rebuild), an admin grant/revoke (Add/Remove) and a
+// periodic purge — are rare, so the store is copy-on-write behind an
+// atomic.Pointer, the same shape `policy/domain.Engine` and
+// `transport/streaming/policy.Store` already use for their per-request reads.
+//
+// This replaced a sync.RWMutex. Reducing the read path to one acquisition was not
+// enough: sync.RWMutex blocks new readers once a writer is queued, so a config
+// push could stall every in-flight interception behind its own critical section.
+// An atomic load cannot be blocked by a writer at all.
+//
+// writeMu serialises WRITERS ONLY — each one reads the current snapshot, builds a
+// new one and swaps it, which is a read-modify-write that two concurrent writers
+// would otherwise lose. Readers never touch it, so the hot path stays lock-free
+// (B13: no new mutex on a hot path; this removes one).
+//
+// Snapshots share their *Exemption pointers, which is safe because nothing mutates
+// a stored Exemption in place — every writer builds new values. Anything that
+// starts mutating one must copy it first, or a reader will observe a torn struct.
 type Store struct {
-	mu     sync.RWMutex
-	items  map[string]*Exemption // keyed by ID
-	logger *slog.Logger
+	current atomic.Pointer[snapshot]
+	writeMu sync.Mutex
+	logger  *slog.Logger
+}
+
+// snapshot is an immutable exemption set. Iteration order IS the match order, so
+// unlike the map this replaced, IsExempt's first-match result is deterministic —
+// see the note on Rebuild.
+type snapshot struct {
+	items []*Exemption
 }
 
 // NewStore creates a new empty exemption store.
 func NewStore(logger *slog.Logger) *Store {
-	return &Store{
-		items:  make(map[string]*Exemption),
-		logger: logger,
-	}
+	s := &Store{logger: logger}
+	s.current.Store(&snapshot{})
+	return s
 }
+
+// load returns the current snapshot, never nil.
+func (s *Store) load() *snapshot { return s.current.Load() }
 
 // Add creates a new exemption with an auto-generated UUID and computed expiry.
 func (s *Store) Add(sourceIP, targetHost string, duration time.Duration, reason, createdBy string) *Exemption {
@@ -61,9 +91,13 @@ func (s *Store) Add(sourceIP, targetHost string, duration time.Duration, reason,
 		CreatedAt:  now,
 	}
 
-	s.mu.Lock()
-	s.items[e.ID] = e
-	s.mu.Unlock()
+	s.writeMu.Lock()
+	cur := s.load().items
+	next := make([]*Exemption, 0, len(cur)+1)
+	next = append(next, cur...)
+	next = append(next, e)
+	s.current.Store(&snapshot{items: next})
+	s.writeMu.Unlock()
 
 	s.logger.Info("exemption added",
 		"id", e.ID,
@@ -86,7 +120,11 @@ func (s *Store) Add(sourceIP, targetHost string, duration time.Duration, reason,
 // don't carry it.
 func (s *Store) Rebuild(entries []identity.ActiveExemption) {
 	now := time.Now()
-	next := make(map[string]*Exemption, len(entries))
+	next := make([]*Exemption, 0, len(entries))
+	// The map-keyed build this replaced deduplicated by ID implicitly. A slice must
+	// do it explicitly, or a shadow snapshot carrying the same ID twice would be
+	// scanned twice on every request and could be attributed twice in the audit row.
+	seen := make(map[string]struct{}, len(entries))
 	dropped := 0
 	for _, e := range entries {
 		expires, err := time.Parse(time.RFC3339, e.ExpiresAt)
@@ -117,7 +155,12 @@ func (s *Store) Rebuild(entries []identity.ActiveExemption) {
 			)
 			continue
 		}
-		next[e.ID] = &Exemption{
+		if _, dup := seen[e.ID]; dup {
+			dropped++
+			continue
+		}
+		seen[e.ID] = struct{}{}
+		next = append(next, &Exemption{
 			ID:            e.ID,
 			SourceIP:      e.SourceIP,
 			TargetHost:    e.TargetHost,
@@ -127,12 +170,23 @@ func (s *Store) Rebuild(entries []identity.ActiveExemption) {
 			CreatedAt:     now,
 			Disabled:      e.Disabled,
 			EffectiveFrom: eff,
-		}
+		})
 	}
 
-	s.mu.Lock()
-	s.items = next
-	s.mu.Unlock()
+	// Held across the publish because Rebuild IS a writer, and writeMu is the
+	// lock every other writer takes. Without it a lost update is possible and its
+	// direction is the dangerous one: purgeExpired reads the snapshot, filters the
+	// expired entries, then stores — so a Hub revocation push landing in that
+	// window is overwritten and the revoked exemption goes LIVE again, keeping the
+	// whole compliance pipeline bypassed for that source/host pair until something
+	// else happens to rewrite the snapshot. -race cannot see it: the pointer swap
+	// is atomic, so this is a lost update, not a data race.
+	//
+	// The build above is deliberately outside the lock — it parses timestamps and
+	// allocates, and writeMu exists to serialise the read-modify-WRITE, not the work.
+	s.writeMu.Lock()
+	s.current.Store(&snapshot{items: next})
+	s.writeMu.Unlock()
 
 	s.logger.Info("exemption store rebuilt from shadow",
 		"active", len(next),
@@ -142,12 +196,21 @@ func (s *Store) Rebuild(entries []identity.ActiveExemption) {
 
 // Remove deletes an exemption by ID. Returns true if the exemption existed.
 func (s *Store) Remove(id string) bool {
-	s.mu.Lock()
-	_, existed := s.items[id]
-	if existed {
-		delete(s.items, id)
+	s.writeMu.Lock()
+	cur := s.load().items
+	next := make([]*Exemption, 0, len(cur))
+	existed := false
+	for _, e := range cur {
+		if e.ID == id {
+			existed = true
+			continue
+		}
+		next = append(next, e)
 	}
-	s.mu.Unlock()
+	if existed {
+		s.current.Store(&snapshot{items: next})
+	}
+	s.writeMu.Unlock()
 
 	if existed {
 		s.logger.Info("exemption removed", "id", id)
@@ -161,13 +224,12 @@ func (s *Store) Remove(id string) bool {
 // external shape treats the "author" as the approver.
 func (s *Store) Snapshot() identity.ActiveExemptions {
 	now := time.Now()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	items := s.load().items
 
 	out := identity.ActiveExemptions{
-		Entries: make([]identity.ActiveExemption, 0, len(s.items)),
+		Entries: make([]identity.ActiveExemption, 0, len(items)),
 	}
-	for _, e := range s.items {
+	for _, e := range items {
 		if e.ExpiresAt.Before(now) {
 			continue
 		}
@@ -191,11 +253,10 @@ func (s *Store) Snapshot() identity.ActiveExemptions {
 // List returns all active (non-expired) exemptions.
 func (s *Store) List() []*Exemption {
 	now := time.Now()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	items := s.load().items
 
-	result := make([]*Exemption, 0, len(s.items))
-	for _, e := range s.items {
+	result := make([]*Exemption, 0, len(items))
+	for _, e := range items {
 		if e.ExpiresAt.After(now) {
 			result = append(result, e)
 		}
@@ -208,11 +269,28 @@ func (s *Store) List() []*Exemption {
 // targetHost (e.g. "*.openai.com" matches "api.openai.com").
 // Returns the matched exemption if found.
 func (s *Store) IsExempt(sourceIP, targetHost string) (bool, *Exemption) {
-	now := time.Now()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// NO LOCK on this path. One atomic load of an immutable snapshot; see the Store
+	// doc for why an RWMutex was wrong here even reduced to one acquisition.
+	items := s.load().items
 
-	for _, e := range s.items {
+	// Fast path for the production-common state. Temporary exemptions are a
+	// break-glass tool — granted rarely, expiring on their own — so most
+	// deployments hold none, yet this runs on every bumped request. Walking an
+	// empty set, and deriving the two per-request values to do it, is pure overhead.
+	if len(items) == 0 {
+		return false, nil
+	}
+
+	// Hoist the per-REQUEST work out of the per-ENTRY loop. matchSourceIP and
+	// matchTargetHost each re-derived these from the same two arguments on
+	// every iteration, so a store with N exemptions paid N redundant
+	// net.ParseIP calls and N redundant strings.ToLower calls. Both results are
+	// identical for every entry, so they are computed once here.
+	clientIP := net.ParseIP(sourceIP)
+	hostLower := strings.ToLower(targetHost)
+	now := time.Now()
+
+	for _, e := range items {
 		if e.ExpiresAt.Before(now) {
 			continue
 		}
@@ -227,10 +305,10 @@ func (s *Store) IsExempt(sourceIP, targetHost string) (bool, *Exemption) {
 		if isOverBroadExemption(e.SourceIP, e.TargetHost) {
 			continue
 		}
-		if !matchSourceIP(e.SourceIP, sourceIP) {
+		if !matchSourceIPParsed(e.SourceIP, clientIP) {
 			continue
 		}
-		if !matchTargetHost(e.TargetHost, targetHost) {
+		if !matchTargetHostLowered(e.TargetHost, hostLower) {
 			continue
 		}
 		return true, e
@@ -259,95 +337,25 @@ func (s *Store) StartCleanup(ctx context.Context, interval time.Duration) {
 // purgeExpired removes all expired exemptions from the store.
 func (s *Store) purgeExpired() {
 	now := time.Now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	s.writeMu.Lock()
+	cur := s.load().items
+	next := make([]*Exemption, 0, len(cur))
 	removed := 0
-	for id, e := range s.items {
+	for _, e := range cur {
 		if e.ExpiresAt.Before(now) {
-			delete(s.items, id)
 			removed++
+			continue
 		}
+		next = append(next, e)
 	}
+	// Only swap when something actually expired — an unconditional store would
+	// publish a new snapshot on every tick and churn the pointer for nothing.
+	if removed > 0 {
+		s.current.Store(&snapshot{items: next})
+	}
+	s.writeMu.Unlock()
+
 	if removed > 0 {
 		s.logger.Debug("expired exemptions purged", "count", removed)
 	}
-}
-
-// isOverBroadExemption reports whether an exemption would match EVERY flow —
-// BOTH its source-IP and target-host selectors are blank or the catch-all "*".
-// Such a grant sets hookExempted=true for all traffic and skips the entire
-// compliance pipeline. The store refuses it at Rebuild (logged +
-// counted as dropped) AND the IsExempt hot path treats it as a never-match
-// floor even if one somehow entered the map, mirroring the access layer's
-// NewDomainAllowlist, which rejects an open wildcard at construction. A grant
-// must scope at least one dimension (a source IP/CIDR or a target host).
-//
-// Zero-prefix CIDRs (0.0.0.0/0, ::/0) match every IPv4/IPv6 address and are
-// therefore also treated as blank on the source dimension.
-func isOverBroadExemption(sourceIP, targetHost string) bool {
-	blank := func(s string) bool { return s == "" || s == "*" }
-	catchAllCIDR := func(s string) bool {
-		if !strings.Contains(s, "/") {
-			return false
-		}
-		_, cidr, err := net.ParseCIDR(s)
-		if err != nil {
-			return false
-		}
-		ones, _ := cidr.Mask.Size()
-		return ones == 0
-	}
-	return (blank(sourceIP) || catchAllCIDR(sourceIP)) && blank(targetHost)
-}
-
-// matchSourceIP checks if clientIP matches the exemption's source specification.
-// The spec can be a single IP ("10.0.0.5") or a CIDR range ("10.0.0.0/24").
-func matchSourceIP(spec, clientIP string) bool {
-	// Empty spec matches everything.
-	if spec == "" || spec == "*" {
-		return true
-	}
-
-	// Try CIDR match first.
-	if strings.Contains(spec, "/") {
-		_, cidr, err := net.ParseCIDR(spec)
-		if err != nil {
-			return false
-		}
-		ip := net.ParseIP(clientIP)
-		if ip == nil {
-			return false
-		}
-		return cidr.Contains(ip)
-	}
-
-	// Exact IP match.
-	specIP := net.ParseIP(spec)
-	cIP := net.ParseIP(clientIP)
-	if specIP == nil || cIP == nil {
-		return false
-	}
-	return specIP.Equal(cIP)
-}
-
-// matchTargetHost checks if the request host matches the exemption's target
-// specification. Supports exact match and wildcard prefix (*.example.com).
-func matchTargetHost(spec, host string) bool {
-	if spec == "" || spec == "*" {
-		return true
-	}
-
-	specLower := strings.ToLower(spec)
-	hostLower := strings.ToLower(host)
-
-	// Wildcard match: *.example.com matches api.example.com, sub.api.example.com
-	// but NOT the apex domain example.com itself (standard wildcard semantics).
-	if strings.HasPrefix(specLower, "*.") {
-		suffix := specLower[1:] // ".example.com"
-		return strings.HasSuffix(hostLower, suffix)
-	}
-
-	// Exact match.
-	return specLower == hostLower
 }

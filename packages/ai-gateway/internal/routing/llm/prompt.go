@@ -29,7 +29,8 @@ The catalog is compact JSON: p = provider id, m = models for that provider; each
 2. Match capabilities: images → vision, tools → function_calling, long text → large context (use f, mx, and mo when deciding)
 3. Cost: simple tasks → cheapest capable model; complex tasks → most capable
 4. If uncertain, prefer the most capable model
-5. modelId must match some catalog entry's i (Model.code) exactly—same characters. Do not return any id not listed as an i value.
+5. Recency: within each provider, models are listed newest-generation-first. When two candidates are equally capable and both fit, prefer the newest — the one listed earlier, i.e. the higher version number in its code i (e.g. prefer -4-8 over -4-7 over -4-6, and 5.5 over 5.4)
+6. modelId must match some catalog entry's i (Model.code) exactly—same characters. Do not return any id not listed as an i value.
 
 ## Output Format
 Return ONLY valid JSON: {"modelId":"<exact ID from list>","reason":"<brief explanation>"}`
@@ -50,24 +51,34 @@ type message struct {
 	Content string `json:"content"`
 }
 
-// routerContextLimit is the default model context window assumed for the
-// router LLM when no explicit limit is configured. Smart routing is a
-// single-turn classification task, so a generous but bounded limit keeps
-// the router-LLM prompt cost predictable.
-const routerContextLimit = 8192
+// routerDefaultContextLimit is the context window assumed for the router
+// LLM only when the router model declares no maxContextTokens. When the
+// catalog carries the real window it arrives via Request.RouterContextLimit.
+const routerDefaultContextLimit = 8192
 
 // routerReserveOutput is the number of tokens reserved for the router
 // LLM's own response (a short JSON object). 256 is well above the
-// typical router reply size ("{"modelId":"...","reason":"..."}") and
-// leaves ~7 936 tokens for the conversation context.
+// typical router reply size ("{"modelId":"...","reason":"..."}").
 const routerReserveOutput = 256
+
+// routerInputCap bounds the conversation tokens sent to the router
+// regardless of how large the router model's window is: routing is a
+// classification task whose signal saturates quickly, so a giant router
+// window must not inflate per-request router cost.
+const routerInputCap = 4096
+
+// routerMinInputBudget is the conversation budget floor when the system
+// prompt (catalog + rules) consumes the router window. Some user content
+// always ships — the call may still fail upstream, but the trace and the
+// overflow metric surface the misconfiguration.
+const routerMinInputBudget = 256
 
 // BuildRequestBody constructs the OpenAI-shape body for the router-LLM
 // call. SystemPrompt arrives pre-prepared (catalog already substituted
-// by the caller); UserMessages have already been filtered to role=user
-// by the smart strategy. The router LLM prompt is "here is the
-// model catalog (system) and here is what the user asked for (user
-// messages); pick the best target".
+// by the caller); Messages carry the user+assistant conversation already
+// filtered by the smart strategy. The router LLM prompt is "here is the
+// model catalog (system) and here is the recent conversation; pick the
+// best target".
 //
 // Each normcore.Message can carry multimodal content blocks; this
 // builder concatenates ContentText blocks per message and elides
@@ -75,11 +86,13 @@ const routerReserveOutput = 256
 // the router does not benefit from seeing binary refs or tool plumbing
 // and ignoring them keeps the prompt small.
 //
-// Truncation uses inputstaging.Plan with StrategyLastUser: the router
-// LLM is a classification task that needs only the most recent user
-// question. On overflow (the single user message alone exceeds the
-// budget), a warn is logged and the message is used as-is — the
-// smart strategy's fallback path recovers on the next request cycle.
+// The conversation budget is the router model's real window minus the
+// measured system prompt (the catalog grows with the model table) minus
+// the output reserve, capped at routerInputCap. Staging uses
+// StrategyRecentTurns so follow-up turns ("continue", "try again")
+// arrive with the context that defines them, and inputstaging's default
+// budget enforcement guarantees the call never carries an over-limit
+// prompt — an oversized newest turn is tail-truncated, not sent as-is.
 func BuildRequestBody(routerProviderModelID string, req Request) requestBody {
 	return buildRequestBodyWithLogger(routerProviderModelID, req, slog.Default())
 }
@@ -96,14 +109,15 @@ func buildRequestBodyWithLogger(routerProviderModelID string, req Request, logge
 		{Role: "system", Content: systemPrompt},
 	}
 
-	// Project user messages to flat text, dropping empty projections.
-	stagingMsgs := make([]inputstaging.Message, 0, len(req.UserMessages))
-	for _, m := range req.UserMessages {
+	// Project conversation messages to flat text, dropping empty
+	// projections and preserving roles for turn-pairing in RecentTurns.
+	stagingMsgs := make([]inputstaging.Message, 0, len(req.Messages))
+	for _, m := range req.Messages {
 		text := textOf(m)
 		if text == "" {
 			continue
 		}
-		stagingMsgs = append(stagingMsgs, inputstaging.Message{Role: "user", Content: text})
+		stagingMsgs = append(stagingMsgs, inputstaging.Message{Role: string(m.Role), Content: text})
 	}
 
 	if len(stagingMsgs) == 0 {
@@ -116,34 +130,68 @@ func buildRequestBodyWithLogger(routerProviderModelID string, req Request, logge
 		}
 	}
 
-	// Apply inputstaging.Plan with StrategyLastUser: the router LLM
-	// makes a classification decision on what the user most recently
-	// asked for; it does not need the full conversation history.
+	// Conversation budget: real router window − measured system prompt
+	// (catalog + rules + metadata line) − output reserve, capped so a
+	// giant router window doesn't inflate cost, floored so some user
+	// content always ships.
+	limit := req.RouterContextLimit
+	if limit <= 0 {
+		limit = routerDefaultContextLimit
+	}
+	// Conservative estimate: the system prompt is SUBTRACTED from the router
+	// window, so under-counting it inflates the conversation budget and risks
+	// overflowing the router LLM. Over-counting only trims a little user
+	// content — the safe direction for a fit decision.
+	inputBudget := limit - inputstaging.EstimateTokensConservative(systemPrompt) - routerReserveOutput
+	if inputBudget > routerInputCap {
+		inputBudget = routerInputCap
+	}
+	if inputBudget < routerMinInputBudget {
+		logger.Warn("smart: router system prompt consumes the router context window; flooring conversation budget",
+			"router_context_limit", limit,
+			"floor", routerMinInputBudget,
+		)
+		InputOverflowTotal.WithLabelValues("system_prompt_budget_floor").Inc()
+		inputBudget = routerMinInputBudget
+	}
+
 	plan, planErr := inputstaging.Plan(inputstaging.PlanInput{
 		Messages:          stagingMsgs,
-		ModelContextLimit: routerContextLimit,
-		Strategy:          inputstaging.StrategyLastUser,
-		ReserveOutput:     routerReserveOutput,
+		ModelContextLimit: inputBudget,
+		Strategy:          inputstaging.StrategyRecentTurns,
 	})
 	if planErr != nil {
 		// Strategy is a constant so this branch is unreachable in practice;
 		// guard defensively and fall through with whatever messages we have.
 		logger.Warn("smart: inputstaging.Plan error", "error", planErr)
 	} else if plan.OverflowKind != inputstaging.OverflowNone {
-		logger.Warn("smart: router-LLM input overflow after inputstaging",
+		// Debug, not Warn: a bounded overflow is expected steady-state on
+		// long conversations; the counter carries the operator signal.
+		logger.Debug("smart: router-LLM input bounded by budget enforcement",
 			"overflow_kind", string(plan.OverflowKind),
 			"input_tokens", plan.InputTokens,
-			"budget", routerContextLimit-routerReserveOutput,
+			"budget", inputBudget,
 		)
+		InputOverflowTotal.WithLabelValues(string(plan.OverflowKind)).Inc()
 	}
 
 	var planned []message
 	if planErr == nil && len(plan.Messages) > 0 {
-		for _, m := range plan.Messages {
+		// The conversation must start with a user turn: an unpaired
+		// leading assistant message (its user partner projected to empty
+		// text) would make Anthropic-shape router providers reject the
+		// call. Trim to the first user turn; if none survives, degrade to
+		// the system-only body below — the pre-existing no-content shape.
+		msgs := plan.Messages
+		for len(msgs) > 0 && msgs[0].Role != "user" {
+			msgs = msgs[1:]
+		}
+		for _, m := range msgs {
 			planned = append(planned, message{Role: m.Role, Content: m.Content})
 		}
-	} else {
-		// Fallback: use all staged messages as-is.
+	} else if planErr != nil {
+		// Defensive fallback for the unreachable Plan error: forward the
+		// staged messages untouched.
 		for _, m := range stagingMsgs {
 			planned = append(planned, message{Role: m.Role, Content: m.Content})
 		}

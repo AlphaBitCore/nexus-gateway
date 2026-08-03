@@ -35,8 +35,8 @@ func TestRegistry_LookupUnknown(t *testing.T) {
 func TestRegistry_All(t *testing.T) {
 	reg := rules.NewRegistry(rules.BuiltinRules)
 	all := reg.All()
-	if len(all) != 30 {
-		t.Fatalf("got %d rules, want 30", len(all))
+	if len(all) != 32 {
+		t.Fatalf("got %d rules, want 32", len(all))
 	}
 }
 

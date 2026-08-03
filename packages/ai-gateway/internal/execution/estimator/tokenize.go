@@ -8,6 +8,13 @@ import (
 // family divisors approximate the average characters-per-token for that
 // vendor's tokenizer. The contract is: pure function, deterministic,
 // no I/O.
+//
+// This is the ACCURACY-class estimate: cost estimation wants the best
+// average-case guess (per-family divisor), NOT an upper bound. Fit / "will
+// it fit the context window?" decisions must instead use
+// inputstaging.EstimateTokensConservative, which is biased high so it never
+// admits a model the request overflows. Do not route fit checks here, and do
+// not add a third char→token heuristic — pick the class that matches intent.
 type Tokenizer interface {
 	CountTokens(chars int) int
 	IsHeuristic() bool

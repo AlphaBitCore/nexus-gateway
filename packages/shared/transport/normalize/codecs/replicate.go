@@ -108,7 +108,7 @@ type replicateMessage struct {
 
 func (n *ReplicateNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req replicateRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroReplicate(meta), fmt.Errorf("replicate: request unmarshal: %w", err)
 	}
 	out := core.NormalizedPayload{
@@ -163,7 +163,7 @@ type replicateMetrics struct {
 
 func (n *ReplicateNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp replicateResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroReplicate(meta), fmt.Errorf("replicate: response unmarshal: %w", err)
 	}
 	out := core.NormalizedPayload{

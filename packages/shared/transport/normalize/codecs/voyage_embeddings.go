@@ -105,7 +105,7 @@ type voyageEmbeddingsRequest struct {
 
 func (n *VoyageEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req voyageEmbeddingsRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroEmbeddingPayload("voyage-embeddings", meta), fmt.Errorf("voyage-embeddings: request unmarshal: %w", err)
 	}
 	if len(req.Input) == 0 || string(req.Input) == "null" {
@@ -152,7 +152,7 @@ type voyageEmbedUsage struct {
 
 func (n *VoyageEmbeddingsNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp voyageEmbeddingsResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroEmbeddingPayload("voyage-embeddings", meta), fmt.Errorf("voyage-embeddings: response unmarshal: %w", err)
 	}
 	// The Voyage response shape requires object:"list" and a model; if both

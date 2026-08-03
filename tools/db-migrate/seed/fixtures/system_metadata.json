@@ -147,8 +147,7 @@
       "hook_timeout_ms": 2000,
       "max_buffer_bytes": 67108864,
       "capture_request_body": true,
-      "capture_response_body": true,
-      "raw_body_spill_enabled": true
+      "capture_response_body": true
     },
     "updated_at": "2026-05-14T14:34:13.548+00:00",
     "updated_by": "nexus-user-super-admin"

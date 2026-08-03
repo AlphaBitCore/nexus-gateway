@@ -16,6 +16,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/dsar/dsarstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	cpgx "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/pgx"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/store/metricsstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/compliancestore"
@@ -28,8 +29,10 @@ import (
 
 // ProxyConfig is the BFF proxy snapshot the proxy/* admin routes use.
 type ProxyConfig struct {
-	ComplianceProxyRuntimeURL string
-	ComplianceProxyAPIToken   string
+	// ComplianceProxyBase resolves the compliance-proxy runtime base URL
+	// from the Hub at request time (never configured locally).
+	ComplianceProxyBase     peer.URLProvider
+	ComplianceProxyAPIToken string
 }
 
 // Deps is the construction-time arg shape.

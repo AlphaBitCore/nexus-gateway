@@ -142,6 +142,92 @@ func TestEstimateTokens_OtherUnicode(t *testing.T) {
 	}
 }
 
+func TestEstimateTokensConservative_Empty(t *testing.T) {
+	if got := EstimateTokensConservative(""); got != 0 {
+		t.Errorf("EstimateTokensConservative(%q) = %d, want 0", "", got)
+	}
+}
+
+// The whole point of the conservative estimate is that it never lands BELOW
+// the average-case estimate — for every script, for every input.
+func TestEstimateTokensConservative_NeverBelowAverage(t *testing.T) {
+	samples := []string{
+		"a",
+		"test",
+		"Hello world, this is a test sentence.",
+		strings.Repeat("Hello world ", 100),
+		"你好世界",
+		strings.Repeat("你好", 200),
+		"café résumé naïve",
+		`{"name":"x","values":[1,2,3],"nested":{"deep":true}}`,
+		"Hi你好café",
+	}
+	for _, s := range samples {
+		cons, avg := EstimateTokensConservative(s), EstimateTokens(s)
+		if cons < avg {
+			t.Errorf("EstimateTokensConservative(%q) = %d < EstimateTokens = %d; conservative must never under-count", s, cons, avg)
+		}
+	}
+}
+
+// The bug this exists to end: dense content (code/JSON/tool schemas) tokenizes
+// at ~0.32 tokens/char, well above the average-case 0.25. A real auto-routed
+// prompt of 670k ASCII chars counted 216543 tokens upstream (≈0.323/char) while
+// the 0.25 estimate said ~167k, routing it to a too-small model. The
+// conservative estimate must cover that observed density.
+func TestEstimateTokensConservative_CoversObservedDenseAscii(t *testing.T) {
+	const observedDenseTokensPerChar = 0.323 // real upstream count / char count
+	body := strings.Repeat("a", 670000)
+	got := EstimateTokensConservative(body)
+	floor := int(float64(len(body)) * observedDenseTokensPerChar)
+	if got < floor {
+		t.Errorf("EstimateTokensConservative(670k ASCII) = %d, want >= %d (observed dense density) — would still under-count and mis-route", got, floor)
+	}
+	// The average-case estimate demonstrably would NOT cover it — this is the regression guard.
+	if EstimateTokens(body) >= floor {
+		t.Fatalf("test premise broken: average EstimateTokens(%d) already covers dense floor %d", EstimateTokens(body), floor)
+	}
+}
+
+// The incident that reset this whole estimate: a BPE tokenizer that lacks a
+// character in its vocabulary emits one token per UTF-8 BYTE (byte fallback),
+// so 3-byte CJK / 4-byte symbols can cost up to 3–4 tokens PER CHARACTER, not
+// the ~0.5–1 a per-character heuristic assumes. A real 61607-char Chinese +
+// alchemical-symbol prompt (237619 UTF-8 bytes) was charged 216543 tokens
+// upstream — ~3.5 tokens/char — and the per-character estimate sized it at
+// ~15k, mis-routing it to a 131072-context model. The conservative estimate
+// must weight non-ASCII by BYTE length so it never lands under that.
+func TestEstimateTokensConservative_CoversByteFallback(t *testing.T) {
+	const runes = 1000
+	body := strings.Repeat("参", runes) // U+53C2, 3 UTF-8 bytes
+	byteLen := len([]byte(body))       // 3000
+	got := EstimateTokensConservative(body)
+	if got < byteLen {
+		t.Errorf("EstimateTokensConservative(%d CJK runes) = %d, want >= %d (UTF-8 byte count = byte-fallback ceiling)", runes, got, byteLen)
+	}
+	// The per-character average would sit far below the byte-fallback token
+	// count (0.5/char = 500 for 1000 runes) — the regression this guards.
+	if EstimateTokens(body) >= byteLen {
+		t.Fatalf("test premise broken: average EstimateTokens(%d) already covers byte ceiling %d", EstimateTokens(body), byteLen)
+	}
+	// 4-byte symbols (the alchemical glyphs in the real prompt) must weight 4.
+	emoji := "\U0001F701" // 4 UTF-8 bytes
+	if got := EstimateTokensConservative(emoji); got < 4 {
+		t.Errorf("EstimateTokensConservative(4-byte rune) = %d, want >= 4", got)
+	}
+}
+
+func TestEstimateTokensConservative_RoundUp(t *testing.T) {
+	// 4 ASCII chars → 4 * 0.5 = 2.0 → 2 tokens.
+	if got := EstimateTokensConservative("test"); got != 2 {
+		t.Errorf("EstimateTokensConservative(%q) = %d, want 2", "test", got)
+	}
+	// 2 CJK chars @ 3 bytes each → 2 * 3 = 6 tokens.
+	if got := EstimateTokensConservative("你好"); got != 6 {
+		t.Errorf("EstimateTokensConservative(%q) = %d, want 6", "你好", got)
+	}
+}
+
 func TestTruncateToTokens_FitsUnchanged(t *testing.T) {
 	in := "hello world"
 	if got := TruncateToTokens(in, 1000); got != in {
@@ -183,17 +269,19 @@ func TestTruncateToTokens_KeepsNewestTail(t *testing.T) {
 }
 
 // Result must stay within budget (with the safety margin) and on a rune
-// boundary for multibyte (CJK) input.
+// boundary for multibyte (CJK) input. TruncateToTokens is a fit cut, so the
+// budget is judged with the CONSERVATIVE estimate it uses internally — the
+// average estimate would let the real tokenizer overflow.
 func TestTruncateToTokens_BudgetAndRuneBoundary(t *testing.T) {
-	in := strings.Repeat("你好", 500) // 1000 CJK runes ≈ 500 tokens
+	in := strings.Repeat("你好", 500) // 1000 CJK runes @ 3 bytes ≈ 3000 conservative tokens
 	const maxTokens = 50
 	out := TruncateToTokens(in, maxTokens)
 
-	if EstimateTokens(out) > maxTokens {
-		t.Fatalf("estimated tokens %d exceed budget %d", EstimateTokens(out), maxTokens)
+	if EstimateTokensConservative(out) > maxTokens {
+		t.Fatalf("conservative tokens %d exceed budget %d", EstimateTokensConservative(out), maxTokens)
 	}
-	if EstimateTokens(out) > maxTokens*85/100+1 {
-		t.Errorf("expected ~85%% margin, got %d tokens for budget %d", EstimateTokens(out), maxTokens)
+	if EstimateTokensConservative(out) > maxTokens*85/100+1 {
+		t.Errorf("expected ~85%% margin, got %d conservative tokens for budget %d", EstimateTokensConservative(out), maxTokens)
 	}
 	for _, r := range out {
 		if r == '�' {

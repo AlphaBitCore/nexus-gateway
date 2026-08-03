@@ -1,0 +1,29 @@
+[Unit]
+Description=Nexus Compliance Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus-gateway/env
+ExecStart=/opt/nexus/bin/compliance-proxy --config /etc/nexus-gateway/compliance-proxy.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# /var/lib/nexus-proxy is the audit-spool durability fallback
+# (audit.ndjson.dir in compliance-proxy.config.yaml, default
+# /var/lib/nexus-proxy/audit-spool): when the NATS publish channel overflows,
+# records spill here as NDJSON instead of being dropped. ProtectSystem=strict
+# makes the whole filesystem read-only except what is listed here. The
+# install doc creates this directory before enabling the unit;
+# ReadWritePaths on a path that does not exist yet fails the unit at startup
+# (systemd cannot bind-mount a missing directory).
+ReadWritePaths=/var/log/nexus /var/lib/nexus-proxy
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=Nexus Control Plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus-gateway/env
+ExecStart=/opt/nexus/bin/control-plane --config /etc/nexus-gateway/control-plane.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/nexus
+
+[Install]
+WantedBy=multi-user.target

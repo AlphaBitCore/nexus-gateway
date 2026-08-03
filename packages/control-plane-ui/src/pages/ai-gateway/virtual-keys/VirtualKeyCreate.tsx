@@ -14,6 +14,7 @@ import {
 } from '@/components/ui';
 import type { AdminModelsByProvider, Project, VirtualKeyAllowedModelRef } from '@/api/types';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '@/constants/admin-api';
+import { dateInputFromToday, endOfDayUTC } from '@/lib/format';
 import { expiryBounds } from './expiryBounds';
 import styles from './VirtualKeyCreate.module.css';
 
@@ -151,11 +152,9 @@ export function VirtualKeyCreate() {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  const defaultExpiresAt = (() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() + 1);
-    return d.toISOString().slice(0, 10);
-  })();
+  // One month out on the admin's calendar, matching the zone the picker floor
+  // and every rendered date resolve through.
+  const defaultExpiresAt = dateInputFromToday({ months: 1 });
 
   const form = useZodForm({
     schema,
@@ -216,12 +215,13 @@ export function VirtualKeyCreate() {
   );
 
   const onSubmit = (values: FormValues) => {
-    // <Input type="date"> produces "YYYY-MM-DD" while the backend
-    // unmarshals into time.Time and demands RFC3339. Stamp end-of-day
-    // UTC so "expires on May 2" remains usable through that calendar
-    // day; without this the bind fails with "Invalid request body".
-    // Application VKs always require an expiry (backend enforces ≤3 months).
-    const expiresAt = `${values.expiresAt}T23:59:59Z`;
+    // <Input type="date"> produces "YYYY-MM-DD" while create binds into a Go
+    // time.Time and demands RFC3339 — without the stamp the bind fails with
+    // "Invalid request body". The stamp resolves the chosen day through the
+    // admin's zone, so the key stays usable through that day on their calendar.
+    // Application VKs always require an expiry; it must be in the future, and
+    // its distance is not bounded.
+    const expiresAt = endOfDayUTC(values.expiresAt);
 
     mutate({
       name: values.name,
@@ -319,7 +319,6 @@ export function VirtualKeyCreate() {
                 value={form.watch('expiresAt')}
                 onChange={e => form.setValue('expiresAt', e.target.value)}
                 min={expiryBounds().min}
-                max={expiryBounds().max}
                 className={styles.expirationDateInput}
               />
             </FormField>

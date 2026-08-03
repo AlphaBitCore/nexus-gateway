@@ -6,14 +6,12 @@ import (
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// TestBuildRequestBody_CanonicalMessages_FiltersToUserRole covers the
-// message-filtering fix: when the smart strategy hands a mixed-role
-// []normalize.Message slice, the router-LLM request body must contain
-// the system prompt plus only the last user message (StrategyLastUser).
-// System / assistant / tool messages from the original request are
-// dropped, and the surviving user message carries the concatenated text
-// projection of its ContentText blocks.
-func TestBuildRequestBody_CanonicalMessages_FiltersToUserRole(t *testing.T) {
+// TestBuildRequestBody_CanonicalMessages_KeepsRecentTurns covers the
+// conversation projection: the router-LLM request body contains the
+// system prompt plus the recent turns that fit the budget
+// (StrategyRecentTurns), each carrying the concatenated text projection
+// of its ContentText blocks.
+func TestBuildRequestBody_CanonicalMessages_KeepsRecentTurns(t *testing.T) {
 	userMsgs := []normalize.Message{
 		{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
 			{Type: normalize.ContentText, Text: "Hello, write me a haiku."},
@@ -25,22 +23,18 @@ func TestBuildRequestBody_CanonicalMessages_FiltersToUserRole(t *testing.T) {
 
 	body := BuildRequestBody("router-model-id", Request{
 		SystemPrompt: "pick a model",
-		UserMessages: userMsgs,
+		Messages:     userMsgs,
 	})
 
-	// StrategyLastUser: system + only the last user message.
-	if len(body.Messages) != 2 {
-		t.Fatalf("expected 1 system + 1 user (last) = 2, got %d: %+v", len(body.Messages), body.Messages)
+	// Both small user turns fit the budget and are kept, oldest first.
+	if len(body.Messages) != 3 {
+		t.Fatalf("expected 1 system + 2 user turns = 3, got %d: %+v", len(body.Messages), body.Messages)
 	}
 	if body.Messages[0].Role != "system" {
 		t.Errorf("Messages[0].Role = %q, want system", body.Messages[0].Role)
 	}
-	if body.Messages[1].Role != "user" {
-		t.Errorf("Messages[1].Role = %q, want user", body.Messages[1].Role)
-	}
-	// "About spring." is the last user message — it must be kept.
-	if body.Messages[1].Content != "About spring." {
-		t.Errorf("Messages[1].Content = %q, want %q", body.Messages[1].Content, "About spring.")
+	if body.Messages[1].Content != "Hello, write me a haiku." || body.Messages[2].Content != "About spring." {
+		t.Errorf("turns out of order or missing: %+v", body.Messages[1:])
 	}
 }
 
@@ -62,12 +56,11 @@ func TestBuildRequestBody_EmptyMessages_ReturnsSystemOnly(t *testing.T) {
 	}
 }
 
-// TestBuildRequestBody_LongConversation_KeepsOnlyLastUser pins the
-// inputstaging.Plan(StrategyLastUser) truncation behavior: when the user's
-// history is long, the router LLM receives only the most recent user
-// message — it is a classification task that needs only the immediate
-// question, not the full conversation history.
-func TestBuildRequestBody_LongConversation_KeepsOnlyLastUser(t *testing.T) {
+// TestBuildRequestBody_LongConversation_KeepsAllTurnsThatFit pins the
+// inputstaging.Plan(StrategyRecentTurns) behavior: small turns all fit
+// the budget and every one reaches the router in chronological order —
+// follow-up questions arrive with the context that defines them.
+func TestBuildRequestBody_LongConversation_KeepsAllTurnsThatFit(t *testing.T) {
 	mk := func(text string) normalize.Message {
 		return normalize.Message{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
 			{Type: normalize.ContentText, Text: text},
@@ -75,21 +68,16 @@ func TestBuildRequestBody_LongConversation_KeepsOnlyLastUser(t *testing.T) {
 	}
 	userMsgs := []normalize.Message{mk("first"), mk("second"), mk("third"), mk("fourth"), mk("last")}
 
-	body := BuildRequestBody("rm", Request{SystemPrompt: "pick", UserMessages: userMsgs})
+	body := BuildRequestBody("rm", Request{SystemPrompt: "pick", Messages: userMsgs})
 
-	// system + exactly one user message (the last one).
-	if len(body.Messages) != 2 {
-		t.Fatalf("truncation: expected 2 entries (system + last-user), got %d: %+v",
-			len(body.Messages), body.Messages)
+	if len(body.Messages) != 6 {
+		t.Fatalf("expected system + all 5 small turns, got %d: %+v", len(body.Messages), body.Messages)
 	}
 	if body.Messages[0].Role != "system" {
 		t.Errorf("Messages[0].Role = %q, want system", body.Messages[0].Role)
 	}
-	if body.Messages[1].Role != "user" {
-		t.Errorf("Messages[1].Role = %q, want user", body.Messages[1].Role)
-	}
-	if body.Messages[1].Content != "last" {
-		t.Errorf("Messages[1].Content = %q, want %q (last user message)", body.Messages[1].Content, "last")
+	if body.Messages[1].Content != "first" || body.Messages[5].Content != "last" {
+		t.Errorf("turns out of order: %+v", body.Messages[1:])
 	}
 }
 
@@ -106,7 +94,7 @@ func TestBuildRequestBody_MultimodalContent_FlattensTextBlocksOnly(t *testing.T)
 		}},
 	}
 
-	body := BuildRequestBody("rm", Request{SystemPrompt: "pick", UserMessages: userMsgs})
+	body := BuildRequestBody("rm", Request{SystemPrompt: "pick", Messages: userMsgs})
 
 	if len(body.Messages) != 2 {
 		t.Fatalf("expected 1 system + 1 user, got %d", len(body.Messages))

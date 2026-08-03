@@ -8,16 +8,10 @@
 // stamps the Ingress on the request context before the pipeline reads
 // the body, so downstream stages (VK extract, model extract, routing,
 // format-compat check, executor dispatch) never guess.
-//
-// `x-nexus-aigw-body-format` is honoured as an explicit override only on
-// the OpenAI-compat family (`/v1/chat/completions`, `/v1/embeddings`),
-// and only when it names a registered [provcore.Format].
 package proxy
 
 import (
 	"context"
-	"net/http"
-	"strings"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -197,25 +191,4 @@ func WireShapeToBodyFormat(w typology.WireShape) (provcore.Format, bool) {
 		return provcore.FormatCohere, true
 	}
 	return provcore.Format(""), false
-}
-
-// applyHeaderOverride returns a copy of in with BodyFormat overridden by
-// a valid `x-nexus-aigw-body-format` request header when in.BodyFormat ==
-// openai. Any other value is ignored (path-based detection is
-// authoritative on native surfaces). A non-empty header that names an
-// unknown format returns ok=false so the caller can reject the request.
-func (in Ingress) applyHeaderOverride(r *http.Request) (Ingress, bool) {
-	if in.BodyFormat != provcore.FormatOpenAI {
-		return in, true
-	}
-	raw := strings.TrimSpace(r.Header.Get("x-nexus-aigw-body-format"))
-	if raw == "" {
-		return in, true
-	}
-	f := provcore.Format(strings.ToLower(raw))
-	if !f.Valid() {
-		return in, false
-	}
-	in.BodyFormat = f
-	return in, true
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E40 Phase 3 D3a: Package the Linux artifacts (built by build.sh) into
+# Package the Linux artifacts (built by build.sh) into
 # .deb (Debian/Ubuntu) and .rpm (RHEL/Fedora/SUSE) via nfpm.
 #
 # Produces in $REPO_ROOT/dist/linux/:

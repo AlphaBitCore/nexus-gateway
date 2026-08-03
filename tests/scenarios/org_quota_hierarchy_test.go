@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -47,12 +48,22 @@ import (
 //     parentId column AND computes Organization.path =
 //     {parent.path}{childId}/ (materialised-path invariant —
 //     subtree queries depend on it).
-//  2. POST /api/admin/quota-policies for parent (1000 tokens) and
-//     child (500 tokens) both succeed and persist with the right
-//     organizationId.
-//  3. Cap binding: child limit (500) < parent limit (1000) — i.e.
-//     the parent quota is the aggregate ceiling. Verified by
-//     reading the two QuotaPolicy.tokenLimit columns.
+//  2. POST /api/admin/quota-policies for parent ($10) and child ($5)
+//     both succeed and persist with the right organizationId.
+//  3. Cap binding: child limit ($5) < parent limit ($10) — i.e. the
+//     parent quota is the aggregate ceiling. Verified by comparing the
+//     two costLimitUsd values READ BACK from the DB, never the two Go
+//     constants we sent: comparing the constants is a tautology that
+//     still holds when the handler drops the field entirely.
+//
+// costLimitUsd is the limit dimension because it is the only
+// enforceable one. This scenario used to send and assert "tokenLimit",
+// which exists nowhere on the path: the create/update request contract
+// has no such field (so the handler silently ignored it), QuotaPolicy
+// has no such column (so the read-back SELECT could only ever 42703),
+// and PolicyCache.Load selects costLimitUsd. The create's 400
+// ("costLimitUsd is required") was merely the first of the three to
+// fire.
 //  4. Cleanup deletes both policies and both orgs (LIFO order
 //     matters — child first because parent has children > 0 and
 //     DeleteOrganization refuses to drop a parent with descendants).
@@ -143,8 +154,12 @@ func TestS078_OrgQuotaHierarchyPropagation(t *testing.T) {
 
 	// --- Arm 2: set quotas ---------------------------------------------
 
-	const parentTokenLimit int64 = 1000
-	const childTokenLimit int64 = 500
+	// Both caps must be > 0: the handler rejects a nil or <= 0 cap because
+	// the engine treats limitCents <= 0 as UNLIMITED, so "0 to hard-stop"
+	// must never produce a 201. Exact in binary, so the Decimal(24,6)
+	// round trip through ::double precision compares equal.
+	const parentCostLimitUsd float64 = 10.0
+	const childCostLimitUsd float64 = 5.0
 
 	// alertThresholds is NOT NULL in the QuotaPolicy table (Prisma default
 	// "[80, 90]" applies only when the column is omitted from the INSERT,
@@ -155,7 +170,7 @@ func TestS078_OrgQuotaHierarchyPropagation(t *testing.T) {
 		"scope":           "organization",
 		"organizationId":  parentID,
 		"periodType":      "monthly",
-		"tokenLimit":      parentTokenLimit,
+		"costLimitUsd":    parentCostLimitUsd,
 		"enforcementMode": "reject",
 		"alertThresholds": []int{80, 90},
 		"priority":        50,
@@ -172,7 +187,7 @@ func TestS078_OrgQuotaHierarchyPropagation(t *testing.T) {
 		"scope":           "organization",
 		"organizationId":  childID,
 		"periodType":      "monthly",
-		"tokenLimit":      childTokenLimit,
+		"costLimitUsd":    childCostLimitUsd,
 		"enforcementMode": "reject",
 		"alertThresholds": []int{80, 90},
 		"priority":        50,
@@ -187,16 +202,17 @@ func TestS078_OrgQuotaHierarchyPropagation(t *testing.T) {
 	// --- Arm 3: verify cascade structure -------------------------------
 
 	// Invariant 2: both QuotaPolicy rows persist with correct
-	// organizationId + tokenLimit. This is what PolicyCache.Load reads
-	// into policiesByScope["organization"]; BuildCheckChain then emits
-	// CheckLevel{organization, parentID} for any VK rooted in childID
-	// because the walk-up over orgParents finds parentID.
+	// organizationId + costLimitUsd. These are the exact two columns
+	// PolicyCache.Load selects into policiesByScope["organization"]
+	// (with the same ::double precision cast); BuildCheckChain then
+	// emits CheckLevel{organization, parentID} for any VK rooted in
+	// childID because the walk-up over orgParents finds parentID.
 	var (
 		parentDBOrgID *string
-		parentDBLimit *int64
+		parentDBLimit *float64
 	)
 	if err := sc.DB.QueryRow(ctx,
-		`SELECT "organizationId", "tokenLimit" FROM "QuotaPolicy" WHERE id = $1`,
+		`SELECT "organizationId", "costLimitUsd"::double precision FROM "QuotaPolicy" WHERE id = $1`,
 		parentPolicyID).Scan(&parentDBOrgID, &parentDBLimit); err != nil {
 		t.Fatalf("read parent policy from DB: %v", err)
 	}
@@ -207,20 +223,20 @@ func TestS078_OrgQuotaHierarchyPropagation(t *testing.T) {
 		}
 		t.Errorf("parent policy.organizationId: got %q want %q", got, parentID)
 	}
-	if parentDBLimit == nil || *parentDBLimit != parentTokenLimit {
-		got := int64(-1)
+	if parentDBLimit == nil || *parentDBLimit != parentCostLimitUsd {
+		got := math.NaN()
 		if parentDBLimit != nil {
 			got = *parentDBLimit
 		}
-		t.Errorf("parent policy.tokenLimit: got %d want %d", got, parentTokenLimit)
+		t.Errorf("parent policy.costLimitUsd: got %v want %v", got, parentCostLimitUsd)
 	}
 
 	var (
 		childDBOrgID *string
-		childDBLimit *int64
+		childDBLimit *float64
 	)
 	if err := sc.DB.QueryRow(ctx,
-		`SELECT "organizationId", "tokenLimit" FROM "QuotaPolicy" WHERE id = $1`,
+		`SELECT "organizationId", "costLimitUsd"::double precision FROM "QuotaPolicy" WHERE id = $1`,
 		childPolicyID).Scan(&childDBOrgID, &childDBLimit); err != nil {
 		t.Fatalf("read child policy from DB: %v", err)
 	}
@@ -231,21 +247,26 @@ func TestS078_OrgQuotaHierarchyPropagation(t *testing.T) {
 		}
 		t.Errorf("child policy.organizationId: got %q want %q", got, childID)
 	}
-	if childDBLimit == nil || *childDBLimit != childTokenLimit {
-		got := int64(-1)
+	if childDBLimit == nil || *childDBLimit != childCostLimitUsd {
+		got := math.NaN()
 		if childDBLimit != nil {
 			got = *childDBLimit
 		}
-		t.Errorf("child policy.tokenLimit: got %d want %d", got, childTokenLimit)
+		t.Errorf("child policy.costLimitUsd: got %v want %v", got, childCostLimitUsd)
 	}
 
-	// Invariant 3: child cap is strictly tighter than parent. If a future
-	// PR inverts this ordering the cascade no longer "binds" — every
-	// child request would be blocked at the child level before the
+	// Invariant 3: child cap is strictly tighter than parent, as PERSISTED.
+	// If a future PR inverts this ordering the cascade no longer "binds" —
+	// every child request would be blocked at the child level before the
 	// parent counter could matter.
-	if childTokenLimit >= parentTokenLimit {
-		t.Errorf("cascade ordering: child limit %d must be < parent limit %d",
-			childTokenLimit, parentTokenLimit)
+	//
+	// Both sides come from the DB read-backs above, so this fails if the
+	// handler clamps, swaps, rounds, or drops either cap. The previous form
+	// compared the two Go constants to each other, which is 500 < 1000 —
+	// true on every run no matter what the product did with them.
+	if parentDBLimit != nil && childDBLimit != nil && *childDBLimit >= *parentDBLimit {
+		t.Errorf("cascade ordering: persisted child limit %v must be < persisted parent limit %v",
+			*childDBLimit, *parentDBLimit)
 	}
 
 	// Invariant 4: org-tree walk-up locates parent from child. This is
@@ -265,8 +286,8 @@ func TestS078_OrgQuotaHierarchyPropagation(t *testing.T) {
 			orgTreeParentID, parentID)
 	}
 
-	t.Logf("S-078 OK: parent=%s(limit=%d) child=%s(limit=%d) cascade structure verified",
-		parentID, parentTokenLimit, childID, childTokenLimit)
+	t.Logf("S-078 OK: parent=%s(costLimitUsd=%v) child=%s(costLimitUsd=%v) cascade structure verified",
+		parentID, parentCostLimitUsd, childID, childCostLimitUsd)
 }
 
 // createOrgS078 POSTs /api/admin/organizations with the supplied body

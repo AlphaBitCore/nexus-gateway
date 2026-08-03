@@ -58,9 +58,9 @@ export interface UseChatState {
 
 export function useChatState(): UseChatState {
   const { t } = useTranslation();
-  // Connection — gateway URL is resolved server-side (CP knows where
-  // ai-gateway is, sourced from env AI_GATEWAY_URL with a localhost
-  // fallback). UI only needs the operator's VK.
+  // Connection — gateway URL is resolved server-side (CP resolves the
+  // ai-gateway's Hub-reported address at request time; no local config,
+  // no fallback). UI only needs the operator's VK.
   const gatewayBaseUrl = '';
   const [vk, setVk] = useState('');
   const [providerGroups, setProviderGroups] = useState<ProviderGroup[]>([]);

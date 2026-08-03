@@ -9,15 +9,15 @@
 //     Cache.BuildKey. Always fail-open.
 //   - NormalizeUpstream: strips and/or injects bytes in the body sent to
 //     the upstream provider. Runs AFTER L1 MISS, BEFORE runViaBroker.
-//     Gated by the global `normaliser_enabled` config switch.
+//     Demand-driven: it no-ops unless an enabled strip rule or a
+//     marker-injecting Provider is configured (there is no global switch).
 //
 // Both functions are called with the adapter-wire body (PrepareBody output).
 //
-// Wire-format identifiers are stable interfaces: the JSON tag
-// `normaliser_enabled` and rule IDs like `cache-normaliser` are admin /
-// shadow / DB identifiers, preserved verbatim even though the Go package
-// name has changed. Renaming them would require a coordinated config
-// migration.
+// Wire-format identifiers are stable interfaces: rule IDs like
+// `cache-normaliser` are admin / shadow / DB identifiers, preserved verbatim
+// even though the Go package name has changed. Renaming them would require a
+// coordinated config migration.
 package wirerewrite
 
 import (
@@ -86,9 +86,12 @@ type Rule struct {
 // blob (configkey.Cache) that the AI Gateway watches on its shadow. The zero
 // value is a safe default (all off).
 type Config struct {
-	// NormaliserEnabled gates NormalizeUpstream (L3). NormalizeKey is
-	// always active regardless of this switch.
-	NormaliserEnabled bool `json:"normaliser_enabled"`
+	// The upstream rewrite (L3 strip + L4 marker inject) is demand-driven:
+	// the engine derives a hasWork gate at Reload from the resolved rules and
+	// per-Provider inject settings below. There is no global on/off knob —
+	// enabling a rule or a Provider's marker injection IS the demand.
+	// NormalizeKey (L0 cache-key) is always active regardless.
+
 	// Rules maps adapter_type → (rule_id → RuleOverride).
 	Rules map[string]map[string]RuleOverride `json:"rules,omitempty"`
 	// Providers carries per-Provider cache settings keyed by Provider UUID.

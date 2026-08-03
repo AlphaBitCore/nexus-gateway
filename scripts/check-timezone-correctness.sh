@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E32-S1 — fail the build if any code drops back into TZ-incorrect
+# Fail the build if any code drops back into TZ-incorrect
 # patterns: bare time.Now() in persistence paths or `timestamp`
 # (no tz) columns in Prisma migrations. See docs/developers/workflow/timezone.md.
 set -euo pipefail
@@ -59,9 +59,15 @@ fi
 # will pick up the @db.Timestamptz(3) attribute correctly.
 
 # (2) `DateTime` in schema/ without @db.Timestamptz.
+#
+# `@db.Date` is exempt: a DATE column stores a calendar day, not an instant,
+# so it has no time zone to get wrong. The field must still name the calendar
+# it is anchored to (e.g. vendor_bill_reconciliation.day = UTC calendar day),
+# which the schema doc comment carries.
 echo "[tz-lint] scanning schema/ for tz-less DateTime fields…"
 schema_hits=$(grep -rE '^\s+\w+\s+DateTime' tools/db-migrate/schema/ \
   | grep -v '@db\.Timestamptz' \
+  | grep -v '@db\.Date' \
   || true)
 if [ -n "$schema_hits" ]; then
   echo "FAIL: DateTime field in schema/ without @db.Timestamptz(3)."

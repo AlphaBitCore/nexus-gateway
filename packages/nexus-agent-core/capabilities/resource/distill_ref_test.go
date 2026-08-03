@@ -225,8 +225,10 @@ func TestDistillRefBodiesNonEmpty(t *testing.T) {
 		}
 	}
 	// Guard the measurement the design rests on: the corpus really does carry
-	// root-$ref bodies (37 at design time; the count may only grow).
-	if refBodies < 37 {
-		t.Errorf("expected >=37 root-$ref JSON bodies in the corpus, found %d — measurement drift", refBodies)
+	// root-$ref bodies (37 at design time; 36 after the Tier-1 cache-global
+	// endpoint retirement removed a $ref request+response pair; the count
+	// should only move when the admin API surface deliberately changes).
+	if refBodies < 36 {
+		t.Errorf("expected >=36 root-$ref JSON bodies in the corpus, found %d — measurement drift", refBodies)
 	}
 }

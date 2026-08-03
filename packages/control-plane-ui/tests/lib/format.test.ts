@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   formatUsd,
   formatUsdSci,
@@ -12,6 +12,8 @@ import {
   localInputToUTC,
   endOfDayUTC,
   utcToLocalInput,
+  utcToDateInput,
+  dateInputFromToday,
   formatCompact,
   formatTokens,
 } from '../../src/lib/format';
@@ -135,6 +137,63 @@ describe('TZ <input> round-trips (UTC)', () => {
   });
   it('utcToLocalInput inverts localInputToUTC', () => {
     expect(utcToLocalInput('2026-05-27T12:00:00.000Z', 'UTC')).toBe('2026-05-27T12:00');
+  });
+});
+
+describe('utcToDateInput — the calendar day an instant falls on', () => {
+  it('resolves the day in the given zone, not the UTC day', () => {
+    // One instant, three zones, three different calendar days. Slicing the ISO
+    // string would answer '2026-05-27' for all three.
+    expect(utcToDateInput('2026-05-27T23:30:00Z', 'UTC')).toBe('2026-05-27');
+    expect(utcToDateInput('2026-05-27T23:30:00Z', 'Asia/Shanghai')).toBe('2026-05-28');
+    expect(utcToDateInput('2026-05-27T03:30:00Z', 'America/Los_Angeles')).toBe('2026-05-26');
+  });
+
+  it('inverts endOfDayUTC — a stamped day round-trips back to itself', () => {
+    for (const tz of ['UTC', 'Asia/Shanghai', 'America/Los_Angeles']) {
+      expect(utcToDateInput(endOfDayUTC('2026-05-27', tz), tz)).toBe('2026-05-27');
+    }
+  });
+
+  it('accepts a Date as well as an ISO string', () => {
+    expect(utcToDateInput(new Date('2026-05-27T23:30:00Z'), 'Asia/Shanghai')).toBe('2026-05-28');
+  });
+});
+
+describe('dateInputFromToday — calendar offsets from the viewer today', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function freeze(instant: string) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(instant));
+  }
+
+  it('offsets from the viewer calendar day, not the UTC one', () => {
+    // 03:30 on 2026-07-16 in +08 is still 2026-07-15 in UTC.
+    freeze('2026-07-15T19:30:00Z');
+    expect(dateInputFromToday({ days: 0 }, 'Asia/Shanghai')).toBe('2026-07-16');
+    expect(dateInputFromToday({ days: 1 }, 'Asia/Shanghai')).toBe('2026-07-17');
+    expect(dateInputFromToday({ days: 0 }, 'UTC')).toBe('2026-07-15');
+    expect(dateInputFromToday({ days: 1 }, 'UTC')).toBe('2026-07-16');
+  });
+
+  it('carries across month and year boundaries rather than overflowing', () => {
+    freeze('2026-12-31T04:00:00Z');
+    expect(dateInputFromToday({ days: 1 }, 'Asia/Shanghai')).toBe('2027-01-01');
+    expect(dateInputFromToday({ months: 1 }, 'Asia/Shanghai')).toBe('2027-01-31');
+  });
+
+  it('advances the date by one across a spring-forward DST boundary', () => {
+    // The local day the offset crosses is 23 hours long; a calendar day must
+    // still land on the next date.
+    freeze('2026-03-08T04:00:00Z'); // 20:00 on Mar 7 in Los Angeles
+    expect(dateInputFromToday({ days: 0 }, 'America/Los_Angeles')).toBe('2026-03-07');
+    expect(dateInputFromToday({ days: 1 }, 'America/Los_Angeles')).toBe('2026-03-08');
+  });
+
+  it('an empty offset is today', () => {
+    freeze('2026-07-15T19:30:00Z');
+    expect(dateInputFromToday({}, 'Asia/Shanghai')).toBe('2026-07-16');
   });
 });
 

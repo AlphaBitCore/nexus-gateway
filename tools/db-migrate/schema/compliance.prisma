@@ -199,9 +199,10 @@ model AIGuardConfig {
   /// conversation before the prompt is rendered. One of the five
   /// inputstaging.Strategy constants (last_user, system_plus_last_user,
   /// recent_turns, head_plus_tail, full_truncated). Defaults to
-  /// "system_plus_last_user" which keeps all system messages + the last
-  /// user message — preserving any guard-system-prompt context.
-  input_strategy         String   @default("system_plus_last_user") @map("input_strategy")
+  /// "full_truncated": the judge's value is violation coverage, and
+  /// dropping middle turns would blind it to content assembled across
+  /// turns; budget enforcement bounds the input, dropping oldest first.
+  input_strategy         String   @default("full_truncated") @map("input_strategy")
   /// model_context_limit is the judge model's context window in tokens.
   /// Used together with input_strategy by inputstaging.Plan to decide
   /// which messages to keep. 0 means "unknown / not configured"; when
@@ -273,7 +274,6 @@ model InterceptionDomain {
   streamingFailBehavior   String?            @map("streaming_fail_behavior")
   captureRequestBody      Boolean?           @map("capture_request_body")
   captureResponseBody     Boolean?           @map("capture_response_body")
-  rawBodySpillEnabled     Boolean?           @map("raw_body_spill_enabled")
   createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt               DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
   createdBy               String?            @map("created_by")

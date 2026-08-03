@@ -128,6 +128,12 @@
   color: var(--color-danger);
 }
 
+.pricingHint {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin: 0 0 var(--g-space-2);
+}
+
 @media (max-width: 640px) {
   .grid {
     grid-template-columns: 1fr;

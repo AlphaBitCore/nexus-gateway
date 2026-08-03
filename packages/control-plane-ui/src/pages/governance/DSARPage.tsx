@@ -325,7 +325,7 @@ export function DSARPage() {
               value={draft.subjectId}
               onChange={(e) => setDraft({ ...draft, subjectId: e.target.value })}
             >
-                <option value="">请选择</option>
+                <option value="">{t('common:choose', 'Choose…')}</option>
               {(usersData?.data ?? []).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.displayName}{u.email ? ` (${u.email})` : ''}

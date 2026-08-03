@@ -22,56 +22,6 @@ type AdapterSpec struct {
 	SchemaCodec     SchemaCodec
 	StreamDecoder   StreamDecoder
 	ErrorNormalizer ErrorNormalizer
-	// PassthroughRewrite is the per-adapter rewrite hook applied on the
-	// passthrough path (BodyFormat already matches Format, no codec
-	// translation runs). It mutates the OpenAI-shape payload in place
-	// and returns the list of rewrites applied (formatted as
-	// "<from>→<to>") so the handler can stamp x-nexus-coerced.
-	// Used for per-model wire quirks owned by the adapter (e.g.
-	// spec_openai strips temperature/top_p and renames max_tokens for
-	// gpt-5 / o-series reasoning models; spec_moonshot strips
-	// caller-supplied temperature for kimi-k2.5 / k2.6 fixed-temp
-	// models). Nil means no passthrough rewrites — the body goes
-	// through unchanged.
-	//
-	// Per provider-adapter-architecture.md §3a Rule 3, per-model wire
-	// quirks belong to the adapter that talks to that wire, not to the
-	// generic spec_adapter dispatcher.
-	PassthroughRewrite func(payload map[string]any, modelID string) []string
-
-	// PassthroughRewriteApplies reports, WITHOUT decoding the body, whether
-	// PassthroughRewrite could mutate anything for modelID. The generic
-	// dispatcher uses it to skip the full map[string]any decode+re-marshal
-	// round-trip when the rewrite is a guaranteed no-op (e.g. a non-reasoning
-	// model on the OpenAI adapter) and instead surgically set the model with
-	// sjson — the dominant hot-path allocation otherwise. Nil ⇒ assume it may
-	// apply (conservative: keep the map path), preserving today's behavior for
-	// adapters that do not provide the probe.
-	PassthroughRewriteApplies func(modelID string) bool
-
-	// PassthroughModelInBody declares that this adapter's native wire
-	// carries the model at the JSON body top-level `model` field (as the
-	// OpenAI shape does), so the passthrough path must rewrite it to the
-	// resolved CallTarget.ProviderModelID before upstream dispatch —
-	// otherwise a client-facing alias / a routing-changed model is sent
-	// verbatim and the upstream 404s the unknown name.
-	//
-	// The generic dispatcher already does this rewrite for OpenAI-family
-	// formats (gated by Format.IsOpenAIFamily). This flag extends the same
-	// surgical top-level `model` rewrite to a non-OpenAI-family adapter whose
-	// wire also puts the model in the body root — today only Anthropic
-	// (`/v1/messages`). Adapters that carry the model elsewhere leave it
-	// false: Gemini (URL path, rewritten by Transport.BuildURL from
-	// ProviderModelID), Bedrock (model deleted from body, encoded into the
-	// URL by its codec). Cross-format routes never rely on this flag — the
-	// codec's EncodeRequest already stamps ProviderModelID.
-	//
-	// Per provider-adapter-architecture.md §3 (Ingress shape preservation)
-	// and §3a Rule 3: the model-location fact is owned by the adapter that
-	// talks to that wire, declared here rather than as a format switch in
-	// the generic dispatcher.
-	PassthroughModelInBody bool
-
 	// RequestShapes lists the typology.WireShape values this adapter
 	// natively serves at the codec boundary (i.e. the WireShape values
 	// the codec's EncodeRequest/DecodeResponse will accept without
@@ -155,19 +105,18 @@ type Transport interface {
 
 // EncodeResult is the structured output of [SchemaCodec.EncodeRequest].
 // Body is the provider-native request bytes. ContentType is the value to
-// use for the Content-Type header (typically "application/json"). Headers
-// carries any extra provider-specific request headers the codec wants to
-// inject (e.g. x-cohere-version). URLOverride replaces the Transport's
-// BuildURL result when non-empty (used by providers that embed the endpoint
-// in the URL path). Rewrites lists any in-place request mutations applied
-// (formatted "<from>→<to>") for x-nexus-coerced stamping.
+// use for the Content-Type header (typically "application/json"). URLOverride
+// replaces the Transport's BuildURL result when non-empty (used by providers
+// that embed the endpoint in the URL path). Rewrites lists any in-place request
+// mutations applied (formatted "<from>→<to>") for x-nexus-coerced stamping.
 //
-// Artifact/job fields are not needed here — codecs produce only wire bytes on
-// the request side.
+// Request headers are NOT a codec concern: protocol/auth headers come from
+// Transport.ApplyAuth, and client-header forwarding is the yaml forwardheader
+// allowlist — neither is codec-owned. Artifact/job fields are not needed here
+// either — codecs produce only wire bytes on the request side.
 type EncodeResult struct {
 	Body        []byte
 	ContentType string
-	Headers     http.Header
 	URLOverride string
 	Rewrites    []string
 }
@@ -206,8 +155,8 @@ type DecodeResult struct {
 // inbound request is already in the adapter's native format
 // (passthrough fast path).
 //
-// EncodeRequest returns [EncodeResult] (Body, ContentType, Headers,
-// URLOverride, Rewrites). DecodeResponse returns [DecodeResult] (CanonicalBody,
+// EncodeRequest returns [EncodeResult] (Body, ContentType, URLOverride,
+// Rewrites). DecodeResponse returns [DecodeResult] (CanonicalBody,
 // Usage, Artifacts) and accepts a contentType parameter so codecs that
 // need to disambiguate the response MIME type can do so without parsing
 // Content-Type themselves. All chat codecs pass _ = contentType; pass ""
@@ -239,6 +188,33 @@ type SchemaCodec interface {
 	// request context pass _ = reqCtx; a zero DecodeContext disables every
 	// request-relative check (fail-open).
 	DecodeResponse(shape typology.WireShape, nativeBody []byte, contentType string, reqCtx DecodeContext) (DecodeResult, error)
+
+	// RewriteNative applies this codec's same-spec DIFFERENTIAL to a body
+	// that is already in the adapter's native wire format. A same-spec body
+	// is semantically equivalent to one that completed the full
+	// ingress → codec → canonicalize → codec round-trip, so this entry
+	// point applies only the diff the second codec pass would have applied
+	// — the model stamp, the per-model wire quirks, the protocol-required
+	// back-fills — and NEVER re-translates. Native-only features the
+	// canonical subset cannot express ride through verbatim.
+	//
+	// stream is the resolved streaming intent: the streaming differential
+	// needs it (defensive `stream: true` and stream_options injection are
+	// not body-sniffable) and body edits must not be duplicated between
+	// the two doors.
+	//
+	// The fast path — nothing due — returns the SAME slice (verbatim,
+	// zero copy). Quirks edit the named fields surgically; a structural
+	// quirk that forces a decode evaluates everything else on the decoded
+	// form rather than re-scanning bytes.
+	//
+	// Every codec implements this explicitly; there is deliberately no
+	// embeddable default. A silent verbatim default would let a new
+	// model-in-body codec skip the model stamp and 404 every aliased or
+	// routed model on same-format traffic. Codecs whose wire carries the
+	// model outside the body (Gemini, Bedrock: URL path) implement a
+	// one-line verbatim return stating that rationale.
+	RewriteNative(shape typology.WireShape, nativeBody []byte, target CallTarget, stream bool) (EncodeResult, error)
 }
 
 // StreamDecoder wraps the provider's streaming response body and

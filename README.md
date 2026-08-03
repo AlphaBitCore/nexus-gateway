@@ -1,7 +1,7 @@
 # Nexus Gateway
 
-[![CI](https://github.com/itechchoice/abc-nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](.github/workflows/ci.yml)
-[![Go CI](https://github.com/itechchoice/abc-nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](.github/workflows/go-ci.yml)
+[![CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](.github/workflows/ci.yml)
+[![Go CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](.github/workflows/go-ci.yml)
 [![Coverage gate](https://img.shields.io/badge/coverage-%E2%89%A595%25%20per%20package-brightgreen)](./scripts/check-go-coverage.sh)
 [![Status: 1.1.0](https://img.shields.io/badge/status-1.1.0-brightgreen)](./CHANGELOG.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
@@ -77,7 +77,7 @@ PII detection · data classification · keyword filtering · content safety · r
 
 ### 🎨 Modalities
 
-Chat · Embeddings · Structured outputs · Function / tool calling · Vision input · Reasoning tokens. Multimodal in development.
+Chat · Embeddings · Structured outputs · Function / tool calling · Vision input · Reasoning tokens · Image generation · Text-to-speech · Speech-to-text · Video generation (async) · Realtime voice (WebSocket) · Rerank · Standalone guardrail verdicts.
 
 ### 🏢 Enterprise governance
 
@@ -208,7 +208,7 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 
 The script:
 
-1. Verifies prerequisites (Node 20+, Go 1.25+, Docker, OpenSSL).
+1. Verifies prerequisites (Node 20+, Go 1.26+, Docker, OpenSSL).
 2. Auto-creates **repo-root `.env`** from `.env.example` with safe dev defaults for `CHANGE_ME_*` secrets (`INTERNAL_SERVICE_TOKEN`, `ADMIN_KEY_HMAC_SECRET`, `CREDENTIAL_ENCRYPTION_KEY` = `openssl rand -hex 32`, …). All four Go services read this via `packages/shared/core/bootenv/` at boot.
 3. Starts PostgreSQL + Valkey + NATS via `docker-compose.yml`.
 4. Runs `npm install`.
@@ -276,6 +276,23 @@ docker exec $(docker ps --filter "name=postgres" -q | head -1) \
 
 ---
 
+## Container quickstart (published images)
+
+To run from the published images instead of building from source:
+
+```bash
+cd deploy
+./init-secrets.sh
+docker compose up -d
+```
+
+Then open <http://localhost:8080>. See
+[`docs/operators/ops/container-deployment.md`](./docs/operators/ops/container-deployment.md)
+for what the two commands do, the demo seed, tag selection, and the Linux
+tarball for systemd installs.
+
+---
+
 ## Repository layout
 
 ```
@@ -306,7 +323,7 @@ Makefile             build / test targets per service
 
 ## Tech stack
 
-- **Go services** — Go 1.25+ with `go.work`; Echo on Control Plane / Nexus Hub / AI Gateway (`labstack/echo/v4 v4.15.2`); structured logging via `log/slog`; metrics via Prometheus `promauto`; Redis-wire client `redis/go-redis/v9 v9.19.0`; WebSocket via `coder/websocket v1.8.14`.
+- **Go services** — Go 1.26+ with `go.work`; Echo on Control Plane / Nexus Hub / AI Gateway (`labstack/echo/v4 v4.15.2`); structured logging via `log/slog`; metrics via Prometheus `promauto`; Redis-wire client `redis/go-redis/v9 v9.19.0`; WebSocket via `coder/websocket v1.8.14`.
 - **Control Plane UI** — React + Vite + TypeScript (strict mode); React Query via the `useApi` hook; layered design tokens in `packages/ui-shared/src/styles/` (`global.css` raw → `light.css` / `dark.css` semantic, flipped by `data-theme`); i18n with `react-i18next` (`en` / `zh` / `es` under `packages/control-plane-ui/public/locales/` and `src/i18n/locales/`); tests via Vitest.
 - **Database** — PostgreSQL 16. Prisma is the dev-time source of truth (`tools/db-migrate/`); runtime queries use hand-written SQL + `pgx`.
 - **Cache** — Valkey 8 (Redis-wire-compatible, BSD-licensed `valkey/valkey-bundle:8-trixie` image). Pure cache only — no pub/sub anywhere.

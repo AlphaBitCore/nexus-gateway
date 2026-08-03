@@ -34,7 +34,6 @@ model Provider {
   streamingFailBehavior   String?  @map("streaming_fail_behavior")
   captureRequestBody      Boolean? @map("capture_request_body")
   captureResponseBody     Boolean? @map("capture_response_body")
-  rawBodySpillEnabled     Boolean? @map("raw_body_spill_enabled")
   /// Whether this provider's upstream natively serves the OpenAI
   /// /v1/responses API (Responses-shape request body + response bytes).
   /// NULL = adapter RequestShapes default (FormatOpenAI → true; every
@@ -57,6 +56,10 @@ model Provider {
   // to be @unique. In practice the SemanticCacheConfig table has exactly one
   // row (id='singleton'), so the list always has at most one element.
   semanticCacheConfig SemanticCacheConfig[]             @relation("EmbeddingProviderOnSemanticCache")
+  // Vendor bill reconciliation rows (one per UTC day) comparing our estimated
+  // spend against this provider's authoritative billing-API total. Only
+  // populated for providers with a VendorBillSource (v1: openai, anthropic).
+  vendorBillReconciliations VendorBillReconciliation[]
 }
 
 model Credential {
@@ -133,7 +136,7 @@ model Model {
   providerId                      String
   provider                        Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
   providerModelId                 String // actual ID sent to provider API
-  type                            String // chat | embedding | image | audio
+  type                            String // chat | embedding | image | audio | rerank | video | realtime
   features                        String[] // vision, function_calling, streaming, json_mode, thinking
   inputPricePerMillion            Decimal?
   outputPricePerMillion           Decimal?
@@ -145,6 +148,17 @@ model Model {
   /// E58-S1: cached input token WRITE surcharge (Anthropic cache_creation_input_tokens
   /// ~1.25×). NULL = no surcharge; cost calculation falls back to inputPricePerMillion.
   cachedInputWritePricePerMillion Decimal?
+  /// E88-S7: audio-token rates for realtime models, which bill text and audio
+  /// components of one response simultaneously at different rates. NULL on
+  /// every non-realtime model. A realtime model needs BOTH primary audio rates
+  /// (and both text rates) non-NULL and > 0 to be realtime-priced — the relay
+  /// refuses un-priced realtime models at upgrade under an enforced cost quota.
+  audioInputPricePerMillion       Decimal?
+  audioOutputPricePerMillion      Decimal?
+  /// E88-S7: cached audio input READ price. NULL = no discount; cost
+  /// calculation falls back to audioInputPricePerMillion (mirrors the
+  /// cachedInputReadPricePerMillion fallback semantics for text).
+  cachedAudioInputReadPricePerMillion Decimal?
   maxContextTokens                Int?
   maxOutputTokens                 Int?
   status                          String    @default("active") // active | deprecated | disabled

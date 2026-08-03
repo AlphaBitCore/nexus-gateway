@@ -52,9 +52,9 @@ function makeModel(overrides: Partial<Model> = {}): Model {
 function makeDetail(models: Model[]): ProviderDetailState {
   return {
     models,
-    canUpdate: false,
-    canDelete: false,
     canCreateModel: false,
+    canUpdateModel: false,
+    canDeleteModel: false,
     showModelForm: false,
     setShowModelForm: vi.fn(),
     resetModelForm: vi.fn(),

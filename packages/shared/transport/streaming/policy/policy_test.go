@@ -25,12 +25,12 @@ func TestResolve_FullOverride(t *testing.T) {
 	override := &policy.Override{
 		Mode: &mode, ChunkBytes: &chunk, HookTimeoutMs: &timeout,
 		MaxBufferBytes: &maxBuf, FailBehavior: &fail,
-		CaptureRequestBody: &tr, CaptureResponseBody: &tr, RawSpillEnabled: &tr,
+		CaptureRequestBody: &tr, CaptureResponseBody: &tr,
 	}
 	got := policy.Resolve(g, override)
 	if got.Mode != mode || got.ChunkBytes != chunk || got.HookTimeoutMs != timeout ||
 		got.MaxBufferBytes != maxBuf || got.FailBehavior != fail ||
-		!got.CaptureRequestBody || !got.CaptureResponseBody || !got.RawSpillEnabled {
+		!got.CaptureRequestBody || !got.CaptureResponseBody {
 		t.Fatalf("full override not applied: %+v", got)
 	}
 }

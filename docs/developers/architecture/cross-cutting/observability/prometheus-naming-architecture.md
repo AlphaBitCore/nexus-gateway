@@ -8,6 +8,8 @@ The metric *universes* (real-time Prometheus vs the Hub-bound rollup pipeline) a
 
 Every series shares the single application prefix `nexus`, followed by an optional subsystem segment and the measurement name with a unit suffix (`_total`, `_seconds`, `_bytes`, `_ms`). Examples: `nexus_requests_total`, `nexus_cache_lookups_total`, `nexus_credential_health_rollup_cycles_total`.
 
+**Enforced by `scripts/check-prometheus-naming.sh`** — `npm run check:prometheus-naming`, and pre-commit on staged Go files. It rejects a service name inside a metric name and any `Namespace:` other than `"nexus"` (a namespace is prefixed onto the name, so `"nexus_hub"` reintroduces the service by another route). The service list is derived from `packages/shared/schemas/thingtype`, so a new service is covered without touching the script. The rule went unenforced long enough to accumulate two violations — `nexus_ai_gateway_admission_shed_total` and `Namespace: "nexus_hub"` — both fixed when the check landed.
+
 **The service is not in the name.** Which binary emitted a metric is carried by the Prometheus `job` label (set by the scrape config), not by a `nexus_<service>_…` prefix. This mirrors how the rollup side already works: `metric_ops_raw` records the service as the `thing_type` column and keeps a flat `metric_name`. Both surfaces treat service as a dimension, so the same subsystem metric emitted by two services (for example MQ counters on the Control Plane and the Compliance Proxy) is one series name distinguished by `job`.
 
 ## 2. Two registration paths

@@ -48,6 +48,7 @@ node scripts/check-doc-lockstep.mjs --staged   # only against staged files
 - A passing `tsc -b` / `go build` / unit tests do **not** mean docs are aligned. Code can compile and the doc can still claim something the code no longer does.
 - Touching `updated:` in the front-matter without changing the body is a **red flag in review** — the doc should reflect what the code now does, not just a fresh date.
 - Adding a `TODO: update doc` comment in code is **explicitly forbidden** under the "real implementation only" rule. Update the doc now, or carve out the change.
+- **This gate verifies presence, never content.** A satisfied entry means a mapped doc was *touched* — not that it reflects the change. When more than one code file triggers the same entry, a single touched doc satisfies it, so a doc that captures one change but not its siblings passes silently (how a stale provider-adapter doc once shipped: one adapter commit touched the doc, a second adapter's function deletion did not). The check prints a non-blocking **COVERAGE ADVISORY** listing that fan-in — treat it as a per-file review checklist. Verifying the doc actually matches the code is `doc-review`'s job ([[feedback-docs-through-review-skill]]), not this gate's, and it is not optional. Tightening the gate to per-file/per-commit was considered and rejected: it false-positives on the legitimate "one PR, many files, one shared doc section" case and still can't catch a whitespace-only touch — presence checks cannot approximate content checks.
 
 ## Waiver
 

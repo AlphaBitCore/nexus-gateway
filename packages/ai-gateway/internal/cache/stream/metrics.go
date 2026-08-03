@@ -51,7 +51,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Namespace: "nexus",
 			Subsystem: "cache",
 			Name:      "lookups_total",
-			Help:      "Cache lookups by outcome (hit, hit_live, miss, skip_no_cache, disabled).",
+			Help:      "Cache lookups by outcome (hit, hit_live, miss, skip_no_cache, disabled, no_targets, passthrough_skip, skip_embeddings).",
 		}, []string{"result"}),
 		WritesTotal: f.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "nexus",

@@ -23,6 +23,13 @@ export function RoutingRuleReadView({ detail }: { detail: RoutingRuleDetailState
 
   if (!rule) return null;
 
+  // Only weighted strategies carry a meaningful per-target weight. latency
+  // (p95-ordered) and fallback (order-only) do not, so their read view omits the
+  // Weight column rather than showing a misleading placeholder.
+  const showViewWeight =
+    mapLegacyStrategy(rule.strategyType) === 'loadbalance' ||
+    mapLegacyStrategy(rule.strategyType) === 'ab_split';
+
   return (
     <>
       <div className={styles.sectionBlock}>
@@ -121,7 +128,7 @@ export function RoutingRuleReadView({ detail }: { detail: RoutingRuleDetailState
                   <tr>
                     <th className={styles.configTableHeader}>{t('pages:routing.provider')}</th>
                     <th className={styles.configTableHeader}>{t('pages:routing.model')}</th>
-                    <th className={styles.configTableHeader}>{t('pages:routing.weight')}</th>
+                    {showViewWeight && <th className={styles.configTableHeader}>{t('pages:routing.weight')}</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -129,7 +136,7 @@ export function RoutingRuleReadView({ detail }: { detail: RoutingRuleDetailState
                     <tr key={i}>
                       <td className={styles.configTableCell}>{e.provider || '--'}</td>
                       <td className={styles.configTableCell}>{e.model || '--'}</td>
-                      <td className={styles.configTableCell}>{e.weight}</td>
+                      {showViewWeight && <td className={styles.configTableCell}>{e.weight}</td>}
                     </tr>
                   ))}
                 </tbody>

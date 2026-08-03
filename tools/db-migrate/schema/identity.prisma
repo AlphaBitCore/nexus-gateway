@@ -197,7 +197,13 @@ model RefreshToken {
 model RevokedToken {
   id              BigInt   @id @default(autoincrement())
   scope           String // jti | user | device | session
-  targetJti       String?  @db.Uuid
+  /// TEXT, not uuid. This column holds the jti of whichever token was revoked,
+  /// and the two token families mint jti differently: refresh tokens use a uuid,
+  /// access tokens use 128 random bits base64url-encoded (RFC 7519 4.1.7 makes
+  /// jti an opaque string, not a uuid). Typed uuid, every access-token
+  /// revocation INSERT failed with SQLSTATE 22P02 and the revocation was never
+  /// recorded — while /oauth/revoke still answered 200.
+  targetJti       String?
   targetUserId    String?
   targetDeviceId  String?
   targetSessionId String?  @db.Uuid
@@ -207,6 +213,7 @@ model RevokedToken {
   actor           String?
 
   @@index([expiresAt])
+  @@index([targetJti])
   @@index([targetUserId])
   @@index([targetDeviceId])
   @@index([targetSessionId])

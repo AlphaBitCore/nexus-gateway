@@ -11,19 +11,19 @@
 // in its system prompt — there is no deterministic cost-comparator we
 // can oracle against. What we CAN assert deterministically:
 //
-//   1. The admin API accepts strategyType="smart" with a real
-//      routerProviderId / routerModelId pair and the operator-side
-//      matchConditions guard (E47-S8) requires
-//      requestedModelLiterals=["auto"].
-//   2. ai-gateway hot-reloads routing_rules (config_applies counter
-//      ticks) — proving the rule reached the engine.
-//   3. AdminAuditLog stamps the create row.
-//   4. A chat with model="auto" + our VK fires the rule:
-//      traffic_event.routing_rule_id == <our rule.ID>.
-//   5. traffic_event.routed_model_id is non-empty (engine resolved a
-//      concrete target — either the LLM's pick OR the fallback default
-//      configured on the rule).
-//   6. nexus_requests_total delta ≥ 1 across the chat.
+//  1. The admin API accepts strategyType="smart" with a real
+//     routerProviderId / routerModelId pair and the operator-side
+//     matchConditions guard requires
+//     requestedModelLiterals=["auto"].
+//  2. ai-gateway hot-reloads routing_rules (config_applies counter
+//     ticks) — proving the rule reached the engine.
+//  3. AdminAuditLog stamps the create row.
+//  4. A chat with model="auto" + our VK fires the rule:
+//     traffic_event.routing_rule_id == <our rule.ID>.
+//  5. traffic_event.routed_model_id is non-empty (engine resolved a
+//     concrete target — either the LLM's pick OR the fallback default
+//     configured on the rule).
+//  6. nexus_requests_total delta ≥ 1 across the chat.
 //
 // Hermetic: matchConditions pins BOTH virtualKeys=[<this-test's-VK>]
 // AND requestedModelLiterals=["auto"] (AND semantics per matcher.go),
@@ -131,7 +131,7 @@ func TestS075_SmartRouting(t *testing.T) {
 		"timeoutMs": 8000,
 	})
 
-	// E47-S8 operator-side guard: smart rules MUST pin
+	// Operator-side guard: smart rules MUST pin
 	// requestedModelLiterals=["auto"] — empty / non-auto literals
 	// are rejected at admin-API time. We also pin virtualKeys so
 	// the rule only fires for our test's VK (concurrent scenarios
@@ -267,13 +267,22 @@ func TestS075_SmartRouting(t *testing.T) {
 	// chat/completions request counter is exported as
 	// `requests_total{endpoint="chat/completions",status="2xx",...}`.
 	postMetrics, _ := helpers.ScrapeMetrics(ctx, sc.Env.AIGwURL)
+	// Two independent defects lived in this one call, and neither could ever have
+	// been noticed because ScrapeMetrics 401'd before reaching it.
+	//
+	// The name was passed WITHOUT the nexus_ prefix, and CounterSum prefix-matches
+	// on "<name>{", so it selected nothing whatever the labels said. And the
+	// endpoint label was the URL path "chat/completions" where the exported value
+	// is the endpoint KIND, "chat" — the same vocabulary as
+	// traffic_event.endpoint_type. Either alone makes the delta permanently 0.
 	matchLabels := map[string]string{
-		"endpoint": "chat/completions",
+		"endpoint": "chat",
 		"status":   "2xx",
 	}
-	reqDelta := postMetrics.CounterSum("requests_total", matchLabels) -
-		preMetrics.CounterSum("requests_total", matchLabels)
+	reqDelta := postMetrics.CounterSum("nexus_requests_total", matchLabels) -
+		preMetrics.CounterSum("nexus_requests_total", matchLabels)
 	if reqDelta < 1 {
-		t.Fatalf("requests_total{endpoint=chat/completions,status=2xx} delta=%g, want >= 1 — chat did not exercise gateway", reqDelta)
+		t.Fatalf("nexus_requests_total{endpoint=chat,status=2xx} delta=%g, want >= 1 — chat did "+
+			"not exercise gateway", reqDelta)
 	}
 }

@@ -6,57 +6,92 @@
   "adapterType": "xai",
   "models": [
     {
+      "code": "grok-4.5",
+      "name": "Grok 4.5",
+      "description": "xAI Grok 4.5 — current flagship. Strongest reasoning and tool use.",
+      "providerModelId": "grok-4.5",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 6,
+      "cachedInputReadPricePerMillion": 0.5,
+      "maxContextTokens": 500000
+    },
+    {
       "code": "grok-4.3",
       "name": "Grok 4.3",
-      "description": "xAI Grok 4.3 — current flagship. 1M context, stronger reasoning and tool use at lower cost than Grok 4.",
+      "description": "xAI Grok 4.3. 1M context at lower cost than 4.5.",
       "providerModelId": "grok-4.3",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 1.25,
+      "outputPricePerMillion": 2.5,
+      "cachedInputReadPricePerMillion": 0.2,
+      "maxContextTokens": 1000000
+    },
+    {
+      "code": "grok-4-1-fast-reasoning",
+      "name": "Grok 4.1 Fast (Reasoning)",
+      "description": "Low-cost 2M-context Grok with reasoning enabled.",
+      "providerModelId": "grok-4-1-fast-reasoning",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.2,
+      "outputPricePerMillion": 0.5,
+      "cachedInputReadPricePerMillion": 0.05,
+      "maxContextTokens": 2000000
+    },
+    {
+      "code": "grok-4-1-fast-non-reasoning",
+      "name": "Grok 4.1 Fast (Non-reasoning)",
+      "description": "Low-cost 2M-context Grok with reasoning disabled.",
+      "providerModelId": "grok-4-1-fast-non-reasoning",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.2,
+      "outputPricePerMillion": 0.5,
+      "cachedInputReadPricePerMillion": 0.05,
+      "maxContextTokens": 2000000
+    },
+    {
+      "code": "grok-code-fast",
+      "name": "Grok Code Fast",
+      "description": "xAI Grok tuned for fast code generation.",
+      "providerModelId": "grok-code-fast",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming",
-        "json_mode"
+        "reasoning",
+        "prompt_caching"
       ],
-      "inputPricePerMillion": 1.25,
-      "outputPricePerMillion": 2.5,
-      "maxContextTokens": 1000000,
-      "maxOutputTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "grok-3",
-      "name": "Grok 3",
-      "description": "Previous-generation xAI Grok flagship.",
-      "providerModelId": "grok-3",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
-      "inputPricePerMillion": null,
-      "outputPricePerMillion": null,
-      "maxContextTokens": 131072,
-      "maxOutputTokens": 8192,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
-    },
-    {
-      "code": "grok-3-mini",
-      "name": "Grok 3 Mini",
-      "description": "Smaller, faster Grok 3 variant.",
-      "providerModelId": "grok-3-mini",
-      "type": "chat",
-      "features": [
-        "streaming"
-      ],
-      "inputPricePerMillion": 0.3,
-      "outputPricePerMillion": 0.5,
-      "maxContextTokens": 131072,
-      "maxOutputTokens": 8192,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
+      "inputPricePerMillion": 0.2,
+      "outputPricePerMillion": 1.5,
+      "cachedInputReadPricePerMillion": 0.02,
+      "maxContextTokens": 256000
     }
   ]
 }

@@ -5,11 +5,11 @@
 package proxy
 
 import (
-	"net/http"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
@@ -40,14 +40,12 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 		return true, false
 	}
 
-	// PrepareBody runs the model-alias rewrite + codec
-	// translation that the executor would otherwise do
-	// internally. Only ProviderModelID and Format on the
-	// CallTarget matter for body preparation; the executor
-	// resolves the full target (BaseURL, APIKey, Extras)
-	// on the wire path. PrepareBody is idempotent so the
-	// executor running it again on the MISS path produces
-	// the same bytes.
+	// PrepareBody runs the model-alias rewrite + codec translation the
+	// executor would otherwise do internally, so the first attempt of a
+	// cache MISS reuses these bytes. bodyPrepCallTarget selects exactly the
+	// fields that shape the body; its contract explains why the wire fields
+	// are omitted and why the bytes must match the executor's re-prepared
+	// target on retry/failover.
 	//
 	// G3 (provider-adapter-architecture.md §11): PrepareBody's
 	// codec contract requires canonical OpenAI input. When the
@@ -58,13 +56,7 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 	// openairesponses.identityCodec (identity), which forwards it
 	// verbatim and the upstream 400s.
 	prepReq := buildProviderRequest(s.r, s.resolved, s.body, s.isStream, h.payloadCaptureConfig().MaxResponseBytes)
-	prepReq.Target = provcore.CallTarget{
-		ProviderID:      primary.ProviderID,
-		ProviderName:    primary.ProviderName,
-		Format:          provcore.Format(primary.AdapterType),
-		ProviderModelID: primary.ProviderModelID,
-		BaseURL:         primary.BaseURL,
-	}
+	prepReq.Target = bodyPrepCallTarget(primary)
 	// Cross-format canonicalization: "cross-format" depends on
 	// the endpoint shape, not just the wire format string:
 	//   - chat-completions ingress → canonicalize iff target wire
@@ -118,6 +110,8 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 	targetFmt := provcore.Format(primary.AdapterType)
 	ingressKind := typology.KindFromWireShape(s.resolved.WireShape)
 	isEmbeddingsIngress := ingressKind == typology.EndpointKindEmbeddings
+	isImagesIngress := ingressKind == typology.EndpointKindImageGeneration
+	isRerankIngress := ingressKind == typology.EndpointKindRerank
 	needsCanonicalization := false
 	if h.deps.CanonicalBridge != nil {
 		switch {
@@ -125,16 +119,33 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 			// Responses is chat-kind but has its own native-passthrough
 			// rule (only targets that natively serve /v1/responses).
 			needsCanonicalization = !h.deps.CanonicalBridge.ServesResponses(targetFmt, primary.ServesResponsesAPI)
-		case ingressKind == typology.EndpointKindChat, isEmbeddingsIngress:
+		case ingressKind == typology.EndpointKindChat, isEmbeddingsIngress, isImagesIngress, isRerankIngress:
+			// Images: this stage always runs (the modality cache-skip lane
+			// still prepares the upstream body), so without this arm a
+			// Gemini-routed image request would hand WireShapeOpenAIImages
+			// to the Gemini codec and die with a prepare-body 400 — the
+			// proxy prepare decision, the executor arm, and the egress skip
+			// must all agree (dispatch site 1 of 3).
 			needsCanonicalization = s.resolved.BodyFormat != targetFmt
 		}
 	}
 	if needsCanonicalization {
 		var canonBody []byte
 		var canonErr error
-		if isEmbeddingsIngress {
+		switch {
+		case isEmbeddingsIngress:
 			canonBody, canonErr = h.deps.CanonicalBridge.IngressEmbeddingsToCanonical(s.resolved.BodyFormat, prepReq.Body, prepReq.Target)
-		} else {
+		case isImagesIngress:
+			// Validation + identity (the image canonical IS the OpenAI
+			// ingress shape): prompt shape, the n fan-out bound, and the
+			// nexus-key reject bind here for the primary target.
+			canonBody, canonErr = h.deps.CanonicalBridge.IngressImagesToCanonical(s.resolved.BodyFormat, prepReq.Body, prepReq.Target)
+		case isRerankIngress:
+			// Validation + identity (the rerank canonical IS the Cohere
+			// ingress shape): query/documents/top_n validation binds here
+			// for the primary target.
+			canonBody, canonErr = h.deps.CanonicalBridge.IngressRerankToCanonical(s.resolved.BodyFormat, prepReq.Body, prepReq.Target)
+		default:
 			canonBody, canonErr = h.deps.CanonicalBridge.IngressChatToCanonical(s.resolved.BodyFormat, prepReq.Body, prepReq.Target)
 			// Stamp the streaming intent onto the canonical body. Gemini
 			// ingress signals streaming via the :streamGenerateContent URL,
@@ -146,21 +157,42 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 			if canonErr == nil && s.isStream {
 				canonBody = canonicalbridge.EnsureCanonicalStream(canonBody)
 			}
+			// This is the PRIMARY cross-format egress: attempt-0 sends
+			// cachePreparedBody and never reaches IngressChatToWire, so the
+			// nexus_thinking strip that leg applies must be mirrored here or
+			// the Anthropic-private per-block signature carrier egresses to a
+			// non-Anthropic OpenAI-wire upstream. Same bridge method both legs
+			// share; a no-thinking body pays only a substring check.
+			if canonErr == nil {
+				canonBody = h.deps.CanonicalBridge.StripInternalCarriersForTarget(canonBody, targetFmt)
+			}
 		}
 		if canonErr != nil {
-			h.writeError(s.w, s.rec, http.StatusBadRequest, "canonicalize ingress body: "+canonErr.Error())
+			h.writeCodecErr(s.w, s.rec, canonErr, "canonicalize ingress body: ")
 			return false, false
 		}
 		prepReq.Body = canonBody
-		prepReq.BodyFormat = provcore.FormatOpenAI
+		// Rerank's canonical format is Cohere (not OpenAI) — the ingress
+		// body IS the Cohere-shaped canonical; every other kind
+		// canonicalizes to the OpenAI shape.
+		if isRerankIngress {
+			prepReq.BodyFormat = provcore.FormatCohere
+		} else {
+			prepReq.BodyFormat = provcore.FormatOpenAI
+		}
 		// The cache-prep codec must encode to the TARGET adapter's
 		// native wire shape (e.g. anthropic-messages, gemini embedContent),
 		// not the caller's ingress shape — otherwise the target codec
 		// rejects "openai-chat"/"openai-embeddings". This matches the bytes
 		// the executor produces (cache-key + MISS-reuse parity).
-		if isEmbeddingsIngress {
+		switch {
+		case isEmbeddingsIngress:
 			prepReq.WireShape = h.deps.CanonicalBridge.EmbeddingsWireShapeForTarget(targetFmt)
-		} else {
+		case isImagesIngress:
+			prepReq.WireShape = h.deps.CanonicalBridge.ImagesWireShapeForTarget(targetFmt)
+		case isRerankIngress:
+			prepReq.WireShape = h.deps.CanonicalBridge.RerankWireShapeForTarget(targetFmt)
+		default:
 			prepReq.WireShape = h.deps.CanonicalBridge.ChatWireShapeForTarget(targetFmt)
 		}
 		if s.resolved.WireShape == typology.WireShapeOpenAIResponses {
@@ -176,7 +208,7 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 	prepStart := time.Now()
 	finalBody, finalRewrites, finalURLOverride, err := adapter.PrepareBody(prepReq)
 	if err != nil {
-		h.writeError(s.w, s.rec, http.StatusBadRequest, "prepare body: "+err.Error())
+		h.writeCodecErr(s.w, s.rec, err, "prepare body: ")
 		return false, false
 	}
 	s.phaseTimer.MarkBetween(traffic.PhaseReqAdapter, time.Since(prepStart))
@@ -184,4 +216,31 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 	s.cachePreparedRewrites = finalRewrites
 	s.cachePreparedURLOverride = finalURLOverride
 	return true, true
+}
+
+// bodyPrepCallTarget projects a routing-snapshot target onto the CallTarget
+// subset that shapes the upstream body — the single definition of which fields
+// PrepareBody is allowed to read. The executor's own CallTarget
+// (provtarget.PgResolver.Resolve) additionally carries wire/dispatch fields
+// (APIKey, credential identity, Extras); those must not influence the body,
+// or the cache stage's first-attempt body would diverge from the executor's
+// re-prepared retry/failover body — breaking both the cache key and
+// PrepareBody idempotency. TestBodyPrepCallTarget_WireFieldsInert pins that
+// contract.
+//
+// ServesResponsesAPI is deliberately IN the projection: the dispatch-level
+// native-leg triage reads it (a /v1/responses body headed to a
+// responses-serving target takes the RewriteNative differential), so it is a
+// body-shaping field — omitting it here would make the cache-prep and
+// executor legs triage the same request differently.
+func bodyPrepCallTarget(t routingcore.RoutingTarget) provcore.CallTarget {
+	return provcore.CallTarget{
+		ProviderID:         t.ProviderID,
+		ProviderName:       t.ProviderName,
+		Format:             provcore.Format(t.AdapterType),
+		ProviderModelID:    t.ProviderModelID,
+		BaseURL:            t.BaseURL,
+		MaxOutputTokens:    t.MaxOutputTokens,
+		ServesResponsesAPI: t.ServesResponsesAPI,
+	}
 }

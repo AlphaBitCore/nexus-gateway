@@ -169,9 +169,14 @@ func (s *Scheduler) WithMetrics(reg prometheus.Registerer) *Scheduler {
 		return s
 	}
 	f := promauto.With(reg)
+	// Namespace is "nexus" and the subsystem goes in Subsystem: a namespace is
+	// prefixed onto the name, so "nexus_hub" would put the service back in the
+	// series name — which the `job` label already carries
+	// (prometheus-naming-architecture.md §1).
 	s.leaderGauge = f.NewGauge(prometheus.GaugeOpts{
-		Namespace: "nexus_hub",
-		Name:      "scheduler_leader",
+		Namespace: "nexus",
+		Subsystem: "scheduler",
+		Name:      "leader",
 		Help: "Set to 1 when this Hub instance is the active scheduler leader " +
 			"(cfg.Scheduler.Enabled=true). Sum across all replicas must equal 1; " +
 			"0 = no leader, >1 = duplicate leaders running jobs independently.",

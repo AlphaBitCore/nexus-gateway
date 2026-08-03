@@ -126,7 +126,7 @@ func (h *Handler) CreateVirtualKey(c echo.Context) error {
 		if body.ProjectID == nil || *body.ProjectID == "" {
 			return c.JSON(http.StatusBadRequest, errJSON("projectId is required for application virtual keys", "validation_error", ""))
 		}
-		if msg := capApplicationExpiry(body.ExpiresAt); msg != "" {
+		if msg := requireApplicationExpiry(body.ExpiresAt); msg != "" {
 			return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 		}
 		vkStatus = "pending"
@@ -152,6 +152,9 @@ func (h *Handler) CreateVirtualKey(c echo.Context) error {
 	allowedModels := []byte("[]")
 	if body.AllowedModels != nil {
 		allowedModels = body.AllowedModels
+	}
+	if msg := validateAllowedModels(allowedModels); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
 
 	vk, err := h.vks.CreateVirtualKey(c.Request().Context(), vkstore.CreateVirtualKeyParams{
@@ -239,16 +242,13 @@ func (h *Handler) UpdateVirtualKey(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON(expiresAtErr, "validation_error", ""))
 	}
 
-	// Application VKs carry a maker-checker governance cap: their lifetime is
-	// bound to 3 months at create (vk.go CreateVirtualKey) and on renewal
-	// (approval.go RenewVirtualKey). The general PUT update path must enforce
-	// the SAME ceiling — otherwise an edit could set an arbitrarily-far expiry,
-	// or clear it to never-expire, and silently escape the re-approval cadence
-	// the cap exists to force. The check is
-	// scoped to vkType == "application": personal VKs have no cap and may carry
-	// any (or no) expiry, so they are intentionally exempt.
+	// Application VKs must always carry a future expiry — enforced identically
+	// at create (vk.go CreateVirtualKey) and renewal (approval.go
+	// RenewVirtualKey), so the PUT update path applies the same rule or an edit
+	// could clear it to never-expire. Scoped to vkType == "application":
+	// personal VKs may carry any (or no) expiry and are intentionally exempt.
 	if updateExpiresAt && existing.VKType != nil && *existing.VKType == "application" {
-		if msg := capApplicationExpiry(newExpiresAt); msg != "" {
+		if msg := requireApplicationExpiry(newExpiresAt); msg != "" {
 			return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 		}
 	}
@@ -264,6 +264,9 @@ func (h *Handler) UpdateVirtualKey(c echo.Context) error {
 	}
 	if body.AllowedModels != nil {
 		raw, _ := json.Marshal(body.AllowedModels)
+		if msg := validateAllowedModels(raw); msg != "" {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+		}
 		params.AllowedModels = raw
 	}
 

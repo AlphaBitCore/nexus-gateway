@@ -5,6 +5,8 @@ import { useMutation } from '@/hooks/useMutation';
 import { virtualKeyApi, projectApi, systemApi } from '@/api/services';
 import type { VirtualKey, VirtualKeyAllowedModelRef, TrafficEvent, AdminModelsByProvider, Project } from '@/api/types';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '@/constants/admin-api';
+import { utcToDateInput } from '@/lib/format';
+import { deriveUpdateExpiry } from '../expiryBounds';
 
 export function useVirtualKeyDetail() {
   const { id } = useParams<{ id: string }>();
@@ -51,6 +53,12 @@ export function useVirtualKeyDetail() {
   const [editSelectedModels, setEditSelectedModels] = useState<VirtualKeyAllowedModelRef[]>([]);
   const [editExpiresAt, setEditExpiresAt] = useState('');
   const [editNeverExpires, setEditNeverExpires] = useState(true);
+  // The expiry state startEditing seeded, kept so a save can tell whether the
+  // admin actually touched the field. The picker round-trips only a calendar
+  // day, so a stored instant's time component cannot survive a re-derive —
+  // an untouched field must be omitted from the PUT, not re-sent.
+  const [initialExpiresAt, setInitialExpiresAt] = useState('');
+  const [initialNeverExpires, setInitialNeverExpires] = useState(true);
 
   const { mutate: updateKey, loading: updating } = useMutation(
     (data: { id: string; body: unknown }) => virtualKeyApi.update(data.id, data.body as Record<string, unknown>),
@@ -68,10 +76,18 @@ export function useVirtualKeyDetail() {
     setEditEnabled(vk.enabled);
     setEditRateLimitRpm(vk.rateLimitRpm != null ? String(vk.rateLimitRpm) : '');
     setEditSelectedModels(Array.isArray(vk.allowedModels) ? vk.allowedModels : []);
-    setEditExpiresAt(vk.expiresAt ? vk.expiresAt.split('T')[0] : '');
-    // Application VKs always have an expiry; never-expires is only valid for
-    // personal VKs and is not shown on this admin surface.
-    setEditNeverExpires(false);
+    // Seed the picker with the calendar day the stored instant falls on in the
+    // display TZ — the same day the Info tab renders. Slicing the ISO string
+    // would seed the UTC day instead, so the page would show one date and the
+    // picker another for every admin whose zone disagrees with UTC.
+    const seededExpiresAt = vk.expiresAt ? utcToDateInput(vk.expiresAt) : '';
+    // A personal VK with no expiry is currently never-expiring; seed the toggle
+    // from that state so cancelling out of the form cannot silently change it.
+    const seededNeverExpires = vk.vkType !== 'application' && !vk.expiresAt;
+    setEditExpiresAt(seededExpiresAt);
+    setEditNeverExpires(seededNeverExpires);
+    setInitialExpiresAt(seededExpiresAt);
+    setInitialNeverExpires(seededNeverExpires);
     setIsEditing(true);
   };
 
@@ -85,10 +101,17 @@ export function useVirtualKeyDetail() {
         enabled: editEnabled,
         rateLimitRpm: editRateLimitRpm ? Number(editRateLimitRpm) : undefined,
         allowedModels: editSelectedModels,
-        // Application VKs always require an expiry; stamp end-of-day UTC so the
-        // date is usable through the full calendar day and satisfies the backend's
-        // RFC3339 parser. Never send null (never-expire) for application VKs.
-        expiresAt: editExpiresAt ? `${editExpiresAt}T23:59:59Z` : undefined,
+        // Application VKs must keep a non-null expiry; personal VKs may clear
+        // theirs to never-expire; an untouched expiry is omitted so saving an
+        // unrelated field cannot move it. deriveUpdateExpiry owns those rules
+        // and mirrors requireApplicationExpiry on the server.
+        expiresAt: deriveUpdateExpiry({
+          vkType: vk.vkType,
+          editExpiresAt,
+          editNeverExpires,
+          initialExpiresAt,
+          initialNeverExpires,
+        }),
       },
     });
   };

@@ -82,6 +82,7 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 			openAIRole = "user"
 		}
 		text := ""
+		reasoning := ""
 		var toolCalls []any
 		var toolMsgs []map[string]any
 		var images []map[string]any
@@ -89,6 +90,20 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 		if parts.IsArray() {
 			parts.ForEach(func(_, p gjson.Result) bool {
 				if t := p.Get("text"); t.Exists() {
+					// A thought part is the model's reasoning, not visible
+					// content — folding it into text would corrupt a
+					// replayed history and mislead the router/hooks. Route
+					// it to reasoning_content, the L2 universal field, so
+					// the response-side symmetry (reasoning_content →
+					// {text,thought:true}) round-trips instead of the
+					// thinking summary leaking into the assistant's answer.
+					if p.Get("thought").Bool() {
+						if reasoning != "" {
+							reasoning += "\n"
+						}
+						reasoning += t.String()
+						return true
+					}
 					if text != "" {
 						text += "\n"
 					}
@@ -162,12 +177,12 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 		}
 		if len(toolMsgs) > 0 {
 			if text != "" || len(images) > 0 {
-				messages = append(messages, geminiCompositeMessage(openAIRole, text, images, nil))
+				messages = append(messages, geminiCompositeMessage(openAIRole, text, reasoning, images, nil))
 			}
 			messages = append(messages, toolMsgs...)
 			return true
 		}
-		messages = append(messages, geminiCompositeMessage(openAIRole, text, images, toolCalls))
+		messages = append(messages, geminiCompositeMessage(openAIRole, text, reasoning, images, toolCalls))
 		return true
 	})
 	if len(messages) == 0 {
@@ -232,8 +247,11 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 // carry text, image_url parts, and (assistant-side) tool_calls. Pure text
 // turns stay as a string content field for compatibility with strict OpenAI
 // SDKs; mixed content collapses to the parts-array form.
-func geminiCompositeMessage(role, text string, images []map[string]any, toolCalls []any) map[string]any {
+func geminiCompositeMessage(role, text, reasoning string, images []map[string]any, toolCalls []any) map[string]any {
 	entry := map[string]any{"role": role}
+	if role == "assistant" && reasoning != "" {
+		entry["reasoning_content"] = reasoning
+	}
 	if role == "assistant" && len(toolCalls) > 0 {
 		entry["tool_calls"] = toolCalls
 	}

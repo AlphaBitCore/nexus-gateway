@@ -27,7 +27,7 @@ type AIGuardConfig struct {
 	// InputStrategy controls which portion of the conversation is
 	// sent to the classifier. One of: last_user, system_plus_last_user,
 	// recent_turns, head_plus_tail, full_truncated. Defaults to
-	// "system_plus_last_user".
+	// "full_truncated".
 	InputStrategy string `json:"inputStrategy"`
 	// ModelContextLimit is the judge model's context window in tokens.
 	// 0 = unknown / not configured; classify falls back to 8192 when zero.
@@ -96,7 +96,7 @@ func defaultAIGuardConfig() *AIGuardConfig {
 	return &AIGuardConfig{
 		ID: "singleton", BackendMode: "configured_provider",
 		TimeoutMs: 5000, CacheTTLSeconds: 600,
-		InputStrategy: "system_plus_last_user", ModelContextLimit: 0,
+		InputStrategy: "full_truncated", ModelContextLimit: 0,
 	}
 }
 

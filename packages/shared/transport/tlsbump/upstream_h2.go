@@ -48,7 +48,30 @@ type fingerprintDialer struct {
 
 func (d *fingerprintDialer) dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	rawHello, _ := ctx.Value(clientHelloKey{}).([]byte)
-	return dialWithFingerprint(ctx, network, addr, rawHello, d.dialer, d.upstreamProxy)
+	return dialWithFingerprint(ctx, network, addr, rawHello, d.dialer, d.upstreamProxy, alpnBothProtocols)
+}
+
+// dialH1 is the dial for the STDLIB transport, and it offers http/1.1 only.
+//
+// The stdlib transport is an HTTP/1.x parser. Sharing the [h2, http/1.1] offer
+// with it lets the upstream choose h2 on a connection nothing can read as h2,
+// and the failure is not a clean error: the transport reads the peer's h2
+// SETTINGS frame as a status line and reports
+// `malformed HTTP response "\x00\x00\x12\x04..."`, which surfaces to the
+// client as a 502.
+//
+// That was reachable in production, permanently, per host. The dispatcher caches
+// the negotiated protocol per authority and never invalidates it, so ONE
+// http/1.1 negotiation pins the authority to this transport for the life of the
+// process — and every later request to a host that prefers h2 (api.openai.com
+// does) then 502s. Measured: a poisoned process returned 502 on three identical
+// requests that a freshly restarted one answered 200 three times.
+//
+// Pinning the offer to http/1.1 here makes the cached decision self-consistent:
+// an authority routed to the h1 transport now gets an h1 connection.
+func (d *fingerprintDialer) dialH1(ctx context.Context, network, addr string) (net.Conn, error) {
+	rawHello, _ := ctx.Value(clientHelloKey{}).([]byte)
+	return dialWithFingerprint(ctx, network, addr, rawHello, d.dialer, d.upstreamProxy, alpnHTTP1Only)
 }
 
 // protocolDispatchRoundTripper routes each upstream MITM request to an HTTP/2 or

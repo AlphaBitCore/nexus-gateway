@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Badge,
@@ -8,6 +9,7 @@ import {
 } from '@/components/ui';
 import type { ProviderDetailState } from './useProviderDetail';
 import { ModelFormDrawer } from './ModelFormDrawer';
+import { CatalogSyncDialog } from './CatalogSyncDialog';
 import styles from './ProviderDetail.module.css';
 import { formatTokens } from '@/lib/format';
 
@@ -18,8 +20,10 @@ interface ProviderModelsTabProps {
 export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
   const { t } = useTranslation();
   const {
+    provider,
     models,
-    canUpdate, canDelete, canCreateModel,
+    refetchModels,
+    canCreateModel, canUpdateModel, canDeleteModel,
     showModelForm, setShowModelForm,
     resetModelForm,
     editingModelId, setEditingModelId,
@@ -28,6 +32,14 @@ export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
     toggleModelEnabled,
     setDeletingModel,
   } = detail;
+
+  const [showCatalogSync, setShowCatalogSync] = useState(false);
+
+  // Syncing writes both new rows and corrections to existing ones, so it needs
+  // the model create and the model update permission — not a permission of its
+  // own. Both are required up front: an apply that starts with only one of them
+  // commits part of the diff before the backend rejects the rest.
+  const canSyncFromCatalog = canCreateModel && canUpdateModel;
 
   // Create + edit share one right slide-out drawer. The mode is derived from
   // which trigger opened it; the create/update mutations close it on success
@@ -48,10 +60,27 @@ export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
   return (
     <div className={styles.modelTabStack}>
       <div className={styles.toolbarStart}>
-        {canCreateModel && (
-          <Button onClick={() => setShowModelForm(true)}>{t('pages:providers.addModel')}</Button>
-        )}
+        <Stack direction="horizontal" gap="sm">
+          {canCreateModel && (
+            <Button onClick={() => setShowModelForm(true)}>{t('pages:providers.addModel')}</Button>
+          )}
+          {canSyncFromCatalog && provider && (
+            <Button variant="secondary" onClick={() => setShowCatalogSync(true)}>
+              {t('pages:providers.catalogSyncButton')}
+            </Button>
+          )}
+        </Stack>
       </div>
+
+      {provider && (
+        <CatalogSyncDialog
+          open={showCatalogSync}
+          onClose={() => setShowCatalogSync(false)}
+          provider={provider}
+          models={models}
+          onApplied={refetchModels}
+        />
+      )}
 
       <Card>
       {models.length === 0 ? (
@@ -77,7 +106,9 @@ export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
                       ? t(`pages:providers.modelStatus${(m.status ?? 'active').charAt(0).toUpperCase() + (m.status ?? 'active').slice(1)}`, m.status ?? 'active')
                       : t('common:disabled')}
                   </Badge>
-                  {m.inputPricePerMillion == null && (
+                  {(m.inputPricePerMillion == null ||
+                    (m.type === 'realtime' &&
+                      (m.audioInputPricePerMillion == null || m.audioOutputPricePerMillion == null))) && (
                     <Badge variant="warning">
                       {t('pages:providers.pricingNotSet')}
                     </Badge>
@@ -155,15 +186,15 @@ export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
                 </div>
               )}
               <div className={styles.modelCardActions}>
-                {canUpdate && (
+                {canUpdateModel && (
                   <Button variant="secondary" size="sm" onClick={() => startEditingModel(m)}>{t('common:edit')}</Button>
                 )}
-                {canUpdate && (
+                {canUpdateModel && (
                   <Button variant="ghost" size="sm" onClick={() => toggleModelEnabled({ id: m.id, enabled: !m.enabled })}>
                     {m.enabled ? t('pages:providers.disable') : t('pages:providers.enable')}
                   </Button>
                 )}
-                {canDelete && (
+                {canDeleteModel && (
                   <Button variant="danger" size="sm" onClick={() => setDeletingModel(m)}>{t('common:delete')}</Button>
                 )}
               </div>

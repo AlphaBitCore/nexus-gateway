@@ -1,6 +1,8 @@
 module github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli
 
-go 1.25.0
+go 1.26.0
+
+toolchain go1.26.5
 
 require (
 	charm.land/bubbles/v2 v2.1.0
@@ -12,7 +14,7 @@ require (
 	github.com/tidwall/gjson v1.19.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/term v0.44.0
-	golang.org/x/tools v0.45.0
+	golang.org/x/tools v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -68,11 +70,11 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
-	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/net v0.55.0
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/net v0.56.0
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 )
 
 replace github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core => ../nexus-agent-core

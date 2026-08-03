@@ -175,7 +175,7 @@ func TestMountRoutes_nilAiguardNoMountAIGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapterReg := InitProviderRegistry(allowlist, discardLogger())
-	hookReg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	hookReg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestInitQuota_withNilPoolDB(t *testing.T) {
 // Reload on a HookConfigCache backed by nil DB (inner func returns early)
 // does not panic.
 func TestInitHookConfigCache_reloadWithNilDBDoesNotPanic(t *testing.T) {
-	hookReg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	hookReg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestInitIntrospectRegistry_snapshotInvokesCacheLayerClosures(t *testing.T) 
 	layer := newTestCacheLayer(t)
 	pcs := payloadcapture.NewStore(payloadcapture.DefaultConfig())
 	pCache := quota.NewPolicyCacheWithPgxPool(nil, discardLogger())
-	hookReg2, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	hookReg2, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package errors
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -28,6 +29,14 @@ func (ErrorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 	switch pe.Type {
 	case "INVALID_ARGUMENT", "FAILED_PRECONDITION":
 		pe.Code = provcore.CodeInvalidRequest
+		// Context overflow arrives as 400 INVALID_ARGUMENT with the
+		// message "The input token count (N) exceeds the maximum number
+		// of tokens allowed (M)" (observed on gemini-2.x 400s).
+		// Classified separately so the executor can fail over to a
+		// larger-context target.
+		if strings.Contains(pe.Message, "exceeds the maximum number of tokens") {
+			pe.Code = provcore.CodeContextOverflow
+		}
 	case "NOT_FOUND":
 		pe.Code = provcore.CodeInvalidRequest
 	case "UNAUTHENTICATED", "PERMISSION_DENIED":

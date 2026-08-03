@@ -39,6 +39,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/status"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	metricsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/profiling"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/runtimemem"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 
@@ -91,6 +93,26 @@ func cmdRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
 		return 1
 	}
+
+	// Runtime self-limits and the opt-in profiler, wired here — inside `run` —
+	// rather than in main(), so the one-shot commands (version, enroll,
+	// install-ca, …) keep their current behaviour and startup cost. `run` is
+	// the only long-lived process, and the only one where a heap burst or a
+	// profile capture is meaningful.
+	//
+	// Both are no-ops unless explicitly enabled: AutoSetMemoryLimit returns
+	// immediately when GOMEMLIMIT is already set or no cgroup limit is
+	// readable, and profiling.Start returns immediately unless
+	// NEXUS_PPROF_ENABLED is truthy. That matters on endpoint hardware —
+	// the agent runs on user laptops, so it must not open a port, spawn a
+	// goroutine, or write a profile file that nobody asked for.
+	//
+	// Until now the agent was the ONLY long-running service in the repo with
+	// neither wired (ai-gateway, compliance-proxy and nexus-hub all have
+	// both), which meant a field report of "the agent is eating CPU/RAM" had
+	// no way to be answered with data.
+	runtimemem.AutoSetMemoryLimit(logger)
+	profiling.Start("nexus-agent")
 
 	// macOS: flush mDNSResponder on every daemon startup so launchd
 	// respawns, OS reboots, and manual restarts all leave the user's
@@ -490,7 +512,7 @@ func cmdRun(args []string) int {
 	// Linux/Windows: wire the shared/tlsbump bridge deps onto the platform
 	// BEFORE Start launches the accept loop (no-op on macOS, which wires its
 	// own deps in WireDarwinBridge below).
-	wiring.WireInspectBridge(plat, wiring.BridgeDepsArgs{
+	inspectAuditWriter := wiring.WireInspectBridge(plat, wiring.BridgeDepsArgs{
 		Keystore:      platformKeystore,
 		Logger:        logger,
 		AgentPipeline: comp.AgentPipeline,
@@ -502,7 +524,19 @@ func cmdRun(args []string) int {
 		NormalizeRegistry:    normalizeRegistry,
 		AttestationSigner:    attestationSigner,
 		UpstreamProxy:        cfg.UpstreamProxy,
+		AuditLossMode:        cfg.AuditLossMode,
 	})
+	// Drain the inspect path's audit writer at shutdown. It batches behind a
+	// channel, so without this the rows still buffered when the daemon stops are
+	// simply gone — the one loss mode nobody chose. Nil on darwin (the NE bridge
+	// owns its own writer) and when the platform has no inspect path.
+	if inspectAuditWriter != nil {
+		defer func() {
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer closeCancel()
+			_ = inspectAuditWriter.Close(closeCtx)
+		}()
+	}
 
 	// Keep the platform's QUIC-force-TCP-fallback allowlist in sync with the
 	// Hub-pushed forceQUICFallbackBundles config (Windows NexusWFP only; no-op
@@ -525,6 +559,7 @@ func cmdRun(args []string) int {
 		AuditQueue:           auditQueue,
 		StreamingPolicyStore: comp.StreamingPolicyStore,
 		AttestationSigner:    attestationSigner,
+		AuditLossMode:        cfg.AuditLossMode,
 	})
 	if bridgeCloser != nil {
 		defer bridgeCloser.Close() //nolint:errcheck

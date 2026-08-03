@@ -17,7 +17,10 @@ on:
       - 'go.work'
       - '.github/workflows/go-ci.yml'
   pull_request:
-    branches: [main]
+    # develop is where feature branches land FIRST. Gating only on main left
+    # that hop unchecked: a 160-commit feature branch reported no checks at
+    # all, so every gate below first saw the change one merge too late.
+    branches: [main, develop]
     paths:
       - 'packages/compliance-proxy/**'
       - 'packages/agent/**'
@@ -50,7 +53,7 @@ jobs:
       agent-ui: ${{ steps.detect.outputs.agent-ui }}
       integration: ${{ steps.detect.outputs.integration }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: detect
@@ -130,10 +133,10 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.detect-modules.outputs.modules) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
           cache-dependency-path: |
             packages/compliance-proxy/go.sum
             packages/agent/go.sum
@@ -157,11 +160,21 @@ jobs:
       - name: go test (workspace mode)
         run: cd packages/${{ matrix.module }} && go test -race -count=1 -timeout 5m ./...
 
+      - name: agent cross-build (linux / darwin / windows)
+        # The agent ships on three platforms and CI builds only the runner's own,
+        # so a platform-specific break — a field added to DarwinBridgeArgs without
+        # mirroring it into wire_bridge_other.go, a syscall that does not exist on
+        # Windows — compiled clean here and shipped broken. The gate existed but was
+        # referenced nowhere outside package.json, which made "enforced" a claim
+        # nothing checked.
+        if: matrix.module == 'agent'
+        run: bash scripts/check-agent-cross-build.sh
+
       - name: go build (standalone — GOWORK=off)
         # Run for every matrix module: each module must resolve its
         # sibling dependencies via the relative replace directives in
         # go.mod without relying on the go.work overlay.  Formerly gated
-        # to shared only (F-0318 — the guard was too narrow).
+        # to shared only, which was too narrow.
         env:
           GOWORK: 'off'
         run: cd packages/${{ matrix.module }} && go build ./...
@@ -170,10 +183,10 @@ jobs:
     name: Core-path 100% coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
           cache-dependency-path: |
             packages/agent/go.sum
             packages/ai-gateway/go.sum
@@ -197,10 +210,10 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.detect-modules.outputs.lint-modules) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
           cache-dependency-path: |
             packages/compliance-proxy/go.sum
             packages/agent/go.sum
@@ -244,10 +257,10 @@ jobs:
     # without running Vite first.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
           cache-dependency-path: packages/agent/ui/go.sum
 
       - name: go vet
@@ -265,10 +278,10 @@ jobs:
     if: needs.detect-modules.outputs.integration == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
           cache-dependency-path: tests/integration-go/go.sum
 
       - name: go vet
@@ -288,10 +301,10 @@ jobs:
     name: Workspace integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
 
       - name: gofmt (repo-wide)
         run: |

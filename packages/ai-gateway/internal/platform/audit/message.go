@@ -86,6 +86,8 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		Action:            "traffic",
 		TraceID:           rec.TraceID,
 		ExternalRequestID: rec.ClientRequestID,
+		EndUserID:         rec.EndUserID,
+		SessionID:         rec.SessionID,
 		Timestamp:         rec.Timestamp,
 		SourceIP:          rec.SourceIP,
 		TargetHost:        rec.TargetHost,
@@ -122,6 +124,8 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		GatewayCacheKind:       string(rec.GatewayCacheKind),
 		GatewayCacheL2EntryKey: rec.GatewayCacheL2EntryKey,
 		ProviderCacheStatus:    string(rec.ProviderCacheStatus),
+		ArtifactRefs:           rec.ArtifactRefs,
+		ComplianceCoverage:     rec.ComplianceCoverage,
 		RoutedProviderID:       rec.RoutedProviderID,
 		RoutedProviderName:     rec.RoutedProviderName,
 		RoutedModelID:          rec.RoutedModelID,
@@ -251,10 +255,10 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 	// The normalized projection is never persisted — the control plane
 	// recomputes it at view time from this (already-redacted) raw body.
 	msg.RequestBody = spillstore.EmitBody(ctx, w.spill, threshold,
-		redact.StorageRawBody(rec.RequestBody, rec.RequestBodyRedacted, rec.RequestAction),
+		w.gateStorageBody(rec.RequestBody, rec.RequestBodyRedacted, rec.RequestAction, "request", rec.RequestID),
 		rec.RequestContentType, rec.RequestID, "request", rec.RequestTruncated, w.logger)
 	msg.ResponseBody = spillstore.EmitBody(ctx, w.spill, threshold,
-		redact.StorageRawBody(rec.ResponseBody, rec.ResponseBodyRedacted, rec.ResponseAction),
+		w.gateStorageBody(rec.ResponseBody, rec.ResponseBodyRedacted, rec.ResponseAction, "response", rec.RequestID),
 		rec.ResponseContentType, rec.RequestID, "response", rec.ResponseTruncated, w.logger)
 	if rec.InternalPurpose != "" {
 		p := rec.InternalPurpose
@@ -291,4 +295,28 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		}
 	}
 	return msg
+}
+
+// gateStorageBody runs the SHARED redact gate — the same
+// redact.StorageRawBodyChecked the compliance proxy and the agent go through —
+// and reports an action it could not name.
+//
+// This used to call redact.StorageRawBody directly and rely on every producer
+// stamping a non-empty action, which the gateway did at each of its own call
+// sites while the shared emitter did not. The empty-action rule now lives in the
+// gate for all three services, so a producer that leaves the action unset gets
+// the same treatment here as it does there, and an action that is set to
+// something nobody recognises gets a log line instead of a NULL body.
+func (w *Writer) gateStorageBody(captured, redacted []byte, a decision.Action, stage, requestID string) []byte {
+	body, ok := redact.StorageRawBodyChecked(captured, redacted, a)
+	if !ok && w.logger != nil {
+		w.logger.Warn("audit: unrecognised match action; the captured body is NOT persisted",
+			"stage", stage,
+			"action", string(a),
+			"request_id", requestID,
+			"captured_bytes", len(captured),
+			"remedy", "the producer must set a decision.Action of approve, redact or block (empty means approve)",
+		)
+	}
+	return body
 }

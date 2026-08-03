@@ -394,13 +394,13 @@ func (j *ThingRollup5mJob) emitThingEventMetrics(
 
 	isSuccess := sc >= 200 && sc < 300 && deref5m(errorCode) == ""
 	if isSuccess && !cacheHitVal {
-		billed := cost
-		// excludeInternalOpsFromBilled mirrors fleet rollup; default false
-		// (include internal-ops in billed total). Flip true to exclude.
-		if !j.excludeInternalOpsFromBilled {
-			billed += derefFloat5m(embeddingCostUsd) + derefFloat5m(aiGuardCostUsd)
-		}
-		add(metrics.MetricBilledCostUSD, billed)
+		// billed passes through estimated unchanged — same invariant as the
+		// fleet rollup, and for the same reason: the gateway's live quota
+		// counter charges estimated only, and its Backfill re-seeds from this
+		// metric, so anything added here makes the counter jump on restart.
+		// j.excludeInternalOpsFromBilled is ignored for the same reason it is
+		// ignored there. See rollup_5m.go.
+		add(metrics.MetricBilledCostUSD, cost)
 		add(metrics.MetricBilledTokens, float64(derefInt5m(totalTokens)))
 	}
 

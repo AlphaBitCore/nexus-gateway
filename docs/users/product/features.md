@@ -54,6 +54,13 @@ UI section names match the sidebar labels in `packages/control-plane-ui/src/i18n
 | **Vision input** | image attachments preserved through codec translation | (per-call) |
 | **Structured outputs** | JSON-schema response format | (per-call) |
 | **Reasoning tokens** | provider reasoning fields preserved through codec translation | (per-call) |
+| **`/v1/images/generations`** | image generation (OpenAI + Gemini image models; prompt compliance-scanned with generative hard-block) | AI Gateway `:3050` |
+| **`/v1/audio/speech`** | text-to-speech (input text compliance-scanned) | AI Gateway `:3050` |
+| **`/v1/audio/transcriptions`, `/v1/audio/translations`** | speech-to-text (multipart upload; the `prompt` field is compliance-scanned with redact-re-emit) | AI Gateway `:3050` |
+| **`/v1/videos`** (+ poll / content / delete) | async video generation (Sora; Gemini Veo cross-shape leg) with a gateway-owned job store and estimate-as-floor billing | AI Gateway `:3050` |
+| **`GET /v1/realtime`** | realtime voice — WebSocket relay to the OpenAI Realtime API (dark-launch: requires the model on the key's allowed-model list) | AI Gateway `:3050` |
+| **`/v1/rerank`** | document rerank (Cohere-format ingress; query + every document compliance-scanned with in-place redaction) | AI Gateway `:3050` |
+| **`POST /v1/guardrail`** | standalone compliance verdict (allow / block / redact) from the same hook pipeline the inline path runs — no LLM relay | AI Gateway `:3050` |
 
 ## Identity and access
 

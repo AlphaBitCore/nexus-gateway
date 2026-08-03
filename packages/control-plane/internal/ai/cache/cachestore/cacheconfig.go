@@ -11,42 +11,13 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/cacheconfig"
 )
 
-// GetCacheGlobalConfig returns the singleton global cache config row.
-// If the row is somehow missing (shouldn't happen — seeded by migration),
-// returns a zero-value GlobalConfig with all booleans false.
-func (store *Store) GetCacheGlobalConfig(ctx context.Context) (cacheconfig.GlobalConfig, error) {
-	var raw []byte
-	err := store.pool.QueryRow(ctx,
-		`SELECT config FROM cache_global_config WHERE id = 'singleton'`,
-	).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return cacheconfig.GlobalConfig{}, nil
-	}
-	if err != nil {
-		return cacheconfig.GlobalConfig{}, fmt.Errorf("get cache_global_config: %w", err)
-	}
-	var cfg cacheconfig.GlobalConfig
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return cacheconfig.GlobalConfig{}, fmt.Errorf("unmarshal cache_global_config: %w", err)
-		}
-	}
-	return cfg, nil
-}
-
-// PutCacheGlobalConfig upserts the singleton row.
-func (store *Store) PutCacheGlobalConfig(ctx context.Context, cfg cacheconfig.GlobalConfig, updatedBy string) error {
-	raw, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshal cache_global_config: %w", err)
-	}
-	_, err = store.pool.Exec(ctx, `
-		INSERT INTO cache_global_config (id, config, updated_at, updated_by)
-		VALUES ('singleton', $1, NOW(), $2)
-		ON CONFLICT (id) DO UPDATE SET config = $1, updated_at = NOW(), updated_by = $2
-	`, raw, updatedBy)
-	return err
-}
+// Tier 1 is retired. The two knobs it carried — the cache master kill switch
+// and the global normaliser gate — are gone: emergency cache-off is served by
+// the fleet disable-all and by Emergency Passthrough's bypassCache, and the
+// upstream rewrite is demand-driven off the Tier-2/3 rule + marker-inject
+// settings. The `cache_global_config` singleton table is therefore no longer
+// read or written by anything; it is left in place (no migration) and can be
+// dropped in a later cleanup.
 
 // GetCacheAdapterConfig returns the Tier-2 row for the given adapter_type.
 // Returns (zero, false, nil) if the row does not exist.
@@ -185,10 +156,6 @@ func (store *Store) ListCacheProviderConfigs(ctx context.Context) (map[string]ca
 // Called by every cache-mutating handler after persisting its tier-specific
 // change, and by the reconcile job when comparing CP DB to thing.desired.
 func (store *Store) AssembleCacheConfigBlob(ctx context.Context) (cacheconfig.CacheConfigBlob, error) {
-	global, err := store.GetCacheGlobalConfig(ctx)
-	if err != nil {
-		return cacheconfig.CacheConfigBlob{}, err
-	}
 	adapters, err := store.ListCacheAdapterConfigs(ctx)
 	if err != nil {
 		return cacheconfig.CacheConfigBlob{}, err
@@ -198,7 +165,6 @@ func (store *Store) AssembleCacheConfigBlob(ctx context.Context) (cacheconfig.Ca
 		return cacheconfig.CacheConfigBlob{}, err
 	}
 	return cacheconfig.CacheConfigBlob{
-		Global:    global,
 		Adapters:  adapters,
 		Providers: providers,
 	}, nil

@@ -3,14 +3,14 @@
     "id": "singleton",
     "backend_mode": "configured_provider",
     "provider_id": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
-    "model_id": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+    "model_id": "model:gpt-4o-mini",
     "external_url": null,
     "custom_headers": null,
     "prompt_template": "You are a security classifier for enterprise AI traffic. Analyze the\nprovided CONTENT for the detector type {{.DetectorType}}. Return ONLY\nvalid JSON matching this schema:\n\n{\"decision\":\"approve|reject_hard|reject_soft|modify\",\n \"confidence\":<0.0-1.0>,\n \"reason\":\"<short human-readable explanation>\",\n \"labels\":[\"<tag>\",\"<tag>\"],\n \"modified_content\":<string or null>}\n\nGuidelines:\n- reject_hard: clear, high-confidence policy violation. Use sparingly.\n- reject_soft: likely violation; the caller may warn instead of blocking.\n- approve: content is acceptable for the detector type.\n- modify: return a sanitized replacement in `modified_content`.\n\nContext:\n- Target provider: {{.TargetProvider}}\n- Target model: {{.TargetModel}}\n- Upstream tags: {{.TagsJoined}}\n\nCONTENT:\n<<<\n{{.Content}}\n>>>\n",
     "timeout_ms": 5000,
     "cache_ttl_seconds": 600,
     "backend_fingerprint": "",
-    "input_strategy": "system_plus_last_user",
+    "input_strategy": "full_truncated",
     "model_context_limit": 0,
     "updated_at": "2026-05-08T14:46:09.555+00:00"
   }

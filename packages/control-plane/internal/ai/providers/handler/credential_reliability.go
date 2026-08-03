@@ -13,6 +13,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
@@ -50,7 +51,11 @@ func (h *Handler) ProbeCredential(c echo.Context) error {
 		rawBody = []byte("{}")
 	}
 
-	gwURL := strings.TrimRight(h.proxy.AIGatewayURL, "/") + "/internal/v1/credentials/" + id + "/probe"
+	gwBase, err := h.aiGatewayBase(ctx)
+	if err != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", err)
+	}
+	gwURL := strings.TrimRight(gwBase, "/") + "/internal/v1/credentials/" + id + "/probe"
 	client := nexushttp.New(nexushttp.Config{
 		Timeout:        35 * time.Second,
 		Caller:         "cp-credential-probe",

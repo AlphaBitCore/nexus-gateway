@@ -20,12 +20,13 @@ var providerColsForLayer = []string{
 	"pathPrefix", "apiVersion", "region", "enabled", "serves_responses_api",
 }
 
-// modelColsForLayer mirrors the SELECT list for model queries (23 columns).
+// modelColsForLayer mirrors the SELECT list for model queries (26 columns).
 var modelColsForLayer = []string{
 	"id", "code", "name", "providerId", "p_name", "p_adapter_type",
 	"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled",
 	"inputPricePerMillion", "outputPricePerMillion",
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"features", "maxContextTokens", "maxOutputTokens",
 	"aliases", "inputModalities", "outputModalities",
 	"lifecycle", "capabilityJson",
@@ -160,7 +161,7 @@ func TestProviderStoreAdapter_GetProviderByID_noExtras(t *testing.T) {
 	}
 }
 
-// makeTestModelRow builds a 23-value row matching the cachelayer loadModels
+// makeTestModelRow builds a 26-value row matching the cachelayer loadModels
 // SELECT (exact column order from loaders.go).
 func makeTestModelRow(id, code, providerID string, enabled bool) []any {
 	displayName := "OpenAI"
@@ -173,6 +174,7 @@ func makeTestModelRow(id, code, providerID string, enabled bool) []any {
 		"openai", "openai", &displayName, "https://api.openai.com",
 		code, "chat", enabled,
 		&inP, &outP, &crP, &cwP,
+		(*string)(nil), (*string)(nil), (*string)(nil),
 		[]string{"vision"},
 		pgtype.Int4{Int32: 128000, Valid: true},
 		pgtype.Int4{Int32: 16384, Valid: true},

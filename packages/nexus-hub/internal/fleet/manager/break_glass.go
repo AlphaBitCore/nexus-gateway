@@ -111,7 +111,7 @@ func ValidateBreakGlassReport(req ShadowReportRequest) error {
 func validateBreakGlassState(key string, state any) error {
 	raw, err := json.Marshal(state)
 	if err != nil {
-		return fmt.Errorf("%w: marshal %s: %v", ErrBreakGlassStateInvalid, key, err)
+		return fmt.Errorf("%w: marshal %s: %w", ErrBreakGlassStateInvalid, key, err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -119,12 +119,12 @@ func validateBreakGlassState(key string, state any) error {
 	case configkey.Killswitch:
 		var v interception.Killswitch
 		if err := dec.Decode(&v); err != nil {
-			return fmt.Errorf("%w: %s: %v", ErrBreakGlassStateInvalid, key, err)
+			return fmt.Errorf("%w: %s: %w", ErrBreakGlassStateInvalid, key, err)
 		}
 	case configkey.Exemptions:
 		var v identity.ActiveExemptions
 		if err := dec.Decode(&v); err != nil {
-			return fmt.Errorf("%w: %s: %v", ErrBreakGlassStateInvalid, key, err)
+			return fmt.Errorf("%w: %s: %w", ErrBreakGlassStateInvalid, key, err)
 		}
 	default:
 		// Unreachable in normal flow: callers gate on breakGlassWritableKeys

@@ -135,10 +135,12 @@ HTTP API. Agent is a pure client to Hub/CP plus these local-only sockets.
 | Port | Bind | Protocol | file:line |
 |------|------|----------|-----------|
 | 3000 (Vite dev) | **0.0.0.0** (`server.host: '0.0.0.0'`) | HTTP dev | `vite.config.ts:86-88` |
-| 3000 (nginx prod) | 0.0.0.0 | static + reverse proxy | `nginx.conf:2` |
 
 No auth at the UI listener; serves the React bundle and proxies `/api` `/oauth` `/.well-known`
 `/authserver` `/idp` to the CP. Vite `allowedHosts` is a Host-header allowlist, not auth.
+The dev server is the package's only listener: in production the built bundle is static files
+served by the deployment host's front nginx on `:443` (`nexus-ami/artifacts/configs/nginx-nexus.conf`),
+which is inventoried as deployment infrastructure, not a service listener of this package.
 
 ---
 
@@ -201,7 +203,7 @@ No auth at the UI listener; serves the React bundle and proxies `/api` `/oauth` 
 - Format: `nvk_` + 64 hex (32 random bytes). Minted CP-side (`virtualkeys/handler/handler.go:204`).
 - At-rest: never plaintext. `keyHash = HMAC-SHA256(key, ADMIN_KEY_HMAC_SECRET)` (`authn/apikey.go:53`);
   only `key_hash` + 12-char `key_prefix` persisted.
-- Verify: gateway extracts token from multiple carriers (`x-nexus-virtual-key`, `Bearer`, `x-api-key`,
+- Verify: gateway extracts token from multiple carriers (`X-Nexus-Virtual-Key`, `Bearer`, `x-api-key`,
   `x-goog-api-key`, `?key=`, `api-key`; `vkauth.go:217`), recomputes the **same HMAC** (`vkauth.go:283`),
   exact DB lookup `GetVirtualKeyByHash`. The HMAC hash *is* the lookup key ⇒ CP-mint and gateway-verify
   **must share `ADMIN_KEY_HMAC_SECRET`** (drift = total VK-auth failure). Status/enabled/expiry

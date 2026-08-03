@@ -22,125 +22,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
-// Format is the provider wire format. The set is one-to-one with the
-// non-fallback IDs in shared/traffic/adapters. The traffic adapter
-// named "generic-jsonpath" is a traffic-side fallback only; it has no
-// provider-side counterpart and is intentionally absent here.
-type Format string
-
-const (
-	FormatOpenAI      Format = "openai"
-	FormatDeepSeek    Format = "deepseek"
-	FormatGLM         Format = "glm"
-	FormatAzureOpenAI Format = "azure-openai"
-	FormatAnthropic   Format = "anthropic"
-	FormatGemini      Format = "gemini"
-	FormatMiniMax     Format = "minimax"
-	FormatBedrock     Format = "bedrock"
-	FormatVertex      Format = "vertex"
-	FormatCohere      Format = "cohere"
-	FormatHuggingFace Format = "huggingface"
-	FormatReplicate   Format = "replicate"
-	// OpenAI-compat re-users — distinct Format constants so vendor-scoped
-	// audit, metrics, and rate-limit policies can target them without
-	// pattern-matching on Provider name. Each ships as a thin spec_X
-	// package that delegates wire encoding/decoding to openai.
-	FormatMistral    Format = "mistral"
-	FormatXai        Format = "xai"
-	FormatGroq       Format = "groq"
-	FormatPerplexity Format = "perplexity"
-	FormatTogether   Format = "together"
-	FormatFireworks  Format = "fireworks"
-	FormatMoonshot   Format = "moonshot"
-	FormatVoyage     Format = "voyage"
-
-	// FormatOpenAIResponses is OpenAI's /v1/responses wire format, the
-	// distinct request/response shape for reasoning models + built-in tools
-	// + server-side conversation state. Treated as a sibling ingress format,
-	// NOT a new canonical: the canonical bus remains OpenAI chat-completions
-	// shape per provider-adapter-architecture.md §3a Rule 1. The /v1/responses
-	// codec under spec_openai translates in both directions; same-shape
-	// passthrough is gated by the target adapter's RequestShapes containing
-	// "responses-api".
-	FormatOpenAIResponses Format = "openai-responses"
-)
-
-// AllFormats returns every provider wire [Format] backed by its own
-// builtin spec package, in stable order. This is the registry / codec /
-// normalizer coverage set: registry seeding, builtin SchemaCodec and
-// normalizer coverage checks, the canonical-bridge self-check, and the
-// cross-pair matrix tests all iterate it.
-//
-// Membership is "has a standalone spec package", NOT "is a chat-completions
-// format". Embeddings-only providers belong here — FormatVoyage ships
-// spec_voyage and needs codec + normalizer coverage like any other format.
-// Chat-routability is a separate predicate decided by the canonical bridge
-// (Bridge.ChatRoutable, via its formatSupportsChat helper), which excludes
-// Voyage because it serves only embeddings. FormatOpenAIResponses is the
-// one declared format intentionally NOT returned here: it has no standalone
-// spec, being folded into spec_openai as a sibling ingress format; it is
-// still .Valid() and still detected at the route layer.
-func AllFormats() []Format {
-	return []Format{
-		FormatOpenAI,
-		FormatDeepSeek,
-		FormatGLM,
-		FormatAzureOpenAI,
-		FormatAnthropic,
-		FormatGemini,
-		FormatMiniMax,
-		FormatBedrock,
-		FormatVertex,
-		FormatCohere,
-		FormatHuggingFace,
-		FormatReplicate,
-		FormatMistral,
-		FormatXai,
-		FormatGroq,
-		FormatPerplexity,
-		FormatTogether,
-		FormatFireworks,
-		FormatMoonshot,
-		FormatVoyage,
-	}
-}
-
-// Valid reports whether f is a known format.
-func (f Format) Valid() bool {
-	switch f {
-	case FormatOpenAI, FormatDeepSeek, FormatGLM, FormatAzureOpenAI,
-		FormatAnthropic, FormatGemini, FormatMiniMax, FormatBedrock, FormatVertex,
-		FormatCohere, FormatHuggingFace, FormatReplicate,
-		FormatMistral, FormatXai, FormatGroq, FormatPerplexity,
-		FormatTogether, FormatFireworks, FormatMoonshot, FormatVoyage,
-		FormatOpenAIResponses:
-		return true
-	}
-	return false
-}
-
-// IsOpenAIFamily reports whether bodies in this format share the
-// canonical OpenAI chat completions JSON schema — model at the JSON
-// root, messages array, etc. — so that simple `payload["model"] = X`
-// substitution works as a passthrough rewrite.
-//
-// Must stay in sync with the set of formats that wire spec_openai's
-// IdentityCodec as their SchemaCodec; specAdapter.rewritePassthroughModel
-// uses this method to gate model-field rewriting before upstream
-// dispatch. Keeping the list here (rather than open-coded per call site)
-// is what makes routing to a Moonshot/Mistral/Groq/... target carry the
-// target's ProviderModelID instead of the originator's model code.
-func (f Format) IsOpenAIFamily() bool {
-	switch f {
-	case FormatOpenAI, FormatDeepSeek, FormatGLM, FormatAzureOpenAI,
-		FormatMoonshot, FormatMiniMax, FormatHuggingFace,
-		FormatMistral, FormatXai, FormatGroq, FormatPerplexity,
-		FormatTogether, FormatFireworks:
-		return true
-	}
-	return false
-}
-
 // CallTarget is the fully-resolved upstream target for a single call.
 // Populated by an implementation of [github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target.Resolver]
 // and then passed through [Adapter.Execute]. Adapters must not mutate it.
@@ -166,6 +47,13 @@ type CallTarget struct {
 	// Resolved once per target in the executor failover loop from the
 	// hydrated routing snapshot — never a per-request DB read.
 	ServesResponsesAPI *bool
+
+	// MaxOutputTokens is the model's advertised output ceiling from the
+	// catalog (0 when unset) — the same number /v1/models reports. An adapter
+	// whose wire requires an output cap fills/clamps against THIS value rather
+	// than a private table, so a wrong number is one bug instead of a silent
+	// divergence between what we advertise and what we send upstream.
+	MaxOutputTokens int
 
 	// Extras carries provider-specific configuration that doesn't fit in
 	// the universal fields above. Keys are dot-namespaced: "azure.apiVersion",
@@ -370,12 +258,14 @@ func (e *ProviderError) Error() string {
 // use these exactly; new codes require a single-line addition here so
 // callers have a single source of truth.
 const (
-	CodeInvalidRequest       = "invalid_request"
-	CodeAuthFailed           = "auth_failed"
-	CodeRateLimited          = "rate_limited"
-	CodeTimeout              = "timeout"
-	CodeUpstreamError        = "upstream_error"
-	CodeEndpointUnsupported  = "endpoint_unsupported"
+	CodeInvalidRequest      = "invalid_request"
+	CodeAuthFailed          = "auth_failed"
+	CodeRateLimited         = "rate_limited"
+	CodeTimeout             = "timeout"
+	CodeUpstreamError       = "upstream_error"
+	CodeEndpointUnsupported = "endpoint_unsupported"
+	// CodeContextOverflow: prompt exceeds the model's window; the executor fails over to a larger target, never same-target retry.
+	CodeContextOverflow      = "context_overflow"
 	CodeNotImplemented       = "not_implemented"
 	CodeNoCompatibleProvider = "no_compatible_provider"
 )

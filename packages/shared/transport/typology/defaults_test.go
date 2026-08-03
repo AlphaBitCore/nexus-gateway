@@ -7,18 +7,16 @@ import "testing"
 // rules become unreachable and the constant rots. Adding a new
 // EndpointKind requires at least one Rule entry referencing it.
 //
-// EndpointKindVideoGeneration and EndpointKindJob are exempt because
-// they are reserved placeholders (no provider has shipped these
-// endpoints in production yet; rules are added when the first provider
-// lands).
+// EndpointKindJob is exempt because it is a reserved placeholder (no
+// provider has shipped such an endpoint in production yet; rules are
+// added when the first provider lands).
 func TestDefaults_EveryKindHasAtLeastOneRule(t *testing.T) {
 	produced := map[EndpointKind]bool{}
 	for _, r := range defaultRules {
 		produced[r.Kind] = true
 	}
 	exempt := map[EndpointKind]bool{
-		EndpointKindVideoGeneration: true,
-		EndpointKindJob:             true,
+		EndpointKindJob: true,
 		// Label-only refinement: the path table classifies /v1/responses as
 		// chat-kind (defaults.go) for routing / cache / hook dispatch; the
 		// traffic_event endpoint_type stamp overrides the label to "responses".
@@ -52,6 +50,14 @@ func TestDefaults_EveryShapeHasAtLeastOneRule(t *testing.T) {
 		WireShapeBedrockEmbeddings: true, // same — Bedrock Titan/Cohere embedding via spec_adapter
 		WireShapeCohereChat:        true, // chat path not yet observed in production interception
 		WireShapeVoyageEmbeddings:  true, // Voyage path not yet observed in production interception
+		// Target-side only: resolved per call by the rerank bridge when
+		// routing a canonical (Cohere-shaped) rerank request to a Voyage
+		// target; no Voyage-native rerank ingress exists.
+		WireShapeVoyageRerank: true,
+		// Target-side only: resolved per call by the cross-shape image
+		// bridge (canonical = OpenAI images); no Gemini-native image
+		// ingress exists, so no path rule can ever produce it.
+		WireShapeGeminiImagesGenerateContent: true,
 	}
 	for _, w := range AllWireShapes {
 		if exempt[w] {

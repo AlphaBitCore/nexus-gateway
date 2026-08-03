@@ -68,42 +68,6 @@ func validateProviderConfigKnobs(adapterType string, cfg cacheconfig.ProviderCon
 	return nil
 }
 
-func (h *Handler) CacheGetGlobal(c echo.Context) error {
-	cfg, err := h.cache.GetCacheGlobalConfig(c.Request().Context())
-	if err != nil {
-		h.logger.Error("get cache_global_config", "error", err)
-		return internalServerError(c, "Internal server error")
-	}
-	return c.JSON(http.StatusOK, cfg)
-}
-
-func (h *Handler) CachePutGlobal(c echo.Context) error {
-	var body cacheconfig.GlobalConfig
-	if err := c.Bind(&body); err != nil {
-		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", err.Error()))
-	}
-
-	ctx := c.Request().Context()
-	a := actorFromContext(c)
-
-	if err := h.cache.PutCacheGlobalConfig(ctx, body, a.UserID); err != nil {
-		h.logger.Error("put cache_global_config", "error", err)
-		return internalServerError(c, "Internal server error")
-	}
-
-	if err := h.propagateCacheConfig(ctx, a.UserID, a.Name); err != nil {
-		h.logger.Error("notify hub cache (global PUT)", "error", err)
-		return hub.RespondPropagationFailure(c, err)
-	}
-
-	ae := audit.EntryFor(c, iam.ResourcePromptCache, iam.VerbUpdate)
-	ae.EntityID = "global"
-	ae.AfterState = body
-	h.audit.LogObserved(ctx, ae)
-
-	return c.JSON(http.StatusOK, body)
-}
-
 func (h *Handler) CacheListAdapters(c echo.Context) error {
 	rows, err := h.cache.ListCacheAdapterConfigs(c.Request().Context())
 	if err != nil {
@@ -269,9 +233,10 @@ func (h *Handler) CacheGetEffective(c echo.Context) error {
 	}
 	eff := cacheconfig.Resolve(blob, providerID, adapter)
 
+	// Tier 1 is retired: the effective view no longer carries
+	// normaliser_enabled / cache_master_kill_switch (this is a response-shape
+	// change to a kept endpoint — see CHANGELOG).
 	effectiveMap := map[string]any{
-		"normaliser_enabled":        eff.NormaliserEnabled,
-		"cache_master_kill_switch":  eff.CacheMasterKillSwitch,
 		"marker_inject_enabled":     eff.MarkerInjectEnabled,
 		"marker_boundary3_enabled":  eff.MarkerBoundary3Enabled,
 		"cache_enabled":             eff.CacheEnabled,

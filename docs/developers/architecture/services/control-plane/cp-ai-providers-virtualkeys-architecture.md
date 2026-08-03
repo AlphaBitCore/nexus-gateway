@@ -70,7 +70,8 @@ Reliability configuration has two scopes: per-credential threshold overrides and
 a gateway-wide default (`/settings/credential-reliability`), both governing the
 credential health circuit (open / half-open / closed). Connectivity tests, the
 embedding probe, and reliability probes are BFF calls forwarded to the AI
-Gateway using the configured gateway URL. Per-model pricing feeds the gateway's
+Gateway using the Hub-resolved gateway URL (`shared/transport/peerurl` — see
+`service-call-framework.md` §6.5). Per-model pricing feeds the gateway's
 cost stamping — see
 [cost-estimation-architecture.md](../ai-gateway/cost-estimation-architecture.md).
 
@@ -82,12 +83,24 @@ approval workflow (`/virtual-keys/:id/{approve,reject,renew,revoke}` plus
 `nvk_` followed by 256 random bits in hex; only its hash and a twelve-character
 display prefix are stored, and the raw key is returned to the caller once at
 creation. A key moves from pending to approved or rejected; revoke and
-regenerate act on an active key. The three-month `expiresAt` governance cap on
-**application** keys is enforced on every write path that can set it — create,
-renew, and the general `PUT` update — so an edit cannot lift the ceiling or
-clear the expiry to never-expire and escape the re-approval cadence; create and
-renew additionally require the value. **Personal** keys are exempt (uncapped,
-and may clear their expiry).
+regenerate act on an active key. The `expiresAt` rule on **application** keys is
+enforced on every write path that can set it — create, renew, and the general
+`PUT` update: the value is required and must be in the future, so an edit cannot
+clear the expiry to never-expire and escape the re-approval cadence. The
+distance is **not** bounded — `requireApplicationExpiry` checks presence and
+future-ness only, and no ceiling exists on any path. **Personal** keys are
+exempt and may clear their expiry to never-expire.
+
+The two write paths read `expiresAt` differently. Create and renew bind it into
+a Go `time.Time`, so they take RFC3339 and nothing else — a bare date fails the
+decode with a 400. The general `PUT` reads it with `extractNullableTimeFromBody`,
+which accepts RFC3339 **or** `2006-01-02`; a bare date is therefore taken, and
+parses to `00:00:00Z`. Since the console's expiry control is a date-only picker,
+that silently retired a key a full day before the date the admin chose. Every
+client-side write stamps the chosen `YYYY-MM-DD` to end-of-day UTC
+(`expiryBounds.ts`), which decodes on all three paths and keeps the key usable
+through its final day. The instant is UTC-anchored, so an admin west of UTC sees
+it land earlier on that local day.
 
 Names are unique per scope: application keys share one deployment-wide
 namespace, while personal keys collide only within their owner — user A's

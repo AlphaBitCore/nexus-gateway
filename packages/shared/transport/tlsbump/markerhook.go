@@ -16,7 +16,7 @@ const defaultIdentity = "compliance-proxy"
 // Per-spec marker header names. There is no per-service prefix anymore —
 // every hop writes to the canonical X-Nexus-* headers and uses traffic
 // chain helpers (PrependVia / PrependChain) to compose multi-hop values
-// 1:1 with the via chain. See nexus-response-markers.md.
+// 1:1 with the via chain. See nexus-headers.md.
 const (
 	requestIDHeader  = "X-Nexus-Request-Id"
 	hookHeader       = "X-Nexus-Hook"

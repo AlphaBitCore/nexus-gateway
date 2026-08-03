@@ -45,6 +45,14 @@ Each of the five services (`nexus-hub`, `control-plane`, `ai-gateway`, `complian
 
 **What is enforced:** `scripts/check-no-yaml-secrets.mjs` scans staged yaml at pre-commit time and rejects matches for the forbidden field-name patterns. The `npm run check:no-yaml-secrets:strict` flag runs the same scan repo-wide.
 
+**Own-address fields + the peer-URL rule (binding).** A service configures its OWN addresses and never a peer's:
+
+- `publicURL` (top-level, all four server services; required) — the externally reachable base URL, reported to the Thing Registry as `staticInfo.publicUrl`. Env override `<SVC>_PUBLIC_URL`.
+- `privateURL` (top-level, all four server services; **optional**) — the internal service-to-service base URL, reported as `staticInfo.privateUrl`. Env override `<SVC>_PRIVATE_URL` (`NEXUS_HUB_PRIVATE_URL`, `CONTROL_PLANE_PRIVATE_URL`, `AI_GATEWAY_PRIVATE_URL`, `COMPLIANCE_PROXY_PRIVATE_URL`). **Default = auto-derived from the bind interface** via `packages/shared/core/metrics/platform/staticinfo.go` `EffectivePrivateURL`: a specific bind host (e.g. the appliance's `127.0.0.1` behind nginx) is advertised verbatim; a wildcard/empty bind advertises `http://<primary-outbound-IPv4>:<service-port>` — nobody sets it in the common case; set it only for split-horizon or non-default topologies. The compliance-proxy derives the port from its RuntimeAPI listen address (the surface peers call).
+- **Peer service URLs are never local config.** A service that needs another Nexus service's URL resolves it at runtime from that peer's Hub-reported Thing via `packages/shared/transport/peerurl` (`GET /api/internal/things/service-url/:thing_type` — contract in `service-call-framework.md` §6.5). The former peer-URL fields — compliance-proxy `compliance.aiGatewayUrl`, control-plane `bff.aiGatewayUrl` / `bff.complianceProxyUrl` / `bff.complianceProxyRuntimeUrl` (env `AI_GATEWAY_URL` / `COMPLIANCE_PROXY_URL` / `COMPLIANCE_PROXY_RUNTIME_URL`) — are **deleted**; do not reintroduce this class of field.
+- Special case: compliance-proxy `onboarding.cpUIBaseURL` stays as an **optional override** for the 407-page display link; when unset it defaults to the Hub-resolved Control Plane `publicUrl`.
+- Still config (not peer URLs): the bootstrap `registry.nexusHubUrl` (needed before any Thing can be read), infrastructure URLs (DB / NATS / Redis), and external IdP URLs.
+
 ## §4 — L2: env vars (.env.example + bootenv)
 
 The repo-root `.env.example` is the contract: it documents every environment variable any of the four Go services consumes at runtime, including a one-line explanation per variable.
@@ -99,6 +107,22 @@ This layer is the fleet-managed config: admin writes a value in the Control Plan
 | `propagation_ledger:<thingType>:<configKey>` | Control-Plane-internal durable backstop for Category-B pushes: per-key `{intended, acked}` versions. Bumped on each security-sensitive `InvalidateConfigE`, acked on confirmed push; the CP reconcile loop re-pushes any key where `acked < intended`. Namespaced family (one row per `(type, key)`), not a singleton; never read by data-plane Things. | `packages/control-plane/internal/platform/hub/ledger.go` (CP reconcile arm) |
 
 **Coexistence with L3:** some keys live in both `thing_config_template` and `system_metadata` by design — `payload_capture` is the classic example. The `thing_config_template.payload_capture` row is the change-signal channel (pushed via shadow); the `system_metadata['payload_capture.config']` row is the authoritative value the receivers re-read. The split exists because the receiver-side state lives in CP-owned business tables and the `thing_config_template` push would otherwise carry an empty / stale state. A01 §5 carries the full Type A / Type B coexistence note.
+
+`streaming_compliance` has the identical shape (`system_metadata['streaming_compliance.config']` is
+its authoritative row) and is the reason this paragraph now carries a warning: **a Type-B receiver
+that applies the pushed payload instead of re-reading will reset the admin's configuration to the
+built-in defaults on every push, and nothing will report it.** The compliance proxy did exactly that.
+It loaded the admin's `chunked_async` at boot and its own invalidation handler replaced it with the
+default `passthrough` 70 ms later, after which every SSE stream was relayed uninspected — `passthrough`
+neither accumulates nor can reject. The failure is silent by construction: the push succeeds, the
+propagation ledger acks, and the only visible difference is a mode string in a log line that the
+service's boot log level was filtering.
+
+The rule, stated as a rule: **on a Type-B trigger, ignore the payload and re-read.** The reference
+implementation is `registerPayloadCapture` in the compliance proxy's `configdispatch`, which does not
+look at `raw` at all. A receiver that needs to tolerate both shapes must treat an empty payload
+(absent, `""`, `null`, `{}` — note `null` is four bytes, so a `len() == 0` check does not catch what
+the Hub sends) as "no state supplied", never as "use defaults".
 
 ## §6.5 — Rename sweep discipline (binding, 14 layers)
 
@@ -158,7 +182,7 @@ Type A = `state` is the config payload (callback applies directly). Type B = `st
 | `log_level` | A | nexus-hub, control-plane, ai-gateway, compliance-proxy | `{level: string}` |
 | `killswitch` | A | compliance-proxy, agent | `{engaged: bool}` (interception.Killswitch) |
 | `ai_guard` | A | ai-gateway | AI Guard backend config blob |
-| `cache` | A | ai-gateway | AI Gateway response-cache config |
+| `cache` | A | ai-gateway | AI Gateway prompt/response-cache config blob — `{adapters, providers}` only. There is **no** global tier: the former `global.cache_master_kill_switch` and `global.normaliser_enabled` fields are retired (emergency cache-off = the fleet disable-all on `/ai-gateway/cache` or Emergency Passthrough's `bypassCache`; the upstream rewrite is demand-driven off the adapter rule + provider marker-inject settings in this same blob) |
 | `gateway_passthrough` | A | ai-gateway | Emergency passthrough toggle (3-tier global/adapter/provider) |
 | `agent_settings` | A | agent | Agent runtime settings (quit-allowed, shutdown warning, auto-update, traffic upload level, theme, QUIC fallback bundles, bypass bundles, attestation). Heartbeat/drain intervals are NOT shadow-pushed — CP strips them on PUT; they are local-yaml-only |
 | `diag_mode` | A | agent | `{until: string}` (RFC3339) — per-thing override; admin writes it via the Hub override API with `expires_at`=until, the agent raises its local log level to debug until the window ends |

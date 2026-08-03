@@ -6,10 +6,13 @@ package dispatch
 // map path for streaming / per-adapter-rewrite / duplicate-top-level-model).
 
 import (
-	"github.com/goccy/go-json"
+	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-json"
+
+	openaicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/codec"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -44,17 +47,75 @@ func reqFor(body []byte, stream bool) Request {
 	}
 }
 
-// rpm calls rewritePassthroughModel with modelInBody=false — the OpenAI-family
-// default every reqFor-based test exercises (model rewrite driven by the
-// OpenAI wire shape, not the PassthroughModelInBody capability).
-func rpm(req Request, pr func(map[string]any, string) []string, ap func(string) bool) ([]byte, []string, error) {
-	return rewritePassthroughModel(req, pr, ap, false)
+// rpm drives the native leg through prepareBodyFull on an OpenAI-format
+// adapter with the real identity codec — the same composition production
+// wiring uses, so these tests pin dispatch guards + triage + codec
+// differential together (model rewrite driven by the OpenAI wire shape).
+func rpm(req Request) ([]byte, []string, error) {
+	a := &specAdapter{spec: AdapterSpec{
+		Format:      FormatOpenAI,
+		SchemaCodec: openaicodec.New(openaicodec.Contract{}),
+	}, log: slog.Default()}
+	body, rewrites, _, err := a.prepareBodyFull(req)
+	return body, rewrites, err
+}
+
+// rpmForceDecode is rpm with an always-gating no-op structural rule, which
+// routes every chat body through the decode door — the semantic reference
+// the surgical fast path must be equivalent to.
+func rpmForceDecode(req Request) ([]byte, []string, error) {
+	a := &specAdapter{spec: AdapterSpec{
+		Format: FormatOpenAI,
+		SchemaCodec: openaicodec.New(openaicodec.Contract{
+			ChatStructural: []openaicodec.StructuralRule{{
+				Applies: func(string) bool { return true },
+				Apply:   func(map[string]any, string) []string { return nil },
+			}},
+		}),
+	}, log: slog.Default()}
+	body, rewrites, _, err := a.prepareBodyFull(req)
+	return body, rewrites, err
+}
+
+// stampingCodec is a minimal model-in-body codec double: its RewriteNative
+// is the shared surgical stamp, mirroring what the real anthropic codec's
+// differential does today. The real anthropic codec cannot be imported here
+// (it imports this package for a metrics emitter), so its RewriteNative
+// semantics are pinned in its own package tests; THESE tests pin the
+// dispatch side — guards, triage, and delegation — against a model-in-body
+// wire.
+type stampingCodec struct{}
+
+func (stampingCodec) EncodeRequest(_ typology.WireShape, canonicalBody []byte, _ CallTarget) (EncodeResult, error) {
+	return EncodeResult{Body: canonicalBody, ContentType: "application/json"}, nil
+}
+
+func (stampingCodec) DecodeResponse(_ typology.WireShape, nativeBody []byte, _ string, _ DecodeContext) (DecodeResult, error) {
+	return DecodeResult{CanonicalBody: nativeBody}, nil
+}
+
+func (stampingCodec) RewriteNative(_ typology.WireShape, nativeBody []byte, target CallTarget, _ bool) (EncodeResult, error) {
+	out, err := SurgicalModelStamp(nativeBody, target.ProviderModelID)
+	if err != nil {
+		return EncodeResult{}, err
+	}
+	return EncodeResult{Body: out, ContentType: "application/json"}, nil
+}
+
+// rpmAnthropic drives the Anthropic-shaped native /v1/messages leg (the
+// model-at-body-root stamp is the codec's RewriteNative differential now).
+func rpmAnthropic(req Request) ([]byte, []string, error) {
+	a := &specAdapter{spec: AdapterSpec{
+		Format:      FormatAnthropic,
+		SchemaCodec: stampingCodec{},
+	}, log: slog.Default()}
+	body, rewrites, _, err := a.prepareBodyFull(req)
+	return body, rewrites, err
 }
 
 // anthropicReqFor builds an Anthropic /v1/messages passthrough request: the
 // native wire shape, FormatAnthropic body, and a model that differs from the
-// resolved ProviderModelID (the alias/routing case). modelInBody must be true
-// for the passthrough to apply ProviderModelID to the body `model`.
+// resolved ProviderModelID (the alias/routing case).
 func anthropicReqFor(body []byte) Request {
 	return Request{
 		WireShape:  typology.WireShapeAnthropicMessages,
@@ -67,7 +128,7 @@ func anthropicReqFor(body []byte) Request {
 // TestA2_FastPath_SetsModelAndStripsNexus: non-stream, no rewrite → fast path.
 func TestA2_FastPath_SetsModelAndStripsNexus(t *testing.T) {
 	body := chatBody(`"nexus":{"ext":{"x":1}},"temperature":0.5`)
-	out, rewrites, err := rpm(reqFor(body, false), nil, nil)
+	out, rewrites, err := rpm(reqFor(body, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,13 +154,12 @@ func TestA2_FastPath_SetsModelAndStripsNexus(t *testing.T) {
 // the old map round-trip for a normal body.
 func TestA2_FastPath_EqualsMapPath(t *testing.T) {
 	body := chatBody(`"temperature":0.5,"top_p":0.9`)
-	fast, _, err := rpm(reqFor(body, false), nil, nil)
+	fast, _, err := rpm(reqFor(body, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Force the map path with a no-op rewrite callback.
-	noop := func(m map[string]any, id string) []string { return nil }
-	mapOut, _, err := rpm(reqFor(body, false), noop, nil)
+	// Force the decode door with a no-op structural rule.
+	mapOut, _, err := rpmForceDecode(reqFor(body, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +172,7 @@ func TestA2_FastPath_EqualsMapPath(t *testing.T) {
 // resolve to the provider model with NO stale duplicate (map path collapses).
 func TestA2_DuplicateModel_FallsBackToMapPath(t *testing.T) {
 	body := []byte(`{"model":"alias-a","messages":[],"model":"alias-b"}`)
-	out, _, err := rpm(reqFor(body, false), nil, nil)
+	out, _, err := rpm(reqFor(body, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +194,7 @@ func TestA2_DuplicateModel_FallsBackToMapPath(t *testing.T) {
 // stream_options.include_usage + stream:true, and preserve sibling fields.
 func TestA2_Streaming_NonConformant_MapPath_AppliesUsageOption(t *testing.T) {
 	body := chatBody(`"temperature":0.5`)
-	out, rewrites, err := rpm(reqFor(body, true), nil, nil)
+	out, rewrites, err := rpm(reqFor(body, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +226,7 @@ func TestA2_Streaming_NonConformant_MapPath_AppliesUsageOption(t *testing.T) {
 // the loadtest and real OpenAI-stream clients that send the upstream model name.
 func TestA2_Streaming_AlreadyConformant_ZeroRewrite(t *testing.T) {
 	body := []byte(`{"model":"provider-real-model","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`)
-	out, _, err := rpm(reqFor(body, true), nil, nil)
+	out, _, err := rpm(reqFor(body, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,19 +235,28 @@ func TestA2_Streaming_AlreadyConformant_ZeroRewrite(t *testing.T) {
 	}
 }
 
-// TestA2_Streaming_ConformantButRewriteApplies_TakesMapPath: even a conformant
-// body must NOT all-skip when a per-adapter rewrite applies — the rewrite has to
-// run, so the map path is taken and the body is round-tripped.
-func TestA2_Streaming_ConformantButRewriteApplies_TakesMapPath(t *testing.T) {
+// TestA2_Streaming_ConformantButStructuralRuleApplies_TakesDecodeDoor: even a
+// conformant body must NOT all-skip when a gate-matching structural rule
+// exists — the rule has to run, so the decode door is taken and the body is
+// round-tripped.
+func TestA2_Streaming_ConformantButStructuralRuleApplies_TakesDecodeDoor(t *testing.T) {
 	body := []byte(`{"model":"provider-real-model","stream":true,"stream_options":{"include_usage":true},"messages":[]}`)
 	called := false
-	rw := func(m map[string]any, id string) []string { called = true; return []string{"r"} }
-	out, rewrites, err := rpm(reqFor(body, true), rw, nil)
+	a := &specAdapter{spec: AdapterSpec{
+		Format: FormatOpenAI,
+		SchemaCodec: openaicodec.New(openaicodec.Contract{
+			ChatStructural: []openaicodec.StructuralRule{{
+				Applies: func(string) bool { return true },
+				Apply:   func(map[string]any, string) []string { called = true; return []string{"r"} },
+			}},
+		}),
+	}, log: slog.Default()}
+	out, rewrites, _, err := a.prepareBodyFull(reqFor(body, true))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !called {
-		t.Error("adapter rewrite must run even for a conformant body (all-skip must not swallow it)")
+		t.Error("structural rule must run even for a conformant body (all-skip must not swallow it)")
 	}
 	if len(rewrites) != 1 {
 		t.Errorf("rewrites = %v, want one entry", rewrites)
@@ -212,13 +281,13 @@ func TestA2_EdgeCases(t *testing.T) {
 		// either gets its model rewritten and forwarded (upstream returns the
 		// error) or sjson itself errors — both acceptable; the gateway must not
 		// crash and must produce a deterministic result.
-		out, _, err := rpm(reqFor([]byte(`{"model":"x"`), false), nil, nil)
+		out, _, err := rpm(reqFor([]byte(`{"model":"x"`), false))
 		if err == nil && len(out) == 0 {
 			t.Error("expected either a forwarded body or an error, got neither")
 		}
 	})
 	t.Run("absent_model_added", func(t *testing.T) {
-		out, _, err := rpm(reqFor([]byte(`{"messages":[{"role":"user","content":"hi"}]}`), false), nil, nil)
+		out, _, err := rpm(reqFor([]byte(`{"messages":[{"role":"user","content":"hi"}]}`), false))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -231,7 +300,7 @@ func TestA2_EdgeCases(t *testing.T) {
 		}
 	})
 	t.Run("numeric_model_overwritten_with_string", func(t *testing.T) {
-		out, _, err := rpm(reqFor([]byte(`{"model":123,"messages":[]}`), false), nil, nil)
+		out, _, err := rpm(reqFor([]byte(`{"model":123,"messages":[]}`), false))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,7 +319,7 @@ func TestA2_EdgeCases(t *testing.T) {
 			Body:       []byte(`{"model":"client-alias","input":"hello"}`),
 			Target:     CallTarget{ProviderModelID: "provider-real-model"},
 		}
-		out, _, err := rpm(req, nil, nil)
+		out, _, err := rpm(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,19 +350,18 @@ func bigChatBodyA2() []byte {
 
 func BenchmarkA2ModelRewrite(b *testing.B) {
 	body := bigChatBodyA2()
-	noop := func(m map[string]any, id string) []string { return nil }
 	b.Run("fast_sjson", func(b *testing.B) {
 		req := reqFor(body, false)
 		b.ReportAllocs()
 		for range b.N {
-			_, _, _ = rpm(req, nil, nil)
+			_, _, _ = rpm(req)
 		}
 	})
 	b.Run("old_map_roundtrip", func(b *testing.B) {
 		req := reqFor(body, false)
 		b.ReportAllocs()
 		for range b.N {
-			_, _, _ = rpm(req, noop, nil)
+			_, _, _ = rpmForceDecode(req)
 		}
 	})
 }
@@ -309,34 +377,46 @@ func BenchmarkA2StreamAllSkip(b *testing.B) {
 		req := reqFor(conformant, true)
 		b.ReportAllocs()
 		for range b.N {
-			_, _, _ = rpm(req, nil, nil)
+			_, _, _ = rpm(req)
 		}
 	})
 	b.Run("nonconformant_map_path", func(b *testing.B) {
 		req := reqFor(rewrite, true)
 		b.ReportAllocs()
 		for range b.N {
-			_, _, _ = rpm(req, nil, nil)
+			_, _, _ = rpm(req)
 		}
 	})
 }
 
-// TestPassthroughRewriteApplies_GatesMapPath locks the behavior: a non-nil
-// per-adapter rewrite no longer forces the (allocation-heavy) map round-trip
-// when PassthroughRewriteApplies reports the rewrite is a no-op for this model.
-func TestPassthroughRewriteApplies_GatesMapPath(t *testing.T) {
+// TestStructuralGate_RoutesTheDecodeDoor locks the gating behavior the
+// deleted applies-probe used to provide: a model outside every structural
+// rule's gate takes the surgical path (rule never invoked, fields
+// preserved verbatim), while a gate-matching model takes the decode door
+// exactly once.
+func TestStructuralGate_RoutesTheDecodeDoor(t *testing.T) {
 	body := chatBody(`"temperature":0.7`)
-	rewriteCalls := 0
-	rewrite := func(_ map[string]any, _ string) []string { rewriteCalls++; return nil }
+	ruleCalls := 0
+	adapterFor := func(gate func(string) bool) *specAdapter {
+		return &specAdapter{spec: AdapterSpec{
+			Format: FormatOpenAI,
+			SchemaCodec: openaicodec.New(openaicodec.Contract{
+				ChatStructural: []openaicodec.StructuralRule{{
+					Applies: gate,
+					Apply:   func(map[string]any, string) []string { ruleCalls++; return nil },
+				}},
+			}),
+		}, log: slog.Default()}
+	}
 
-	// Probe false → surgical sjson path: rewrite NOT invoked, model set, other
+	// Gate false → surgical sjson path: rule NOT invoked, model set, other
 	// fields (temperature) preserved verbatim.
-	out, _, err := rpm(reqFor(body, false), rewrite, func(string) bool { return false })
+	out, _, _, err := adapterFor(func(string) bool { return false }).prepareBodyFull(reqFor(body, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rewriteCalls != 0 {
-		t.Fatalf("rewrite must NOT run when applies-probe is false; got %d", rewriteCalls)
+	if ruleCalls != 0 {
+		t.Fatalf("rule must NOT run when its gate is false; got %d", ruleCalls)
 	}
 	if !strings.Contains(string(out), `"model":"provider-real-model"`) {
 		t.Fatalf("model not rewritten on fast path: %s", out)
@@ -345,33 +425,24 @@ func TestPassthroughRewriteApplies_GatesMapPath(t *testing.T) {
 		t.Fatalf("fast path must preserve other fields verbatim: %s", out)
 	}
 
-	// Probe true → map path: rewrite invoked.
-	rewriteCalls = 0
-	if _, _, err = rpm(reqFor(body, false), rewrite, func(string) bool { return true }); err != nil {
+	// Gate true → decode door: rule invoked exactly once.
+	ruleCalls = 0
+	if _, _, _, err = adapterFor(func(string) bool { return true }).prepareBodyFull(reqFor(body, false)); err != nil {
 		t.Fatal(err)
 	}
-	if rewriteCalls != 1 {
-		t.Fatalf("rewrite must run when applies-probe is true; got %d", rewriteCalls)
-	}
-
-	// Nil probe ⇒ conservative map path (prior behavior).
-	rewriteCalls = 0
-	if _, _, err = rpm(reqFor(body, false), rewrite, nil); err != nil {
-		t.Fatal(err)
-	}
-	if rewriteCalls != 1 {
-		t.Fatalf("nil probe must keep the map path; got %d", rewriteCalls)
+	if ruleCalls != 1 {
+		t.Fatalf("rule must run once when its gate matches; got %d", ruleCalls)
 	}
 }
 
 // TestModelInBody_Anthropic_AliasRewritten is the core fix: an Anthropic
 // /v1/messages native passthrough (non-OpenAI wire, non-OpenAI-family body)
-// whose adapter declares PassthroughModelInBody MUST rewrite the top-level
-// `model` from the client-facing alias to the resolved ProviderModelID —
-// otherwise the alias reaches Anthropic verbatim and 404s.
+// whose codec RewriteNative stamps the resolved model MUST rewrite the
+// top-level `model` from the client-facing alias to the resolved
+// ProviderModelID — otherwise the alias reaches Anthropic verbatim and 404s.
 func TestModelInBody_Anthropic_AliasRewritten(t *testing.T) {
 	body := []byte(`{"model":"my-fast-alias","messages":[{"role":"user","content":"hi"}],"nexus":{"ext":{"anthropic":{"topK":42}}}}`)
-	out, rewrites, err := rewritePassthroughModel(anthropicReqFor(body), nil, nil, true)
+	out, rewrites, err := rpmAnthropic(anthropicReqFor(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +471,7 @@ func TestModelInBody_Anthropic_AliasRewritten(t *testing.T) {
 // hot path (nexus strip aside).
 func TestModelInBody_Anthropic_NoOpWhenEqual(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}`)
-	out, _, err := rewritePassthroughModel(anthropicReqFor(body), nil, nil, true)
+	out, _, err := rpmAnthropic(anthropicReqFor(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,10 +480,10 @@ func TestModelInBody_Anthropic_NoOpWhenEqual(t *testing.T) {
 	}
 }
 
-// TestModelInBody_False_NonOpenAI_NoRewrite: without the PassthroughModelInBody
-// capability, a non-OpenAI-family body is NOT rewritten even when
-// ProviderModelID differs — this is the Gemini/Bedrock contract (model lives in
-// the URL / is deleted from the body, applied by the transport/codec instead).
+// TestModelInBody_False_NonOpenAI_NoRewrite: a codec whose RewriteNative is
+// verbatim leaves the body untouched even when ProviderModelID differs —
+// this is the Gemini/Bedrock contract (model lives in the URL / is deleted
+// from the body, applied by the transport/codec instead).
 func TestModelInBody_False_NonOpenAI_NoRewrite(t *testing.T) {
 	body := []byte(`{"model":"gemini-1.5-pro","contents":[]}`)
 	req := Request{
@@ -421,7 +492,8 @@ func TestModelInBody_False_NonOpenAI_NoRewrite(t *testing.T) {
 		Body:       body,
 		Target:     CallTarget{ProviderModelID: "gemini-2.0-flash"},
 	}
-	out, rw, err := rewritePassthroughModel(req, nil, nil, false)
+	a := &specAdapter{spec: AdapterSpec{Format: FormatGemini, SchemaCodec: noopCodec{}}, log: slog.Default()}
+	out, rw, _, err := a.prepareBodyFull(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,11 +507,11 @@ func TestModelInBody_False_NonOpenAI_NoRewrite(t *testing.T) {
 // already-rewritten body is a no-op.
 func TestModelInBody_Anthropic_Idempotent(t *testing.T) {
 	body := []byte(`{"model":"my-fast-alias","messages":[]}`)
-	first, _, err := rewritePassthroughModel(anthropicReqFor(body), nil, nil, true)
+	first, _, err := rpmAnthropic(anthropicReqFor(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := rewritePassthroughModel(anthropicReqFor(first), nil, nil, true)
+	second, _, err := rpmAnthropic(anthropicReqFor(first))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,14 +520,14 @@ func TestModelInBody_Anthropic_Idempotent(t *testing.T) {
 	}
 }
 
-// TestPrepareBody_Anthropic_ModelInBody_Wired proves the call site threads
-// a.spec.PassthroughModelInBody into the rewrite: an adapter whose spec
-// declares the capability rewrites the Anthropic body model through the public
-// PrepareBody entry point (the executor + cache-prep path), not just the
-// internal helper.
+// TestPrepareBody_Anthropic_ModelInBody_Wired proves the model-in-body
+// differential is codec-owned and reached through the public PrepareBody
+// entry point (the executor + cache-prep path): an adapter whose codec's
+// RewriteNative stamps (anthropic-style model-at-body-root) rewrites the
+// body model; an adapter whose codec is verbatim (Gemini/Bedrock —
+// model-in-URL) must NOT touch the body.
 func TestPrepareBody_Anthropic_ModelInBody_Wired(t *testing.T) {
 	spec := specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic)
-	spec.PassthroughModelInBody = true
 	ad := NewSpecAdapter(spec, nil)
 	body := []byte(`{"model":"my-fast-alias","messages":[]}`)
 	got, _, _, err := ad.PrepareBody(Request{
@@ -470,8 +542,8 @@ func TestPrepareBody_Anthropic_ModelInBody_Wired(t *testing.T) {
 	if !strings.Contains(string(got), `"model":"claude-opus-4-8"`) {
 		t.Fatalf("capability spec must rewrite the Anthropic body model to ProviderModelID; got %s", got)
 	}
-	// A spec WITHOUT the capability must NOT rewrite (Gemini/Bedrock contract).
-	specNoCap := specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic)
+	// A verbatim codec (model-in-URL wires) must NOT rewrite the body.
+	specNoCap := specFrom(&fakeTransport{}, noopCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic)
 	adNoCap := NewSpecAdapter(specNoCap, nil)
 	gotNoCap, _, _, err := adNoCap.PrepareBody(Request{
 		WireShape:  typology.WireShapeAnthropicMessages,
@@ -492,7 +564,7 @@ func TestPrepareBody_Anthropic_ModelInBody_Wired(t *testing.T) {
 // map path collapses last-wins), matching the OpenAI dup-key guarantee.
 func TestModelInBody_Anthropic_DuplicateModel_MapPath(t *testing.T) {
 	body := []byte(`{"model":"alias-a","messages":[],"model":"alias-b"}`)
-	out, _, err := rewritePassthroughModel(anthropicReqFor(body), nil, nil, true)
+	out, _, err := rpmAnthropic(anthropicReqFor(body))
 	if err != nil {
 		t.Fatal(err)
 	}

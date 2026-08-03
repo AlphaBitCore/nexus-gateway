@@ -242,6 +242,51 @@ func TestCreateProvider_InlineModelMissingFields400(t *testing.T) {
 	}
 }
 
+// TestCreateProvider_InlineModelInvalidType400 locks the create-path model-type
+// validation: the wizard create path now rejects an out-of-vocabulary type
+// (closing the asymmetry where only UpdateModel validated it), so a typo or a
+// retired type like "completion" 400s at create instead of persisting silently.
+func TestCreateProvider_InlineModelInvalidType400(t *testing.T) {
+	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+	body := `{
+		"name":"alpha","baseUrl":"https://x","adapterType":"openai",
+		"models":[{"providerModelId":"m1","name":"M1","type":"completion"}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u-1")
+	_ = h.CreateProvider(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400 for an out-of-vocabulary inline model type", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "realtime") {
+		t.Errorf("400 body should enumerate the valid types incl. realtime; got %s", rec.Body.String())
+	}
+}
+
+// TestAddProviderModel_InvalidType400 mirrors the create-path validation for
+// the add-model-to-existing-provider route: the provider resolves, but an
+// out-of-vocabulary type 400s before any INSERT (no model row is written).
+func TestAddProviderModel_InvalidType400(t *testing.T) {
+	mock, db := newMockStore(t)
+	now := nowFixture()
+	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
+		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
+	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+	body := `{"name":"gpt-legacy","type":"completion"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u-1")
+	c.SetParamNames("id")
+	c.SetParamValues("prov-1")
+	_ = h.AddProviderModel(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400 for an out-of-vocabulary model type", rec.Code)
+	}
+}
+
 func TestCreateProvider_CredentialNoVault503(t *testing.T) {
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	body := `{
@@ -323,15 +368,9 @@ func TestCreateProvider_HappyWithModelsAndCredential(t *testing.T) {
 	mock.ExpectQuery(`INSERT INTO "Provider"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
-	// 1 model insert — 18 params ($1..$18 including 4 capability cols).
+	// 1 model insert — 23 params ($1..$23 incl. capability + cached + audio price cols).
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(anyArgs(23)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	// 1 inline credential insert — note the 14-column Scan target.
 	mock.ExpectQuery(`INSERT INTO "Credential"`).
@@ -388,13 +427,7 @@ func TestCreateProvider_HappyModelMissingCodeAndAliases(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(anyArgs(23)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	mock.ExpectCommit()
 	mock.ExpectQuery(`SELECT value FROM system_metadata`).
@@ -448,13 +481,7 @@ func TestCreateProvider_ModelCollision409(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(anyArgs(23)...).
 		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "Model_providerId_providerModelId_key"})
 	mock.ExpectRollback()
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
@@ -926,13 +953,7 @@ func TestAddProviderModel_Happy_DefaultsCodeAndProviderModelID(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(anyArgs(23)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	mock.ExpectQuery(`SELECT value FROM system_metadata`).
 		WillReturnRows(pgxmock.NewRows([]string{"value"}))
@@ -968,13 +989,7 @@ func TestAddProviderModel_DuplicateCollision409(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(anyArgs(23)...).
 		WillReturnError(&pgconn.PgError{Code: "23505"})
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	body := `{"name":"gpt-4o","type":"chat"}`
@@ -996,13 +1011,7 @@ func TestAddProviderModel_GenericError500(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(anyArgs(23)...).
 		WillReturnError(errors.New("disk full"))
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	body := `{"name":"gpt-4o","type":"chat"}`

@@ -13,11 +13,15 @@ import (
 // many idle windows untouched, while a turn that goes silent is cancelled —
 // the "stuck model never wedges the UI" intent without severing live streams.
 func TestBridge_IdleWatchdogSeversOnlyStuckTurns(t *testing.T) {
-	// Active turn: streams a delta every 5ms for 40x the idle window; must finish on its own.
+	// Active turn: streams a delta every 5ms across three idle windows; must
+	// finish on its own. The 20x margin between the tick and the window is
+	// deliberate — at 2x, a loaded machine that delays one 5ms tick past the
+	// window makes the watchdog sever a turn that IS making progress, and the
+	// test fails for the scheduler's punctuality rather than the contract.
 	active := newBridge(nil)
-	active.idleTimeout = 10 * time.Millisecond
+	active.idleTimeout = 100 * time.Millisecond
 	active.agent = agentFunc(func(ctx context.Context) (string, error) {
-		for i := 0; i < 80; i++ {
+		for range 60 {
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()

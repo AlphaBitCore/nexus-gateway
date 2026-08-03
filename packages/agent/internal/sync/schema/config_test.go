@@ -266,3 +266,25 @@ func TestManager_CloseUnblocksSubscribers(t *testing.T) {
 		t.Error("Close did not close the subscriber channel")
 	}
 }
+
+// An agent upgraded in place keeps an agent.yaml that predates auditLossMode.
+// Without a default here, lossmode.Resolve("") yields the no-loss BLOCKING mode,
+// which overrides the queue writer's deliberate Spill and parks a goroutine on the
+// host's own packet path — the one thing CLAUDE.md's NE rule forbids. Found by
+// adversarial review; every sibling audit field was already defaulted.
+func TestApplyDefaults_AuditLossModeDefaultsToSpillForUpgradedConfigs(t *testing.T) {
+	cfg := &AgentConfig{} // an old on-disk config: the key does not exist
+	applyDefaults(cfg)
+	if cfg.AuditLossMode != "spill" {
+		t.Errorf("AuditLossMode = %q after defaults; want \"spill\" — an empty value resolves to the "+
+			"blocking no-loss mode, which must never govern the host packet path", cfg.AuditLossMode)
+	}
+
+	// An explicit choice is never overridden: an operator who accepts the stalls
+	// must be able to select a no-loss mode.
+	explicit := &AgentConfig{AuditLossMode: "spillblock"}
+	applyDefaults(explicit)
+	if explicit.AuditLossMode != "spillblock" {
+		t.Errorf("an explicit mode was overwritten with %q", explicit.AuditLossMode)
+	}
+}

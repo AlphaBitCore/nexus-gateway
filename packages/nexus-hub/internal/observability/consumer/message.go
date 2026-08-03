@@ -18,11 +18,19 @@ import (
 // on the producer and missing here is silently dropped on unmarshal. Enforced
 // by TestTrafficEventMessage_NoStructDrift.
 type TrafficEventMessage struct {
-	ID                string    `json:"id"`
-	Source            string    `json:"source"`
-	TraceID           *string   `json:"traceId,omitempty"`
-	ExternalRequestID *string   `json:"externalRequestId,omitempty"`
-	Timestamp         time.Time `json:"timestamp"`
+	ID                string  `json:"id"`
+	Source            string  `json:"source"`
+	TraceID           *string `json:"traceId,omitempty"`
+	ExternalRequestID *string `json:"externalRequestId,omitempty"`
+	// EndUserID is the caller-declared end-user tag (the caller's own
+	// customer id, not a Nexus identity). Persisted verbatim onto
+	// traffic_event.end_user_id; NULL when absent.
+	EndUserID *string `json:"endUserId,omitempty"`
+	// SessionID is the caller-declared session/conversation tag — the grain
+	// between EndUserID and ExternalRequestID. Persisted verbatim onto
+	// traffic_event.session_id; NULL when absent.
+	SessionID *string   `json:"sessionId,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 
 	SourceIP   *string `json:"sourceIp,omitempty"`
 	TargetHost *string `json:"targetHost,omitempty"`
@@ -90,13 +98,21 @@ type TrafficEventMessage struct {
 	// check actually consults.
 	GatewayCacheL2EntryKey string  `json:"gatewayCacheL2EntryKey,omitempty"`
 	ProviderCacheStatus    *string `json:"providerCacheStatus,omitempty"`
-	OriginTZ               *string `json:"originTz,omitempty"`
-	RoutedProviderID       *string `json:"routedProviderId,omitempty"`
-	RoutedProviderName     *string `json:"routedProviderName,omitempty"`
-	RoutedModelID          *string `json:"routedModelId,omitempty"`
-	RoutedModelName        *string `json:"routedModelName,omitempty"`
-	RoutingRuleID          *string `json:"routingRuleId,omitempty"`
-	RoutingRuleName        *string `json:"routingRuleName,omitempty"`
+	// ArtifactRefs is the JSON-encoded array of non-PII artifact references
+	// for multimodal responses ([{"sha256","sizeBytes","mime"}] byte-bearing,
+	// [{"url"}] URL-return). Persisted to traffic_event.artifact_refs.
+	ArtifactRefs *string `json:"artifactRefs,omitempty"`
+	// ComplianceCoverage is the request-time record of what compliance
+	// scanning actually ran on a multimodal request ("prompt-only"/"none").
+	// Persisted to traffic_event.compliance_coverage.
+	ComplianceCoverage *string `json:"complianceCoverage,omitempty"`
+	OriginTZ           *string `json:"originTz,omitempty"`
+	RoutedProviderID   *string `json:"routedProviderId,omitempty"`
+	RoutedProviderName *string `json:"routedProviderName,omitempty"`
+	RoutedModelID      *string `json:"routedModelId,omitempty"`
+	RoutedModelName    *string `json:"routedModelName,omitempty"`
+	RoutingRuleID      *string `json:"routingRuleId,omitempty"`
+	RoutingRuleName    *string `json:"routingRuleName,omitempty"`
 
 	// Dual hook pipeline. Each stage records its own decision +
 	// reason + reason_code; persisted on traffic_event.{request,response}_hook_*.

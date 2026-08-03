@@ -92,8 +92,11 @@ func TestReadResponseBodyBounded(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rc := io.NopCloser(bytes.NewReader(payload))
-			got, err := readResponseBodyBounded(rc, tc.max)
+			resp := &http.Response{
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: int64(len(payload)),
+			}
+			got, err := readResponseBodyBounded(resp, tc.max)
 			if err != nil {
 				t.Fatalf("readResponseBodyBounded: %v", err)
 			}
@@ -103,10 +106,60 @@ func TestReadResponseBodyBounded(t *testing.T) {
 		})
 	}
 
-	t.Run("nil body returns nil", func(t *testing.T) {
+	t.Run("nil response and nil body return nil", func(t *testing.T) {
 		got, err := readResponseBodyBounded(nil, 4096)
 		if err != nil || got != nil {
+			t.Fatalf("nil response: want (nil,nil), got (%v,%v)", got, err)
+		}
+		got, err = readResponseBodyBounded(&http.Response{ContentLength: 7}, 4096)
+		if err != nil || got != nil {
 			t.Fatalf("nil body: want (nil,nil), got (%v,%v)", got, err)
+		}
+	})
+}
+
+// TestBumpedPathReads_SizeFromContentLength pins finding C-11's win at THIS layer, not just
+// in bodyread's own tests. The helpers here own the decision to forward the declared length,
+// and dropping it would leave every assertion above passing — the bodies would still be
+// correct, they would just cost geometric growth again. Capacity is the only observable
+// difference, so it is what is asserted.
+func TestBumpedPathReads_SizeFromContentLength(t *testing.T) {
+	payload := bytes.Repeat([]byte("q"), 8192)
+
+	t.Run("request", func(t *testing.T) {
+		// httptest.NewRequest sets ContentLength from a *bytes.Reader, which is what a real
+		// bumped request carries too: a chat completion body of known length.
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+		got, err := readBody(req, 10<<20)
+		if err != nil {
+			t.Fatalf("readBody: %v", err)
+		}
+		if len(got) != len(payload) {
+			t.Fatalf("len = %d, want %d", len(got), len(payload))
+		}
+		if cap(got) > len(payload)+1 {
+			t.Fatalf("capacity = %d for an %d-byte request with an honest Content-Length, want at "+
+				"most %d — r.ContentLength is not reaching bodyread.Bounded, so every bumped request "+
+				"is back to io.ReadAll's geometric growth while still looking correct",
+				cap(got), len(payload), len(payload)+1)
+		}
+	})
+
+	t.Run("response", func(t *testing.T) {
+		resp := &http.Response{
+			Body:          io.NopCloser(bytes.NewReader(payload)),
+			ContentLength: int64(len(payload)),
+		}
+		got, err := readResponseBodyBounded(resp, 10<<20)
+		if err != nil {
+			t.Fatalf("readResponseBodyBounded: %v", err)
+		}
+		if cap(got) > len(payload)+1 {
+			t.Fatalf("capacity = %d for an %d-byte response with an honest Content-Length, want at "+
+				"most %d — resp.ContentLength is not reaching bodyread.Bounded. This helper takes the "+
+				"whole *http.Response precisely so it can read that field; taking only the body was "+
+				"what made the response half of C-11 impossible.",
+				cap(got), len(payload), len(payload)+1)
 		}
 	})
 }

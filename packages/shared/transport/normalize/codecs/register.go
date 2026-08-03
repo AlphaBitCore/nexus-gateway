@@ -147,6 +147,10 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 	// intercept embedding traffic without an adapter_type hint.
 	reg.Register("::/v1/embeddings", oaiEmb)
 
+	// OpenAI multimodal text surfaces (image/tts/stt) — extracted to
+	// register_multimodal.go along the multimodal seam.
+	registerMultimodalText(reg, openAICompatible)
+
 	// GLM Embeddings — /api/paas/v4/embeddings (Zhipu AI native path).
 	// The glm adapter-only entry above maps to the OpenAI chat normalizer
 	// (GLM chat is OpenAI-compatible). The path-specific entry below

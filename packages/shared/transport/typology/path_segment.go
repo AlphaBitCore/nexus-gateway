@@ -18,14 +18,22 @@ func KindFromPathSegment(segment string) EndpointKind {
 		return EndpointKindChat
 	case "embeddings":
 		return EndpointKindEmbeddings
+	case "rerank":
+		return EndpointKindRerank
 	case "audio/transcriptions", "audio/translations":
 		return EndpointKindSTT
 	case "audio/speech":
 		return EndpointKindTTS
 	case "images/generations", "images/edits", "images/variations":
 		return EndpointKindImageGeneration
+	case "videos":
+		return EndpointKindVideoGeneration
 	case "batches":
 		return EndpointKindBatch
+	case "guardrail":
+		return EndpointKindGuardrail
+	case "realtime":
+		return EndpointKindRealtime
 	}
 	return ""
 }

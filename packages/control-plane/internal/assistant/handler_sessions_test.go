@@ -17,6 +17,8 @@ import (
 	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // ctxWithUser builds an echo context carrying an authenticated admin principal, the
@@ -123,7 +125,7 @@ func TestChatStreamMultiTurnContinuesOwnedSession(t *testing.T) {
 	spill := &fakeSpill{objs: map[string][]byte{"s1:transcript": prior}}
 	ref, _ := json.Marshal(audit.SpillRef{Backend: "fake", Key: "s1:transcript"})
 
-	h := New(Config{AIGatewayURL: mockGW.URL, CPBaseURL: mockGW.URL, SystemVK: "nvk_test", Model: "m", Pool: mock, Spill: spill})
+	h := New(Config{AIGatewayBase: peer.Static(mockGW.URL), CPBaseURL: mockGW.URL, SystemVK: "nvk_test", Model: "m", Pool: mock, Spill: spill})
 
 	// The three DB ops a turn issues with DB stores: memory index (system prompt),
 	// session load (this test's continuation), session save (post-turn).
@@ -166,7 +168,7 @@ func TestStartChatSessionIDIsUserScoped(t *testing.T) {
 	spill := &fakeSpill{objs: map[string][]byte{"shared-id:transcript": prior}}
 	ref, _ := json.Marshal(audit.SpillRef{Backend: "fake", Key: "shared-id:transcript"})
 
-	h := New(Config{AIGatewayURL: mockGW.URL, CPBaseURL: mockGW.URL, SystemVK: "nvk_test", Model: "m", Pool: mock, Spill: spill})
+	h := New(Config{AIGatewayBase: peer.Static(mockGW.URL), CPBaseURL: mockGW.URL, SystemVK: "nvk_test", Model: "m", Pool: mock, Spill: spill})
 
 	// All three turn DB ops MUST bind userId='bob'. The session load+save bind
 	// (id='shared-id', userId='bob') — never 'alice', proving cross-user
@@ -244,7 +246,7 @@ func TestListModels_FiltersToReachable(t *testing.T) {
 		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"m-a"},{"id":"m-c"}]}`))
 	}))
 	defer srv.Close()
-	h := New(Config{Model: "m-a", Models: []string{"m-a", "m-b", "m-c"}, SystemVK: "nvk_sys", AIGatewayURL: srv.URL})
+	h := New(Config{Model: "m-a", Models: []string{"m-a", "m-b", "m-c"}, SystemVK: "nvk_sys", AIGatewayBase: peer.Static(srv.URL)})
 	e := echo.New()
 	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
 	if err := h.ListModels(c); err != nil || rec.Code != http.StatusOK {
@@ -266,7 +268,7 @@ func TestListModels_FailsOpenOnGatewayError(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer srv.Close()
-	h := New(Config{Model: "m-a", Models: []string{"m-a", "m-b"}, SystemVK: "nvk_sys", AIGatewayURL: srv.URL})
+	h := New(Config{Model: "m-a", Models: []string{"m-a", "m-b"}, SystemVK: "nvk_sys", AIGatewayBase: peer.Static(srv.URL)})
 	e := echo.New()
 	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
 	if err := h.ListModels(c); err != nil {
@@ -292,7 +294,7 @@ func TestListModels_ExplicitMode_EnrichesAndFallsBackForUnknownCode(t *testing.T
 	// Catalog knows "known-m" but NOT "ghost-m" (a configured code absent from the catalog).
 	mock.ExpectQuery(`SELECT m.code, m.name, p.name FROM "Model"`).
 		WillReturnRows(chatCatalogRows([3]string{"known-m", "Known Model", "OpenAI"}))
-	h := New(Config{Model: "known-m", Models: []string{"known-m", "ghost-m"}, SystemVK: "nvk_sys", AIGatewayURL: srv.URL, Pool: mock})
+	h := New(Config{Model: "known-m", Models: []string{"known-m", "ghost-m"}, SystemVK: "nvk_sys", AIGatewayBase: peer.Static(srv.URL), Pool: mock})
 	e := echo.New()
 	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
 	if err := h.ListModels(c); err != nil || rec.Code != http.StatusOK {
@@ -501,7 +503,7 @@ func TestListModels_AutoMode_DerivesChatReachableRankedDefault(t *testing.T) {
 
 	// Configured default "claude-opus-4-9" is NOT reachable → robust default must pick the
 	// ranked best of offered (claude-opus-4-7).
-	h := New(Config{Model: "claude-opus-4-9", SystemVK: "nvk_sys", AIGatewayURL: srv.URL, Pool: mock})
+	h := New(Config{Model: "claude-opus-4-9", SystemVK: "nvk_sys", AIGatewayBase: peer.Static(srv.URL), Pool: mock})
 	e := echo.New()
 	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
 	if err := h.ListModels(c); err != nil || rec.Code != http.StatusOK {
@@ -562,7 +564,7 @@ func TestListModels_AutoMode_DefaultReachableKept(t *testing.T) {
 		WillReturnRows(chatCatalogRows(
 			[3]string{"claude-opus-4-7", "Claude Opus 4.7", "Anthropic"},
 			[3]string{"gpt-5", "GPT-5", "OpenAI"}))
-	h := New(Config{Model: "gpt-5", SystemVK: "nvk_sys", AIGatewayURL: srv.URL, Pool: mock})
+	h := New(Config{Model: "gpt-5", SystemVK: "nvk_sys", AIGatewayBase: peer.Static(srv.URL), Pool: mock})
 	e := echo.New()
 	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
 	if err := h.ListModels(c); err != nil {
@@ -592,7 +594,7 @@ func TestListModels_AutoMode_FailsOpenWhenGatewayDown(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery(`SELECT m.code, m.name, p.name FROM "Model"`).
 		WillReturnRows(chatCatalogRows([3]string{"claude-opus-4-7", "Claude Opus 4.7", "Anthropic"}))
-	h := New(Config{Model: "claude-opus-4-7", SystemVK: "nvk_sys", AIGatewayURL: srv.URL, Pool: mock})
+	h := New(Config{Model: "claude-opus-4-7", SystemVK: "nvk_sys", AIGatewayBase: peer.Static(srv.URL), Pool: mock})
 	e := echo.New()
 	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
 	if err := h.ListModels(c); err != nil {
@@ -626,7 +628,7 @@ func TestListModels_AutoMode_FailsOpenWhenChatCatalogUnavailable(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 	mock.ExpectQuery(`SELECT m.code, m.name, p.name FROM "Model"`).WillReturnError(errors.New("catalog down"))
-	h := New(Config{Model: "gpt-5", SystemVK: "nvk_sys", AIGatewayURL: srv.URL, Pool: mock})
+	h := New(Config{Model: "gpt-5", SystemVK: "nvk_sys", AIGatewayBase: peer.Static(srv.URL), Pool: mock})
 	e := echo.New()
 	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
 	if err := h.ListModels(c); err != nil {
@@ -718,5 +720,22 @@ func TestLiftFileArtifact(t *testing.T) {
 	liftFileArtifact("observe_health", []byte("ok"), false, pub)
 	if events["file"] != 1 {
 		t.Fatalf("events = %v, want exactly one file event", events)
+	}
+}
+
+// TestListModels_FailsOpenWithoutGatewayProvider: no AI-Gateway provider
+// wired at all (nil AIGatewayBase) must fail OPEN like any resolution
+// failure — the picker still offers the configured allow-list rather than
+// coming up empty.
+func TestListModels_FailsOpenWithoutGatewayProvider(t *testing.T) {
+	h := New(Config{Model: "m-a", Models: []string{"m-a", "m-b"}, SystemVK: "nvk_sys"})
+	e := echo.New()
+	c, rec := ctxWithUser(e, http.MethodGet, "/m", "alice")
+	if err := h.ListModels(c); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("ListModels: %v %d", err, rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "m-a") || !strings.Contains(body, "m-b") {
+		t.Fatalf("picker must fall open to the configured list, got: %s", body)
 	}
 }

@@ -70,10 +70,8 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 		Vault:      h.Vault,
 		MultiVault: h.MultiVault,
 		Proxy: providers.ProxyConfig{
-			ComplianceProxyRuntimeURL: h.Proxy.ComplianceProxyRuntimeURL,
-			ComplianceProxyAPIToken:   h.Proxy.ComplianceProxyAPIToken,
-			AIGatewayURL:              h.Proxy.AIGatewayURL,
-			AIGatewayInternalToken:    h.Proxy.AIGatewayInternalToken,
+			AIGatewayBase:          h.Proxy.AIGatewayBase,
+			AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken,
 		},
 		Redis: h.Redis,
 	})
@@ -97,7 +95,7 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 		Hub:    h.Hub,
 		Audit:  h.Audit,
 		Logger: h.Logger,
-		Proxy:  routing.ProxyConfig{AIGatewayURL: h.Proxy.AIGatewayURL, AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken},
+		Proxy:  routing.ProxyConfig{AIGatewayBase: h.Proxy.AIGatewayBase, AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken},
 	}).RegisterRoutingRoutes(g, iamMW)
 	// Quota policy + override + analytics routes — R8-B16 extracted into
 	// handler/quota/ subpackage.
@@ -137,11 +135,6 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 		ThingOverrideGroupLookup: h.ThingOverrideGroupLookup,
 		HubProxyClient:           h.HubProxyClient,
 		ComplianceProxyClient:    h.ComplianceProxyClient,
-		Proxy: infra.ProxyConfig{
-			ComplianceProxyRuntimeURL: h.Proxy.ComplianceProxyRuntimeURL,
-			ComplianceProxyAPIToken:   h.Proxy.ComplianceProxyAPIToken,
-			AIGatewayURL:              h.Proxy.AIGatewayURL,
-		},
 	})
 	infraHandler.RegisterRoutes(g, iamMW)
 	// Traffic events + admin audit logs + forward-proxy dashboard —
@@ -152,8 +145,8 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 		Logger:     h.Logger,
 		SpillStore: h.SpillStore,
 		Proxy: traffic.ProxyConfig{
-			ComplianceProxyRuntimeURL: h.Proxy.ComplianceProxyRuntimeURL,
-			ComplianceProxyAPIToken:   h.Proxy.ComplianceProxyAPIToken,
+			ComplianceProxyBase:     h.Proxy.ComplianceProxyBase,
+			ComplianceProxyAPIToken: h.Proxy.ComplianceProxyAPIToken,
 		},
 		HTTPClient: h.ComplianceProxyClient,
 	})
@@ -288,7 +281,7 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 	provHandler.RegisterEmbeddingProbeRoutes(g, iamMW)
 	// Hook extras (implementations registry, execution chain, hook test/dry-run) —
 	// lives in governance/hooks/handler.
-	hooksHandler.RegisterHookExtrasRoutes(g, iamMW, hooks.ProxyConfig{AIGatewayURL: h.Proxy.AIGatewayURL, AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken})
+	hooksHandler.RegisterHookExtrasRoutes(g, iamMW, hooks.ProxyConfig{AIGatewayBase: h.Proxy.AIGatewayBase, AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken})
 	// Fleet analytics — lives in fleet/handler/agent.
 	// (registered above via agentHandler.RegisterRoutes → RegisterFleetAnalyticsRoutes)
 	// /me + /me/permissions + PATCH /me + /iam/action-catalog + /organizations/tree —

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/lossmode"
 )
 
 // perfNoSpill is a THROWAWAY perf-ablation switch (NEXUS_PERF_NO_SPILL=1): on
@@ -44,22 +46,24 @@ func (w *Writer) effectiveMaxQueue() int {
 // when the spill channel is also saturated), or lossModeDrop (counted bounded
 // drop). An empty or unrecognised value keeps the spillBlock default — audit must
 // never silently start dropping because of a config typo, and spillBlock is
-// no-loss whenever the spool is wired (prod/rig always set AI_GATEWAY_AUDIT_SPOOL_DIR;
-// spillOverflow falls back to block-style behaviour if no spool sink is wired).
+// no-loss whenever the spool is wired, and no-loss without one too: ensureStarted
+// downgrades spillBlock to block at Start when no spool is wired, with a WARN naming
+// the downgrade (lossmode.WithoutDurableSink, enforced there rather than assumed). So
+// after Start, LossMode() already reports the mode actually in force.
 // Wired from AuditConfig.LossMode at startup; call before any Enqueue. Returns the receiver.
 func (w *Writer) WithLossMode(mode string) *Writer {
-	switch mode {
-	case lossModeSpill, lossModeDrop, lossModeBlock:
-		w.lossMode = mode
-	default:
-		w.lossMode = lossModeSpillBlock
-	}
+	// lossmode.Resolve carries the rule this switch used to spell inline: an empty or
+	// unrecognised value becomes the no-loss default, because a config typo must never be
+	// able to make an audit pipeline silently start dropping records. Provably the same
+	// mapping as the four-case switch it replaces — see the shared package's
+	// TestResolve_ExactValuesRoundTrip and TestResolve_UnrecognisedIsNoLoss.
+	w.lossMode = string(lossmode.Resolve(mode))
 	return w
 }
 
 // LossMode reports the resolved overflow policy (after the WithLossMode fallback),
-// so startup wiring can log what is actually in effect — making a config typo that
-// silently fell back to the block default observable instead of mysterious.
+// so startup wiring can log what was asked for — making a config typo that silently
+// fell back to the default observable instead of mysterious.
 func (w *Writer) LossMode() string { return w.lossMode }
 
 // perfNoAudit is a THROWAWAY perf-ablation switch (NEXUS_PERF_NO_AUDIT=1): it
@@ -103,8 +107,10 @@ func (w *Writer) WithNDJSONSpill(s *sharedndjson.Writer) *Writer {
 // discipline is the overflow policy (lossMode):
 //   - block (default, no-loss): a BLOCKING send back-pressures the request path
 //     until a consumer frees a slot — admission self-throttles to the audit publish
-//     rate, nothing dropped. Bounded by backpressureMaxWait so a wedged pipeline
-//     (NATS down) spills durably instead of hanging forever.
+//     rate, nothing dropped. With a durable spool wired the wait is bounded by
+//     backpressureMaxWait, past which a wedged pipeline (NATS down) spills durably
+//     instead of hanging forever. With no spool there is nothing to bound it
+//     WITH: the escape would be a discard, so the mode waits for a consumer.
 //   - spill / drop (lossy opt-out): a NON-BLOCKING send; on a full queue the record
 //     is handed to the async spill worker (spill) or counted-dropped (drop).
 func (w *Writer) Enqueue(rec *Record) {
@@ -131,6 +137,20 @@ func (w *Writer) Enqueue(rec *Record) {
 		case lossModeBlock, lossModeSpillBlock:
 			if !w.memBudget.TryAcquire(n) {
 				w.metrics.incMemBackpressure()
+				// The budget is what bounds heap; the spool is what absorbs the
+				// overflow. When a durable sink exists there is no reason to park a
+				// request goroutine waiting for heap: hand the record to the spool
+				// and return. Still no loss, and the request stops holding its
+				// admission slot — which matters more than it looks, because the
+				// slot is released AFTER this enqueue, so a parked request sheds
+				// arrivals that would otherwise have been served.
+				if w.hasDurableSink() {
+					w.spillRecord(rec)
+					return
+				}
+				// No durable sink: this mode promised no loss, and with nowhere to
+				// put the record the only honest way to keep that promise is to
+				// wait. Acquire returns false only at shutdown.
 				if !w.memBudget.Acquire(n) {
 					// Shutdown fired while blocked: nothing was reserved — spill
 					// durably without enqueuing (still no loss).
@@ -170,30 +190,6 @@ func (w *Writer) Enqueue(rec *Record) {
 	}
 }
 
-// blockEnqueue is the no-loss producer path: a BLOCKING send parks the request
-// goroutine efficiently (no polling) until a consumer frees a queue slot. The
-// number of simultaneously back-pressured goroutines is bounded by the server's
-// request concurrency, so it cannot pile up unboundedly. A genuinely wedged
-// pipeline (e.g. NATS down) past backpressureMaxWait spills the record durably
-// instead of hanging forever — still no loss.
-func (w *Writer) blockEnqueue(rec *Record) {
-	// Fast path: a slot is free, no timer needed.
-	select {
-	case w.recCh <- rec:
-		return
-	default:
-	}
-	timer := time.NewTimer(backpressureMaxWait)
-	defer timer.Stop()
-	select {
-	case w.recCh <- rec:
-	case <-timer.C:
-		w.spillRecord(rec) // wedged past the wait → durable spill, never a drop
-	case <-w.stopCh:
-		w.spillRecord(rec) // shutting down → spill durably
-	}
-}
-
 // spillOverflow is the spill policy's overflow handler. The common path is a single
 // NON-BLOCKING hand-off to the async spill worker (spillCh), which batches the
 // record to the durable NDJSON sink OFF the request goroutine — audit is a
@@ -217,8 +213,16 @@ func (w *Writer) blockEnqueue(rec *Record) {
 // non-blocking (a bounded drop); lossModeSpillBlock and lossModeBlock choose
 // no-loss (back-pressure on the request path).
 func (w *Writer) spillOverflow(rec *Record) {
-	if perfNoSpill || w.ndjsonSpill == nil {
-		w.dropOverflow(rec) // no durable sink wired
+	if perfNoSpill {
+		w.dropOverflow(rec) // ablation switch: dropping IS the intent
+		return
+	}
+	if w.ndjsonSpill == nil {
+		// Reaching here means the mode is `spill` — the lossy one — because
+		// ensureStarted has already downgraded spillblock to block when no spool
+		// is wired (writer_lifecycle.go), and block never routes through here. An
+		// async spill with nowhere to spill IS a drop, so saying so is honest.
+		w.dropOverflow(rec)
 		return
 	}
 	// Non-blocking hand-off to the async spill worker.
@@ -420,8 +424,21 @@ func (w *Writer) spillRecord(rec *Record) bool {
 	// leaves the in-memory pipeline here, so its byte-budget reservation returns.
 	defer w.releaseRecordMem(rec)
 	if w.ndjsonSpill == nil {
+		// A no-loss mode reaches this arm only at shutdown: every other escape it
+		// takes is gated on hasDurableSink, and without one it waits rather than
+		// come here. At shutdown waiting is not on offer — the process is going
+		// away — so this is the one discard those modes cannot avoid, and it is
+		// counted and logged rather than silent.
 		w.metrics.incDropped()
 		w.reclaimRecordBody(rec)
+		if n := w.noSpoolLogCount.Add(1); n%dropLogEvery == 1 {
+			w.logger.Error("audit: DROPPING records — no durable spool is configured (throttled)",
+				"requestId", rec.RequestID,
+				"droppedSoFar", n,
+				"remedy", "set audit.ndjson.enabled and audit.ndjson.dir: without a spool the "+
+					"back-pressure escape has nowhere durable to put a record and discards it",
+			)
+		}
 		return false
 	}
 	data, msgBuf, ok := w.marshalRecord(rec) // wire-format per w.wireBinary; reclaims the body

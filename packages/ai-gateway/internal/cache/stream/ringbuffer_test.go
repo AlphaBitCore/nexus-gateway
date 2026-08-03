@@ -96,6 +96,51 @@ func TestRingBuffer_BlockingReadWakesOnAppend(t *testing.T) {
 	}
 }
 
+// Every reader parked at the moment a chunk arrives must be woken by it, and
+// must then be able to park again for the following chunk. This is what makes
+// one broker leg serve many subscribers: a subscriber that slept through an
+// Append would stall until the next one, and stall permanently on the last.
+func TestRingBuffer_AppendWakesEveryParkedReader(t *testing.T) {
+	rb := NewRingBuffer()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	const readers = 3
+	got := make(chan string, readers*2)
+	for range readers {
+		go func() {
+			idx := 0
+			for {
+				chunk, next, err := rb.Read(ctx, idx)
+				if err != nil {
+					return
+				}
+				idx = next
+				got <- chunk.Delta
+			}
+		}()
+	}
+
+	// Give the readers time to be parked rather than racing the first Append.
+	time.Sleep(50 * time.Millisecond)
+
+	for _, delta := range []string{"one", "two"} {
+		rb.Append(provcore.Chunk{Delta: delta})
+		seen := 0
+		for seen < readers {
+			select {
+			case d := <-got:
+				if d != delta {
+					t.Fatalf("reader saw %q, want %q", d, delta)
+				}
+				seen++
+			case <-ctx.Done():
+				t.Fatalf("only %d of %d readers woke for chunk %q", seen, readers, delta)
+			}
+		}
+	}
+}
+
 func TestRingBuffer_FailBroadcasts(t *testing.T) {
 	rb := NewRingBuffer()
 	rb.Append(provcore.Chunk{Delta: "a"})

@@ -118,11 +118,12 @@ Agent-only endpoints registered alongside (same auth, same route group):
 | `POST /renew-cert` | device certificate renewal |
 | `GET /:id/attestation-pubkey` | attestation public key fetch |
 
-Plus one service-only endpoint:
+Plus two service-only endpoints:
 
 | Method + Path | Purpose |
 |---|---|
 | `POST /agent-audit` | normalized agent audit ingested by compliance-proxy / ai-gateway via MQ |
+| `GET /service-url/:thing_type` | resolve a peer service's reported base URLs (§6.5); device-token callers get 403 — the private URL never reaches end-user devices |
 
 All of the above are mounted under the same `deviceAuth := enroll.DeviceOrServiceAuth(cfg.Store, cfg.ServiceToken)` middleware in `packages/nexus-hub/internal/handler/routes.go`, so either token kind works on either kind of endpoint (subject to the handler's own ThingType check where applicable).
 
@@ -191,6 +192,28 @@ If step 2 fails, step 3 still fires but with `ReportedVer` at its prior value pl
 - **Heartbeat** — a periodic tick driven by `Config.HeartbeatInterval` (default 15 s). The interval is settable at runtime via `SetHeartbeatInterval`; a broadcast channel wakes any sleeping ticker so the new cadence takes effect immediately rather than waiting for the next firing.
 - **Reconnect backoff** — exponential 1 s, 2 s, 4 s, 8 s, 16 s, 30 s with 0–25 % jitter, computed in `calculateBackoffFor`. The first failure is logged at DEBUG (boot races are expected); failures 2 onward log at WARN.
 
+## §6.5 — Peer service URL resolution (`shared/transport/peerurl`)
+
+A service **never configures another Nexus service's URL**. Each server service reports its own two base URLs to the Thing Registry as `staticInfo` (`publicUrl` = external clients + the agent; `privateUrl` = internal service-to-service, auto-derived when not overridden — see [[thing-model]] §2), and any service that needs a peer's address resolves the reported value from the Hub at runtime. The peer-URL config fields this replaces (compliance-proxy `compliance.aiGatewayUrl`; control-plane BFF `aiGatewayUrl` / `complianceProxyUrl` / `complianceProxyRuntimeUrl` and their env vars) are deleted — a locally configured peer URL is a drift class, not a feature.
+
+**Hub endpoint** — `GET /api/internal/things/service-url/:thing_type` (`packages/nexus-hub/internal/fleet/handler/hubapi/internal_things.go` `GetServiceURL`, mounted in `internal/handler/routes.go`):
+
+- **Auth**: `Bearer INTERNAL_SERVICE_TOKEN`, service-token callers **only**. A device-token caller (agent) gets 403 — the private URL must never reach end-user devices. `:thing_type` must be one of the four server types (`nexus-hub`, `control-plane`, `ai-gateway`, `compliance-proxy`); the agent type is excluded by design.
+- **Response**: `{thingType, privateUrl, publicUrl}`.
+- **Selection rule**: the most-recently-seen Thing of the requested type that reports a URL. The framework assumes **one reachable base per service type** — a horizontally scaled fleet is expected to sit behind a single LB base. When more than one Thing reports URLs the Hub logs a warning and the freshest wins deterministically.
+- **Boot window**: 404 with code `SERVICE_URL_NOT_REPORTED` while no Thing of the type has pushed its `static_info` yet (the push lands ~500 ms after registration). Callers treat this as retry-next-use, not an error state.
+
+**Shared resolver** — `packages/shared/transport/peerurl` (`Resolver.PrivateURL` / `Resolver.PublicURL`, keyed by target thing type). Contract:
+
+- **Lazy**: nothing is fetched at construction; the first use resolves. The Hub starts first in every deployment recipe and URLs are stable post-boot, so in practice the first call resolves and the cache serves the rest.
+- **In-memory cache**: positive results are cached per thing type and refreshed after `DefaultRefreshTTL` (5 min) so a moved peer converges without a restart. **A failed refresh of a previously good entry serves the stale value** — URLs are stable, availability wins.
+- **Error + retry-next-use**: an unreachable Hub or a not-yet-reported URL returns an error (`ErrNotReported` for the 404 case) — **never a silent fallback or hardcoded default**. A negative entry is retried after `DefaultNegativeTTL` (5 s) so a hot caller doesn't hammer the Hub during the peer's boot window.
+- **Failure UX rule**: consumers surface a resolver error as a transient dependency failure — a 503 with code `PEER_SERVICE_UNAVAILABLE` ("peer not yet available — retrying") on admin/BFF surfaces — never a raw 500 and never a silent call to a wrong URL.
+
+**Trust model**: the resolved base is a Thing-reported value selected by type, so the trust root is the **Hub registry + controlled enrollment** — only a Hub-authenticated, legitimately enrolled service presents a server thing type. This is the same trust boundary all Thing state already relies on (e.g. the attestation-pubkey cache). Internal tokens are only ever sent to a Hub-registered, type-matched base; a rogue base would require a rogue enrollment.
+
+**What stays config** (not peer URLs): each service's OWN `publicURL` / `privateURL`, the bootstrap `registry.nexusHubUrl` (chicken-and-egg — you need the Hub to resolve anything), infrastructure URLs (DB / NATS / Redis), and external IdP URLs. One special case: compliance-proxy `onboarding.cpUIBaseURL` remains an optional override for the 407-page display link; its default is the Hub-resolved Control Plane `publicUrl` (a display link for end users, hence public, never private).
+
 ## §7 — Failure modes + safety
 
 | Trigger | Behaviour |
@@ -217,7 +240,9 @@ The framework is **boot-degraded, not boot-fatal**. Every service can start with
 - `packages/shared/transport/thingclient/` — full client implementation: `client.go` (Config, lifecycle, WS pumps), `http.go` (fallback endpoints), `shadow.go` (reported state + outcomes), `outcomes.go` (per-key apply ledger), `opsmetrics.go` (metrics/diag/static push), `mq.go` (NATS publisher with ring buffer).
 - `packages/nexus-hub/internal/ws/server.go` — `Server.HandleUpgrade` mounted at `/ws`.
 - `packages/nexus-hub/internal/handler/routes.go` — `/api/internal/things/*` route group + `deviceAuth` middleware wiring.
-- `packages/nexus-hub/internal/fleet/handler/hubapi/` — handler implementations for the routes in §3.2.
+- `packages/nexus-hub/internal/fleet/handler/hubapi/` — handler implementations for the routes in §3.2 (incl. `internal_things.go` `GetServiceURL` for §6.5).
+- `packages/shared/transport/peerurl/` — the shared peer-URL resolver (§6.5): lazy, cached, error-and-retry.
+- `packages/shared/core/metrics/platform/staticinfo.go` — `CaptureStaticInfo` + `EffectivePrivateURL` (the reported `publicUrl` / `privateUrl` source).
 - `packages/nexus-hub/internal/identity/handler/enroll/device_auth.go` — `DeviceOrServiceAuth` middleware.
 - `packages/nexus-hub/internal/identity/handler/enroll/enrollment_handler.go` — `resolveThingID` (Hub-generated agent ThingIDs + reinstall-idempotency lookup).
 - `packages/nexus-hub/internal/identity/handler/bootstrap/agent_bootstrap.go` — unauthenticated-by-design pre-enrollment endpoint.

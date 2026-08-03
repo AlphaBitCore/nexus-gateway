@@ -247,6 +247,14 @@ export interface Model {
   /** Per-million price for cache WRITE creation (Anthropic ~1.25× input).
    *  NULL = no surcharge; cost calc falls back to inputPricePerMillion. */
   cachedInputWritePricePerMillion?: number;
+  /** Audio-token input rate for realtime models (USD per 1M tokens).
+   *  NULL on every non-realtime model. */
+  audioInputPricePerMillion?: number;
+  /** Audio-token output rate for realtime models (USD per 1M tokens). */
+  audioOutputPricePerMillion?: number;
+  /** Cached audio-input READ rate for realtime models. NULL = no discount;
+   *  cost calc falls back to audioInputPricePerMillion. */
+  cachedAudioInputReadPricePerMillion?: number;
   maxContextTokens?: number;
   maxOutputTokens?: number;
   /** active | deprecated | disabled | preview — may be omitted by older API responses */
@@ -279,6 +287,10 @@ export interface CreateModelInput {
   outputPricePerMillion?: number;
   cachedInputReadPricePerMillion?: number;
   cachedInputWritePricePerMillion?: number;
+  /** Audio-token rates for realtime models (USD per 1M tokens). */
+  audioInputPricePerMillion?: number;
+  audioOutputPricePerMillion?: number;
+  cachedAudioInputReadPricePerMillion?: number;
   maxContextTokens?: number;
   maxOutputTokens?: number;
   features?: string[];
@@ -300,6 +312,10 @@ export type UpdateModelInput = Partial<{
   outputPricePerMillion: number;
   cachedInputReadPricePerMillion: number;
   cachedInputWritePricePerMillion: number;
+  /** Audio-token rates for realtime models (USD per 1M tokens). */
+  audioInputPricePerMillion: number;
+  audioOutputPricePerMillion: number;
+  cachedAudioInputReadPricePerMillion: number;
   maxContextTokens: number;
   maxOutputTokens: number;
   status: string;
@@ -584,6 +600,13 @@ export interface TrafficEvent {
   // Request tracing
   traceId?: string | null;
   externalRequestId?: string | null;
+  // Caller-declared correlation tags (AI Gateway rows only). endUserId is the
+  // caller's own customer id (X-Nexus-End-User-Id header or protocol-native
+  // user field); sessionId groups a conversation's requests
+  // (X-Nexus-Session-Id header). Opaque, VK-scoped, never joined to Nexus
+  // identities. Null for compliance-proxy / agent rows.
+  endUserId?: string | null;
+  sessionId?: string | null;
   // Entity attribution (unified across sources)
   entityType?: 'user' | 'project' | 'device' | 'unknown' | null;
   entityId?: string | null;
@@ -617,8 +640,39 @@ export interface TrafficEvent {
   cacheStatus?: 'HIT' | 'MISS' | null;
   /** Detail-only: gateway-cache decision (extract hit / singleflight hit_inflight / miss / skipped). */
   gatewayCacheStatus?: 'hit' | 'hit_inflight' | 'miss' | 'skipped' | null;
-  /** Populated only when `gatewayCacheStatus = 'skipped'`. */
-  gatewayCacheSkipReason?: 'disabled' | 'no_cache' | 'passthrough' | 'not_cacheable' | null;
+  /**
+   * Populated only when `gatewayCacheStatus = 'skipped'`. The full set the
+   * gateway can stamp (audit.GatewayCacheSkipReason), one label per value in
+   * `pages:traffic.detail.cache.gatewaySkip`.
+   *
+   * This union had drifted to four values while the gateway emitted twenty, and
+   * it listed `not_cacheable`, which nothing has ever emitted. `disabled` means
+   * no cache TIER is on; `no_targets` means the tiers are on but routing
+   * produced nothing to key against — the two used to share the `disabled`
+   * label, so a config posture and a routing outcome read identically.
+   */
+  gatewayCacheSkipReason?:
+    | 'disabled'
+    | 'no_targets'
+    | 'no_cache'
+    | 'passthrough'
+    | 'time_sensitive'
+    | 'modality_endpoint'
+    | 'embeddings_endpoint'
+    | 'rerank_endpoint'
+    | 'agentic_tool_use'
+    | 'poisoned'
+    | 'no_embeddable_text'
+    | 'oversize_for_embedding'
+    | 'valkey_unavailable'
+    | 'semantic_unavailable'
+    | 'semantic_search_error'
+    | 'semantic_search_timeout'
+    | 'embedding_timeout'
+    | 'embedding_provider_error'
+    | 'embedding_dim_mismatch'
+    | 'embedding_circuit_open'
+    | null;
   /** Populated only when `gatewayCacheStatus ∈ {hit, hit_inflight}`. Today always 'extract'. */
   gatewayCacheKind?: 'extract' | 'semantic' | null;
   /**
@@ -633,6 +687,25 @@ export interface TrafficEvent {
   gatewayCacheL2EntryKey?: string | null;
   /** Provider prompt-cache outcome. `na` = no provider call or model doesn't support prompt cache. */
   providerCacheStatus?: 'hit' | 'miss' | 'na' | null;
+  /**
+   * Multimodal artifact references, JSON-encoded array:
+   * `[{"sha256","sizeBytes","mime"}]` for byte-bearing artifacts (inline
+   * b64 images, TTS audio), `[{"url"}]` for URL-return images (reference
+   * only — the gateway never fetches it, no content hash exists in that
+   * mode). Null for non-multimodal rows.
+   */
+  artifactRefs?: string | null;
+  /**
+   * Request-time record of what compliance scanning actually ran on a
+   * multimodal request. `prompt-only` = the prompt text was scanned but the
+   * binary output is not inspectable; `none` = no hook pipeline was
+   * configured, nothing was scanned. Null for chat/embeddings (no claim).
+   * Rendered as the per-modality coverage badge — degradation must be
+   * visible, never silent.
+   */
+  complianceCoverage?: 'prompt-only' | 'none' | null;
+  /** Request modality (traffic_event.endpoint_type: chat / image_generation / tts / stt / …) — Traffic modality column + filter. */
+  endpointType?: string | null;
   // Prompt-cache metrics
   cacheCreationTokens?: number | null;
   cacheReadTokens?: number | null;
@@ -931,6 +1004,13 @@ export interface VirtualKey {
   sourceApp?: string;
   enabled: boolean;
   expiresAt?: string;
+  /**
+   * 'application' keys are issued to a service and must always carry a future
+   * expiry (server: requireApplicationExpiry); 'personal' keys may clear theirs
+   * to never-expire. Drives the expiry edit form's rules.
+   */
+  vkType?: 'application' | 'personal';
+  vkStatus?: string;
   rateLimitRpm?: number;
   allowedModels?: VirtualKeyAllowedModelRef[];
   createdBy?: string;
@@ -1200,10 +1280,19 @@ export interface ApiTemplateModel {
   providerModelId: string;
   type: string;
   features: string[];
+  /** Other names this same model answers to — typically an id the catalog has
+   *  since renamed away from ("claude-haiku-4-5-20251001" for
+   *  "claude-haiku-4-5"). Part of the model's identity: a provider row found
+   *  under an alias is this model, not an unknown one. Absent when empty. */
+  aliases?: string[];
   inputPricePerMillion?: number;
   outputPricePerMillion?: number;
   cachedInputReadPricePerMillion?: number;
   cachedInputWritePricePerMillion?: number;
+  /** Audio-token rates for realtime models (USD per 1M tokens). */
+  audioInputPricePerMillion?: number;
+  audioOutputPricePerMillion?: number;
+  cachedAudioInputReadPricePerMillion?: number;
   maxContextTokens?: number;
   maxOutputTokens?: number;
 }
@@ -1453,192 +1542,10 @@ export interface IdpGroupMapping {
   createdAt: string;
 }
 
-// NormalizedPayload + sidecar (traffic_event_normalized)
-
-/** kind discriminator on NormalizedPayload — must mirror Go normalize.Kind. */
-export type NormalizedKind =
-  | 'ai-chat'
-  | 'ai-completion'
-  | 'ai-embedding'
-  | 'ai-image'
-  | 'http-json'
-  | 'http-text'
-  | 'http-form'
-  | 'http-multipart'
-  | 'http-binary'
-  | 'http-sse'
-  | 'unsupported';
-
-export interface BinaryRef {
-  size: number;
-  contentType: string;
-  sha256: string;
-  spillKey?: string;
-}
-
-export interface ToolUse {
-  callId?: string;
-  name: string;
-  input?: Record<string, unknown>;
-}
-
-export interface ToolResult {
-  callId?: string;
-  output?: string;
-}
-
-export type ContentBlockType = 'text' | 'image_ref' | 'tool_use' | 'tool_result' | 'reasoning';
-
-export interface NormalizedContentBlock {
-  type: ContentBlockType;
-  text?: string;
-  imageRef?: BinaryRef;
-  toolUse?: ToolUse;
-  toolResult?: ToolResult;
-}
-
-export interface NormalizedMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: NormalizedContentBlock[];
-  finishReason?: string;
-}
-
-/** One server-sent event captured by the generic-http SSE projection.
- *  At most one of `data` (frame data parsed as JSON) or `dataText`
- *  (verbatim non-JSON data) is set; a frame whose data line was empty
- *  carries neither. */
-export interface SSEFrame {
-  event?: string;
-  data?: unknown;
-  dataText?: string;
-}
-
-export interface HTTPBodyView {
-  text?: string;
-  json?: unknown;
-  form?: Record<string, string>;
-  binaryRef?: BinaryRef;
-  /** kind=http-sse: decoded event frames in stream order. */
-  sseFrames?: SSEFrame[];
-  /** kind=http-sse: true when the capture limit cut the frame list short. */
-  sseTruncated?: boolean;
-}
-
-export interface HTTPPayload {
-  method?: string;
-  url?: string;
-  headersFiltered?: Record<string, string>;
-  bodyView?: HTTPBodyView;
-}
-
-export interface NormalizedUsage {
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-  cacheReadTokens?: number;
-  cacheCreationTokens?: number;
-  reasoningTokens?: number | null;
-}
-
-export interface NormalizedPayload {
-  kind: NormalizedKind;
-  normalizeVersion: string;
-  protocol?: string;
-  model?: string;
-  stream?: boolean;
-  messages?: NormalizedMessage[];
-  tools?: unknown[];
-  params?: Record<string, unknown>;
-  usage?: NormalizedUsage;
-  finishReason?: string;
-  http?: HTTPPayload;
-  /** drop-content placeholder marker — when true the payload is metadata-only. */
-  redacted?: boolean;
-  /** Why the content was dropped: the operator chose drop-content, or a
-   *  redact storage policy could not be applied precisely and degraded.
-   *  Absent on rows written before the reason was stamped — the UI then
-   *  renders a neutral notice asserting neither story. */
-  redactedReason?: 'operator-drop' | 'redact-degraded';
-  /** Degradation diagnosis when redactedReason === 'redact-degraded'.
-   *  failedAddresses lists content addresses only — never content.
-   *  cause is an open vocabulary: the listed tokens render as localized
-   *  phrases, unknown future tokens render verbatim. */
-  redactedDetail?: {
-    cause: 'no-spans' | 'payload-unmarshal' | 'spans-unresolved' | 'marshal-failed' | (string & {});
-    failedAddresses?: string[];
-  };
-  /** rule IDs that triggered the drop-content storage policy. */
-  ruleIds?: string[];
-  /** Normalizer-reported confidence in [0,1]. Absent/0 on
-   *  older rows is interpreted as fully confident (1.0). */
-  confidence?: number;
-  /** Which spec the normalizer matched. Examples:
-   *  "openai-chat" (Tier 1 AI builtin), "chatgpt-web" (Tier 1
-   *  per-host adapter), "pattern:chatgpt-web" (Tier 2 multi-spec
-   *  pattern probe), "generic-http" (structural fallback projection
-   *  of the raw HTTP body, confidence 1.0 = confidence in the
-   *  projection only, no AI-semantics claim). Empty on legacy
-   *  verbatim rows. */
-  detectedSpec?: string;
-  /** "host" when the normalizer was selected by interception-domain
-   *  host match (a per-host adapter) rather than by decode coverage —
-   *  the confidence is then the honest coverage of a known-adapter
-   *  body (a single-prompt spec caps near 0.6 by design), NOT a trust
-   *  score comparable to a Tier-1 sniffed decode. The badge renders a
-   *  "host-matched" label in place of the numeral. Absent for keyed /
-   *  sniffed / pattern / fallback rows. */
-  selectionEvidence?: 'host';
-  /** Text input strings for kind=ai-embedding requests.
-   *  Nil/absent when the input was a binary token array (not stored)
-   *  or when this is a response payload (embedding vectors are never
-   *  stored). */
-  inputs?: string[] | null;
-}
-
-/** One TransformSpan emitted by hook / aiguard / cache normaliser. */
-export interface TransformSpan {
-  source: 'hook' | 'aiguard' | 'cache-normaliser' | 'cache-control-inject' | 'cache-key-strip';
-  sourceId?: string;
-  action: 'redact' | 'strip' | 'inject' | 'replace';
-  contentAddress: string;
-  start: number;
-  end: number;
-  replacement?: string;
-  reason?: string;
-}
-
-export type NormalizeStatus = 'ok' | 'partial' | 'failed';
-
-/** One transform span emitted by a hook / aiguard / cache normaliser. */
-export interface TransformSpan {
-  source: 'hook' | 'aiguard' | 'cache-normaliser' | 'cache-control-inject' | 'cache-key-strip';
-  sourceId?: string;
-  action: 'redact' | 'strip' | 'inject' | 'replace';
-  contentAddress: string;
-  start: number;
-  end: number;
-  replacement?: string;
-  reason?: string;
-}
-
-/**
- * Sidecar row for traffic_event_normalized. The Admin API
- * endpoint GET /api/admin/traffic/:id/normalized returns this shape;
- * 404 when no normalize row exists (e.g. capture was disabled).
- */
-export interface TrafficEventNormalized {
-  trafficEventId: string;
-  normalizeVersion: string;
-  requestNormalized?: NormalizedPayload | null;
-  responseNormalized?: NormalizedPayload | null;
-  requestStatus?: NormalizeStatus | null;
-  responseStatus?: NormalizeStatus | null;
-  requestErrorReason?: string | null;
-  responseErrorReason?: string | null;
-  requestRedactionSpans?: TransformSpan[] | null;
-  responseRedactionSpans?: TransformSpan[] | null;
-  createdAt: string;
-}
+// NormalizedPayload + sidecar types (traffic_event_normalized) live in
+// ./types.normalized and are re-exported here so importers keep a single
+// `@/api/types` entry point.
+export * from './types.normalized';
 
 // ── Semantic Cache Config (L1 embedding singleton) ─────────────────────
 

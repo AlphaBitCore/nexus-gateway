@@ -199,7 +199,7 @@ type openaiResponsesToolDecl struct {
 
 func (n *OpenAIResponsesNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req openaiResponsesRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroPayloadForKind(meta), fmt.Errorf("openai-responses: request unmarshal: %w", err)
 	}
 	out := core.NormalizedPayload{
@@ -376,7 +376,7 @@ type openaiResponsesOutputDetails struct {
 
 func (n *OpenAIResponsesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp openaiResponsesResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroPayloadForKind(meta), fmt.Errorf("openai-responses: response unmarshal: %w", err)
 	}
 	out := core.NormalizedPayload{

@@ -241,20 +241,25 @@ def classify_model_modality(model_entry: dict) -> str:
     by outputModalities, else by id-prefix heuristic.
 
     model_entry is a single item from /v1/models data[].
-    Returns: "chat" | "embedding" | "image" | "audio" | "video" | "skip"
+    Returns: "chat" | "embedding" | "image" | "audio" | "tts" | "stt" |
+             "realtime" | "video" | "rerank" | "skip"
 
     Priority order:
       1. `type` (Nexus extension on /v1/models, canonical Model.type) —
          the most reliable signal; admins set this on Provider catalog.
          Without this, smoke historically misclassified dall-e-3 / whisper-1
-         (seed data left outputModalities=['text'] on every row).
+         (seed data left outputModalities=['text'] on every row). The precise
+         audio sub-types (tts/stt/realtime) and rerank MUST be recognized here
+         so the modality guard's non-chat models never land in chat_models and
+         get chat-tested (which now correctly 400s MODEL_MODALITY_MISMATCH).
       2. `outputModalities` — when type is absent, fall back to the first
          output modality.
       3. id prefix — last-resort heuristic for embedding-* / text-embedding-*.
     """
     mid = model_entry.get("id", "")
     mtype = (model_entry.get("type") or "").lower()
-    if mtype in ("chat", "embedding", "image", "audio", "video"):
+    if mtype in ("chat", "embedding", "image", "audio", "tts", "stt",
+                 "realtime", "video", "rerank"):
         return mtype
     modalities = model_entry.get("outputModalities")
     if isinstance(modalities, list) and modalities:
@@ -286,20 +291,102 @@ def is_non_chat(mid: str) -> bool:
     return classify_model_modality({"id": mid}) != "chat"
 
 
-# Models that reject custom temperature values (reasoning/thinking/new models).
-# Do NOT send temperature param for these — the API uses its own default.
+# Reasoning-family models whose requests take the reasoning SHAPE:
+# max_completion_tokens instead of max_tokens, system text embedded in the
+# user turn, reasoning-output auditing, larger token budgets. Most members'
+# upstream ALSO rejects a caller-supplied temperature (each such 400 is
+# quoted inline below or in scripts/quirk-coverage.config.mjs;
+# kimi-k2-thinking is the exception — it accepts temperature and sits here
+# for the reasoning shape only).
+#
+# Whether a request body actually CARRIES a temperature is decided per call
+# site by _send_temperature(model, ingress), not by this set alone. On every
+# wire where the gateway strips the param, the smoke deliberately sends one:
+# a 200 proves the strip fired, and a strip list that has gone stale
+# re-reddens as the upstream's own 400. That coverage is what caught the
+# kimi-k2.7 families (shipped in the catalog, 400'd every temperature-sending
+# client) and the gpt-5.6 /v1/responses wire gap (identical body answered 200
+# on chat and 400 there). Membership here therefore does NOT suppress the
+# gateway-wire probes; it only governs the two arms where no gateway strip
+# exists — the direct-to-vendor arm and claude on native /v1/messages — plus
+# the non-temperature consumers of is_reasoning (max_completion_tokens vs
+# max_tokens, system-message embedding, reasoning-output auditing, token
+# budgets).
+#
+# Membership is exact, not prefix. The catalog↔quirk↔smoke chain is linted:
+# `npm run check:quirk-coverage` fails when a catalog chat family has no
+# recorded sampling-quirk decision, and when an entry here no longer matches
+# any catalog model (the staleness that once produced 30 false failures in a
+# production run).
 _REASONING_MODELS = {
-    "o1", "o1-mini", "o1-preview",
+    "o1",
     "o3", "o3-mini", "o4-mini",
+    # Accepts temperature (probed; no 400 exists) — member for the reasoning
+    # shape only. Sending it a temperature on gateway wires is harmless.
     "kimi-k2-thinking",
     "kimi-k2.5", "kimi-k2.6",
+    # Probed on production: 400 "invalid temperature: only 1 is allowed for this
+    # model"; both answer 200 with the param omitted.
+    "kimi-k2.7-code", "kimi-k2.7-code-highspeed",
     "gpt-5.5",
-    "claude-opus-4-7",
+    # gpt-5.6-* / gpt-5.4-* are deliberately NOT here. gpt-5.6 rejects a
+    # temperature exactly as gpt-5.5 does (probed: 400 on both OpenAI wires);
+    # gpt-5.4 ACCEPTS one (probed: 200 on both wires — the family's 400 is the
+    # max_tokens rename only). Listing either would flip the OTHER
+    # is_reasoning consumers (message shape, max_completion_tokens) on arms
+    # that are green today, and the gateway-wire temperature probes run for
+    # listed and unlisted models alike. Known cost, accepted: the
+    # direct-to-vendor arm (P3C) still sends gpt-5.6 a temperature and eats
+    # the vendor's 400 — a vendor contract, not a gateway defect.
+    # Probed on production via /v1/messages: 400 "`temperature` is deprecated for
+    # this model." The same models answer 200 on /v1/chat/completions, where the
+    # codec strips the param — the native wire forwards it by design.
+    "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5",
 }
 
 
 def is_reasoning(mid: str) -> bool:
     return mid in _REASONING_MODELS
+
+
+def _send_temperature(model: str, ingress: str) -> bool:
+    """Should this request body carry `temperature: 0`?
+
+    ingress ∈ {"chat", "responses", "messages", "gemini", "direct"} — the wire
+    the call site is about to use, NOT the routed target.
+
+    For models whose upstream rejects a caller-supplied temperature
+    (_REASONING_MODELS), the gateway strips the param on every wire it owns
+    the request contract for, and SENDING the param on those wires is the
+    regression test — the arm must answer 200, and a stale strip list
+    re-reddens as the upstream's 400:
+      - chat wire: the target adapter's passthrough rewrite (o-series/gpt-5*
+        via openai, kimi fixed-temp families via moonshot). Bodies bridged
+        from the messages/gemini/responses ingresses to a chat-wire target
+        re-enter the same rewrite, so those ingresses probe it too.
+      - responses wire: the openai codec's Responses arm.
+      - cross-format to Anthropic: the anthropic codec strips sampling params
+        for every family outside its probed accepts-allowlist.
+
+    The two arms with NO gateway strip in the path stay temperature-free:
+      - "direct": vendor API called directly — nothing strips; the vendor's
+        400 would pollute the gateway-vs-direct comparison for a reason that
+        has nothing to do with the gateway.
+      - "messages" × claude-*: the same-format native /v1/messages leg
+        forwards sampling params verbatim today, and the vendor rejects
+        them (probed 400 quoted on the set above). When the anthropic native
+        leg starts applying the sampling strip on /v1/messages, DELETE this
+        branch (and check 6 in scripts/check-quirk-coverage.mjs, which pairs
+        with it) — sending the param then becomes the required proof on this
+        wire too, exactly as on the others.
+    """
+    if model not in _REASONING_MODELS:
+        return True
+    if ingress == "direct":
+        return False
+    if model.startswith("claude-") and ingress == "messages":
+        return False
+    return True
 
 # Models where the provider does not support automatic prefix caching.
 # Moonshot v1 requires explicit context-cache creation (POST /v1/context_caches).
@@ -363,6 +450,30 @@ class Result:
         return self
 
 _results: list[Result] = []
+
+# Models the virtual key's allow-list denied during this run, and the models it
+# admitted. A restricted VK silently BOUNDS THE COVERAGE of the whole smoke: the
+# run still reports "N passed", but N is measured over the models the key happens
+# to permit, not over the catalogue. One run reported 105 passed while reaching 6
+# of 29 models, and nothing in the output said so — the same failure shape this
+# suite exists to catch, in the suite itself. Recorded centrally in _post_sync so
+# every arm feeds it, and surfaced in the final summary.
+_denied_models: set[str] = set()
+_reached_models: set[str] = set()
+
+def _note_model_access(body_dict: dict, status: int, data) -> None:
+    model = (body_dict or {}).get("model") or ""
+    if not model:
+        return
+    code = ""
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            code = err.get("code") or ""
+    if status == 403 and code == "MODEL_NOT_ALLOWED":
+        _denied_models.add(model)
+    elif status and status != 403:
+        _reached_models.add(model)
 
 def rec(phase, name) -> Result:
     r = Result(phase, name)
@@ -544,13 +655,6 @@ class CPClient:
         log_info(f"All {len(rules)} routing rules → enabled={enabled}")
 
     # Cache config
-    def get_cache_cfg(self) -> dict:
-        _, body = self.get("/api/admin/settings/cache")
-        return body
-
-    def set_cache_cfg(self, cfg: dict):
-        return self.put("/api/admin/settings/cache", cfg)
-
     def get_gemini_cache_cfg(self) -> dict:
         _, body = self.get("/api/admin/settings/gemini-cache")
         return body
@@ -798,13 +902,49 @@ class GWClient:
         c.close()
         return r.status, body
 
+    # /metrics is authenticated. The gateway refuses correctly — HTTP 401 with the
+    # body "unauthorized" — and this client never looked at the status, reading the
+    # body whatever it was. So the refusal flowed into metrics_diff as if it were an
+    # exposition, every assertion compared "unauthorized" to itself, and P7's "No
+    # unexpected error counter growth" could not fail because it could see no
+    # counters at all. The server was never the problem; the client was.
+    #
+    # (Recorded precisely because I first wrote this up as "the server answers 200",
+    # which was wrong and would have sent the next reader looking at the gateway.)
+    METRICS_UNAUTHORIZED = "unauthorized"
+
     def metrics(self) -> str:
         c = self._conn(10)
-        c.request("GET", "/metrics")
+        tok = (os.environ.get("INTERNAL_SERVICE_TOKEN")
+               or os.environ.get("NEXUS_HUB_SERVICE_TOKEN") or "")
+        headers = {"Authorization": f"Bearer {tok}"} if tok else {}
+        c.request("GET", "/metrics", headers=headers)
         r = c.getresponse()
         body = r.read().decode()
+        status = r.status
         c.close()
+        if status != 200:
+            # The status was there all along and this client ignored it. Surface it,
+            # because "unauthorized" reaching the diff as if it were data is what made
+            # every metrics assertion in the suite unfalsifiable.
+            raise RuntimeError(
+                f"GET /metrics returned {status}: {body.strip()[:120]!r}. "
+                "It is authenticated — set INTERNAL_SERVICE_TOKEN or NEXUS_HUB_SERVICE_TOKEN")
         return body
+
+    @staticmethod
+    def metrics_readable(body: str) -> bool:
+        """True when the body is a real exposition rather than a refusal.
+
+        Checked by CONTENT rather than status because this helper only ever sees
+        the body — metrics() returns a string. The status IS 401 and would have
+        been the more direct signal, so metrics() now raises on a non-200 and this
+        stays as the backstop for an empty or otherwise unusable exposition.
+        Any real exposition carries at least one nexus_-prefixed sample line.
+        """
+        if not body or body.strip() == GWClient.METRICS_UNAUTHORIZED:
+            return False
+        return any(ln.startswith("nexus_") for ln in body.splitlines())
 
     def list_models(self) -> tuple[int, dict]:
         c = self._conn()
@@ -876,6 +1016,7 @@ class GWClient:
                "stream": False, "headers": headers}
         if endpoint:
             out["endpoint"] = endpoint
+        _note_model_access(body_dict, r.status, data)
         return out
 
     def _post_sse(self, path: str, body_dict: dict, sse_parser: Callable[[str, dict], None],
@@ -922,7 +1063,7 @@ class GWClient:
     def chat_sync(self, model: str, messages: list, max_tokens=16,
                    timeout=90, **kwargs) -> dict:
         body = {"model": model, "messages": messages, **kwargs}
-        if not is_reasoning(model):
+        if _send_temperature(model, "chat"):
             body["temperature"] = 0
         if is_reasoning(model):
             body["max_completion_tokens"] = max_tokens
@@ -933,7 +1074,7 @@ class GWClient:
     def chat_stream(self, model: str, messages: list, max_tokens=16,
                     timeout=90, **kwargs) -> dict:
         body = {"model": model, "messages": messages, "stream": True, **kwargs}
-        if not is_reasoning(model):
+        if _send_temperature(model, "chat"):
             body["temperature"] = 0
         if is_reasoning(model):
             body["max_completion_tokens"] = max_tokens
@@ -955,7 +1096,7 @@ class GWClient:
                               timeout=90, **kwargs) -> dict:
         """POST /v1/responses non-streaming. kwargs ride onto the body."""
         body = {"model": model, "input": prompt, "max_output_tokens": max_tokens, **kwargs}
-        if not is_reasoning(model):
+        if _send_temperature(model, "responses"):
             body["temperature"] = 0
         return self._post_sync("/v1/responses", body, timeout, endpoint="responses")
 
@@ -963,7 +1104,7 @@ class GWClient:
                          timeout=90, **kwargs) -> dict:
         """POST /v1/responses with stream=True; collects response.* events."""
         body = {"model": model, "input": prompt, "max_output_tokens": max_tokens, "stream": True, **kwargs}
-        if not is_reasoning(model):
+        if _send_temperature(model, "responses"):
             body["temperature"] = 0
         return self._post_sse("/v1/responses", body, _responses_sse_parser, timeout, endpoint="responses")
 
@@ -980,7 +1121,7 @@ class GWClient:
         body = {"model": model, "messages": messages, "max_tokens": max_tokens, **kwargs}
         if system:
             body["system"] = system
-        if not is_reasoning(model):
+        if _send_temperature(model, "messages"):
             body["temperature"] = 0
         return self._post_sync("/v1/messages", body, timeout, endpoint="messages")
 
@@ -989,7 +1130,7 @@ class GWClient:
         body = {"model": model, "messages": messages, "max_tokens": max_tokens, "stream": True, **kwargs}
         if system:
             body["system"] = system
-        if not is_reasoning(model):
+        if _send_temperature(model, "messages"):
             body["temperature"] = 0
         return self._post_sse("/v1/messages", body, _messages_sse_parser, timeout, endpoint="messages")
 
@@ -1007,7 +1148,7 @@ class GWClient:
         body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens}}
         if system:
             body["systemInstruction"] = {"role": "system", "parts": [{"text": system}]}
-        if not is_reasoning(model):
+        if _send_temperature(model, "gemini"):
             body["generationConfig"]["temperature"] = 0
         for k, v in kwargs.items():
             body[k] = v
@@ -1018,7 +1159,7 @@ class GWClient:
         body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens}}
         if system:
             body["systemInstruction"] = {"role": "system", "parts": [{"text": system}]}
-        if not is_reasoning(model):
+        if _send_temperature(model, "gemini"):
             body["generationConfig"]["temperature"] = 0
         for k, v in kwargs.items():
             body[k] = v
@@ -1138,6 +1279,7 @@ class DBClient:
                  ssh_host: str = "", ssh_pgpassword: str = "",
                  ssh_pguser: str = "nexus", ssh_pgdb: str = "nexus_gateway"):
         self._cid: Optional[str] = None
+        self._poll_err_logged = False
         self.is_remote = is_remote
         self.ssh_host = ssh_host
         self.ssh_pgpassword = ssh_pgpassword
@@ -1149,15 +1291,39 @@ class DBClient:
         return bool(self.ssh_host and self.ssh_pgpassword)
 
     def container(self) -> str:
-        if not self._cid:
-            out = subprocess.check_output(
-                "docker ps --filter name=postgres -q | head -1",
-                shell=True, text=True, timeout=10
-            ).strip()
-            if not out:
-                raise RuntimeError("No postgres container running")
-            self._cid = out
-        return self._cid
+        if self._cid:
+            return self._cid
+        override = os.environ.get("NEXUS_PG_CONTAINER", "").strip()
+        if override:
+            self._cid = override
+            return self._cid
+        out = subprocess.check_output(
+            "docker ps --filter name=postgres --format '{{.ID}}'",
+            shell=True, text=True, timeout=10
+        ).strip()
+        candidates = [c for c in out.split("\n") if c.strip()]
+        if not candidates:
+            raise RuntimeError("No postgres container running")
+        if len(candidates) == 1:
+            self._cid = candidates[0]
+            return self._cid
+        # A dev box can run several containers whose name contains "postgres"
+        # (a sibling stack's pgvector, etc.). Picking `head -1` is
+        # non-deterministic and, when it lands on the wrong one, every query
+        # fails "database nexus_gateway does not exist" — which poll_event
+        # would mask as a bogus "no traffic_event row". Select by the fact we
+        # actually depend on: the container that hosts the nexus_gateway DB.
+        for cid in candidates:
+            chk = subprocess.run(
+                ["docker", "exec", cid, "psql", "-U", "postgres", "-tAc",
+                 "SELECT 1 FROM pg_database WHERE datname='nexus_gateway'"],
+                capture_output=True, text=True, timeout=10)
+            if chk.returncode == 0 and chk.stdout.strip() == "1":
+                self._cid = cid
+                return self._cid
+        raise RuntimeError(
+            f"none of {len(candidates)} postgres containers has a nexus_gateway "
+            "database; set NEXUS_PG_CONTAINER to disambiguate")
 
     def _psql_args(self, sql: str, separator: str = "") -> list[str]:
         # When ssh access is configured, route through ssh+psql against the
@@ -1221,13 +1387,24 @@ class DBClient:
             try:
                 r = subprocess.run(self._psql_args(sql, separator="|"),
                                    capture_output=True, text=True, timeout=15)
-                line = r.stdout.strip().split("\n")[0] if r.stdout.strip() else ""
-                if line:
-                    parts = line.split("|")
-                    if len(parts) >= len(cols):
-                        return dict(zip(cols, parts))
-            except Exception:
-                pass
+                if r.returncode != 0:
+                    # Surface the real DB error once rather than masking a
+                    # misconfig (wrong container / missing DB / bad column) as
+                    # an absent row — the two are indistinguishable to callers.
+                    if not self._poll_err_logged:
+                        self._poll_err_logged = True
+                        print(f"[smoke] poll_event DB error: "
+                              f"{r.stderr.strip()[:200]}", flush=True)
+                else:
+                    line = r.stdout.strip().split("\n")[0] if r.stdout.strip() else ""
+                    if line:
+                        parts = line.split("|")
+                        if len(parts) >= len(cols):
+                            return dict(zip(cols, parts))
+            except Exception as e:
+                if not self._poll_err_logged:
+                    self._poll_err_logged = True
+                    print(f"[smoke] poll_event exception: {e}", flush=True)
             time.sleep(2)
         return None
 
@@ -1426,7 +1603,15 @@ def metrics_diff(m0: str, m1: str) -> list[tuple[str, float, float]]:
                     pass
         return 0.0
     for key in sorted(keys):
-        if "nexus_ai_gateway_" in key:
+        # The product's metric prefix is `nexus_` (nexus_requests_total,
+        # nexus_tokens_total, nexus_request_duration_ms_*). Filtering on
+        # "nexus_ai_gateway_" matched exactly ONE series in the whole exposition —
+        # nexus_ai_gateway_pure_forward_mode, a gauge whose own HELP text says it
+        # MUST be 0 in production. So this loop was, by construction, comparing a
+        # constant to itself and returning [] on every run, which is why P7 has
+        # always reported "0 requests recorded" and "no unexpected error counter
+        # growth" no matter what the gateway did.
+        if key.startswith("nexus_"):
             v0 = _val(m0, key)
             v1 = _val(m1, key)
             if v1 != v0:
@@ -1439,7 +1624,6 @@ def metrics_diff(m0: str, m1: str) -> list[tuple[str, float, float]]:
 class StateSnapshot:
     def __init__(self):
         self.routing_rules: list[dict] = []
-        self.cache_cfg: dict = {}
         self.gemini_cache_cfg: dict = {}
 
     @classmethod
@@ -1450,10 +1634,6 @@ class StateSnapshot:
             log_info(f"Snapshotted {len(s.routing_rules)} routing rules")
         except Exception as e:
             log_warn(f"Could not snapshot routing rules: {e}")
-        try:
-            s.cache_cfg = cp.get_cache_cfg()
-        except Exception as e:
-            log_warn(f"Could not snapshot cache config: {e}")
         try:
             s.gemini_cache_cfg = cp.get_gemini_cache_cfg()
         except Exception as e:
@@ -1473,11 +1653,6 @@ class StateSnapshot:
                     cp.set_routing_rule(rule["id"], rule.get("enabled", False))
                 except Exception as e:
                     log_warn(f"Restore rule {rule.get('name')}: {e}")
-        if self.cache_cfg:
-            try:
-                cp.set_cache_cfg(self.cache_cfg)
-            except Exception as e:
-                log_warn(f"Restore cache config: {e}")
         log_ok("Config restored")
 
 
@@ -2241,6 +2416,26 @@ _CACHE_HIT_THRESHOLD = 100
 # gpt-5.x / gpt-4.1 generation DOES cache on Responses; the gpt-4o-era + o1 models
 # do not. So a 0-cache result for these on the responses ingress is expected
 # provider behavior, not a gateway regression — record INFO, not WARN.
+# Models whose /v1/responses calls OpenAI does not prefix-cache, direct-verified
+# against the provider (bypassing the gateway) on the dates noted at the use site.
+#
+# The bar for adding an entry is a DIRECT provider measurement, and it is set high
+# on purpose. Three pairs — gemini-2.5-flash@/v1/messages,
+# gemini-2.5-flash-lite@/v1/responses, gpt-4.1-mini@/v1/responses — missed in two
+# consecutive full-surface runs and were candidates for this set. Direct
+# verification of gpt-4.1-mini on 2026-07-28 REFUTED that, and the numbers are
+# worth keeping:
+#
+#   same ~1940-token prefix, consecutive identical calls, no gateway involved
+#     /v1/chat/completions : cached_tokens 0 → 1792 → 1792   (deterministic)
+#     /v1/responses        : cached_tokens 0 → 1792 → 0      (NON-deterministic)
+#
+# So /v1/responses does cache this model — it just does not do so reliably. Adding
+# it here would have created an assertion that can never fail, which would hide a
+# real gateway regression later. Two consecutive misses through the gateway are
+# consistent with provider non-determinism and are NOT evidence of a no-cache
+# model. The cumulative-across-rounds threshold below already exists to absorb
+# exactly this; when every round misses anyway, that is the provider, not us.
 _RESPONSES_NO_CACHE_MODELS = {"gpt-4o", "gpt-4o-mini", "o1"}
 
 
@@ -2602,24 +2797,58 @@ def _record_chat(model: str, t0_iso: str, sync_status: int, stream_status: int):
 
 # ─── Phase implementations ─────────────────────────────────────────────────────
 
-def _flush_redis_gateway_cache(is_remote: bool = False) -> int:
-    """Delete all ai-gw::* response-cache keys from Redis.
+def _find_cache_container() -> Optional[str]:
+    """Return the container id hosting the gateway's response cache, or None.
 
-    Returns the number of keys deleted (0 if none found or Redis unavailable).
-    Skips silently when is_remote=True (no local Docker).
+    NEXUS_REDIS_CONTAINER overrides the search. Otherwise: match the names the
+    cache is deployed under (Redis and its Valkey fork), then confirm by the
+    fact we actually depend on — that it answers the Redis protocol. Selecting
+    on `name=redis` alone silently matched nothing on a stack whose container is
+    `nexus-valkey`, and a dev box can run several containers whose name contains
+    "redis" (a sibling stack's broker), where `head -1` picks a coin-flip.
+    Same failure the postgres selector had.
+    """
+    override = os.environ.get("NEXUS_REDIS_CONTAINER", "").strip()
+    if override:
+        return override
+    candidates: list[str] = []
+    for name in ("redis", "valkey"):
+        out = subprocess.run(
+            ["docker", "ps", "--filter", f"name={name}", "-q"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        candidates.extend(c for c in out.split("\n") if c.strip())
+    for cid in dict.fromkeys(candidates):  # de-dup, preserve order
+        ping = subprocess.run(
+            ["docker", "exec", cid, "redis-cli", "PING"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if ping.returncode == 0 and ping.stdout.strip().upper() == "PONG":
+            return cid
+    return None
+
+
+def _flush_redis_gateway_cache(is_remote: bool = False) -> Optional[int]:
+    """Delete all ai-gw::* response-cache keys from the gateway's cache.
+
+    Returns the number of keys deleted, or None when the flush could not be
+    performed (no container, or the command failed). None and 0 are NOT the
+    same: 0 means the cache was already empty, None means every later cache
+    assertion is running against unflushed state. Callers must distinguish them
+    — reporting "could not flush" as "empty (nothing to flush)" turns a broken
+    smoke into a green one.
+    Returns 0 for is_remote=True (no local Docker; nothing to flush by design).
     Operates on the gateway's response-cache key namespace only — does not
     touch session, IAM, or quota counter keys.
     """
     if is_remote:
         return 0
     try:
-        container = subprocess.run(
-            ["docker", "ps", "--filter", "name=redis", "-q"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip().split("\n")[0].strip()
+        container = _find_cache_container()
         if not container:
-            log_warn("  Redis flush: no redis container found — skipping")
-            return 0
+            log_warn("  Redis flush: no container answering the Redis protocol "
+                     "(set NEXUS_REDIS_CONTAINER to select one)")
+            return None
 
         # SCAN + DEL in one Lua call to avoid round-trips; safe for up to ~10 k keys.
         lua = (
@@ -2631,11 +2860,15 @@ def _flush_redis_gateway_cache(is_remote: bool = False) -> int:
             ["docker", "exec", container, "redis-cli", "EVAL", lua, "0", "ai-gw::*"],
             capture_output=True, text=True, timeout=15,
         )
-        deleted = int(result.stdout.strip()) if result.stdout.strip().lstrip("-").isdigit() else 0
-        return deleted
+        out = result.stdout.strip()
+        if result.returncode != 0 or not out.lstrip("-").isdigit():
+            log_warn(f"  Redis flush: EVAL failed on {container}: "
+                     f"{(result.stderr or out).strip()[:200]}")
+            return None
+        return int(out)
     except Exception as e:
         log_warn(f"  Redis flush error: {e}")
-        return 0
+        return None
 
 
 def phase0_preflight(gw: GWClient, cp: CPClient, is_remote: bool = False) -> str:
@@ -2671,6 +2904,12 @@ def phase0_preflight(gw: GWClient, cp: CPClient, is_remote: bool = False) -> str
     if is_remote:
         log_info("Redis gateway cache: remote environment — flush skipped")
         rec("P0", "redis-flush").passed("remote; skipped")
+    elif deleted is None:
+        # Not "empty" — the flush did not run, so every cache assertion below
+        # is measuring unflushed state. Fail loudly rather than report green.
+        log_fail("Redis gateway cache: flush could not run — cache arms below "
+                 "would test stale state")
+        rec("P0", "redis-flush").failed("flush unavailable")
     elif deleted > 0:
         log_ok(f"Redis gateway cache flushed: {deleted} key(s) deleted")
         rec("P0", "redis-flush").passed(f"{deleted} keys")
@@ -2830,7 +3069,11 @@ def phase3_routing_off(
     log_step("P3 Routing OFF — per-model suite")
     deleted = _flush_redis_gateway_cache(is_remote=is_remote)
     if not is_remote:
-        log_info(f"  Redis cache flushed: {deleted} key(s) — fresh upstream calls guaranteed")
+        if deleted is None:
+            log_warn("  Redis cache flush could not run — this phase's cache "
+                     "arms may be reading stale entries")
+        else:
+            log_info(f"  Redis cache flushed: {deleted} key(s) — fresh upstream calls guaranteed")
     if manage_routing:
         cp.set_all_routing_rules(False, snapshot.routing_rules)
         _wait_config_propagation(gw)
@@ -2846,6 +3089,89 @@ def phase3_routing_off(
         cache_rounds=cache_rounds, db=db,
     )
 
+
+
+# ─── P3T — tool-body coercion probes ─────────────────────────────────────────
+# Live upstream proof for the two tool-body rule classes that plain chat
+# arms never exercise (they send no tools[]). Each probe SENDS the body the
+# rule exists to fix; a 200 plus the exact x-nexus-coerced label proves the
+# gateway-side coercion fired AND the coerced body is what the vendor
+# accepts. A stale rule (vendor starts accepting the original body: probe
+# still 200 but label missing → red) or a regression (400 → red) both
+# surface here. Probes run only when the target model was selected.
+#
+# Evidence anchors (probed 2026-07-17, prod-observed 400s):
+#   - gpt-5.6* + non-empty tools on /v1/chat/completions rejects ANY
+#     reasoning_effort other than the explicit "none" — including absent.
+#   - gemini rejects tool schemas whose $ref target was never shipped
+#     (OpenAPI #/components/... pointers); the codec degrades the property
+#     and reports it.
+_P3T_TOOLS = [{"type": "function", "function": {
+    "name": "get_time", "description": "Get current time",
+    "parameters": {"type": "object", "properties": {"tz": {"type": "string"}}}}}]
+
+_P3T_REF_TOOLS = [{"type": "function", "function": {
+    "name": "dryRun", "description": "d",
+    "parameters": {"type": "object", "properties": {
+        "detector_type": {"type": "string"},
+        "context": {"$ref": "#/components/schemas/handler_DryRunContext",
+                     "description": "routing context"}},
+        "required": ["detector_type"]}}}]
+
+
+def phase3t_tool_coercions(gw: "GWClient", models: list[str], timeout: int):
+    probes = []
+    gpt56 = [m for m in models if m.startswith("gpt-5.6")]
+    if gpt56:
+        probes.append((gpt56[0], _P3T_TOOLS, "reasoning_effort→none (function tools on the chat wire)",
+                       {"reasoning_effort": "high"}))
+        probes.append((gpt56[0], _P3T_TOOLS, "reasoning_effort→none (function tools on the chat wire)", {}))
+    gem = [m for m in models if m.startswith("gemini-")]
+    if gem:
+        probes.append((gem[0], _P3T_REF_TOOLS,
+                       "tools.dryRun.parameters.$ref(#/components/schemas/handler_DryRunContext)→object", {}))
+    if not probes:
+        return
+    log_step("P3T Tool-body coercion probes")
+    for model, tools, want_label, extra in probes:
+        tag = "effort" if "reasoning_effort→" in want_label else "$ref"
+        arm = f"{model}/tools-{tag}" + ("+explicit" if extra else "")
+        # Inject the per-run nonce so the probe never lands on an L1 cache hit:
+        # a cached 200 is served WITHOUT re-running the coercion, so its response
+        # carries no x-nexus-coerced header and the label check false-reds (the
+        # coercion did fire on the original miss). Same L1-bypass every other
+        # phase uses.
+        #
+        # The nonce must also vary BETWEEN arms. Two arms of the same model differ
+        # only in a request PARAMETER (reasoning_effort present vs absent) while
+        # sending identical message content, so a run-scoped nonce leaves the
+        # second arm hitting the first arm's cache entry — exactly the false-red
+        # described above, self-inflicted. Observed on prod 2026-07-28:
+        # tools-effort+explicit returned MISS with the label, tools-effort
+        # returned HIT with no label and was reported as "rule stale or report
+        # lost" when the gateway had coerced correctly (verified directly against
+        # the vendor: absent reasoning_effort with function tools still 400s, so
+        # the rule is live, and a uniquely-nonced request returns 200 with the
+        # label).
+        out = gw.chat_sync(model, [{"role": "user", "content": f"hi r:{_run_nonce}/{arm}"}],
+                           max_tokens=16, timeout=timeout, tools=tools, **extra)
+        if out.get("status") != 200:
+            rec("P3T", arm).failed(f"HTTP {out.get('status')}: {str(out.get('data'))[:120]}")
+            log_fail(f"  [{arm}] HTTP {out.get('status')} — the coercion did not save the body")
+            continue
+        coerced = (out.get("headers") or {}).get("x-nexus-coerced", "")
+        # http.client decodes header bytes as latin-1; the label's "→" is
+        # UTF-8 on the wire, so re-decode before comparing.
+        try:
+            coerced = coerced.encode("latin-1").decode("utf-8")
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            pass
+        if want_label not in coerced:
+            rec("P3T", arm).failed(f"200 but x-nexus-coerced missing {want_label!r} (got {coerced!r})")
+            log_fail(f"  [{arm}] 200 but coercion label missing — rule stale or report lost")
+            continue
+        rec("P3T", arm).passed(f"200 + coerced: {want_label}")
+        log_ok(f"  [{arm}] 200 + x-nexus-coerced carries the rule label")
 
 
 # Models empirically known to accept /v1/responses NATIVELY (verified
@@ -3337,6 +3663,19 @@ def _embedding_supports_dimensions(model_entry: dict) -> bool:
     return bool(supported)
 
 
+def _metrics_readable_safe(gw: "GWClient") -> bool:
+    """metrics_readable, tolerating the fetch itself raising.
+
+    metrics() now raises on a non-200 (it used to swallow the status and hand the
+    refusal body onward). Arm E asks this question to CLASSIFY a failure it has
+    already seen, so it must not blow up while doing so.
+    """
+    try:
+        return GWClient.metrics_readable(gw.metrics())
+    except Exception:
+        return False
+
+
 def _snapshot_prometheus_embedding(gw: GWClient, provider: str, model: str) -> dict:
     """Snapshot nexus_requests_total{endpoint="embeddings",...} counters.
 
@@ -3673,9 +4012,19 @@ def phase3e_embeddings(
                 # not a regression — skip rather than warn to keep the run clean.
                 log_info(f"  [{mid}] Arm E: skipped (metrics endpoint loopback-only, unreachable from a remote runner)")
                 rec("P3E", f"{mid}/arm-e").passed("remote; metrics endpoint loopback-only")
+            elif not _metrics_readable_safe(gw):
+                # Distinct from "no embeddings series": the exposition itself is
+                # refused. Reporting that as "unavailable" sent three sessions
+                # looking at a healthy endpoint.
+                log_fail(f"  [{mid}] Arm E: metrics exposition unreadable (refused, not absent)")
+                rec("P3E", f"{mid}/arm-e").failed(
+                    "metrics exposition unreadable — /metrics is authenticated; set "
+                    "INTERNAL_SERVICE_TOKEN or NEXUS_HUB_SERVICE_TOKEN")
             else:
-                log_warn(f"  [{mid}] Arm E: metrics endpoint unavailable")
-                rec("P3E", f"{mid}/arm-e").warning("metrics endpoint unavailable")
+                log_warn(f"  [{mid}] Arm E: no embeddings series in the exposition")
+                rec("P3E", f"{mid}/arm-e").warning(
+                    "metrics readable but carries no nexus_requests_total{endpoint=\"embeddings\"} "
+                    "series — embeddings traffic may not be counted")
         elif delta_e > 0:
             log_ok(f"  [{mid}] Arm E OK delta={delta_e}")
             rec("P3E", f"{mid}/arm-e").passed(f"delta={delta_e}")
@@ -4177,7 +4526,11 @@ def phase4_routing_on(
     log_step("P4 Routing ON — all rules enabled except default-kmini-128k")
     deleted = _flush_redis_gateway_cache(is_remote=is_remote)
     if not is_remote:
-        log_info(f"  Redis cache flushed: {deleted} key(s) — fresh upstream calls guaranteed")
+        if deleted is None:
+            log_warn("  Redis cache flush could not run — this phase's cache "
+                     "arms may be reading stale entries")
+        else:
+            log_info(f"  Redis cache flushed: {deleted} key(s) — fresh upstream calls guaranteed")
 
     # Enable every rule except the catch-all default-kmini-128k
     enabled_names: list[str] = []
@@ -4202,13 +4555,16 @@ def phase4_routing_on(
 
 def phase5_cache_cfg(cp: CPClient):
     log_step("P5 Cache config (read-only)")
+    # The Tier-1 global cache switches (normaliser_enabled +
+    # cache_master_kill_switch) are retired; probe the surviving Tier-2
+    # adapter surface instead so P5 still proves the cache admin API is up.
     try:
-        cfg = cp.get_cache_cfg()
-        enabled = cfg.get("normaliser_enabled", "?")
-        log_ok(f"  settings/cache: normaliser_enabled={enabled}")
-        rec("P5", "cache-config").passed(f"normaliser_enabled={enabled}")
+        _, adapters = cp.get("/api/admin/cache/adapters")
+        total = adapters.get("total", "?") if isinstance(adapters, dict) else "?"
+        log_ok(f"  cache/adapters: {total} adapter config rows")
+        rec("P5", "cache-config").passed(f"cache/adapters total={total}")
     except Exception as e:
-        log_warn(f"  settings/cache: {e}")
+        log_warn(f"  cache/adapters: {e}")
         rec("P5", "cache-config").warning(str(e))
 
     try:
@@ -4387,8 +4743,38 @@ def _viewtime_normalize_rows(cp: CPClient, base_rows: list[dict]) -> list[dict]:
             errors += 1
             continue
         if status != 200:
-            log_fail(f"  [{model} {eid[:8]}] view-time normalize HTTP {status}")
-            rec("P6b", f"{model}/{eid[:8]}/viewtime-http").failed(f"HTTP {status}")
+            # The endpoint's own 4-tier ladder distinguishes two 404s that mean
+            # opposite things, and the harness must not flatten them. "Traffic event
+            # not found" is a real failure — the row we just observed is gone.
+            # "Normalized payload not found" is tier (d): this row has NO recoverable
+            # body, which for some endpoint kinds is the DESIGN. A guardrail row is
+            # the standing example — stampGuardrailAudit sets no request/response
+            # body on purpose, because the evaluated text is the sensitive thing the
+            # endpoint exists to judge and must never persist. Failing on it would
+            # mean the suite permanently reports a defect for a privacy guarantee
+            # working correctly.
+            # Shape verified live: {"error": {"code": "", "message": "...",
+            # "type": "not_found"}}. Read the nested field explicitly — relying on
+            # str(dict) to happen to contain the sentence works today and breaks the
+            # moment the envelope gains a field, silently turning this branch off.
+            msg = ""
+            if isinstance(payload, dict):
+                err = payload.get("error")
+                if isinstance(err, dict):
+                    msg = str(err.get("message") or "")
+                elif isinstance(err, str):
+                    msg = err
+                else:
+                    msg = str(payload.get("message") or "")
+            if status == 404 and "Normalized payload not found" in msg:
+                log_info(f"  [{model} {eid[:8]}] no recoverable body (tier d) — "
+                         f"expected for endpoint kinds that persist none")
+                rec("P6b", f"{model}/{eid[:8]}/viewtime-nobody").passed(
+                    "404 'Normalized payload not found': the row persists no body by design "
+                    "(e.g. guardrail) or its spilled body aged out — not a normalize failure")
+                continue
+            log_fail(f"  [{model} {eid[:8]}] view-time normalize HTTP {status} {msg[:80]}")
+            rec("P6b", f"{model}/{eid[:8]}/viewtime-http").failed(f"HTTP {status} {msg[:60]}")
             errors += 1
             continue
         rn = payload.get("responseNormalized")
@@ -4621,6 +5007,20 @@ def phase7_metrics_delta(gw: GWClient, m0: str) -> list:
     log_step("P7 Metrics delta")
     try:
         m1 = gw.metrics()
+        # A counter check that cannot read counters must FAIL, not report "no
+        # error growth". With an unreadable exposition errors_grew is empty for
+        # the same reason a switched-off smoke detector never alarms, and this
+        # phase is one of the few things that watches the gateway's own error
+        # counters — the binding in CLAUDE.md names Prometheus deltas as
+        # something the smoke uniquely catches.
+        if not GWClient.metrics_readable(m1) or not GWClient.metrics_readable(m0):
+            log_fail("  metrics exposition unreadable (refused or empty) — the error-counter "
+                     "check cannot run, and passing here would assert nothing")
+            rec("P7", "metrics").failed(
+                "metrics exposition unreadable: /metrics is authenticated and answers 200 with "
+                "'unauthorized' when the token is absent, so this check would silently compare "
+                "two refusals. Set INTERNAL_SERVICE_TOKEN or NEXUS_HUB_SERVICE_TOKEN")
+            return []
         diff = metrics_diff(m0, m1)
         errors_grew = [(k, v0, v1) for k, v0, v1 in diff
                        if "error" in k and v1 > v0]
@@ -4631,13 +5031,29 @@ def phase7_metrics_delta(gw: GWClient, m0: str) -> list:
             log_warn(f"  {k} +{v1 - v0:.0f} (was {v0:.0f})")
         if not errors_grew:
             log_ok("No unexpected error counter growth")
-        rec("P7", "metrics").passed(
-            f"{sum(v1-v0 for _,v0,v1 in requests):.0f} requests recorded"
-        )
+        observed = sum(v1 - v0 for _, v0, v1 in requests)
+        # Zero request growth after a run that just drove hundreds of requests is
+        # not a pass — it means this phase is reading something other than the
+        # gateway's counters, which is the state it was in for both reasons above.
+        # "No unexpected error counter growth" is only meaningful once we can show
+        # the counters moved at all.
+        if observed <= 0:
+            log_fail("  no nexus_requests_total growth observed across the run — the error-counter "
+                     "claim rests on counters this phase cannot see")
+            rec("P7", "metrics").failed(
+                "0 request-counter growth after a full run: the exposition was read but no "
+                "nexus_requests_total series changed, so 'no unexpected error counter growth' "
+                "asserts nothing")
+            return diff
+        rec("P7", "metrics").passed(f"{observed:.0f} requests recorded across {len(requests)} series")
         return diff
     except Exception as e:
-        log_warn(f"Metrics delta failed: {e}")
-        rec("P7", "metrics").warning(str(e))
+        # A failure to FETCH the counters is a failure of this phase, not a note
+        # about it: everything P7 claims rests on being able to read them, so a
+        # warning here would leave the run green while the check did nothing —
+        # which is the state this phase was in for its whole history.
+        log_fail(f"Metrics delta could not run: {e}")
+        rec("P7", "metrics").failed(str(e))
         return []
 
 
@@ -4844,10 +5260,10 @@ class DirectClient:
     def _openai_compat_sync(self, provider: str, model: str, messages: list,
                              max_tokens: int, timeout: int, key: str, t0: float) -> dict:
         host = self._PROVIDER_BASES[provider]
-        body = json.dumps({
-            "model": model, "messages": messages,
-            "max_tokens": max_tokens, "temperature": 0,
-        }).encode()
+        body_dict: dict = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        if _send_temperature(model, "direct"):
+            body_dict["temperature"] = 0
+        body = json.dumps(body_dict).encode()
         c = self._https_conn(host, timeout)
         c.request("POST", "/v1/chat/completions", body,
                   {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
@@ -4964,11 +5380,14 @@ class DirectClient:
     def _openai_compat_stream(self, provider: str, model: str, messages: list,
                                max_tokens: int, timeout: int, key: str, t0: float) -> dict:
         host = self._PROVIDER_BASES[provider]
-        body = json.dumps({
+        body_dict: dict = {
             "model": model, "messages": messages, "stream": True,
-            "max_tokens": max_tokens, "temperature": 0,
+            "max_tokens": max_tokens,
             "stream_options": {"include_usage": True},
-        }).encode()
+        }
+        if _send_temperature(model, "direct"):
+            body_dict["temperature"] = 0
+        body = json.dumps(body_dict).encode()
         c = self._https_conn(host, timeout)
         c.request("POST", "/v1/chat/completions", body, {
             "Authorization": f"Bearer {key}",
@@ -5322,6 +5741,18 @@ def render_report(
     report_path: str,
     cost_phase_modes: Optional[dict] = None,
 ):
+    # Recorded as a Result, not only printed, so a bounded run carries its
+    # denominator into the report table and the warning count. A fact that changes
+    # what the verdict MEANS has to live in the structured output; leaving it on
+    # stdout only is the same mistake as burying a smell flag among seven
+    # attributes on a line nobody greps.
+    if _denied_models:
+        rec("PRE", "vk-coverage").warning(
+            f"virtual key denied {len(_denied_models)} model(s) with MODEL_NOT_ALLOWED, so the "
+            f"pass count below was measured over {len(_reached_models)} reached model(s), not the "
+            f"full catalogue. Denied: {', '.join(sorted(_denied_models))}. Remedy: use a key whose "
+            "allowedModels is empty (tests/scripts/mint-test-vk.go mints one)")
+
     pass_count = sum(1 for r in _results if r.ok is True and not r.warn)
     warn_count = sum(1 for r in _results if r.ok is True and r.warn)
     fail_count = sum(1 for r in _results if r.ok is False)
@@ -5476,8 +5907,141 @@ def render_report(
     print()
     print(bold(f"Result: {green(overall) if overall == 'PASS' else red(overall)}"))
     print(f"  {pass_count} passed  {warn_count} warnings  {fail_count} failed")
+    # Coverage, stated whenever it was bounded. A pass count is meaningless without
+    # the denominator it was measured over, and the virtual key's allow-list is the
+    # one thing that silently changes that denominator: every denied model simply
+    # never runs, so the surface shrinks without a single failure being recorded.
+    if _denied_models:
+        print(red(bold(
+            f"  COVERAGE WAS RESTRICTED: the virtual key denied {len(_denied_models)} model(s) "
+            f"with MODEL_NOT_ALLOWED, so this run did NOT cover the full surface.")))
+        print(f"    reached: {len(_reached_models)}  denied: {sorted(_denied_models)}")
+        print("    Remedy: run with a virtual key whose allowedModels is empty (unrestricted). "
+              "tests/scripts/mint-test-vk.go mints one.")
     print(f"Report: {report_path}")
     return overall == "PASS"
+
+
+def _mm_traffic_row(db: "DBClient", model_name: str, endpoint_type: str, t0_iso: str, timeout: int = 30) -> Optional[dict]:
+    """Poll traffic_event for the most recent row of a modality request, returning
+    the endpoint_type / cost / artifact_refs presence for the cross-check."""
+    if db.is_remote and not db.has_ssh:
+        return None
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            rows = db.rows(
+                "SELECT endpoint_type, status_code, estimated_cost_usd, "
+                "(artifact_refs IS NOT NULL) AS has_artifact "
+                "FROM traffic_event WHERE source='ai-gateway' "
+                f"AND timestamp >= '{t0_iso}'::timestamptz "
+                f"AND endpoint_type = '{endpoint_type}' AND model_name = '{model_name}' "
+                "ORDER BY timestamp DESC LIMIT 1"
+            )
+        except Exception:
+            rows = []
+        if rows:
+            p = rows[0]["_row"].split("|")
+            return {"endpoint_type": p[0], "status_code": p[1],
+                    "estimated_cost_usd": p[2], "has_artifact": p[3]}
+        time.sleep(2)
+    return None
+
+
+def phase_multimodal(gw: "GWClient", cp: "CPClient", db: "DBClient", t0_iso: str, timeout: int = 90) -> None:
+    """PMM — multimodal surface smoke: image 2xx + traffic_event cross-check,
+    cross-modality routing-safety rejections, guardrail verdict, and the rerank
+    ingress (no 'unsupported ingress format'). TTS/STT/video/realtime need
+    binary/multipart/WS handling beyond this JSON client — see the handoff for
+    the manual-verified content those modalities carry; codified here are the
+    JSON-shaped surfaces + the load-bearing cross-modality guard.
+    """
+    log_step("PMM Multimodal surfaces")
+    try:
+        models = cp.list_models_flat()
+    except Exception as e:
+        log_warn(f"  PMM: could not list models ({e}); skipping")
+        rec("PMM", "phase").passed("skipped: model catalog unavailable")
+        return
+
+    def by_type(t):
+        return [m for m in models if (m.get("type") or "").lower() == t and m.get("enabled", True)]
+
+    image_ms = by_type("image")
+    chat_ms = by_type("chat")
+    rerank_ms = by_type("rerank")
+
+    # ── Image generation: 2xx + traffic_event (endpoint_type/cost/artifact) ──
+    if image_ms:
+        code = image_ms[0].get("code", "")
+        log_info(f"  [image] {code} — generate + traffic cross-check")
+        r = gw._post_sync("/v1/images/generations",
+                          {"model": code, "prompt": "a small red lighthouse at dawn, watercolor", "n": 1},
+                          timeout, endpoint="images")
+        st = r.get("status", 0)
+        data = (r.get("data") or {})
+        if st == 200 and isinstance(data.get("data"), list) and data["data"]:
+            rec("PMM", f"image/{code}/2xx").passed(f"200, {len(data['data'])} artifact(s)")
+            row = _mm_traffic_row(db, code, "image_generation", t0_iso)
+            if row is None:
+                rec("PMM", f"image/{code}/traffic").passed("no DB access (skipped cross-check)")
+            else:
+                issues = []
+                if row["endpoint_type"] != "image_generation":
+                    issues.append(f"endpoint_type={row['endpoint_type']}")
+                if row["has_artifact"] != "t":
+                    issues.append("artifact_refs missing")
+                try:
+                    if float(row["estimated_cost_usd"] or 0) <= 0:
+                        issues.append("cost<=0")
+                except ValueError:
+                    issues.append(f"cost={row['estimated_cost_usd']!r}")
+                if issues:
+                    rec("PMM", f"image/{code}/traffic").failed("; ".join(issues))
+                else:
+                    rec("PMM", f"image/{code}/traffic").passed(
+                        f"endpoint_type=image_generation cost={row['estimated_cost_usd']} artifact_refs present")
+        else:
+            rec("PMM", f"image/{code}/2xx").failed(
+                f"status={st} err={data.get('error', {}).get('code') if isinstance(data, dict) else '?'}")
+    else:
+        rec("PMM", "image").passed("no image model in catalog (skipped)")
+
+    # ── Cross-modality routing safety (the load-bearing guard) ──
+    if chat_ms and image_ms:
+        chat_code = chat_ms[0].get("code", "")
+        img_code = image_ms[0].get("code", "")
+        # chat model on the image endpoint → 400 MODEL_MODALITY_MISMATCH
+        r = gw._post_sync("/v1/images/generations", {"model": chat_code, "prompt": "x", "n": 1}, timeout, endpoint="images")
+        err = ((r.get("data") or {}).get("error") or {}).get("code", "")
+        if r.get("status") == 400 and err == "MODEL_MODALITY_MISMATCH":
+            rec("PMM", "xmodal/chat-on-image").passed("400 MODEL_MODALITY_MISMATCH")
+        else:
+            rec("PMM", "xmodal/chat-on-image").failed(f"status={r.get('status')} code={err} (want 400 MODEL_MODALITY_MISMATCH)")
+        # image model on the chat endpoint → 400
+        r = gw._post_sync("/v1/chat/completions", {"model": img_code, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8}, timeout, endpoint="chat")
+        err = ((r.get("data") or {}).get("error") or {}).get("code", "")
+        if r.get("status") == 400 and err == "MODEL_MODALITY_MISMATCH":
+            rec("PMM", "xmodal/image-on-chat").passed("400 MODEL_MODALITY_MISMATCH")
+        else:
+            rec("PMM", "xmodal/image-on-chat").failed(f"status={r.get('status')} code={err} (want 400 MODEL_MODALITY_MISMATCH)")
+
+    # ── Guardrail verdict (JSON, always 200 with a verdict) ──
+    r = gw._post_sync("/v1/guardrail", {"stage": "input", "content": "My email is alice@example.com"}, timeout, endpoint="guardrail")
+    data = (r.get("data") or {})
+    if r.get("status") == 200 and "action" in data and "coverage" in data:
+        rec("PMM", "guardrail/verdict").passed(f"200 action={data.get('action')} coverage={data.get('coverage')}")
+    else:
+        rec("PMM", "guardrail/verdict").failed(f"status={r.get('status')} keys={list(data.keys())[:5]}")
+
+    # ── Rerank ingress: must NOT 400 'unsupported ingress format' (regression) ──
+    rr_code = rerank_ms[0].get("code", "") if rerank_ms else "rerank-v3.5"
+    r = gw._post_sync("/v1/rerank", {"model": rr_code, "query": "capital of France", "documents": ["Paris", "Berlin"], "top_n": 1}, timeout, endpoint="rerank")
+    msg = ((r.get("data") or {}).get("error") or {}).get("message", "") or str((r.get("data") or {}).get("message", ""))
+    if "unsupported ingress format" in msg:
+        rec("PMM", "rerank/ingress").failed(f"ingress regression: {msg}")
+    else:
+        rec("PMM", "rerank/ingress").passed(f"ingress OK (status={r.get('status')}; model extraction reached routing)")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -5588,6 +6152,14 @@ and Redis cache flushing are skipped automatically.
                          "exercised at the same P3 depth. Use this "
                          "for full-surface validation after any "
                          "ingress, codec, or canonical-bridge change.")
+    ap.add_argument("--multimodal", action="store_true",
+                    help="PMM: multimodal surface smoke — image generation 2xx "
+                         "+ traffic_event cross-check (endpoint_type/cost/"
+                         "artifact_refs), cross-modality routing-safety "
+                         "rejections (MODEL_MODALITY_MISMATCH 400), the guardrail "
+                         "verdict shape, and the rerank ingress (no 'unsupported "
+                         "ingress format' regression). Real upstream — needs an "
+                         "image provider credential.")
     ap.add_argument("--cache-rounds", type=int, default=3,
                     help="Read rounds per cache test (default 3); write cost vs cumulative savings")
     ap.add_argument("--concurrent", action="store_true",
@@ -5738,6 +6310,9 @@ and Redis cache flushing are skipped automatically.
                            cache_rounds=args.cache_rounds, is_remote=is_remote,
                            db=db, manage_routing=not args.no_routing_manage)
 
+        # P3T — tool-body coercion probes (runs while routing is still OFF)
+        phase3t_tool_coercions(gw, chat_models, args.timeout)
+
         # P3C direct compare (optional) — runs immediately after P3 while routing is still OFF
         if args.direct_compare:
             if args.db_credentials:
@@ -5776,6 +6351,12 @@ and Redis cache flushing are skipped automatically.
         else:
             log_info("P3E skipped — not real-upstream in cost policy (use --all-upstream to force)")
             rec("P3E", "phase").passed("skipped: fixture mode (use --all-upstream)")
+
+        # PMM Multimodal — image 2xx + traffic cross-check + cross-modality
+        # routing safety + guardrail + rerank ingress. Opt-in via --multimodal
+        # (real upstream: needs an image provider credential).
+        if args.multimodal:
+            phase_multimodal(gw, cp, db, t0_iso, timeout=args.timeout)
 
         # P3R OpenAI Responses-API ingress (E56) — full per-model suite
         # mirroring P3 depth (non-stream + SSE + multi-round cache).
@@ -5861,6 +6442,13 @@ and Redis cache flushing are skipped automatically.
         t1_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         diff = []
     except RuntimeError as e:
+        # Record the abort as a real failure, not just a printed line. The
+        # verdict is computed by render_report from the recorded results, so a
+        # fatal that only logs leaves the counters at whatever passed before it
+        # — a run that aborted in P0 preflight, having exercised no model at
+        # all, reported "Result: PASS — 0 failed" and exited 0. The smoke is a
+        # mandatory pre-"done" gate; a gate that cannot fail is not a gate.
+        rec("FATAL", "run-aborted").failed(str(e))
         log_fail(f"Fatal: {e}")
         t1_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         diff = []

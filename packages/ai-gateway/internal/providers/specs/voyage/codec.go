@@ -35,11 +35,14 @@ func newCodec() provcore.SchemaCodec {
 // EncodeRequest converts canonical OpenAI-shape embedding request to Voyage AI wire.
 // Non-embeddings endpoints are rejected.
 func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, target provcore.CallTarget) (provcore.EncodeResult, error) {
+	if endpoint == typology.WireShapeVoyageRerank {
+		return encodeVoyageRerank(canonicalBody, target)
+	}
 	if endpoint != typology.WireShapeVoyageEmbeddings {
 		return provcore.EncodeResult{}, &provcore.ProviderError{
 			Status:  http.StatusBadRequest,
 			Code:    provcore.CodeEndpointUnsupported,
-			Message: fmt.Sprintf("voyage: unsupported endpoint %q — only embeddings is available", endpoint),
+			Message: fmt.Sprintf("voyage: unsupported endpoint %q — embeddings and rerank are available", endpoint),
 		}
 	}
 	if len(canonicalBody) == 0 {
@@ -153,8 +156,11 @@ func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 // The only translation needed is usage.total_tokens → usage.prompt_tokens+total_tokens
 // in the canonical shape.
 func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
+	if endpoint == typology.WireShapeVoyageRerank {
+		return decodeVoyageRerankResponse(nativeBody)
+	}
 	if endpoint != typology.WireShapeVoyageEmbeddings {
-		// Unexpected — Voyage only serves embeddings; pass through opaquely.
+		// Unexpected — Voyage only serves embeddings and rerank; pass through.
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil
 	}
 	if len(nativeBody) == 0 {

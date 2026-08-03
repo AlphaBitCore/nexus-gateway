@@ -59,7 +59,7 @@ same package (white-box) or a `_test` package (black-box).
 requires a sibling module must pin the require to exactly `v0.0.0` (an inert
 placeholder, never a real pseudo-version) and carry a matching
 `replace … => ../<sibling>` directive, with its `go.sum` free of any
-`packages/` lines. Under Go 1.25 a real pseudo-version is validated against the
+`packages/` lines. Since Go 1.25 a real pseudo-version is validated against the
 upstream remote even with `go.work` active, so without this a `GOWORK=off` build
 silently pulls a stale GitHub snapshot instead of local code.
 `scripts/check-workspace-replace.mjs` (pre-commit and `check:all`) blocks the

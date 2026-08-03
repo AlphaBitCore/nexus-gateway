@@ -8,12 +8,43 @@
 package proxy
 
 import (
+	"log/slog"
+	"net/http"
+	"sync"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/freshness"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
+
+// noCacheRequested reports whether the caller asked to bypass the response
+// cache, accepting either spelling of the header.
+//
+// X-Nexus-Aigw-No-Cache is the deprecated per-service-prefixed name. It stays
+// readable because the published caller reference told clients to send it, and
+// dropping it outright would fail silently: the request would be served from
+// cache while the caller believed it had opted out. Retire it and its
+// AcceptHeaders entry together, in one release that says so.
+func noCacheRequested(h http.Header) bool {
+	return h.Get("X-Nexus-No-Cache") != "" || h.Get("X-Nexus-Aigw-No-Cache") != ""
+}
+
+// deprecatedNoCacheSeen rate-limits the deprecated-spelling warning to once
+// per process: enough for an operator to answer "is anyone still sending the
+// old name?" from logs before closing the retirement window, at zero
+// steady-state cost on the hot path.
+var deprecatedNoCacheSeen sync.Once
+
+func noCacheRequestedWithWarn(h http.Header, logger *slog.Logger) bool {
+	if h.Get("X-Nexus-Aigw-No-Cache") != "" && logger != nil {
+		deprecatedNoCacheSeen.Do(func() {
+			logger.Warn("deprecated header X-Nexus-Aigw-No-Cache still in use; callers should send X-Nexus-No-Cache")
+		})
+	}
+	return noCacheRequested(h)
+}
 
 // cacheStage consults the response cache before any upstream dispatch.
 //
@@ -36,6 +67,37 @@ import (
 // (different client model aliases, different SDK JSON key
 // orderings) hash to the same key.
 type cacheStage struct{ s *proxyState }
+
+// cacheNormalized returns the canonical payload cache consumers must
+// read — L2 embedding input, L2 write-back, and freshness detection.
+// When a request hook rewrote the wire body, the admission-time lazy
+// canonical predates the rewrite, so the rewritten bytes are normalized
+// once here (memoized) and redacted content is what reaches the
+// embedding provider and the vector store. When renormalization is
+// unavailable or fails, the result is nil — cache semantics are skipped
+// for this request — because falling back to the pre-redaction
+// canonical would leak content an egress policy just masked. Requests
+// without a rewrite return the admission canonical with no added work.
+func (s *proxyState) cacheNormalized() *normcore.NormalizedPayload {
+	if !s.rec.HookRewritten {
+		return s.rctxFull.Normalized()
+	}
+	if s.postHookNormalizedSet {
+		return s.postHookNormalized
+	}
+	s.postHookNormalizedSet = true
+	if s.h.deps.NormalizeRegistry == nil || len(s.body) == 0 {
+		return nil
+	}
+	meta := requestNormalizeMeta(s.r, s.resolved.BodyFormat, s.modelID)
+	payload, err := s.h.deps.NormalizeRegistry.Normalize(s.r.Context(), s.body, meta)
+	if err != nil {
+		s.logger.Warn("cache canonical: renormalize of rewritten body failed; skipping cache semantics", "error", err)
+		return nil
+	}
+	s.postHookNormalized = &payload
+	return s.postHookNormalized
+}
 
 func (st cacheStage) run() bool {
 	s := st.s
@@ -67,11 +129,11 @@ func (st cacheStage) run() bool {
 		h.deps.SemanticConfigCache.ScopeReady()
 	l2Enabled := h.deps.SemanticReader != nil &&
 		h.deps.SemanticConfigCache != nil && h.deps.SemanticConfigCache.EffectiveEnabled()
-	// Emergency master kill switch (cache shadow blob global.cache_master_kill_switch):
-	// when active it disables ALL gateway response caching regardless of either
-	// tier's own enable flag. One nil-safe atomic read; forces the lean
-	// (cache-off) path below so no lookup, key build, or freshness projection runs.
-	cacheEnabled := (l1Enabled || l2Enabled) && !h.deps.Cache.MasterKilled()
+	// Emergency cache-off is not a separate switch here: a fleet-wide disable
+	// flips each tier's own enable flag (StatusStrip "disable all"), and a
+	// time-boxed, audited bypass arrives as Emergency Passthrough bypassCache,
+	// handled above. So the tiers' own flags are the whole gate.
+	cacheEnabled := l1Enabled || l2Enabled
 	// Project canonical NormalizedPayload messages → freshness.ChatMessage
 	// for the time-sensitivity detector. Computed ONLY when a cache tier is
 	// active — pulling rctxFull.Normalized() materializes the lazy canonical,
@@ -81,7 +143,7 @@ func (st cacheStage) run() bool {
 	// false (fail-open).
 	var canonicalMsgs []freshness.ChatMessage
 	if cacheEnabled {
-		if np := s.rctxFull.Normalized(); np != nil {
+		if np := s.cacheNormalized(); np != nil {
 			canonicalMsgs = normMessagesToFreshness(np.Messages)
 		}
 	}
@@ -90,7 +152,7 @@ func (st cacheStage) run() bool {
 	preLookupStatus, preLookupSkipReason := classifyCachePreLookup(
 		typology.KindFromWireShape(s.resolved.WireShape),
 		cacheEnabled,
-		s.r.Header.Get("x-nexus-aigw-no-cache") != "",
+		noCacheRequestedWithWarn(s.r.Header, s.logger),
 		len(s.routeResult.Targets) > 0,
 		passthroughBypassCache,
 		h.deps.FreshnessDetector,
@@ -104,6 +166,8 @@ func (st cacheStage) run() bool {
 		switch preLookupSkipReason {
 		case audit.GatewayCacheSkipReasonDisabled:
 			h.deps.CacheMetrics.RecordLookup("disabled")
+		case audit.GatewayCacheSkipReasonNoTargets:
+			h.deps.CacheMetrics.RecordLookup("no_targets")
 		case audit.GatewayCacheSkipReasonNoCache:
 			h.deps.CacheMetrics.RecordLookup("skip_no_cache")
 		case audit.GatewayCacheSkipReasonPassthrough:
@@ -204,13 +268,13 @@ func (st cacheStage) run() bool {
 			start:         s.start,
 			logger:        s.logger,
 			canonicalMsgs: func() []normcore.Message {
-				if np := s.rctxFull.Normalized(); np != nil {
+				if np := s.cacheNormalized(); np != nil {
 					return np.Messages
 				}
 				return nil
 			}(),
 			hasTools: func() bool {
-				np := s.rctxFull.Normalized()
+				np := s.cacheNormalized()
 				return np != nil && len(np.Tools) > 0
 			}(),
 		}) {

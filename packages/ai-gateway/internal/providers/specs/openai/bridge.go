@@ -15,9 +15,20 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/stream"
 )
 
-// IdentityCodec returns the OpenAI identity SchemaCodec, shared by all
-// OpenAI-compat adapters (DeepSeek, Azure, Groq, Together, …).
-func IdentityCodec() provcore.SchemaCodec { return codec.IdentityCodec() }
+// Contract aliases the identity codec's wire-rule contract so sibling
+// adapters construct their codecs with a single openai import.
+type Contract = codec.Contract
+
+// NewIdentityCodec returns an OpenAI-family identity SchemaCodec carrying
+// the sibling's wire-rule contract — a required argument by design (see
+// codec.New). Siblings with no probed wire quirk pass the zero Contract.
+func NewIdentityCodec(c Contract) provcore.SchemaCodec { return codec.New(c) }
+
+// OpenAIContract returns the OpenAI wire-rule contract (reasoning-model
+// parameter quirks, ada-002 embedding strips). Shared verbatim by the
+// Azure OpenAI adapter: Azure serves the same model families behind
+// deployment URLs and returns the same wire 400s.
+func OpenAIContract() Contract { return rewrites.OpenAIContract() }
 
 // ErrorNormalizerInstance returns the shared OpenAI-style error normaliser
 // for use by OpenAI-compat sibling adapters.
@@ -33,16 +44,6 @@ func NewStreamDecoder(log *slog.Logger) *stream.StreamDecoder {
 // OpenAI Responses-API SSE streams.
 func NewResponsesStreamDecoder(log *slog.Logger) *stream.ResponsesStreamDecoder {
 	return stream.NewResponsesStreamDecoder(log)
-}
-
-// ApplyReasoningRewrites is the PassthroughRewrite callback for OpenAI
-// reasoning models (o-series, gpt-5). Shared by Azure OpenAI adapter.
-var ApplyReasoningRewrites = rewrites.ApplyReasoningRewrites
-
-// IsReasoningModel reports whether modelID belongs to an OpenAI reasoning
-// model family (o-series, gpt-5). Exposed for tests and any internal callers.
-func IsReasoningModel(modelID string) bool {
-	return rewrites.IsReasoningModel(modelID)
 }
 
 // IsResponsesBuiltinTool reports whether the given tool type name is an

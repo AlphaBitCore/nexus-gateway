@@ -60,7 +60,7 @@ const (
 // InterceptionDomain is the compliance-proxy in-memory view of an
 // interception_domain row plus its joined interception_path rows.
 //
-// The Streaming* / Capture* / RawBodySpillEnabled fields are per-host
+// The Streaming* / Capture* fields are per-host
 // StreamingPolicy overrides. A nil value means "inherit from the global
 // default in system_metadata['streaming_compliance.config']" — see
 // shared/transport/streaming/policy.Resolve.
@@ -84,7 +84,6 @@ type InterceptionDomain struct {
 	StreamingFailBehavior   *string              `json:"streamingFailBehavior,omitempty"`
 	CaptureRequestBody      *bool                `json:"captureRequestBody,omitempty"`
 	CaptureResponseBody     *bool                `json:"captureResponseBody,omitempty"`
-	RawBodySpillEnabled     *bool                `json:"rawBodySpillEnabled,omitempty"`
 }
 
 // InterceptionPath represents a single `interception_path` row.

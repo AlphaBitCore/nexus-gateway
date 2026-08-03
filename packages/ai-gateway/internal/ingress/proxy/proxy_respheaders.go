@@ -34,9 +34,8 @@ func allowlistVersionFromDeps(d *Deps) string {
 // value is worse than not surfacing it.
 //
 // MUST be called BEFORE [Handler.setResponseHeaders] /
-// [Handler.setResponseHeadersStream] so Nexus's own
-// `x-nexus-aigw-*` stamps overwrite any conflicting upstream value
-// ("Nexus wins on conflict").
+// [Handler.setResponseHeadersStream] so Nexus's own `X-Nexus-*` stamps
+// overwrite any conflicting upstream value ("Nexus wins on conflict").
 //
 // Safe with a nil allowlist (falls back to embedded defaults via
 // provcore.FilterResponseHeaders) and with an empty / nil src.

@@ -22,13 +22,14 @@ panic returns the original body unchanged.
 - **`NormalizeKey(format, body)`** — strips key-safe volatile fields and returns
   the result *for cache-key hashing only*; the body sent upstream is untouched. It
   runs after `PrepareBody` and before the cache key is built, and it is **always
-  active**, independent of the global enable switch. This is what lets two
-  requests that differ only in a volatile field land on the same
+  active** — no config gates it. This is what lets two requests that differ only in
+  a volatile field land on the same
   [L1 cache](../storage/cache-multi-tier-architecture.md) entry.
 - **`NormalizeUpstream(format, providerID, body)`** — strips and/or injects bytes
   in the body that *will* be forwarded to the provider, returning the modified body
   and a `Result` for audit. It runs after an L1 miss, before the request goes to
-  the broker, and is gated by the global `normaliser_enabled` switch.
+  the broker, and is **demand-driven**: it no-ops unless the current config actually
+  gives it work to do (§4).
 
 ## 2. The engine
 
@@ -80,15 +81,28 @@ boundary; this is what makes the upstream provider cache the prompt.
 Config is projected from the `cache` config key (`configkey.Cache`): the Control
 Plane assembles the cache-config blob and pushes it to the AI Gateway shadow, which
 projects that blob into the wirerewrite `Config` on reload. Its zero value is a safe
-all-off default. It carries the global `normaliser_enabled` gate,
-per-adapter per-rule overrides (`enabled`, `dry_run_always`), and per-provider
-marker-injection settings keyed by the Provider UUID. A config change rebuilds the
-engine's snapshot through `Reload`.
+all-off default. It carries exactly two things: per-adapter per-rule overrides
+(`enabled`, `dry_run_always`) and per-provider marker-injection settings keyed by the
+Provider UUID. A config change rebuilds the engine's snapshot through `Reload`.
 
-The on-the-wire identifiers — the `normaliser_enabled` JSON tag and the rule IDs
-such as `claude-code-cch-strip` — are stable admin/shadow/database identifiers.
-They are preserved verbatim, so renaming one is a coordinated config migration, not
-a local refactor.
+**There is no global on/off switch for the engine.** `Reload` derives an internal
+`hasWork` flag from the resolved snapshot:
+
+```
+hasWork = (any adapter has ≥1 enabled upstream strip rule)
+       || (any provider has cache_control marker injection enabled)
+```
+
+`NormalizeUpstream` returns the body untouched when `hasWork` is false, so a
+zero-config deployment pays nothing and never rewrites a forwarded byte. Enabling a
+strip rule, or switching on a provider's marker injection, **is itself the demand** —
+there is no second, operator-facing toggle to remember (forgetting it used to
+silently swallow marker injection). `NormalizeKey` is outside this gate entirely: the
+L0 cache-key normalisation always runs, whatever `hasWork` says.
+
+The on-the-wire identifiers — the rule IDs such as `claude-code-cch-strip` — are
+stable admin/shadow/database identifiers. They are preserved verbatim, so renaming
+one is a coordinated config migration, not a local refactor.
 
 ## 5. Safety
 

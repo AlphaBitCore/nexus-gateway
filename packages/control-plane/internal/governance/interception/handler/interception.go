@@ -173,6 +173,24 @@ type interceptionPath struct {
 	Enabled     *bool    `json:"enabled"`
 }
 
+// validateAdapterConfig shape-checks the adapterConfig blob at the write
+// boundary. The traffic snapshot unmarshals this column into map[string]any
+// when building interception instances; a non-object value fails that parse
+// and the whole domain is SILENTLY skipped (traffic for its host pattern is no
+// longer intercepted — a compliance gap with only a warn log). null / omitted
+// is valid (adapter defaults). Returns "" when valid.
+func validateAdapterConfig(raw json.RawMessage) string {
+	s := string(raw)
+	if len(raw) == 0 || s == "null" {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "adapterConfig must be a JSON object"
+	}
+	return ""
+}
+
 // POST /interception-domains
 
 func (h *Handler) CreateInterceptionDomain(c echo.Context) error {
@@ -193,6 +211,9 @@ func (h *Handler) CreateInterceptionDomain(c echo.Context) error {
 	pathInputs, msg := buildPathInputs(body.Paths)
 	if msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+	}
+	if msg := validateAdapterConfig(body.AdapterConfig); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", "adapterConfig"))
 	}
 
 	actor := actorFromContext(c)
@@ -275,6 +296,9 @@ func (h *Handler) UpdateInterceptionDomain(c echo.Context) error {
 	}
 	if msg := validateEnum("networkZone", deref(body.NetworkZone), validNetworkZones); msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+	}
+	if msg := validateAdapterConfig(body.AdapterConfig); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", "adapterConfig"))
 	}
 	// Compile-check the host regex against the EFFECTIVE match type + pattern
 	// (a PATCH may change one without the other), so a partial update can never

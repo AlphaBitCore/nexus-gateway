@@ -3,12 +3,10 @@ package streaming
 import (
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
@@ -32,7 +30,14 @@ type LiveConfig struct {
 	MinCheckpointChars int
 	MaxCheckpointChars int
 	MaxBufferSize      int // max total buffer (default 8MB)
-	ChannelSize        int // internal channel buffer (default 64)
+	// ChannelSize is INERT as of finding C-30 and setting it has no effect. It sized the
+	// buffered channel between a reader goroutine and the delivery loop; parsing now runs
+	// inline, so there is no channel. The field and its default survive because LiveConfig
+	// is exported from packages/shared and has shipped in a released agent binary, where
+	// CLAUDE.md's 1.0 GA rule makes removing it a breaking change — same reason
+	// Min/MaxCheckpointChars above are kept. Leaving the old comment ("internal channel
+	// buffer") would have told the next reader a knob exists that does nothing.
+	ChannelSize int
 }
 
 func (c *LiveConfig) withDefaults() LiveConfig {
@@ -100,10 +105,18 @@ func (l *LivePipeline) WithUsageAccumulator(acc UsageAccumulator) *LivePipeline 
 
 // WithPreHook installs a callback that fires at every checkpoint before
 // pipeline.Execute, with the cumulative raw SSE wire bytes seen so far.
-// Lets the caller stamp checkpointInput.Normalized (and audit-info
-// ResponseNormalized) with a Registry-normalized payload so hook
-// pipelines see structured chat content rather than the flat-text
-// fallback buildCheckpointInput would otherwise produce.
+// Lets the caller stamp checkpointInput.Normalized with a
+// Registry-normalized payload so hook pipelines see structured chat
+// content rather than the flat-text fallback buildCheckpointInput
+// would otherwise produce.
+//
+// It stamps ci.Normalized and NOTHING else. An earlier version of this
+// comment also claimed it stamped auditInfo.ResponseNormalized; that was
+// never true on this path. responseprehook exposes an OnPayload hook for
+// exactly such a side-effect, but no production caller passes one, and
+// nothing under shared/transport/streaming assigns ResponseNormalized at
+// all — the audit row's normalized projection is recomputed at view time
+// from the captured raw body instead.
 //
 // Cost: each checkpoint re-runs normalize on the cumulative body. To keep
 // the total normalize work linear in the response length rather than
@@ -211,54 +224,64 @@ func (l *LivePipeline) Process(
 		upstreamForReader = io.TeeReader(upstream, rawAcc)
 	}
 
-	eventChan := make(chan *SSEEvent, l.config.ChannelSize)
+	// Parsing runs INLINE in the delivery loop (finding C-30). There was a reader
+	// goroutine handing frames over a buffered channel; deleting it removes one goroutine
+	// and two synchronisation operations per frame, collapses teardown from three stuck
+	// points to one, and fixes a leak — a panic in this loop unwound through `defer cancel()`
+	// but NOT through CloseUpstreamOnExit, and a reader parked in upstream.Read never
+	// observed ctx, so that goroutine and its pooled 64 KiB scan buffer leaked for good.
+	//
+	// The B6 review retracted the backpressure objection: the channel held 64 frames in every
+	// production caller, against a 4 MiB per-stream h2 flow-control window — single-digit KB,
+	// immaterial. (LiveConfig.ChannelSize is what sized it, and is now inert; see its field
+	// comment for why it survives.)
+	//
+	// The behaviour change the owner signed off is real and its FIRST justification here was
+	// wrong. It said "on a client abort the provider never sends the usage trailer anyway" —
+	// but the provider is on the other connection and never observes the client abort, so it
+	// keeps sending, trailer included. The accurate statement: Feed used to run before the
+	// channel send, so a reader could buffer up to 64 frames — including a trailer the client
+	// never received — and feed all of them; that observation window is now one frame. A
+	// differential run over 14 stream scenarios found this to be the ONLY divergence between
+	// the two versions, and it is confined to the writer-error path: `writer_fails_frame3` fed
+	// 2 frames where the old code fed 10 plus [DONE]. Consequence: an aborted stream now
+	// records no provider-reported usage, so its cost falls back to estimation. That is
+	// defensible (do not count what was not delivered) and it removes a nondeterministic
+	// window, but it is cost-visible, so it is stated rather than implied. What it did NOT retract is a behaviour change the owner signed off: Feed
+	// used to run before the channel send, so up to 65 frames could be fed but never
+	// delivered; that observation window is now one frame. On a client abort the provider
+	// never sends the usage trailer anyway, so this only narrows a nondeterministic chance of
+	// observing a trailer the client never received.
+	parser := NewSSEParserWithLogger(upstreamForReader, l.logger)
+	// One goroutine now, so this defer covers every exit path — including the panic path
+	// that used to leak the buffer.
+	defer parser.Release()
 
-	var (
-		wg        sync.WaitGroup
-		readerErr error
-	)
-
-	// --- Reader goroutine ---
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(eventChan)
-
-		parser := NewSSEParserWithLogger(upstreamForReader, l.logger)
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-			evt, err := parser.Next()
-			if err != nil {
-				if !errors.Is(err, io.EOF) {
-					readerErr = err
-					l.logger.Error("SSE reader error", "error", err)
-				}
-				return
-			}
-			if l.usage != nil {
-				l.usage.Feed(evt)
-			}
-			select {
-			case eventChan <- evt:
-			case <-ctx.Done():
-				return
-			}
-			if evt.Done {
-				return
-			}
-		}
-	}()
+	var readerErr error
 
 	// --- Delivery + observe-only audit (current goroutine) ---
 	// accumulatedAll grows with the cumulative response text (bounded by
 	// MaxBufferSize); strings.Builder keeps the per-event append amortized O(1).
 	// pendingLen counts chars since the last checkpoint so the cadence check stays a
 	// cheap int compare.
+	// pendingRaw counts RAW wire bytes since the last checkpoint. It exists
+	// because pendingLen is derived from extractDeltaText, which models only the
+	// OpenAI chat shape: for an Anthropic / Gemini / Responses-API / Cohere
+	// stream — or an OpenAI stream carrying only tool-call deltas — it returns ""
+	// for every frame, so pendingLen stays 0 for the whole stream, every
+	// checkpoint gate below fails, and the pipeline would never execute at all.
+	// A transparent MITM carries arbitrary provider wires, so that is the normal
+	// case here, not an edge one. Counting raw bytes is shape-agnostic and keeps
+	// the guarantee "a stream that carried content gets scanned" true for wires
+	// we do not model. The PreHook is what makes such a checkpoint meaningful:
+	// it re-normalizes the cumulative raw bytes and overwrites the checkpoint
+	// input's payload, which is how the buffer pipeline already behaves.
+	// rawSnap is the reusable pre-hook snapshot destination; see runCheckpoint.
+	var rawSnap []byte
 	var (
 		accumulatedAll strings.Builder
 		pendingLen     int
+		pendingRaw     int
 		totalBytes     int
 		allResults     []core.HookResult
 		auditCapped    bool
@@ -279,17 +302,42 @@ func (l *LivePipeline) Process(
 		}
 		checkpointInput := buildCheckpointInput(baseInput, accumulatedAll.String())
 		if l.preHook != nil && rawAcc != nil {
-			l.preHook(rawAcc.Snapshot(), checkpointInput)
+			// Reuse one destination across checkpoints (finding C-22). A fresh copy
+			// per checkpoint made total allocation quadratic in stream length. The
+			// pre-hook does not retain the slice, and no NormalizedPayload can alias
+			// it — see SnapshotInto's contract for the evidence.
+			rawSnap = rawAcc.SnapshotInto(rawSnap)
+			l.preHook(rawSnap, checkpointInput)
 		}
 		if result := l.pipeline.Execute(ctx, checkpointInput); result != nil {
 			allResults = append(allResults, result.HookResults...)
 		}
 	}
 
-	for evt := range eventChan {
+	for ctx.Err() == nil {
+		evt, err := parser.Next()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				readerErr = err
+				l.logger.Error("SSE reader error", "error", err)
+			}
+			break
+		}
+
+		// MERGE TRAP 1 (B6 review, highest severity): Feed must stay ABOVE the
+		// audit-capped and MaxBufferSize skips below. It used to live in the reader, so
+		// those skips could not affect it; put it below either one and every stream past
+		// MaxBufferSize stops feeding the accumulator partway — and since every tier-1
+		// accumulator reads its counts from frames at the END of the stream, such streams
+		// would lose tier-1 usage entirely.
+		if l.usage != nil {
+			l.usage.Feed(evt)
+		}
+
 		// AUDIT-ONLY: deliver every event in real time — delivery is NEVER gated on a
-		// checkpoint. A write error closes the upstream so the reader goroutine exits
-		// and wg.Wait() can return (the slow-upstream wedge guard).
+		// checkpoint. A write error closes the upstream so nothing is left half-read.
+		// CloseUpstreamOnExit is KEPT (merge trap 3): it is exported and
+		// ai-gateway/internal/platform/streaming calls it.
 		if err := WriteSSEEvent(client, evt); err != nil {
 			writerErr = err
 			cancel()
@@ -300,37 +348,52 @@ func (l *LivePipeline) Process(
 			flusher.Flush()
 		}
 
-		if auditCapped {
-			continue
+		// The two skips below were `continue` when a channel range drove this loop. They
+		// are now nested instead, because a `continue` would jump over the evt.Done break
+		// at the bottom and the loop would block in parser.Next() on an upstream that has
+		// nothing left to send (MERGE TRAP 2: [DONE] must be delivered AND accumulated,
+		// then break — matching the old reader, which returned only after sending it).
+		if !auditCapped {
+			deltaText := extractDeltaText(evt)
+			accumulatedAll.WriteString(deltaText)
+			pendingLen += len(deltaText)
+			if !evt.Done {
+				// The [DONE] sentinel carries no content — counting it would make a
+				// stream that delivered nothing but the terminator look like it had
+				// something to scan, and fire a checkpoint over an empty body.
+				pendingRaw += len(evt.Data)
+			}
+			totalBytes += len(evt.Data)
+			if totalBytes > l.config.MaxBufferSize {
+				// Audit-accumulation cap: stop scanning further content to bound memory,
+				// but KEEP delivering — an audit-only relay must never break a
+				// non-enforcing stream just because it grew past the scan budget.
+				l.logger.Warn("live pipeline: audit accumulation capped at max buffer size", "bytes", totalBytes)
+				auditCapped = true
+			} else {
+				// Widen the checkpoint cadence with the transcript: each checkpoint
+				// re-normalizes the FULL accumulated body (the pre-hook parses cumulative
+				// wire bytes), so a fixed step makes the total re-normalization work grow
+				// with the square of the response length — a long stream saturates the
+				// box on parsing alone. Growing the step proportionally to the accumulated
+				// length keeps the checkpoint count sublinear and the total work linear.
+				// Short streams keep the fixed CheckpointChars cadence; the mandatory
+				// final checkpoint below always covers the trailing content, so coarser
+				// intermediate spacing never changes the final audit result.
+				step := l.config.CheckpointChars
+				if grow := accumulatedAll.Len() / 8; grow > step {
+					step = grow
+				}
+				if pendingLen >= step {
+					runCheckpoint()
+					pendingLen = 0
+					pendingRaw = 0
+				}
+			}
 		}
-		deltaText := extractDeltaText(evt)
-		accumulatedAll.WriteString(deltaText)
-		pendingLen += len(deltaText)
-		totalBytes += len(evt.Data)
-		if totalBytes > l.config.MaxBufferSize {
-			// Audit-accumulation cap: stop scanning further content to bound memory,
-			// but KEEP delivering — an audit-only relay must never break a
-			// non-enforcing stream just because it grew past the scan budget.
-			l.logger.Warn("live pipeline: audit accumulation capped at max buffer size", "bytes", totalBytes)
-			auditCapped = true
-			continue
-		}
-		// Widen the checkpoint cadence with the transcript: each checkpoint
-		// re-normalizes the FULL accumulated body (the pre-hook parses cumulative
-		// wire bytes), so a fixed step makes the total re-normalization work grow
-		// with the square of the response length — a long stream saturates the
-		// box on parsing alone. Growing the step proportionally to the accumulated
-		// length keeps the checkpoint count sublinear and the total work linear.
-		// Short streams keep the fixed CheckpointChars cadence; the mandatory
-		// final checkpoint below always covers the trailing content, so coarser
-		// intermediate spacing never changes the final audit result.
-		step := l.config.CheckpointChars
-		if grow := accumulatedAll.Len() / 8; grow > step {
-			step = grow
-		}
-		if pendingLen >= step {
-			runCheckpoint()
-			pendingLen = 0
+
+		if evt.Done {
+			break
 		}
 	}
 
@@ -338,12 +401,18 @@ func (l *LivePipeline) Process(
 	// covered by a periodic checkpoint so a stream shorter than the cadence — or the
 	// tail after the last checkpoint — is still audited once. Skipped when a write
 	// error aborted delivery or when the last checkpoint already covered everything.
-	if writerErr == nil && pendingLen > 0 {
+	//
+	// The pendingRaw arm is what guarantees the scan happens at all for a wire
+	// shape extractDeltaText does not model (see pendingRaw's declaration): those
+	// streams leave pendingLen at 0 forever, so without it the pipeline would
+	// never run and the flow would be audited as an approve with zero hook
+	// executions. It is gated on rawAcc — i.e. on a PreHook being installed —
+	// because the pre-hook is the only thing that can recover content from raw
+	// bytes; without one, firing here would execute hooks against empty text and
+	// record a misleading "scanned, found nothing" result.
+	if writerErr == nil && (pendingLen > 0 || (rawAcc != nil && pendingRaw > 0)) {
 		runCheckpoint()
 	}
-
-	// Wait for the reader goroutine to finish.
-	wg.Wait()
 
 	finalResult := &core.CompliancePipelineResult{Decision: core.Approve, HookResults: foldHookResults(allResults)}
 	if writerErr != nil {
@@ -390,37 +459,6 @@ func buildCheckpointInput(base *core.HookInput, accumulatedText string) *core.Ho
 		Normalized:  core.PayloadFromTextSegments([]string{accumulatedText}),
 	}
 	return input
-}
-
-// extractDeltaText attempts to extract the delta content from an SSE event's
-// data field. For OpenAI-compatible streaming responses, the data is JSON with
-// choices[0].delta.content. Falls back to the raw data if parsing fails.
-func extractDeltaText(evt *SSEEvent) string {
-	if evt.Done {
-		return ""
-	}
-	data := evt.Data
-	if data == "" {
-		return ""
-	}
-
-	// Try to parse as OpenAI streaming chunk.
-	var chunk struct {
-		Choices []struct {
-			Delta struct {
-				Content string `json:"content"`
-			} `json:"delta"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal([]byte(data), &chunk); err == nil {
-		if len(chunk.Choices) > 0 {
-			return chunk.Choices[0].Delta.Content
-		}
-		return ""
-	}
-
-	// Fallback: return raw data as text.
-	return data
 }
 
 // CloseUpstreamOnExit unblocks a reader goroutine that's parked

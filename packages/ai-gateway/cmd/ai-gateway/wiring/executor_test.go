@@ -35,7 +35,7 @@ func TestInitExecutor_withHealthTracker(t *testing.T) {
 
 	// InitHookRegistry is cheap; use it to create a real registry to satisfy
 	// InitRouter which we don't call here.
-	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatalf("hook registry: %v", err)
 	}

@@ -36,7 +36,6 @@ type InterceptionDomainDTO struct {
 	StreamingFailBehavior   *string `json:"streamingFailBehavior,omitempty"`
 	CaptureRequestBody      *bool   `json:"captureRequestBody,omitempty"`
 	CaptureResponseBody     *bool   `json:"captureResponseBody,omitempty"`
-	RawBodySpillEnabled     *bool   `json:"rawBodySpillEnabled,omitempty"`
 }
 
 // InterceptionPathDTO is the wire format for interception paths.

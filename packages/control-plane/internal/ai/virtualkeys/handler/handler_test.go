@@ -749,14 +749,20 @@ func TestRenewVirtualKey_MissingExpiresAt(t *testing.T) {
 	}
 }
 
-// TestRenewVirtualKey_TooFar covers the 3-month-ceiling 400.
-func TestRenewVirtualKey_TooFar(t *testing.T) {
-	h, mock, _, _ := newHandlerWithMockDB(t)
+// TestRenewVirtualKey_FarFuture_Accepted pins that renewal distance is
+// unbounded — an admin may renew an application VK a year out, and the renewal
+// reaches the UPDATE + hub invalidate + audit rather than being rejected.
+func TestRenewVirtualKey_FarFuture_Accepted(t *testing.T) {
+	h, mock, hub, aud := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
 	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
-	far := time.Now().UTC().AddDate(1, 0, 0)
+	far := time.Now().UTC().AddDate(1, 0, 0).Truncate(time.Second)
+	mock.ExpectExec(`UPDATE "VirtualKey"`).
+		WithArgs("vk-1", far).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
 	body := `{"expiresAt":"` + far.Format(time.RFC3339) + `"}`
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", body)
 	c.SetParamNames("id")
@@ -764,11 +770,11 @@ func TestRenewVirtualKey_TooFar(t *testing.T) {
 	if err := h.RenewVirtualKey(c); err != nil {
 		t.Fatalf("RenewVirtualKey: %v", err)
 	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s; want 200 (renewal distance is unbounded)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "must not exceed 3 months") {
-		t.Errorf("body=%s", rec.Body.String())
+	if len(hub.invalidateCalls) != 1 || aud.count() != 1 {
+		t.Errorf("hub=%d audit=%d", len(hub.invalidateCalls), aud.count())
 	}
 }
 

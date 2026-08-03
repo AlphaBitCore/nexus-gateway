@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # /test-openai-responses runner.
 #
-# Drives 5 hand-rolled requests against POST /v1/responses (E56 ingress)
+# Drives 5 hand-rolled requests against POST /v1/responses (ingress)
 # on the local AI Gateway, then cross-checks the resulting traffic_event
 # DB rows + Prometheus counters. Optional --cross-format runs the S6
 # guard rejections against a non-OpenAI routing rule.

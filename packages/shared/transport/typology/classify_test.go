@@ -46,6 +46,20 @@ func TestClassifyPath_AIGatewayIngressPaths(t *testing.T) {
 		// and GET /v1/models/{model}.
 		{"GET", "/v1/models", EndpointKindModels, WireShapeNone},
 		{"GET", "/v1/models/gpt-4o", EndpointKindModels, WireShapeNone},
+
+		// Guardrail — standalone compliance-verdict endpoint; carries a body
+		// (the text to evaluate) but no provider wire shape (nothing routed).
+		{"POST", "/v1/guardrail", EndpointKindGuardrail, WireShapeNone},
+
+		// Realtime — GET WebSocket upgrade, no HTTP body (WireShapeNone).
+		{"GET", "/v1/realtime", EndpointKindRealtime, WireShapeNone},
+
+		// Video generation (async job family) — submit carries the
+		// multipart body; poll / content / delete are body-less relays.
+		{"POST", "/v1/videos", EndpointKindVideoGeneration, WireShapeOpenAIVideos},
+		{"GET", "/v1/videos/video_abc123", EndpointKindVideoGeneration, WireShapeNone},
+		{"GET", "/v1/videos/video_abc123/content", EndpointKindVideoGeneration, WireShapeNone},
+		{"DELETE", "/v1/videos/video_abc123", EndpointKindVideoGeneration, WireShapeNone},
 	}
 	for _, c := range cases {
 		gotKind, gotWire, ok := ClassifyPath(c.method, c.path)
@@ -58,6 +72,25 @@ func TestClassifyPath_AIGatewayIngressPaths(t *testing.T) {
 		}
 		if gotWire != c.wantWire {
 			t.Errorf("ClassifyPath(%q, %q) wire = %v, want %v", c.method, c.path, gotWire, c.wantWire)
+		}
+	}
+}
+
+// TestClassifyPath_VideoUnservedSurfacesStayUnclassified pins the negative
+// half of the video rule set: the list surface and the out-of-scope remix
+// family are deliberately NOT rule-matched — they are unserved (explicit-404
+// routes at the gateway) and their classification must stay empty so
+// kind-aware filters treat them as unclassified. A rule reorder or glob
+// change that starts classifying them would silently change hook selection
+// on intercepted traffic.
+func TestClassifyPath_VideoUnservedSurfacesStayUnclassified(t *testing.T) {
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/v1/videos"},                  // list — provider list is account-wide, unserved
+		{"POST", "/v1/videos/video_123/remix"}, // remix family — out of scope
+		{"POST", "/v1/videos/edits"},           // edits — out of scope
+	} {
+		if kind, wire, ok := ClassifyPath(c.method, c.path); ok {
+			t.Errorf("ClassifyPath(%q, %q) = (%v, %v, true); want unclassified (ok=false)", c.method, c.path, kind, wire)
 		}
 	}
 }

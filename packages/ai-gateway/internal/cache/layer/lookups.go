@@ -162,9 +162,23 @@ func (l *Layer) ListCredentialsForProvider(ctx context.Context, providerID strin
 
 // GetVirtualKeyByHash looks up a VK by its HMAC hash. Cache miss falls
 // through to the database.
+//
+// A hash with no matching row is remembered as a negative result for
+// VKTTL. Without it every request bearing an unknown or revoked key
+// re-queried Postgres — an amplification path open to unauthenticated
+// callers, and multiplied by the HMAC keyring version count because
+// vkauth tries each version's hash in turn. Only "row absent" is cached;
+// transport, scan and JSON-parse failures are transient and must keep
+// retrying, so they fall through unchanged.
 func (l *Layer) GetVirtualKeyByHash(ctx context.Context, hash string) (*store.VirtualKey, error) {
+	if l.negativeVKHit(hash) {
+		return nil, fmt.Errorf("cachelayer: virtual key not found (negative cache): %w", errNotFound)
+	}
 	vk, err := l.vkeys.Get(ctx, hash)
 	if err != nil {
+		if errors.Is(err, errNotFound) {
+			l.recordNegativeVK(hash)
+		}
 		return nil, err
 	}
 	return vk, nil

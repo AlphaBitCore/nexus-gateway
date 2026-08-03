@@ -27,6 +27,26 @@ func TestExtractIngressModel_OpenAI_FromBody(t *testing.T) {
 	}
 }
 
+func TestExtractIngressModel_Cohere_Rerank_FromBody(t *testing.T) {
+	// /v1/rerank canonical = Cohere shape, model in the body. Without the
+	// FormatCohere case the ingress fell to the default arm and 400'd with
+	// "unsupported ingress format cohere".
+	in := Ingress{WireShape: typology.WireShapeCohereRerank, BodyFormat: provcore.FormatCohere}
+	body := []byte(`{"model":"rerank-v3.5","query":"q","documents":["a","b"]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/rerank", bytes.NewReader(body))
+
+	model, stream, err := ExtractIngressModel(in, req, body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if model != "rerank-v3.5" {
+		t.Errorf("model = %q, want rerank-v3.5", model)
+	}
+	if stream {
+		t.Errorf("stream = true, want false (rerank is non-streaming)")
+	}
+}
+
 func TestExtractIngressModel_Anthropic_FromBody(t *testing.T) {
 	in := Ingress{WireShape: typology.WireShapeAnthropicMessages, BodyFormat: provcore.FormatAnthropic}
 	body := []byte(`{"model":"claude-3-5-sonnet","messages":[]}`)

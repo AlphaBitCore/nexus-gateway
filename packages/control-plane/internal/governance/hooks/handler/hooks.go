@@ -97,6 +97,19 @@ func (h *Handler) CreateHookConfig(c echo.Context) error {
 			"applicableIngress must not be empty (omit the field to default to ALL)",
 			"validation_error", "applicableIngress"))
 	}
+	// The config blob is stored verbatim and hard-parsed into map[string]any by
+	// the AI Gateway and compliance-proxy at config load. A non-object value
+	// (array / scalar / string) makes every reload fail — freezing hook-config
+	// propagation — and, on a service restart, silently starts the hook with an
+	// EMPTY config: a fail-open bypass of the whole compliance pipeline. Reject
+	// the wrong shape here, at the single write boundary. null / omitted is
+	// valid (no config).
+	if len(body.Config) > 0 {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(body.Config, &obj); err != nil {
+			return c.JSON(http.StatusBadRequest, errJSON("config must be a JSON object", "validation_error", "config"))
+		}
+	}
 
 	hc, err := h.hooks.CreateHookConfig(c.Request().Context(), hookstore.CreateHookConfigParams{
 		Name:              body.Name,
@@ -194,6 +207,15 @@ func (h *Handler) UpdateHookConfig(c echo.Context) error {
 			return c.JSON(http.StatusBadRequest, errJSON(
 				"config must be JSON-serializable: "+err.Error(),
 				"validation_error", "config"))
+		}
+		// Same shape contract as create: the gateway / compliance-proxy hard-parse
+		// this column into map[string]any, so a non-object value would fail-open to
+		// an empty hook config on the next restart. null is allowed (no config).
+		if len(raw) > 0 {
+			var obj map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &obj); err != nil {
+				return c.JSON(http.StatusBadRequest, errJSON("config must be a JSON object", "validation_error", "config"))
+			}
 		}
 		params.Config = raw
 	}

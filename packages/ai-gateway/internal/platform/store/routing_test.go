@@ -51,6 +51,55 @@ func TestGetEnabledRoutingRules(t *testing.T) {
 		}
 	})
 
+	t.Run("empty result set is cached, not re-queried", func(t *testing.T) {
+		mock, db := newMockDB(t)
+		// Exactly ONE query is expected for the whole sub-test. A
+		// deployment with zero enabled routing rules is a legitimate
+		// steady state; the second and third lookups must be served
+		// from cache. pgxmock errors on an unexpected Query, so a
+		// re-query surfaces as a failure here.
+		mock.ExpectQuery(`FROM "RoutingRule"\s+WHERE enabled = true`).
+			WillReturnRows(pgxmock.NewRows(routingTestColumns))
+
+		for i := range 3 {
+			got, err := db.GetEnabledRoutingRules(context.Background())
+			if err != nil {
+				t.Fatalf("lookup %d: unexpected error (empty result must be cached): %v", i, err)
+			}
+			if len(got) != 0 {
+				t.Fatalf("lookup %d: want zero rules, got %+v", i, got)
+			}
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("expectations: %v", err)
+		}
+	})
+
+	t.Run("cached empty result still honours invalidation", func(t *testing.T) {
+		mock, db := newMockDB(t)
+		mock.ExpectQuery(`FROM "RoutingRule"`).
+			WillReturnRows(pgxmock.NewRows(routingTestColumns))
+		got, err := db.GetEnabledRoutingRules(context.Background())
+		if err != nil || len(got) != 0 {
+			t.Fatalf("initial load: rules=%+v err=%v", got, err)
+		}
+
+		// An admin enabling the first routing rule reaches the gateway as
+		// a Hub `routing_rules` push -> InvalidateRuleCache. The cached
+		// empty result must not survive it.
+		mock.ExpectQuery(`FROM "RoutingRule"`).
+			WillReturnRows(pgxmock.NewRows(routingTestColumns).AddRow(makeRoutingRow("r-new")...))
+		db.InvalidateRuleCache()
+
+		got2, err := db.GetEnabledRoutingRules(context.Background())
+		if err != nil {
+			t.Fatalf("post-invalidate load: %v", err)
+		}
+		if len(got2) != 1 || got2[0].ID != "r-new" {
+			t.Errorf("stale empty result served after invalidation: %+v", got2)
+		}
+	})
+
 	t.Run("query err wraps and is not cached", func(t *testing.T) {
 		mock, db := newMockDB(t)
 		want := errors.New("planner err")

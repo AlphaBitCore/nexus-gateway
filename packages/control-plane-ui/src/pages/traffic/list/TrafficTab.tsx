@@ -18,9 +18,9 @@ import { LiveTrafficFilterPanel } from '../filters/LiveTrafficFilterPanel';
 import {
   buildTrafficAuditLogQueryParams,
   countLiveTrafficFilters,
-  parseTrafficNavParams,
   type TrafficSourceFilter,
 } from '../filters/liveTrafficFilters';
+import { parseTrafficNavParams } from '../filters/liveTrafficNavParams';
 import { getColumnsForSource } from './trafficColumns';
 import { useTrafficNav } from './useTrafficNav';
 import { useTrafficFilters } from './useTrafficFilters';
@@ -261,6 +261,12 @@ export function TrafficTab({ source }: TrafficTabProps) {
           drawerVisible={drawerVisible}
           onClose={closeDrawer}
           titleId="traffic-analytics-live-drawer-title"
+          // Correlation pivot: one click jumps from "this event" to the whole
+          // slice for that end-user / session / request in the live list.
+          onPivot={(patch) => {
+            applyFilterPatch(patch);
+            closeDrawer();
+          }}
         />
       )}
 

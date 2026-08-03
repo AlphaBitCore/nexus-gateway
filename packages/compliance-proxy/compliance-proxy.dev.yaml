@@ -106,9 +106,13 @@ log:
   # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
   # boot default only. logging.SetLevel mutates the slog.LevelVar live on
   # shadow push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
-  # warn by default: debug is high-volume and grows the log file fast. Raise to
-  # debug per session (or via the Hub log_level shadow) when actively debugging.
-  level: "warn"
+  # info at boot, matching *.prod.yaml.example and the level the Hub shadow
+  # pushes anyway. It was warn, which governs ONLY the boot window — and that
+  # window is where the posture lines live (audit overflow policy, spillstore
+  # backend, streaming policy mode), so they were invisible locally while
+  # appearing in production. That is what hid R-7 for as long as it hid.
+  # debug stays opt-in: it is high-volume and grows the log file fast.
+  level: "info"
   format: "text"
   file: "logs/compliance-proxy.log"
   stackOnError: true
@@ -128,9 +132,17 @@ audit:
     size: 10
     flushIntervalMs: 500
     channelBufferSize: 1000
+  # Audit-overflow policy (shared/audit/lossmode): spillblock | block | spill | drop.
+  # Empty or unrecognised resolves to spillblock, the no-loss default.
+  lossMode: spillblock
   ndjson:
-    enabled: false
-    dir: ""
+    # The durable spool every spooling mode needs. This was DISABLED with an empty dir, which
+    # made every local run silently lossy on audit overflow — the old code logged "writing to
+    # NDJSON fallback" and incremented enqueue_total{ndjson} before checking whether a spool
+    # existed, so the signals claimed a durable write that never happened. Local runs are also
+    # where the smoke suite exercises overflow, so the dev config must not be the lossy one.
+    enabled: true
+    dir: "/tmp/nexus-proxy-audit-spool"
     maxFileSizeMB: 100
     maxTotalSizeMB: 1000
   pinning:
@@ -148,6 +160,9 @@ audit:
 # live in the DB and load via hooks shadow. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
 compliance:
   enabled: true
+  # The trusted AI-Gateway base for compliance-webhook authentication is not
+  # configured here: it is resolved from the Hub (the ai-gateway's reported
+  # public/private URLs), so it cannot drift from the real deployment.
 
 # --- Runtime API (healthz, connections, killswitch) ---
 runtimeApi:

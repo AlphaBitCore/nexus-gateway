@@ -174,7 +174,7 @@ func BenchmarkFullRecordDecode(b *testing.B) {
 	rec := benchRecord()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := decodeBinaryRecord(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -185,7 +185,7 @@ func BenchmarkAlertRecordDecode(b *testing.B) {
 	frame := append([]byte{mq.BinwireMagic}, appendUvarintRec(benchRecord())...)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		DecodeAlertFrame(frame, func(*AlertView) {}, func(error) { b.Fatal("decode error") })
 	}
 }

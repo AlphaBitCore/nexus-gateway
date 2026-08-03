@@ -196,6 +196,7 @@ func InitThingClient(ctx context.Context, d TCInitDeps) TCInitResult {
 		ServiceVersion: "ai-gateway/0.1.0",
 		StartTime:      d.ProcessStartTime.Format(time.RFC3339),
 		PublicURL:      d.Cfg.PublicURL,
+		PrivateURL:     platform.EffectivePrivateURL(d.Cfg.PrivateURL, d.Cfg.Server.Host, d.Cfg.Server.Port),
 	})
 	go func() {
 		time.Sleep(500 * time.Millisecond)
@@ -331,6 +332,9 @@ func MountRoutes(
 		AIGuardConfigCache:  func() *aiguard.ConfigCache { return d.AiguardConfigCache },
 		ObservabilityGet:    func() *telemetry.Config { return d.ObsState.Load() },
 		ConfigKeyRecorder:   d.ConfigKeyRecorder, AuthToken: cfg.Auth.InternalServiceToken,
+		SpillAvailability: d.SpillAvailability,
+		SpillStore:        d.SpillStore,
+		SpillConfig:       d.Cfg.Spill,
 	}, mux)
 	if d.AiguardConfigCache != nil {
 		MountAIGuardRoutes(mux, cfg, d.Rdb, d.AdapterReg, d.PtResolver,
@@ -340,6 +344,7 @@ func MountRoutes(
 		Config: cfg, CacheLayer: d.CacheLayer, DB: d.DB, VKAuth: d.VkAuth,
 		RateLimiter: d.RateLimiter, CredManager: d.CredManager,
 		RouterResolver: d.RouterResolver, Executor: d.TargetExecutor,
+		Resolver:        d.PtResolver,
 		HookConfigCache: d.HookConfigCache, GWHookRegistry: d.GwHookRegistry,
 		ProviderReg: d.AdapterReg, HealthTracker: d.HealthTracker,
 		AuditWriter: d.AuditWriter, NormalizeReg: d.NormalizeReg,

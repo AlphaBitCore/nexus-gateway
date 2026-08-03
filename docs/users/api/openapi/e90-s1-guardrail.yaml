@@ -1,0 +1,270 @@
+# Hand-maintained OpenAPI spec for the AI Gateway data-plane guardrail ingress
+# (e90-s1). Verified claim-by-claim against the AI Gateway source (the single
+# source of truth): the route mount in
+# packages/ai-gateway/cmd/ai-gateway/wiring/routes.go, the handler in
+# packages/ai-gateway/internal/ingress/proxy/guardrail_handler.go, and the
+# request/response DTOs + verdict mapping in
+# packages/ai-gateway/internal/policy/guardrail/{types,verdict,validate}.go.
+# Field names, types, optionality, and error envelopes mirror the code.
+#
+# Guardrail is the standalone compliance-verdict endpoint: a caller submits text
+# and receives an allow/block/redact verdict from the deployment's configured
+# compliance pipeline (rule-pack + PII redaction + AI-Guard LLM judge) — WITHOUT
+# relaying an LLM completion. It is a parallel handler (ServeGuardrail), not the
+# ServeProxy chain; it carries no provider wire shape. See
+# docs/developers/specs/e90-s1-guardrail-endpoint.md.
+openapi: 3.1.0
+info:
+    title: Nexus AI Gateway — Guardrail (/v1/guardrail)
+    version: dev
+    description: |-
+        The AI Gateway guardrail ingress. `POST /v1/guardrail` evaluates
+        caller-supplied text against the SAME compliance pipeline the inline
+        proxy path runs (deterministic rule-pack + PII redaction + the AI-Guard
+        LLM judge) and returns a structured `allow` / `block` / `redact`
+        verdict — without relaying an LLM completion. It is the standalone
+        counterpart to the inline pipeline (the ApplyGuardrail / Content-Safety
+        category), backed by the deployment's already-configured policy rather
+        than a generic classifier: the same policy, two entry points, one audit
+        trail.
+
+        The endpoint ALWAYS returns HTTP 200 with the verdict — a `block` /
+        `redact` disposition is DATA in the body (`action`), not an HTTP error.
+        Admission reuses the shared cross-cutting subset: virtual-key auth, a
+        per-key rate limit, and a per-key concurrency cap (the primary
+        judge-budget bound; v1 has no hard spend ceiling). The raw evaluated
+        text is never persisted to the payload store.
+
+        Coverage honesty: the `coverage` field distinguishes a fully-scanned
+        `allow` (`full`) from one where a hook failed open (`degraded`) or no
+        hooks were bound for the stage (`none`) — a guardrail must never hand a
+        caller a false clean verdict.
+servers:
+    - url: https://gateway.example.com
+      description: AI Gateway base URL (deployment-specific)
+security:
+    - VirtualKey: []
+paths:
+    /v1/guardrail:
+        post:
+            operationId: guardrail
+            summary: Evaluate text against the deployment's compliance policy
+            description: |-
+                Runs the configured compliance pipeline over `content` (or the
+                joined `messages`) for the given `stage` and returns the verdict.
+                Exactly one of `content` / `messages` must be non-empty.
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/GuardrailRequest'
+                        examples:
+                            prompt:
+                                summary: Check a prompt (default stage)
+                                value:
+                                    content: "ping me at alice@example.com"
+                            output:
+                                summary: Check a model output
+                                value:
+                                    stage: output
+                                    content: "Sure, her SSN is 123-45-6789."
+            responses:
+                '200':
+                    description: The compliance verdict (including block/redact dispositions).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GuardrailResponse'
+                            examples:
+                                allow:
+                                    value:
+                                        action: allow
+                                        decision: approve
+                                        coverage: full
+                                        metadata: {latency_ms: 3}
+                                redact:
+                                    value:
+                                        action: redact
+                                        decision: modify
+                                        coverage: full
+                                        labels: ["pii:email"]
+                                        assessments:
+                                            - {check: pii-detect, decision: modify, action: redact, labels: ["pii:email"]}
+                                        redactions:
+                                            - {start: 11, end: 28, replacement: "[REDACTED_EMAIL]", action: redact, reason: "pii:email"}
+                                        redacted_content: "ping me at [REDACTED_EMAIL]"
+                                        metadata: {latency_ms: 41}
+                '400':
+                    description: Malformed JSON, unknown field, invalid `stage`, or neither/both of content and messages.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                '401':
+                    description: Missing or invalid virtual key.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                '413':
+                    description: Request body exceeds the guardrail size ceiling (1 MiB).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                '429':
+                    description: |-
+                        Per-key rate limit or per-key guardrail concurrency cap exceeded.
+                        Carries a `Retry-After` header.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+                '500':
+                    description: |-
+                        The compliance pipeline could not be built (a defensive
+                        error mirroring the inline path; the caller-supplied body
+                        is not echoed).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
+components:
+    securitySchemes:
+        VirtualKey:
+            type: http
+            scheme: bearer
+            description: A Nexus virtual key, sent as `Authorization: Bearer <vk>`.
+    schemas:
+        GuardrailRequest:
+            type: object
+            description: Exactly one of `content` / `messages` must be non-empty.
+            properties:
+                stage:
+                    type: string
+                    enum: [input, output]
+                    default: input
+                    description: |-
+                        Selects the pipeline direction. `input` evaluates a
+                        prompt (request-stage hooks); `output` evaluates a model
+                        completion (response-stage hooks). Omitted → `input`.
+                content:
+                    type: string
+                    description: The text to evaluate (mutually exclusive with `messages`).
+                messages:
+                    type: array
+                    description: |-
+                        Structured alternative to `content`; the message contents
+                        are joined in turn order with a newline into the evaluated
+                        text (which defines the offset space for `redactions`).
+                    items:
+                        type: object
+                        properties:
+                            role: {type: string}
+                            content: {type: string}
+                        required: [role, content]
+                include_redacted_content:
+                    type: boolean
+                    default: true
+                    description: |-
+                        When the verdict is `redact`, echo the span-applied
+                        sanitized text in `redacted_content`. Defaults to true
+                        (opt-out); the sanitized text is the primary redact-path
+                        deliverable.
+        GuardrailResponse:
+            type: object
+            required: [action, decision, coverage, metadata]
+            properties:
+                action:
+                    type: string
+                    enum: [allow, block, redact]
+                    description: The caller-facing disposition.
+                decision:
+                    type: string
+                    enum: [approve, reject_hard, block_soft, modify]
+                    description: The raw pipeline decision (fidelity beyond `action`).
+                coverage:
+                    type: string
+                    enum: [full, degraded, none]
+                    description: |-
+                        Scan completeness. `full` = every applicable hook scanned
+                        cleanly; `degraded` = a hook failed open (the verdict is
+                        NOT a full scan — do not trust an `allow` at face value);
+                        `none` = no compliance hooks were bound for the stage.
+                reason:
+                    type: string
+                reason_code:
+                    type: string
+                labels:
+                    type: array
+                    items: {type: string}
+                    description: Aggregate policy tags that fired.
+                assessments:
+                    type: array
+                    description: Per-policy breakdown — one entry per hook that flagged the content.
+                    items:
+                        type: object
+                        properties:
+                            check: {type: string, description: The hook / policy family.}
+                            decision: {type: string}
+                            action: {type: string, enum: [approve, redact, block]}
+                            labels: {type: array, items: {type: string}}
+                            reason_code: {type: string}
+                blocking:
+                    type: object
+                    nullable: true
+                    description: |-
+                        Present when `action=block`. Carries category/severity/labels
+                        only — pack/version/rule identifiers are deliberately NOT
+                        exposed (a VK-facing endpoint that returned exact rule IDs
+                        would be an evasion oracle).
+                    properties:
+                        category: {type: string}
+                        severity: {type: string}
+                        labels: {type: array, items: {type: string}}
+                redactions:
+                    type: array
+                    description: |-
+                        Rule-pack / PII redaction spans, as UTF-8 byte offsets into
+                        the joined evaluated text. AI-Guard judge-suggested spans are
+                        audit-only and are NOT included here (nor reflected in
+                        `redacted_content`) — consistent with the inline path, which
+                        also cannot apply them inflight.
+                    items:
+                        type: object
+                        properties:
+                            start: {type: integer}
+                            end: {type: integer}
+                            replacement: {type: string}
+                            action: {type: string}
+                            reason: {type: string}
+                redacted_content:
+                    type: string
+                    description: |-
+                        Present when `action=redact` and `include_redacted_content`
+                        is not false: the evaluated text with the rule-pack/PII spans
+                        applied.
+                metadata:
+                    type: object
+                    required: [latency_ms]
+                    description: |-
+                        Diagnostics. v1 carries only `latency_ms`; per-call judge cost
+                        and cache-hit are not surfaced here (they ride the joinable
+                        internal ai-guard audit row — see e90-s1 §5).
+                    properties:
+                        latency_ms: {type: integer}
+        Error:
+            type: object
+            description: |-
+                Gateway-generated error envelope (OpenAI proxy_error shape). The
+                message / code / hint are nested under `error`, not top-level.
+            properties:
+                error:
+                    type: object
+                    properties:
+                        message: {type: string}
+                        type: {type: string, example: proxy_error}
+                        code:
+                            description: Machine code string, or the numeric HTTP status when no code is set.
+                        hint: {type: string}

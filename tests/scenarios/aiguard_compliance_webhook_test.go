@@ -1,18 +1,30 @@
 // AI-Guard compliance-webhook family (S-086) — verifies the
-// /v1/ai-guard/compliance-webhook ingress (E31-S2). This endpoint is
-// the webhook-forward sink that hook rows with action=webhook-forward
-// POST into; the AI Gateway evaluates the payload via the configured
-// AIGuard classifier and returns a webhook-shape decision envelope
+// /v1/ai-guard/compliance-webhook ingress. This endpoint is the
+// webhook-forward sink that hook rows with action=webhook-forward POST
+// into; the AI Gateway evaluates the payload via the configured AIGuard
+// classifier and returns a webhook-shape decision envelope
 // (decision ∈ {APPROVE, REJECT_HARD, REJECT_SOFT, MODIFY, ABSTAIN}).
 //
-// OpenAPI: docs/users/api/openapi/admin/e31-s2-aiguard-compliance-webhook-integration.yaml
 // Handler: packages/ai-gateway/internal/ingress/proxy/classify/classify.go
-//          (ServeComplianceWebhookHTTP)
+//
+//	(ServeComplianceWebhookHTTP)
+//
 // Wiring : packages/ai-gateway/cmd/ai-gateway/wiring/thingclient.go
-//          (MountAIGuardRoutes — mounted WITHOUT rstokenauth middleware
-//          by design; this is an internal webhook surface protected by
-//          network ACLs, not VK auth. The OpenAPI spec carries no
-//          `security` block, confirming the contract.)
+//
+//	(mountAIGuardRoutes — the route sits BEHIND rstokenauth, which
+//	reads the shared internal secret from the X-RS-Token HEADER.
+//	Any Authorization bearer, VK or service token, gets 401
+//	RS_TOKEN_REQUIRED. Verified live both ways.
+//	sse-streaming-compliance-architecture.md documents the same
+//	contract from the caller side: webhook-forward injects
+//	X-RS-Token per request, and only for this exact path against a
+//	trusted base.)
+//
+// This header used to describe the route as deliberately unauthenticated and
+// cite an OpenAPI file as proof. Both were stale: the gate exists, and the
+// cited spec path does not — it went with a docs-archive deletion, so the
+// "no `security` block, confirming the contract" argument rested on a file
+// that was not there to read.
 package scenarios_test
 
 import (
@@ -30,35 +42,35 @@ import (
 // /v1/ai-guard/compliance-webhook ingress. Three arms cover the three
 // distinct failure modes a webhook-forward integration cares about:
 //
-//   1. Happy path — well-formed ComplianceWebhookRequest (per the
-//      OpenAPI schema): stage/method/path/targetHost/model/ingressType +
-//      normalizedContent. The handler always returns a structured JSON
-//      decision envelope; HTTP status is 200 when the classifier ran
-//      (regardless of which decision it produced) or 503 when the
-//      AIGuard backend is unavailable (acceptable in CI where the
-//      backend is often unconfigured). Both responses MUST carry a JSON
-//      body with a known shape — status==200 → ComplianceWebhookResponse
-//      with `decision` in the documented enum; status==503 → ErrorBody
-//      with `error`.
+//  1. Happy path — well-formed ComplianceWebhookRequest (per the
+//     OpenAPI schema): stage/method/path/targetHost/model/ingressType +
+//     normalizedContent. The handler always returns a structured JSON
+//     decision envelope; HTTP status is 200 when the classifier ran
+//     (regardless of which decision it produced) or 503 when the
+//     AIGuard backend is unavailable (acceptable in CI where the
+//     backend is often unconfigured). Both responses MUST carry a JSON
+//     body with a known shape — status==200 → ComplianceWebhookResponse
+//     with `decision` in the documented enum; status==503 → ErrorBody
+//     with `error`.
 //
-//   2. Malformed body — POST `{` (invalid JSON). Handler responds
-//      HTTP 400 with ErrorBody{error:"malformed_json"}. This proves the
-//      decode-error branch is wired and prevents a regression where a
-//      panic-on-decode would crash the gateway under a malformed
-//      webhook payload from a misbehaving compliance-proxy build.
+//  2. Malformed body — POST `{` (invalid JSON). Handler responds
+//     HTTP 400 with ErrorBody{error:"malformed_json"}. This proves the
+//     decode-error branch is wired and prevents a regression where a
+//     panic-on-decode would crash the gateway under a malformed
+//     webhook payload from a misbehaving compliance-proxy build.
 //
-//   3. No-auth admittance — POST with NO Authorization header. The
-//      endpoint is intentionally mounted without the rstokenauth
-//      middleware that fronts /v1/ai-guard/classify; the OpenAPI spec
-//      carries no `security` block. The expected behavior is "the
-//      endpoint accepts anonymous POSTs and runs the classifier" —
-//      identical to Arm 1's behaviour. This arm DOCUMENTS that
-//      property so a regression that accidentally adds auth (causing
-//      every webhook-forward call from the compliance-proxy to start
-//      401-ing) is caught immediately. If a future build intentionally
-//      adds auth, this arm is the canary that forces the OpenAPI spec
-//      + this scenario + the compliance-proxy webhook plumbing to be
-//      updated in lockstep.
+//  3. Auth gate — POST with NO X-RS-Token. The expected behaviour is a
+//     401: an internal classification surface must stay closed to
+//     unauthenticated callers, and reaching the handler without the
+//     header would mean the gate was removed or bypassed. The arm was
+//     originally written the other way round — it asserted anonymous
+//     POSTs were ACCEPTED, and predicted in its own comment that a
+//     future rstokenauth hardening "would surface here as a 401/403,
+//     immediately flagging the contract change". That hardening
+//     shipped and the arm flagged it exactly as intended, so the
+//     assertion is inverted rather than deleted: keeping the old one
+//     would have meant either dropping a security check or reopening
+//     the route to satisfy a test.
 //
 // Metric: nexus_requests_total — per the same labelling
 // convention used by S-062, this counter ticks on every ingress request
@@ -120,7 +132,10 @@ func TestS086_AIGuardComplianceWebhook(t *testing.T) {
 			fmt.Sprintf("user: Hello, please summarise this document. nonce=%d", time.Now().UnixNano()),
 		},
 	})
-	statusA, bodyA, err := intg.AIGwPostJSON(&envForCall, client,
+	// rstokenauth reads the shared internal secret from the X-RS-Token HEADER, so a
+	// bearer — VK or service token alike — gets 401 RS_TOKEN_REQUIRED. Verified live
+	// both ways: bearer 401, X-RS-Token 200 with decision=APPROVE.
+	statusA, bodyA, err := intg.AIGwPostRSToken(&envForCall, client,
 		"/v1/ai-guard/compliance-webhook", armABody)
 	if err != nil {
 		t.Fatalf("Arm A AIGwPostJSON: %v", err)
@@ -182,7 +197,7 @@ func TestS086_AIGuardComplianceWebhook(t *testing.T) {
 	// ------------------------------------------------------------------
 	// Arm 2 — malformed body. Single open brace is invalid JSON.
 	// ------------------------------------------------------------------
-	statusB, bodyB, err := intg.AIGwPostJSON(&envForCall, client,
+	statusB, bodyB, err := intg.AIGwPostRSToken(&envForCall, client,
 		"/v1/ai-guard/compliance-webhook", []byte("{"))
 	if err != nil {
 		t.Fatalf("Arm B AIGwPostJSON: %v", err)
@@ -233,24 +248,28 @@ func TestS086_AIGuardComplianceWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Arm C AIGwPostJSON: %v", err)
 	}
+	// The assertion is INVERTED from what it used to be, and that is the point. This
+	// arm was written to prove the route accepted anonymous POSTs, with a comment
+	// predicting that "a future hardening that adds rstokenauth.MiddlewareHTTP to
+	// this route would surface here as a 401/403, immediately flagging the contract
+	// change". That hardening shipped, the arm flagged it exactly as designed, and
+	// the contract it now guards is the opposite one: an internal classification
+	// surface must stay CLOSED to unauthenticated callers.
+	//
+	// Keeping the old expectation would have meant either deleting a security
+	// assertion or re-opening the route to satisfy a test.
 	switch statusC {
-	case 200, 503:
-		// Documented no-auth contract: anonymous POSTs are accepted
-		// and either evaluated (200) or fall through to backend-
-		// unavailable (503). Both prove no auth gate is in front of
-		// the handler — which is the intended state.
-		t.Logf("Arm C OK: no-auth contract upheld (status=%d, body=%q)",
-			statusC, truncate(bodyC, 200))
 	case 401, 403:
-		// A regression that adds auth to this route. The compliance-
-		// proxy webhook-forward integration would silently break in
-		// prod — fail loudly here so the lockstep update (OpenAPI
-		// `security` block + compliance-proxy auth wiring + this
-		// scenario) is forced into the same PR.
-		t.Errorf("Arm C: endpoint unexpectedly rejected anonymous POST with status=%d — OpenAPI spec documents no `security` block; if auth was added intentionally, update the yaml + compliance-proxy + this scenario in lockstep (body=%q)",
+		t.Logf("Arm C OK: anonymous POST correctly refused (status=%d, body=%q)",
+			statusC, truncate(bodyC, 200))
+	case 200, 503:
+		t.Errorf("Arm C: the endpoint ACCEPTED an anonymous POST with status=%d — rstokenauth "+
+			"gates this route on the X-RS-Token header, so reaching the handler without one means "+
+			"the gate was removed or bypassed. An internal classification surface open to anyone "+
+			"who can reach the port is a security regression (body=%q)",
 			statusC, truncate(bodyC, 200))
 	default:
-		t.Errorf("Arm C: unexpected status=%d (want 200|503 for no-auth contract, or 401|403 for auth regression) (body=%q)",
+		t.Errorf("Arm C: unexpected status=%d (want 401|403 — the route is rstokenauth-gated) (body=%q)",
 			statusC, truncate(bodyC, 200))
 	}
 
@@ -274,11 +293,18 @@ func TestS086_AIGuardComplianceWebhook(t *testing.T) {
 		postMetrics.CounterSum("nexus_aiguard_cache_misses_total", nil)) -
 		(preMetrics.CounterSum("nexus_aiguard_cache_hits_total", nil) +
 			preMetrics.CounterSum("nexus_aiguard_cache_misses_total", nil))
-	if decisionsDelta < 2 {
-		t.Errorf("nexus_aiguard_decisions_total delta=%g (want ≥ 2 across arms A+C)", decisionsDelta)
+	// Floor is 1, not 2. The old floor counted arms A AND C as classifications,
+	// which only held while arm C reached the handler anonymously. Now that the
+	// route is rstokenauth-gated, arm C is refused at the middleware and never
+	// touches the classifier — so exactly one classification happens, and
+	// expecting two would fail for the same reason the security gate exists.
+	if decisionsDelta < 1 {
+		t.Errorf("nexus_aiguard_decisions_total delta=%g (want ≥ 1 from arm A — arm C is refused "+
+			"before the classifier, and arm B never decodes)", decisionsDelta)
 	}
-	if cacheLookupsDelta < 2 {
-		t.Errorf("nexus_aiguard_cache_{hits,misses}_total delta=%g (want ≥ 2)", cacheLookupsDelta)
+	if cacheLookupsDelta < 1 {
+		t.Errorf("nexus_aiguard_cache_{hits,misses}_total delta=%g (want ≥ 1 — one classification, "+
+			"so one cache lookup)", cacheLookupsDelta)
 	}
 	reqDelta := decisionsDelta // kept for the OK log line below
 

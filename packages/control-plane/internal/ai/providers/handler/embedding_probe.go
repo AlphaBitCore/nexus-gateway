@@ -11,6 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
@@ -125,7 +126,11 @@ func (h *Handler) forwardEmbeddingProbe(c echo.Context,
 	providerID, modelID, modelName, providerModelID, baseURL, apiKey string,
 	dimension int,
 ) error {
-	gwURL := strings.TrimRight(h.proxy.AIGatewayURL, "/") + "/internal/embedding-probe"
+	gwBase, err := h.aiGatewayBase(c.Request().Context())
+	if err != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", err)
+	}
+	gwURL := strings.TrimRight(gwBase, "/") + "/internal/embedding-probe"
 
 	payload, _ := json.Marshal(map[string]any{
 		"providerId":      providerID,

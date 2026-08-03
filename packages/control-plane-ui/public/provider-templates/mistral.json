@@ -7,45 +7,100 @@
   "models": [
     {
       "code": "mistral-large-latest",
-      "name": "Mistral Large (latest)",
-      "description": "Mistral's flagship reasoning + multilingual model. Stable alias to the most recent mistral-large-* snapshot.",
+      "name": "Mistral Large",
+      "description": "Mistral Large — current flagship, floating alias. 256k context with vision.",
       "providerModelId": "mistral-large-latest",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
-        "streaming",
-        "json_mode",
-        "vision"
+        "streaming"
       ],
       "inputPricePerMillion": 0.5,
       "outputPricePerMillion": 1.5,
-      "maxContextTokens": 262144,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 262144
     },
     {
       "code": "mistral-medium-latest",
-      "name": "Mistral Medium (latest)",
-      "description": "Mid-tier multimodal model. Strong performance / cost balance.",
+      "name": "Mistral Medium",
+      "description": "Mistral Medium — floating alias. Reasoning and vision.",
       "providerModelId": "mistral-medium-latest",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 1.5,
+      "outputPricePerMillion": 7.5,
+      "maxContextTokens": 262144
+    },
+    {
+      "code": "mistral-small-latest",
+      "name": "Mistral Small",
+      "description": "Mistral Small — floating alias. Lowest-cost general tier.",
+      "providerModelId": "mistral-small-latest",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.06,
+      "outputPricePerMillion": 0.18,
+      "maxContextTokens": 131072
+    },
+    {
+      "code": "pixtral-large-latest",
+      "name": "Pixtral Large",
+      "description": "Mistral Pixtral Large — vision-first multimodal model.",
+      "providerModelId": "pixtral-large-latest",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 6,
+      "maxContextTokens": 128000
+    },
+    {
+      "code": "codestral-latest",
+      "name": "Codestral",
+      "description": "Mistral Codestral — code generation and fill-in-the-middle.",
+      "providerModelId": "codestral-latest",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 1,
+      "outputPricePerMillion": 3,
+      "maxContextTokens": 32000,
+      "maxOutputTokens": 8191
+    },
+    {
+      "code": "devstral-latest",
+      "name": "Devstral",
+      "description": "Mistral Devstral — agentic software engineering.",
+      "providerModelId": "devstral-latest",
       "type": "chat",
       "features": [
         "function_calling",
         "streaming",
-        "json_mode",
-        "vision"
+        "json_mode"
       ],
-      "inputPricePerMillion": 1.5,
-      "outputPricePerMillion": 7.5,
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "inputPricePerMillion": 0.4,
+      "outputPricePerMillion": 2,
+      "maxContextTokens": 256000
     },
     {
-      "code": "mistral-small-latest",
-      "name": "Mistral Small (latest)",
-      "description": "Compact instruct model for high-volume use.",
-      "providerModelId": "mistral-small-latest",
+      "code": "devstral-small-latest",
+      "name": "Devstral Small",
+      "description": "Smaller, cheaper Devstral tier.",
+      "providerModelId": "devstral-small-latest",
       "type": "chat",
       "features": [
         "function_calling",
@@ -54,100 +109,72 @@
       ],
       "inputPricePerMillion": 0.1,
       "outputPricePerMillion": 0.3,
-      "maxContextTokens": 262144,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "codestral-latest",
-      "name": "Codestral (latest)",
-      "description": "Specialized for code completion and generation across 80+ languages.",
-      "providerModelId": "codestral-latest",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
-      "inputPricePerMillion": 0.3,
-      "outputPricePerMillion": 0.9,
-      "maxContextTokens": 262144,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "devstral-latest",
-      "name": "Devstral (latest)",
-      "description": "Agentic coding model optimised for multi-file edits and software engineering tasks.",
-      "providerModelId": "devstral-latest",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 0.4,
-      "outputPricePerMillion": 2.0
+      "maxContextTokens": 256000
     },
     {
       "code": "magistral-medium-latest",
       "name": "Magistral Medium",
-      "description": "Reasoning-tuned model with explicit chain-of-thought.",
+      "description": "Mistral Magistral Medium — reasoning model.",
       "providerModelId": "magistral-medium-latest",
       "type": "chat",
       "features": [
+        "function_calling",
         "streaming",
-        "thinking"
+        "reasoning"
       ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 2.0,
-      "outputPricePerMillion": 5.0
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 5,
+      "maxContextTokens": 40000
+    },
+    {
+      "code": "magistral-small-latest",
+      "name": "Magistral Small",
+      "description": "Smaller, cheaper Magistral reasoning tier.",
+      "providerModelId": "magistral-small-latest",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 0.5,
+      "outputPricePerMillion": 1.5,
+      "maxContextTokens": 40000
     },
     {
       "code": "ministral-8b-latest",
       "name": "Ministral 8B",
-      "description": "Edge-class 8B model.",
+      "description": "Mistral Ministral 8B — edge-scale model with vision.",
       "providerModelId": "ministral-8b-latest",
       "type": "chat",
       "features": [
+        "vision",
         "function_calling",
         "streaming"
       ],
       "inputPricePerMillion": 0.15,
       "outputPricePerMillion": 0.15,
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
-    },
-    {
-      "code": "ministral-3b-latest",
-      "name": "Ministral 3B",
-      "description": "Smallest Ministral tier — best for latency-sensitive deployments.",
-      "providerModelId": "ministral-3b-latest",
-      "type": "chat",
-      "features": [
-        "streaming"
-      ],
-      "inputPricePerMillion": 0.1,
-      "outputPricePerMillion": 0.1,
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null
+      "maxContextTokens": 262144
     },
     {
       "code": "mistral-embed",
       "name": "Mistral Embed",
-      "description": "Mistral's text embedding model.",
+      "description": "Mistral text embedding model.",
       "providerModelId": "mistral-embed",
       "type": "embedding",
       "features": [],
-      "maxContextTokens": 8192,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 0.1
+      "inputPricePerMillion": 0.1,
+      "maxContextTokens": 8192
+    },
+    {
+      "code": "codestral-embed",
+      "name": "Codestral Embed",
+      "description": "Mistral code-specialised embedding model.",
+      "providerModelId": "codestral-embed",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.15,
+      "maxContextTokens": 8192
     }
   ]
 }

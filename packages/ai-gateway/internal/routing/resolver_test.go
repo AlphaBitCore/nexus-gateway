@@ -97,7 +97,7 @@ func newResolverFixture() *resolverFixture {
 		narrowingEngine: &matcher.NarrowingEngine{},
 		capCache:        nil, // nil = capability pre-filter disabled in these tests
 	}
-	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil)
+	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 	return &resolverFixture{store: fs, registry: reg, resolver: resolver}
 }
 

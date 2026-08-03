@@ -39,6 +39,7 @@ Canonical `Code` values (`packages/ai-gateway/internal/providers/core/types.go`,
 | `CodeEndpointUnsupported` | `endpoint_unsupported` | Adapter does not serve the requested wire shape on this provider model. |
 | `CodeNotImplemented` | `not_implemented` | Feature flagged-off in this adapter. |
 | `CodeNoCompatibleProvider` | `no_compatible_provider` | Routing layer found no target adapter that can serve the request. |
+| `CodeContextOverflow` | `context_overflow` | Prompt exceeds the target model's context window (OpenAI `context_length_exceeded` / "maximum context length" message; Anthropic "prompt is too long"; Gemini "exceeds the maximum number of tokens"). Target-permanent: the executor never retries the same target but MAY fail over to the next target — the smart strategy arms a larger-window `ContextUpgradeOnly` target used exactly for this class; on the last target the provider's own 400 is surfaced verbatim. |
 
 Adding a new canonical code is a one-line change to the const block; callers branch on the string value, so a misspelling at a producer site silently drops into the upstream-error bucket rather than panicking. Tests under `packages/ai-gateway/internal/providers/core/types_test.go` pin the constant string values.
 
@@ -110,6 +111,7 @@ The hook pipeline's `HookResult.ReasonCode` is the per-hook string the audit row
 
 - `REDACT_INFLIGHT_UNSUPPORTED` — a `redact` match could not be applied on the live wire shape (adapter returned `ErrRewriteUnsupported`); the redacted copy is absent so the raw body is dropped rather than persisted.
 - `AIGUARD_SUGGESTED_VS_POLICY` — AI-Guard scanner suggested action overridden by admin policy.
+- `GENERATIVE_PROMPT_BLOCKED` — AI-Gateway-local (constant in `packages/ai-gateway/internal/ingress/proxy/generative_block.go`, not in the shared vocabulary): a content match on a generative binary-output prompt (image / video generation) escalated to a hard 403 even though the matching hook was configured observe-only — the output artifact is uninspectable, so the prompt is the only enforcement point. Unlike the `REDACT_INFLIGHT_UNSUPPORTED` arm (which leaves the pipeline's MODIFY decision on the row), the escalation stamps the aggregate `request_hook_decision` as `REJECT_HARD` so blocked-traffic queries and the drawer's decision badge count it as blocked; the per-hook trace still carries each hook's real approve/observe vote.
 
 `REDACT_STORAGE_ONLY_BY_POLICY` and `STORAGE_DROPPED_BY_POLICY` stay defined as constants so historical rows that carry them still render, but no live path stamps them: a single `action` axis admits no store-only-redact divergence, and `drop-content` is not an operator choice.
 
@@ -136,7 +138,16 @@ Control Plane's admin surface uses the same envelope shape via two helpers — `
 `packages/ai-gateway/internal/platform/metrics/metrics.go` registers two error-aware counters:
 
 - `requests_total{provider, model, endpoint, status}` — bucketed by HTTP status family. Used for the top-level success-rate panel.
-- `errors_total{provider, error_type}` — incremented on every non-2xx path, keyed by the canonical `ProviderError.Code` (or by `proxy_error` for gateway-internal errors). Used for the per-provider error-category panel.
+- `errors_total{provider, error_type}` — incremented once per request a provider failed, by `proxy_upstream.go: recordUpstreamFailure`. Both provider-failure paths feed it: the terminal 4xx and the all-targets-exhausted path. Used for the per-provider error-category panel.
+
+`error_type` is the canonical `ProviderError.Code` of the **terminal attempt** — the last one that actually reached a provider. One label value is not a canonical code: `unclassified`, for a dispatched attempt whose transport failure produced no provider envelope (a dial refusal, a connection reset). Label cardinality is therefore bounded by the canonical code set plus that one, which is why the counter takes the code and never free-form error text.
+
+`provider` is the terminal attempt's provider. When no attempt reached a provider at all there is nothing to attribute, and the counter is not incremented — so **do not add a `not_dispatched` bucket to a dashboard**: the log path uses that word to describe an attempt that never left the process, but it can never appear as a metric label, because the absence of a terminal attempt is exactly the case that skips the counter.
+
+Two deliberate exclusions:
+
+- **Client disconnects.** A `499 CLIENT_CLOSED` (§ above) is a client-side outcome, so counting it would inflate the provider's apparent error rate with failures the provider never had.
+- **Gateway-internal rejections.** Quota, routing and admission failures never reach a provider and carry no provider label. They are visible on `requests_total` by status and on their own counters; `errors_total` is scoped to provider failures.
 
 A new canonical `Code` automatically becomes a new label value on `errors_total` — no metrics-side registration needed, but the operator dashboard must add the new bucket explicitly if it's expected to be visible.
 

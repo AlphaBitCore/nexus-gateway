@@ -27,7 +27,16 @@ import (
 
 // InitHookRegistry clones the shared hook registry and replaces
 // webhook-forward with a variant using the ai-gateway shared http.Client pool.
-func InitHookRegistry(webhookCfg config.HTTPClientPoolConfig) (*hookcore.HookRegistry, error) {
+//
+// internalToken + trustedBases let a webhook-forward hook aimed at this
+// ai-gateway's own AI-Guard compliance-webhook authenticate with the
+// internal-service X-RS-Token. The token rides only when the hook endpoint's
+// scheme+host match one of the trusted bases (this gateway's own public and
+// private URLs — a service knows itself, no resolver needed) AND its path is
+// AIGuardComplianceWebhookPath (see webhook.Options.TrustedAIGuardBases), so
+// the [MUST MATCH] secret is never sent to an arbitrary admin-configured
+// webhook URL.
+func InitHookRegistry(webhookCfg config.HTTPClientPoolConfig, internalToken string, trustedBases []string) (*hookcore.HookRegistry, error) {
 	webhookClient := nexushttp.New(nexushttp.Config{
 		Timeout:             time.Duration(webhookCfg.TimeoutSec) * time.Second,
 		MaxIdleConns:        webhookCfg.MaxIdleConns,
@@ -36,9 +45,22 @@ func InitHookRegistry(webhookCfg config.HTTPClientPoolConfig) (*hookcore.HookReg
 		Caller:              "webhook-shared",
 		PropagateReqID:      true,
 	})
+	// Static own-URL set: filter empties once so the per-request provider is
+	// a plain slice return.
+	bases := make([]string, 0, len(trustedBases))
+	for _, b := range trustedBases {
+		if b != "" {
+			bases = append(bases, b)
+		}
+	}
+	trusted := func(context.Context) []string { return bases }
 	gwHookRegistry := builtins.Registry.Clone()
 	gwHookRegistry.Replace("webhook-forward", func(cfg *hookcore.HookConfig) (hookcore.Hook, error) {
-		return hookwh.NewWebhookForwardWithClient(cfg, webhookClient)
+		return hookwh.NewWebhookForwardWithOptions(cfg, hookwh.Options{
+			Client:              webhookClient,
+			InternalToken:       internalToken,
+			TrustedAIGuardBases: trusted,
+		})
 	})
 	gwHookRegistry.Freeze()
 	return gwHookRegistry, nil

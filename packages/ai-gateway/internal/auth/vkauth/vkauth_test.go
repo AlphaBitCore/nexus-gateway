@@ -13,7 +13,7 @@ import (
 
 func TestExtractVKToken_Header(t *testing.T) {
 	r, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	r.Header.Set("x-nexus-virtual-key", "my-slug")
+	r.Header.Set("X-Nexus-Virtual-Key", "my-slug")
 	if got := extractVKToken(context.Background(), r); got != "my-slug" {
 		t.Errorf("got %q", got)
 	}
@@ -29,7 +29,7 @@ func TestExtractVKToken_Bearer(t *testing.T) {
 
 func TestExtractVKToken_PreferHeader(t *testing.T) {
 	r, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	r.Header.Set("x-nexus-virtual-key", "from-header")
+	r.Header.Set("X-Nexus-Virtual-Key", "from-header")
 	r.Header.Set("Authorization", "Bearer from-bearer")
 	if got := extractVKToken(context.Background(), r); got != "from-header" {
 		t.Errorf("got %q, want from-header", got)

@@ -19,6 +19,8 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // RegisterProviderTestRoutes — wires 3 routes
@@ -145,7 +147,7 @@ func TestProviderTestConnection_InvalidAdapterType_Returns400(t *testing.T) {
 func TestProviderTestConnection_AIGatewayUnreachable_ReturnsOK_SuccessFalse(t *testing.T) {
 	// forwardProviderTest returns 200 even on transport failure (per the handler contract).
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL: "http://127.0.0.1:1", // no listener
+		AIGatewayBase: peer.Static("http://127.0.0.1:1"), // no listener
 	})
 	body := `{"name":"test","adapterType":"openai","baseUrl":"https://api.openai.com","apiKey":"sk-x"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -172,7 +174,7 @@ func TestProviderTestConnection_AIGatewayResponds_PassesThrough(t *testing.T) {
 	}))
 	defer gw.Close()
 
-	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayURL: gw.URL})
+	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayBase: peer.Static(gw.URL)})
 	body := `{"name":"test","adapterType":"openai","baseUrl":"https://api.openai.com","apiKey":"sk-x"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -198,7 +200,7 @@ func TestProviderTest_ProviderNotFound_Returns404(t *testing.T) {
 		WithArgs("prov-missing").
 		WillReturnRows(pgxmock.NewRows(providerCols))
 
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayURL: "http://127.0.0.1:1"})
+	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayBase: peer.Static("http://127.0.0.1:1")})
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -220,7 +222,7 @@ func TestProviderTest_ProviderGetError_Returns404(t *testing.T) {
 		WithArgs("x").
 		WillReturnError(errors.New("db err"))
 
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayURL: "http://127.0.0.1:1"})
+	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{AIGatewayBase: peer.Static("http://127.0.0.1:1")})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
 	c, _ := echoCtx(req, rec, "u-1")
@@ -259,7 +261,7 @@ func TestProviderTest_HappyWithSpecificCredentialID(t *testing.T) {
 	defer gw.Close()
 
 	vault := newTestVault(t)
-	h := newHandler(db, nil, &auditSpy{}, nil, vault, nil, ProxyConfig{AIGatewayURL: gw.URL})
+	h := newHandler(db, nil, &auditSpy{}, nil, vault, nil, ProxyConfig{AIGatewayBase: peer.Static(gw.URL)})
 	body := `{"credentialId":"cred-1"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -311,7 +313,7 @@ func TestProviderTest_HappyWithFirstCredential(t *testing.T) {
 	defer gw.Close()
 
 	vault := newTestVault(t)
-	h := newHandler(db, nil, &auditSpy{}, nil, vault, nil, ProxyConfig{AIGatewayURL: gw.URL})
+	h := newHandler(db, nil, &auditSpy{}, nil, vault, nil, ProxyConfig{AIGatewayBase: peer.Static(gw.URL)})
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -526,7 +528,7 @@ func TestListProviderHealth_DBError_Returns500(t *testing.T) {
 
 func TestForwardProviderTest_GatewayUnreachable_Returns200WithError(t *testing.T) {
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL: "http://127.0.0.1:1",
+		AIGatewayBase: peer.Static("http://127.0.0.1:1"),
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()

@@ -345,15 +345,36 @@ export function VirtualKeyInfoTab(props: VirtualKeyInfoTabProps) {
           />
         </FormField>
 
-        <FormField label={t('pages:virtualKeys.expiration')} required>
-          <Input
-            type="date"
-            value={editExpiresAt}
-            onChange={e => setEditExpiresAt(e.target.value)}
-            min={expiryBounds().min}
-            max={expiryBounds().max}
-            className={`${styles.inlineInput} ${styles.expirationInputFlex}`}
-          />
+        <FormField
+          label={t('pages:virtualKeys.expiration')}
+          required={vk.vkType === 'application'}
+          helpText={vk.vkType === 'application' ? t('pages:virtualKeys.expirationAppHelp') : undefined}
+        >
+          <Stack direction="vertical" gap="sm">
+            <Input
+              type="date"
+              value={editExpiresAt}
+              onChange={e => setEditExpiresAt(e.target.value)}
+              min={expiryBounds().min}
+              disabled={editNeverExpires}
+              className={`${styles.inlineInput} ${styles.expirationInputFlex}`}
+            />
+            {/* Only personal VKs may be never-expiring; application VKs are
+                server-rejected (requireApplicationExpiry), so the toggle would
+                offer a choice that cannot be saved. */}
+            {vk.vkType !== 'application' && (
+              <Stack direction="horizontal" gap="sm" align="center">
+                <Switch
+                  checked={editNeverExpires}
+                  onCheckedChange={next => {
+                    setEditNeverExpires(next);
+                    if (next) setEditExpiresAt('');
+                  }}
+                />
+                <span>{t('pages:virtualKeys.neverExpires')}</span>
+              </Stack>
+            )}
+          </Stack>
         </FormField>
 
         <Stack direction="horizontal" gap="sm" align="center">

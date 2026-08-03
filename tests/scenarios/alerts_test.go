@@ -29,14 +29,14 @@ var jsonUnmarshal = json.Unmarshal
 // ChannelTest contract.
 //
 // Assertions:
-//   1. CreateAlertChannel persists with type=webhook + the URL config.
-//   2. TestAlertChannel returns 200 with a structured JSON body
-//      (success may be false because the upstream is unreachable —
-//      that's fine, what matters is the endpoint's contract).
-//   3. AlertDispatch row appears in DB referencing our channel.id
-//      within a reasonable window.
-//   4. AdminAuditLog records the channel create write op.
-//   5. Cleanup deletes the channel.
+//  1. CreateAlertChannel persists with type=webhook + the URL config.
+//  2. TestAlertChannel returns 200 with a structured JSON body
+//     (success may be false because the upstream is unreachable —
+//     that's fine, what matters is the endpoint's contract).
+//  3. AlertDispatch row appears in DB referencing our channel.id
+//     within a reasonable window.
+//  4. AdminAuditLog records the channel create write op.
+//  5. Cleanup deletes the channel.
 func TestS092_AlertChannelTest(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -45,6 +45,14 @@ func TestS092_AlertChannelTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CPLogin: %v", err)
 	}
+
+	// Baseline BEFORE the create. The audit row for this route carries no
+	// correlatable field — entityId is empty and afterState holds only
+	// {method, hubPath, subEntity} — so there is no marker to match on and a
+	// bare "a row exists in the last N seconds" check would be satisfied by a
+	// previous run's row. Requiring the count to INCREASE is exact without a
+	// marker: it can only pass if this create produced a row.
+	auditBaseline := countAlertCreateAuditRowsS092(t, ctx, sc)
 
 	chName := fmt.Sprintf("s092-%d", time.Now().UnixNano())
 	ch, err := helpers.CreateAlertChannel(ctx, sc.Env, token, chName, "webhook",
@@ -59,29 +67,30 @@ func TestS092_AlertChannelTest(t *testing.T) {
 		t.Errorf("created channel.type=%q, want 'webhook'", ch.Type)
 	}
 
-	// AdminAuditLog row for channel create — entityId likely the channel ID
-	// per the alert-forward handler's audit emission pattern. Accept any
-	// recent row whose action is create AND the actorLabel is admin —
-	// we'll match by recent timestamp window instead of entityId since
-	// the alert-forward write-path may not stamp entityId verbatim.
-	deadline := time.Now().Add(15 * time.Second)
+	// AdminAuditLog row for the channel create.
+	//
+	// The admin audit write is ASYNCHRONOUS — measured at up to ~13 s from the
+	// POST returning to the row being queryable, and sub-second on a warm path.
+	// This used to poll 15 s and, on losing that race, log "admin audit
+	// emission may be partial": it reported a latency race as a product gap.
+	// Checked by hand against the DB after a losing run — the row was there,
+	// entityType='alert' action='create'.
+	//
+	// Now a hard assertion with a 45 s deadline (S-131's window), and counted
+	// against the pre-create baseline rather than a time window, so neither a
+	// slow write nor an older row can decide the outcome.
+	deadline := time.Now().Add(45 * time.Second)
 	auditFound := false
 	for time.Now().Before(deadline) {
-		var n int
-		err := sc.DB.QueryRow(ctx, `
-			SELECT count(*) FROM "AdminAuditLog"
-			WHERE "timestamp" > NOW() - INTERVAL '30 seconds'
-			  AND action = 'create'
-			  AND ("entityType" ILIKE '%alert%' OR "entityType" ILIKE '%channel%')
-		`).Scan(&n)
-		if err == nil && n > 0 {
+		if countAlertCreateAuditRowsS092(t, ctx, sc) > auditBaseline {
 			auditFound = true
 			break
 		}
 		time.Sleep(1 * time.Second)
 	}
 	if !auditFound {
-		t.Logf("note: no AdminAuditLog 'create' row for an alert/channel entityType — admin audit emission may be partial for forwarded admin alert routes")
+		t.Errorf("no new AdminAuditLog 'create' row for an alert/channel entityType within 45s (baseline %d unchanged) — creating an alert channel is an admin mutation and MUST leave an audit trail",
+			auditBaseline)
 	}
 
 	// Dispatch the synthetic alert. Status may be 200 (sender
@@ -112,8 +121,9 @@ func TestS092_AlertChannelTest(t *testing.T) {
 			status, truncate(body, 200))
 	}
 
-	t.Logf("S-092 OK: synthetic alert dispatched (status=%d dispatchId=%s success=%v err=%q)",
-		status, probe.DispatchID, probe.Success, probe.Error)
+	t.Logf("S-092 OK: synthetic alert dispatched (status=%d dispatchId=%s success=%v err=%q); audit create rows %d→%d",
+		status, probe.DispatchID, probe.Success, probe.Error,
+		auditBaseline, countAlertCreateAuditRowsS092(t, ctx, sc))
 }
 
 // decodeJSON is a thin wrapper to keep the scenario body imports tight.
@@ -145,10 +155,10 @@ func decodeJSON(b []byte, v any) error {
 // fixture.
 //
 // Assertions:
-//   1. Every Go BuiltinRules.ID exists in `AlertRule.id` (Go ⊆ DB).
-//   2. DB-only rules (the documented drift) are surfaced via t.Logf —
-//      not failed — so the test stays green until product decides to
-//      back-port them.
+//  1. Every Go BuiltinRules.ID exists in `AlertRule.id` (Go ⊆ DB).
+//  2. DB-only rules (the documented drift) are surfaced via t.Logf —
+//     not failed — so the test stays green until product decides to
+//     back-port them.
 func TestS091_AlertBuiltinSeedLockstep(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -203,4 +213,21 @@ func TestS091_AlertBuiltinSeedLockstep(t *testing.T) {
 	}
 	t.Logf("S-091: Go=%d DB=%d Go⊆DB=ok seed-only=%v (drift documented in project_alerting_builtin_drift_2026_05_15)",
 		len(goIDs), len(dbSet), seedOnly)
+}
+
+// countAlertCreateAuditRowsS092 counts admin-audit 'create' rows for an
+// alert/channel entityType. Used as a before/after delta because this route's
+// audit row carries nothing to correlate on: entityId is empty and afterState
+// holds only {method, hubPath, subEntity}.
+func countAlertCreateAuditRowsS092(t *testing.T, ctx context.Context, sc *scenarioCtx) int {
+	t.Helper()
+	var n int
+	if err := sc.DB.QueryRow(ctx, `
+		SELECT count(*) FROM "AdminAuditLog"
+		WHERE action = 'create'
+		  AND ("entityType" ILIKE '%alert%' OR "entityType" ILIKE '%channel%')
+	`).Scan(&n); err != nil {
+		t.Fatalf("count alert-create audit rows: %v", err)
+	}
+	return n
 }

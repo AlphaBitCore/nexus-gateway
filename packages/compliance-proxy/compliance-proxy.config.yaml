@@ -218,6 +218,10 @@ audit:
     flushIntervalMs: 500
     # Channel buffer capacity (overflow goes to NDJSON)
     channelBufferSize: 1000
+  # Audit-overflow policy (shared/audit/lossmode): spillblock | block | spill | drop.
+  # spillblock is the no-loss default — the spool below is the primary overflow buffer and the
+  # request path back-pressures only when it is ALSO saturated.
+  lossMode: spillblock
   ndjson:
     enabled: true
     # Spool directory for NDJSON fallback files
@@ -239,3 +243,21 @@ audit:
       windowSeconds: 3600
       # Duration of auto-exemption (seconds)
       exemptionDurationSeconds: 86400
+
+# Body spill: bodies at or above the inline-vs-spill threshold are written to an
+# object store and the audit row keeps a reference instead of the bytes.
+#
+# Stated explicitly, and disabled, on purpose. This template previously carried NO
+# spill block at all, so the shipping posture of a compliance product was readable
+# only by inferring a Go default from source — the same silence finding S-3 exists
+# to remove, one layer up. `enabled: false` means every captured body stays inline
+# on traffic_event_payload, bounded by payloadCapture.maxInlineBodyBytes.
+#
+# The SHIPPING posture for a real deployment is `compliance-proxy.prod.yaml.example`, which
+# enables the s3 backend. It is not the default here because s3 needs a bucket that
+# only the operator can create, and a spill backend pointing at a bucket that does
+# not exist fails every capture. All four server services must agree on one backend
+# and one root, or the control-plane read path cannot resolve a ref another node
+# wrote (see spillstore-architecture.md section 3).
+spill:
+  enabled: false

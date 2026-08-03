@@ -178,7 +178,7 @@ func TestCreateUserVirtualKey_Happy(t *testing.T) {
 		WithArgs(anyN(14)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-new", "mine", strPtr("admin-1"))...))
 
-	body := `{"name":"mine","sourceApp":"cli","enabled":true,"rateLimitRpm":50,"allowedModels":["m-x"]}`
+	body := `{"name":"mine","sourceApp":"cli","enabled":true,"rateLimitRpm":50,"allowedModels":[{"providerId":"p","modelId":"m-x"}]}`
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", body)
 	if err := h.CreateUserVirtualKey(c); err != nil {
 		t.Fatalf("CreateUserVirtualKey: %v", err)
@@ -386,7 +386,7 @@ func TestUpdateUserVirtualKey_Happy(t *testing.T) {
 		WithArgs(anyN(10)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "new", strPtr("admin-1"))...))
 
-	body := `{"enabled":false,"rateLimitRpm":80,"allowedModels":["m-x","m-y"]}`
+	body := `{"enabled":false,"rateLimitRpm":80,"allowedModels":[{"providerId":"p","modelId":"m-x"},{"providerId":"p","modelId":"m-y"}]}`
 	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")

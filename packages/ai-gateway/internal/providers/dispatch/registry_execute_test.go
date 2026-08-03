@@ -757,14 +757,18 @@ func TestDebugBody_EmptyStreamLogged(t *testing.T) {
 // spec_adapter.go: PrepareBody coverage for the "not a rewrite candidate"
 // branches — non-chat endpoint, non-OpenAI-wire body, empty body.
 
-// TestPrepareBody_NonChatEndpoint_PassesBodyThrough asserts the switch
-// arm that returns the body unchanged when typology.WireShape is neither
-// chat-completions, embeddings, nor legacy-completions.
+// TestPrepareBody_NonChatEndpoint_PassesBodyThrough pins the dispatch side
+// of the native leg for a codec whose differential is verbatim: dispatch
+// itself must not JSON-rewrite the body — whatever diff applies is the
+// codec's RewriteNative and nothing else. (A live /v1/responses request
+// carries FormatOpenAIResponses and gets the identity codec's stamp+strip
+// differential; that path is pinned in specs/openai/codec's own tests and
+// by TestPrepareBody_ReasoningQuirk_ChatAndResponsesAgree.)
 func TestPrepareBody_NonChatEndpoint_PassesBodyThrough(t *testing.T) {
-	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
+	ad := NewSpecAdapter(specFrom(&fakeTransport{}, noopCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	body := []byte(`{"model":"foo"}`)
 	got, rw, _, err := ad.PrepareBody(Request{
-		WireShape:  typology.WireShapeOpenAIResponses, // not in the rewrite-eligible set
+		WireShape:  typology.WireShapeOpenAIResponses,
 		BodyFormat: FormatOpenAI,
 		Body:       body,
 		Target:     CallTarget{ProviderModelID: "bar"},
@@ -777,15 +781,13 @@ func TestPrepareBody_NonChatEndpoint_PassesBodyThrough(t *testing.T) {
 	}
 }
 
-// TestPrepareBody_NonOpenAIWire_NoRewrite asserts that a non-OpenAI-family
-// body is NOT rewritten by the generic passthrough when the adapter does not
-// declare PassthroughModelInBody — the Gemini/Bedrock contract (model applied
-// by the transport/codec, not the body). A spec that DOES declare the
-// capability is covered by TestPrepareBody_Anthropic_ModelInBody_Wired.
+// TestPrepareBody_NonOpenAIWire_NoRewrite asserts that dispatch does not
+// JSON-rewrite a native-leg body itself: with a verbatim RewriteNative (the
+// Gemini/Bedrock contract — model applied by the transport/codec, not the
+// body) the bytes pass through untouched. The stamping counterpart is
+// covered by TestPrepareBody_Anthropic_ModelInBody_Wired.
 func TestPrepareBody_NonOpenAIWire_NoRewrite(t *testing.T) {
-	// specFrom leaves PassthroughModelInBody false, so the model-in-body gate
-	// (OpenAI-family wire OR capability) is not satisfied for FormatAnthropic.
-	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic), slog.Default())
+	ad := NewSpecAdapter(specFrom(&fakeTransport{}, noopCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic), slog.Default())
 	body := []byte(`{"model":"claude-3-5-sonnet","messages":[]}`)
 	got, rw, _, err := ad.PrepareBody(Request{
 		WireShape:  typology.WireShapeOpenAIChat,
@@ -1177,4 +1179,8 @@ func TestExecuteWithBody_CodecURLOverride_ThreadsThrough(t *testing.T) {
 	if !strings.HasSuffix(capturedURL, ":batchEmbedContents") {
 		t.Errorf("URLOverride not threaded through ExecuteWithBody: dispatched URL = %q", capturedURL)
 	}
+}
+
+func (s *sleepyCodec) RewriteNative(_ typology.WireShape, nativeBody []byte, _ CallTarget, _ bool) (EncodeResult, error) {
+	return EncodeResult{Body: nativeBody}, nil
 }

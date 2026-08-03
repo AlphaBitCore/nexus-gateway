@@ -39,7 +39,7 @@ import (
 //	    reject → request is short-circuited (non-2xx, terminal hook
 //	    decision recorded in traffic_event).
 //	(3) Two requests across the suite move
-//	    `hook_pipeline_total{stage="request"}` by ≥ 2 (one APPROVE
+//	    `nexus_hook_pipeline_total{stage="request"}` by ≥ 2 (one APPROVE
 //	    on the approve arm + one REJECT_HARD on the deny arm). This
 //	    is the real Prometheus name emitted by the AI Gateway —
 //	    confirmed against `curl :3050/metrics` and the opsmetrics
@@ -257,16 +257,19 @@ func TestS069_WebhookForwardHook(t *testing.T) {
 	}
 	// Real metric: every webhook hook fires at request stage, so both
 	// the approve arm (decision=APPROVE) and the deny arm (decision=
-	// REJECT_HARD) increment hook_pipeline_total{stage="request"}.
+	// REJECT_HARD) increment nexus_hook_pipeline_total{stage="request"}.
 	// Sum across decisions catches both arms in one delta. Hard-assert
 	// — a miss here would mean the hook never ran, in which case the
 	// httptest hit counter check above should have already failed; this
 	// is the cross-check from the Prometheus side.
 	hookLabels := map[string]string{"stage": "request"}
-	reqDelta := postMetrics.CounterSum("hook_pipeline_total", hookLabels) -
-		preMetrics.CounterSum("hook_pipeline_total", hookLabels)
+	// Full exposed name — see hookPipelineMetric. The unprefixed form matched no
+	// series, so this delta was structurally 0 while the log two lines down
+	// reported hits=2 and a REJECT_HARD audit row.
+	reqDelta := postMetrics.CounterSum(hookPipelineMetric, hookLabels) -
+		preMetrics.CounterSum(hookPipelineMetric, hookLabels)
 	if reqDelta < 2 {
-		t.Errorf("hook_pipeline_total{stage=\"request\"} delta=%g, want ≥ 2 (one per arm — approve + deny)", reqDelta)
+		t.Errorf("%s{stage=\"request\"} delta=%g, want ≥ 2 (one per arm — approve + deny)", hookPipelineMetric, reqDelta)
 	}
 
 	// Traffic event for the deny arm: the AI Gw must have stamped a

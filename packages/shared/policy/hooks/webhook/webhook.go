@@ -11,9 +11,13 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
+
+// The AI-Guard compliance-webhook authentication (Options,
+// NewWebhookForwardWithOptions, endpointMatchesTrustedBase, and the
+// AIGuardComplianceWebhookPath / rsTokenHeader constants) lives in
+// webhook_aiguard.go.
 
 // WebhookForward sends hook input to a configured HTTP endpoint and reads
 // the decision from the response.
@@ -58,6 +62,19 @@ type WebhookForward struct {
 	payloadMode    WebhookPayloadMode
 	onMatch        core.OnMatchConfig
 	projectionOpts normalize.TextProjectionOptions
+	// internalToken is the X-RS-Token injected on the outbound request — but
+	// ONLY when the endpoint path is the AI-Guard compliance-webhook AND the
+	// endpoint's scheme+host match one of the trusted AI-Gateway bases
+	// returned by trustedAIGuardBases at request time, so the [MUST MATCH]
+	// internal secret is never sent to any other endpoint. The base check is
+	// per-request because the trusted bases may be Hub-resolved (peerurl)
+	// after this hook is constructed; the provider is in-memory cached, so
+	// the per-request cost is a call + at most two host compares.
+	internalToken         string
+	trustedAIGuardBases   func(ctx context.Context) []string
+	endpointScheme        string
+	endpointHost          string
+	endpointPathIsAIGuard bool
 }
 
 // NewWebhookForward creates a webhook-forward hook from config.
@@ -80,64 +97,7 @@ func NewWebhookForward(cfg *core.HookConfig) (core.Hook, error) {
 //	  "onMatch":     {...}                                  // optional ceiling
 //	}
 func NewWebhookForwardWithClient(cfg *core.HookConfig, client *http.Client) (core.Hook, error) {
-	endpoint, _ := cfg.Config["endpoint"].(string)
-	if endpoint == "" {
-		return nil, fmt.Errorf("webhook-forward: endpoint is required")
-	}
-
-	timeout := 5 * time.Second
-	if ms, ok := cfg.Config["timeoutMs"].(float64); ok && ms > 0 {
-		timeout = time.Duration(ms) * time.Millisecond
-	}
-
-	if client == nil {
-		client = nexushttp.New(nexushttp.Config{
-			Timeout:        timeout,
-			Caller:         "webhook-hook",
-			PropagateReqID: true,
-			// The endpoint is an admin-configured URL the compliance
-			// pipeline POSTs captured traffic to — external by nature and an
-			// SSRF primitive. Block every non-public address at dial time
-			// (loopback / RFC-1918 / link-local / metadata); the guard runs on
-			// the resolved IP so it also defeats DNS-rebinding.
-			DialControl: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly),
-		})
-	}
-
-	mode := WebhookPayloadRedacted
-	if v, ok := cfg.Config["payloadMode"].(string); ok && v != "" {
-		switch WebhookPayloadMode(v) {
-		case WebhookPayloadFull, WebhookPayloadRedacted, WebhookPayloadMetadataOnly:
-			mode = WebhookPayloadMode(v)
-		default:
-			return nil, fmt.Errorf("webhook-forward: unknown payloadMode %q (expected full|redacted|metadata-only)", v)
-		}
-	}
-
-	onMatch, err := core.ParseOnMatch(cfg.Config)
-	if err != nil {
-		return nil, fmt.Errorf("webhook-forward: %w", err)
-	}
-	// webhook-forward is uniquely advisory: unlike pii-detector /
-	// keyword-filter / content-safety (where "match → block by default" is
-	// the right security default), the webhook's reply IS the decision.
-	// If the admin did not configure an explicit `action`, treat the ceiling
-	// as `approve` so the webhook's suggestion flows through without being
-	// silently clobbered to block by ParseOnMatch's default. Admins who want
-	// webhook-bounded-by-ceiling behavior must opt in via an explicit
-	// `onMatch.action`.
-	if !hasActionConfigured(cfg.Config) {
-		onMatch.Action = core.ActionApprove
-	}
-
-	return &WebhookForward{
-		endpoint:       endpoint,
-		timeout:        timeout,
-		client:         client,
-		payloadMode:    mode,
-		onMatch:        onMatch,
-		projectionOpts: cfg.ProjectionOptions(),
-	}, nil
+	return NewWebhookForwardWithOptions(cfg, Options{Client: client})
 }
 
 // MayExceedOnMatch satisfies core.RuntimeEscalatable: webhook-forward can return
@@ -189,6 +149,20 @@ func (w *WebhookForward) Execute(ctx context.Context, input *core.HookInput) (*c
 		return nil, fmt.Errorf("webhook-forward: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// AI-Guard's compliance-webhook is gated by the internal-service X-RS-Token.
+	// The token rides ONLY when the endpoint path is the compliance-webhook
+	// (proven at construction) AND its scheme+host match a trusted AI-Gateway
+	// base right now — bases may be Hub-resolved after construction, so the
+	// match is per-request. Anything else posts unauthenticated, so the
+	// [MUST MATCH] secret never rides to an arbitrary admin-configured URL.
+	if w.internalToken != "" && w.endpointPathIsAIGuard && w.trustedAIGuardBases != nil {
+		for _, base := range w.trustedAIGuardBases(ctx) {
+			if endpointMatchesTrustedBase(w.endpointScheme, w.endpointHost, base) {
+				req.Header.Set(rsTokenHeader, w.internalToken)
+				break
+			}
+		}
+	}
 
 	resp, err := w.client.Do(req)
 	if err != nil {

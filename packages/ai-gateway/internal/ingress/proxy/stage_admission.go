@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/generativecaps"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -109,6 +110,17 @@ func (st admissionStage) run() bool {
 		s.w.Header().Set("X-RateLimit-Limit", strconv.Itoa(*vkMeta.RateLimitRpm))
 	}
 
+	// Phase 2b: Per-VK generative concurrency cap. Expensive generative
+	// endpoints (image today; tts/video/realtime as they land) carry a
+	// built-in per-VK concurrency bound the global admission gate lacks, so a
+	// single leaked/abusive VK cannot open unbounded concurrent per-call-priced
+	// requests (e88 NFR-4). Runs after auth+RPM (VK + endpoint kind are known)
+	// and before the body read (an over-cap key cannot force full-body reads).
+	// Non-generative kinds skip this entirely — Lookup returns not-generative.
+	if !h.admitGenerativeConcurrency(s, vkMeta) {
+		return false
+	}
+
 	// Phase 3: Read body (uses ingress format to pick the right
 	// model-field source: JSON body for body-carrying formats,
 	// URL path for Gemini/Azure). Runs only after auth + rate-limit
@@ -117,6 +129,17 @@ func (st admissionStage) run() bool {
 	body, bodyHandle, modelID, isStream, err := h.readBody(s.r, s.resolved)
 	s.phaseTimer.MarkBetween(traffic.PhaseBodyRead, time.Since(bodyReadStart))
 	if err != nil {
+		if errors.Is(err, errGenerativeBodyTooLarge) {
+			// The generative per-kind ceiling fired, NOT the global cap —
+			// name the lever that actually governs it (raising the global
+			// payload_capture cap would not help).
+			h.writeDetailedErr(s.w, s.rec,
+				http.StatusRequestEntityTooLarge,
+				"PAYLOAD_TOO_LARGE",
+				"request body exceeds this generative endpoint's body limit",
+				"Reduce the request size; this endpoint enforces a tighter per-kind body ceiling (env AI_GATEWAY_GENERATIVE_CAP_<KIND>_MAX_BYTES)")
+			return false
+		}
 		if errors.Is(err, errRequestTooLarge) {
 			h.writeDetailedErr(s.w, s.rec,
 				http.StatusRequestEntityTooLarge,
@@ -141,6 +164,13 @@ func (st admissionStage) run() bool {
 	// resolved RoutingTarget. Metrics + quota + cost math read the
 	// resolved target directly and are not affected by this field.
 	s.rec.ModelName = modelID
+
+	// Caller-declared correlation tags. End-user: header first, then the
+	// ingress protocol's native field; session: header only. Both opaque —
+	// persisted onto traffic_event.{end_user_id,session_id} and read by
+	// nothing else.
+	s.rec.EndUserID = extractEndUserID(s.r.Header)
+	s.rec.SessionID = extractSessionID(s.r.Header)
 
 	// Snapshot the payload-capture config once per request so the
 	// pre-hook request body and later response body decisions stay
@@ -174,12 +204,10 @@ func (st admissionStage) run() bool {
 	// read instead of re-parsing raw bytes. The RequestContext
 	// type is the L3 immutable carrier; routing reads its Normalized()
 	// via *routingcore.RoutingContext.Request.
-	// Use resolved.BodyFormat (post-header-override), matching every
-	// other consumer (rec.IngressFormat, canonicalization at the
-	// upstream prep step). Using the pre-override in.BodyFormat here
-	// would normalize a header-overridden cross-family body with the
-	// wrong codec for the L3 RequestContext (smart routing / hooks /
-	// semantic-cache pre-pass).
+	// Use resolved.BodyFormat, matching every other consumer
+	// (rec.IngressFormat, canonicalization at the upstream prep step), so
+	// the L3 RequestContext that smart routing / hooks / the semantic-cache
+	// pre-pass read is decoded with the same codec they all assume.
 	s.rctxFull = h.buildRequestContext(s.r, vkMeta, body, s.resolved.BodyFormat, modelID, s.endpointType)
 	return true
 }
@@ -214,6 +242,27 @@ func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle
 	if maxBytes <= 0 {
 		maxBytes = payloadcapture.DefaultMaxRequestBytes
 	}
+	// Generative endpoints carry a tighter per-kind body ceiling (their bodies
+	// are small JSON prompts; the global 10 MiB cap is far too loose to shut a
+	// body-flood against a per-call-priced endpoint). Clamp to the smaller of
+	// the two — an oversized generative body 413s at the tighter ceiling via
+	// the existing errRequestTooLarge path, and clampedGenerative flags it so
+	// the 413 hint names the right lever.
+	//
+	// The size clamp is gated on the JSON wire shapes only. The multipart
+	// generative routes (/v1/images/edits, /v1/images/variations) share the
+	// image_generation KIND but carry a multi-MB source image, so a
+	// kind-keyed byte ceiling would wrongly 413 them the day they land — those
+	// routes are not registered yet (they 404), and when they are, they must
+	// carry their own (larger) multipart size limit, not this JSON ceiling.
+	clampedGenerative := false
+	if generativeJSONWireShape(in.WireShape) {
+		if caps, generative := generativecaps.Lookup(typology.KindFromWireShape(in.WireShape)); generative &&
+			caps.MaxRequestBytes > 0 && caps.MaxRequestBytes < maxBytes {
+			maxBytes = caps.MaxRequestBytes
+			clampedGenerative = true
+		}
+	}
 	// Read into a POOLED scratch buffer (pre-grown to ~64 KB) so the common
 	// ~50 KB body neither pays io.ReadAll's geometric regrowth nor a fresh
 	// per-request buffer allocation. The body escapes to the async audit writer,
@@ -233,6 +282,9 @@ func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle
 		return nil, nil, "", false, fmt.Errorf("failed to read request body")
 	}
 	if int64(buf.Len()) > maxBytes {
+		if clampedGenerative {
+			return nil, nil, "", false, errGenerativeBodyTooLarge
+		}
 		return nil, nil, "", false, errRequestTooLarge
 	}
 	// Right-sized escaping copy taken from a POOL: the body escapes to the async
@@ -248,6 +300,19 @@ func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle
 	if err != nil {
 		audit.ReleaseRequestBuffer(bodyHandle)
 		return nil, nil, "", false, err
+	}
+
+	// Multimodal routes are handled non-stream only in this slice: cost
+	// metering (stampModalityUnits) and the artifact fingerprint
+	// (buildArtifactRefs) live exclusively on the non-stream response path.
+	// A client-sent `stream: true` (e.g. gpt-image-1 partial_images) would
+	// otherwise take the streaming path and skip both — silently pricing the
+	// request at $0 with a NULL artifact_ref. Force non-stream; the raw body
+	// is still forwarded verbatim and the upstream returns a non-stream
+	// response. Streaming multimodal ships with its own accounting later.
+	switch typology.KindFromWireShape(in.WireShape) {
+	case typology.EndpointKindImageGeneration, typology.EndpointKindTTS:
+		isStream = false
 	}
 
 	if modelID == "" {

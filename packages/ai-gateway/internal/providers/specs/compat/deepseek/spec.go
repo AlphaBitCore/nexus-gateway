@@ -18,11 +18,15 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		log = slog.Default()
 	}
 	return provcore.AdapterSpec{
-		Format:             provcore.FormatDeepSeek,
-		Transport:          openai.NewTransport(log),
-		SchemaCodec:        openai.IdentityCodec(),
-		StreamDecoder:      openai.NewStreamDecoder(log),
-		ErrorNormalizer:    openai.ErrorNormalizerInstance(),
-		PassthroughRewrite: ApplyRewrites,
+		Format:    provcore.FormatDeepSeek,
+		Transport: openai.NewTransport(log),
+		// The contract carries the thinking-model structural rules
+		// (forced-tool_choice strip, reasoning_content back-fill) into
+		// both codec entry points — bodies bridged from /v1/messages get
+		// the same fixes the native chat leg gets. No dispatch-level
+		// rewrite callback.
+		SchemaCodec:     openai.NewIdentityCodec(Contract()),
+		StreamDecoder:   openai.NewStreamDecoder(log),
+		ErrorNormalizer: openai.ErrorNormalizerInstance(),
 	}
 }

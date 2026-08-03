@@ -42,7 +42,6 @@ export function SettingsStreamingComplianceTab() {
   const [failBehavior, setFailBehavior] = useState<StreamingComplianceConfig['fail_behavior']>('fail_open');
   const [captureRequest, setCaptureRequest] = useState(false);
   const [captureResponse, setCaptureResponse] = useState(false);
-  const [rawSpillEnabled, setRawSpillEnabled] = useState(false);
 
   const { data, loading, error, refetch } = useApi<StreamingComplianceConfig>(
     () => systemApi.getStreamingComplianceConfig(),
@@ -58,7 +57,6 @@ export function SettingsStreamingComplianceTab() {
     setFailBehavior(data.fail_behavior);
     setCaptureRequest(!!data.capture_request_body);
     setCaptureResponse(!!data.capture_response_body);
-    setRawSpillEnabled(!!data.raw_body_spill_enabled);
   }, [data]);
 
   const { mutate: save, loading: saving } = useMutation(
@@ -71,7 +69,6 @@ export function SettingsStreamingComplianceTab() {
         fail_behavior: failBehavior,
         capture_request_body: captureRequest,
         capture_response_body: captureResponse,
-        raw_body_spill_enabled: rawSpillEnabled,
       }),
     {
       invalidateQueries: [['admin', 'settings', 'streaming-compliance']],
@@ -217,13 +214,6 @@ export function SettingsStreamingComplianceTab() {
             </div>
           </div>
 
-          <div className={styles.switchField}>
-            <div className={styles.switchTitle}>{t('pages:settingsStreamingCompliance.rawSpillEnabledTitle', 'Spill bodies larger than the inline threshold to SpillStore')}</div>
-            <div className={styles.switchRow}>
-              <Switch checked={rawSpillEnabled} onCheckedChange={setRawSpillEnabled} aria-label="enable raw body spill" />
-              <span className={styles.switchHelp}>{t('pages:settingsStreamingCompliance.rawSpillEnabledHelpShort', '(default: localfs).')}</span>
-            </div>
-          </div>
         </div>
 
         <Stack direction="horizontal" gap="sm">

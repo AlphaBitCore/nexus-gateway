@@ -791,6 +791,34 @@ func TestProxy_WriteError_BasicPaths(t *testing.T) {
 	}
 }
 
+// TestProxy_WriteCodecErr_PreservesTypedError pins station 1 of the
+// typed-errors-survive path: a codec Fail that is a typed *ProviderError keeps
+// its Status + Code through the response; an untyped error falls back to a 400.
+func TestProxy_WriteCodecErr_PreservesTypedError(t *testing.T) {
+	h := &Handler{deps: &Deps{}}
+
+	rec := &audit.Record{}
+	w := httptest.NewRecorder()
+	h.writeCodecErr(w, rec, &provcore.ProviderError{Status: 422, Code: "custom_code", Message: "codec says no"}, "prepare body: ")
+	if w.Code != 422 {
+		t.Fatalf("typed codec error must keep its status; got %d", w.Code)
+	}
+	if rec.ErrorCode != "custom_code" {
+		t.Fatalf("typed codec error must keep its code; got %q", rec.ErrorCode)
+	}
+
+	// Untyped error → generic 400.
+	rec = &audit.Record{}
+	w = httptest.NewRecorder()
+	h.writeCodecErr(w, rec, errors.New("missing model"), "prepare body: ")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("untyped error must fall back to 400; got %d", w.Code)
+	}
+	if !strings.Contains(rec.ErrorReason, "prepare body: missing model") {
+		t.Fatalf("fallback must carry the prefix + message; got %q", rec.ErrorReason)
+	}
+}
+
 func TestProxyCache_CopyUpstreamHeaders(t *testing.T) {
 	if got := copyUpstreamHeaders(nil); got != nil {
 		t.Errorf("nil → %v", got)

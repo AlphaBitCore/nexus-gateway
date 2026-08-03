@@ -312,6 +312,47 @@ func TestRulePackEngine_Redact_MasksMatchedContent(t *testing.T) {
 	}
 }
 
+// TestRulePackEngine_Redact_SeedBareSSN guards the shipped nexus/pii seed: a
+// context-free US SSN (strict dash-separated 3-2-4, no "SSN"/"social security"
+// label word nearby) must be REDACTED, not merely tagged. It matches only
+// pii-gov-002 — the structure-only rule — so this fails the moment that rule's
+// severity is weakened back to warn/info, which would silently let a pasted SSN
+// pass through un-masked.
+//
+// It builds from the seed YAML, which is the authoring source but NOT what a
+// deployment enforces: the DB seeds seed/fixtures/rule.json, generated from
+// these YAMLs. This test therefore covers the shipped severity only as far as
+// those two agree, and nothing in Go asserts that they do — the equivalence is
+// enforced by `npm run check:rulepacks` (CI + pre-commit). Without that gate a
+// fixture regressed to warn would leak in production while this test stayed
+// green, each side being internally consistent.
+func TestRulePackEngine_Redact_SeedBareSSN(t *testing.T) {
+	cfg := buildEngineConfig(loadSeedRules(t))
+	cfg.Config["onMatch"] = map[string]any{"action": "redact"}
+	h, err := NewRulePackEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewRulePackEngine(seed): %v", err)
+	}
+	// No label word — the only rule that can match this is pii-gov-002.
+	text := "please review 123-45-6789 before noon"
+	res, err := h.Execute(t.Context(), &HookInput{Normalized: PayloadFromTextSegments([]string{text})})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Decision != Modify || res.Action != ActionRedact {
+		t.Fatalf("context-free SSN must Modify+redact; got decision=%s action=%s (severity of pii-gov-002 weakened?)", res.Decision, res.Action)
+	}
+	if res.BlockingRule == nil || res.BlockingRule.RuleID != "pii-gov-002" {
+		t.Fatalf("redaction must be attributed to pii-gov-002; got %+v", res.BlockingRule)
+	}
+	if len(res.ModifiedContent) != 1 {
+		t.Fatalf("expected one redacted block; got %d", len(res.ModifiedContent))
+	}
+	if mc := res.ModifiedContent[0].Text; strings.Contains(mc, "123-45-6789") {
+		t.Errorf("redacted content still leaks the raw SSN: %q", mc)
+	}
+}
+
 // TestRulePackEngine_Redact_EmbeddingInputs covers the KindAIEmbedding address
 // branch: a redact match in an embedding input must mask "inputs.<i>".
 func TestRulePackEngine_Redact_EmbeddingInputs(t *testing.T) {

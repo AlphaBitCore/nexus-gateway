@@ -121,7 +121,16 @@ paths:
                                         - policy
                                         - smart
                                 config:
-                                    description: Strategy-specific configuration. Required. Must parse as a strategy object; a non-object document or an unrecognized embedded `type` is rejected with 400.
+                                    description: >-
+                                        Strategy-specific configuration. Required. Validated
+                                        RECURSIVELY against the gateway's strategy-node shape: a
+                                        non-object document, a field with the wrong JSON type at ANY
+                                        depth (including weighted/conditional/ab/latency
+                                        sub-targets, e.g. a weighted target with weight "5" as a
+                                        string), an unrecognized node `type` at any depth, or a tree
+                                        deeper than the gateway evaluates (10) is rejected with 400
+                                        — a config that passed a shallower check used to fail the
+                                        resolver's parse on every request routed by the rule.
                                 matchConditions:
                                     description: 'Request-matching predicate as an arbitrary JSON value. The legacy key `organizations` is rejected (use `projects`). For `strategyType=smart`, must include `requestedModelLiterals: ["auto"]`.'
                                 priority:
@@ -133,7 +142,24 @@ paths:
                                         - "null"
                                     description: Pipeline stage the rule belongs to. Defaults to 1 when omitted or null; an explicit 0 is preserved.
                                 fallbackChain:
-                                    description: Ordered fallback target list as an arbitrary JSON value.
+                                    description: >-
+                                        Ordered inline recovery-target list as an array of
+                                        {providerId, modelId} objects; an empty array means no inline
+                                        fallback. Other shapes (e.g. bare model strings) are rejected
+                                        with 400 fallback_chain_invalid — the gateway resolver decodes
+                                        this list best-effort, so an unparseable chain would silently
+                                        lose all failover coverage.
+                                    type: array
+                                    items:
+                                        type: object
+                                        properties:
+                                            providerId:
+                                                type: string
+                                            modelId:
+                                                type: string
+                                        required:
+                                            - providerId
+                                            - modelId
                                 retryPolicy:
                                     type:
                                         - object
@@ -346,7 +372,21 @@ paths:
                                         - "null"
                                     description: New pipeline stage. An explicit 0 is preserved; any other supplied value is normalized to 1. Omit to leave unchanged.
                                 fallbackChain:
-                                    description: New fallback target list (arbitrary JSON value). Omit to leave unchanged.
+                                    description: >-
+                                        New inline recovery-target list as an array of
+                                        {providerId, modelId} objects. Omit to leave unchanged; other
+                                        shapes are rejected with 400 fallback_chain_invalid.
+                                    type: array
+                                    items:
+                                        type: object
+                                        properties:
+                                            providerId:
+                                                type: string
+                                            modelId:
+                                                type: string
+                                        required:
+                                            - providerId
+                                            - modelId
                                 retryPolicy:
                                     type:
                                         - object
@@ -496,7 +536,21 @@ paths:
                                         - "null"
                                     description: New pipeline stage. An explicit 0 is preserved; any other supplied value is normalized to 1. Omit to leave unchanged.
                                 fallbackChain:
-                                    description: New fallback target list (arbitrary JSON value). Omit to leave unchanged.
+                                    description: >-
+                                        New inline recovery-target list as an array of
+                                        {providerId, modelId} objects. Omit to leave unchanged; other
+                                        shapes are rejected with 400 fallback_chain_invalid.
+                                    type: array
+                                    items:
+                                        type: object
+                                        properties:
+                                            providerId:
+                                                type: string
+                                            modelId:
+                                                type: string
+                                        required:
+                                            - providerId
+                                            - modelId
                                 retryPolicy:
                                     type:
                                         - object
@@ -682,7 +736,20 @@ components:
                     type: integer
                     description: Pipeline stage the rule belongs to.
                 fallbackChain:
-                    description: Ordered fallback target list (arbitrary JSON value).
+                    description: >-
+                        Ordered inline recovery-target list as an array of
+                        {providerId, modelId} objects (empty = no inline fallback).
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            providerId:
+                                type: string
+                            modelId:
+                                type: string
+                        required:
+                            - providerId
+                            - modelId
                 retryPolicy:
                     type:
                         - object

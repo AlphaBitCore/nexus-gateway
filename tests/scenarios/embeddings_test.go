@@ -1,17 +1,18 @@
 // Embeddings family (S-063) — verifies the /v1/embeddings ingress
-// (E62) end-to-end through the AI Gateway: happy-path single input,
+// end-to-end through the AI Gateway: happy-path single input,
 // explicit `dimensions` round-trip, and batch input. Closes the E2E
-// coverage gap for the embeddings endpoint type tracked under E86.
+// coverage for the embeddings endpoint type.
 //
 // Hardening 2026-05-22: every env-shape skip was promoted to a hard
 // failure. text-embedding-3-small is a baseline seed in
 // tools/db-migrate/prisma/seed.ts and the dev compose stack provisions
 // the openai-embeddings adapter unconditionally — a 400 from arm A
 // is a regression in routing, codec, or seed, never an "env not
-// ready" state. The metric-delta assertion now binds the
-// `nexus_normalize_total` counter directly (the real metric
-// name on this build; see live /metrics probe) instead of the absent
-// nexus_requests_total.
+// ready" state. The metric-delta assertion binds nexus_requests_total
+// with endpoint="embeddings" — the counter the gateway has exported
+// since the initial commit. A previous revision of this comment called
+// that metric "absent" and bound nexus_normalize_total instead, which
+// has never existed; see the note at the assertion.
 package scenarios_test
 
 import (
@@ -27,7 +28,7 @@ import (
 
 // TestS063_EmbeddingsHappyPath — PM-grade e2e for /v1/embeddings.
 //
-// BRAINSTORM (pre): the embeddings endpoint (E62) is a sibling of
+// BRAINSTORM (pre): the embeddings endpoint is a sibling of
 // /v1/chat/completions but lives on its own audit endpoint_type
 // ("embeddings") and emits a different response envelope:
 // {"object":"list","data":[{"index":i,"embedding":[...]}],"model":...}.
@@ -238,16 +239,28 @@ func TestS063_EmbeddingsHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeMetrics post: %v", err)
 	}
-	embedReqDelta := postMetrics.CounterSum(
-		"nexus_normalize_total",
-		map[string]string{"adapter": "openai-embeddings", "direction": "request"},
-	) - preMetrics.CounterSum(
-		"nexus_normalize_total",
-		map[string]string{"adapter": "openai-embeddings", "direction": "request"},
-	)
+	// nexus_requests_total{endpoint=…,status="2xx"} — the counter the gateway
+	// actually exports, registered since the initial commit.
+	//
+	// This assertion used to bind nexus_normalize_total, which HAS NEVER EXISTED:
+	// the only normalize counters are nexus_normalize_panic_total and
+	// nexus_prehook_normalize_drop_total. The switch was made deliberately, with a
+	// comment calling nexus_requests_total "absent" — and the probe that concluded
+	// that was almost certainly unauthenticated, because /metrics answers 401
+	// without a service token and an unauthenticated scrape shows every metric as
+	// absent. So a 401 talked an earlier session into replacing a working metric
+	// name with one that could never match, and ScrapeMetrics then 401'd too, so
+	// the broken assertion never ran and nobody found out.
+	//
+	// The label is `endpoint`, not `adapter`: the exported series carries
+	// provider/model/endpoint/status, and endpoint takes the same vocabulary as
+	// traffic_event.endpoint_type (chat / responses / embeddings / image_generation).
+	embedLabels := map[string]string{"endpoint": "embeddings", "status": "2xx"}
+	embedReqDelta := postMetrics.CounterSum("nexus_requests_total", embedLabels) -
+		preMetrics.CounterSum("nexus_requests_total", embedLabels)
 	if embedReqDelta < 1 {
-		t.Errorf("nexus_normalize_total{adapter=openai-embeddings,direction=request} delta=%.0f, want ≥ 1 — embeddings normalize codec never executed",
-			embedReqDelta)
+		t.Errorf("nexus_requests_total{endpoint=embeddings,status=2xx} delta=%.0f, want ≥ 1 — "+
+			"the embeddings ingress never registered a successful request", embedReqDelta)
 	}
 
 	t.Logf("S-063 OK: armA_len=%d armB_len=%d (dims=256) armC_batch=%d embed_req_delta=%.0f",

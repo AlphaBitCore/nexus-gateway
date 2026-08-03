@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -93,7 +94,7 @@ func TestProcessInfoCached_CachesErrors(t *testing.T) {
 	cacheMu.Unlock()
 
 	_, err := ProcessInfoCached(pid)
-	if err != sentinel {
+	if !errors.Is(err, sentinel) {
 		t.Fatalf("cached error not served: got %v, want sentinel", err)
 	}
 }

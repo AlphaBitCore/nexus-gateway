@@ -34,7 +34,10 @@ paths:
                   example: vk
                 - name: provider
                   in: query
-                  description: Filter by provider identifier.
+                  description: >-
+                    Exact match on the serving provider (COALESCE(routed_provider_name,
+                    provider_name)). The sentinel `__none__` selects rows that never
+                    resolved a provider (early rejections).
                   required: false
                   schema:
                     type: string
@@ -89,13 +92,56 @@ paths:
                   schema:
                     type: string
                 - name: modelUsed
-                  description: "Filter by the client-requested model name (case-insensitive substring match). The actually-served model after routing is in routedModelName and is not matched by this filter."
+                  description: "Filter by served model name, falling back to the requested name (COALESCE(routed_model_name, model_name)); case-insensitive substring match."
                   in: query
                   required: false
                   schema:
                     type: string
+                - name: modelExact
+                  description: >-
+                    Exact match on the served model (same COALESCE(routed_model_name,
+                    model_name) expression the error-governance grouping uses) — the
+                    drill-down filter; substring matching cannot bound a class
+                    (gpt-4o would swallow gpt-4o-mini). The sentinel `__none__`
+                    selects rows with no model at all (early rejections).
+                  in: query
+                  required: false
+                  schema:
+                    type: string
+                - name: endpointType
+                  description: >-
+                    Filter by request modality (traffic_event.endpoint_type):
+                    chat, embeddings, image_generation, tts, stt,
+                    video_generation, rerank, guardrail, realtime. Exact match;
+                    omitted = all modalities.
+                  in: query
+                  required: false
+                  schema:
+                    type: string
+                    enum: [chat, embeddings, image_generation, tts, stt, video_generation, rerank, guardrail, realtime]
                 - name: requestId
                   description: "Filter by the gateway request id."
+                  in: query
+                  required: false
+                  schema:
+                    type: string
+                - name: endUserId
+                  description: >-
+                    Filter by the caller-declared end-user id (exact match on the indexed
+                    end_user_id column). The AI Gateway stamps it from the
+                    X-Nexus-End-User-Id request header and from nowhere else — a
+                    provider's own end-user field is not read for this. Opaque and
+                    VK-scoped; only AI Gateway rows carry it.
+                  in: query
+                  required: false
+                  schema:
+                    type: string
+                - name: sessionId
+                  description: >-
+                    Filter by the caller-declared session/conversation id (exact match on
+                    the indexed session_id column). The AI Gateway stamps it from the
+                    X-Nexus-Session-Id request header only. Opaque and VK-scoped; only
+                    AI Gateway rows carry it.
                   in: query
                   required: false
                   schema:
@@ -161,7 +207,15 @@ paths:
                   schema:
                     type: string
                 - name: errorCode
-                  description: "Filter by the structured failure-reason code (exact match on the raw stored value), e.g. PROVIDER_ERROR."
+                  description: >-
+                    Filter by the structured failure-reason code (exact match on the raw stored value).
+                    Two vocabularies coexist: upper-case codes for failures the gateway decided
+                    (e.g. PROVIDER_UNAVAILABLE, PROVIDER_RATE_LIMITED, QUOTA_EXCEEDED, CLIENT_CLOSED),
+                    and the provider's own lower_snake cause for a terminal upstream 4xx
+                    (e.g. auth_failed, invalid_request, context_overflow). PROVIDER_ERROR means an
+                    upstream 4xx that carried no canonical cause. The sentinel `__unclassified__`
+                    selects rows whose producer did not classify the failure (error_code NULL or
+                    empty) — used by the error-governance drill-down.
                   in: query
                   required: false
                   schema:
@@ -232,6 +286,147 @@ paths:
                             schema:
                                 type: object
                                 additionalProperties: {}
+    /api/admin/traffic/errors/groups:
+        get:
+            operationId: listTrafficErrorGroups
+            summary: Aggregated error-governance view over traffic events
+            description: |-
+                Aggregates failed data-plane rows (status_code >= 400, internal
+                operational traffic excluded) into top-100 error classes by
+                occurrence count, grouped by (errorCode, statusRange, provider,
+                model). Each class carries counts, distinct affected end-users,
+                first/last seen, per-bin sparkline buckets, and a computed
+                first-suspect attribution — ours (gateway routing / translation /
+                provider configuration), client (caller-side), or upstream
+                (provider-side). Attribution is a triage priority, not a verdict:
+                unclassified 5xx rows attribute upstream, unclassified 4xx rows to
+                the client. Bucket width is 5 minutes for windows up to 48h, 1 hour
+                up to 14 days, 1 day beyond. Note the attribution filter applies
+                AFTER the top-100 selection: classes in the requested bucket that
+                rank below the overall top-100 are not returned.
+
+                Data source: by default the aggregation is served rollup-first —
+                sealed history from the pre-aggregated metric_rollup_* tiers
+                (traffic.error_class.* series produced by the Hub's rollup-5m
+                job) plus a raw scan of only the unsealed trailing window — so
+                read cost does not scale with the number of error rows in the
+                window. The response's dataSource field reports which path
+                served the numbers: "rollup", or "direct" when the full raw
+                scan was used instead (rollup pipeline never ran, the rollup
+                tiers no longer retain the requested window, the window
+                predates the error-class series' first aggregated bucket, or
+                the rollup-5m watermark is stalled more than an hour behind
+                the window end).
+                On the rollup path, affectedEndUsers is computed exactly for
+                classes up to an affordability threshold (50000 rows) and is
+                null above it or when the raw rows backing a rollup-counted
+                class have been purged by retention; a bucket holding more
+                than 500 distinct classes folds the excess into one
+                "__overflow__" pseudo-class per status range (count-preserving,
+                attribution "mixed"), which supports no drill-down.
+
+                Window alignment: from/to are snapped outward to whole bucket
+                boundaries (5m/1h/1d by window length) so both read paths
+                cover the same event population; the response's effectiveFrom
+                / effectiveTo report the snapped window actually served.
+                Late-arriving events (ingest lag beyond a bucket's sealing,
+                rare outside heavy storms) enter the rollup via the daily
+                correction job — until then the freshest sealed buckets can
+                trail mode=direct slightly; first/last seen on the rollup path
+                carry whole-second precision.
+            x-nexus-iam-action: iam.ResourceTrafficLog.Action(iam.VerbRead)
+            x-nexus-tier: auto
+            parameters:
+                - name: from
+                  in: query
+                  description: Inclusive lower time bound (RFC 3339). Required.
+                  required: true
+                  schema:
+                    type: string
+                    format: date-time
+                - name: to
+                  in: query
+                  description: Exclusive upper time bound (RFC 3339). Required; must be after `from`.
+                  required: true
+                  schema:
+                    type: string
+                    format: date-time
+                - name: source
+                  in: query
+                  description: Product domain scope (vk, proxy, or agent); empty = all data-plane sources.
+                  required: false
+                  schema:
+                    type: string
+                    enum:
+                        - vk
+                        - proxy
+                        - agent
+                - name: attribution
+                  in: query
+                  description: Narrow to one first-suspect bucket (applied after the top-100 selection).
+                  required: false
+                  schema:
+                    type: string
+                    enum:
+                        - ours
+                        - client
+                        - upstream
+                - name: mode
+                  in: query
+                  description: |-
+                    Read-path override. auto (default) serves rollup-first with a
+                    raw-scan tail; direct forces the full raw traffic_event scan —
+                    an ops/verification escape hatch for cross-checking the rollup
+                    path's numbers.
+                  required: false
+                  schema:
+                    type: string
+                    enum:
+                        - auto
+                        - direct
+            responses:
+                "400":
+                    description: Missing/invalid from or to, from not before to, invalid attribution, or invalid mode
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "200":
+                    description: Error classes ordered by occurrence count (data) plus the sparkline bin width (bucketSeconds) and the serving read path (dataSource)
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    bucketSeconds:
+                                        type: integer
+                                        description: Sparkline bin width in seconds (300 for windows <= 48h, 3600 up to 14 days, 86400 beyond).
+                                    dataSource:
+                                        type: string
+                                        enum:
+                                            - rollup
+                                            - direct
+                                        description: Which read path served the aggregation — pre-aggregated rollup tiers (with a raw tail for the unsealed window) or the full raw traffic_event scan (fallback on missing/stalled rollup pipeline or out-of-retention windows).
+                                    effectiveFrom:
+                                        type: string
+                                        format: date-time
+                                        description: The window start actually served, after snapping from down to a whole bucket boundary.
+                                    effectiveTo:
+                                        type: string
+                                        format: date-time
+                                        description: The window end actually served, after snapping to up to a whole bucket boundary.
+                                    data:
+                                        type: array
+                                        items:
+                                            $ref: '#/components/schemas/trafficstore_TrafficErrorGroup'
     /api/admin/traffic/{id}:
         get:
             operationId: getTrafficEvent
@@ -315,6 +510,68 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/trafficstore_TrafficEventNormalized'
+    /api/admin/traffic/{id}/artifact:
+        get:
+            operationId: getTrafficEventArtifact
+            summary: Stream the captured multimodal artifact for inline preview
+            description: |-
+                Streams the captured artifact bytes for a multimodal traffic event so the
+                admin UI can render it inline. For an image_generation event the response
+                data[index].b64_json is decoded and served with the byte-sniffed image
+                mime; for a tts event the whole response body IS the audio and is served
+                with the captured content type. The served Content-Type is restricted to an
+                image/* or audio/* allow-list (off-list bytes serve as
+                application/octet-stream) with X-Content-Type-Options: nosniff so a captured
+                provider body can never render as active content. A url-mode image (the
+                gateway never dereferenced the provider URL) returns 409 with the reference.
+                Returns 404 for events with no inline artifact (chat, embeddings, stt,
+                video, guardrail, realtime) or when no captured body is available. Gated by
+                the same read action as the traffic event itself.
+            x-nexus-iam-action: iam.ResourceTrafficLog.Action(iam.VerbRead)
+            x-nexus-tier: auto
+            parameters:
+                - name: id
+                  in: path
+                  description: Traffic event id whose artifact is requested.
+                  required: true
+                  schema:
+                    type: string
+                - name: index
+                  in: query
+                  description: For image events with multiple data[] entries, which artifact to serve (default 0).
+                  required: false
+                  schema:
+                    type: integer
+                    minimum: 0
+            responses:
+                "200":
+                    description: The artifact bytes, with an image/* or audio/* Content-Type.
+                    content:
+                        application/octet-stream:
+                            schema:
+                                type: string
+                                format: binary
+                "409":
+                    description: The image was returned as a provider URL (not stored); the body carries the reference.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "404":
+                    description: No inline artifact for this event.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
     /api/admin/traffic/storage:
         get:
             operationId: trafficStorage
@@ -334,6 +591,59 @@ paths:
                                 additionalProperties: {}
 components:
     schemas:
+        trafficstore_TrafficErrorGroup:
+            type: object
+            description: One aggregated error class from the traffic error-governance view.
+            properties:
+                errorCode:
+                    type: string
+                    description: Raw stored failure classification; empty when the producer did not classify (compliance rejections, raw upstream 5xx pass-through).
+                statusRange:
+                    type: string
+                    enum:
+                        - 4xx
+                        - 5xx
+                provider:
+                    type: string
+                    description: Serving provider (routed, falling back to requested); empty on early rejections.
+                model:
+                    type: string
+                    description: Serving model (routed, falling back to requested); empty on early rejections.
+                sampleReason:
+                    type: string
+                    description: One representative error_reason from the group; may be empty.
+                count:
+                    type: integer
+                affectedEndUsers:
+                    type:
+                        - integer
+                        - "null"
+                    description: DISTINCT caller-declared end-user tags in the group; 0 when callers send none. Null when the rollup read path skipped the distinct scan because the class exceeds the 50000-row affordability threshold (the UI renders a dash).
+                firstSeen:
+                    type: string
+                    format: date-time
+                lastSeen:
+                    type: string
+                    format: date-time
+                buckets:
+                    type: array
+                    description: Sparkline bins (bucketSeconds wide) covering the window; only non-empty bins are returned.
+                    items:
+                        type: object
+                        properties:
+                            ts:
+                                type: string
+                                format: date-time
+                            count:
+                                type: integer
+                attribution:
+                    type: string
+                    description: 'Computed first-suspect triage bucket: ours = gateway routing / format translation / provider configuration; client = caller-side (bad or expired key, own rate/quota limits, disconnect, malformed request); upstream = provider-side failures passed through; mixed = the "__overflow__" pseudo-class only (classes shed by the rollup cardinality cap, individually unattributable — excluded by any ?attribution filter).'
+                    enum:
+                        - ours
+                        - client
+                        - upstream
+                        - mixed
         trafficstore_TrafficEvent:
             type: object
             properties:
@@ -399,6 +709,22 @@ components:
                         - string
                         - "null"
                 externalRequestId:
+                    type:
+                        - string
+                        - "null"
+                endUserId:
+                    description: >-
+                        Caller-declared end-user id (X-Nexus-End-User-Id header or the
+                        ingress protocol's native user field). Opaque, VK-scoped, never
+                        joined to Nexus identities. Null for compliance-proxy / agent rows.
+                    type:
+                        - string
+                        - "null"
+                sessionId:
+                    description: >-
+                        Caller-declared session/conversation id (X-Nexus-Session-Id header
+                        only). Same trust model as endUserId. Null for compliance-proxy /
+                        agent rows.
                     type:
                         - string
                         - "null"
@@ -593,6 +919,14 @@ components:
                 requestBlockingRule:
                     description: arbitrary JSON value
                 responseHookDecision:
+                    description: >-
+                        Verdict of the response-stage hook pipeline, or null when no response
+                        hook examined this traffic — the deployment enables no response hooks,
+                        the body was unreadable, the flow took a non-AI fast path, the pipeline
+                        failed to build and fail-open relayed it, or the upstream failed before
+                        a response existed. Null means NOT INSPECTED, never approved: do not
+                        read absence as a clean verdict. responseHooksPipeline carries the
+                        hooks that actually ran and is null on the same rows.
                     type:
                         - string
                         - "null"

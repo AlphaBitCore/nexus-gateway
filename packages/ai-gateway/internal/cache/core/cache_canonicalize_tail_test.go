@@ -3,7 +3,7 @@ package core
 // Investigation harness (latency-tail study, not a coverage test):
 // quantifies how much transient allocation + CPU the per-request cache-key
 // canonicalization (canonicalizeJSON, reached on every cache-enabled request
-// with no x-nexus-aigw-no-cache header via BuildScopedKey) costs as the
+// with no X-Nexus-No-Cache header via BuildScopedKey) costs as the
 // request body grows. The hypothesis under test: this cost scales with body
 // size, so a long-context (~12.5k-token) workload pays a large per-request
 // allocation here even when hooks are OFF and the lookup always MISSes —

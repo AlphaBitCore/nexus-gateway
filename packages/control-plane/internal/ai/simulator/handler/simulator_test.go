@@ -3,6 +3,7 @@ package aigwsim
 import (
 	"bytes"
 	"context"
+	"errors"
 	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
@@ -13,11 +14,19 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
-func newTestHandler() *Handler {
+func newTestHandler(gw peer.URLProvider) *Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(Deps{Logger: logger})
+	return New(Deps{Logger: logger, GatewayBase: gw})
+}
+
+// testEchoCtx builds a throwaway echo context for resolvedGatewayURL calls.
+func testEchoCtx() echo.Context {
+	e := echo.New()
+	return e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
 }
 
 func TestErrJSON(t *testing.T) {
@@ -45,21 +54,27 @@ func TestInternalServerError(t *testing.T) {
 	}
 }
 
-func TestConfiguredGatewayURL_Default(t *testing.T) {
-	// Without env override, should return the fallback localhost URL.
-	t.Setenv("AI_GATEWAY_URL", "")
-	got, err := configuredGatewayURL()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "http://localhost:3050" {
-		t.Errorf("got %q; want http://localhost:3050", got)
+func TestResolvedGatewayURL_NilProviderIsUnavailable(t *testing.T) {
+	// No provider wired: behaves like an unresolved peer (transient), never a
+	// hardcoded localhost fallback — peer URLs are Hub-resolved only.
+	h := newTestHandler(nil)
+	if _, err := h.resolvedGatewayURL(testEchoCtx()); !errors.Is(err, peer.ErrUnavailable) {
+		t.Fatalf("want peer.ErrUnavailable, got %v", err)
 	}
 }
 
-func TestConfiguredGatewayURL_EnvOverride(t *testing.T) {
-	t.Setenv("AI_GATEWAY_URL", "https://ai-gw.example.com/")
-	got, err := configuredGatewayURL()
+func TestResolvedGatewayURL_ResolverErrorIsUnavailable(t *testing.T) {
+	h := newTestHandler(func(context.Context) (string, error) {
+		return "", errors.New("peer service URL not reported yet")
+	})
+	if _, err := h.resolvedGatewayURL(testEchoCtx()); !errors.Is(err, peer.ErrUnavailable) {
+		t.Fatalf("want peer.ErrUnavailable, got %v", err)
+	}
+}
+
+func TestResolvedGatewayURL_TrimsTrailingSlash(t *testing.T) {
+	h := newTestHandler(peer.Static("https://ai-gw.example.com/"))
+	got, err := h.resolvedGatewayURL(testEchoCtx())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,16 +83,22 @@ func TestConfiguredGatewayURL_EnvOverride(t *testing.T) {
 	}
 }
 
-func TestConfiguredGatewayURL_Misconfigured(t *testing.T) {
+func TestResolvedGatewayURL_MalformedReportedURL(t *testing.T) {
 	for _, tc := range []struct{ name, val string }{
 		{"bad scheme", "ftp://ai-gw.example.com"},
 		{"no host", "http://"},
 		{"parse error", "http://[::1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("AI_GATEWAY_URL", tc.val)
-			if _, err := configuredGatewayURL(); err == nil {
-				t.Errorf("expected error for %q, got nil", tc.val)
+			h := newTestHandler(peer.Static(tc.val))
+			_, err := h.resolvedGatewayURL(testEchoCtx())
+			if err == nil {
+				t.Fatalf("expected error for %q, got nil", tc.val)
+			}
+			// A malformed reported URL is an operator error, not a transient
+			// resolution failure.
+			if errors.Is(err, peer.ErrUnavailable) {
+				t.Errorf("malformed URL must not classify as peer-unavailable: %v", err)
 			}
 		})
 	}
@@ -211,8 +232,7 @@ func TestAIGatewaySimulatorForward_IgnoresCallerSuppliedHost(t *testing.T) {
 	}))
 	defer attacker.Close()
 
-	t.Setenv("AI_GATEWAY_URL", configured.URL)
-	h := newTestHandler()
+	h := newTestHandler(peer.Static(configured.URL))
 	e := echo.New()
 	// Raw JSON carrying an unknown "targetUrl" field pointing at the attacker
 	// server — the struct no longer has the field, so it must be ignored.
@@ -235,8 +255,7 @@ func TestAIGatewaySimulatorForward_IgnoresCallerSuppliedHost(t *testing.T) {
 // AIGatewaySimulatorForward — misconfigured gateway URL → 500 (not 400)
 
 func TestAIGatewaySimulatorForward_MisconfiguredGateway_Returns500(t *testing.T) {
-	t.Setenv("AI_GATEWAY_URL", "ftp://bad.example.com") // invalid scheme
-	h := newTestHandler()
+	h := newTestHandler(peer.Static("ftp://bad.example.com")) // invalid scheme
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
 		Path:   "/v1/models",
@@ -258,7 +277,7 @@ func TestAIGatewaySimulatorForward_MisconfiguredGateway_Returns500(t *testing.T)
 // AIGatewaySimulatorForward — bind failure
 
 func TestAIGatewaySimulatorForward_BadBody(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(nil)
 	e := echo.New()
 	// Send non-JSON body with Content-Type application/json — Bind will fail.
 	req := httptest.NewRequest(http.MethodPost, "/forward", strings.NewReader("{bad"))
@@ -276,7 +295,7 @@ func TestAIGatewaySimulatorForward_BadBody(t *testing.T) {
 // AIGatewaySimulatorForward — validation failure
 
 func TestAIGatewaySimulatorForward_ValidationFailure(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(nil)
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
 		Path:   "/v1/models",
@@ -305,9 +324,8 @@ func TestAIGatewaySimulatorForward_UpstreamSuccess(t *testing.T) {
 		w.Write([]byte(`{"object":"list","data":[]}`)) //nolint:errcheck
 	}))
 	defer upstream.Close()
-	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
-	h := newTestHandler()
+	h := newTestHandler(peer.Static(upstream.URL))
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
 		Path:   "/v1/models",
@@ -329,9 +347,8 @@ func TestAIGatewaySimulatorForward_UpstreamSuccess(t *testing.T) {
 // AIGatewaySimulatorForward — upstream down (connection refused)
 
 func TestAIGatewaySimulatorForward_UpstreamDown(t *testing.T) {
-	// Point the configured gateway at a port that is guaranteed not in use.
-	t.Setenv("AI_GATEWAY_URL", "http://127.0.0.1:19999")
-	h := newTestHandler()
+	// Point the resolved gateway at a port that is guaranteed not in use.
+	h := newTestHandler(peer.Static("http://127.0.0.1:19999"))
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
 		Path:   "/v1/models",
@@ -364,9 +381,8 @@ func TestAIGatewaySimulatorForward_PostWithBody(t *testing.T) {
 		w.Write(data) //nolint:errcheck
 	}))
 	defer upstream.Close()
-	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
-	h := newTestHandler()
+	h := newTestHandler(peer.Static(upstream.URL))
 	e := echo.New()
 	chatBody := json.RawMessage(`{"model":"gpt-4","messages":[]}`)
 	body, _ := json.Marshal(simulatorForwardRequest{
@@ -413,9 +429,8 @@ func TestAIGatewaySimulatorForward_AcceptHeaderPassThrough(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
-	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
-	h := newTestHandler()
+	h := newTestHandler(peer.Static(upstream.URL))
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
 		Path:   "/v1/chat/completions",
@@ -446,9 +461,8 @@ func TestAIGatewaySimulatorForward_CanceledContext_Returns499(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer upstream.Close()
-	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
-	h := newTestHandler()
+	h := newTestHandler(peer.Static(upstream.URL))
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
 		Path:   "/v1/chat/completions",
@@ -510,7 +524,7 @@ func TestNewSimulatorForwardClient_Timeout(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(nil)
 	if h == nil {
 		t.Fatal("New returned nil")
 		return
@@ -524,5 +538,32 @@ func TestNew_NilLogger_UsesDefault(t *testing.T) {
 	h := New(Deps{Logger: nil})
 	if h == nil {
 		t.Fatal("New returned nil")
+	}
+}
+
+// AIGatewaySimulatorForward — resolver failure → 503 PEER_SERVICE_UNAVAILABLE
+
+func TestAIGatewaySimulatorForward_ResolverError503(t *testing.T) {
+	h := newTestHandler(func(context.Context) (string, error) {
+		return "", errors.New("peer service URL not reported yet")
+	})
+	e := echo.New()
+	body, _ := json.Marshal(simulatorForwardRequest{
+		Path:   "/v1/models",
+		Method: "GET",
+		VK:     "vk-test",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/forward", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if err := h.AIGatewaySimulatorForward(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d; want 503 (transient peer resolution)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing %s: %s", peer.CodeUnavailable, rec.Body.String())
 	}
 }

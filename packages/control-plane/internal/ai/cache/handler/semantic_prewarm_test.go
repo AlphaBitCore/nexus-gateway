@@ -7,6 +7,8 @@
 package cache_test
 
 import (
+	"context"
+	"errors"
 	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
@@ -19,16 +21,22 @@ import (
 
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/cache/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // buildPrewarmHandler creates a SemanticCacheHandler wired to the given
 // AI Gateway mock server URL. store may be nil.
 func buildPrewarmHandler(t *testing.T, aiGWURL string, store cache.SemanticCacheStore) *cache.SemanticCacheHandler {
 	t.Helper()
+	var base peer.URLProvider
+	if aiGWURL != "" {
+		base = peer.Static(aiGWURL)
+	}
 	return cache.NewSemanticCacheHandler(cache.SemanticCacheHandlerDeps{
-		Store:        store,
-		AIGatewayURL: aiGWURL,
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:         store,
+		AIGatewayBase: base,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 }
 
@@ -209,10 +217,11 @@ func TestPrewarm_GatewayUnavailable_503(t *testing.T) {
 	}
 }
 
-// TestPrewarm_NoAIGatewayURL_503 locks the unconfigured AI GW URL case.
+// TestPrewarm_NoAIGatewayURL_503 locks the missing-provider case: no
+// AIGatewayBase wired at all must answer 503 PEER_SERVICE_UNAVAILABLE.
 func TestPrewarm_NoAIGatewayURL_503(t *testing.T) {
 	e := echo.New()
-	h := buildPrewarmHandler(t, "" /* no URL */, nil)
+	h := buildPrewarmHandler(t, "" /* no provider */, nil)
 	e.POST("/api/admin/semantic-cache/prewarm", h.PrewarmCache)
 
 	rec := httptest.NewRecorder()
@@ -224,8 +233,35 @@ func TestPrewarm_NoAIGatewayURL_503(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("want 503, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "gateway_unavailable") {
-		t.Errorf("body missing code: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing code %s: %s", peer.CodeUnavailable, rec.Body.String())
+	}
+}
+
+// TestPrewarm_ResolverError_503 locks the transient-resolution case: the
+// Hub-backed provider erroring (gateway not registered yet / Hub down) must
+// answer 503 PEER_SERVICE_UNAVAILABLE — never a raw 500 or 502.
+func TestPrewarm_ResolverError_503(t *testing.T) {
+	e := echo.New()
+	h := cache.NewSemanticCacheHandler(cache.SemanticCacheHandlerDeps{
+		AIGatewayBase: func(context.Context) (string, error) {
+			return "", errors.New("peer service URL not reported yet")
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	e.POST("/api/admin/semantic-cache/prewarm", h.PrewarmCache)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/semantic-cache/prewarm",
+		strings.NewReader(singlePrewarmEntry()))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing code %s: %s", peer.CodeUnavailable, rec.Body.String())
 	}
 }
 
@@ -486,7 +522,7 @@ func TestPrewarm_AttachesBearer(t *testing.T) {
 	})
 
 	h := cache.NewSemanticCacheHandler(cache.SemanticCacheHandlerDeps{
-		AIGatewayURL:           gw.URL,
+		AIGatewayBase:          peer.Static(gw.URL),
 		AIGatewayInternalToken: tok,
 		Logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

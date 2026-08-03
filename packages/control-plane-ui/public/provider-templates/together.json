@@ -6,9 +6,100 @@
   "adapterType": "together",
   "models": [
     {
+      "code": "moonshotai/Kimi-K2.5",
+      "name": "Kimi K2.5 (Together)",
+      "description": "Moonshot Kimi K2.5 on Together serverless. 256k context with vision.",
+      "providerModelId": "moonshotai/Kimi-K2.5",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 0.5,
+      "outputPricePerMillion": 2.8,
+      "maxContextTokens": 256000
+    },
+    {
+      "code": "zai-org/GLM-4.7",
+      "name": "GLM-4.7 (Together)",
+      "description": "Zhipu GLM-4.7 on Together serverless.",
+      "providerModelId": "zai-org/GLM-4.7",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 0.45,
+      "outputPricePerMillion": 2,
+      "maxContextTokens": 200000
+    },
+    {
+      "code": "Qwen/Qwen3.5-397B-A17B",
+      "name": "Qwen3.5 397B (Together)",
+      "description": "Alibaba Qwen3.5 397B MoE on Together serverless.",
+      "providerModelId": "Qwen/Qwen3.5-397B-A17B",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.6,
+      "outputPricePerMillion": 3.6,
+      "maxContextTokens": 262144
+    },
+    {
+      "code": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+      "name": "Qwen3 Coder 480B (Together)",
+      "description": "Alibaba Qwen3 Coder 480B MoE on Together serverless.",
+      "providerModelId": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 2,
+      "outputPricePerMillion": 2,
+      "maxContextTokens": 256000
+    },
+    {
+      "code": "deepseek-ai/DeepSeek-V3.1",
+      "name": "DeepSeek V3.1 (Together)",
+      "description": "DeepSeek V3.1 on Together serverless.",
+      "providerModelId": "deepseek-ai/DeepSeek-V3.1",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 0.6,
+      "outputPricePerMillion": 1.7,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384
+    },
+    {
+      "code": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+      "name": "Llama 4 Maverick 17B (Together)",
+      "description": "Meta Llama 4 Maverick on Together serverless.",
+      "providerModelId": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.27,
+      "outputPricePerMillion": 0.85
+    },
+    {
       "code": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      "name": "Llama 3.3 70B Instruct Turbo",
-      "description": "Meta's flagship 70B Llama 3.3 served via Together AI's Turbo (FP8) inference profile.",
+      "name": "Llama 3.3 70B Turbo (Together)",
+      "description": "Meta Llama 3.3 70B on Together serverless.",
       "providerModelId": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
       "type": "chat",
       "features": [
@@ -16,74 +107,9 @@
         "streaming",
         "json_mode"
       ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 1.04,
-      "outputPricePerMillion": 1.04
-    },
-    {
-      "code": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
-      "name": "Llama 3.1 405B Instruct Turbo",
-      "description": "Meta's 405B reference model, served at FP8 for production cost.",
-      "providerModelId": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "status": "deprecated"
-    },
-    {
-      "code": "Qwen/Qwen2.5-72B-Instruct-Turbo",
-      "name": "Qwen 2.5 72B Instruct Turbo",
-      "description": "Alibaba's Qwen 2.5 72B served via Together's Turbo profile.",
-      "providerModelId": "Qwen/Qwen2.5-72B-Instruct-Turbo",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
-      "maxContextTokens": 131072,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 1.2,
-      "outputPricePerMillion": 1.2
-    },
-    {
-      "code": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      "name": "Mixtral 8x7B Instruct",
-      "description": "Mistral's 8x7B mixture-of-experts.",
-      "providerModelId": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
-      "maxContextTokens": 32768,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 0.6,
-      "outputPricePerMillion": 0.6
-    },
-    {
-      "code": "deepseek-ai/DeepSeek-V3",
-      "name": "DeepSeek V3",
-      "description": "DeepSeek's V3 chat model.",
-      "providerModelId": "deepseek-ai/DeepSeek-V3",
-      "type": "chat",
-      "features": [
-        "function_calling",
-        "streaming"
-      ],
-      "maxContextTokens": 65536,
-      "cachedInputReadPricePerMillion": null,
-      "cachedInputWritePricePerMillion": null,
-      "inputPricePerMillion": 1.25,
-      "outputPricePerMillion": 1.25
+      "inputPricePerMillion": 0.88,
+      "outputPricePerMillion": 0.88,
+      "maxContextTokens": 131072
     }
   ]
 }

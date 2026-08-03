@@ -28,8 +28,22 @@ spillstore setting: the inline-vs-spill threshold is an admin concern, while the
 spillstore owns only where spilled bytes land and how long they live. The emit
 helper (`packages/shared/storage/spillstore/emit.go`) applies the rule: with no
 store configured, or a body below the cutoff, it emits inline; otherwise it writes
-to the store and emits a spill reference, falling back to inline if the write
-fails so a storage outage never drops the audit row.
+to the store and emits a spill reference.
+
+When a `Put` fails, the helper falls back to inline rather than dropping the audit
+row — but the fallback is **bounded to the same cutoff an inline body is already
+allowed to carry**, and the resulting body is marked `Truncated` while `SizeBytes`
+keeps reporting the body's real size. So the record says *this body was N bytes,
+here is the prefix we could keep*. An unbounded fallback defeats itself: a payload
+large enough to need spilling becomes a publish larger than the MQ `max_payload`,
+and the row is lost anyway — loudly, elsewhere, after the memory has been spent
+several times over.
+
+Note the asymmetry: that bound applies to a **failed** spill. With **no** spill
+backend configured at all, an oversize body is still carried inline whole,
+because keeping bodies inline is then a deliberate configuration rather than a
+malfunction. Bounding that case too would start truncating audit bodies that are
+stored complete today, so it is a data-completeness decision rather than a bug fix.
 
 ## 2. The `SpillStore` interface
 
@@ -94,6 +108,61 @@ read of that ref returns not-found, which matches the at-most-once guarantee the
 audit pipeline already makes. Services should close the store on shutdown to drain
 the queue.
 
+### Is a backend actually configured? — the `storage.spill` runtime source
+
+`enabled` defaults to **false**, and the factory returns no store when it is off.
+Everything downstream then keeps bodies inline — including when an admin has set an
+inline-vs-spill threshold. That control cannot see the backend it depends on, so it
+reads as configured while doing nothing. (A second control, a per-host raw-body-spill
+switch, was removed outright: nothing ever read it and every stored value was NULL.) That is not hypothetical: the shipped `*.dev.yaml` files enable spill,
+and none of the prod-shaped `*.config.yaml` files carry a `spill:` block at all.
+
+Two signals close that gap, and neither adds an admin surface:
+
+**And how much is already there — `residency`.** The same source now carries a bounded
+measurement of the backend's current contents: object count, total bytes, and the oldest /
+newest object timestamps. It is measured **when the source is read**, not at boot, because
+that number moves while the process runs.
+
+Three properties make it safe to be the first consumer of `SpillStore.Stat()`, which
+previously had none on a shipped interface precisely because it was not safe:
+
+- **Bounded.** `localfs` stops at 50 000 objects and `s3` at 10 list pages; past the bound
+  `truncated: true` and `scanLimit` are reported, so a lower bound never reads as a total.
+  The s3 bound was already there and was **silent** — it returned the partial numbers
+  unlabelled, which is the same defect shape as a silent drop.
+- **Interruptible.** `localfs.Stat` now checks its context per entry (not per directory — one
+  flat day-directory with a million files would otherwise never reach a cancellation point),
+  and a cancelled scan returns both the partial numbers AND `ctx.Err()`, so a timeout reads as
+  a timeout rather than as an almost-empty store.
+- **Non-fatal.** A measurement failure leaves `residency` **absent** rather than zero-valued
+  and puts the reason on `effect`. "We could not look" and "the store is empty" are different
+  answers, and a zero count reads as the second when it means the first.
+
+- **At boot**, the factory logs its posture on every path. The two enabled paths
+  already announced themselves; the disabled path now does too, naming the
+  consequence rather than only the state.
+- **At runtime**, the AI Gateway and the Compliance Proxy — the two services that
+  capture bodies, and therefore the two where the threshold applies — register a
+  `storage.spill` source on their existing runtime-introspection registry. It reaches
+  an admin through the surface that already exists: `GET /debug/runtime` → the Hub
+  bridge → `GET /api/admin/nodes/:id/runtime` → the node detail page's Runtime State
+  tab, which renders sources generically. No new endpoint, no new page, no new IAM
+  action.
+
+`spillfactory.Describe` builds the payload from the boot config and the store the
+factory actually returned. It reports whether a backend exists, which one, **where**
+it stores, whether that location is host-local, whether writes are async, and the
+consequence in plain language. Location and host-locality are there for a specific
+failure: two nodes each running their own localfs root write successfully and read
+each other's objects never, which is only visible by comparing roots across nodes —
+otherwise it surfaces much later as a `not_found_host_local` read failure (section 5).
+
+It deliberately does not call `Stat()`. `Stat` is the natural source of object counts,
+but the localfs implementation is an unbounded `filepath.Walk` that ignores its
+context, so calling it from an admin endpoint would trade a diagnostic for a stall on
+a large spool.
+
 ### Per-object cap
 
 Each backend enforces a hard per-object ceiling (256 MiB by default). The
@@ -140,7 +209,39 @@ at-rest blob can never be presented as the genuine captured request/response.
 The Hub never decides *whether* to spill — that is the data plane's call. The
 upload API is pure infrastructure: token minting and a token-gated sink.
 
-## 5. Retention
+## 5. Reading a spilled body back
+
+The Control Plane is the only reader of spilled traffic bodies. It resolves them
+in two places — the traffic drawer (`resolveSpillBody`, which shapes the bytes for
+the UI) and the view-time normalize recompute (`rawSpillBody`, which needs the
+captured bytes verbatim so spilled SSE is not mis-detected as a quoted JSON
+string). Both go through one fetch helper, so the integrity gate and the failure
+diagnosis exist once.
+
+A body that cannot be fetched is never an endpoint error: that direction degrades
+to empty and the row still renders. The log is therefore the only place the reason
+appears, and it carries a stable `cause` label plus an operator-facing `remedy`,
+alongside `stage` (`view` or `normalize`), `direction`, and both backend names.
+
+| `cause` | What happened | What the operator does |
+|---|---|---|
+| `not_found_host_local` | A `localfs` ref, and the object is not on this host | **Structural.** A localfs ref is only readable on the host that wrote it. Either mount the same root on every node or move to a shared backend (s3). Retention may also have swept it |
+| `not_found` | Absent from a shared backend | Swept by retention, or an async upload was queued and lost before it landed |
+| `backend_mismatch` | The ref names a different backend than this node is configured with | Refs written before a backend change are not readable through the new one |
+| `transport` | The backend could not be reached | Connectivity, credentials, permissions. The bytes are probably still there |
+| `integrity` | The bytes do not match the recorded SHA-256 | A security event — the blob was refused, not served. See the tamper note in section 4 |
+| `read` | The object opened, then the stream broke | A transfer fault against a live backend |
+| `ref_decode` | The row's `spill_ref` column is not a decodable ref | A defect in the row, not in storage |
+
+The first cause is the one the labels exist for. Section 3 states that all services
+sharing a localfs store must point at the same root; nothing enforced it, so a
+deployment that violated it made *every* spilled body permanently unreadable from
+the Control Plane while logging the same sentence a transient S3 hiccup produces.
+Distinguishing "unreachable by construction" from "unfetchable right now" is the
+difference between fixing the deployment and waiting for a retry that will never
+succeed.
+
+## 6. Retention
 
 Each backend bounds its own footprint with three controls, all set per backend in
 the `spill:` config block. The per-object cap (256 MiB default) bounds any single
@@ -160,7 +261,7 @@ idempotent. The retention horizon comes from the backend's `retentionDays`
 runs alongside, not instead of, any backend-native lifecycle (an S3 bucket
 lifecycle rule remains a fine belt-and-suspenders for age-based expiry).
 
-## 6. Configuration ownership
+## 7. Configuration ownership
 
 Two configs govern the spill subsystem, split by audience:
 
@@ -177,10 +278,13 @@ body travels inline without touching where spilled bytes are stored.
 - `packages/shared/storage/spillstore/spillstore.go` — `SpillStore` + `Presigner` interfaces, `SpillRef`
 - `packages/shared/storage/spillstore/emit.go` — inline-vs-spill emit helper
 - `packages/shared/storage/spillstore/spillfactory/factory.go` — `FactoryConfig` + backend construction
+- `packages/shared/storage/spillstore/spillfactory/availability.go` — the `storage.spill` runtime posture
 - `packages/shared/storage/spillstore/localfs/` — localfs backend
 - `packages/shared/storage/spillstore/s3/` — S3 backend + presign
 - `packages/shared/storage/spillstore/async/` — async upload wrapper
 - `packages/shared/storage/spillstore/spillsweep/` — per-service periodic sweep loop
 - `packages/shared/audit/body.go` — `Body` / `SpillRef` shapes
+- `packages/control-plane/internal/traffic/handler/traffic/traffic_spill.go` — the shared fetch + integrity gate
+- `packages/control-plane/internal/traffic/handler/traffic/spill_diag.go` — read-failure cause classification
 - `packages/nexus-hub/internal/traffic/ingest/spill/spill_uploads.go` — agent mint + blob upload endpoints
 - `packages/agent/cmd/agent/wiring/bridgedeps.go` — agent local spill store wiring

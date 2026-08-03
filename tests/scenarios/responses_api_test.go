@@ -1,5 +1,5 @@
 // Responses-API family (S-062) — verifies the OpenAI /v1/responses
-// ingress shipped under E56. Closes the E86 E2E coverage gap flagged
+// ingress. Closes the E2E coverage gap flagged
 // in 00-catalog.md / COVERAGE.md ("≥3 scenarios: NS, SSE, error
 // envelope. GAP — only one Responses scenario implied").
 package scenarios_test
@@ -17,35 +17,35 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/tests/scenarios/helpers"
 )
 
-// TestS062_ResponsesAPI_NonStreamAndError — PM-grade e2e for E56
+// TestS062_ResponsesAPI_NonStreamAndError — PM-grade e2e for the
 // /v1/responses ingress, covering three arms in one scenario.
 //
 // BRAINSTORM (pre): the Responses API is Nexus's OpenAI-shape ingress
-// for the new stateless Responses surface (E56). The adapter is wired
+// for the stateless Responses surface. The adapter is wired
 // in packages/ai-gateway/internal/providers/specs/openai/codec and the
 // hub_ingress handler stamps path='/v1/responses' on the
 // traffic_event row so analytics can split chat-vs-responses traffic.
 // Three failure modes are interesting enough to assert independently:
 //
-//   1. Non-stream success path — proves the codec round-trips a basic
-//      Responses request, the upstream returns object="response", and
-//      the audit MQ writes a traffic_event row with endpoint_type set
-//      correctly. Without this row the analytics rollup misclassifies
-//      Responses traffic as chat-completions and the E56-S5 invariant
-//      breaks silently.
+//  1. Non-stream success path — proves the codec round-trips a basic
+//     Responses request, the upstream returns object="response", and
+//     the audit MQ writes a traffic_event row with endpoint_type set
+//     correctly. Without this row the analytics rollup misclassifies
+//     Responses traffic as chat-completions and the endpoint_type invariant
+//     breaks silently.
 //
-//   2. Streaming (SSE) path — Responses streams use the same
-//      event-stream framing as /v1/chat/completions but a different
-//      event schema. The codec must emit at least one "data: " line
-//      before EOF; if the stream pipeline drops back to JSON the body
-//      will be a single JSON object with no SSE framing.
+//  2. Streaming (SSE) path — Responses streams use the same
+//     event-stream framing as /v1/chat/completions but a different
+//     event schema. The codec must emit at least one "data: " line
+//     before EOF; if the stream pipeline drops back to JSON the body
+//     will be a single JSON object with no SSE framing.
 //
-//   3. Cross-format guard (E56-S6) — the Responses API on Nexus is
-//      stateless-only. previous_response_id / store=true / built-in
-//      tools must be rejected with HTTP 400 + a JSON error envelope
-//      so an SDK that defaults to stateful mode fails fast instead of
-//      silently dropping conversation state. A drift here looks like
-//      "conversation works but every turn forgets the previous one".
+//  3. Cross-format guard — the Responses API on Nexus is
+//     stateless-only. previous_response_id / store=true / built-in
+//     tools must be rejected with HTTP 400 + a JSON error envelope
+//     so an SDK that defaults to stateful mode fails fast instead of
+//     silently dropping conversation state. A drift here looks like
+//     "conversation works but every turn forgets the previous one".
 //
 // Cross-service path: AI Gw codec (openai/responses) → adapter →
 // upstream → response normalizer → MQ → DB (traffic_event with
@@ -213,27 +213,30 @@ func TestS062_ResponsesAPI_NonStreamAndError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeMetrics post: %v", err)
 	}
-	respReqDelta := postMetrics.CounterSum(
-		"nexus_normalize_total",
-		map[string]string{"adapter": "openai-responses", "direction": "request"},
-	) - preMetrics.CounterSum(
-		"nexus_normalize_total",
-		map[string]string{"adapter": "openai-responses", "direction": "request"},
-	)
+	// nexus_requests_total{endpoint="responses",status="2xx"} — the counter the
+	// gateway actually exports. This used to bind nexus_normalize_total, which has
+	// never existed (the only normalize counters are nexus_normalize_panic_total and
+	// nexus_prehook_normalize_drop_total), with an `adapter` label the exported
+	// series does not carry. See the fuller note in onboarding_test.go: an
+	// unauthenticated /metrics probe reads 401 as "metric absent", which is how a
+	// working name got replaced with an impossible one — and ScrapeMetrics then
+	// 401'd too, so the broken assertion never ran.
+	//
+	// Scoping to status="2xx" is what makes the floor of 2 correct: Arm C is a
+	// deliberate 400, so it lands in a different status bucket and cannot inflate
+	// the count either way.
+	respLabels := map[string]string{"endpoint": "responses", "status": "2xx"}
+	respReqDelta := postMetrics.CounterSum("nexus_requests_total", respLabels) -
+		preMetrics.CounterSum("nexus_requests_total", respLabels)
 	if respReqDelta < 2 {
-		// Floor is 2 — Arms A + B are guaranteed to increment the
-		// request counter (200 path). Arm C may or may not depending
-		// on whether the S6 guard runs before or after the normalize
-		// counter increment; we don't bind the test to that internal
-		// ordering. < 2 means the ingress codec never registered the
-		// successful arms.
-		t.Errorf("nexus_normalize_total{adapter=openai-responses,direction=request} delta=%.0f, want ≥ 2 across arms A+B (Arm C optional) — Responses ingress counter did not advance",
-			respReqDelta)
+		// Arms A + B are the two 200 paths; both must register.
+		t.Errorf("nexus_requests_total{endpoint=responses,status=2xx} delta=%.0f, want ≥ 2 across "+
+			"arms A+B — the Responses ingress did not register its successful arms", respReqDelta)
 	}
 
 	// Cheap signal that the SSE body contained the "response.created"
 	// event family (not load-bearing — keep as a log line, not an
-	// assertion, since event names may evolve as E56 grows).
+	// assertion, since event names may evolve).
 	if strings.Contains(string(respB), "response.") {
 		t.Logf("Arm B SSE includes response.* event family")
 	}

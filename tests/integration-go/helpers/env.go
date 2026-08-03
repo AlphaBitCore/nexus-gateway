@@ -4,8 +4,8 @@
 // three stacks (bash via loadenv.sh, Python via loadenv.py, Go here)
 // means an operator only edits one file per target to repoint a test
 // run. Target selection mirrors the bash/Python loaders:
-//   1. NEXUS_TEST_TARGET env var (preferred).
-//   2. Defaults to "local" — matches the loadenv.sh TTY-default.
+//  1. NEXUS_TEST_TARGET env var (preferred).
+//  2. Defaults to "local" — matches the loadenv.sh TTY-default.
 package helpers
 
 import (
@@ -35,6 +35,36 @@ type Env struct {
 	PGUser          string
 	PGPassword      string
 	PGDB            string
+
+	// ProxyBumpKey / ProxyBumpBaseURL / ProxyBumpModel are the fixture for the
+	// compliance-proxy CONNECT (TLS-bump) path: a PLAINTEXT provider key and an
+	// OpenAI-compatible endpoint, because the proxy bumps a client's own outbound
+	// request and the key rides inside it.
+	//
+	// ProxyBumpKey resolves NEXUS_PROXY_TEST_KEY first (so a CI secret still
+	// overrides) and falls back to OPENAI_API_KEY — the SAME variable
+	// tests/scripts/bump-regression.py already uses for this surface, so the whole
+	// compliance-proxy fixture has one source instead of two.
+	//
+	// Why this is on Env at all: LoadEnv reads tests/.env.<target> into a private
+	// map and never exports it to the process environment, while tests/lib/
+	// loadenv.sh (the shell path) does export. A Go scenario reading os.Getenv
+	// therefore cannot see what a Python harness in the same repo can, which is
+	// why the CONNECT scenario skipped on every local run since it was written.
+	ProxyBumpKey     string
+	ProxyBumpBaseURL string
+	ProxyBumpModel   string
+
+	// ProxyBumpKeySource names WHERE ProxyBumpKey came from, so a credential
+	// failure can be attributed instead of guessed. LoadEnv deliberately lets a
+	// real environment variable beat the file ("so CI overrides Just Work"), which
+	// means a stale ambient export is indistinguishable from an intentional CI
+	// override — and the symptom is a provider 401 that looks like the provider's
+	// fault. Measured: an ambient OPENAI_API_KEY of the same length and prefix as
+	// the one in tests/.env.local, but a different value, sent the CONNECT
+	// scenario into a 401 while curl using the file's value got 200 through the
+	// same proxy. That cost a false "the proxy mangles Authorization" hypothesis.
+	ProxyBumpKeySource string
 }
 
 var (
@@ -98,7 +128,29 @@ func loadEnvOnce() (*Env, error) {
 		PGUser:          get("NEXUS_PG_USER", "postgres"),
 		PGPassword:      get("NEXUS_PG_PASSWORD", "postgres"),
 		PGDB:            get("NEXUS_PG_DB", "nexus_gateway"),
+
+		ProxyBumpKey:       firstNonEmpty(get("NEXUS_PROXY_TEST_KEY", ""), get("OPENAI_API_KEY", "")),
+		ProxyBumpKeySource: bumpKeySource(values),
+		// INCLUDES /v1: the scenario appends only "/chat/completions", which is the
+		// OpenAI-compatible "base URL" convention (OPENAI_BASE_URL=.../v1). A
+		// default without it produced a 404 the scenario then misfiled as a
+		// provider problem.
+		ProxyBumpBaseURL: get("NEXUS_PROXY_TEST_BASEURL", "https://api.openai.com/v1"),
+		ProxyBumpModel:   get("NEXUS_PROXY_TEST_MODEL", "gpt-4o-mini"),
 	}, nil
+}
+
+// RepoRoot returns the repository root, located by the same marker walk
+// repoTestsRoot uses. Scenarios need it because a default path written relative
+// to the process CWD resolves differently depending on which directory `go test`
+// was invoked from — the compliance-proxy CONNECT scenario's dev-CA default was
+// relative, so it never resolved from tests/scenarios/ and the scenario skipped.
+func RepoRoot() (string, error) {
+	testsDir, err := repoTestsRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(testsDir), nil
 }
 
 func repoTestsRoot() (string, error) {
@@ -155,4 +207,36 @@ func (e *Env) PGDSN() string {
 		" user=" + e.PGUser +
 		" password=" + e.PGPassword +
 		" dbname=" + e.PGDB
+}
+
+// firstNonEmpty returns the first argument that is not the empty string.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// bumpKeySource reports which layer supplied the bump key, in the same order
+// LoadEnv resolves it. Returns a human-readable provenance string, never the
+// key itself.
+func bumpKeySource(values map[string]string) string {
+	if os.Getenv("NEXUS_PROXY_TEST_KEY") != "" {
+		return "NEXUS_PROXY_TEST_KEY (process environment)"
+	}
+	if values["NEXUS_PROXY_TEST_KEY"] != "" {
+		return "NEXUS_PROXY_TEST_KEY (tests/.env file)"
+	}
+	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		if fileVal := values["OPENAI_API_KEY"]; fileVal != "" && fileVal != v {
+			return "OPENAI_API_KEY (process environment) — WHICH DIFFERS FROM the value in tests/.env; the ambient export wins by design, so unset it to use the repo's"
+		}
+		return "OPENAI_API_KEY (process environment)"
+	}
+	if values["OPENAI_API_KEY"] != "" {
+		return "OPENAI_API_KEY (tests/.env file)"
+	}
+	return "unset"
 }

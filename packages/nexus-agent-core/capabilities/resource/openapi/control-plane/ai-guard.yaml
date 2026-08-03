@@ -41,7 +41,7 @@ paths:
                                 timeoutMs: 30000
                                 cacheTtlSeconds: 300
                                 backendFingerprint: 9f2c1a7b...
-                                inputStrategy: system_plus_last_user
+                                inputStrategy: full_truncated
                                 modelContextLimit: 128000
         put:
             operationId: putConfig
@@ -55,7 +55,7 @@ paths:
                 its in-process snapshot on the next request. Server-side defaults are
                 applied when omitted: `timeoutMs` defaults to 30000 when not positive,
                 `cacheTtlSeconds` is clamped to 0 when negative, `inputStrategy` falls back
-                to `system_plus_last_user` when not one of the accepted values, and
+                to `full_truncated` when not one of the accepted values, and
                 `modelContextLimit` is clamped to 0 when negative.
             x-nexus-iam-action: iam.ResourceAIGuardConfig.Action(iam.VerbUpdate)
             x-nexus-tier: confirm
@@ -72,7 +72,7 @@ paths:
                             promptTemplate: "Classify the following content for policy violations.\n\n{{content}}"
                             timeoutMs: 30000
                             cacheTtlSeconds: 300
-                            inputStrategy: system_plus_last_user
+                            inputStrategy: full_truncated
                             modelContextLimit: 128000
             responses:
                 "400":
@@ -233,9 +233,9 @@ components:
                     type: string
                     description: |-
                         Which portion of the conversation is sent to the classifier. An
-                        unrecognized value is silently replaced with `system_plus_last_user`.
+                        unrecognized value is silently replaced with `full_truncated`.
                     enum:
-                        # Source: PutConfig validStrategies map; an out-of-set value is defaulted to system_plus_last_user (not rejected).
+                        # Source: PutConfig validStrategies map; an out-of-set value is defaulted to full_truncated (not rejected).
                         - last_user
                         - system_plus_last_user
                         - recent_turns

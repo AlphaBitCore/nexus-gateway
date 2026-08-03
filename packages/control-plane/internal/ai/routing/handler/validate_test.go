@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+// latencyConfigWithTargets builds a latency strategy config JSON carrying n
+// {providerId,modelId} entries under the generic "targets" key.
+func latencyConfigWithTargets(n int) string {
+	var b strings.Builder
+	b.WriteString(`{"type":"latency","targets":[`)
+	for i := range n {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`{"providerId":"p","modelId":"m"}`)
+	}
+	b.WriteString(`]}`)
+	return b.String()
+}
+
 // TestValidateMatchConditions: the admin write path rejects the legacy
 // field name "organizations" in favor of "projects".
 func TestValidateMatchConditions(t *testing.T) {
@@ -66,7 +81,7 @@ func TestValidateMatchConditions(t *testing.T) {
 // free-string value with an operator-facing message that lists the allowed
 // set (F-0272b).
 func TestValidateStrategyType(t *testing.T) {
-	for _, st := range []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "policy", "smart"} {
+	for _, st := range []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "policy", "smart", "latency"} {
 		t.Run("accept_"+st, func(t *testing.T) {
 			if msg, ok := validateStrategyType(st); !ok {
 				t.Errorf("strategyType %q should be accepted; got msg=%q", st, msg)
@@ -125,6 +140,22 @@ func TestValidateStrategyConfig(t *testing.T) {
 		{
 			name:   "valid smart node",
 			raw:    `{"type":"smart","routerProviderId":"p","routerModelId":"m","maxTokens":256,"timeoutMs":3000}`,
+			wantOK: true,
+		},
+		{
+			name:   "valid latency node (targets under generic key)",
+			raw:    `{"type":"latency","targets":[{"providerId":"p","modelId":"m"}]}`,
+			wantOK: true,
+		},
+		{
+			name:          "latency node over the target cap is rejected",
+			raw:           latencyConfigWithTargets(maxLatencyTargets + 1),
+			wantOK:        false,
+			wantMsgSubstr: "at most",
+		},
+		{
+			name:   "latency node exactly at the target cap is accepted",
+			raw:    latencyConfigWithTargets(maxLatencyTargets),
 			wantOK: true,
 		},
 		{

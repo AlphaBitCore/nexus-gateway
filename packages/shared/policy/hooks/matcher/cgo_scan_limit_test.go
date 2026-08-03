@@ -51,6 +51,9 @@ func TestAdaptiveCgoScanLimit(t *testing.T) {
 // TestVectorscan_ScanUnderCgoLimit installs a small semaphore directly and drives
 // many concurrent scans through it, proving the cgo concurrency cap does not
 // corrupt or drop results (correctness under the limiter).
+// Load-bearing beyond this package: named by docker/services/Dockerfile and
+// scripts/release/build-tarball.sh as one of the three firing self-tests a
+// release build must see pass. Renaming it fails those builds.
 func TestVectorscan_ScanUnderCgoLimit(t *testing.T) {
 	old := cgoScanSem
 	cgoScanSem = make(chan struct{}, 2) // cap 2 → at most 2 concurrent cgo scans
@@ -91,6 +94,7 @@ func TestVectorscan_ScanUnderCgoLimit(t *testing.T) {
 // TestVectorscan_ScanComplete_ReportsCompletion covers the CompleteScanner path:
 // a normal (non-truncated) scan reports complete=true and still returns its hits;
 // an empty-segment scan is vacuously complete.
+// Load-bearing beyond this package: see the note on TestVectorscan_ScanUnderCgoLimit.
 func TestVectorscan_ScanComplete_ReportsCompletion(t *testing.T) {
 	m, bad := CompileVectorscan([]Pattern{{ID: 0, Expr: `AKIA[0-9A-Z]{16}`}})
 	if len(bad) != 0 {

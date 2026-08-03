@@ -270,6 +270,45 @@ func (s stubBridgeForDebug) ResponseCanonicalToIngressEmbeddings(_ provcore.Form
 	return canonical, nil
 }
 
+func (s stubBridgeForDebug) ImagesWireShapeForTarget(target provcore.Format) typology.WireShape {
+	switch target {
+	case provcore.FormatGemini:
+		return typology.WireShapeGeminiImagesGenerateContent
+	case provcore.FormatOpenAI:
+		return typology.WireShapeOpenAIImages
+	}
+	return typology.WireShapeNone
+}
+
+func (s stubBridgeForDebug) IngressImagesToCanonical(_ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, error) {
+	return body, nil
+}
+
+func (s stubBridgeForDebug) IngressImagesToWire(_, _ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, []string, error) {
+	return body, nil, nil
+}
+
+func (s stubBridgeForDebug) RerankWireShapeForTarget(target provcore.Format) typology.WireShape {
+	switch target {
+	case provcore.FormatCohere:
+		return typology.WireShapeCohereRerank
+	case provcore.FormatVoyage:
+		return typology.WireShapeVoyageRerank
+	}
+	return typology.WireShapeNone
+}
+
+func (s stubBridgeForDebug) IngressRerankToCanonical(_ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, error) {
+	return body, nil
+}
+
+func (s stubBridgeForDebug) IngressRerankToWire(_, _ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, []string, error) {
+	return body, nil, nil
+}
+func (s stubBridgeForDebug) StripInternalCarriersForTarget(canon []byte, _ provcore.Format) []byte {
+	return canon
+}
+
 func TestSchemaMode_nonNilBridge_notRoutable_rejected(t *testing.T) {
 	got := schemaMode(provcore.FormatAnthropic, provcore.FormatOpenAI, typology.WireShapeOpenAIChat, stubBridgeForDebug{routable: false})
 	if got != "rejected" {

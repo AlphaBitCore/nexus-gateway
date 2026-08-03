@@ -1,6 +1,7 @@
 package cacheconfig
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -24,16 +25,58 @@ func TestResolve_AllTiersFallthrough(t *testing.T) {
 	}
 }
 
-func TestResolve_GlobalSetsNormaliser(t *testing.T) {
+func TestResolve_NoGlobalTier_OnlyAdapterAndProviderSourcesAppear(t *testing.T) {
+	// Tier 1 is retired. Every knob must resolve from Tier 2 / Tier 3 / code
+	// default — no knob may ever be attributed to a global tier, and the two
+	// knobs Tier 1 used to carry (normaliser_enabled, cache_master_kill_switch)
+	// must not appear in the effective view at all.
 	blob := CacheConfigBlob{
-		Global: GlobalConfig{NormaliserEnabled: true, CacheMasterKillSwitch: false},
+		Adapters: map[string]AdapterConfig{
+			"anthropic": {MarkerInjectEnabled: bp(true)},
+		},
+		Providers: map[string]ProviderConfig{
+			"p1": {MarkerBoundary3Enabled: bp(true)},
+		},
 	}
 	eff := Resolve(blob, "p1", "anthropic")
-	if !eff.NormaliserEnabled {
-		t.Errorf("normaliser_enabled: want true from Tier 1, got false")
+
+	if !eff.MarkerInjectEnabled || eff.Sources["marker_inject_enabled"] != SourceAdapterDefault {
+		t.Errorf("marker_inject_enabled: want true/adapter-default, got %v/%q",
+			eff.MarkerInjectEnabled, eff.Sources["marker_inject_enabled"])
 	}
-	if eff.Sources["normaliser_enabled"] != SourceGlobalDefault {
-		t.Errorf("normaliser_enabled source: want %q, got %q", SourceGlobalDefault, eff.Sources["normaliser_enabled"])
+	if !eff.MarkerBoundary3Enabled || eff.Sources["marker_boundary3_enabled"] != SourceProviderOverride {
+		t.Errorf("marker_boundary3_enabled: want true/provider-override, got %v/%q",
+			eff.MarkerBoundary3Enabled, eff.Sources["marker_boundary3_enabled"])
+	}
+	for knob, src := range eff.Sources {
+		if src == Source("global-default") {
+			t.Errorf("knob %q attributed to the retired global tier", knob)
+		}
+	}
+	for _, retired := range []string{"normaliser_enabled", "cache_master_kill_switch"} {
+		if _, present := eff.Sources[retired]; present {
+			t.Errorf("retired Tier-1 knob %q still resolved into the effective view", retired)
+		}
+	}
+}
+
+func TestCacheConfigBlob_WireShapeIsAdaptersAndProvidersOnly(t *testing.T) {
+	// The blob is the Hub shadow `cache` payload. With Tier 1 gone the wire
+	// shape is exactly {adapters, providers}; a stray `global` key would mean
+	// the gateway is still being handed a retired tier.
+	raw, err := json.Marshal(CacheConfigBlob{
+		Adapters:  map[string]AdapterConfig{"anthropic": {MarkerInjectEnabled: bp(true)}},
+		Providers: map[string]ProviderConfig{"p1": {TTLSeconds: ip(7200)}},
+	})
+	if err != nil {
+		t.Fatalf("marshal blob: %v", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		t.Fatalf("unmarshal blob: %v", err)
+	}
+	if len(keys) != 2 || keys["adapters"] == nil || keys["providers"] == nil {
+		t.Fatalf("blob wire shape: want exactly {adapters, providers}, got %s", raw)
 	}
 }
 

@@ -12,9 +12,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/runtimeapi"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
@@ -31,12 +34,41 @@ type IntrospectDeps struct {
 	ObservabilityGet    func() *telemetry.Config
 	ConfigKeyRecorder   *runtimeintrospect.KeyStateRecorder
 	AuthToken           string
+	SpillAvailability   spillfactory.Availability
+	// SpillStore + SpillConfig let the storage.spill source measure residency when
+	// it is READ. Nil store keeps the boot-time description.
+	SpillStore  spillstore.SpillStore
+	SpillConfig spillfactory.FactoryConfig
 }
 
 // InitIntrospectRegistry builds the runtime introspection registry and mounts
 // /debug/runtime on mux.
 func InitIntrospectRegistry(deps IntrospectDeps, mux *http.ServeMux) *runtimeintrospect.Registry {
 	introspectReg := runtimeintrospect.New("ai-gateway", deps.AgID, deps.BuildVersion)
+
+	// Always registered, including when no backend exists — the absent case is
+	// the one worth surfacing, since the admin-facing inline-vs-spill threshold
+	// then silently does nothing.
+	introspectReg.Register(runtimeintrospect.SourceFunc{
+		SourceName: "storage.spill",
+		Fn: func(ctx context.Context) (any, error) {
+			if deps.SpillStore == nil {
+				return deps.SpillAvailability, nil
+			}
+			return spillfactory.DescribeWithResidency(ctx, deps.SpillConfig, deps.SpillStore), nil
+		},
+	})
+
+	// Which content-scanning engine this binary compiled in. A build-tag choice,
+	// so nothing else at runtime can answer it, and the two engines differ by an
+	// order of magnitude on large bodies. Registered unconditionally: the RE2
+	// fallback is exactly the case worth surfacing.
+	introspectReg.Register(runtimeintrospect.SourceFunc{
+		SourceName: "policy.matcher",
+		Fn: func(_ context.Context) (any, error) {
+			return matcher.DescribeEngine(), nil
+		},
+	})
 
 	if deps.PayloadCaptureStore != nil {
 		introspectReg.Register(runtimeintrospect.SourceFunc{

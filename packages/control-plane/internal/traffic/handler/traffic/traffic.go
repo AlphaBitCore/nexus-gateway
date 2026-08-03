@@ -2,13 +2,10 @@ package traffic
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	stdjson "encoding/json"
 	"fmt"
 
 	"github.com/goccy/go-json"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,11 +23,18 @@ import (
 // RegisterTrafficRoutes registers traffic event and admin audit log routes.
 func (h *Handler) RegisterTrafficRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
 	g.GET("/traffic", h.ListTrafficEvents, iamMW(iam.ResourceTrafficLog.Action(iam.VerbRead)))
+	// Error-governance aggregation over traffic_event — same read action as
+	// the raw list: the view is a lens over the same rows.
+	g.GET("/traffic/errors/groups", h.ListTrafficErrorGroups, iamMW(iam.ResourceTrafficLog.Action(iam.VerbRead)))
 	g.GET("/traffic/:id", h.GetTrafficEvent, iamMW(iam.ResourceTrafficLog.Action(iam.VerbRead)))
 	// Normalized sidecar for a single traffic event. Returns the canonical
 	// NormalizedPayload(s) plus normalize status / error reason / redaction spans.
 	// Gated by the same read action as /traffic/:id; no separate IAM resource.
 	g.GET("/traffic/:id/normalized", h.GetTrafficEventNormalized, iamMW(iam.ResourceTrafficLog.Action(iam.VerbRead)))
+	// Streams the captured multimodal artifact bytes (image/audio) for inline
+	// preview. Gated by the same read action as /traffic/:id; no separate IAM
+	// resource.
+	g.GET("/traffic/:id/artifact", h.GetTrafficEventArtifact, iamMW(iam.ResourceTrafficLog.Action(iam.VerbRead)))
 	g.GET("/traffic/storage", h.TrafficStorage, iamMW(iam.ResourceTrafficLog.Action(iam.VerbRead)))
 	// Admin audit log routes (separate concern)
 	g.GET("/admin-audit-logs", h.ListAdminAuditLogs, iamMW(iam.ResourceAuditLog.Action(iam.VerbRead)))
@@ -151,14 +155,20 @@ func (h *Handler) ListTrafficEvents(c echo.Context) error {
 		// Route the `deviceId` query param to thing_id so the global
 		// traffic search returns rows uploaded by that agent; keep
 		// `entityId` and `userId` on entity_id for non-agent traffic.
-		EntityID:              firstNonEmpty(c.QueryParam("entityId"), c.QueryParam("userId")),
-		ThingID:               firstNonEmpty(c.QueryParam("thingId"), c.QueryParam("deviceId")),
-		OrgID:                 c.QueryParam("orgId"),
-		EntityType:            c.QueryParam("entityType"),
-		ProjectID:             c.QueryParam("projectId"),
-		VirtualKeyID:          c.QueryParam("virtualKeyId"),
-		ModelUsed:             c.QueryParam("modelUsed"),
-		RequestID:             c.QueryParam("requestId"),
+		EntityID:     firstNonEmpty(c.QueryParam("entityId"), c.QueryParam("userId")),
+		ThingID:      firstNonEmpty(c.QueryParam("thingId"), c.QueryParam("deviceId")),
+		OrgID:        c.QueryParam("orgId"),
+		EntityType:   c.QueryParam("entityType"),
+		ProjectID:    c.QueryParam("projectId"),
+		VirtualKeyID: c.QueryParam("virtualKeyId"),
+		ModelUsed:    c.QueryParam("modelUsed"),
+		ModelExact:   c.QueryParam("modelExact"),
+		EndpointType: c.QueryParam("endpointType"),
+		RequestID:    c.QueryParam("requestId"),
+		// Caller-declared correlation tags (X-Nexus-End-User-Id /
+		// X-Nexus-Session-Id at ingress). Exact match, indexed.
+		EndUserID:             c.QueryParam("endUserId"),
+		SessionID:             c.QueryParam("sessionId"),
 		HookDecision:          c.QueryParam("hookDecision"),
 		ResponseHookDecision:  c.QueryParam("responseHookDecision"),
 		StatusRange:           c.QueryParam("statusRange"),
@@ -312,15 +322,15 @@ func (h *Handler) GetTrafficEvent(c echo.Context) error {
 		if record.RequestBody == nil && len(record.RequestSpillRef) > 0 {
 			if body, err := h.resolveSpillBody(ctx, record.RequestSpillRef); err == nil {
 				record.RequestBody = body
-			} else if h.logger != nil {
-				h.logger.Warn("spill body resolve failed (request)", "trafficEventId", record.ID, "error", err)
+			} else {
+				h.logSpillFetchFailure("view", "request", record.ID, err)
 			}
 		}
 		if record.ResponseBody == nil && len(record.ResponseSpillRef) > 0 {
 			if body, err := h.resolveSpillBody(ctx, record.ResponseSpillRef); err == nil {
 				record.ResponseBody = body
-			} else if h.logger != nil {
-				h.logger.Warn("spill body resolve failed (response)", "trafficEventId", record.ID, "error", err)
+			} else {
+				h.logSpillFetchFailure("view", "response", record.ID, err)
 			}
 		}
 	}
@@ -367,30 +377,15 @@ func renderBody(col json.RawMessage, encoding string) json.RawMessage {
 // types whose bytes parse as JSON are returned as raw JSON; everything
 // else (SSE, multipart, binary) is wrapped as a JSON string. This keeps
 // the UI shape identical regardless of inline-vs-spill storage.
+//
+// The fetch, the sha256 integrity gate (which refuses a tampered at-rest blob
+// so fabricated evidence can never be served as the genuine capture) and the
+// failure diagnosis all live in fetchSpillBytes, shared with the normalize
+// reader. This function owns only the UI shaping.
 func (h *Handler) resolveSpillBody(ctx context.Context, refJSON []byte) (json.RawMessage, error) {
-	var ref sharedaudit.SpillRef
-	if err := json.Unmarshal(refJSON, &ref); err != nil {
-		return nil, fmt.Errorf("decode spill_ref: %w", err)
-	}
-	rc, err := h.spillStore.Get(ctx, ref)
+	body, ref, err := h.fetchSpillBytes(ctx, refJSON)
 	if err != nil {
 		return nil, err
-	}
-	defer rc.Close() //nolint:errcheck
-	body, err := io.ReadAll(rc)
-	if err != nil {
-		return nil, fmt.Errorf("read spill body: %w", err)
-	}
-	// Verify the fetched bytes against the sha256 recorded on the
-	// traffic_event when the body was spilled. A mismatch means the at-rest blob
-	// was tampered with (e.g. a cross-node overwrite) — refuse to serve a forged
-	// body as the genuine captured request/response, so the forensic/compliance
-	// record can never present fabricated evidence as authentic.
-	if ref.SHA256 != "" {
-		sum := sha256.Sum256(body)
-		if got := hex.EncodeToString(sum[:]); got != strings.ToLower(ref.SHA256) {
-			return nil, fmt.Errorf("spill body integrity check failed (sha256 %s != recorded %s): blob may have been tampered with", got, ref.SHA256)
-		}
 	}
 	if isJSONContentType(ref.ContentType) && stdjson.Valid(body) {
 		return json.RawMessage(body), nil

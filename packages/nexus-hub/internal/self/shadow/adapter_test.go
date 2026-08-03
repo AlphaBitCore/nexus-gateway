@@ -10,9 +10,9 @@ import (
 // fakePooledListener is a test double for pooledListener. It lets us
 // drive the listen loop's Exec / WaitForNotification / Release paths
 // without standing up a real Postgres listener or holding a *pgxpool.Conn.
-// After the selfshadow adapter-ladder simplification (F-0260d) tests inject
-// this directly as what a fakeNotifier.Acquire returns — one layer rather than
-// the former two (fakePooledConn → poolConnAdapter).
+// After the selfshadow adapter-ladder simplification tests inject this
+// directly as the notifier's acquired listener — one layer rather than the
+// former two (fakePooledConn → poolConnAdapter).
 type fakePooledListener struct {
 	execErr   error
 	waitErr   error
@@ -39,20 +39,6 @@ func (f *fakePooledListener) WaitForNotification(_ context.Context) (*pgconnNoti
 }
 
 func (f *fakePooledListener) Release() { f.releaseCalls.Add(1) }
-
-// fakeNotifier is an Acquire factory that returns a pre-built fakePooledListener.
-// This is the single test-seam injection point for the listen loop.
-type fakeNotifier struct {
-	listener   *fakePooledListener
-	acquireErr error
-}
-
-func (fn *fakeNotifier) Acquire(_ context.Context) (pooledListener, error) {
-	if fn.acquireErr != nil {
-		return nil, fn.acquireErr
-	}
-	return fn.listener, nil
-}
 
 // Compile-time assertion: fakePooledListener satisfies pooledListener.
 var _ pooledListener = (*fakePooledListener)(nil)

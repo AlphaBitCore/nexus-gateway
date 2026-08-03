@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/goccy/go-json"
 	"log/slog"
-	"net"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,14 +25,6 @@ import (
 // typical S3 PutObject latency but short enough that an unreachable spill
 // backend cannot stall the proxy indefinitely.
 const spillEmitTimeout = 5 * time.Second
-
-// spillRetainCap bounds a single spilled body re-attached in memory for
-// the flush-time normalize pass (see buildEvent). 2 MiB covers the
-// realistic spilled AI request/response that still normalizes usefully;
-// a larger body stays ref-only and is healed off the hot path by the
-// hub backfill's spill-fetch. Worst-case retained memory is therefore
-// ~queue-cap × 2 × spillRetainCap rather than × the 10 MiB body ceiling.
-const spillRetainCap = 2 << 20
 
 // nullableString converts an empty string into a nil *string so the audit
 // row's response_hook_decision column ends up SQL NULL when no response
@@ -129,11 +120,10 @@ type AuditInfo struct {
 
 // AuditEmitter maps compliance pipeline results to audit events and enqueues them.
 type AuditEmitter struct {
-	writer             audit.Writer
-	logger             *slog.Logger
-	spill              spillstore.SpillStore
-	payloadCapture     *payloadcapture.Store
-	retainSpilledBytes bool
+	writer         audit.Writer
+	logger         *slog.Logger
+	spill          spillstore.SpillStore
+	payloadCapture *payloadcapture.Store
 }
 
 // WithSpillStore wires an out-of-band body backend so captured bodies
@@ -142,18 +132,6 @@ type AuditEmitter struct {
 // chaining.
 func (e *AuditEmitter) WithSpillStore(store spillstore.SpillStore) *AuditEmitter {
 	e.spill = store
-	return e
-}
-
-// WithPreSpillNormalize opts this emitter into retaining a spilled
-// body's in-memory bytes (bounded by spillRetainCap) so the writer's
-// flush-time normalize pass can project it without a spill-store fetch.
-// ONLY a service whose writer actually runs a flush-time normalizer (the
-// compliance proxy's applyNormalize) should set this — for a writer that
-// normalizes inline before emit (the agent) the retention is pure memory
-// cost with no consumer. Returns the receiver for chaining.
-func (e *AuditEmitter) WithPreSpillNormalize() *AuditEmitter {
-	e.retainSpilledBytes = true
 	return e
 }
 
@@ -288,8 +266,8 @@ func (e *AuditEmitter) buildEvent(
 	// (absent → nothing). The normalized projection is never persisted —
 	// each service recomputes it at view time from the (already
 	// action-governed) raw body.
-	requestBody = redact.StorageRawBody(requestBody, info.RequestBodyRedacted, stageAction(requestResult))
-	responseBody = redact.StorageRawBody(responseBody, info.ResponseBodyRedacted, stageAction(responseResult))
+	requestBody = e.gateStorageBody(requestBody, info.RequestBodyRedacted, stageAction(requestResult), "request")
+	responseBody = e.gateStorageBody(responseBody, info.ResponseBodyRedacted, stageAction(responseResult), "response")
 	// Bound by spillEmitTimeout: spillstore.EmitBody can issue network I/O
 	// (S3 PutObject) and must not stall the proxy indefinitely. On timeout
 	// EmitBody returns an inline-only container flagged truncated.
@@ -301,28 +279,15 @@ func (e *AuditEmitter) buildEvent(
 	requestCT := headerLookup(info.Headers, "Content-Type")
 	requestBodyContainer := spillstore.EmitBody(ctx, e.spill, threshold, requestBody, requestCT, eventID, "request", false, e.logger)
 	responseBodyContainer := spillstore.EmitBody(ctx, e.spill, threshold, responseBody, info.ResponseContentType, eventID, "response", false, e.logger)
-	// Re-attach the in-memory bytes to spilled containers so the writer's
-	// flush-time normalize pass sees the content without a spill-store
-	// round-trip. InlineBytes is excluded from the wire form for non-inline
-	// kinds (Body.MarshalJSON switches on Kind), so the persisted shape is
-	// unchanged. Two guards bound the memory cost (the audit queue holds up
-	// to ~1000 events until flush, so unconditional retention of 10 MiB
-	// bodies would pin gigabytes under MQ backpressure — an OOM risk on
-	// the hub):
-	//   - retainSpilledBytes is opt-in: only a service whose writer runs a
-	//     flush-time normalizer (the compliance proxy) sets it; the agent,
-	//     which normalizes inline before emit, gets zero retention cost.
-	//   - spillRetainCap bounds a single retained body; a larger spilled
-	//     body stays ref-only and is healed off the hot path by the hub
-	//     backfill's spill-fetch (Lane A, 64 MiB read cap).
-	if e.retainSpilledBytes {
-		if requestBodyContainer.Kind == audit.BodySpill && len(requestBody) <= spillRetainCap {
-			requestBodyContainer.InlineBytes = requestBody
-		}
-		if responseBodyContainer.Kind == audit.BodySpill && len(responseBody) <= spillRetainCap {
-			responseBodyContainer.InlineBytes = responseBody
-		}
-	}
+	// A spilled body stays REF-ONLY: the container carries its SpillRef and no
+	// bytes. There used to be an opt-in (WithPreSpillNormalize) that re-attached
+	// up to 2 MiB in memory so a writer's flush-time normalize pass could read the
+	// content without a spill-store fetch. It was deleted with owner approval —
+	// nothing ever called it, and the applyNormalize its doc named as the sole
+	// consumer does not exist anywhere in the repo, so the retention was pure
+	// memory cost. Reinstating it needs the consumer to exist first: the audit
+	// queue holds up to ~1000 events until flush, so retention that is not
+	// bounded AND actually read pins gigabytes under MQ backpressure.
 
 	// Latency phase fields. Hook aggregates derive from per-hook latency_ms
 	// in the JSONB pipelines. Upstream phase fields come from the PhaseSink
@@ -399,16 +364,34 @@ func (e *AuditEmitter) buildEvent(
 	}
 }
 
-// stageAction returns the stage result's match action, which governs the
-// persisted raw body via redact.StorageRawBody. A nil result (the stage
-// never ran — compliance disabled, fast path, or the opposite stage of a
-// single-stage emit) carries no redaction demand, so its captured body is
-// stored as-is: nil maps to approve.
+// stageAction returns the stage result's match action for the shared redact
+// gate. A nil result — the stage never ran (compliance disabled, fast path, or
+// the opposite stage of a single-stage emit) — carries no redaction demand, so
+// it yields the empty action.
+//
+// The empty action's meaning is NOT decided here. redact.StorageRawBodyChecked
+// owns it, and owns it for all three services, which is the point: this function
+// used to spell out "empty maps to approve" itself, the gateway spelled the same
+// rule out at each of its own call sites, and the shared emitter the proxy and
+// the agent depend on was the copy that had it — one rule in three places, which
+// is how it came to be missing from the one that mattered.
 func stageAction(r *CompliancePipelineResult) decision.Action {
 	if r == nil {
-		return decision.ActionApprove
+		return ""
 	}
-	return r.Action
+	if r.Action != "" {
+		return r.Action
+	}
+	// A result that states a DECISION but no action gets the action its decision
+	// implies. This is not a convenience: several producers hand-build a result to
+	// report an outcome no hook produced — most sharply, the fail-closed refusal
+	// when the request pipeline cannot be BUILT, which is `{Decision: RejectHard}`
+	// with no action. Reading that as an empty action meant "no redaction demand",
+	// so the gate persisted the captured raw body of the one request class the
+	// product KNOWS it could not scan, while an ordinary scanned block persisted
+	// nothing. Deriving here fixes every such literal at once, including the ones
+	// nobody has written yet, and is why the producers are not each stamped.
+	return core.ActionFromDecision(r.Decision)
 }
 
 // sumHooksPipelineLatency sums the per-hook latency in the hooks_pipeline JSONB
@@ -577,55 +560,21 @@ func extractUserAgent(headers map[string][]string) *string {
 	return &ua
 }
 
-// EmitKillSwitchPassthrough records an audit event for a connection that
-// bypassed TLS bump because the kill switch was engaged. This ensures the
-// compliance gap is visible in dashboards and analytics.
-func (e *AuditEmitter) EmitKillSwitchPassthrough(sourceAddr, targetHost string) {
-	sourceIP, _, _ := net.SplitHostPort(sourceAddr)
-	if sourceIP == "" {
-		sourceIP = sourceAddr
+// gateStorageBody runs the shared redact gate and says so when the gate could
+// not name the action. An unrecognised action stores nothing — correct, because
+// a body must never be persisted under a policy nobody can name — but silently
+// storing nothing is how this class of defect stayed invisible: the row simply
+// carries a NULL body. One WARN per occurrence, carrying the action that was not
+// understood, is the difference between a bug report and a mystery.
+func (e *AuditEmitter) gateStorageBody(captured, redacted []byte, a decision.Action, stage string) []byte {
+	body, ok := redact.StorageRawBodyChecked(captured, redacted, a)
+	if !ok && e.logger != nil {
+		e.logger.Warn("audit: unrecognised match action; the captured body is NOT persisted",
+			"stage", stage,
+			"action", string(a),
+			"captured_bytes", len(captured),
+			"remedy", "the producer must set a decision.Action of approve, redact or block (empty means approve)",
+		)
 	}
-
-	reason := "kill switch engaged — TLS bump bypassed"
-	reasonCode := "KILLSWITCH_ENGAGED"
-
-	event := audit.AuditEvent{
-		ID:                    uuid.NewString(),
-		TransactionID:         uuid.NewString(),
-		TrafficSource:         "COMPLIANCE_PROXY",
-		IngressType:           "COMPLIANCE_PROXY",
-		BumpStatus:            "BUMP_DISABLED_EMERGENCY",
-		SourceIP:              sourceIP,
-		TargetHost:            targetHost,
-		RequestHookDecision:   "PASSTHROUGH",
-		RequestHookReason:     &reason,
-		RequestHookReasonCode: &reasonCode,
-		Timestamp:             time.Now().UTC(),
-	}
-
-	e.writer.Enqueue(event)
-}
-
-// EmitExempted records an audit event for a request exempted from compliance
-// hooks. The hookDecision is "EXEMPTED" so dashboards can distinguish these
-// from normal APPROVE/REJECT decisions.
-func (e *AuditEmitter) EmitExempted(sourceIP, targetHost, exemptionID, exemptionReason string) {
-	reason := fmt.Sprintf("temporary exemption %s: %s", exemptionID, exemptionReason)
-	reasonCode := "EXEMPTED"
-
-	event := audit.AuditEvent{
-		ID:                    uuid.NewString(),
-		TransactionID:         uuid.NewString(),
-		TrafficSource:         "COMPLIANCE_PROXY",
-		IngressType:           "COMPLIANCE_PROXY",
-		BumpStatus:            "BUMP_SUCCESS",
-		SourceIP:              sourceIP,
-		TargetHost:            targetHost,
-		RequestHookDecision:   "EXEMPTED",
-		RequestHookReason:     &reason,
-		RequestHookReasonCode: &reasonCode,
-		Timestamp:             time.Now().UTC(),
-	}
-
-	e.writer.Enqueue(event)
+	return body
 }

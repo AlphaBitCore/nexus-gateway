@@ -605,7 +605,8 @@ paths:
                                     description: Upstream model id. Defaults to name when omitted.
                                 type:
                                     type: string
-                                    description: Model type (e.g. chat, embedding).
+                                    description: 'Model type. Validated against the fixed set: chat, embedding, image, audio, tts, stt, rerank, video, realtime — an out-of-set value is rejected 400.'
+                                    enum: [chat, embedding, image, audio, tts, stt, rerank, video, realtime]
                                 features:
                                     type: array
                                     items:
@@ -623,6 +624,21 @@ paths:
                                         - number
                                         - "null"
                                 cachedInputWritePricePerMillion:
+                                    type:
+                                        - number
+                                        - "null"
+                                audioInputPricePerMillion:
+                                    description: Audio-token input rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                                    type:
+                                        - number
+                                        - "null"
+                                audioOutputPricePerMillion:
+                                    description: Audio-token output rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                                    type:
+                                        - number
+                                        - "null"
+                                cachedAudioInputReadPricePerMillion:
+                                    description: Cached audio-input read rate for realtime models, USD per 1M tokens. NULL = no discount; falls back to audioInputPricePerMillion.
                                     type:
                                         - number
                                         - "null"
@@ -966,7 +982,8 @@ components:
                     description: Optional free-text description.
                 type:
                     type: string
-                    description: Model type (e.g. chat, embedding).
+                    description: 'Model type. Validated against the fixed set: chat, embedding, image, audio, tts, stt, rerank, video, realtime — an out-of-set value is rejected 400.'
+                    enum: [chat, embedding, image, audio, tts, stt, rerank, video, realtime]
                 features:
                     type: array
                     items:
@@ -976,6 +993,21 @@ components:
                         - number
                         - "null"
                 outputPricePerMillion:
+                    type:
+                        - number
+                        - "null"
+                audioInputPricePerMillion:
+                    description: Audio-token input rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                    type:
+                        - number
+                        - "null"
+                audioOutputPricePerMillion:
+                    description: Audio-token output rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                    type:
+                        - number
+                        - "null"
+                cachedAudioInputReadPricePerMillion:
+                    description: Cached audio-input read rate for realtime models, USD per 1M tokens. NULL = no discount; falls back to audioInputPricePerMillion.
                     type:
                         - number
                         - "null"
@@ -1031,6 +1063,21 @@ components:
                         - number
                         - "null"
                 cachedInputWritePricePerMillion:
+                    type:
+                        - number
+                        - "null"
+                audioInputPricePerMillion:
+                    description: Audio-token input rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                    type:
+                        - number
+                        - "null"
+                audioOutputPricePerMillion:
+                    description: Audio-token output rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                    type:
+                        - number
+                        - "null"
+                cachedAudioInputReadPricePerMillion:
+                    description: Cached audio-input read rate for realtime models, USD per 1M tokens. NULL = no discount; falls back to audioInputPricePerMillion.
                     type:
                         - number
                         - "null"

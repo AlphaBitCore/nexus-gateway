@@ -56,13 +56,16 @@ func InitJWT(
 		}
 		replayURL := cfg.AuthServer.RevocationReplayURL
 		if replayURL == "" {
-			replayURL = strings.TrimRight(cfg.AuthServer.Issuer, "/") + "/api/admin/revocations"
+			// The INTERNAL route, not the admin one. The admin route gates on
+			// admin:revocation.read, which a service token can never satisfy —
+			// this defaulted to it and took a 401 on every poll.
+			replayURL = strings.TrimRight(cfg.AuthServer.Issuer, "/") + "/api/internal/revocations"
 		}
 		revChecker := jwtverifier.NewMQRevocationChecker(jwtverifier.MQCheckerConfig{
-			IntrospectURL:    introspectURL,
-			ReplayURL:        replayURL,
-			ReplayAuthHeader: "Bearer " + cfg.Auth.InternalServiceToken,
-			Logger:           logger,
+			IntrospectURL: introspectURL,
+			ReplayURL:     replayURL,
+			ServiceToken:  cfg.Auth.InternalServiceToken,
+			Logger:        logger,
 		})
 		group := "cp-revocation-" + sanitizeForJetStreamDurable(cpThingID)
 		go func() {

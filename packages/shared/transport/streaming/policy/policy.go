@@ -55,7 +55,6 @@ type Policy struct {
 	FailBehavior        FailBehavior // applied on hook error/timeout/oversize
 	CaptureRequestBody  bool
 	CaptureResponseBody bool
-	RawSpillEnabled     bool // when true, oversize bodies fall back to SpillStore
 }
 
 // IsValid reports whether the policy fields fall in acceptable ranges.
@@ -91,6 +90,5 @@ func DefaultPolicy() Policy {
 		FailBehavior:        FailOpen,
 		CaptureRequestBody:  false,
 		CaptureResponseBody: false,
-		RawSpillEnabled:     false,
 	}
 }

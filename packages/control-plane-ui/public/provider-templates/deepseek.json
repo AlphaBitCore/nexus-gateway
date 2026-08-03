@@ -18,10 +18,10 @@
       ],
       "inputPricePerMillion": 0.14,
       "outputPricePerMillion": 0.28,
-      "maxContextTokens": 65536,
-      "maxOutputTokens": 8192,
       "cachedInputReadPricePerMillion": 0.0028,
-      "cachedInputWritePricePerMillion": 0
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 1048565,
+      "maxOutputTokens": 393216
     },
     {
       "code": "deepseek-v4-pro",
@@ -36,10 +36,10 @@
       ],
       "inputPricePerMillion": 0.435,
       "outputPricePerMillion": 0.87,
-      "maxContextTokens": 128000,
-      "maxOutputTokens": 16384,
       "cachedInputReadPricePerMillion": 0.003625,
-      "cachedInputWritePricePerMillion": 0
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 1048565,
+      "maxOutputTokens": 393216
     }
   ]
 }

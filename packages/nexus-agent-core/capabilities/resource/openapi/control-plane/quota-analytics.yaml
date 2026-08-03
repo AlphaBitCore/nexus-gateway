@@ -20,13 +20,12 @@ paths:
                 quota override or governing policy supplies one), the resulting usage
                 percentage, and an alert level. Items are sorted by current cost descending.
 
-                The scope is mapped to a rollup dimension before querying: `user` and
+                The scope is mapped to a rollup dimension before querying: `user`, `project`, and
                 `organization` map to themselves and `vk`/`virtual_key` map to the virtual-key
-                dimension. `project` is NOT a supported analytics scope — the rollup pipeline
-                emits no per-project dimension, so `scope=project` is rejected with HTTP 400
-                rather than returning org-aggregated numbers under a project label. Entity names
-                are resolved to a human-readable display name (user display name or email,
-                organization name, or virtual-key name), falling back to the raw ID.
+                dimension. The rollup pipeline emits `billed_cost_usd` keyed by each of these
+                dimensions, so all four scopes return per-entity usage. Entity names are resolved
+                to a human-readable display name (user display name or email, organization name,
+                project name or code, or virtual-key name), falling back to the raw ID.
 
                 The alert level is derived from the usage percentage: `critical` at 90% or above,
                 `warning` at 70% or above, otherwise `normal`.
@@ -47,6 +46,7 @@ paths:
                         - user
                         - vk
                         - virtual_key
+                        - project
                         - organization
                 - name: periodKey
                   in: query
@@ -129,6 +129,7 @@ paths:
                         - user
                         - vk
                         - virtual_key
+                        - project
                         - organization
                 - name: periodKey
                   in: query
@@ -217,6 +218,7 @@ paths:
                         - user
                         - vk
                         - virtual_key
+                        - project
                         - organization
                 - name: targetId
                   in: query
