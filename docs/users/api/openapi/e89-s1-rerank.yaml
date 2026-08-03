@@ -1,0 +1,327 @@
+# Hand-maintained OpenAPI spec for the AI Gateway data-plane rerank ingress
+# (e89-s1). Verified claim-by-claim against the AI Gateway source (the single
+# source of truth): the route mount in
+# packages/ai-gateway/cmd/ai-gateway/wiring/routes.go, the canonical
+# validation in
+# packages/ai-gateway/internal/execution/canonicalbridge/rerank.go, and the
+# Cohere / Voyage rerank codecs under
+# packages/ai-gateway/internal/providers/specs/{cohere,voyage}/rerank_codec.go.
+# Field names, types, optionality, and error envelopes mirror the code.
+#
+# Canonical note: unlike every other endpoint kind, the rerank canonical shape
+# is Cohere's `/v2/rerank`, NOT OpenAI — OpenAI ships no rerank API. This is a
+# documented, intentional exception to provider-adapter-architecture.md §3a
+# Rule 1. See docs/developers/specs/e89-s1-rerank.md §1-§2.
+openapi: 3.1.0
+info:
+    title: Nexus AI Gateway — Reranking (/v1/rerank)
+    version: dev
+    description: |-
+        The AI Gateway rerank ingress. `POST /v1/rerank` accepts the
+        industry-standard Cohere-shaped request (`{model, query, documents[],
+        top_n?, return_documents?}`) and returns candidate documents re-ordered
+        by relevance to the query. The request is governed by the same
+        ServeProxy pipeline as chat and embeddings: virtual-key auth, rate
+        limiting, quota, kill-switch, routing, and the request-side compliance
+        hook pipeline (the `query` and every `documents[]` element are scanned,
+        and a redact policy rewrites the offending text in place in the
+        forwarded body). It routes to a rerank-capable provider — Cohere
+        (native passthrough) or Voyage (canonical → Voyage wire, `top_n` →
+        `top_k`) — and translates the response back to the canonical
+        Cohere-shaped body. The response cache is endpoint-skipped for rerank.
+servers:
+    - url: https://gateway.example.com
+      description: AI Gateway base URL (deployment-specific)
+security:
+    - VirtualKey: []
+paths:
+    /v1/rerank:
+        post:
+            operationId: rerank
+            summary: Re-order candidate documents by relevance to a query
+            description: |-
+                Given a `query` and a list of `documents`, return the documents
+                re-ordered by relevance with a per-document `relevance_score`.
+                Scores are passed through from the resolved provider verbatim —
+                they are NOT renormalized across providers (a Cohere 0.98 is not
+                comparable to a Voyage 0.98). `results` are sorted by
+                `relevance_score` descending and truncated to `top_n` when
+                supplied.
+
+                The request body IS the canonical (Cohere-shaped) rerank body.
+                Input rules: `model` and `query` must be non-empty strings,
+                `documents` must be an array of 1..1000 non-empty strings
+                (object documents are not accepted at v1), and `top_n`, if
+                present, must be a positive integer (over-length values are
+                clamped to the document count, not rejected — providers clamp,
+                the gateway mirrors). On a cross-format target (e.g. Voyage) the
+                canonical bridge (`IngressRerankToCanonical`) validates and
+                rejects invalid input with a 400 before any upstream call; on a
+                native Cohere target the Cohere-shaped body is forwarded
+                same-format and Cohere returns its own 400 on invalid input.
+
+                A rerank request routed to a target that has no rerank leg
+                (e.g. an OpenAI chat model) is rejected with a
+                `no_compatible_provider` 400 that names the endpoint kind
+                (`rerank`).
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RerankRequest'
+                        example:
+                            model: rerank-english-v3.0
+                            query: What is the capital of the United States?
+                            documents:
+                                - Carson City is the capital city of the American state of Nevada.
+                                - Washington, D.C. is the capital of the United States.
+                                - The Commonwealth of the Northern Mariana Islands is a group of islands in the Pacific Ocean.
+                            top_n: 2
+                            return_documents: true
+            responses:
+                "200":
+                    description: The documents re-ordered by relevance, sorted by score descending and truncated to `top_n`.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RerankResponse'
+                            example:
+                                id: 018e5f7a-1b2c-7d3e-9f01-2a3b4c5d6e7f
+                                model: rerank-english-v3.0
+                                results:
+                                    - index: 1
+                                      relevance_score: 0.999071
+                                      document:
+                                        text: Washington, D.C. is the capital of the United States.
+                                    - index: 0
+                                      relevance_score: 0.077349
+                                      document:
+                                        text: Carson City is the capital city of the American state of Nevada.
+                                meta:
+                                    billed_units:
+                                        search_units: 1
+                "400":
+                    description: |-
+                        Two families of 400. (1) Validation failure —
+                        empty/missing `query`, empty or out-of-range
+                        `documents`, a non-string document, or a non-positive
+                        `top_n`. On a cross-format target the canonical bridge
+                        rejects it before upstream; the message is prefixed
+                        `canonicalize ingress body:` and names the offending
+                        field plus the resolved provider/model. The gateway
+                        reshapes it to the OpenAI-shaped envelope (`message` is
+                        the load-bearing field; the internal classification is
+                        invalid-request). (2) `no_compatible_provider` — the
+                        resolved target has no rerank leg (only Cohere and Voyage
+                        do); the message names the endpoint kind `rerank`.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                            examples:
+                                emptyQuery:
+                                    summary: Empty query (validation, cross-format target)
+                                    value:
+                                        error:
+                                            message: 'canonicalize ingress body: field "query" must be a non-empty string for the resolved rerank provider voyage (rerank-2)'
+                                            type: api_error
+                                            code: ""
+                                            param: null
+                                emptyDocuments:
+                                    summary: Empty documents array (validation, cross-format target)
+                                    value:
+                                        error:
+                                            message: 'canonicalize ingress body: field "documents" must have 1..1000 entries for the resolved rerank provider voyage (rerank-2)'
+                                            type: api_error
+                                            code: ""
+                                            param: null
+                                nonStringDocument:
+                                    summary: Non-string document element (validation, cross-format target)
+                                    value:
+                                        error:
+                                            message: 'canonicalize ingress body: field "documents"[1] must be a non-empty string for the resolved rerank provider voyage (rerank-2)'
+                                            type: api_error
+                                            code: ""
+                                            param: null
+                                noCompatibleProvider:
+                                    summary: Target has no rerank leg
+                                    value:
+                                        error:
+                                            type: no_compatible_provider
+                                            message: ingress format "cohere" cannot be routed to provider format "openai" for rerank requests in this release
+                "401":
+                    description: Missing or invalid virtual key.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                "403":
+                    description: |-
+                        Request blocked by the compliance hook pipeline. A
+                        redact policy normally rewrites offending PII in place and
+                        the request proceeds; a hard-block (or a redact policy the
+                        wire cannot satisfy) surfaces here.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                "429":
+                    description: Rate limit exceeded (`RATE_LIMITED`) or quota/budget cap reached for the virtual key / user / project / org (`QUOTA_EXCEEDED`).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                "502":
+                    description: Upstream provider error.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+components:
+    securitySchemes:
+        VirtualKey:
+            type: http
+            scheme: bearer
+            description: 'A Nexus virtual key presented as `Authorization: Bearer <vk>`.'
+    schemas:
+        RerankRequest:
+            type: object
+            required:
+                - model
+                - query
+                - documents
+            properties:
+                model:
+                    type: string
+                    minLength: 1
+                    description: The routed model name (a gateway model code or alias resolving to a rerank-capable provider model).
+                    example: rerank-english-v3.0
+                query:
+                    type: string
+                    minLength: 1
+                    description: The search query. Must be a non-empty string. Scanned by the request-side compliance hooks.
+                    example: What is the capital of the United States?
+                documents:
+                    type: array
+                    minItems: 1
+                    maxItems: 1000
+                    items:
+                        type: string
+                        minLength: 1
+                    description: |-
+                        The candidate documents to rank, 1..1000 non-empty
+                        strings. Object documents (`{text: ...}`) are not
+                        accepted at v1. Every element is scanned individually by
+                        the compliance hooks (documents are the enterprise
+                        corpus and the bulk-PII carrier).
+                top_n:
+                    type: integer
+                    minimum: 1
+                    description: |-
+                        Return only the top N results. If present, must be a
+                        positive integer; a value larger than the document count
+                        is clamped to the document count (not rejected).
+                    example: 2
+                return_documents:
+                    type: boolean
+                    default: false
+                    description: When true, echo each ranked document's text back in `results[].document.text`.
+        RerankResponse:
+            type: object
+            required:
+                - model
+                - results
+                - meta
+            properties:
+                id:
+                    type: string
+                    description: |-
+                        Provider/gateway request id. Present on the Cohere leg
+                        (passed through) and absent on legs whose provider
+                        response carries no id (the Voyage leg does not emit
+                        one), so this field is optional.
+                model:
+                    type: string
+                    description: The resolved model.
+                results:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RerankResult'
+                    description: The ranked documents, sorted by `relevance_score` descending and truncated to `top_n`.
+                meta:
+                    $ref: '#/components/schemas/RerankMeta'
+        RerankResult:
+            type: object
+            required:
+                - index
+                - relevance_score
+            properties:
+                index:
+                    type: integer
+                    description: The zero-based position of this document in the request `documents` array.
+                relevance_score:
+                    type: number
+                    format: float
+                    description: |-
+                        The provider's relevance score for this document.
+                        Passed through verbatim — NOT renormalized across
+                        providers, so scores are not comparable between Cohere
+                        and Voyage.
+                document:
+                    type: object
+                    description: Present only when `return_documents` is true.
+                    required:
+                        - text
+                    properties:
+                        text:
+                            type: string
+                            description: The echoed document text.
+        RerankMeta:
+            type: object
+            required:
+                - billed_units
+            properties:
+                billed_units:
+                    type: object
+                    description: |-
+                        The provider-reported billable unit, carried through for
+                        audit and cost. Cohere reports `search_units`; Voyage
+                        reports `total_tokens`. Exactly one is populated per
+                        response depending on the resolved provider.
+                    properties:
+                        search_units:
+                            type: integer
+                            description: Cohere billable search units (1 query + up to 100 documents = 1 unit). Priced as SearchUnits by the rerank cost formula.
+                        total_tokens:
+                            type: integer
+                            description: Voyage billable tokens. Priced through the token path of the rerank cost formula.
+        ErrorResponse:
+            type: object
+            description: |-
+                The gateway reshapes rerank errors to the OpenAI-shaped error
+                envelope. The `no_compatible_provider` routing rejection carries
+                only `type` + `message`.
+            required:
+                - error
+            properties:
+                error:
+                    type: object
+                    required:
+                        - message
+                    properties:
+                        message:
+                            type: string
+                            description: Human-readable error message. Validation errors name the offending field and the resolved provider/model.
+                        type:
+                            type: string
+                            description: 'Error class. Bridge-validation and prepare-stage 400s reshape through the generic error writer and surface as `api_error`; the routing rejection carries `no_compatible_provider`.'
+                        code:
+                            oneOf:
+                                - type: string
+                                - type: integer
+                            description: Canonical error code when one is set; empty string on the bridge-validation / prepare-stage path (the field name is carried in `message`, not `code`). Absent on the `no_compatible_provider` envelope.
+                        param:
+                            type: string
+                            nullable: true
+                            description: Present (null unless attributable) on the OpenAI-shaped envelope; absent on the `no_compatible_provider` envelope.

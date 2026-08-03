@@ -20,25 +20,6 @@
     "updatedAt": "2026-05-10T16:41:19.49+00:00"
   },
   {
-    "id": "afd4aea8-e7a4-4f7a-b336-bd8750860fb2",
-    "name": "Application VK Weekly Cap",
-    "description": "Weekly cap for application virtual keys to control burst spending",
-    "scope": "virtual_key",
-    "organizationId": null,
-    "vkType": "application",
-    "periodType": "weekly",
-    "costLimitUsd": 500,
-    "enforcementMode": "reject",
-    "alertThresholds": [
-      80
-    ],
-    "priority": 5,
-    "enabled": true,
-    "createdBy": null,
-    "createdAt": "2026-05-10T16:41:20.504+00:00",
-    "updatedAt": "2026-05-10T16:41:20.504+00:00"
-  },
-  {
     "id": "d4be988e-bfa5-4f35-a865-c9c02df31e29",
     "name": "Apex Financial Group Org Ceiling",
     "description": "Enterprise-wide hard spending ceiling for Apex Financial Group",
@@ -57,26 +38,6 @@
     "createdBy": null,
     "createdAt": "2026-05-10T16:41:19.981+00:00",
     "updatedAt": "2026-05-10T16:41:19.981+00:00"
-  },
-  {
-    "id": "dccff831-a99d-4b34-b0e8-23e3924be63b",
-    "name": "Application VK Default",
-    "description": "Default limit for all application virtual keys",
-    "scope": "virtual_key",
-    "organizationId": null,
-    "vkType": "application",
-    "periodType": "monthly",
-    "costLimitUsd": 5000,
-    "enforcementMode": "downgrade",
-    "alertThresholds": [
-      80,
-      95
-    ],
-    "priority": 0,
-    "enabled": true,
-    "createdBy": null,
-    "createdAt": "2026-05-10T16:41:19.729+00:00",
-    "updatedAt": "2026-05-10T16:41:19.729+00:00"
   },
   {
     "id": "df1b0764-1380-4d87-ae71-348503f7a634",

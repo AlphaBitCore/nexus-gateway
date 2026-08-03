@@ -38,6 +38,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 // Pattern set, paired with whether the pattern is meaningful inside a
 // comment context. Anything `commentOk: false` is ignored on `//` and
@@ -75,33 +76,50 @@ const STRICT = process.argv.includes('--strict') || process.env.STRICT === '1';
 const STAGED = process.argv.includes('--staged');
 
 function listFiles() {
+  // A git failure here (e.g. .git/index.lock held by a parallel session) must
+  // fail the gate, not silently shrink the file list to nothing — an empty
+  // list is indistinguishable from "nothing to check" and passes vacuously.
   if (STAGED) {
+    let out;
     try {
-      const out = execSync('git diff --cached --name-only --diff-filter=ACM', {
+      out = execSync('git diff --cached --name-only --diff-filter=ACM', {
         encoding: 'utf-8',
       });
-      return out
-        .split('\n')
-        .map((s) => s.trim())
-        .filter((s) => s.endsWith('.go'));
-    } catch {
-      return [];
+    } catch (err) {
+      console.error(`check-no-prod-todos: git staged-file listing failed (${err.message.trim()}); refusing to pass on an empty list.`);
+      process.exit(2);
     }
-  }
-  try {
-    const out = execSync('git ls-files "packages/**/*.go"', { encoding: 'utf-8' });
     return out
       .split('\n')
       .map((s) => s.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
+      .filter((s) => s.endsWith('.go'));
   }
+  let out;
+  try {
+    out = execSync('git ls-files "packages/**/*.go"', { encoding: 'utf-8' });
+  } catch (err) {
+    console.error(`check-no-prod-todos: git ls-files failed (${err.message.trim()}); refusing to pass on an empty list.`);
+    process.exit(2);
+  }
+  return out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-function readFromWorkingTree(path) {
+function readContent(path) {
+  // In --staged mode read the INDEX blob — the content that would actually be
+  // committed — never the working tree, which may carry unstaged edits on a
+  // partially staged file.
   try {
-    return execSync(`cat "${path}"`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    if (STAGED) {
+      return execSync(`git show :"${path}"`, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    }
+    return readFileSync(path, 'utf-8');
   } catch {
     return null;
   }
@@ -121,7 +139,7 @@ function main() {
   const hits = [];
   for (const f of files) {
     if (EXCLUDE_PATH_RE.test(f)) continue;
-    const text = readFromWorkingTree(f);
+    const text = readContent(f);
     if (text === null) continue;
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {

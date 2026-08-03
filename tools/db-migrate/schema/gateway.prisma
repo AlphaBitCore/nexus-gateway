@@ -107,6 +107,55 @@ model QuotaOverride {
   @@index([targetType])
 }
 
+/// e88-s6 — async-job correlation store (the §8 part-1 substrate). One row per
+/// provider-side async job (video generation today; batch later), written
+/// synchronously by the AI Gateway at submit — the gateway's ONE
+/// runtime-writable table (read-your-write: a client may poll immediately
+/// after submit; MQ→Hub is async-racy and Redis is ephemeral vs hours-long
+/// jobs). It is a correlation/authz record, NOT a payload store — no prompt
+/// text, no artifact bytes; row volume is bounded by smallness.
+///
+/// Identity is provider-scoped: the provider's job-id string is NOT globally
+/// unique across providers, so the PK is (provider_id, id) and every lookup
+/// goes through the caller's job row. Inserts are plain INSERT with conflict
+/// = fail-and-surface, NEVER upsert — an upsert would let a provider response
+/// echoing another job's id rebind virtual_key_id and hijack the correlation.
+///
+/// `status` is a cache of the LAST OBSERVED provider state
+/// (queued|in_progress|completed|failed|canceled|expired) — a "stale
+/// non-terminal" row may be provider-complete. Retention marks rows expired
+/// (never hard-deletes; the attribution/audit record is preserved) and an
+/// expired row serves 410 Gone.
+model GatewayAsyncJob {
+  providerId     String    @map("provider_id")
+  /// The PROVIDER's job id (Veo jobs store the veo_-encoded canonical form).
+  id             String
+  endpointType   String    @map("endpoint_type")
+  /// Authz binding: the stable VK uuid (rotation preserves it; deletion never
+  /// reuses it). Every poll/content/delete checks this against the caller.
+  virtualKeyId   String    @map("virtual_key_id")
+  organizationId String    @map("organization_id")
+  projectId      String?   @map("project_id")
+  /// Pins the submit-time credential so poll/download reach the SAME provider
+  /// account that owns the job (pool re-selection hours later could pick a
+  /// different credential and 404 a live job).
+  credentialId   String?   @map("credential_id")
+  modelId        String    @map("model_id")
+  /// Requested seconds (the cost-estimate basis; estimate-as-floor).
+  requestedUnits Float     @map("requested_units")
+  status         String
+  costReconciled Boolean   @default(false) @map("cost_reconciled")
+  submitTraceId  String    @map("submit_trace_id")
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3) @map("created_at")
+  completedAt    DateTime? @db.Timestamptz(3) @map("completed_at")
+  canceledAt     DateTime? @db.Timestamptz(3) @map("canceled_at")
+  expiresAt      DateTime? @db.Timestamptz(3) @map("expires_at")
+
+  @@id([providerId, id])
+  @@index([virtualKeyId, status])
+  @@map("gateway_async_job")
+}
+
 /// E48 — Emergency Passthrough 3-Tier Config, Tier 1 (singleton).
 /// Runtime kill-switch that degrades the gateway to a dumb pipe for matched
 /// traffic. Three independent bypass flags (bypassHooks / bypassCache /

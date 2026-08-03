@@ -2,7 +2,9 @@
 # Fails if internal Thing-Model SOURCE identifiers leak into Control Plane UI
 # page components.
 #
-# What is ACTUALLY scanned (banner ↔ behavior must stay aligned — F-0324):
+# What is ACTUALLY scanned. Keep this banner in step with the globs below: a
+# banner that overstates the scope is worse than none, because it is read as
+# proof that a surface is covered.
 #   packages/control-plane-ui/src/pages/**  ·  *.ts *.tsx *.js *.jsx *.json
 #
 # What is deliberately NOT scanned here:
@@ -32,7 +34,7 @@ set -euo pipefail
 # generic English word (e.g. percentage-rounding adjustment vars).
 FORBIDDEN='(\bthing(s|Type|Id)?\b|\bshadow\b|\bdrift(ed|edAt|Keys|Monitor)\b|\bdesired(Ver)?\b|\breported(Ver)?\b)'
 
-# Scope: every UI tree that can render user-visible strings (F-0323). Pages are
+# Scope: every UI tree that can render user-visible strings. Pages are
 # the bulk, but components and lib also ship JSX text / formatted labels admins
 # read. NOT scanned: src/api (the TypeScript mirror of the Hub/CP handler shapes;
 # its `thingId` / `thingType` fields are the contract, internal by design — same
@@ -52,7 +54,7 @@ INCLUDES=(
   '--include=*.json'
 )
 
-# Allowlist — SPECIFIC files (never whole directories — F-0205) that legitimately
+# Allowlist — SPECIFIC files, never whole directories, that legitimately
 # carry internal Thing identifiers as CODE props mirroring the API contract
 # (`thingId` / `thingType` passed into a component, the ThingStats* surface, the
 # `'thing'` SourceType enum value). Narrowed from the old blanket
@@ -184,7 +186,7 @@ for p in "${PATHS[@]}"; do
   done <<< "$out"
 done
 
-# Locale bundle value-walk (F-0323): parse each JSON file under
+# Locale bundle value-walk: parse each JSON file under
 # src/i18n/locales/, strip {{…}} interpolation tokens from each string value,
 # then test the remainder against the same FORBIDDEN pattern. Keys are never
 # tested — they are the API contract. Python3 is required; its absence is a
@@ -198,11 +200,11 @@ if ! command -v python3 &>/dev/null; then
   echo "python3 not found — required for locale value scan (terminology guard misconfigured)" >&2
   exit 2
 fi
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  echo "TERMINOLOGY (locale value): $line"
-  hits=$((hits + 1))
-done < <(python3 - "$LOCALE_DIR" "$FORBIDDEN" <<'PYEOF'
+# Run the scanner to completion FIRST and check its exit code — a process
+# substitution would discard a Python failure (unparsable JSON, crash) and
+# let the guard pass vacuously on the very runs where it saw nothing.
+locale_rc=0
+locale_out="$(python3 - "$LOCALE_DIR" "$FORBIDDEN" <<'PYEOF'
 import json, os, re, sys
 
 locale_dir = sys.argv[1]
@@ -240,7 +242,16 @@ for locale in sorted(os.listdir(locale_dir)):
                 sys.exit(2)
         walk(data, '', locale, fname)
 PYEOF
-)
+)" || locale_rc=$?
+if [[ $locale_rc -ne 0 ]]; then
+  echo "Locale value scan failed (python3 rc=$locale_rc) — the guard cannot vouch for locale bundles (terminology guard misconfigured)" >&2
+  exit 2
+fi
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  echo "TERMINOLOGY (locale value): $line"
+  hits=$((hits + 1))
+done <<< "$locale_out"
 
 if [[ $hits -gt 0 ]]; then
   echo "Terminology check failed: $hits occurrences of internal terms in product-facing code."

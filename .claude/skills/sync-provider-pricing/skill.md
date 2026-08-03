@@ -1,9 +1,11 @@
 # sync-provider-pricing
 
 Scrape each provider's **official** model + pricing page and reconcile our model
-catalog — `provider-templates/*.json` (UI preset), `seed/fixtures/Model.json` (seed
-fixture dataset), `seed.ts` cache multipliers, and the **prod `Model` table** — so
-prices, model lists, and deprecation flags match the vendor's published page.
+catalog. The single repo source of truth is `tools/db-migrate/model-catalog.json`;
+`provider-templates/*.json` + `index.json` (UI preset) and `seed/fixtures/Model.json`
+(seed dataset) are GENERATED from it, and `seed.ts` cache multipliers + the **prod
+`Model` table** are the remaining surfaces — so prices, model lists, and deprecation
+flags match the vendor's published page.
 
 Use this skill when:
 - A provider ships/renames/retires a model or changes prices.
@@ -24,10 +26,11 @@ not edit that provider — it reports the gap.
 **Division of labor (why this is reliable):** the LLM does the part that genuinely needs
 judgment and freshness — fetch the live page, read the table, map vendor columns to our
 fields, decide deprecations — and emits a normalized desired-state JSON. The deterministic
-`sync_pricing.py` does every mechanical step from that JSON (diff, edit template JSON, edit
-`seed/fixtures/Model.json`, emit prod SQL) so the edits never drift. The script invents no
-facts; the LLM verifies every fact live. Neither shortcut is allowed: no applying without a
-live fetch, no hand-editing the JSON that the script should write.
+`sync_pricing.py` does every mechanical step from that JSON (diff, edit
+`model-catalog.json` + regenerate its derived files, emit prod SQL) so the edits never
+drift. The script invents no facts; the LLM verifies every fact live. Neither shortcut is
+allowed: no applying without a live fetch, no hand-editing the generated files (edit the
+catalog and regenerate — CI `check:model-catalog` fails on any hand-edit).
 
 The mutable URL knob is **`provider-sources.json`** (next to this file): `models_urls` (model
 catalog/spec page) + `pricing_urls` ($/MTok) per provider. Edit it freely as vendor URLs
@@ -35,24 +38,22 @@ drift; this procedure stays fixed.
 
 ---
 
-## Where prices live (the 4 surfaces — keep them consistent)
+## Where prices live (one source, two generated, plus seed.ts + prod)
 
-1. **`packages/control-plane-ui/public/provider-templates/<name>.json`** — UI "add provider"
-   preset. Explicit per-model object: `code`, `name`, `description`, `providerModelId`,
-   `type` (chat|embedding|image|audio), `features[]`, `inputPricePerMillion`,
-   `outputPricePerMillion`, `cachedInputReadPricePerMillion`, `cachedInputWritePricePerMillion`,
-   `maxContextTokens`, `maxOutputTokens`. Also bump `modelCount` for this provider in
-   `provider-templates/index.json`. The build copies `public/` → `dist/`; after editing
-   `public/`, either rebuild the UI (`npm run build -w packages/control-plane-ui`) or mirror
-   the same edit into `dist/provider-templates/<name>.json` so a no-rebuild deploy is current.
-2. **`tools/db-migrate/seed/fixtures/Model.json`** — JSON array of `Model` rows (one object
-   per model, keys are camelCase column names). Carries all four price fields
-   (`inputPricePerMillion`, `outputPricePerMillion`, `cachedInputReadPricePerMillion`,
-   `cachedInputWritePricePerMillion`), plus `status`, `deprecationDate`, `replacedBy`,
-   `code`, `providerModelId`, `name`, etc. The fixture is the canonical data source for
-   fresh-seed runs; regenerate it from a source DB via
-   `tools/db-migrate/scripts/extract-reference-fixtures.ts`. For quick value fixes,
-   `sync_pricing.py apply` edits it in-place (matches rows by `code`).
+**0. `tools/db-migrate/model-catalog.json`** — THE source of truth you edit. One entry per
+`(provider, model)`: shared vendor facts (`code`, `name`, `description`, `providerModelId`,
+`type`, `features[]`, the four price fields, `maxContextTokens`, `maxOutputTokens`), an
+`inTemplate` flag, and — for seeded models — a `seed` block (`id`, `status`,
+`deprecationDate`, `replacedBy`, modalities, `capabilityJson`, timestamps). See the schema
+header in `tools/db-migrate/gen-model-catalog.mjs`. `sync_pricing.py apply` edits this file
+(money fields + seed `status`) and regenerates surfaces 1–2; never hand-edit those.
+
+1. **`packages/control-plane-ui/public/provider-templates/<name>.json` + `index.json`** —
+   GENERATED. UI "add provider" preset: each model projected to the 12 wizard vendor-fact
+   fields, `index.json` `modelCount` computed. Do not edit by hand.
+2. **`tools/db-migrate/seed/fixtures/Model.json`** — GENERATED. JSON array of the SEEDED
+   `Model` rows (those with a `seed` block), full camelCase column shape, sorted by `id`.
+   The seed's canonical dataset; do not edit by hand.
 3. **`tools/db-migrate/seed/seed.ts`** — the cache-price backfill `VALUES (adapter, read, write)`
    block (search `cachePriceBackfill`). It fills `cachedInput{Read,Write}PricePerMillion`
    = `input × mult` **only when NULL** (COALESCE). It is a FALLBACK, not the truth — prefer
@@ -155,7 +156,7 @@ Record the thinking + cache code-verification result (✓ / gap + file:line) in 
 
 ### Step 3.5 — Approval gate (BINDING — no change without it)
 **Every price and every model change requires explicit user approval before it is
-applied to ANY surface (template JSON, seed fixture, or prod).** Run
+applied to ANY surface (the `model-catalog.json` source, or prod).** Run
 `sync_pricing.py diff <desired.json>` and present its output to the user as the approval
 request — it pairs each change with the **source URL + fetch date** at the top so the user
 can confirm against the live page. For each drifted model show: field, old→new value
@@ -164,21 +165,21 @@ prod-sql (Step 5) run ONLY after the user approves; if the user approves a subse
 reduced `desired.json` with only the approved models and re-run. Never apply silently, never
 batch-approve across providers — one provider's diff, one approval.
 
-### Step 4 — Edit the repo surfaces (safe, reversible)
-- Template JSON: update each model's price fields; add/flag models per Step 3; keep field order.
-  Bump `index.json` `modelCount`. Mirror into `dist/` or rebuild the UI.
-- `tools/db-migrate/seed/fixtures/Model.json`: update all four price fields
-  (`inputPricePerMillion`, `outputPricePerMillion`, `cachedInputReadPricePerMillion`,
-  `cachedInputWritePricePerMillion`) and `status`/`deprecationDate`/`replacedBy` for the
-  matching rows (matched by `code`). The fixture is a JSON array — `sync_pricing.py apply`
-  edits it in-place with 2-space indent + trailing newline (preserves fixture format). For
-  manual edits: update only the changed values; do not reformat the whole file.
+### Step 4 — Apply through the catalog (safe, reversible)
+- `sync_pricing.py apply <desired.json>` edits `model-catalog.json` (the four price fields on
+  the matched `(provider, code)` entry + seed `status`) and then regenerates
+  `provider-templates/*.json` + `index.json` + `Model.json` from it. One edit, one regenerate —
+  no per-surface hand-editing, no `dist/` mirror, no field-order care. If a desired model is
+  not yet in the catalog, apply reports it — add the entry (with a `seed` block if it should
+  seed) to the catalog first, then re-run.
+- For a model needing more than price/status (a brand-new model, new features, caps): edit its
+  entry in `model-catalog.json` directly, then `npm run gen:model-catalog`.
 - `seed.ts`: only if the provider's whole-family read/write ratio changed.
-- English only. Decimal literals, not "$5 / MTok".
+- English only. Decimal literals, not "$5 / MTok". Verify with `npm run check:model-catalog`.
 
 ### Step 5 — prod is OUT OF SCOPE for this skill
-This skill updates ONLY the repo surfaces — the template JSON and seed fixture. It
-**never writes the prod `Model` table.** Changing prod prices is a SEPARATE operation that
+This skill updates ONLY the repo source (`model-catalog.json`, which regenerates the
+template JSON + seed fixture). It **never writes the prod `Model` table.** Changing prod prices is a SEPARATE operation that
 requires explicit, per-run user approval every time (there is no standing authority), done
 outside this skill under the prod-deploy backup discipline (pg_dump first, transactional
 `UPDATE ... WHERE code=... AND "providerId"=(...)`, re-SELECT to verify). The deterministic

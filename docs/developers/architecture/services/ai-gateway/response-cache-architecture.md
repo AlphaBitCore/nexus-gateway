@@ -27,14 +27,27 @@ Each handler applies its blob atomically, so cache behavior changes without a se
 
 ## 3. Where the cache sits in the request lifecycle
 
-The cache phase runs after request hooks and before the in-flight broker. For each request the handler:
+The cache phase runs after request hooks and before the in-flight broker. The stage's own gate is the disjunction of the two tiers' enable flags — there is no third, global cache switch:
+
+```go
+// packages/ai-gateway/internal/ingress/proxy/stage_cache.go
+l1Enabled := /* Cache.IsEnabled() && scope ready */
+l2Enabled := /* SemanticConfigCache.EffectiveEnabled() */
+cacheEnabled := l1Enabled || l2Enabled
+```
+
+Either tier being on makes the request cache-eligible; both off takes the lean cache-off path (no key build, no lookup, no freshness projection). Fleet-wide emergency cache-off is therefore done by flipping those same per-tier flags (the status strip's "Disable all gateway cache" on `/ai-gateway/cache` does exactly that, fleet-wide, in one click) — a durable off that persists until re-enabled.
+
+The other way off is **Emergency Passthrough**: a `bypassCache` tier short-circuits both the key build and the lookup/write, and the pre-lookup classifier stamps `(skipped, "passthrough")` rather than `(skipped, "no_cache")` so an operator-forced bypass is SQL-distinguishable from a client's `X-Nexus-No-Cache` header (which it also overrides). That path is auditable (mandatory reason + `enabledBy`) and time-boxed (≤ 8 h, auto-reverted). The two surfaces are complementary: the status-strip disable-all is the fast, durable incident switch; passthrough is the governed, self-reverting, optionally provider-scoped bypass. See [emergency-passthrough-architecture.md](../../cross-cutting/safety/emergency-passthrough-architecture.md) and [cache-multi-tier-architecture.md](../../cross-cutting/storage/cache-multi-tier-architecture.md).
+
+For each request the handler:
 
 1. Runs the pre-lookup classifier, which short-circuits to `skipped` for the embeddings endpoint (`embeddings_endpoint` — embeddings are never cached because each input is unique per workflow step and not session-bound, so caching wastes Redis and dilutes the chat cache-hit dashboards; checked first, regardless of cache config), a disabled cache, a no-cache header, a passthrough bypass, no routing target, or a freshness match (when `apply_freshness_rules` is on).
 2. Looks up L1 against the canonical key.
 3. On an L1 miss, attempts L2 via `tryL2Lookup`.
 4. On a full miss, dispatches through the broker (which coalesces concurrent identical misses onto one upstream call).
 
-The L2 path reads its settings from the fleet `semantic_cache_config` snapshot — `fleetSemanticPolicy` assembles the threshold, embed strategy, scope, and cross-model flag from the singleton; there is no per-route decode. The isolation scope resolves the Redis tag the entry is filtered by: `vk` → virtual-key id, `user` → user id, `org` → org id, `none` → cross-tenant. The embedding input is built from the canonical messages via the configured `embed_strategy`. The lookup/write-back sequence and the cache-status stamping are detailed in [cache-multi-tier-architecture.md](../../cross-cutting/storage/cache-multi-tier-architecture.md).
+The L2 path reads its settings from the fleet `semantic_cache_config` snapshot — `fleetSemanticPolicy` assembles the threshold, embed strategy, scope, and cross-model flag from the singleton; there is no per-route decode. The isolation scope resolves the Redis tag the entry is filtered by: `vk` → virtual-key id, `user` → user id, `org` → org id, `none` → cross-tenant. The embedding input is built from the canonical messages via the configured `embed_strategy`. The canonical the cache consumers read is post-redaction: when a request hook rewrote the wire body, the rewritten bytes are renormalized once (`proxyState.cacheNormalized`, memoized) so the embedding provider and the vector store see the redacted content the upstream sees — never the pre-hook original; a renormalize failure skips the cache semantics for that request rather than falling back to the stale canonical. Requests without a rewrite (the vast majority) keep the admission-time canonical with no added work. The lookup/write-back sequence and the cache-status stamping are detailed in [cache-multi-tier-architecture.md](../../cross-cutting/storage/cache-multi-tier-architecture.md).
 
 ## 4. L2 supporting machinery
 

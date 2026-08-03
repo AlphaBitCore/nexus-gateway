@@ -14,8 +14,13 @@
 #   scripts/check-go-coverage.sh --json           # machine-readable per-package report
 #   scripts/check-go-coverage.sh --strict-allowlist  # also fail if an allowlisted package now exceeds threshold (cleanup hint)
 #
-# Coverage measured via `go test -cover -count=1 ./...` per module.
-# `[no statements]` packages (pure type definitions, doc-only) are skipped.
+# Coverage measured via `go test -cover -count=1` per module — the full
+# `./...` tree in all/CI mode, only the staged packages in --staged mode
+# (that is the documented pre-commit contract: "staged Go packages", and
+# per-package coverage is a per-package number, so testing the touched
+# packages answers the pre-commit question exactly; the full-tree sweep
+# stays with CI). `[no statements]` packages (pure type definitions,
+# doc-only) are skipped.
 
 set -uo pipefail
 
@@ -54,8 +59,11 @@ if [[ ${#MODULES[@]} -eq 0 ]]; then
 fi
 
 # In --staged mode, restrict to modules with staged *.go changes.
+# --no-renames + ACMD: a staged rename decomposes into its delete+add halves
+# so BOTH affected packages are checked, and deleting a test file counts —
+# it lowers its package's coverage exactly like editing one.
 if [[ "$MODE" == "staged" ]]; then
-  STAGED="$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -E '\.go$' || true)"
+  STAGED="$(git diff --cached --name-only --no-renames --diff-filter=ACMD 2>/dev/null | grep -E '\.go$' || true)"
   if [[ -z "$STAGED" ]]; then
     echo "[check-go-coverage] no staged Go files — skipping."
     exit 0
@@ -113,17 +121,121 @@ declare -a UNNECESSARY_ALLOWLIST=()
 declare -a OK_PKGS=()
 
 run_module() {
+  # Subshell cd rather than pushd: each module runs in its own background
+  # process, and a shared directory stack would race between them.
   local module="$1"
-  pushd "$module" >/dev/null || return 1
-  local raw
-  raw="$(go test -cover -count=1 ./... 2>&1)"
-  popd >/dev/null || true
-  echo "$raw"
+  shift
+  ( cd "$module" && go test -cover -count=1 "$@" 2>&1 )
 }
 
+# nearest_module_root walks up from a dir to the closest ancestor holding a
+# go.mod. Used to keep a staged file out of an OUTER module's target list
+# when it really belongs to a nested module (packages/agent/ui inside
+# packages/agent, go.mod-bearing testdata fixtures) — go test errors on a
+# directory from a different module, and that error carries no parseable
+# per-package FAIL line.
+nearest_module_root() {
+  local d="$1"
+  while [[ -n "$d" && "$d" != "." && "$d" != "/" ]]; do
+    [[ -f "$d/go.mod" ]] && { echo "$d"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+# staged_pkgs_for_module prints the module-relative package dirs ("./x/y")
+# holding staged .go changes (from $STAGED, which includes deletions and
+# both halves of renames). Dirs the Go tool cannot test are filtered out,
+# because their go-test error output has no parseable per-package line:
+#   - testdata trees and _/. prefixed components (invisible to the Go tool);
+#   - dirs that no longer exist or hold no .go files after a deletion;
+#   - dirs whose nearest go.mod is NOT this module (nested modules).
+staged_pkgs_for_module() {
+  local module="$1"
+  echo "$STAGED" \
+    | grep -E "^$module/" \
+    | while IFS= read -r f; do dirname "$f"; done \
+    | sort -u \
+    | while IFS= read -r dir; do
+        case "/$dir/" in
+          */testdata/*|*/_*|*/.*) continue ;;
+        esac
+        [[ -d "$dir" ]] || continue
+        has_go=0
+        for g in "$dir"/*.go; do
+          [[ -e "$g" ]] && { has_go=1; break; }
+        done
+        [[ "$has_go" -eq 1 ]] || continue
+        [[ "$(nearest_module_root "$dir")" == "$module" ]] || continue
+        echo "${dir/#$module/.}"
+      done
+}
+
+# Modules run concurrently. `go test ./...` parallelises packages within one
+# module, but no single module saturates a developer box — measured serially,
+# the modules cost the SUM of their runtimes while the machine sits partly
+# idle. Each module writes to its own file so interleaved writes cannot
+# corrupt another's output, and the results are concatenated in MODULES order
+# afterwards so failures report deterministically.
+#
+# In staged mode each module tests only its staged packages, not its whole
+# tree: per-package coverage is a per-package number, so the touched packages
+# are the whole pre-commit question. The full sweep belongs to CI.
+TMPDIR_COV="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_COV"' EXIT
+
+for i in "${!MODULES[@]}"; do
+  m="${MODULES[$i]}"
+  if [[ "$MODE" == "staged" ]]; then
+    TARGETS=()
+    while IFS= read -r d; do
+      [[ -n "$d" ]] && TARGETS+=("$d")
+    done < <(staged_pkgs_for_module "$m")
+    [[ ${#TARGETS[@]} -eq 0 ]] && continue
+    printf '%s\n' "${TARGETS[@]}" > "$TMPDIR_COV/$i.targets"
+    { run_module "$m" "${TARGETS[@]}" > "$TMPDIR_COV/$i.out" 2>&1; echo $? > "$TMPDIR_COV/$i.rc"; } &
+  else
+    printf '%s\n' "./..." > "$TMPDIR_COV/$i.targets"
+    { run_module "$m" ./... > "$TMPDIR_COV/$i.out" 2>&1; echo $? > "$TMPDIR_COV/$i.rc"; } &
+  fi
+done
+wait
+
+# Shared-build-cache eviction retry: on a multi-session box, another process
+# wiping GOCACHE (`go clean -cache`) mid-compile makes imports fail with
+# "could not import X (open .../go-build/...: no such file or directory)" and
+# cascades [build failed] across dozens of healthy packages; the rerun simply
+# rebuilds the evicted objects. Retry ONCE, per module, ONLY on that exact
+# signature — real compile errors don't match it, and the retry re-runs the
+# full test set so nothing is weakened.
+for i in "${!MODULES[@]}"; do
+  [[ -f "$TMPDIR_COV/$i.rc" ]] || continue
+  rc="$(cat "$TMPDIR_COV/$i.rc")"
+  [[ "$rc" != "0" ]] || continue
+  if grep -qE 'could not import .*no such file or directory' "$TMPDIR_COV/$i.out"; then
+    echo "[check-go-coverage] ${MODULES[$i]}: build-cache eviction detected (concurrent 'go clean -cache'?) — retrying once." >&2
+    RETRY_TARGETS=()
+    while IFS= read -r d; do
+      [[ -n "$d" ]] && RETRY_TARGETS+=("$d")
+    done < "$TMPDIR_COV/$i.targets"
+    run_module "${MODULES[$i]}" "${RETRY_TARGETS[@]}" > "$TMPDIR_COV/$i.out" 2>&1
+    echo $? > "$TMPDIR_COV/$i.rc"
+  fi
+done
+
 ALL_OUTPUT=""
-for m in "${MODULES[@]}"; do
-  ALL_OUTPUT+="$(run_module "$m")"$'\n'
+for i in "${!MODULES[@]}"; do
+  [[ -f "$TMPDIR_COV/$i.out" ]] || continue
+  ALL_OUTPUT+="$(cat "$TMPDIR_COV/$i.out")"$'\n'
+  # Fail-closed guard: a module whose go test exited non-zero WITHOUT any
+  # parseable per-package "FAIL github.com/..." line would otherwise vanish
+  # from the report entirely (e.g. "no Go files in ...", toolchain errors,
+  # a directory from a different module). Surface it as a failure with the
+  # raw output head instead of silently passing.
+  rc="$(cat "$TMPDIR_COV/$i.rc" 2>/dev/null || echo 0)"
+  if [[ "$rc" != "0" ]] && ! grep -qE '^FAIL[[:space:]]+github\.com/' "$TMPDIR_COV/$i.out"; then
+    FAILED_PKGS+=("module ${MODULES[$i]}: go test exited rc=$rc with no per-package FAIL line — $(head -c 300 "$TMPDIR_COV/$i.out" | tr '\n' ' ')")
+  fi
 done
 
 # Parse each line. Possible shapes:
@@ -238,6 +350,20 @@ echo ""
 for f in "${FAILED_PKGS[@]}"; do
   echo "  ✗ $f"
 done
+
+# "[build failed]" tells you nothing without the compiler's own error lines
+# ("# import/path" header + file:line diagnostics). Surface them so a
+# transient failure (e.g. under heavy parallel load) is diagnosable from the
+# report alone instead of vanishing with the temp files.
+case "${FAILED_PKGS[*]}" in
+  *"build failed"*)
+    echo ""
+    echo "Compiler diagnostics for the build failure(s) above:"
+    # Herestring instead of `echo | grep`: head(1) closing the pipe early
+    # would make the echo builtin report "write error: Broken pipe".
+    grep -E '^#|^[^[:space:]]*\.go:[0-9]+|^[[:space:]]+.*\.go:[0-9]+' <<< "$ALL_OUTPUT" | head -40 | sed 's/^/    /'
+    ;;
+esac
 echo ""
 echo "Options:"
 echo "  1. Add quality tests to bring the package above ${THRESHOLD}%."

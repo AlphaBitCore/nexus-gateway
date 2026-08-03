@@ -50,6 +50,26 @@ into the Store at startup. tlsbump's `WithStreamingPolicyStore(*Store)`
 option lets the SSE handler read `Store.Get()` per-flow (always sees
 the latest snapshot).
 
+**The shadow push carries no mode.** `streaming_compliance` is a Type-B configKey — an invalidation
+trigger whose shadow state is `null` on every push — so a receiver must **re-read**
+`system_metadata['streaming_compliance.config']` when the trigger fires, exactly as it does at boot.
+Applying the pushed payload instead installs `DefaultPolicy()`, whose mode is `passthrough`.
+
+That is not hypothetical: the compliance proxy loaded the admin's `chunked_async` at boot and its own
+handler overwrote it with `passthrough` **70 ms later**, so every SSE stream was relayed uninspected
+while the admin's configured mode said otherwise. `passthrough` relays bytes only — it neither
+accumulates through the ContentExtractor nor can reject — so the difference is whether streamed model
+output is inspected at all.
+
+Two guards now hold that line, and each is sufficient alone:
+
+- `Store.ApplyShadowState` treats an empty payload (absent, `""`, `null`, `{}`) as **no state
+  supplied** and keeps the current policy. A trigger never resets state.
+- The compliance-proxy receiver re-reads `system_metadata` when the payload is empty, so a trigger
+  resolves to the same value a restart would.
+
+`null` is four bytes, so a `len() == 0` check does not catch what the Hub actually sends.
+
 **Hub-push alignment (two-service, not three).** Agent and
 compliance-proxy register a `streaming_compliance` shadow handler in
 their configdispatch and are listed in
@@ -111,9 +131,30 @@ hooks' declared `onMatch` action, an over-approximation that errs toward buffer:
 | `MayRedact` + admin `passthrough` (raw forwarding cannot redact) | `buffer` |
 | non-enforcing | admin mode unchanged (`live` stays audit-only) |
 
-ai-gateway implements this in `stream_shape.go` §B2 (`s.modelAArmed`); tlsbump mirrors
-it in `sse.go::scopeRouteSSEMode` / `overrideStreamingModeForScope` (`sse_modela.go`).
-The same probe pipeline is reused as the Model A prescan/confirm executor.
+ai-gateway implements this in `stream_shape.go` §B2 (`s.modelAArmed`); tlsbump mirrors it
+with `overrideStreamingModeForScope` (`sse_modela.go`), applied inline in `sse.go` against
+the response pipeline built at SSE entry.
+
+**One response pipeline per SSE request.** tlsbump builds it once, in the same block as the
+strict fail-closed entry guard and *before* any response header is copied, and every mode
+then reuses that instance — Model A as its prescan/confirm executor, `live` and `buffer` as
+their checkpoint executor. It is not rebuilt per mode, and the routing decision reads
+`MayBlock`/`MayRedact` off the already-built pipeline rather than building a probe of its
+own. (Previously the guard built one only to discard it, the routing built a second, and the
+mode branch a third; the three were argument-identical.)
+
+Two consequences worth stating because they are load-bearing:
+
+- **Neither `live` nor `buffer` carries a build-failure fallback**, and adding one back would
+  be dead code. Every error return inside `BuildPipeline` is gated on
+  `strictFailClosed` **and** a `fail-closed` hook, so a non-strict caller — the agent's
+  host-packet path — cannot produce a build error at all; its fail-open posture is by
+  construction, not by fallback branch. A strict caller that *would* error is refused with a
+  clean 451 at the entry guard before any header is written, and returns. Pinned by
+  `TestNonStrictBuildPipeline_NeverErrors_FailOpenByConstruction`.
+- The strict guard passes the caller's own `strictFailClosed` rather than a hardcoded
+  `true`. That block only runs when the caller is strict, so the value is identical; passing
+  the field is what makes the single build correct for both postures.
 
 > **Predicate soundness caveat.** `MayBlock`/`MayRedact` read the *declared*
 > `onMatch` action. A hook whose runtime decision can EXCEED its declared ceiling
@@ -145,6 +186,25 @@ substrate. The escalate gate keys on `ActionFromDecision(decision)` (not the raw
 decision enum) so a redact whose spans are masked behind a co-firing soft-block is
 still escalated. A `MaxBufferBytes` eviction of an incomplete content unit, and the
 escalation drain, both bound memory and escalate/block rather than deliver raw.
+
+**Where an evicted body goes is a deployment fact, not a policy one.** There is no admin
+switch for it, and there used to be one: `raw_body_spill_enabled` reached the resolved
+streaming policy and **no production code ever read it** — `resolveStreamingMode` consults
+only `merged.Mode`, and the spill decision (`spillstore/emit.go`) is
+`store == nil || size < threshold`. It has been **removed** rather than wired: every value
+in seed and in the live database was NULL, nothing read it, and a per-host override for a
+storage destination is a knob whose absence nobody noticed — the strongest available
+evidence that the need was not real. Enforcement was never affected either way (a storage
+destination is not a scan gate); what a spill decides is whether an oversize captured body
+is retrievable out-of-band. Each node reports its actual posture as the `storage.spill`
+runtime-introspection source, surfaced on the node's Runtime State tab; see
+[spillstore-architecture.md](../storage/spillstore-architecture.md) section 3.
+
+The two database columns (`interception_domain.raw_body_spill_enabled`,
+`Provider.raw_body_spill_enabled`) are **dropped**, not merely unused: the drop was verified lossless
+first (every row in seed and in the live database held NULL, count-checked before the DDL). A stored
+blob that still carries the key decodes normally — the key is ignored, not rejected, which a test
+pins — so an unmigrated node's own config never fails to load.
 
 **Aggregate-count rules are streaming-best-effort on Model A.** The confirm runs over
 the still-held window only (`scanBuf[deliveredScanLen:]`), not the whole transcript, so
@@ -201,6 +261,31 @@ responsibilities:
 
 Returns `nil` when `Options.Registry == nil` — callers treat that as
 "no normalize layer wired; keep the flat-text fallback".
+
+### `rawBody` lifetime: the callback MUST NOT retain it
+
+`rawBody` is **borrowed, not given**. `LivePipeline` fires the callback once per checkpoint
+and passes a snapshot taken into a **reused destination**
+(`LockedByteBuffer.SnapshotInto`), so the slice is valid only until the next checkpoint on
+the same stream. A callback that retains it will observe the next checkpoint's transcript in
+place of its own.
+
+This is safe for the canonical builder, and the reason is a property of the normalize layer
+rather than a convention: **no `NormalizedPayload` can alias the bytes it was built from.**
+Neither `NormalizedPayload` nor any type nested in it (`Message`, `ContentBlock`,
+`HTTPPayload`, `HTTPBodyView`, `SSEFrame`, `BinaryRef`, `ToolDef`, `ToolUse`, `Usage`) has a
+`[]byte` or `json.RawMessage` field; the normalize, adapters and streaming trees contain no
+`unsafe`; and both JSON libraries copy out of their input (gjson's `getBytes` re-allocates
+`Raw`/`Str`, goccy decodes into fresh values). So `ci.Normalized` survives the buffer being
+overwritten and extended.
+
+A **new** pre-hook that decodes some other way must re-check that before relying on it. If
+retention is genuinely needed, copy explicitly — do not assume the buffer is stable.
+
+`LockedByteBuffer.Snapshot` (no destination) keeps its original contract: an independent copy
+the caller may retain **and** mutate. `ai-gateway/internal/platform/streaming` relies on
+that, so the two methods are deliberately separate and `Snapshot` must not be redefined in
+terms of a shared destination.
 
 ### Registry is the only wire-format decode route in tlsbump
 
@@ -288,6 +373,8 @@ The two impls serve different architectural roles; unifying them would
 violate the "less is more" rule by pushing ai-gateway-only features
 into `shared/` where `agent`/`compliance-proxy` would carry them as
 dormant complexity.
+
+**Where the two deliberately diverge, and why the divergence is measured rather than argued:** ai-gateway's LivePipeline runs a reader goroutine feeding the delivery loop over a buffered channel; the shared one has no such goroutine. The queue that goroutine creates is what the delivery loop's drain-then-flush coalescing reads from, and the arithmetic favours keeping it by two orders of magnitude: one event crossing the channel costs 33 ns and no allocation, while one flush on a real TCP connection costs ~1900 ns (~1950 ns with the flush against ~53 ns for the same write without it). Coalescing one flush in every ~58 frames covers the handoff on every frame. Without the queue there is nothing to drain, so every frame carries its own flush. Benchmarks for all three figures live beside the pipeline, so the trade can be re-opened on evidence if either side moves.
 
 **What's actually shared (the contract that matters):**
 
@@ -498,6 +585,8 @@ Two compile-time consistency tests pin this surface:
 
 **Text accumulation in LivePipeline and BufferPipeline:** The streaming accumulation loops in `live.go` (`pendingText`, `accumulatedAll`), `buffer.go` (`fullText`), and `connectrpc.go` (`all`) use `strings.Builder` to keep hot-path allocations O(n) rather than the O(n²) of `str += chunk`.
 
+**ai-gateway hook-registry wiring + webhook-forward auth:** the hooks that run in every streaming mode come from the registry built by `packages/ai-gateway/cmd/ai-gateway/wiring/hooks.go` `InitHookRegistry`, which clones the shared builtin registry and replaces `webhook-forward` with a variant on the gateway's shared HTTP client pool. That variant authenticates to this deployment's AI-Guard compliance-webhook via the `webhook.Options.TrustedAIGuardBases` contract: the internal `X-RS-Token` is injected **per request**, and only when the hook endpoint's path is `/v1/ai-guard/compliance-webhook` AND its scheme+host match a trusted base. The ai-gateway supplies its **own** public + private URLs as the trusted bases (a service knows itself — no resolver involved; `boot.go` passes `cfg.PublicURL` + `platform.EffectivePrivateURL`), so the `[MUST MATCH]` internal secret is never sent to an arbitrary admin-configured webhook URL. (The compliance-proxy's counterpart wiring resolves the ai-gateway's bases from the Hub via `shared/transport/peerurl` — see `service-call-framework.md` §6.5.)
+
 ## Code anchors
 
 - Canonical type:
@@ -514,6 +603,9 @@ Two compile-time consistency tests pin this surface:
   `packages/ai-gateway/internal/platform/streaming/{live.go,prehook_test.go}` (compliance: LivePipeline + LiveConfig + Hook types + PreHook integration)
   `packages/ai-gateway/internal/platform/streaming/format/{parser.go,writers.go,extract.go}` (pure SSE wire primitives — Parser/Event/WriteEvent/WriteTypedEvent/WriteDone/WriteError/ExtractDeltaText/OpenAIStreamDeltaPayload; zero dependency on hookcore or streaming package, so the format surface can evolve independently of the hook executor)
   `packages/ai-gateway/internal/platform/streaming/format/parser_error_paths_test.go` (write-failure + io.EOF error paths: asserts that a downstream write error surfaces cleanly rather than silently swallowing the fault, and that io.EOF from the parser terminates cleanly without a panic)
+- ai-gateway hook-registry wiring (webhook-forward auth):
+  `packages/ai-gateway/cmd/ai-gateway/wiring/hooks.go` (`InitHookRegistry`)
+  `packages/shared/policy/hooks/webhook/webhook_aiguard.go` (`Options.TrustedAIGuardBases`)
 - Codec registry: `packages/shared/transport/normalize/codecs/register.go`
 - Streaming policy: `packages/shared/transport/streaming/policy/`
 - Cross-service tests:

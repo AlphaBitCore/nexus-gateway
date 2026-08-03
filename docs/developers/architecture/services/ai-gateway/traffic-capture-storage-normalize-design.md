@@ -67,7 +67,7 @@ This is an invariant in the data plane, not a coincidence:
 
 `rec.IngressFormat` (set from `resolved.BodyFormat`) carries the **authoritative ingress wire format** — `openai` / `openai-responses` / `anthropic` / `gemini` / … — and `writeIngressError` relies on it. It is now **persisted to `traffic_event.ingress_format`** (the fix below); before that, the view-time path was forced to re-derive (wrongly) from the provider adapter.
 
-`resolved.BodyFormat` is known from **route registration** (which ingress endpoint was hit) + the optional `x-nexus-aigw-body-format` override — available at `newProxyState`, *before* VK auth. `rec.IngressFormat` is **already stamped there** (in the Record literal built by `newProxyState` before any stage runs), so even early-rejection rows (VK-invalid, rate-limited, malformed body) carry it. The original gap was purely that the field was never persisted to `traffic_event`; persisting it (carried through the audit→mq message and the Hub insert) is what lets the view-time recompute read it.
+`resolved.BodyFormat` is known from **route registration** (which ingress endpoint was hit) — available at `newProxyState`, *before* VK auth. `rec.IngressFormat` is **already stamped there** (in the Record literal built by `newProxyState` before any stage runs), so even early-rejection rows (VK-invalid, rate-limited, malformed body) carry it. The original gap was purely that the field was never persisted to `traffic_event`; persisting it (carried through the audit→mq message and the Hub insert) is what lets the view-time recompute read it.
 
 ## 6. Pipeline-position determines what is stored
 

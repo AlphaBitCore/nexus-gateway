@@ -56,36 +56,39 @@ END $$;
 
 -- ── Function: cache_key_source ────────────────────────────────────────────
 -- Resolves which config tier supplies a given cache key. No Prisma representation.
+-- Tier 1 (cache_global_config) is retired: the orphaned table is never joined,
+-- so an ops query cannot surface its stale switch state as "effective".
 CREATE OR REPLACE FUNCTION public.cache_key_source(p_provider_id text, p_key text) RETURNS text
     LANGUAGE sql STABLE
     AS $$
   SELECT CASE
     WHEN o."config" ? p_key THEN 'provider-override'
     WHEN a."config" ? p_key THEN 'adapter-default'
-    WHEN g."config" ? p_key THEN 'global-default'
     ELSE 'code-default'
   END
   FROM "Provider" p
-  LEFT JOIN "cache_global_config"   g ON g."id" = 'singleton'
   LEFT JOIN "cache_adapter_config"  a ON a."adapter_type" = p."adapter_type"
   LEFT JOIN "cache_provider_config" o ON o."provider_id" = p."id"
   WHERE p."id" = p_provider_id;
 $$;
 
 -- ── View: cache_provider_effective ────────────────────────────────────────
--- Merges the 3 cache-config tiers into one effective row per provider.
-CREATE OR REPLACE VIEW public.cache_provider_effective AS
+-- Merges the two cache-config tiers (adapter + provider) into one effective
+-- row per provider. Tier 1 is retired — the orphaned cache_global_config is
+-- deliberately not joined so its stale contents can never look "effective".
+-- CREATE OR REPLACE cannot drop columns, so re-provisioned databases must
+-- drop the old 4-column view first (idempotent).
+DROP VIEW IF EXISTS public.cache_provider_effective;
+CREATE VIEW public.cache_provider_effective AS
  SELECT p.id AS provider_id,
     p.name AS provider_name,
     p.adapter_type,
-    ((COALESCE(g.config, '{}'::jsonb) || COALESCE(a.config, '{}'::jsonb)) || COALESCE(o.config, '{}'::jsonb)) AS effective_config,
-    COALESCE(g.config, '{}'::jsonb) AS global_config,
+    (COALESCE(a.config, '{}'::jsonb) || COALESCE(o.config, '{}'::jsonb)) AS effective_config,
     COALESCE(a.config, '{}'::jsonb) AS adapter_config,
     COALESCE(o.config, '{}'::jsonb) AS override_config,
     o.updated_at AS override_updated_at,
     o.updated_by AS override_updated_by
-   FROM (((public."Provider" p
-     LEFT JOIN public.cache_global_config g ON ((g.id = 'singleton'::text)))
+   FROM ((public."Provider" p
      LEFT JOIN public.cache_adapter_config a ON ((a.adapter_type = p.adapter_type)))
      LEFT JOIN public.cache_provider_config o ON ((o.provider_id = p.id)));
 
@@ -140,3 +143,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ops_rollup_1d ON public.metric_ops_rollup_1
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ops_rollup_1h ON public.metric_ops_rollup_1h USING btree (bucket_start, COALESCE(thing_id, ''::text), metric_name, dimension_key);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ops_rollup_1mo ON public.metric_ops_rollup_1mo USING btree (bucket_start, COALESCE(thing_id, ''::text), metric_name, dimension_key);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ops_rollup_5m ON public.metric_ops_rollup_5m USING btree (bucket_start, COALESCE(thing_id, ''::text), metric_name, dimension_key);
+-- Error-governance aggregation (GET /api/admin/traffic/errors/groups) filters
+-- every query on status_code >= 400 over a timestamp window. No full index
+-- covers status_code, so without this partial the group + bucket passes
+-- heap-fetch every row in the window and discard the ~95-99% that succeeded.
+-- Errors-only partial keeps both passes proportional to failed traffic and
+-- adds write cost only on error-row inserts.
+CREATE INDEX IF NOT EXISTS traffic_event_error_ts_idx ON public.traffic_event USING btree ("timestamp") WHERE (status_code >= 400);
+-- The rollup-first error-governance read enriches each displayed error class
+-- with a LIMIT-1 sample reason and a distinct end-user count, both scoped to
+-- one class via the exact COALESCE key expressions below. The timestamp-only
+-- partial above leaves those class predicates as heap filters (every
+-- enrichment query would re-visit every error row in the window); this
+-- expression partial makes both point queries walk only the class's own rows
+-- (equality on the three class expressions + trailing timestamp keeps
+-- ORDER BY timestamp DESC LIMIT 1 an index walk). Expressions must stay
+-- byte-identical to errorClassWhere in the Control Plane trafficstore.
+CREATE INDEX IF NOT EXISTS traffic_event_error_class_idx ON public.traffic_event USING btree
+  ((COALESCE(error_code, ''::text)),
+   (COALESCE(routed_provider_name, provider_name, ''::text)),
+   (COALESCE(routed_model_name, model_name, ''::text)),
+   "timestamp")
+  WHERE (status_code >= 400);

@@ -11,10 +11,13 @@ A third sibling — the in-flight broker — is the **sole cache-fill path** (it
 
 What the cache does **not** serve:
 
-- Requests with the `x-nexus-aigw-no-cache` header (`gateway_cache_status=skipped`, reason `no_cache`).
+- Requests with the `X-Nexus-No-Cache` header, or its deprecated `X-Nexus-Aigw-No-Cache` alias (`gateway_cache_status=skipped`, reason `no_cache`).
 - Requests whose `ResolvedRequest.Passthrough.BypassCache` flag is set by an emergency passthrough rule (`skipped`, reason `passthrough`).
 - Requests classified as time-sensitive by the freshness detector when the runtime `applyFreshnessRules` knob is on (`skipped`, reason `time_sensitive`).
-- Requests with no resolvable routing target or with the cache module not wired (`skipped`, reason `disabled`).
+- Requests with the cache module not wired — no tier enabled (`skipped`, reason `disabled`), and
+  requests where the tiers are on but routing resolved no target (`skipped`, reason
+  `no_targets`). The two are separate reasons because the remedies differ: a cache setting
+  versus a routing rule. They shared `disabled` until the split.
 - Upstream failures — the broker's leader path returns the error directly; no entry is written.
 - Entries exceeding the per-tier size cap (L1: 1 MiB default; L2: 256 KiB default).
 
@@ -52,8 +55,6 @@ Streaming and non-streaming requests both cache; the L1 schema discriminator (`s
 - `ApplyFreshnessRules` — gates whether the proxy's pre-lookup classifier honours a freshness detector match. **Defaults ON** (`extract_cache_config.apply_freshness_rules`): freshness protection is intrinsic to caching, so enabling a tier never silently replays a stale time-sensitive answer. The detector only runs when a cache tier is active, so a cache-off gateway pays nothing.
 
 The proxy reads these through `IsEnabled()` / `ApplyFreshnessRules()` on the hot path; the values are pushed via the Hub shadow (`response_cache.extract_config`) and dispatched into `SetConfig` without restarting the service.
-
-**Emergency master kill switch** (`Cache.SetMasterKill` / `MasterKilled`): the Tier-1 `cache_master_kill_switch` (cacheconfig global, Hub shadow key `cache`) is wired into `*cache.Cache` and read once per request at the cache stage — `cacheEnabled = (l1Enabled || l2Enabled) && !MasterKilled()`. When active it disables **both** gateway response cache tiers (L1 + L2) regardless of either tier's own enable flag, forcing the lean cache-off path (no key build, no lookup, no freshness projection). It does **not** disable provider-side prompt caching (Anthropic markers / Gemini context cache), which only makes the upstream cache and never serves a stored gateway response. The flag lives on the L1 `*cache.Cache` object because that object is already threaded into both the config-dispatch receiver and the proxy hot path; the invariant that makes this safe is "L2 active ⟹ `ResponseCache != nil`" (both tiers derive from the same Redis client and L2's `*redis.Client` requirement is strictly narrower than L1's `UniversalClient`).
 
 **Yaml-only knobs** (set once at boot, since changing them invalidates existing entries):
 
@@ -117,17 +118,41 @@ The `upstream_provider` / `upstream_model` clauses are dropped when the caller s
 
 **Eligibility — `EffectiveEnabled()`**: the L2 cache is only consulted when the runtime fleet-wide enabled flag is on AND the embedding provider id, embedding model id, and embedding dimension are all populated. A missing embedding model produces `skip_disabled` and falls through to the broker.
 
+## Emergency cache-off — two complementary surfaces
+
+There is no separate master switch for the gateway response cache. Each tier owns its own enable flag and the cache stage gates on their disjunction:
+
+```go
+// packages/ai-gateway/internal/ingress/proxy/stage_cache.go
+cacheEnabled := l1Enabled || l2Enabled
+```
+
+Turning the cache off fleet-wide during an incident therefore goes through one of two surfaces, which are complementary rather than redundant:
+
+| Surface | Where | Properties | Reach for it when |
+|---|---|---|---|
+| **Fleet disable-all** | The sticky status strip at the top of `/ai-gateway/cache` — "Disable all gateway cache", behind a confirmation dialog and permission-gated (`useDisableExtractCacheFleetWide` / `useDisableSemanticCacheFleetWide`) | Fast (one click) and **durable** — it writes `enabled=false` onto the L1 and L2 singleton configs, so the cache stays off until someone re-enables it. No reason required, no expiry | The cache itself is the problem and you want it off *now* and off until you say otherwise — a poisoned corpus, a bad embedding rotation, a cache-correctness incident |
+| **Emergency Passthrough `bypassCache`** | `/ai-gateway/passthrough` — the 3-tier (global / adapter / provider) bypass | **Auditable + time-boxed** — mandatory ≥20-char reason, `enabledBy` recorded, `expiresAt` ≤ 8 h with a Hub auto-revert job, and every affected request is stamped (`passthrough_flags`, `gateway_cache_skip_reason = passthrough`) | You need a governed, self-reverting bypass, or you need it scoped to one provider/adapter rather than the whole fleet — and you want the traffic rows to record who bypassed and why |
+
+Neither surface disables **provider-side** prompt caching (Anthropic `cache_control` markers / Gemini context cache): that only makes the *upstream* cache and never serves a stored gateway response.
+
+The full passthrough model is in [`emergency-passthrough-architecture.md`](../safety/emergency-passthrough-architecture.md).
+
 ## Lookup order + write-back
 
 The proxy's cache phase runs after request hooks and before the broker. Per request:
 
-1. **Pre-lookup classifier** — `classifyCachePreLookup` returns either `(skipped, <reason>)` (cache disabled, no-cache header, passthrough bypass, no routing target, time-sensitive freshness match) or `("", "")` (proceed).
+1. **Pre-lookup classifier** — `classifyCachePreLookup` returns either `(skipped, <reason>)` (no tier enabled, no routing target, no-cache header, passthrough bypass, endpoint kind that is never cached, time-sensitive freshness match) or `("", "")` (proceed). When both "no tier enabled" and "no routing target" hold, `disabled` wins: enabling a tier is the actionable first step.
 2. **L1 lookup** — `Cache.LookupStream` or `Cache.LookupResponse` against the canonical key. On hit, stamp `gateway_cache_status = hit`, `gateway_cache_kind = extract`, `provider_cache_status = na`, and dispatch into the HIT pipeline.
 3. **L2 lookup on L1 miss** — `Handler.tryL2Lookup` runs unconditionally; returns false (and the caller proceeds to the broker) when the L2 reader is not wired or the per-route policy disables semantic. On hit, stamp `gateway_cache_status = hit`, `gateway_cache_kind = semantic`, `gateway_cache_l2_entry_key = <reader entry key>`, `provider_cache_status = na`.
 4. **Broker path on full miss** — `streamcache.Registry.Subscribe(key, leaderFn)` returns `(subscription, isFirst, err)`. The first subscriber's `leaderFn` fires the live upstream call and stamps `gateway_cache_status = miss`; joiners share the in-flight stream and stamp `gateway_cache_status = hit_inflight`.
 5. **L2 write-back** — on the leader's terminal frame, `Handler.scheduleL2Write` fires a goroutine with a 5-second deadline that embeds the canonical prompt text and HSETs an L2 entry. Both response kinds are written: a non-streaming leader writes a `response_kind=response` entry whose body is the canonical response JSON (fired from `handleNonStreamWithSubscription`, or `ServeProxy` on the direct path); a streaming leader writes a `response_kind=stream` entry whose body is the canonical `[]ChunkRecord` timeline (the broker's `writeCache` invokes `CacheMeta.OnStreamCachePersisted`, which routes the same timeline JSON L1 stored into `scheduleL2Write`). Streaming therefore L2-hits on equivalent subsequent requests rather than paying an embedding charge on a guaranteed miss. The VK scope on every write is resolved from the fleet `vary_by` setting (vk / user / org / none) — the same dimension the reader filters on — so a write and the matching read isolate identically. L1 write-back is internal to the broker's `writeCache` step (single canonical timeline regardless of how many joiners attached).
 
 Joiners do NOT issue upstream calls and do NOT reconcile against the quota counter — the leader pays the upstream cost and reconciles its own quota.
+
+**The write-back set is bounded.** The 5-second deadline caps how long one write lives, not how many exist: while the embedding provider is slow the outstanding set grows as arrival-rate × write-latency, and each entry pins its whole `WriteRequest` — response body included — until it resolves. `scheduleL2Write` therefore takes a slot from a process-wide gate (64 per CPU) and sheds beyond it. With 5000 schedules outstanding against a stalled provider at 16 KB bodies, the bound holds live heap after GC to +12.9 MB against +84.4 MB unbounded; the gate itself costs 4 ns and no allocation on the admitted path. Shedding is safe by construction — L2 is best-effort, so a dropped write-back costs a later equivalent request its hit and nothing else — and `nexus_cache_l2_write_shed_total` reports when the bound binds. A rising value means the embedding provider is slow enough that write-back is falling behind, i.e. a reduced hit rate, never a failed request.
+
+**Subscriber wake-up.** `RingBuffer` wakes every parked reader through one broadcast channel per generation rather than a per-reader channel list, so per-chunk allocation on the broker's fan-out is flat in subscriber count rather than linear in it: 4 subscribers cost one allocation and 112 B per chunk, where a per-reader channel list costs six and 503 B.
 
 ## OriginWireShape tagging
 
@@ -159,7 +184,7 @@ The audit record (and downstream `TrafficEventMessage`) carries six cache column
 |---|---|---|
 | `CacheStatus` | enum `HIT` \| `MISS` | `DeriveCacheStatus(GatewayCacheStatus, ProviderCacheStatus)` — HIT iff gateway served (`hit` or `hit_inflight`) OR upstream reported a provider-side prompt cache hit. |
 | `GatewayCacheStatus` | enum `hit` \| `hit_inflight` \| `miss` \| `skipped` | Stamped by the proxy at the lookup branch (extract HIT, semantic HIT, broker leader, broker joiner, or pre-lookup classifier). |
-| `GatewayCacheSkipReason` | enum (16 values) | Set only when `GatewayCacheStatus = skipped`. Vocabulary: `disabled / no_cache / passthrough / not_cacheable / time_sensitive / oversize_for_embedding / valkey_unavailable / embedding_timeout / embedding_provider_error / embedding_dim_mismatch / semantic_search_error / semantic_search_timeout / semantic_reindex_in_progress / semantic_unavailable / embedding_circuit_open / poisoned`. |
+| `GatewayCacheSkipReason` | enum (20 values) | Set only when `GatewayCacheStatus = skipped`. Vocabulary: `disabled / no_targets / no_cache / passthrough / time_sensitive / modality_endpoint / embeddings_endpoint / rerank_endpoint / agentic_tool_use / poisoned / no_embeddable_text / oversize_for_embedding / valkey_unavailable / semantic_unavailable / semantic_search_error / semantic_search_timeout / embedding_timeout / embedding_provider_error / embedding_dim_mismatch / embedding_circuit_open`. This list had drifted: it claimed 16 values, named two (`not_cacheable`, `semantic_reindex_in_progress`) that nothing emits, and omitted six the gateway does emit. It is now the same set as `audit.GatewayCacheSkipReason`, the `pages:traffic.detail.cache.gatewaySkip` labels and the CP-UI union type. |
 | `GatewayCacheKind` | enum `extract` \| `semantic` | Distinguishes L1 hits (`extract`) from L2 hits (`semantic`). |
 | `GatewayCacheL2EntryKey` | string | The L2 Redis HASH key (`<index>:<sha256[:16]>` over embedding text + scope + kind [+ provider/model]). Stamped only on rows where `GatewayCacheKind = semantic`. The admin UI uses this as the entry id the gateway's poison check will match against. |
 | `ProviderCacheStatus` | enum `hit` \| `miss` \| `na` | Reports the upstream provider's own prompt-cache outcome from the upstream usage envelope. `na` on every gateway-served row (the upstream wasn't called). |
@@ -198,6 +223,10 @@ The cache layer does NOT delegate to the spillstore. The two systems are indepen
 **L2 eviction** is per-entry `PEXPIRE` set at write time, plus index-level lifecycle. The L2 config snapshot carries a `Fingerprint = sha256(provider:model:dim)` and an explicit `RedisIndexName` (e.g. `nexus:semantic-cache:v1`). When the fingerprint changes — embedding provider, model, or dimension swap — a blue/green index rotation drops the stale index and recreates with the new dimension. Stale entries are unreachable behind the new fingerprint TAG filter even before the index drop.
 
 **Freshness — time-sensitive skip**. `cache/freshness.Detector` is a hot-swappable rule set evaluated over the canonical message stream. When `Cache.ApplyFreshnessRules()` is true AND `Detector.IsTimeSensitive(messages)` matches, `classifyCachePreLookup` returns `(skipped, time_sensitive)` so both L1 and L2 are bypassed. The detector's rule list is loaded from the Hub shadow and replaced atomically via `Detector.Reload` — no restart required. The default rule set seeds from `semantic_cache_config.time_sensitive_overrides` (the `tools/db-migrate/seed/fixtures/semantic_cache_config.json` fixture); there is no Go-side default, so if the seed never ran the rule list is empty and nothing is classified time-sensitive.
+
+**Negative virtual-key entries** share the positive VK freshness contract. An unknown key hash is recorded in a bounded 1024-entry arena — deliberately separate from the 10,000-entry positive cache, so a flood of distinct bad keys cannot evict resolved keys — and expires at the same `Config.VKTTL` (30 s default) that bounds positives, or earlier when a Hub `virtual_keys` push invalidates that hash. It exists because an uncached rejection is an unauthenticated amplification path: without it an unknown key reaches Postgres on every request, once per HMAC keyring version, and nothing about driving that requires credentials.
+
+**A legitimately empty result is a cached result.** `store.GetEnabledRoutingRules` records that a load happened independently of what it found, so a deployment with no enabled routing rules answers its one-or-two lookups per request from memory rather than from Postgres. Invalidation and the 30-minute TTL retire a cached empty result exactly as they retire a non-empty one. Using `rules != nil` as the hit predicate instead is the trap: a nil slice is indistinguishable from "not loaded".
 
 **Poisoning** (above) is the third eviction-adjacent path: a poisoned L2 entry remains in Valkey but is invisible to FT.SEARCH-driven reads until the poison key TTL elapses or the entry's own TTL evicts it.
 

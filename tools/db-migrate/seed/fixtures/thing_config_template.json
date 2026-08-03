@@ -101,31 +101,13 @@
     "type": "ai-gateway",
     "config_key": "cache",
     "state": {
-      "global": {
-        "normaliser_enabled": false,
-        "cache_master_kill_switch": false
-      },
       "adapters": {
-        "glm": {
-          "rules": {
-            "glm-field-order-normalize": {
-              "enabled": true
-            }
-          }
-        },
         "gemini": {
           "ttl_seconds": 3600,
           "cache_enabled": false,
           "min_system_chars": 4096,
           "circuit_breaker_open_secs": 300,
           "circuit_breaker_threshold": 5
-        },
-        "openai": {
-          "rules": {
-            "openai-field-order-normalize": {
-              "enabled": true
-            }
-          }
         },
         "vertex": {
           "ttl_seconds": 3600,
@@ -143,20 +125,6 @@
           "marker_inject_enabled": false,
           "marker_boundary3_enabled": false
         },
-        "deepseek": {
-          "rules": {
-            "deepseek-field-order-normalize": {
-              "enabled": true
-            }
-          }
-        },
-        "moonshot": {
-          "rules": {
-            "moonshot-field-order-normalize": {
-              "enabled": true
-            }
-          }
-        },
         "anthropic": {
           "rules": {
             "claude-code-cch-strip": {
@@ -165,13 +133,6 @@
           },
           "marker_inject_enabled": false,
           "marker_boundary3_enabled": false
-        },
-        "azure-openai": {
-          "rules": {
-            "azure-openai-field-order-normalize": {
-              "enabled": true
-            }
-          }
         }
       },
       "providers": {

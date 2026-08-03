@@ -1,0 +1,85 @@
+# Rebuilds the Vectorscan buildbase. Runs only when the pin or the toolchain
+# changes, because compiling libhs is the slow part of every service build.
+name: buildbase
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Buildbase tag, e.g. vs5.4.12"
+        required: true
+  push:
+    # Restricted to the default branch: this workflow republishes the
+    # pinned nexus-buildbase:vs5.4.12-* tags in place (no version bump), so
+    # an unrestricted push trigger would let a push to ANY branch touching
+    # the Dockerfile — including an in-progress feature branch — overwrite
+    # the tag every other build's `docker pull` (or a maintainer's local
+    # `docker build`) resolves to. main-only keeps that republish tied to
+    # code that has actually merged.
+    branches:
+      - main
+    paths:
+      - "docker/buildbase/Dockerfile"
+      - ".github/workflows/buildbase.yml"
+      # The ISA gate below decides what these tags are allowed to contain, so a
+      # change to it has to be able to re-measure them. Without this line a
+      # tightened pattern would leave the published tags standing on the old
+      # measurement until something else happened to touch the Dockerfile.
+      - "scripts/release/verify-image.sh"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            config: baseline
+            cmake: ""
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            config: avx2
+            cmake: "-DBUILD_AVX2=ON"
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            config: baseline
+            cmake: ""
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        # TAG goes through env:, not a literal ${{ inputs.tag }} substitution
+        # inside the run: script body, so a crafted `tag` dispatch input
+        # (e.g. containing a shell metacharacter sequence) is delivered as an
+        # inert environment variable value rather than text spliced into the
+        # script before bash ever parses it — the standard Actions
+        # script-injection guard for any ${{ inputs.* }} used in a run: step.
+        env:
+          TAG: ${{ inputs.tag || 'vs5.4.12' }}
+        run: |
+          set -euo pipefail
+          tag="$TAG"
+          arch="${{ matrix.config == 'avx2' && 'amd64-avx2' || matrix.platform == 'linux/arm64' && 'arm64' || 'amd64' }}"
+          ref="ghcr.io/alphabitcore/nexus-buildbase:${tag}-${arch}"
+          docker build \
+            --build-arg "EXTRA_CMAKE_FLAGS=${{ matrix.cmake }}" \
+            -f docker/buildbase/Dockerfile -t "$ref" docker/buildbase/
+          # Measure before publishing. These tags are the one class of artifact
+          # a maintainer is invited to consume directly (see the architecture
+          # doc's "building services from the pulled buildbase"), and they are
+          # republished IN PLACE under the same name, so an unmeasured push
+          # silently changes what every later --build-arg BUILDBASE=<tag> build
+          # links. build-images.sh gates its own locally built buildbase the
+          # same way; this closes the published path.
+          scripts/release/verify-image.sh "$ref" "${{ matrix.config }}"
+          docker push "$ref"

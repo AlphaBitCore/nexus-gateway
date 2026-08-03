@@ -145,53 +145,6 @@ paths:
                                 additionalProperties: {}
                             example:
                                 flushed: true
-    /api/admin/cache/global:
-        get:
-            operationId: cacheGetGlobal
-            summary: Get global cache config
-            description: Returns the Tier-1 singleton prompt-cache configuration (master kill switch and normaliser toggle).
-            x-nexus-iam-action: iam.ResourcePromptCache.Action(iam.VerbRead)
-            x-nexus-tier: auto
-            responses:
-                "200":
-                    description: The global cache config blob.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/cacheconfig_GlobalConfig'
-        put:
-            operationId: cachePutGlobal
-            summary: Update global cache config
-            description: Writes the Tier-1 singleton prompt-cache configuration and propagates the change to the Hub shadow. Returns 502 when the Hub propagation fails.
-            x-nexus-iam-action: iam.ResourcePromptCache.Action(iam.VerbUpdate)
-            x-nexus-tier: confirm
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/cacheconfig_GlobalConfig'
-            responses:
-                "400":
-                    description: Malformed request body.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "502":
-                    description: The config was persisted but propagation to the Hub shadow failed.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "200":
-                    description: The accepted global config blob, echoed back.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/cacheconfig_GlobalConfig'
     /api/admin/cache/overrides:
         get:
             operationId: cacheListOverrides
@@ -570,19 +523,6 @@ components:
             example:
                 marker_inject_enabled: true
                 marker_boundary3_enabled: false
-        cacheconfig_GlobalConfig:
-            type: object
-            description: Tier-1 singleton prompt-cache configuration.
-            properties:
-                normaliser_enabled:
-                    description: Whether the request normaliser runs before cache-key computation.
-                    type: boolean
-                cache_master_kill_switch:
-                    description: When true, disables all prompt caching fleet-wide regardless of lower-tier config.
-                    type: boolean
-            example:
-                normaliser_enabled: true
-                cache_master_kill_switch: false
         cacheconfig_ProviderConfig:
             type: object
             description: Tier-3 prompt-cache override blob for a single provider. A strict subset of AdapterConfig with no rules map. Every knob is an optional pointer — null or absent means inherit from the adapter and global tiers.

@@ -4,14 +4,17 @@ on:
   push:
     branches: [main, worktree-chore-pr-review]
   pull_request:
-    branches: [main]
+    # develop is where feature branches land FIRST. Gating only on main left
+    # that hop unchecked: a 160-commit feature branch reported no checks at
+    # all, so every gate below first saw the change one merge too late.
+    branches: [main, develop]
 
 jobs:
   terminology-guard:
     name: Terminology Guard - No Internal Thing Model Terms in Product Surfaces
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Terminology guard self-test (detector canary)
         run: ./scripts/check-terminology.sh --selftest
       - name: Terminology check
@@ -21,7 +24,7 @@ jobs:
     name: Governance Lints - Arch-Doc Triggers, Migration Timestamps, i18n, TZ, Code Bindings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Need full clone for `git ls-files` + `git show :path` patterns
           # used by check-no-redis-pubsub.mjs / check-hardcoded-agent-paths.mjs.
@@ -47,13 +50,47 @@ jobs:
       - name: i18n parity
         run: node scripts/check-i18n-parity.mjs
 
+      # Model catalog: Model.json + provider-templates/*.json + index.json are
+      # generated from tools/db-migrate/model-catalog.json; fail if they drift.
+      - name: Model catalog generated files in sync
+        run: node tools/db-migrate/gen-model-catalog.mjs --check
+
+      # Rule packs: seed/fixtures/{rule_pack,rule}.json are generated from
+      # seed/rule-packs/*.yaml. The YAML is what the Go differential and
+      # Vectorscan-compat tests load; the fixtures are what the DB seeds. Drift
+      # means the packs a deployment enforces are not the packs the tests prove,
+      # and severity decides whether a rule redacts or only tags — so a stale
+      # fixture silently downgrades enforcement while every test stays green.
+      - name: Rule-pack generated fixtures in sync
+        run: npm run check:rulepacks
+
+      # The ai-gateway smoke is a mandatory pre-"done" gate, and a gate that
+      # cannot fail is worse than no gate — it certifies. A fatal abort used to
+      # only print its failure, leaving the verdict counters untouched, so a run
+      # that died in preflight without exercising a single model reported PASS
+      # and exited 0. This asserts an aborted run still fails.
+      - name: Smoke harness can fail
+        run: npm run check:smoke-harness
+
+      # Sampling-quirk coverage: every catalog chat family has an explicit
+      # recorded decision (strips / accepts / forward-unprobed); strip rules
+      # anchor to real adapter code and a seeded smoke probe; the smoke's
+      # rejects-temperature set stays fresh against the catalog.
+      - name: Quirk coverage (catalog↔codec↔smoke)
+        run: npm run check:quirk-coverage
+
+      # §3a Rule 7 machine check: every prefix-list quirk rule cites an
+      # observed vendor 400; no speculative strips.
+      - name: Quirk evidence citations
+        run: npm run check:quirk-evidence
+
       # Timezone-handling correctness.
       - name: Timezone correctness
         run: bash scripts/check-timezone-correctness.sh
 
       # Code-binding lints (STRICT mode — net-new violations fail CI).
       # All bindings are currently clean as of the docs+governance
-      # program closeout commit a254e350.
+      # program closeout.
 
       - name: useApi queryKey shape (strict)
         run: node scripts/check-useapi-querykey.mjs --strict
@@ -86,7 +123,7 @@ jobs:
     name: Frontend - Type Check, Test, Build (control-plane-ui + ui-shared)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -117,7 +154,7 @@ jobs:
     name: DB Migrate - Seed Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -136,20 +173,31 @@ jobs:
       - name: Seed unit tests
         run: cd tools/db-migrate && npm test
 
+      # tools/db-migrate/package-lock.json is a DEDICATED lockfile, not part of
+      # the root npm workspace, so the `npm ci` above neither maintains nor
+      # validates it. The db-migrator image installs from it at RUNTIME (it
+      # ships thin), which moved the "is this lockfile installable?" question
+      # out of every build and into the operator's first `docker compose up` —
+      # and the release pushes that image before the compose smoke would notice.
+      # Installing it here puts the check back in front of the merge.
+      - name: Migrator lockfile installs
+        run: cd tools/db-migrate && npm ci --no-audit --no-fund --ignore-scripts --omit=dev
+
   security-scan:
     name: Security Scanning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           # Pinned (not `stable`) so the govulncheck gate is reproducible:
           # the toolchain's own stdlib is what govulncheck scans, so a
           # floating `stable` that lags behind a patch release makes the
-          # gate flap. 1.26.4 carries the fixes for all standard-library
+          # gate flap. 1.26.5 carries the fixes for all standard-library
           # advisories currently reachable from our code (GO-2026-4918 →
-          # GO-2026-5039). Bump this when govulncheck flags a newer one.
-          go-version: '1.26.4'
+          # GO-2026-5856, the crypto/tls advisory fixed in 1.26.5). Bump
+          # this when govulncheck flags a newer one.
+          go-version: '1.26.5'
       - uses: actions/setup-node@v6
         with:
           node-version: 20

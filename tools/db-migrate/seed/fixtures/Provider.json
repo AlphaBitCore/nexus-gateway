@@ -18,7 +18,6 @@
     "streaming_fail_behavior": null,
     "capture_request_body": null,
     "capture_response_body": null,
-    "raw_body_spill_enabled": null,
     "createdAt": "2026-05-08T14:45:04.145+00:00",
     "updatedAt": "2026-05-10T16:40:48.524+00:00"
   },
@@ -41,7 +40,6 @@
     "streaming_fail_behavior": null,
     "capture_request_body": null,
     "capture_response_body": null,
-    "raw_body_spill_enabled": null,
     "createdAt": "2026-05-08T14:45:04.408+00:00",
     "updatedAt": "2026-05-10T16:40:48.764+00:00"
   },
@@ -64,7 +62,6 @@
     "streaming_fail_behavior": null,
     "capture_request_body": null,
     "capture_response_body": null,
-    "raw_body_spill_enabled": null,
     "createdAt": "2026-05-08T14:45:01.208+00:00",
     "updatedAt": "2026-05-10T16:40:46.809+00:00"
   },
@@ -87,7 +84,6 @@
     "streaming_fail_behavior": null,
     "capture_request_body": null,
     "capture_response_body": null,
-    "raw_body_spill_enabled": null,
     "createdAt": "2026-06-13T06:35:32.836+00:00",
     "updatedAt": "2026-06-13T06:35:32.836+00:00"
   },
@@ -110,7 +106,6 @@
     "streaming_fail_behavior": null,
     "capture_request_body": null,
     "capture_response_body": null,
-    "raw_body_spill_enabled": null,
     "createdAt": "2026-05-08T14:45:03.879+00:00",
     "updatedAt": "2026-05-10T16:40:48.27+00:00"
   },
@@ -133,7 +128,6 @@
     "streaming_fail_behavior": null,
     "capture_request_body": null,
     "capture_response_body": null,
-    "raw_body_spill_enabled": null,
     "createdAt": "2026-05-08T14:45:03.609+00:00",
     "updatedAt": "2026-05-10T16:40:48.026+00:00"
   },
@@ -156,7 +150,6 @@
     "streaming_fail_behavior": null,
     "capture_request_body": null,
     "capture_response_body": null,
-    "raw_body_spill_enabled": null,
     "createdAt": "2026-05-20T00:00:00+00:00",
     "updatedAt": "2026-05-20T00:00:00+00:00"
   }

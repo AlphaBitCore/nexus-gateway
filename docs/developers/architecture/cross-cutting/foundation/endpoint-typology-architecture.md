@@ -6,8 +6,8 @@ Nexus classifies every traffic event along three orthogonal axes: **what kind of
 
 Anchor packages:
 
-- `packages/shared/transport/typology/` — the **single source of truth**: `EndpointKind` + `WireShape` constants, the `Rule` struct, the 28-rule built-in table, `ClassifyPath(method, path)`, and the `KindFromPathSegment(segment)` path-segment lookup used by the audit pipeline.
-- `packages/shared/policy/hooks/core/types.go` — `hookcore.EndpointType = typology.EndpointKind` (type alias) plus the eight `EndpointType*` re-export constants. Hook configs match against `EndpointType`; the hook pipeline reads the canonical kind via this alias.
+- `packages/shared/transport/typology/` — the **single source of truth**: `EndpointKind` + `WireShape` constants, the `Rule` struct, the 34-rule built-in table, `ClassifyPath(method, path)`, and the `KindFromPathSegment(segment)` path-segment lookup used by the audit pipeline.
+- `packages/shared/policy/hooks/core/types.go` — `hookcore.EndpointType = typology.EndpointKind` (type alias) plus the nine `EndpointType*` re-export constants. Hook configs match against `EndpointType`; the hook pipeline reads the canonical kind via this alias.
 - `packages/ai-gateway/internal/routing/core/types.go` — `RoutingContext.EndpointType typology.EndpointKind`. The routing matcher reads it via `resolveField("endpointType")`.
 - `packages/ai-gateway/internal/execution/canonicalbridge/api.go` — `CanonicalBridge.ResponseAcrossFormats(from, to typology.WireShape, body []byte)` is the cache-HIT cross-format reshape boundary. `WireShape` on both sides; the bridge decodes via the `from` shape and re-encodes via the `to` shape.
 - `packages/ai-gateway/internal/ingress/proxy/ingress.go` — `Ingress.WireShape typology.WireShape` is the route-table field that carries the canonical wire shape for cache tagging + codec dispatch. Every route in `cmd/ai-gateway/wiring/routes.go` declares the WireShape directly (e.g. `WireShape: typology.WireShapeAnthropicMessages` for `/v1/messages`).
@@ -30,19 +30,23 @@ The axes are independent:
 
 ## 2. EndpointKind (Axis 1)
 
-`EndpointKind` is a typed string. Nine values cover every supported semantic category:
+`EndpointKind` is a typed string. Twelve values cover every supported semantic category:
 
 | Constant | Value | Covers |
 |---|---|---|
 | `EndpointKindChat` | `chat` | `/v1/chat/completions`, `/v1/responses`, `/v1/completions` (legacy), `/v1/messages` (Anthropic), Gemini `:generateContent`, Vertex `:generateContent`, Bedrock Converse |
 | `EndpointKindEmbeddings` | `embeddings` | `/v1/embeddings` (OpenAI / Azure / GLM), `/v1/embed` + `/v2/embed` (Cohere), Gemini `:embedContent` / `:batchEmbedContents`, Vertex `:embedContent` / `:batchEmbedContents`, Voyage embeddings |
+| `EndpointKindRerank` | `rerank` | `/v1/rerank` (canonical, Cohere-shaped body — OpenAI ships no rerank API), Cohere `/v2/rerank`, Voyage `/v1/rerank` |
 | `EndpointKindImageGeneration` | `image_generation` | `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations` |
 | `EndpointKindTTS` | `tts` | `/v1/audio/speech` and provider-specific text-to-speech |
 | `EndpointKindSTT` | `stt` | `/v1/audio/transcriptions`, `/v1/audio/translations`, and provider-specific speech-to-text |
-| `EndpointKindVideoGeneration` | `video_generation` | Reserved for provider video-generation endpoints; no rules match yet |
+| `EndpointKindVideoGeneration` | `video_generation` | `POST /v1/videos` (async submit) + its body-less poll / content / delete siblings, and provider-specific video-generation endpoints |
 | `EndpointKindBatch` | `batch` | `/v1/batches` and provider-specific async batch ingest |
 | `EndpointKindJob` | `job` | Long-running provider job endpoints (Bedrock InvokeModelAsync, Vertex prediction jobs) |
 | `EndpointKindModels` | `models` | `/v1/models`, `/v1/models/{model}` — never carries user content; hook pipeline and cost layer ignore |
+| `EndpointKindResponses` | `responses` | Label-only refinement of the chat family: path classification keeps `/v1/responses` chat-kind, but the traffic_event `endpoint_type` stamp distinguishes Responses traffic |
+| `EndpointKindGuardrail` | `guardrail` | `/v1/guardrail` — standalone compliance-verdict endpoint; carries a body but no provider wire shape (nothing is routed upstream) |
+| `EndpointKindRealtime` | `realtime` | `GET /v1/realtime` — WebSocket upgrade for realtime voice sessions; a session emits one traffic_event row per in-band response plus a session row, all under this kind |
 
 The closed enumeration is exported as `AllEndpointKinds` for exhaustiveness tests + UI population. `(EndpointKind).IsValid()` reports membership; the empty `EndpointKind` is treated as **unclassified** (no rule matched) and falls through every kind-aware filter — no special-casing required.
 
@@ -52,18 +56,18 @@ The string values are the canonical wire format. They appear verbatim in the `tr
 
 `WireShape` is a typed string identifying the request/response body protocol. The naming convention is `<vendor>-<shape>` in kebab-case, where the vendor prefix is the body's protocol family (not the upstream brand — every OpenAI-compatible provider rides `openai-*` shapes).
 
-19 named values + the `WireShapeNone` sentinel cover every adapter currently shipped:
+23 named values + the `WireShapeNone` sentinel cover every adapter currently shipped:
 
 | Family | Constants |
 |---|---|
-| OpenAI family | `openai-chat`, `openai-responses`, `openai-completions-legacy`, `openai-embeddings`, `openai-audio-speech`, `openai-audio-transcriptions`, `openai-images`, `openai-batches` |
+| OpenAI family | `openai-chat`, `openai-responses`, `openai-completions-legacy`, `openai-embeddings`, `openai-audio-speech`, `openai-audio-transcriptions`, `openai-images`, `openai-videos`, `openai-batches` |
 | Anthropic | `anthropic-messages` |
-| Google Gemini (AI Studio) | `gemini-generate-content`, `gemini-embed-content` |
+| Google Gemini (AI Studio) | `gemini-generate-content`, `gemini-embed-content`, `gemini-images-generate-content` (target-side only — resolved by the cross-shape image bridge, never by ingress classification) |
 | Google Vertex AI | `vertex-generate-content`, `vertex-embed-content` |
 | AWS Bedrock | `bedrock-converse`, `bedrock-invoke`, `bedrock-embeddings` |
-| Cohere | `cohere-chat`, `cohere-embed` |
-| Voyage AI | `voyage-embeddings` |
-| Sentinel | `WireShapeNone` (empty string) — endpoints with no request body, e.g. `GET /v1/models` |
+| Cohere | `cohere-chat`, `cohere-embed`, `cohere-rerank` (both the canonical rerank ingress shape and Cohere's own wire) |
+| Voyage AI | `voyage-embeddings`, `voyage-rerank` (target-side only — resolved by the rerank bridge) |
+| Sentinel | `WireShapeNone` (empty string) — endpoints with no request body, e.g. `GET /v1/models`, the `/v1/videos/{id}` poll / content / delete relays, `/v1/guardrail` (body, but nothing routed upstream), and `GET /v1/realtime` (WebSocket upgrade — no HTTP body; session frames are relayed verbatim, never codec-parsed) |
 
 The closed enumeration is exported as `AllWireShapes` (excluding the sentinel). `(WireShape).IsValid()` mirrors `EndpointKind.IsValid()`. Callers that need "is there a body to parse?" check against `WireShapeNone` rather than the empty string literally.
 
@@ -82,10 +86,10 @@ Downstream of dispatch, no consumer needs the path string. The Compliance Proxy 
 | File | Contents |
 |---|---|
 | `typology.go` | Package doc — the 3-axis principle and the package's "single source of truth" role |
-| `endpointkind.go` | `EndpointKind` type, 9 constants, `AllEndpointKinds`, `IsValid()`, `String()` |
-| `wireshape.go` | `WireShape` type, 19 constants + `WireShapeNone`, `AllWireShapes`, `IsValid()`, `String()`, `KindFromWireShape` |
+| `endpointkind.go` | `EndpointKind` type, 12 constants, `AllEndpointKinds`, `IsValid()`, `String()` |
+| `wireshape.go` | `WireShape` type, 23 constants + `WireShapeNone`, `AllWireShapes`, `IsValid()`, `String()`, `KindFromWireShape` |
 | `classify.go` | `Rule` struct, `ClassifyPath(method, path)`, the internal `matchPath` / `globMatch` / `equalFold` helpers |
-| `defaults.go` | The 28-rule built-in table consumed by `ClassifyPath` |
+| `defaults.go` | The 34-rule built-in table consumed by `ClassifyPath` |
 | `path_segment.go` | `KindFromPathSegment(segment)` for path-segment lookup used by audit + hook pipelines |
 
 The package has zero `packages/shared/` dependencies and zero AI Gateway / Compliance Proxy / Agent / Hub dependencies — every other package can import it freely. Tests cover the rule table, the glob matcher, the legacy mappings, and the validity predicates at 96%+ statement coverage.
@@ -96,11 +100,11 @@ The package has zero `packages/shared/` dependencies and zero AI Gateway / Compl
 
 **Semantics.** Method comparison is case-insensitive. Path matching uses single-segment glob where `*` matches any run of non-slash characters within the same path segment (`**` is not supported). Rules are evaluated in registration order and the first match wins. When no rule matches the function returns `("", WireShapeNone, false)` — callers treat unclassified as "kind-aware filters pass through".
 
-**The built-in table** (`packages/shared/transport/typology/defaults.go`) has 28 rules covering:
+**The built-in table** (`packages/shared/transport/typology/defaults.go`) has 34 rules covering:
 
-- Every path AI Gateway's HTTP mux registers (chat, responses, messages, embeddings, models, Gemini `generateContent` / `embedContent` / `batchEmbedContents`, Azure deployment-suffixed paths, GLM PAAS v4 paths).
+- Every path AI Gateway's HTTP mux registers (chat, responses, messages, embeddings, rerank, guardrail, models, Gemini `generateContent` / `embedContent` / `batchEmbedContents`, Azure deployment-suffixed paths, GLM PAAS v4 paths).
 - Every upstream-provider path Compliance Proxy + Agent intercept transparently (OpenAI, Azure OpenAI, Cohere, Gemini AI Studio, Vertex AI for embeddings).
-- Every canonical OpenAI endpoint that may be intercepted (audio transcriptions, audio speech, image generation, batch ingest, legacy completions).
+- Every canonical OpenAI endpoint that may be intercepted (audio transcriptions, audio speech, image generation, video generation, batch ingest, legacy completions).
 
 **Precedence pitfall: Vertex before Gemini.** Vertex AI paths look like `/v1*/projects/<proj>/locations/<loc>/publishers/<pub>/models/<model>:generateContent`. The Gemini AI Studio pattern `/v1*/models/*:generateContent` can match these via the `*` star expanding across slashes when bracketed by `/`. Because first-match-wins is the precedence rule, **Vertex rules are registered before Gemini rules** so the more specific path classifies first. New rules that could subset an existing pattern must be placed before it.
 
@@ -120,7 +124,7 @@ The package has zero `packages/shared/` dependencies and zero AI Gateway / Compl
 
 Adding a new path-segment form is a one-line change in this switch. The matching `ClassifyPath` rule must be added in `defaults.go` in the same commit.
 
-The wire vocabulary downstream of the helper is the canonical `EndpointKind` string verbatim: `audit.Record.EndpointType`, `TrafficEventMessage.EndpointType`, `traffic_event.endpoint_type`, the cost-formula registry key in `packages/ai-gateway/internal/execution/estimator/cost_formula_registry.go`, and the Prometheus `endpoint` label all carry the canonical strings (`chat`, `embeddings`, `stt`, `tts`, `image_generation`, `batch`). No translation hop exists between the helper and persistence.
+The wire vocabulary downstream of the helper is the canonical `EndpointKind` string verbatim: `audit.Record.EndpointType`, `TrafficEventMessage.EndpointType`, `traffic_event.endpoint_type`, the cost-formula registry key in `packages/ai-gateway/internal/execution/estimator/cost_formula_registry.go`, and the Prometheus `endpoint` label all carry the canonical strings (`chat`, `responses`, `embeddings`, `rerank`, `stt`, `tts`, `image_generation`, `video_generation`, `guardrail`, `batch`, `realtime`). No translation hop exists between the helper and persistence.
 
 The routing matcher (`packages/ai-gateway/internal/routing/matcher/matcher.go: resolveField("endpointType")`) returns the canonical `EndpointKind` value directly; routing-rule conditions that filter on `endpointType` compare against the canonical kind strings.
 

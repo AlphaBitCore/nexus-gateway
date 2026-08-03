@@ -425,9 +425,6 @@ server:           { port: 3001, advertiseHost: "127.0.0.1" }
 database:         { url: "postgresql://nexus:<DB_PASSWORD>@localhost:5432/nexus_gateway?sslmode=disable",
                     maxConns: 50, minConns: 10 }
 redis:            { mode: standalone, addrs: ["localhost:6379"] }
-bff:              { complianceProxyUrl: "http://127.0.0.1:3040",
-                    complianceProxyRuntimeUrl: "http://127.0.0.1:3040",
-                    aiGatewayUrl: "http://127.0.0.1:3050" }
 registry:         { nexusHubUrl: "http://127.0.0.1:3060" }
 authServer:       { issuer: "https://nexus.<DOMAIN>",
                     keystoreDir: "/var/lib/nexus/authkeys" }

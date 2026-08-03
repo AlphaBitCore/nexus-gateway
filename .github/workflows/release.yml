@@ -1,0 +1,376 @@
+# Manual release. The version and ref are explicit inputs, and every image
+# records its commit in org.opencontainers.image.revision plus the binary's
+# buildVersion, so an image can always answer which commit produced it.
+#
+# `ref` is resolved to a commit SHA ONCE, by the resolve job below, and every
+# later job checks out that SHA. It has to be: the input defaults to a branch
+# name, and three build legs on three runners, the publish job and
+# `gh release create --target` would otherwise each resolve it at a different
+# wall-clock moment. A merge landing mid-release would then fuse an amd64 layer
+# from one commit with an arm64 layer from another under a single version tag,
+# and point the GitHub tag at a third — with nothing failing, because every
+# individual step succeeded.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 1.3.0"
+        required: true
+      ref:
+        description: "Git ref to build"
+        required: true
+        default: main
+
+# Declared per job, not once at workflow scope. `contents: write` is needed by
+# exactly one step — `gh release create` in the publish job — while the build
+# job runs `npm ci` without --ignore-scripts, executing install scripts from the
+# root lockfile's transitive closure on a runner that also holds a GHCR push
+# credential. Scoping the build job to packages-only keeps a compromised
+# postinstall from pushing commits or creating releases in this repository.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  # One resolution of the dispatch input, reused by every job below. A tag or
+  # branch name is fine as an input; what must not vary is what it means.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - id: resolve
+        # Same rule as the two jobs below, and it matters most here: git permits
+        # $, backticks, parentheses and ; in a ref name, so a literal
+        # ${{ inputs.ref }} inside this script body would let a branch NAME
+        # execute in the one job whose output every later job treats as
+        # provenance — including the value written to $GITHUB_OUTPUT.
+        env:
+          REF_INPUT: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          # Shape-checked before it is published as an output: everything
+          # downstream (three checkouts, the image revision labels, the release
+          # tag's --target) trusts this string without re-deriving it.
+          case "$sha" in
+            *[!0-9a-f]*|"") echo "ERROR: resolved ref is not a hex SHA: $sha" >&2; exit 1 ;;
+          esac
+          if [ "${#sha}" -ne 40 ]; then
+            echo "ERROR: resolved ref is not a 40-character SHA: $sha" >&2
+            exit 1
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "resolved ${REF_INPUT} to ${sha}"
+
+  build:
+    needs: resolve
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            config: baseline
+            arch: amd64
+          - runner: ubuntu-latest
+            config: avx2
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            config: baseline
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    # VERSION goes through env:, not a literal ${{ inputs.version }}
+    # substitution inside a run: script body — every step below references
+    # it as "$VERSION" instead. A crafted `version` dispatch input is
+    # delivered as an inert environment variable value rather than text
+    # spliced into a script before bash parses it, closing the standard
+    # Actions script-injection anti-pattern for run:-interpolated inputs.
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Builds the four services and runs the Vectorscan firing self-test inside
+      # the builder. The ISA gate runs once per leg, on the buildbase — that is
+      # where libhs's instruction set is fixed, and every service image inherits
+      # it (see build-images.sh for why measuring the linked binaries instead
+      # would reject correct images).
+      - name: Build service images
+        run: |
+          scripts/release/build-images.sh \
+            --config ${{ matrix.config }} \
+            --version "$VERSION" \
+            --registry ghcr.io/alphabitcore \
+            --push
+
+      - name: Build UI and migrator images
+        if: matrix.config == 'baseline'
+        run: |
+          set -euo pipefail
+          v="$VERSION"; a="${{ matrix.arch }}"
+          revision="$(git rev-parse HEAD)"
+          for img in control-plane-ui db-migrator; do
+            ref="ghcr.io/alphabitcore/${img}:${v}-baseline-${a}"
+            docker build \
+              --label "org.opencontainers.image.revision=${revision}" \
+              --label "org.opencontainers.image.version=${v}" \
+              -f "docker/${img}/Dockerfile" -t "$ref" .
+            docker push "$ref"
+          done
+
+      # build-tarball.sh runs `make control-plane-ui-build` (tsc + vite build)
+      # directly on this runner, not inside a container — the npm workspace
+      # dependency on packages/ui-shared has to already be resolved via a
+      # root-level `npm ci` (see docker/control-plane-ui/Dockerfile, which
+      # does the same npm ci before its own tsc/vite build). Node/Go toolchain
+      # otherwise stay off the host: the four service binaries build inside
+      # `docker run "$BUILDBASE_TAG" ...` in the script itself.
+      - uses: actions/setup-node@v6
+        if: matrix.config == 'baseline'
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install root npm dependencies
+        if: matrix.config == 'baseline'
+        run: npm ci
+
+      - name: Build tarball
+        if: matrix.config == 'baseline'
+        run: scripts/release/build-tarball.sh --version "$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.config == 'baseline'
+        with:
+          name: tarball-${{ matrix.arch }}
+          path: dist/release/
+
+  publish:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    # Same rationale as the build job above: VERSION and REF go through
+    # env:, never a literal ${{ inputs.* }} substitution inside a run:
+    # script body. REF is the resolved SHA, not the dispatch input.
+    env:
+      VERSION: ${{ inputs.version }}
+      REF: ${{ needs.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Only the immutable exact-version tag is composed here — the compose
+      # smoke below needs something to pull, and "${v}" never overwrites an
+      # existing consumer's reference the way "latest"/"${minor}" would. The
+      # mobile/rolling tags (latest, ${minor}) and the AVX2 rolling tag
+      # (latest-avx2) are composed AFTER the smoke passes (see "Compose
+      # mobile tags" below): a stack that fails the smoke must not have
+      # already moved `latest` (or `${minor}`) forward on either registry —
+      # doing so would republish a broken image to every consumer pinned to
+      # the rolling tag before this workflow even reports failure.
+      - name: Compose exact-version manifests
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          for img in nexus-hub control-plane ai-gateway compliance-proxy control-plane-ui db-migrator; do
+            g="ghcr.io/alphabitcore/${img}"
+            docker buildx imagetools create \
+              -t "${g}:${v}" \
+              "${g}:${v}-baseline-amd64" "${g}:${v}-baseline-arm64"
+            # Every image gets a "-avx2" tag, because the operator doc's AVX2
+            # opt-in is a single NEXUS_VERSION value and Compose applies that
+            # one value to all six images. Publishing "-avx2" for only the
+            # four Go services left db-migrator and control-plane-ui resolving
+            # to "manifest unknown", and since every service gates on
+            # db-migrator: service_completed_successfully, following the
+            # documented opt-in took the whole stack down.
+            #
+            # Only the Go services have an ACTUAL AVX2 build (they are the ones
+            # that link Vectorscan); for the Node and nginx images the "-avx2"
+            # tag is an alias for the same baseline manifest, so this costs
+            # tags, not builds. The versioned "-avx2" tag is exact-version
+            # (never mutated by a later release), so it is safe to compose
+            # pre-smoke alongside the bare version tag.
+            case "$img" in
+              nexus-hub|control-plane|ai-gateway|compliance-proxy)
+                docker buildx imagetools create \
+                  -t "${g}:${v}-avx2" \
+                  "${g}:${v}-avx2-amd64"
+                ;;
+              *)
+                docker buildx imagetools create \
+                  -t "${g}:${v}-avx2" \
+                  "${g}:${v}-baseline-amd64" "${g}:${v}-baseline-arm64"
+                ;;
+            esac
+          done
+
+      # The compose smoke is the release gate: it is the only check that
+      # exercises a published tag rather than a locally-built image. It runs
+      # BEFORE latest/${minor} are composed and BEFORE anything reaches
+      # Docker Hub — see the comment above "Compose exact-version manifests".
+      # smoke-compose.sh rewrites deploy/.env's NEXUS_VERSION and
+      # NEXUS_REGISTRY to these values and then `docker compose up` pulls the
+      # bare "${v}" manifest just composed above (deploy/docker-compose.yml
+      # has no -avx2 image reference; the avx2 tags are an opt-in variant,
+      # not what the quickstart stack pulls).
+      - name: Compose smoke
+        run: scripts/release/smoke-compose.sh --registry ghcr.io/alphabitcore --version "$VERSION"
+
+      # Only reached if the smoke above passed. This is what actually moves
+      # the mobile tags (latest, ${minor}) and the AVX2 rolling tag
+      # (latest-avx2) forward on GHCR — the registry every existing
+      # `NEXUS_VERSION=latest` deployment re-pulls on its next `docker
+      # compose pull`.
+      - name: Compose mobile tags
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          minor="${v%.*}"
+          for img in nexus-hub control-plane ai-gateway compliance-proxy control-plane-ui db-migrator; do
+            g="ghcr.io/alphabitcore/${img}"
+            docker buildx imagetools create \
+              -t "${g}:${minor}" -t "${g}:latest" \
+              "${g}:${v}-baseline-amd64" "${g}:${v}-baseline-arm64"
+            # Same reasoning as the exact-version step: all six images carry the
+            # rolling "-avx2" tag, aliased to baseline for the two that have no
+            # real AVX2 build, so a NEXUS_VERSION=latest-avx2 stack resolves
+            # completely instead of failing on two images.
+            case "$img" in
+              nexus-hub|control-plane|ai-gateway|compliance-proxy)
+                docker buildx imagetools create \
+                  -t "${g}:latest-avx2" \
+                  "${g}:${v}-avx2-amd64"
+                ;;
+              *)
+                docker buildx imagetools create \
+                  -t "${g}:latest-avx2" \
+                  "${g}:${v}-baseline-amd64" "${g}:${v}-baseline-arm64"
+                ;;
+            esac
+          done
+
+      # Also gated behind the smoke, for the same reason: Docker Hub must
+      # never receive a tag GHCR has not already proven via the compose
+      # smoke. Mirrors every tag composed above, including the AVX2 variants
+      # — Docker Hub and GHCR are documented as carrying the same tag set
+      # (see container-image-architecture.md §7 and the operator doc's
+      # "Choosing an image tag" section).
+      - name: Mirror to Docker Hub
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          minor="${v%.*}"
+          for img in nexus-hub control-plane ai-gateway compliance-proxy control-plane-ui db-migrator; do
+            for t in "$v" "$minor" latest; do
+              docker buildx imagetools create \
+                -t "docker.io/alphabitcore/${img}:${t}" \
+                "ghcr.io/alphabitcore/${img}:${t}"
+            done
+            # All six now carry "-avx2" on GHCR (aliased to baseline for the two
+            # without a real AVX2 build), so the mirror covers all six too —
+            # the two registries are documented as carrying the same tag set.
+            for t in "${v}-avx2" "latest-avx2"; do
+              docker buildx imagetools create \
+                -t "docker.io/alphabitcore/${img}:${t}" \
+                "ghcr.io/alphabitcore/${img}:${t}"
+            done
+          done
+
+      # A machine-readable record of what this release actually published,
+      # for the manifest attached to the GitHub Release below (spec §6.5).
+      # imagetools inspect reads the manifest list digest already computed
+      # above rather than recomputing anything, so this cannot disagree with
+      # what was just composed and mirrored.
+      - name: Record published image digests
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          out="dist/release/IMAGE-DIGESTS.txt"
+          mkdir -p dist/release
+          {
+            echo "# Nexus Gateway v${v} — published image digests"
+            for img in nexus-hub control-plane ai-gateway compliance-proxy control-plane-ui db-migrator; do
+              for ref in "ghcr.io/alphabitcore/${img}:${v}" "docker.io/alphabitcore/${img}:${v}"; do
+                digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/{print $2}')"
+                echo "${ref}  ${digest}"
+              done
+            done
+            for img in nexus-hub control-plane ai-gateway compliance-proxy; do
+              for ref in "ghcr.io/alphabitcore/${img}:${v}-avx2" "docker.io/alphabitcore/${img}:${v}-avx2"; do
+                digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/{print $2}')"
+                echo "${ref}  ${digest}"
+              done
+            done
+          } > "$out"
+          cat "$out"
+
+      # merge-multiple is deliberately NOT set: build-tarball.sh writes a
+      # fresh single-line dist/release/SHA256SUMS on every matrix leg, so the
+      # amd64 and arm64 artifacts each carry their own SHA256SUMS with the
+      # same filename. merge-multiple flattens same-named files into one
+      # clobbering the other; downloading into per-artifact subdirectories
+      # and concatenating below is what keeps both checksums.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          pattern: tarball-*
+
+      - name: Flatten downloaded release artifacts
+        run: |
+          set -euo pipefail
+          cd dist/release
+          find . -mindepth 2 -name '*.tar.gz' -exec mv {} . \;
+          cat tarball-*/SHA256SUMS > SHA256SUMS
+          rm -rf tarball-*
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          # --target pins the release tag to the commit that was actually
+          # built: $REF is the SHA the resolve job pinned, which is also what
+          # every build leg checked out. Passing the dispatch input instead
+          # would re-resolve a branch name here, tagging whatever HEAD is at
+          # this instant — a commit that need not be in any of the images and
+          # binaries the release names, which breaks the provenance story every
+          # image label and buildVersion stamp exists to support. Without
+          # --target at all, `gh release create` tags the default branch, which
+          # is wrong even for an immutable input.
+          gh release create "v${v}" \
+            --title "v${v}" \
+            --target "$REF" \
+            --notes "Container images: ghcr.io/alphabitcore and docker.io/alphabitcore, tag ${v}." \
+            dist/release/* \
+            deploy/docker-compose.yml \
+            deploy/.env.example \
+            deploy/init-secrets.sh

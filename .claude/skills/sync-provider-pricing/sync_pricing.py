@@ -3,8 +3,12 @@
 
 The LLM's only job is to WebFetch a provider's official pricing page and emit a
 normalized desired-state JSON (schema below). THIS script does every mechanical
-step deterministically — diff, edit the template JSON, edit the Model fixture,
-and emit transactional prod UPDATE SQL — so the reconcile never drifts.
+step deterministically — diff, edit the single-source catalog + regenerate its
+derived files, and emit transactional prod UPDATE SQL — so the reconcile never drifts.
+
+Source of truth: `tools/db-migrate/model-catalog.json`. `apply` edits THAT file and
+regenerates `Model.json` + `provider-templates/*.json` + `index.json` from it — never
+edit those derived files directly (CI `check:model-catalog` fails on drift).
 
 Desired-state JSON (one file per provider, produced by the LLM from the official page):
 {
@@ -18,6 +22,9 @@ Desired-state JSON (one file per provider, produced by the LLM from the official
       "output": 25.0,                       # $/MTok output
       "cache_write": 6.25,                  # $/MTok standard (short) cache write; 0 if none
       "cache_read": 0.5,                    # $/MTok cache hit/read; null for non-chat
+      "audio_input": 32.0,                  # $/MTok audio-in (realtime models only)
+      "audio_output": 64.0,                 # $/MTok audio-out (realtime models only)
+      "cached_audio_read": 0.4,             # $/MTok cached audio-in read (realtime; null = no discount)
       "status": "active",                   # active | deprecated | disabled
       "replaced_by": null,                  # successor code if deprecated/retired
       "deprecation_date": null              # ISO date if deprecated
@@ -27,10 +34,9 @@ Desired-state JSON (one file per provider, produced by the LLM from the official
 Only keys present are compared/applied; omit a key to leave that field untouched.
 
 Subcommands:
-  diff       <desired.json>              show drift: desired vs template JSON vs fixture
-  apply      <desired.json>              edit template JSON (+ index.json modelCount) and
-                                         tools/db-migrate/seed/fixtures/Model.json in place
-                                         (input/output/status)
+  diff       <desired.json>              show drift: desired vs the generated template + fixture
+  apply      <desired.json>              edit model-catalog.json (money fields + seed status)
+                                         then regenerate Model.json + provider-templates
   prod-sql   <desired.json> [--out f]    emit BEGIN/UPDATE.../COMMIT for the prod Model table
 
 Paths default to repo-relative; override with --repo. Money compared at 1e-9 tolerance.
@@ -46,27 +52,38 @@ TEMPLATE_FIELDS = {  # desired-key -> template-JSON key
     "output": "outputPricePerMillion",
     "cache_write": "cachedInputWritePricePerMillion",
     "cache_read": "cachedInputReadPricePerMillion",
+    # Realtime models: audio-token rates, USD per 1M tokens.
+    "audio_input": "audioInputPricePerMillion",
+    "audio_output": "audioOutputPricePerMillion",
+    "cached_audio_read": "cachedAudioInputReadPricePerMillion",
 }
-# fixture + prod carry all 4 money fields.
+# fixture + prod carry all 7 money fields.
 FIXTURE_MONEY = {
     "input": "inputPricePerMillion",
     "output": "outputPricePerMillion",
     "cache_write": "cachedInputWritePricePerMillion",
     "cache_read": "cachedInputReadPricePerMillion",
+    "audio_input": "audioInputPricePerMillion",
+    "audio_output": "audioOutputPricePerMillion",
+    "cached_audio_read": "cachedAudioInputReadPricePerMillion",
 }
 PROD_FIELDS = {
     "input": "inputPricePerMillion",
     "output": "outputPricePerMillion",
     "cache_write": "cachedInputWritePricePerMillion",
     "cache_read": "cachedInputReadPricePerMillion",
+    "audio_input": "audioInputPricePerMillion",
+    "audio_output": "audioOutputPricePerMillion",
+    "cached_audio_read": "cachedAudioInputReadPricePerMillion",
 }
 
 
 def repo_paths(repo):
     return {
         "template_dir": os.path.join(repo, "packages/control-plane-ui/public/provider-templates"),
-        "dist_dir": os.path.join(repo, "packages/control-plane-ui/dist/provider-templates"),
         "fixture": os.path.join(repo, "tools/db-migrate/seed/fixtures/Model.json"),
+        "catalog": os.path.join(repo, "tools/db-migrate/model-catalog.json"),
+        "gen": os.path.join(repo, "tools/db-migrate/gen-model-catalog.mjs"),
     }
 
 
@@ -104,13 +121,6 @@ def load_fixture(fixture_path):
     return rows, by_code
 
 
-def save_fixture(fixture_path, rows):
-    """Write Model.json with 2-space indent + trailing newline (matches fixture format)."""
-    with open(fixture_path, "w", encoding="utf-8") as f:
-        json.dump(rows, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-
 def num_literal(v):
     # Emit a decimal literal suitable for prod UPDATE SQL (30-dp style, trailing zeros stripped).
     return f"{Decimal(str(v)):.30f}".rstrip("0").rstrip(".") if v is not None else "NULL"
@@ -140,14 +150,16 @@ def cmd_diff(args):
         for k, tk in TEMPLATE_FIELDS.items():
             if k in want and (t is None or not money_eq(want[k], t.get(tk))):
                 marks.append(f"{k}: {fmt(None if t is None else t.get(tk))}→{fmt(want[k])}")
-        if "status" in want and t is not None and want["status"] != t.get("status", "active"):
-            marks.append(f"status: {t.get('status','active')}→{want['status']}")
         if t is None:
             marks.append("NOT in template (add?)")
         s = fixture_by.get(code)
         for k, fk in FIXTURE_MONEY.items():
             if k in want and s is not None and not money_eq(want[k], s.get(fk)):
                 marks.append(f"fixture.{k}: {fmt(s.get(fk))}→{fmt(want[k])}")
+        # status is a seed-only field: it lives on the Model.json (fixture) row, not
+        # the wizard template. Compare against the fixture so the preview is accurate.
+        if "status" in want and s is not None and s.get("status", "active") != want["status"]:
+            marks.append(f"status: {s.get('status','active')}→{want['status']}")
         if marks:
             drift += 1
             print(f"  {code}: " + " | ".join(marks))
@@ -163,73 +175,47 @@ def cmd_diff(args):
 def cmd_apply(args):
     provider, desired, _ = load_desired(args.desired)
     p = repo_paths(args.repo)
-    # 1) template JSON (+ dist mirror + index.json modelCount)
-    for d in (p["template_dir"], p["dist_dir"]):
-        tpath = os.path.join(d, f"{provider}.json")
-        if not os.path.exists(tpath):
+    with open(p["catalog"], encoding="utf-8") as f:
+        catalog = json.load(f)
+    block = next((b for b in catalog.get("providers", []) if b.get("key") == provider), None)
+    if block is None:
+        sys.exit(f"apply: provider '{provider}' not found in {os.path.relpath(p['catalog'], args.repo)}")
+    by_code = {m["code"]: m for m in block.get("models", [])}
+    changed, missing = 0, []
+    for code, want in desired.items():
+        m = by_code.get(code)
+        if m is None:
+            missing.append(code)
             continue
-        tpl = json.load(open(tpath))
-        changed = 0
-        by = {m["code"]: m for m in tpl.get("models", [])}
-        for code, want in desired.items():
-            m = by.get(code)
-            if m is None:
-                continue
-            for k, tk in TEMPLATE_FIELDS.items():
-                if k in want and not money_eq(want[k], m.get(tk)):
-                    m[tk] = want[k]; changed += 1
-            if "status" in want and want["status"] != m.get("status", "active"):
-                m["status"] = want["status"]; changed += 1
-        with open(tpath, "w") as f:
-            json.dump(tpl, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        print(f"  template {os.path.relpath(tpath, args.repo)}: {changed} field(s) updated")
-    _bump_index(p, provider, desired, args.repo)
-    # 2) Model.json fixture — update inputPricePerMillion / outputPricePerMillion /
-    #    cachedInputReadPricePerMillion / cachedInputWritePricePerMillion / status in place.
-    _apply_fixture(p["fixture"], desired, args.repo)
+        # Money fields are shared on the model entry — one edit feeds both the
+        # generated Model.json row and the wizard template.
+        for k, fk in FIXTURE_MONEY.items():
+            if k in want and not money_eq(want[k], m.get(fk)):
+                m[fk] = want[k]
+                changed += 1
+        # status is a seed-only field (Model.json); wizard templates carry none.
+        if "status" in want and isinstance(m.get("seed"), dict) and m["seed"].get("status") != want["status"]:
+            m["seed"]["status"] = want["status"]
+            changed += 1
+    with open(p["catalog"], "w", encoding="utf-8") as f:
+        json.dump(catalog, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print(f"  {os.path.relpath(p['catalog'], args.repo)}: {changed} field(s) updated")
+    if missing:
+        print(f"  NOTE: {len(missing)} desired model(s) not in the catalog — add them there first: {missing}")
+    _regenerate(p, args.repo)
     return 0
 
 
-def _bump_index(p, provider, desired, repo):
-    for d in (p["template_dir"], p["dist_dir"]):
-        ipath = os.path.join(d, "index.json")
-        if not os.path.exists(ipath):
-            continue
-        idx = json.load(open(ipath))
-        tpath = os.path.join(d, f"{provider}.json")
-        cnt = len(json.load(open(tpath)).get("models", [])) if os.path.exists(tpath) else None
-        for t in idx.get("templates", []):
-            if t.get("name") == provider and cnt is not None and t.get("modelCount") != cnt:
-                t["modelCount"] = cnt
-        with open(ipath, "w") as f:
-            json.dump(idx, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-
-
-def _apply_fixture(fixture_path, desired, repo):
-    """Update Model.json fixture rows for the models in desired.
-    Matches by code. Writes back with 2-space indent + trailing newline."""
-    rows, by_code = load_fixture(fixture_path)
-    if not rows:
-        print(f"  fixture {os.path.relpath(fixture_path, repo)}: file not found or empty — skipped")
-        return
-    changed = 0
-    for code, want in desired.items():
-        row = by_code.get(code)
-        if row is None:
-            continue
-        for k, fk in FIXTURE_MONEY.items():
-            if k in want:
-                if not money_eq(want[k], row.get(fk)):
-                    row[fk] = want[k]
-                    changed += 1
-        if "status" in want and row.get("status") != want["status"]:
-            row["status"] = want["status"]
-            changed += 1
-    if changed:
-        save_fixture(fixture_path, rows)
-    print(f"  fixture {os.path.relpath(fixture_path, repo)}: {changed} field(s) updated")
+def _regenerate(p, repo):
+    """Regenerate Model.json + provider-templates/*.json + index.json from the catalog."""
+    import subprocess
+    r = subprocess.run(["node", p["gen"]], cwd=repo, capture_output=True, text=True)
+    if r.stdout:
+        sys.stdout.write(r.stdout)
+    if r.returncode != 0:
+        sys.stderr.write(r.stderr)
+        sys.exit(f"apply: gen-model-catalog.mjs failed (exit {r.returncode})")
 
 
 def cmd_prod_sql(args):

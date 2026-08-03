@@ -380,7 +380,13 @@ paths:
                                 pattern: \b\d{3}-\d{2}-\d{4}\b
             responses:
                 "400":
-                    description: Bad Request — body read failed or YAML failed to parse/validate
+                    description: |-
+                        Bad Request — body read failed, YAML failed to parse (`error:
+                        parse_failed`), or persistence-layer validation rejected at least
+                        one rule (`error: validation_failed`, with a `rules` array naming
+                        each offending rule's index, id and reason — an out-of-enum
+                        severity or an uncompilable pattern). No rules are persisted in
+                        either case.
                     content:
                         application/json:
                             schema:

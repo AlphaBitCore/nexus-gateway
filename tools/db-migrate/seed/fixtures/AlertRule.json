@@ -499,6 +499,66 @@
     "updatedAt": "2026-05-10T16:41:23.928+00:00"
   },
   {
+    "id": "vendor.bill_drift",
+    "displayName": "Vendor Bill Drift",
+    "sourceType": "provider",
+    "defaultSeverity": "HIGH",
+    "requiresAck": true,
+    "enabled": true,
+    "params": {
+      "thresholdPct": 5.0,
+      "thresholdUsd": 1.0
+    },
+    "paramsSchema": {
+      "type": "object",
+      "required": [
+        "thresholdPct",
+        "thresholdUsd"
+      ],
+      "properties": {
+        "thresholdPct": {
+          "type": "number",
+          "minimum": 0
+        },
+        "thresholdUsd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "cooldownSec": 3600,
+    "group_id_filter": null,
+    "createdAt": "2026-07-19T00:00:00.000+00:00",
+    "updatedAt": "2026-07-19T00:00:00.000+00:00"
+  },
+  {
+    "id": "vendor.bill_sync_failed",
+    "displayName": "Vendor Bill Sync Failed",
+    "sourceType": "provider",
+    "defaultSeverity": "MEDIUM",
+    "requiresAck": true,
+    "enabled": true,
+    "params": {
+      "staleHours": 25
+    },
+    "paramsSchema": {
+      "type": "object",
+      "required": [
+        "staleHours"
+      ],
+      "properties": {
+        "staleHours": {
+          "type": "number",
+          "minimum": 1
+        }
+      }
+    },
+    "cooldownSec": 3600,
+    "group_id_filter": null,
+    "createdAt": "2026-07-23T00:00:00.000+00:00",
+    "updatedAt": "2026-07-23T00:00:00.000+00:00"
+  },
+  {
     "id": "provider.upstream_error",
     "displayName": "Upstream Provider Error Rate",
     "sourceType": "provider",

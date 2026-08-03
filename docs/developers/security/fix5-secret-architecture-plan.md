@@ -1,6 +1,6 @@
 # FIX-5 — Secret & crypto architecture hardening (SEC-W2-01 / W2-02 / W2-03 / C1-02)
 
-> **Status:** PLAN (2026-06-09). Gated cluster, user signed off ("继续"). This doc is the design/SDD source of truth for the four-finding crypto/secret re-architecture. Implemented sub-phase by sub-phase, each with a regression test, doc/finding/ledger lockstep, prod-deploy execution steps, and its own commit on `worktree-security-audit`.
+> **Status:** PLAN (2026-06-09). Gated cluster, user signed off ("continue", translated). This doc is the design/SDD source of truth for the four-finding crypto/secret re-architecture. Implemented sub-phase by sub-phase, each with a regression test, doc/finding/ledger lockstep, prod-deploy execution steps, and its own commit on `worktree-security-audit`.
 
 ## Goal
 

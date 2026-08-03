@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import pg from 'pg'
+import { toModelRefs } from '../seed/reference/modelRefs.ts'
 
 // One-time / re-runnable extractor: materialize the 1.0 reference catalog as
 // versioned JSON fixtures from a source DB. Point DATABASE_URL at a scratch DB
@@ -19,7 +20,10 @@ import pg from 'pg'
 // CURATION map below normalizes captured-drift values back to product defaults.
 const REFERENCE: { table: string; where?: string; orderBy: string }[] = [
   { table: 'Provider', orderBy: 'id' },
-  { table: 'Model', orderBy: 'id' },
+  // Model.json is intentionally NOT extracted here: it is GENERATED from
+  // tools/db-migrate/model-catalog.json (the single source of truth) by
+  // gen-model-catalog.mjs. Extracting it from a DB would fight the catalog and
+  // trip `check:model-catalog`. Edit the catalog + `npm run gen:model-catalog`.
   { table: 'interception_domain', orderBy: 'id' },
   { table: 'interception_path', orderBy: 'id' },
   { table: 'rule', orderBy: 'id' },
@@ -52,7 +56,6 @@ const REFERENCE: { table: string; where?: string; orderBy: string }[] = [
     orderBy: 'key',
   },
   { table: 'metric_ops_retention_config', orderBy: 'layer' },
-  { table: 'cache_global_config', orderBy: 'id' },
   { table: 'cache_adapter_config', orderBy: 'adapter_type' },
   { table: 'cache_provider_config', orderBy: 'provider_id' },
   { table: 'gateway_passthrough_config_global', orderBy: 'id' },
@@ -91,6 +94,17 @@ const CURATION: Record<string, (row: Record<string, unknown>) => void> = {
     }
   },
 }
+
+// ─── Model references ─────────────────────────────────────────────────────────
+//
+// A fixture must not carry the source database's Model ids. Seeding a model
+// matches a live row on its code or an alias and keeps THAT row's id, so an id
+// captured here names nothing in any database that already knew the model — and
+// none of the columns below is a foreign key, so nothing would raise. Extraction
+// rewrites each id to the `model:<code>` reference the seed resolves against the
+// live catalog.
+const MODEL_REF_TABLES = new Set(['ai_guard_config', 'RoutingRule'])
+const DEMO_MODEL_REF_TABLES = new Set(['VirtualKey'])
 
 // Tier-B demo tenant: operational-instance rows extracted into seed/fixtures/demo/.
 // Ordered FK-safe AND principals-first: NexusUser / AdminApiKey / VirtualKey are
@@ -141,13 +155,19 @@ async function main() {
   await client.connect()
   mkdirSync(OUT, { recursive: true })
   try {
+    const { rows: modelRows } = await client.query<{ id: string; code: string }>(
+      `SELECT id, code FROM "Model"`,
+    )
+    const codeById = new Map(modelRows.map((m) => [m.id, m.code]))
+
     for (const { table, where, orderBy } of REFERENCE) {
       const sql = `SELECT row_to_json(t) AS row FROM "${table}" t ${where ? `WHERE ${where}` : ''} ORDER BY ${orderBy}`
       const { rows } = await client.query<{ row: Record<string, unknown> }>(sql)
       const curate = CURATION[table]
       const data = rows.map((r) => {
         if (curate) curate(r.row)
-        return r.row
+        if (!MODEL_REF_TABLES.has(table)) return r.row
+        return toModelRefs(r.row, codeById, null, table) as Record<string, unknown>
       })
       writeFileSync(resolve(OUT, `${table}.json`), JSON.stringify(data, null, 2) + '\n')
       console.log(`[extract] ${table}: ${data.length} rows${curate ? ' (curated)' : ''}`)
@@ -166,7 +186,8 @@ async function main() {
         if (nullCols) {
           for (const col of nullCols) row[col] = null
         }
-        return row
+        if (!DEMO_MODEL_REF_TABLES.has(table)) return row
+        return toModelRefs(row, codeById, null, `demo/${table}`) as Record<string, unknown>
       })
       let dropped = 0
       if (PRINCIPAL_TABLES.has(table)) {

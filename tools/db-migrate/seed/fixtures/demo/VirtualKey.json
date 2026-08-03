@@ -38,27 +38,27 @@
     "compareEndpointRateLimitRpm": null,
     "allowedModels": [
       {
-        "modelId": "e65623cf-60e8-489f-a91f-6e4869216d15",
+        "modelId": "model:claude-haiku-4-5",
         "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450"
       },
       {
-        "modelId": "bff825a3-7f51-4a87-8b31-03ef745993a0",
+        "modelId": "model:claude-opus-4-7",
         "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450"
       },
       {
-        "modelId": "862cd7ce-0927-4296-88a2-ebb0ff482e5c",
+        "modelId": "model:claude-sonnet-4-6",
         "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450"
       },
       {
-        "modelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+        "modelId": "model:gpt-4o-mini",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       {
-        "modelId": "6bf24832-0b9a-4175-b5e3-e0de4c9ed387",
+        "modelId": "model:gpt-5.5",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       {
-        "modelId": "b299b0f2-8e10-4deb-aed9-2def5b7ea2b7",
+        "modelId": "model:gpt-5.4-nano",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       }
     ],
@@ -163,15 +163,15 @@
     "compareEndpointRateLimitRpm": null,
     "allowedModels": [
       {
-        "modelId": "06056793-2ab1-4975-a0db-66896ca56134",
+        "modelId": "model:gpt-4o",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       {
-        "modelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+        "modelId": "model:gpt-4o-mini",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       {
-        "modelId": "1d5f88f6-ff4c-4422-9623-4d1a0f5e127e",
+        "modelId": "model:text-embedding-3-large",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       }
     ],
@@ -201,11 +201,11 @@
     "compareEndpointRateLimitRpm": null,
     "allowedModels": [
       {
-        "modelId": "862cd7ce-0927-4296-88a2-ebb0ff482e5c",
+        "modelId": "model:claude-sonnet-4-6",
         "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450"
       },
       {
-        "modelId": "e65623cf-60e8-489f-a91f-6e4869216d15",
+        "modelId": "model:claude-haiku-4-5",
         "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450"
       }
     ],
@@ -235,11 +235,11 @@
     "compareEndpointRateLimitRpm": null,
     "allowedModels": [
       {
-        "modelId": "06056793-2ab1-4975-a0db-66896ca56134",
+        "modelId": "model:gpt-4o",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       {
-        "modelId": "1d5f88f6-ff4c-4422-9623-4d1a0f5e127e",
+        "modelId": "model:text-embedding-3-large",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       }
     ],
@@ -269,7 +269,7 @@
     "compareEndpointRateLimitRpm": null,
     "allowedModels": [
       {
-        "modelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+        "modelId": "model:gpt-4o-mini",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       }
     ],
@@ -324,7 +324,7 @@
     "compareEndpointRateLimitRpm": null,
     "allowedModels": [
       {
-        "modelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+        "modelId": "model:gpt-4o-mini",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       }
     ],

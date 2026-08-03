@@ -136,6 +136,59 @@ test('seedDemo is idempotent: running twice yields stable row counts', { skip: S
   assert.equal(await prisma.organization.count(), orgs, 'Organization count must be stable')
 })
 
+test(
+  'seedDemo leaves a row the deployment modified exactly as it is',
+  { skip: SKIP },
+  async () => {
+    assert.ok(prisma)
+
+    // Row counts alone cannot tell an upsert from an insert-only write — they
+    // were stable under both. This is the property the write mode exists for:
+    // an operator disables a demo key and pastes a real provider key, and the
+    // next seed must not undo either.
+    const vk = await prisma.virtualKey.findFirst({ where: { name: 'demo01' } })
+    assert.ok(vk, 'demo01 must exist after the first seed')
+    await prisma.virtualKey.update({
+      where: { id: vk.id },
+      data: { enabled: false, vkStatus: 'revoked' },
+    })
+    const cred = await prisma.credential.findFirst({ where: { name: 'openai-prod' } })
+    assert.ok(cred, 'openai-prod must exist after the first seed')
+    await prisma.credential.update({
+      where: { id: cred.id },
+      data: { encryptedKey: 'operator-pasted-provider-key' },
+    })
+
+    try {
+      await seedDemo(prisma)
+
+      const vkAfter = await prisma.virtualKey.findUnique({ where: { id: vk.id } })
+      assert.equal(vkAfter?.enabled, false, 'a revoked demo key must stay revoked')
+      assert.equal(vkAfter?.vkStatus, 'revoked')
+      const credAfter = await prisma.credential.findUnique({ where: { id: cred.id } })
+      assert.equal(
+        credAfter?.encryptedKey,
+        'operator-pasted-provider-key',
+        'an operator-entered provider key must not be replaced by the fixture placeholder',
+      )
+    } finally {
+      // Restored in `finally`, because seedDemo will never repair these rows
+      // again — that is the property under test. Without it, a failing
+      // assertion above leaves the scratch database mutated, and the arms that
+      // decrypt openai-prod and authenticate demo01 then fail on every later
+      // run, masking whatever went red first.
+      await prisma.virtualKey.update({
+        where: { id: vk.id },
+        data: { enabled: vk.enabled, vkStatus: vk.vkStatus },
+      })
+      await prisma.credential.update({
+        where: { id: cred.id },
+        data: { encryptedKey: cred.encryptedKey },
+      })
+    }
+  },
+)
+
 // ─── Env guard at seedDemo level ──────────────────────────────────────────────
 
 test(

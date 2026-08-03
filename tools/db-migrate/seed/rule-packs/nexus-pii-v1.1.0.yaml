@@ -66,9 +66,9 @@ rules:
     labels: [detector:pii, gov:us-ssn, severity:restricted]
   - id: pii-gov-002
     category: pii.government_id
-    severity: warn
+    severity: soft
     pattern: '\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b'
-    description: US SSN by strict dash-separated 3-2-4 structure (no context). Warn-only — dash-delimited shape is specific but context-free.
+    description: US SSN by strict dash-separated 3-2-4 structure (no context). Enforces (redact) on structure alone — the dash-delimited 3-2-4 shape is SSN-specific and low false-positive, matching the structure-only posture of the payment-card rule (pii-fin-001).
     labels: [detector:pii, gov:us-ssn, severity:restricted]
   - id: pii-gov-003
     category: pii.government_id
@@ -99,9 +99,9 @@ rules:
     labels: [detector:pii, contact:email, severity:confidential]
   - id: pii-con-002
     category: pii.contact
-    severity: warn
+    severity: soft
     pattern: '(?:\+[1-9][0-9]{7,14}|\(?[0-9]{3}\)?[-. ][0-9]{3}[-. ][0-9]{4})'
-    description: Phone number — E.164 (+ and 8-15 digits) OR US format requiring separators to cut numeric FP.
+    description: Phone number — E.164 (+ and 8-15 digits) OR US format requiring separators to cut numeric FP. severity=soft enforces redaction (contact PII parity with email pii-con-001); the separator-required pattern keeps numeric false positives low enough to redact safely.
     labels: [detector:pii, contact:phone, severity:confidential]
   - id: pii-con-003
     category: pii.contact

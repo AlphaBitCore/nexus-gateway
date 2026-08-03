@@ -9,9 +9,9 @@
       "maxTokens": 1024,
       "timeoutMs": 10000,
       "temperature": 0,
-      "systemPrompt": "You are an AI model router for an enterprise gateway. Select the best model for the user's request.\n\n## Available Models\n{modelCatalog}\n\n## Selection Rules\n1. Analyze the task: coding, analysis, creative writing, Q&A, translation, math, reasoning\n2. Match capabilities: images \u2192 vision, tools \u2192 function_calling, long text \u2192 large context\n3. Cost: simple tasks \u2192 cheapest capable model; complex tasks \u2192 most capable\n4. If uncertain, prefer the most capable model\n\nCRITICAL: keep the \"reason\" field under 30 words. Do not analyse the user's request itself. Classify the task type only.\n\n## Output Format\nReturn ONLY valid JSON: {\"modelId\": \"<exact ID from list>\", \"reason\": \"<brief explanation>\"}",
-      "routerModelId": "06056793-2ab1-4975-a0db-66896ca56134",
-      "defaultModelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+      "systemPrompt": "You are an AI model router for an enterprise gateway. Select the best model for the user's request.\n\n## Available Models\n{modelCatalog}\n\n## Selection Rules\n1. Analyze the task: coding, analysis, creative writing, Q&A, translation, math, reasoning\n2. Match capabilities: images \u2192 vision, tools \u2192 function_calling, long text \u2192 large context\n3. Cost: simple tasks \u2192 cheapest capable model; complex tasks \u2192 most capable\n4. If uncertain, prefer the most capable model\n5. Recency: within each provider, models are listed newest-generation-first; when candidates are equally capable and both fit, prefer the newest - the one listed earlier (higher version number in its code, e.g. -4-8 over -4-7 over -4-6, 5.5 over 5.4)\n\nCRITICAL: keep the \"reason\" field under 30 words. Do not analyse the user's request itself. Classify the task type only.\n\n## Output Format\nReturn ONLY valid JSON: {\"modelId\": \"<exact ID from list>\", \"reason\": \"<brief explanation>\"}",
+      "routerModelId": "model:gpt-4o",
+      "defaultModelId": "model:gpt-4o-mini",
       "routerProviderId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
       "defaultProviderId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
     },
@@ -24,11 +24,11 @@
     "pipelineStage": 1,
     "fallbackChain": [
       {
-        "modelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+        "modelId": "model:gpt-4o-mini",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       {
-        "modelId": "ca94f1a2-8a03-499b-b7b8-433621e8504a",
+        "modelId": "model:moonshot-v1-128k",
         "providerId": "64119a02-f3e4-4ff3-a023-e2289bc3135c"
       }
     ],
@@ -46,14 +46,14 @@
       "type": "conditional",
       "default": {
         "type": "single",
-        "modelId": "06056793-2ab1-4975-a0db-66896ca56134",
+        "modelId": "model:gpt-4o",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       "conditions": [
         {
           "then": {
             "type": "single",
-            "modelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+            "modelId": "model:gpt-4o-mini",
             "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
           },
           "when": {
@@ -66,15 +66,15 @@
     },
     "matchConditions": {
       "models": [
-        "06056793-2ab1-4975-a0db-66896ca56134",
-        "3f45ca57-c842-4e40-a901-4d607f3fe064"
+        "model:gpt-4o",
+        "model:gpt-4o-mini"
       ]
     },
     "priority": 20,
     "pipelineStage": 1,
     "fallbackChain": [
       {
-        "modelId": "ca94f1a2-8a03-499b-b7b8-433621e8504a",
+        "modelId": "model:moonshot-v1-128k",
         "providerId": "64119a02-f3e4-4ff3-a023-e2289bc3135c"
       }
     ],
@@ -90,23 +90,23 @@
     "strategyType": "single",
     "config": {
       "type": "single",
-      "modelId": "862cd7ce-0927-4296-88a2-ebb0ff482e5c",
+      "modelId": "model:claude-sonnet-4-6",
       "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450"
     },
     "matchConditions": {
       "models": [
-        "862cd7ce-0927-4296-88a2-ebb0ff482e5c"
+        "model:claude-sonnet-4-6"
       ]
     },
     "priority": 10,
     "pipelineStage": 1,
     "fallbackChain": [
       {
-        "modelId": "e65623cf-60e8-489f-a91f-6e4869216d15",
+        "modelId": "model:claude-haiku-4-5",
         "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450"
       },
       {
-        "modelId": "ca94f1a2-8a03-499b-b7b8-433621e8504a",
+        "modelId": "model:moonshot-v1-128k",
         "providerId": "64119a02-f3e4-4ff3-a023-e2289bc3135c"
       }
     ],
@@ -118,7 +118,7 @@
   {
     "id": "091d160c-436d-430c-ac94-b78249210c78",
     "name": "load-balance-mini",
-    "description": "Load-balance GPT-4o-mini: 70% OpenAI, 30% Google Gemini 2.0 Flash",
+    "description": "Load-balance GPT-4o-mini: 70% OpenAI, 30% Google Gemini 2.5 Flash",
     "strategyType": "loadbalance",
     "config": {
       "type": "loadbalance",
@@ -126,7 +126,7 @@
         {
           "node": {
             "type": "single",
-            "modelId": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+            "modelId": "model:gpt-4o-mini",
             "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
           },
           "weight": 70
@@ -134,7 +134,7 @@
         {
           "node": {
             "type": "single",
-            "modelId": "2364e1e5-861c-45c2-be9e-62fe3c5fe8d8",
+            "modelId": "model:gemini-2.5-flash",
             "providerId": "c6e3b252-303a-45fd-b5dd-f9467eeba669"
           },
           "weight": 30
@@ -143,18 +143,18 @@
     },
     "matchConditions": {
       "models": [
-        "3f45ca57-c842-4e40-a901-4d607f3fe064"
+        "model:gpt-4o-mini"
       ]
     },
     "priority": 5,
     "pipelineStage": 1,
     "fallbackChain": [
       {
-        "modelId": "06056793-2ab1-4975-a0db-66896ca56134",
+        "modelId": "model:gpt-4o",
         "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab"
       },
       {
-        "modelId": "ca94f1a2-8a03-499b-b7b8-433621e8504a",
+        "modelId": "model:moonshot-v1-128k",
         "providerId": "64119a02-f3e4-4ff3-a023-e2289bc3135c"
       }
     ],
@@ -170,7 +170,7 @@
     "strategyType": "single",
     "config": {
       "type": "single",
-      "modelId": "ca94f1a2-8a03-499b-b7b8-433621e8504a",
+      "modelId": "model:moonshot-v1-128k",
       "providerId": "64119a02-f3e4-4ff3-a023-e2289bc3135c"
     },
     "matchConditions": {},

@@ -120,6 +120,124 @@ Send a request that triggers an admin policy with `onMatch.inflightAction = "blo
 
 **Rollback.** Plain `git revert`. Stamps revert to producer-side raw verbatim and the reason code stops being stamped — no DB cleanup required.
 
+### `fix/gw-json-parse` — Model catalog: corrected caps, floating Claude codes, new models
+
+**Scope.** No schema change. `Model` **row** changes only, and they must reach an existing deployment or the fixes do not apply: the seed fixture governs fresh installs, while a live deployment's `Model` rows were created through the provider wizard and drift freely from the catalog.
+
+Two of the corrections fix a live 400, so this is not cosmetic:
+
+- **Output caps that exceed the vendor's real ceiling.** The gateway fills `max_tokens` from `Model.maxOutputTokens` whenever a caller omits the field, so a too-high stored cap makes the provider reject every such request. Anthropic's real ceilings are: `claude-fable-5` / `claude-sonnet-5` / `claude-opus-4-8` / `-4-7` / `-4-6` / `claude-sonnet-4-6` = **128000**; `claude-opus-4-5` / `claude-sonnet-4-5` / `claude-haiku-4-5` = **64000**; `claude-opus-4-1` = **32000**. Any row storing 131072 or 65536 is over its ceiling and is 400ing now.
+- **Claude codes moved from dated ids to floating aliases** (`claude-haiku-4-5-20251001` → `claude-haiku-4-5`), with the dated id preserved in `aliases` so callers still sending it keep resolving.
+
+**Tables + JSON paths.** `Model` — `code`, `aliases`, `maxOutputTokens`, `maxContextTokens`, the four price columns, `description`, `features`, `status` / `deprecationDate` / `replacedBy` (on `claude-opus-4-1`, which the vendor deprecated). No JSON paths.
+
+**Value rule.** Recompute from the catalog: run the reference seed. It reconciles each fixture row against any live row matching its `id`, its `code`, **or one of its aliases**, then updates in place — so a wizard-created row under the old dated name is adopted and corrected while keeping the id that `traffic_event.model_id` and `VirtualKey.allowedModels[].modelId` reference. Rows the catalog does not carry are left untouched; nothing is deleted.
+
+**Order.** Seed-then-deploy or deploy-then-seed both work — the row values and the binary are independent. Seeding first closes the live 400 sooner.
+
+Before seeding, check for a half-applied rename, which is the one shape the seed refuses to guess at:
+
+```sql
+SELECT id, code, "maxOutputTokens" FROM "Model"
+ WHERE code LIKE 'claude-%' ORDER BY code;
+```
+
+If BOTH a floating code and its dated alias exist as separate rows, the seed stops and names both ids rather than corrupting either. Merge them by hand first: keep the row whose id `traffic_event` references, delete the other.
+
+**Smoke after deploy.**
+
+```sql
+-- Expect zero rows. Any hit is a cap above the vendor ceiling, i.e. a live 400.
+SELECT code, "maxOutputTokens" FROM "Model"
+ WHERE (code LIKE 'claude-opus-4-1%'  AND "maxOutputTokens" > 32000)
+    OR (code LIKE 'claude-haiku-4-5%' AND "maxOutputTokens" > 64000)
+    OR (code LIKE 'claude-sonnet-4-5%' AND "maxOutputTokens" > 64000)
+    OR (code LIKE 'claude-opus-4-5%'  AND "maxOutputTokens" > 64000)
+    OR (code IN ('claude-fable-5','claude-sonnet-5','claude-opus-4-8','claude-opus-4-7',
+                 'claude-opus-4-6','claude-sonnet-4-6') AND "maxOutputTokens" > 128000);
+```
+
+Then confirm the 400 is actually gone, from the gateway, with `max_tokens` deliberately omitted so the catalog ceiling is what goes on the wire:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' "$GW/v1/chat/completions" \
+  -H "Authorization: Bearer $VK" -H 'content-type: application/json' \
+  -d '{"model":"claude-opus-4-8","messages":[{"role":"user","content":"ok"}]}'   # expect 200
+```
+
+**Rollback.** `git revert` restores the previous fixture, and re-seeding rewrites the rows back. Note the revert reinstates the over-ceiling caps and with them the 400 — prefer fixing forward. The renamed `code` values do not need reverting either way: the dated ids stay resolvable through `aliases`.
+
+**Dated follow-up — `claude-sonnet-5` prices change on 2026-09-01.** The stored rates are the vendor's introductory ones, which expire **2026-08-31**: input / output go `2` / `10` → **`3` / `15`**, and cache write / read go `2.5` / `0.2` → **`3.75` / `0.3`**. Nothing in this repo watches the clock — there is no scheduled pricing-refresh job — so from Sep 1 the catalog silently under-bills `claude-sonnet-5` by 1.5× until someone edits it. On or after that date, update the four price columns in `tools/db-migrate/model-catalog.json`, regenerate, and re-seed by the value rule above. Rates only: no cap, `code`, or alias moves with it, and already-stamped `traffic_event` rows are historical and are not recomputed.
+
+### `fix/gw-json-parse` — Rule pack: phone PII enforces redaction
+
+**Scope.** No schema change. One `rule` **row** value: `pii-con-002` (phone) moves `severity` `warn` → `soft`. `severityEnforces()` enforces on `hard|soft` and observes on `warn`, so at `warn` a phone number is tagged but never masked, where email (`pii-con-001`) and SSN (`pii-gov-002`) are masked.
+
+The fixtures are generated from `tools/db-migrate/seed/rule-packs/*.yaml`. The YAML already said `soft`; only the generated fixture was stale, so this ships as a regenerated fixture with no YAML change.
+
+**Blast radius — read before prioritising this.** The severity only decides anything where the `nexus/pii` pack's bound hooks are **enabled**. Both ship disabled (`pii-scanner` stage=request, `pii-outbound-scanner` stage=response, `enabled: false` in `HookConfig.json`), and the hook loader selects `WHERE enabled = true`, so on a deployment that has not turned them on the pack never executes and this row changes nothing observable. That is the state of production today — no `HookConfig` row is enabled there, so **nothing** is being masked, phone included. This entry is therefore latent: it corrects the value that would be wrong the moment an operator enables PII scanning. Do not report it as a live leak being closed.
+
+**Tables + JSON paths.** `rule` — `severity`, on the single row `ruleId = 'pii-con-002'`. No JSON paths.
+
+**Value rule.** Run the reference seed. `rule` reconciles on the composite key `(packId, ruleId)` and updates in place.
+
+**Order.** **Seed, then reload config — in that order, and the reload is not optional** on any deployment where the hooks ARE enabled. The engine does not read `rule.severity` per request: `packages/shared/policy/rulepack/enricher.go` materialises the rules into the hook config blob (`Config["_rulePackInstalls"]`) at config-load time. A service that loaded its config before the seed keeps enforcing the old severity, so the DB can read `soft` while the pipeline still only tags. The standard deploy order (restart, then seed) leaves exactly that state — restart again after seeding, or push a config change.
+
+**Smoke after deploy.** The DB value is all that can be checked on a deployment with the hooks off:
+
+```sql
+-- Expect soft for all three.
+SELECT "ruleId", severity FROM rule WHERE "ruleId" IN ('pii-con-001','pii-con-002','pii-gov-002');
+```
+
+Where the hooks ARE enabled, the DB value is necessary but not sufficient — only behaviour proves the config reloaded. Confirm the hook is actually live first, or the check passes for the wrong reason:
+
+```sql
+-- If this returns nothing, the pack does not run and the curl below proves nothing.
+SELECT name, stage, enabled FROM "HookConfig"
+ WHERE id IN ('20b82564-5ce3-4d0b-a102-da5f3bf3f29b','b2f2d960-54a5-4f01-abf7-47877f73bce3')
+   AND enabled = true;
+```
+
+```bash
+# Only meaningful once the request-stage hook is enabled: the number must not
+# reach the upstream. Read it off the traffic_event row's stored content, not
+# the model's reply — a model that simply did not repeat the number would make
+# a response-body grep pass with the redaction still broken.
+```
+
+**Rollback.** `git revert` restores the stale fixture and re-seeding writes `warn` back. Fix forward.
+
+### `fix/gw-json-parse` — Model catalog: `omni-moderation-latest` withdrawn
+
+**Scope.** No schema change. `omni-moderation-latest` is removed from `model-catalog.json`, so fresh installs never receive it. The model is alive at OpenAI but the gateway has **no moderation endpoint**; it was seeded `type = 'chat'`, so every call reached `/v1/chat/completions` and was rejected with `This is not a chat model`. It could not work in any configuration, and `inTemplate: true` was actively offering it in the provider wizard. Moderation as a capability belongs to the guardrail surface, not to a chat-typed catalog row.
+
+**Tables + JSON paths.** `Model` — the single row `code = 'omni-moderation-latest'`. No JSON paths.
+
+**Value rule.** **The seed will NOT remove it.** `reconcileRows` upserts; a row the catalog no longer carries is left untouched (see the value rule of the catalog entry above). An existing deployment therefore keeps serving it from `/v1/models` and the smoke keeps driving it — the 8 red arms do not clear on their own. Flip it by hand:
+
+```sql
+UPDATE "Model" SET enabled = false WHERE code = 'omni-moderation-latest';
+```
+
+**Disable, do not `DELETE`.** `traffic_event.model_id` is a plain column with **no FK**, and calls against this model recorded rows before it was withdrawn (16 on production at the time of writing). Deleting the row orphans that history and the analytics join loses the model name. `enabled = false` reaches the same user-visible end state — `ListEnabledModels` backs `/v1/models`, so a disabled row is gone from the catalog listing, unroutable, and skipped by the smoke — while leaving the history joinable.
+
+**Order.** Independent of the binary; flip whenever. Flipping before the smoke keeps the 8 arms from reporting.
+
+**Smoke after deploy.**
+
+```sql
+-- Expect enabled = f (or zero rows on a fresh install).
+SELECT code, enabled FROM "Model" WHERE code = 'omni-moderation-latest';
+```
+
+```bash
+# Expect the id to be absent from the catalog listing.
+curl -s "$GW/v1/models" -H "Authorization: Bearer $VK" | grep -c omni-moderation   # expect 0
+```
+
+**Rollback.** `UPDATE "Model" SET enabled = true WHERE code = 'omni-moderation-latest';` restores the row — and with it the 400 on every call. There is nothing to roll back to that works; the row only ever produced errors.
+
 ## How to add a new entry
 
 When a branch lands DB-shape changes (schema change in `tools/db-migrate/schema/` applied via `prisma db push`, or in-place JSON-key flip, or computed-column re-population), append a new entry to this file with the same Scope / Tables / Value rule / Order / Smoke / Rollback shape. Commit the entry as part of the same PR. If the PR lands without an entry here, the operator running the deploy will not know what to flip and the runtime will drift from the binary's expectations.

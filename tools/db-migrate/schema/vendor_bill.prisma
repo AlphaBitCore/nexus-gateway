@@ -1,0 +1,68 @@
+/// Vendor bill reconciliation — one row per provider × UTC day, comparing the
+/// gateway's own estimated spend (metric_rollup_1d.billed_cost_usd, routed_provider
+/// dimension) against the provider's authoritative billing-API total for that day.
+///
+/// Populated by the Hub daily reconciliation job
+/// (packages/nexus-hub/internal/jobs/defs/reconciliation). Design:
+/// docs/superpowers/specs/2026-07-19-vendor-bill-reconciliation-design.md.
+/// v1 covers only providers that expose a dollar-denominated cost API at
+/// provider×day granularity (OpenAI, Anthropic); providers without a
+/// VendorBillSource (Gemini direct / DeepSeek / Moonshot) never get rows here.
+model VendorBillReconciliation {
+  /// FK → Provider. The provider whose bill this row reconciles.
+  provider_id String @map("provider_id")
+
+  /// UTC calendar day this row reconciles (midnight-anchored).
+  day DateTime @map("day") @db.Date
+
+  /// Our side: metric_rollup_1d.billed_cost_usd for routed_provider=<provider_id>
+  /// on `day`. Always present (0 when the rollup recorded no traffic that day).
+  our_billed_usd Decimal @map("our_billed_usd") @db.Decimal(20, 10)
+
+  /// Vendor side: authoritative USD from the provider cost API, narrowed to the
+  /// gateway's scope. NULL when the vendor fetch failed or the day is not yet
+  /// finalized — absence is never written as 0.
+  vendor_reported_usd Decimal? @map("vendor_reported_usd") @db.Decimal(20, 10)
+
+  /// vendor_reported_usd - our_billed_usd. NULL whenever the vendor side is NULL.
+  diff_usd Decimal? @map("diff_usd") @db.Decimal(20, 10)
+
+  /// diff_usd / max(vendor, ours), as a fraction (0.05 = 5%). NULL when vendor NULL.
+  diff_pct Decimal? @map("diff_pct") @db.Decimal(10, 6)
+
+  /// How far the vendor query was narrowed: api_key | project | workspace | org.
+  scope_kind String @map("scope_kind")
+
+  /// Trust level of this row for alerting:
+  ///   scoped                   — narrowed to the gateway's slice; alert-eligible.
+  ///   org_only                 — vendor total is org-wide (could not narrow);
+  ///                              display-only, alert suppressed.
+  ///   fetch_failed             — vendor fetch/auth failed; no diff; alert suppressed.
+  ///   priority_tier_undercount — Anthropic priority tier excluded from cost_report;
+  ///                              display-only, alert suppressed.
+  /// Only `scoped` rows ever feed the drift alert.
+  coverage String @map("coverage")
+
+  /// Diff-handling entry point (the audit's "difference handling" requirement):
+  /// open | reviewed. Default open; an admin acks a row via the review endpoint.
+  status String @default("open") @map("status")
+
+  /// Admin user id who marked this row reviewed. NULL until acked.
+  reviewed_by String? @map("reviewed_by")
+
+  /// Free-text reviewer note.
+  note String? @map("note")
+
+  /// Set on every UPSERT. The job overwrites trailing-window rows so late vendor
+  /// revisions self-heal; this records the last recompute time.
+  updated_at DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  provider Provider @relation(fields: [provider_id], references: [id], onDelete: Cascade)
+
+  @@id([provider_id, day])
+  /// Report scans a date range across all providers.
+  @@index([day])
+  /// "Show me open, alert-eligible drift" — the report's default filter.
+  @@index([coverage, status])
+  @@map("vendor_bill_reconciliation")
+}

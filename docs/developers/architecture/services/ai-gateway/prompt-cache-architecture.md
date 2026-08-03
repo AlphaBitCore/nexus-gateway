@@ -35,15 +35,16 @@ Consecutive creation failures trip a per-manager circuit breaker (default thresh
 
 The proxy wires this in before the broker: for a Gemini-format primary target it calls `Get(providerID)` and, if a manager exists, `Inject`. On success it swaps in the rewritten body and captures the `Invalidate` hook.
 
-## 3. Three-tier configuration
+## 3. Two-tier configuration
 
-Prompt-cache behavior is configured through a three-tier model in `packages/shared/storage/cacheconfig`, shared by the Control Plane (DB I/O and blob assembly), the AI Gateway (resolution and the manager set), and config reconciliation (drift detection):
+Prompt-cache behavior is configured through a two-tier model in `packages/shared/storage/cacheconfig`, shared by the Control Plane (DB I/O and blob assembly), the AI Gateway (resolution and the manager set), and config reconciliation (drift detection):
 
-- **Tier 1 — `cache_global_config`** (singleton): pipeline-wide switches — `NormaliserEnabled` (gates the upstream wire-rewrite pipeline; see [shared-wirerewrite-architecture.md](../../cross-cutting/shared/shared-wirerewrite-architecture.md)) and `CacheMasterKillSwitch`, an emergency switch that disables all gateway-side caching for every provider.
 - **Tier 2 — `cache_adapter_config`** (one row per adapter family): the Gemini knobs (`cache_enabled`, `min_system_chars`, `ttl_seconds`, circuit-breaker threshold and open seconds), the Anthropic marker toggles, and a per-rule override map.
 - **Tier 3 — `cache_provider_config`** (one row per provider): a strict subset of the adapter fields, overriding the family default for a single provider (no rule overrides at this tier).
 
-`Resolve(blob, providerID, adapterType)` composes the three tiers into a flat `ProviderEffective`: pointer fields are nil when "not set at this tier", so a knob inherits Tier 3 → Tier 2 → Tier 1 → code default, and each resolved value records which tier supplied it. The whole `CacheConfigBlob` (`{global, adapters, providers}`) reaches the gateway over the Hub shadow key `cache`; the dispatch handler feeds it to `ManagerSet.SetConfig` and reloads the normaliser config from the same blob.
+The tiers keep their historical numbering because a **Tier 1 used to exist**: a `cache_global_config` singleton carrying two pipeline-wide switches, `NormaliserEnabled` and `CacheMasterKillSwitch`. Both are retired. Emergency gateway-side cache-off is served by the two surfaces in [cache-multi-tier-architecture.md](../../cross-cutting/storage/cache-multi-tier-architecture.md) (the fleet disable-all on `/ai-gateway/cache`, and Emergency Passthrough's time-boxed `bypassCache`), and the upstream wire-rewrite pipeline is now demand-driven off the Tier-2/Tier-3 rule and marker-inject settings rather than a global gate (see [shared-wirerewrite-architecture.md](../../cross-cutting/shared/shared-wirerewrite-architecture.md)). The `cache_global_config` table is orphaned — nothing reads or writes it — and is left in place pending a later cleanup migration.
+
+`Resolve(blob, providerID, adapterType)` composes the tiers into a flat `ProviderEffective`: pointer fields are nil when "not set at this tier", so a knob inherits Tier 3 → Tier 2 → code default, and each resolved value records which tier supplied it. The whole `CacheConfigBlob` (`{adapters, providers}`) reaches the gateway over the Hub shadow key `cache`; the dispatch handler feeds it to `ManagerSet.SetConfig` and reloads the wire-rewrite config from the same blob.
 
 ## 4. Relationship to Anthropic prompt caching
 

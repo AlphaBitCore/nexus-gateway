@@ -47,12 +47,23 @@ Three independent toggles guarded by an `Enabled` master and `ExpiresAt`:
 | Flag | Layer disabled | Notes |
 |------|----------------|-------|
 | `bypassHooks` | Request-stage hooks pipeline AND response-stage hooks pipeline (including SSE live compliance) | `Record.HookDecision` stamped `"BYPASSED"` so audit consumers can filter |
-| `bypassCache` | Response-cache lookup AND write for matched traffic | Takes precedence over the `x-nexus-aigw-no-cache` client header so an operator-forced bypass cannot be overridden by an end-user |
+| `bypassCache` | Response-cache lookup AND write for matched traffic | Takes precedence over the `X-Nexus-No-Cache` client header so an operator-forced bypass cannot be overridden by an end-user |
 | `bypassNormalize` | Response-side `normalize.Registry.Normalize` + emission to `traffic_event_normalized` | Request-side normalize still runs (it precedes resolution and the canonical payload aids triage). Per admin/UX invariant `bypassNormalize=true` requires `bypassCache=true` because the cache key derives from the canonical normalized payload |
 
 `AnyBypassActive()` returns true only when `Enabled=true` AND at least one flag is on. A nil `*Config`, a disabled config, and an empty flag set are all "no bypass" — every consumer call site is nil-safe so cold-start sees the empty cache as "no bypass" rather than crashing.
 
 `Flags()` returns the canonical-order slice `[bypassHooks, bypassCache, bypassNormalize]` — the literal strings that land on `traffic_event.passthrough_flags`. Operator triage queries grep these literals directly.
+
+### 4.1 `bypassCache` is one of two emergency cache-off surfaces
+
+Passthrough is **not** the only way to take the gateway response cache offline, and it is not always the right one. The gateway cache stage gates purely on the two tiers' own enable flags (`cacheEnabled = l1Enabled || l2Enabled`); there is no global cache master switch. That leaves two complementary surfaces, and operators should know which to reach for:
+
+| Surface | Properties | Reach for it when |
+|---|---|---|
+| **Fleet disable-all** — the status strip at the top of `/ai-gateway/cache` ("Disable all gateway cache", confirm dialog, permission-gated) | Fast (one click) and **durable**: it writes `enabled=false` onto the L1 and L2 singleton configs, so the cache stays off until someone turns it back on. No reason, no expiry, fleet-wide only | The cache itself is the fault — poisoned corpus, bad embedding rotation, cache-correctness incident — and you want it off now and off until you decide otherwise |
+| **Emergency Passthrough `bypassCache`** (this page) | **Auditable and time-boxed**: mandatory ≥20-char reason, `enabledBy` recorded, `expiresAt` ≤ 8 h with Hub auto-revert, per-request stamping on `traffic_event` (`passthrough_flags`, `gateway_cache_skip_reason = passthrough`), and scopable to one adapter or provider | You want a governed, self-reverting bypass — or a bypass narrower than the fleet — and you want the traffic rows to record who bypassed the cache and why |
+
+They differ in kind, not in strength: disable-all is a **config** change (durable, unattributed, all-or-nothing); passthrough is an **incident** control (attributed, expiring, scoped). Using passthrough for a permanent cache-off is wrong (it auto-reverts in ≤ 8 h); using disable-all for a scoped, audited bypass is wrong (it has no scope and no audit trail). See [cache-multi-tier-architecture.md](../storage/cache-multi-tier-architecture.md).
 
 ## 5. ResolvedRequest — the L4 effective layer
 
@@ -91,7 +102,7 @@ Cold-start fail-closed is structural: `NewCache()` installs an empty `Snapshot{}
 Each bypass flag short-circuits exactly the phase named in its key:
 
 - **Request hooks (Phase 5)** — `BypassHooks` causes the handler to skip `runRequestHooks` entirely and stamp `rec.HookDecision = "BYPASSED"`. The outer-scope `rewrittenBody / reqHookResult / rejected` zero-values are reused downstream without further branching.
-- **Cache (Phase 5.5)** — `BypassCache` short-circuits the cache-key build and Redis lookup. `classifyCachePreLookup` returns `(Skipped, "passthrough")` instead of `(Skipped, "no_cache")` so operators can SQL-distinguish "incident-forced bypass" from "client-opted-out". The bypass takes precedence over the `x-nexus-aigw-no-cache` request header.
+- **Cache (Phase 5.5)** — `BypassCache` short-circuits the cache-key build and Redis lookup. `classifyCachePreLookup` returns `(Skipped, "passthrough")` instead of `(Skipped, "no_cache")` so operators can SQL-distinguish "incident-forced bypass" from "client-opted-out". The bypass takes precedence over the `X-Nexus-No-Cache` request header.
 - **Response hooks** — `BypassHooks` is re-checked in the response stage via `requestcontext.ResolvedFrom(r.Context())`. The response pipeline build + execute is skipped; `rec.ResponseHookDecision` is left empty.
 - **Response normalize** — Inside the audit Writer, when `rec.PassthroughFlags` contains `"bypassNormalize"`, the response-side normalize emit is skipped (request-side still runs as noted above).
 

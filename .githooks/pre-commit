@@ -20,15 +20,31 @@ cd "$REPO_ROOT"
 
 staged="$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)"
 
+# Deletion-inclusive staged list for the coverage gates only: deleting or
+# renaming a test file lowers its package's coverage exactly like editing
+# one, so those gates must also fire on D/R. --no-renames decomposes a
+# rename into its delete+add halves so both affected packages are seen.
+# Content-scanning gates (lint, gofmt, tokens) stay on $staged — a deleted
+# file has no content to scan.
+staged_cov="$(git diff --cached --name-only --no-renames --diff-filter=ACMD 2>/dev/null || true)"
+
 FAILED=0
 
 run_hard() {
-  # run_hard <label> <command...> — failure blocks commit.
+  # run_hard <label> <command...> — failure blocks commit. The command's
+  # output is captured and printed on failure: a blocked commit must name
+  # the offending file/package inline, not force a manual re-run.
   local label=$1
   shift
-  if ! "$@" >/dev/null 2>&1; then
+  local out rc
+  out="$("$@" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
     echo ""
     echo "✗ ${label} FAILED — blocking commit."
+    if [ -n "$out" ]; then
+      echo "$out" | tail -n 60 | sed 's/^/    /'
+    fi
     echo "  Reproduce: $*"
     FAILED=1
   else
@@ -67,6 +83,15 @@ if echo "$staged" | grep -qE '\.go$'; then
   run_hard "keystore seam" bash scripts/check-keystore-seam.sh
 fi
 
+# 2b2. Prometheus metric naming (binding; nexus_<subsystem>_<name>, the service
+# is carried by the `job` label and must not be in the name — see
+# prometheus-naming-architecture.md §1). A metric name is a shipped contract:
+# every dashboard and alert reading it breaks on a rename, so the rule is
+# enforced before the name ships rather than after someone builds on it.
+if echo "$staged" | grep -qE '\.go$'; then
+  run_hard "prometheus naming" bash scripts/check-prometheus-naming.sh --staged
+fi
+
 # 2c. File-size ratchet (binding; no file grows past its recorded baseline,
 # new files cap at 500 — see conventions.md "File-size ratchet").
 if echo "$staged" | grep -qE '\.(go|ts|tsx|swift|py)$'; then
@@ -78,13 +103,21 @@ if echo "$staged" | grep -qE '^docs/users/product/|^packages/control-plane-ui/';
   run_hard "IoT terminology guard" bash scripts/check-terminology.sh
 fi
 
+# 3b. Nexus header naming contract (nexus-headers.md §1): mixed-case
+# X-Nexus-* literals, no per-service prefixes, no ghost registry members.
+# Headers live in Go code, so Go files are the trigger. Pure git grep —
+# milliseconds.
+if echo "$staged" | grep -qE '\.go$|^scripts/check-headers\.sh$'; then
+  run_hard "header naming contract" bash scripts/check-headers.sh
+fi
+
 # 4. Design tokens (binding; only when UI files staged — scoped to staged files).
 if echo "$staged" | grep -qE '\.(tsx|module\.css|css)$|^scripts/check-design-tokens\.mjs$|^packages/ui-shared/src/styles/'; then
   echo "[pre-commit] design-token compliance check…"
-  if ! echo "$staged" | node scripts/check-design-tokens.mjs --files=- >/dev/null 2>&1; then
+  if ! dt_out="$(echo "$staged" | node scripts/check-design-tokens.mjs --files=- 2>&1)"; then
     echo ""
-    echo "✗ design-token guard failed on STAGED files."
-    echo "  Run \`echo \"\$(git diff --cached --name-only)\" | node scripts/check-design-tokens.mjs --files=-\` to see the report."
+    echo "✗ design-token guard failed on STAGED files:"
+    printf '%s\n' "$dt_out"
     echo "  See CLAUDE.md → Conventions → \"Design-token strict\" for the binding."
     FAILED=1
   else
@@ -131,10 +164,32 @@ if echo "$staged" | grep -qE '^packages/nexus-hub/internal/jobs/|^docs/developer
   run_hard "jobs-catalogue lockstep" bash scripts/check-jobs-catalogue.sh
 fi
 
+# 8b. Rule-pack fixture lockstep (binding; seed/fixtures/{rule_pack,rule}.json
+# are GENERATED from seed/rule-packs/*.yaml. The YAML is what the Go
+# differential / Vectorscan tests load, the fixtures are what the DB seeds, and
+# a rule's severity decides whether it redacts or only tags. Editing the YAML
+# alone therefore leaves a deployment enforcing the OLD severity while every
+# test proves the new one — no test can fail, because each side is internally
+# consistent).
+if echo "$staged" | grep -qE '^tools/db-migrate/seed/rule-packs/|^tools/db-migrate/seed/fixtures/rule(_pack)?\.json$|^tools/db-migrate/seed/gen-rulepacks\.ts$'; then
+  run_hard "rule-pack fixture lockstep" npm run --silent check:rulepacks
+fi
+
+# 8c. Sampling-quirk coverage + evidence (binding; §3a Rule 7 machine check).
+# Every catalog chat family needs an explicit sampling-quirk decision, strip
+# rules must anchor to real adapter code + a seeded smoke probe, and every
+# quirk rule cites its observed 400. Runs when the catalog, the registered
+# quirk-rule files, the smoke's rejects set, or the lints themselves change.
+if echo "$staged" | grep -qE '^tools/db-migrate/model-catalog\.json$|^packages/ai-gateway/internal/providers/specs/(openai/rewrites/|compat/moonshot/|compat/deepseek/|anthropic/codec/)|^tests/scripts/smoke-gateway\.py$|^scripts/(check-quirk-coverage|check-quirk-evidence|quirk-coverage\.config)\.mjs$'; then
+  run_hard "quirk coverage" npm run --silent check:quirk-coverage
+  run_hard "quirk evidence" npm run --silent check:quirk-evidence
+fi
+
 # 9. Unit test coverage ≥95% per Go package (binding; CLAUDE.md → Mandatory
-# rules). Scoped to packages with staged Go files. Allowlist:
+# rules). Scoped to packages with staged Go files — including deletions and
+# renames, which lower coverage without leaving an ACM entry. Allowlist:
 # scripts/.coverage-allowlist (entries require user approval + category).
-if echo "$staged" | grep -qE '\.go$'; then
+if echo "$staged_cov" | grep -qE '\.go$'; then
   run_hard "go coverage ≥95%" bash scripts/check-go-coverage.sh --staged
 fi
 
@@ -145,7 +200,7 @@ fi
 # Go file OR the manifest/checker is staged — a core-path function losing
 # a covered branch must block the commit, OS-tagged funcs checked on their
 # GOOS, OS-neutral funcs everywhere.
-if echo "$staged" | grep -qE '\.go$|^scripts/\.core-path-100$|^scripts/check-core-path-coverage\.sh$'; then
+if echo "$staged_cov" | grep -qE '\.go$|^scripts/\.core-path-100$|^scripts/check-core-path-coverage\.sh$'; then
   run_hard "core-path 100% coverage" bash scripts/check-core-path-coverage.sh
 fi
 
