@@ -1,0 +1,301 @@
+# Nexus Gateway — quickstart deployment.
+#
+# Brings up the control plane and AI gateway from published images. Two
+# commands:
+#
+#   ./init-secrets.sh     # generates .env (secrets + admin password)
+#   docker compose up -d
+#
+# Then open http://localhost:8080 (or NEXUS_UI_PORT, if you moved it).
+#
+# Only the UI (8080) and the gateway (3050) are published to the host by a
+# default `up` — the optional compliance profile publishes 3128 as well. Each of
+# the three is NEXUS_UI_PORT / NEXUS_GATEWAY_PORT / NEXUS_PROXY_PORT in .env when
+# one of those is already taken on the host.
+#
+# Moving the UI port moves the console's origin with it, and that origin is not
+# cosmetic: the migrator registers "<origin>/auth/callback" as an OAuth redirect
+# URI, and /oauth/authorize rejects any redirect_uri it has not been given, so an
+# origin that disagrees with the published port means nobody can log in. Every
+# place that names the external address therefore derives from the same variable
+# rather than repeating a literal — and CONTROL_PLANE_PUBLIC_URL still overrides
+# the whole thing for a deployment answering on a real hostname.
+# Postgres, Valkey, and NATS stay on the internal network — a smaller attack
+# surface, and it lets this stack coexist with a development stack from the
+# repository root compose file without port collisions.
+#
+# The Nexus Agent is deliberately absent: it intercepts through netfilter,
+# needs NET_ADMIN and host iptables chains, and is a host-level install.
+#
+# The compliance proxy is behind a profile:
+#   docker compose --profile compliance up -d
+#
+# Operator guide: docs/operators/ops/container-deployment.md
+#
+# The repository-root docker-compose.yml is a different thing: development
+# infrastructure only, for running services from source.
+
+name: nexus-gateway
+
+# Registry prefix for every image below. A YAML alias cannot be spliced into
+# the middle of a scalar (`*anchor/suffix` is not valid YAML — an alias node
+# substitutes a whole value, not a string fragment), so each image line below
+# repeats this Compose variable with an inline default rather than aliasing a
+# fragment. Override with NEXUS_REGISTRY in .env to pull from a mirror.
+
+configs:
+  nats-conf:
+    # max_payload is config-file-only in nats-server (it is not a CLI flag), so
+    # it cannot move into `command:`. The 16 MiB cap lets a traffic_event
+    # carrying a large prompt or response publish; the 1 MB default drops audit
+    # rows under concurrency.
+    content: |
+      jetstream {
+        store_dir: /data
+      }
+      max_payload: 16MB
+      http_port: 8222
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: UTC
+      PGTZ: UTC
+    command: ["postgres", "-c", "timezone=UTC", "-c", "log_timezone=UTC", "-c", "max_connections=200"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey-bundle:8-trixie
+    environment:
+      TZ: UTC
+    volumes:
+      # Valkey snapshots to /data/dump.rdb on its built-in save schedule
+      # (3600s/1 change, 300s/100, 60s/10000). Without a volume that file lives
+      # in the container layer, so every `up -d` that recreates the container —
+      # i.e. every upgrade — starts from an empty cache: admin sessions are
+      # invalidated, the IAM cache is cold, and quota counters reset mid-period.
+      # This is a cache, not a system of record; the volume is about not
+      # disrupting a running deployment, not about durability.
+      - valkeydata:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2.10-alpine
+    environment:
+      TZ: UTC
+    command: ["-c", "/nats.conf"]
+    configs:
+      - source: nats-conf
+        target: /nats.conf
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  db-migrator:
+    image: ${NEXUS_REGISTRY:-ghcr.io/alphabitcore}/db-migrator:${NEXUS_VERSION}
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Both of these replace credentials the seed ships with public values.
+      # The migrator refuses to run without them.
+      NEXUS_ADMIN_PASSWORD: ${NEXUS_ADMIN_PASSWORD}
+      NEXUS_ASSISTANT_SYSTEM_VK: ${NEXUS_ASSISTANT_SYSTEM_VK}
+      ADMIN_KEY_HMAC_SECRET: ${ADMIN_KEY_HMAC_SECRET}
+      # Needed to seed the demo tenant's encrypted placeholder provider
+      # credentials (SEED_DEMO defaults to true — see entrypoint.sh). Already
+      # generated by init-secrets.sh and already reaches the other services
+      # below via the shared *service-env anchor.
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      # Declared so that setting SEED_DEMO=false in .env actually reaches the
+      # migrator. Compose reads .env to interpolate THIS file, but only passes a
+      # variable into a container when the service lists it — so without this
+      # line the operator's SEED_DEMO was read, dropped, and the entrypoint took
+      # its default: the demo tier appeared anyway, silently, in a deployment
+      # the operator believed had none.
+      SEED_DEMO: ${SEED_DEMO:-true}
+      # The origin an admin reaches the console at. The migrator registers
+      # "<this>/auth/callback" as a cp-ui redirect URI; without it
+      # /oauth/authorize rejects the browser's redirect_uri and nobody can log
+      # in. Same value as the services' own CONTROL_PLANE_PUBLIC_URL below —
+      # both are "the address an external client reaches the control plane at",
+      # which behind this stack's nginx is the proxy's published address.
+      # Change it here and below together when publishing on a real hostname.
+      CONTROL_PLANE_PUBLIC_URL: ${CONTROL_PLANE_PUBLIC_URL:-http://localhost:${NEXUS_UI_PORT:-8080}}
+    volumes:
+      # The image ships without node_modules; entrypoint.sh installs into this
+      # volume on the first `up` and reuses it thereafter, keyed on the
+      # lockfile's hash. Declared at the bottom of this file.
+      - migrator-deps:/app/tools/db-migrate/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nexus-hub:
+    image: ${NEXUS_REGISTRY:-ghcr.io/alphabitcore}/nexus-hub:${NEXUS_VERSION}
+    restart: unless-stopped
+    environment: &service-env
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_MODE: standalone
+      REDIS_ADDRS: valkey:6379
+      NATS_URL: nats://nats:4222
+      # compliance-proxy's shipped config yaml leaves mq.driver commented out
+      # (must come from env); the other three services default it in yaml, so
+      # this was masked until compliance-proxy was actually brought up under
+      # the --profile compliance flag.
+      MQ_DRIVER: nats
+      NEXUS_HUB_URL: http://nexus-hub:3060
+      AUTH_SERVER_URL: http://control-plane:3001
+      AUTH_SERVER_ISSUER: ${CONTROL_PLANE_PUBLIC_URL:-http://localhost:${NEXUS_UI_PORT:-8080}}
+      # Each service's config validation refuses to start without its own
+      # PublicURL (reported to the Hub registry as staticInfo; the admin UI
+      # renders it, and it is what an external client — an agent, a browser —
+      # is told to reach the service at). Every service in this anchor reads
+      # only its own <SERVICE>_PUBLIC_URL var and ignores the others,
+      # so listing all four here is harmless. nexus-hub and control-plane sit
+      # entirely behind the nginx reverse proxy (control-plane-ui, :8080), so
+      # their public URL is the proxy's external address; ai-gateway and
+      # compliance-proxy are ALSO published directly on their own host ports
+      # (see their `ports:` blocks below), which is the address a caller
+      # holding a virtual key actually uses.
+      NEXUS_HUB_PUBLIC_URL: ${CONTROL_PLANE_PUBLIC_URL:-http://localhost:${NEXUS_UI_PORT:-8080}}
+      CONTROL_PLANE_PUBLIC_URL: ${CONTROL_PLANE_PUBLIC_URL:-http://localhost:${NEXUS_UI_PORT:-8080}}
+      AI_GATEWAY_PUBLIC_URL: ${AI_GATEWAY_PUBLIC_URL:-http://localhost:${NEXUS_GATEWAY_PORT:-3050}}
+      COMPLIANCE_PROXY_PUBLIC_URL: ${COMPLIANCE_PROXY_PUBLIC_URL:-http://localhost:${NEXUS_PROXY_PORT:-3128}}
+      # The shipped nexus-hub.config.yaml pins hub.id to an explicit empty
+      # string ("REQUIRED. Unique instance id surfaced in the thing
+      # registry.") so a missing override fails config validation rather than
+      # silently reusing the container hostname across every quickstart
+      # install. Only nexus-hub reads this var; harmless on the other three
+      # services.
+      NEXUS_HUB_ID: nexus-hub-quickstart
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      HUB_CONFIG_TOKEN: ${HUB_CONFIG_TOKEN}
+      ADMIN_KEY_HMAC_SECRET: ${ADMIN_KEY_HMAC_SECRET}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      COMPLIANCE_PROXY_API_TOKEN: ${COMPLIANCE_PROXY_API_TOKEN}
+      NEXUS_ASSISTANT_SYSTEM_VK: ${NEXUS_ASSISTANT_SYSTEM_VK}
+      TZ: UTC
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      db-migrator:
+        condition: service_completed_successfully
+
+  control-plane:
+    image: ${NEXUS_REGISTRY:-ghcr.io/alphabitcore}/control-plane:${NEXUS_VERSION}
+    restart: unless-stopped
+    environment: *service-env
+    depends_on:
+      nexus-hub:
+        condition: service_started
+      db-migrator:
+        condition: service_completed_successfully
+
+  ai-gateway:
+    image: ${NEXUS_REGISTRY:-ghcr.io/alphabitcore}/ai-gateway:${NEXUS_VERSION}
+    restart: unless-stopped
+    ports:
+      - "${NEXUS_GATEWAY_PORT:-3050}:3050"
+    environment: *service-env
+    volumes:
+      # Audit spill root (audit.spoolDir). The traffic_event writer buffers in
+      # memory and publishes to NATS asynchronously; overflow lands here as
+      # NDJSON instead of being dropped, and a sweeper re-ingests it once the
+      # pipeline recovers. Without this the directory cannot be created and the
+      # default `spillblock` loss mode downgrades to `block` at startup —
+      # nothing is lost, but the request path then back-pressures on the in-heap
+      # buffer alone, with no disk buffer to absorb a burst or a NATS outage.
+      # Bounded by audit.spoolMaxTotalMb (512 MB today), not by this volume.
+      - gateway-audit-spool:/var/lib/nexus
+    depends_on:
+      nexus-hub:
+        condition: service_started
+      db-migrator:
+        condition: service_completed_successfully
+
+  control-plane-ui:
+    image: ${NEXUS_REGISTRY:-ghcr.io/alphabitcore}/control-plane-ui:${NEXUS_VERSION}
+    restart: unless-stopped
+    ports:
+      - "${NEXUS_UI_PORT:-8080}:8080"
+    # nginx resolves the literal hostnames in its proxy_pass directives when it
+    # loads the configuration, so every upstream it names must already resolve
+    # or the container exits immediately. The config proxies to all three
+    # services, not just the control plane.
+    depends_on:
+      control-plane:
+        condition: service_started
+      ai-gateway:
+        condition: service_started
+      nexus-hub:
+        condition: service_started
+
+  compliance-proxy:
+    image: ${NEXUS_REGISTRY:-ghcr.io/alphabitcore}/compliance-proxy:${NEXUS_VERSION}
+    restart: unless-stopped
+    profiles: ["compliance"]
+    ports:
+      - "${NEXUS_PROXY_PORT:-3128}:3128"
+    environment: *service-env
+    # compliance-proxy.config.yaml (packages/compliance-proxy) reads its MITM
+    # CA from /etc/compliance-proxy/{ca.crt,ca.key} and exits on startup if
+    # either is absent. ./init-secrets.sh generates ./compliance-ca/ (a
+    # self-signed EC CA an operator can replace with their own); mounted
+    # read-only because the container only ever reads this pair, never
+    # regenerates it.
+    volumes:
+      - ./compliance-ca:/etc/compliance-proxy:ro
+      # NDJSON audit fallback root (audit.ndjson.dir). This service resolves its
+      # overflow policy through the same shared/audit/lossmode contract as the
+      # gateway and defaults to spillblock, so a full channel spills here — and
+      # with nowhere to spill the mode degrades to `block` rather than dropping,
+      # which for a service in an intercepted TLS path means the back-pressure
+      # lands on a user's connection. Bounded by audit.ndjson.maxTotalSizeMB
+      # (1000 MB today).
+      - proxy-audit-spool:/var/lib/nexus-proxy
+    depends_on:
+      nexus-hub:
+        condition: service_started
+      db-migrator:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  natsdata:
+  # The cache's RDB snapshot, so an upgrade does not log every admin out and
+  # reset every quota counter. See the valkey service above.
+  valkeydata:
+  # Audit spill for the two services that produce traffic/compliance events.
+  # Both are capped by the owning service's own config, so they cannot grow
+  # without bound — but both hold records that have not reached the database
+  # yet, so `docker compose down -v` discards audit the pipeline still owed.
+  # The container images pre-create these paths owned by uid 65532; a volume
+  # mounted at a path absent from the image would be root-owned and unwritable
+  # to a distroless :nonroot service.
+  gateway-audit-spool:
+  proxy-audit-spool:
+  # Holds the db-migrator's node_modules so its runtime `npm ci` runs once
+  # (first `up`) and is reused thereafter. Removed by `docker compose down -v`.
+  migrator-deps:

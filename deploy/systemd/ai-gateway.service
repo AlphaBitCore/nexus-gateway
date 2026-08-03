@@ -1,0 +1,31 @@
+[Unit]
+Description=Nexus AI Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus-gateway/env
+ExecStart=/opt/nexus/bin/ai-gateway --config /etc/nexus-gateway/ai-gateway.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# /var/lib/nexus is the audit-spool durability fallback (audit.spoolDir in
+# ai-gateway.config.yaml, default /var/lib/nexus/audit-spool): when the NATS
+# publish buffer overflows, records spill here as NDJSON instead of being
+# dropped. ProtectSystem=strict makes the whole filesystem read-only except
+# what is listed here, so omitting this path does not merely disable the
+# spill — it is silently treated as "spill disabled, drop loudly" by the
+# service's own fallback logic, not a startup failure, which makes the gap
+# easy to miss. The install doc creates this directory before enabling the
+# unit; ReadWritePaths on a path that does not exist yet fails the unit at
+# startup (systemd cannot bind-mount a missing directory).
+ReadWritePaths=/var/log/nexus /var/lib/nexus
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,113 @@
+# Prometheus scrape configuration for a single-host Nexus Gateway deployment.
+#
+# This file is load-bearing, not a convenience. prometheus-naming-architecture.md
+# §1 keeps the service OUT of the metric name — `nexus_requests_total` is emitted
+# by more than one binary — and carries it in the `job` label instead. That label
+# is set HERE. Without a scrape config that gives each service a distinct
+# job_name, every per-service query is impossible: the series collide.
+#
+# Ports below are the shipped defaults, verified against a running production
+# host. Override per deployment; the job_name values are what queries depend on
+# and should not be renamed casually.
+#
+# ── The one thing that will catch you out ─────────────────────────────────────
+# The AI Gateway's /metrics is token-gated and returns 401 without a bearer.
+# It is not an oversight: the gateway binds /metrics on the SAME port and
+# interfaces as the public /v1/* data plane, so an open /metrics would hand
+# request counts, model and provider ids, and cost/latency histograms to anyone
+# who can reach the port. It uses the same INTERNAL_SERVICE_TOKEN as the
+# /internal/* operator routes. The compliance-proxy gates its runtime /metrics
+# the same way.
+#
+# Do NOT "fix" a 401 by removing the guard. Give Prometheus the token:
+#
+#   1. Copy the token the services already use — on a systemd host it is
+#      INTERNAL_SERVICE_TOKEN in the unit's EnvironmentFile
+#      (/etc/nexus-gateway/env on the current appliance; check with
+#      `systemctl cat nexus-ai-gateway | grep EnvironmentFile`) — into a file
+#      only Prometheus can read:
+#
+#        install -m 0400 -o prometheus -g prometheus /dev/null /etc/prometheus/nexus-internal-token
+#        sudo grep -oE '^INTERNAL_SERVICE_TOKEN=.*' /etc/nexus-gateway/env \
+#          | cut -d= -f2- | tr -d '"' \
+#          > /etc/prometheus/nexus-internal-token
+#
+#   2. The ai-gateway and compliance-proxy jobs below read it via
+#      authorization.credentials_file.
+#
+#   Verify before trusting the scrape (this exact check was run against
+#   production on 2026-07-16 — 401 without, 200 and 435 nexus_* series with):
+#
+#     curl -s -o /dev/null -w '%{http_code}\n' localhost:3050/metrics            # expect 401
+#     curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $(cat /etc/prometheus/nexus-internal-token)" \
+#       localhost:3050/metrics                                                    # expect 200
+#
+# The token must MATCH the services' INTERNAL_SERVICE_TOKEN (.env). A mismatch
+# is a silent 401 — the scrape fails, `up{job="ai-gateway"}` goes 0, and no
+# metric arrives. Check `up` first when a dashboard empties out.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    # Set per environment so a federated/remote-write setup can tell them apart.
+    # Staging and production emit identical series names otherwise.
+    deployment: production
+
+scrape_configs:
+  # ── AI Gateway ──────────────────────────────────────────────────────────────
+  # The data plane. Owns nexus_requests_total, nexus_request_duration_ms,
+  # nexus_tokens_total, nexus_errors_total, nexus_hook_pipeline_total,
+  # nexus_router_retry_total, nexus_admission_shed_total, the estimate_* family,
+  # and the cache/embeddings/credstats subsystems.
+  - job_name: ai-gateway
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/nexus-internal-token
+    static_configs:
+      - targets: ["127.0.0.1:3050"]
+
+  # ── Nexus Hub ───────────────────────────────────────────────────────────────
+  # Fleet coordination + the scheduler and rollup jobs. Owns
+  # nexus_scheduler_leader (sum across replicas must equal 1 — see below),
+  # nexus_credential_health_rollup_*, nexus_credential_circuit_flush_*.
+  - job_name: nexus-hub
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:3060"]
+
+  # ── Control Plane ───────────────────────────────────────────────────────────
+  # Admin API. Owns nexus_http_requests_total{method,route_class,status_class},
+  # nexus_auth_attempts_total, nexus_iam_eval_total,
+  # nexus_admin_audit_log_failed_total, nexus_assistant_turns_total.
+  - job_name: control-plane
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:3001"]
+
+  # ── Compliance Proxy ────────────────────────────────────────────────────────
+  # NOTE the port: the proxy serves MITM traffic on 3128 and exposes
+  # /metrics + /debug/runtime on its separate health address (:9090 by default,
+  # `health.address` in compliance-proxy.config.yaml). Scraping 3128 gets you a
+  # 405 — that is the proxy port, not the metrics port.
+  #
+  # Token-gated for the same reason as the gateway.
+  - job_name: compliance-proxy
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/nexus-internal-token
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+# ── Why there are no alerting rules here ──────────────────────────────────────
+# Alerting does not live in Prometheus. Nexus evaluates alerts in the Hub
+# (packages/nexus-hub/internal/alerts) against traffic_event and the metric
+# rollups, persists them to the Alert table, and fans out to
+# webhook/Slack/email/PagerDuty from there — see alerting-architecture.md. The
+# rules are DB-backed and per-tenant tunable, which a static rules file cannot
+# express.
+#
+# Prometheus here is for ad-hoc query, dashboards, and capacity work. If you add
+# rule_files, you are building a second alerting system: say so deliberately.
