@@ -113,7 +113,7 @@ paths:
                 404 when the id does not exist and 400 on validation failure.
 
                 Validation enforced by the handler:
-                - `type`, when present, must be one of `chat`, `embedding`, `image`, `audio`.
+                - `type`, when present, must be one of `chat`, `embedding`, `image`, `audio`, `tts`, `stt`, `rerank`, `video`, `realtime`.
                 - `code`, when present, must not be an empty string.
                 - `providerModelId`, when present, must not be an empty string.
                 - `capabilityJson`, when present, must be a valid JSON object.
@@ -154,7 +154,7 @@ paths:
                                         - string
                                         - "null"
                                 type:
-                                    description: 'Model category. When present, the handler validates it against the fixed set: chat, embedding, image, audio.'
+                                    description: 'Model category. When present, the handler validates it against the fixed set: chat, embedding, image, audio, tts, stt, rerank, video, realtime.'
                                     type:
                                         - string
                                         - "null"
@@ -163,6 +163,11 @@ paths:
                                         - embedding
                                         - image
                                         - audio
+                                        - tts
+                                        - stt
+                                        - rerank
+                                        - video
+                                        - realtime
                                 inputPricePerMillion:
                                     description: Price per million input tokens.
                                     type:
@@ -180,6 +185,21 @@ paths:
                                         - "null"
                                 cachedInputWritePricePerMillion:
                                     description: Price per million cached-input write tokens.
+                                    type:
+                                        - number
+                                        - "null"
+                                audioInputPricePerMillion:
+                                    description: Audio-token input rate for realtime models, USD per 1M tokens. Realtime models bill text and audio components of one response at different rates; set NULL on every non-realtime model.
+                                    type:
+                                        - number
+                                        - "null"
+                                audioOutputPricePerMillion:
+                                    description: Audio-token output rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                                    type:
+                                        - number
+                                        - "null"
+                                cachedAudioInputReadPricePerMillion:
+                                    description: Cached audio-input read rate for realtime models, USD per 1M tokens. NULL = no discount; cost calculation falls back to audioInputPricePerMillion (mirrors the cachedInputReadPricePerMillion fallback for text).
                                     type:
                                         - number
                                         - "null"
@@ -404,6 +424,21 @@ components:
                         - number
                         - "null"
                 cachedInputWritePricePerMillion:
+                    type:
+                        - number
+                        - "null"
+                audioInputPricePerMillion:
+                    description: Audio-token input rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                    type:
+                        - number
+                        - "null"
+                audioOutputPricePerMillion:
+                    description: Audio-token output rate for realtime models, USD per 1M tokens. NULL on every non-realtime model.
+                    type:
+                        - number
+                        - "null"
+                cachedAudioInputReadPricePerMillion:
+                    description: Cached audio-input read rate for realtime models, USD per 1M tokens. NULL = no discount; falls back to audioInputPricePerMillion.
                     type:
                         - number
                         - "null"

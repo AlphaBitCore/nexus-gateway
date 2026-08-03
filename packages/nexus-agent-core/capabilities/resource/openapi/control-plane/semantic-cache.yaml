@@ -249,6 +249,13 @@ components:
                         - "null"
                     description: User ID of the actor who last saved the row; null when never modified by an admin.
                 timeSensitiveOverrides:
+                    description: >-
+                        Admin-edited time-sensitive freshness rules. The default
+                        set is seeded from the semantic_cache_config fixture
+                        (tools/db-migrate/seed/fixtures/semantic_cache_config.json,
+                        time_sensitive_overrides); there is no server-side default,
+                        so on a database that was never seeded the rule list is
+                        empty and nothing is classified time-sensitive.
                     $ref: '#/components/schemas/configstore_TimeSensitiveOverridesBlob'
                 embeddingProviderBaseUrl:
                     type: string

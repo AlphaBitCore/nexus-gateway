@@ -17,7 +17,7 @@ import (
 // handshake, or time-to-first-byte — and whether the connection was reused.
 //
 // It logs the request URL WITHOUT its query string (queries can carry secrets)
-// and never logs the Authorization / x-admin-key header values.
+// and never logs the Authorization / X-Nexus-Admin-Key header values.
 type LoggingTransport struct {
 	// Base is the underlying RoundTripper that performs the request. The CLI
 	// sets it to core.NewHTTPTransport() to preserve the widened 30s TLS
@@ -100,7 +100,7 @@ func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 
 	// URL without query: scheme + host + path only, so a secret carried in a
-	// query parameter never lands in the log. The Authorization / x-admin-key
+	// query parameter never lands in the log. The Authorization / X-Nexus-Admin-Key
 	// header value is never read here, so it cannot leak either.
 	u := req.URL
 	safeURL := u.Scheme + "://" + u.Host + u.Path

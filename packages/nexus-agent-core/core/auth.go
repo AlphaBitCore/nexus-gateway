@@ -50,7 +50,9 @@ func NewTokenSource(env Env, store SecretStore, httpc *http.Client) TokenSource 
 	return &jwtTokenSource{env: env, store: store, httpc: httpc, now: time.Now, skew: defaultRefreshSkew}
 }
 
-// apiKeyTokenSource attaches the stored admin API key as x-admin-key.
+// apiKeyTokenSource attaches the stored admin API key as X-Nexus-Admin-Key.
+// A Control Plane older than that header's introduction reads only the former
+// `x-admin-key` and answers 401 — a loud, immediate failure, not a silent one.
 type apiKeyTokenSource struct {
 	env   Env
 	store SecretStore
@@ -61,7 +63,7 @@ func (s *apiKeyTokenSource) Credential(context.Context) (string, string, error) 
 	if err != nil {
 		return "", "", &APIError{kind: ErrUnauthorized, Message: "no admin key stored for env " + s.env.Name}
 	}
-	return "x-admin-key", key, nil
+	return "X-Nexus-Admin-Key", key, nil
 }
 
 // jwtTokenSource attaches the auth-server JWT as a bearer token, refreshing via
