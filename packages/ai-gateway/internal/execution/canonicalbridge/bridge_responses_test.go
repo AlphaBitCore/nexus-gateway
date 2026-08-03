@@ -68,7 +68,7 @@ func TestBridge_EndpointRoutable_ResponsesAPI(t *testing.T) {
 func TestBridge_IngressChatToWire_ResponsesSameShape(t *testing.T) {
 	b := testBridge(t)
 	body := []byte(`{"model":"gpt-5.2","input":"hi","previous_response_id":"resp_abc"}`)
-	out, err := b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, provcore.CallTarget{
+	out, _, err := b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, provcore.CallTarget{
 		Format:          provcore.FormatOpenAI,
 		ProviderModelID: "gpt-5.2",
 	}, false)
@@ -93,7 +93,7 @@ func TestBridge_IngressChatToWire_ResponsesCrossFormat(t *testing.T) {
 		"instructions": "Be terse.",
 		"input": "What is 2+2?"
 	}`)
-	out, err := b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatAnthropic, body, provcore.CallTarget{
+	out, _, err := b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatAnthropic, body, provcore.CallTarget{
 		Format:          provcore.FormatAnthropic,
 		ProviderModelID: "claude-sonnet-4-6",
 	}, false)
@@ -162,7 +162,7 @@ func TestBridge_IngressChatToWire_ResponsesCapability(t *testing.T) {
 
 	// Default (override nil) → native passthrough: body forwarded verbatim.
 	ct := dummyCallTarget(provcore.FormatOpenAI)
-	out, err := b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, ct, false)
+	out, _, err := b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, ct, false)
 	if err != nil {
 		t.Fatalf("IngressChatToWire (default): %v", err)
 	}
@@ -174,7 +174,7 @@ func TestBridge_IngressChatToWire_ResponsesCapability(t *testing.T) {
 	no := false
 	ctOff := dummyCallTarget(provcore.FormatOpenAI)
 	ctOff.ServesResponsesAPI = &no
-	out, err = b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, ctOff, false)
+	out, _, err = b.IngressChatToWire(provcore.FormatOpenAIResponses, provcore.FormatOpenAI, body, ctOff, false)
 	if err != nil {
 		t.Fatalf("IngressChatToWire (override=false): %v", err)
 	}

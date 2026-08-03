@@ -32,7 +32,6 @@ type InterceptionDomain struct {
 	StreamingFailBehavior   *string           `db:"streaming_fail_behavior"`
 	CaptureRequestBody      *bool             `db:"capture_request_body"`
 	CaptureResponseBody     *bool             `db:"capture_response_body"`
-	RawBodySpillEnabled     *bool             `db:"raw_body_spill_enabled"`
 	CreatedAt               time.Time         `db:"created_at"`
 	UpdatedAt               time.Time         `db:"updated_at"`
 	CreatedBy               *string           `db:"created_by"`

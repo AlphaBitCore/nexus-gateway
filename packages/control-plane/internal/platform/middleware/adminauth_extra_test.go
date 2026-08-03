@@ -73,7 +73,7 @@ func TestAdminAuth_APIKey_NilLookupReturns401(t *testing.T) {
 		APIKeyLookup: nil, // explicit
 		Logger:       slog.Default(),
 	})
-	rec := doRequest(e, map[string]string{"x-admin-key": "nxk_anything"})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": "nxk_anything"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", rec.Code)
 	}
@@ -97,7 +97,7 @@ func TestAdminAuth_APIKey_LookupErrorReturns500(t *testing.T) {
 		APIKeyLookup: lookup,
 		Logger:       slog.Default(),
 	})
-	rec := doRequest(e, map[string]string{"x-admin-key": "nxk_anything"})
+	rec := doRequest(e, map[string]string{"X-Nexus-Admin-Key": "nxk_anything"})
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d want 500", rec.Code)
 	}

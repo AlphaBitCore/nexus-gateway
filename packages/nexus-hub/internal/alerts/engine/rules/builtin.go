@@ -169,6 +169,50 @@ var BuiltinRules = []RuleDef{
 		}),
 	},
 	{
+		ID:              "vendor.bill_drift",
+		DisplayName:     "Vendor Bill Drift",
+		SourceType:      "provider",
+		DefaultSeverity: alerting.SeverityHigh,
+		RequiresAck:     true,
+		Enabled:         true,
+		CooldownSec:     3600,
+		// Fires when a scoped provider×day reconciliation row's drift exceeds
+		// BOTH floors: |diff| > thresholdPct percent AND |diff| > thresholdUsd
+		// dollars. The dual floor keeps a low-spend day from paging on a large
+		// percentage swing of a trivial amount.
+		Params: mustJSON(map[string]any{"thresholdPct": 5.0, "thresholdUsd": 1.0}),
+		ParamsSchema: mustJSON(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"thresholdPct": map[string]any{"type": "number", "minimum": 0},
+				"thresholdUsd": map[string]any{"type": "number", "minimum": 0},
+			},
+			"required": []string{"thresholdPct", "thresholdUsd"},
+		}),
+	},
+	{
+		ID:              "vendor.bill_sync_failed",
+		DisplayName:     "Vendor Bill Sync Failed",
+		SourceType:      "provider",
+		DefaultSeverity: alerting.SeverityMedium,
+		RequiresAck:     true,
+		Enabled:         true,
+		CooldownSec:     3600,
+		// Fires when a provider's vendor cost-API sync stays fetch_failed past a
+		// full reconcile cycle (staleHours): the sync is persistently broken
+		// (revoked key / lost scope / blocked egress), not a one-off transient
+		// error that the next successful run heals. Closes the blind spot the
+		// drift rule leaves — it treats fetch_failed as display-only.
+		Params: mustJSON(map[string]any{"staleHours": 25.0}),
+		ParamsSchema: mustJSON(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"staleHours": map[string]any{"type": "number", "minimum": 1},
+			},
+			"required": []string{"staleHours"},
+		}),
+	},
+	{
 		ID:              "system.channel_test",
 		DisplayName:     "Channel Test (synthetic)",
 		SourceType:      "system",

@@ -18,6 +18,8 @@ func TestKindFromPathSegment_KnownSegments(t *testing.T) {
 		{"responses", EndpointKindChat},
 		// Embeddings (plural, matches deployed wire string).
 		{"embeddings", EndpointKindEmbeddings},
+		// Rerank
+		{"rerank", EndpointKindRerank},
 		// Speech-to-text
 		{"audio/transcriptions", EndpointKindSTT},
 		{"audio/translations", EndpointKindSTT},
@@ -27,8 +29,14 @@ func TestKindFromPathSegment_KnownSegments(t *testing.T) {
 		{"images/generations", EndpointKindImageGeneration},
 		{"images/edits", EndpointKindImageGeneration},
 		{"images/variations", EndpointKindImageGeneration},
+		// Video generation
+		{"videos", EndpointKindVideoGeneration},
 		// Batch
 		{"batches", EndpointKindBatch},
+		// Guardrail
+		{"guardrail", EndpointKindGuardrail},
+		// Realtime (WebSocket session)
+		{"realtime", EndpointKindRealtime},
 	}
 	for _, c := range cases {
 		if got := KindFromPathSegment(c.segment); got != c.want {

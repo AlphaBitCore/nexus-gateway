@@ -128,6 +128,12 @@ func (w *TrafficEventWriter) insertTrafficEvents(ctx context.Context, tx pgx.Tx,
 			// request_hooks_us / response_hooks_us ($92, $93). Nil *int → SQL NULL,
 			// same NULL-vs-0 semantics as the _ms aggregates.
 			e.RequestHooksUs, e.ResponseHooksUs,
+			// artifact_refs / compliance_coverage ($94, $95). Nil → SQL NULL
+			// (non-multimodal traffic carries neither stamp).
+			stripNulPtr(e.ArtifactRefs), stripNulPtr(e.ComplianceCoverage),
+			// end_user_id / session_id ($96, $97). Caller-declared correlation
+			// tags; NULL when absent.
+			stripNulPtr(e.EndUserID), stripNulPtr(e.SessionID),
 		)
 	}
 
@@ -201,8 +207,17 @@ INSERT INTO traffic_event (
     -- compliance-proxy / agent transparent forwards.
     ingress_format,
     -- Microsecond-precision hook aggregates (siblings of request_hooks_ms /
-    -- response_hooks_ms). Appended LAST so existing $N positions never shift.
-    request_hooks_us, response_hooks_us
+    -- response_hooks_ms). Appended so existing $N positions never shift.
+    request_hooks_us, response_hooks_us,
+    -- Multimodal audit stamps: JSON artifact reference array (byte-bearing
+    -- fingerprints or URL refs, never dereferenced) + the request-time
+    -- compliance-coverage enum ("prompt-only"/"none"). NULL for
+    -- non-multimodal traffic.
+    artifact_refs, compliance_coverage,
+    -- Caller-declared correlation tags (their customer id and their
+    -- session/conversation id, not Nexus identities). NULL for
+    -- compliance-proxy / agent rows. Appended LAST.
+    end_user_id, session_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -244,7 +259,8 @@ INSERT INTO traffic_event (
     $89,
     $90,
     $91,
-    $92, $93
+    $92, $93,
+    $94, $95, $96, $97
 ) ON CONFLICT (id) DO NOTHING
 `
 

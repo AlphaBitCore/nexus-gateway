@@ -48,6 +48,7 @@ type credStore struct {
 	listErr      error
 	lastCredID   string
 	resolveCalls int
+	listCalls    int
 }
 
 func (c *credStore) ResolveForProvider(_ context.Context, _ string, credID string) (string, string, string, error) {
@@ -64,6 +65,7 @@ func (c *credStore) ResolveForProvider(_ context.Context, _ string, credID strin
 }
 
 func (c *credStore) ListForProvider(_ context.Context, _ string) ([]CredentialCandidate, error) {
+	c.listCalls++
 	return c.candidates, c.listErr
 }
 
@@ -236,6 +238,47 @@ func TestResolve_CopiesExtrasAndAddsDeploymentHint(t *testing.T) {
 		}
 		if target.Extras == nil || target.Extras["azure.deployment"] != "dep-x" {
 			t.Fatalf("deployment hint not applied to nil-extras provider: %+v", target.Extras)
+		}
+	})
+}
+
+// TestResolve_PropagatesMaxOutputTokens is the executor-path guard for the
+// same ceiling the cache stage carries on its own CallTarget. The executor
+// re-prepares the upstream body from THIS CallTarget on every retry and
+// failover, and the Anthropic codec reads MaxOutputTokens off it to clamp /
+// fill max_tokens. The value was populated (resolver.go: MaxOutputTokens:
+// mr.MaxOutputTokens) but nothing asserted it, so a regression zeroing it
+// would make retried requests 400 (over-ceiling) or silently truncate
+// (omitted) while every package stayed green — the exact failure class this
+// program keeps hitting: coverage of a line, no assertion of its value.
+func TestResolve_PropagatesMaxOutputTokens(t *testing.T) {
+	t.Run("catalog ceiling reaches the CallTarget", func(t *testing.T) {
+		r := NewPgResolver(
+			&configurableProviderStore{row: ProviderRow{ID: "p-1", Name: "anthropic", AdapterType: "anthropic"}},
+			&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "claude-opus-4-7", MaxOutputTokens: 128000}},
+			&credStore{resolveKey: "sk", resolveID: "c-1"},
+		)
+		target, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if target.MaxOutputTokens != 128000 {
+			t.Fatalf("CallTarget.MaxOutputTokens = %d, want the catalog's 128000 on the executor's re-prepare path", target.MaxOutputTokens)
+		}
+	})
+
+	t.Run("no catalog ceiling stays 0 for the codec's no-ceiling contract", func(t *testing.T) {
+		r := NewPgResolver(
+			&configurableProviderStore{row: ProviderRow{ID: "p-1", Name: "anthropic", AdapterType: "anthropic"}},
+			&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "claude-nocap"}},
+			&credStore{resolveKey: "sk", resolveID: "c-1"},
+		)
+		target, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if target.MaxOutputTokens != 0 {
+			t.Fatalf("CallTarget.MaxOutputTokens = %d, want 0 when the catalog row has no ceiling", target.MaxOutputTokens)
 		}
 	})
 }
@@ -434,5 +477,83 @@ func TestResolveCredential_MultipleCandidates_WithRedis(t *testing.T) {
 	}
 	if target.CredentialID != "c-a" && target.CredentialID != "c-b" {
 		t.Fatalf("winner not in candidate set: %q", target.CredentialID)
+	}
+}
+
+// TestResolveCredential_PinnedCredentialBypassesPool — a non-empty
+// hints.CredentialID resolves exactly that credential: pool listing never
+// runs, so neither a heavier-weighted sibling candidate nor circuit state
+// can redirect an async-job follow-up away from the provider account that
+// owns the job.
+func TestResolveCredential_PinnedCredentialBypassesPool(t *testing.T) {
+	cs := &credStore{
+		resolveKey: "sk-pinned",
+		// A rival candidate that pool selection WOULD pick (sole entry,
+		// weight 100) — reaching it proves the pin was ignored.
+		candidates: []CredentialCandidate{{ID: "c-rival", Name: "rival", Weight: 100}},
+	}
+	r := NewPgResolver(
+		&configurableProviderStore{row: ProviderRow{ID: "p-1", AdapterType: "openai"}},
+		&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "x"}},
+		cs,
+	)
+	target, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{CredentialID: "c-pinned"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cs.lastCredID != "c-pinned" {
+		t.Fatalf("pinned resolve forwarded credID %q, want c-pinned", cs.lastCredID)
+	}
+	if cs.listCalls != 0 {
+		t.Fatalf("pool listing ran %d times; a pinned credential must bypass pool selection entirely", cs.listCalls)
+	}
+	if target.CredentialID != "c-pinned" || target.APIKey != "sk-pinned" {
+		t.Fatalf("target = id %q key %q, want the pinned credential", target.CredentialID, target.APIKey)
+	}
+}
+
+// TestResolveCredential_PinnedCredentialGone_SurfacesError — a pinned
+// credential that was rotated away / disabled / deleted surfaces the store's
+// resolve error verbatim (the video handlers map it to 502 with the job row
+// intact); it must NOT fall back to pool selection, which would silently
+// reach a provider account that cannot see the job.
+func TestResolveCredential_PinnedCredentialGone_SurfacesError(t *testing.T) {
+	gone := errors.New("credential not found or disabled")
+	cs := &credStore{
+		resolveErr: gone,
+		// A healthy rival exists — falling back to it would be the bug.
+		candidates: []CredentialCandidate{{ID: "c-rival", Name: "rival", Weight: 100}},
+	}
+	r := NewPgResolver(
+		&configurableProviderStore{row: ProviderRow{ID: "p-1", AdapterType: "openai"}},
+		&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "x"}},
+		cs,
+	)
+	_, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{CredentialID: "c-rotated"})
+	if !errors.Is(err, gone) {
+		t.Fatalf("err = %v, want the pinned credential's resolve error surfaced", err)
+	}
+	if cs.resolveCalls != 1 || cs.listCalls != 0 {
+		t.Fatalf("resolveCalls=%d listCalls=%d; the pin must try exactly the pinned credential and never fall back to the pool", cs.resolveCalls, cs.listCalls)
+	}
+}
+
+// TestResolveCredential_EmptyPin_KeepsPoolPath pins backward compatibility:
+// an empty CredentialID leaves the existing pool-selection path untouched.
+func TestResolveCredential_EmptyPin_KeepsPoolPath(t *testing.T) {
+	cs := &credStore{
+		resolveKey: "sk",
+		candidates: []CredentialCandidate{{ID: "c-only", Name: "only", Weight: 100}},
+	}
+	r := NewPgResolver(
+		&configurableProviderStore{row: ProviderRow{ID: "p-1", AdapterType: "openai"}},
+		&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "x"}},
+		cs,
+	)
+	if _, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{}); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cs.listCalls != 1 || cs.lastCredID != "c-only" {
+		t.Fatalf("listCalls=%d lastCredID=%q; empty pin must ride the pool path", cs.listCalls, cs.lastCredID)
 	}
 }

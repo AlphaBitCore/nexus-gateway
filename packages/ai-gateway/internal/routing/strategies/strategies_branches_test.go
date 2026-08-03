@@ -28,7 +28,7 @@ func TestRegisterAllStrategies_withSmartDeps_registersSmartStrategy(t *testing.T
 		RouterLLM: &fakeDecider{},
 		Logger:    nil,
 	}
-	RegisterAllStrategies(reg, mockLookup, smartDeps)
+	RegisterAllStrategies(reg, mockLookup, nil, smartDeps)
 	reg.Freeze()
 
 	// "smart" strategy should be registered; an unknown node type triggers ErrUnknown.

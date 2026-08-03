@@ -21,6 +21,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
@@ -57,11 +58,12 @@ type SemanticCacheHandlerDeps struct {
 	Hub    SemanticCacheHubInvalidator // may be nil — invalidation skipped, reconcile recovers within 60s
 	Audit  *audit.Writer               // may be nil (tests) — audit emission skipped silently
 	Logger *slog.Logger
-	// AIGatewayURL is the internal base URL of the AI Gateway service.
-	// Required for the prewarm endpoint which forwards embedding+write to the
-	// AI GW's /internal/semantic-prewarm handler. Empty string disables
-	// prewarm forwarding (returns 503 with a clear error message).
-	AIGatewayURL string
+	// AIGatewayBase resolves the AI Gateway internal base URL from the Hub
+	// at request time (never configured locally). Used by the prewarm
+	// endpoint which forwards embedding+write to the AI GW's
+	// /internal/semantic-prewarm handler. Nil or failing resolution yields
+	// a 503 with a clear error message.
+	AIGatewayBase peer.URLProvider
 	// AIGatewayInternalToken is the shared internal-service bearer token
 	// presented on the CP→ai-gateway /internal/semantic-prewarm call.
 	AIGatewayInternalToken string
@@ -77,9 +79,9 @@ type SemanticCacheHandler struct {
 	hub            SemanticCacheHubInvalidator
 	audit          *audit.Writer
 	logger         *slog.Logger
-	aiGatewayURL   string      // internal AI GW base URL for prewarm forwarding
-	aiGatewayToken string      // internal-service bearer for prewarm forwarding
-	poison         PoisonAdder // may be nil when Redis unavailable
+	aiGatewayBase  peer.URLProvider // Hub-resolved AI GW base URL for prewarm forwarding
+	aiGatewayToken string           // internal-service bearer for prewarm forwarding
+	poison         PoisonAdder      // may be nil when Redis unavailable
 }
 
 // NewSemanticCacheHandler constructs the handler from its narrow deps.
@@ -97,7 +99,7 @@ func NewSemanticCacheHandler(d SemanticCacheHandlerDeps) *SemanticCacheHandler {
 		hub:            d.Hub,
 		audit:          d.Audit,
 		logger:         logger,
-		aiGatewayURL:   d.AIGatewayURL,
+		aiGatewayBase:  d.AIGatewayBase,
 		aiGatewayToken: d.AIGatewayInternalToken,
 		poison:         d.Poison,
 	}

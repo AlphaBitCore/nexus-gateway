@@ -156,7 +156,7 @@ type geminiGenConfig struct {
 
 func (n *GeminiGenerateNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req geminiRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroGemini(meta), fmt.Errorf("gemini-generate: request unmarshal: %w", err)
 	}
 	if len(req.Contents) == 0 {
@@ -309,7 +309,7 @@ func (n *GeminiGenerateNormalizer) normalizeResponse(raw []byte, meta core.Meta)
 		return n.normalizeStreamResponse(raw, meta)
 	}
 	var resp geminiResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroGemini(meta), fmt.Errorf("gemini-generate: response unmarshal: %w", err)
 	}
 	out := core.NormalizedPayload{

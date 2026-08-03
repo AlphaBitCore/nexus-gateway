@@ -1,6 +1,8 @@
 package routing
 
 import (
+	"context"
+	"errors"
 	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
@@ -10,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // TestRoutingSimulate_ForwardsBodyAndStatus verifies the CP forwarder posts
@@ -27,7 +31,7 @@ func TestRoutingSimulate_ForwardsBodyAndStatus(t *testing.T) {
 	defer stub.Close()
 
 	h := New(Deps{
-		Proxy:  ProxyConfig{AIGatewayURL: stub.URL},
+		Proxy:  ProxyConfig{AIGatewayBase: peer.Static(stub.URL)},
 		Logger: slog.Default(),
 	})
 
@@ -71,7 +75,7 @@ func TestRoutingSimulate_StatusCodePassthrough(t *testing.T) {
 	defer stub.Close()
 
 	h := New(Deps{
-		Proxy:  ProxyConfig{AIGatewayURL: stub.URL},
+		Proxy:  ProxyConfig{AIGatewayBase: peer.Static(stub.URL)},
 		Logger: slog.Default(),
 	})
 
@@ -95,7 +99,7 @@ func TestRoutingSimulate_StatusCodePassthrough(t *testing.T) {
 func TestRoutingSimulate_UpstreamUnreachable(t *testing.T) {
 	h := New(Deps{
 		// 127.0.0.1:1 is a port we're confident is closed.
-		Proxy:  ProxyConfig{AIGatewayURL: "http://127.0.0.1:1"},
+		Proxy:  ProxyConfig{AIGatewayBase: peer.Static("http://127.0.0.1:1")},
 		Logger: slog.Default(),
 	})
 
@@ -130,7 +134,7 @@ func TestRoutingSimulate_AttachesBearer(t *testing.T) {
 	defer stub.Close()
 
 	h := New(Deps{
-		Proxy:  ProxyConfig{AIGatewayURL: stub.URL, AIGatewayInternalToken: tok},
+		Proxy:  ProxyConfig{AIGatewayBase: peer.Static(stub.URL), AIGatewayInternalToken: tok},
 		Logger: slog.Default(),
 	})
 
@@ -146,5 +150,32 @@ func TestRoutingSimulate_AttachesBearer(t *testing.T) {
 	}
 	if want := "Bearer " + tok; gotAuth != want {
 		t.Errorf("Authorization = %q; want %q", gotAuth, want)
+	}
+}
+
+// TestRoutingSimulate_ResolverError503 locks the peer-resolution failure UX:
+// a gateway whose Hub-reported URL cannot be resolved yet answers 503 with
+// code PEER_SERVICE_UNAVAILABLE — never a raw 500 and never the 502 used for
+// transport failures after resolution.
+func TestRoutingSimulate_ResolverError503(t *testing.T) {
+	h := New(Deps{
+		Proxy: ProxyConfig{AIGatewayBase: func(context.Context) (string, error) {
+			return "", errors.New("peer service URL not reported yet")
+		}},
+		Logger: slog.Default(),
+	})
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/routing-rules/simulate",
+		strings.NewReader(`{"modelId":"gpt-4o-mini"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	if err := h.RoutingSimulate(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("RoutingSimulate: %v", err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d; want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing %s: %s", peer.CodeUnavailable, rec.Body.String())
 	}
 }

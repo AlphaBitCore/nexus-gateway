@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/labstack/echo/v4"
 
@@ -16,6 +17,30 @@ import (
 )
 
 const adminAuthContextKey = "adminAuth"
+
+// deprecatedAdminKeySeen rate-limits the deprecated-spelling warning to once
+// per process: enough for an operator to answer "is anyone still sending the
+// old name?" from logs before closing the retirement window.
+var deprecatedAdminKeySeen sync.Once
+
+// adminAPIKey returns the raw admin API key from whichever accepted header
+// carries it, preferring the canonical name.
+//
+// `x-admin-key` is the pre-namespace spelling. It stays readable because the
+// nexus CLI ships it: dropping it would 401 every operator still on an older
+// binary, against a Control Plane they did not knowingly upgrade past. Retire
+// it together with the CLI's sender, in one release that says so.
+func adminAPIKey(h http.Header, logger *slog.Logger) string {
+	if h.Get("x-admin-key") != "" && logger != nil {
+		deprecatedAdminKeySeen.Do(func() {
+			logger.Warn("deprecated header x-admin-key still in use; callers should send X-Nexus-Admin-Key")
+		})
+	}
+	if k := h.Get("X-Nexus-Admin-Key"); k != "" {
+		return k
+	}
+	return h.Get("x-admin-key")
+}
 
 // AdminAuthFromContext extracts the AdminAuth from an Echo context.
 func AdminAuthFromContext(c echo.Context) *auth.AdminAuth {
@@ -60,7 +85,7 @@ type AdminAuthConfig struct {
 	// JWTVerifier verifies access tokens minted by the auth server. Required.
 	JWTVerifier *jwtverifier.Verifier
 	// APIKeyLookup resolves an API key hash to a row plus owner fields. May be
-	// nil when the DB is not wired; the x-admin-key path will then 401.
+	// nil when the DB is not wired; the admin-key path will then 401.
 	APIKeyLookup AdminAPIKeyLookup
 	// APIKeyRehasher lazy-migrates an admin key to the current HMAC keyring
 	// version after it authenticates under an older one.
@@ -76,9 +101,11 @@ type AdminAuthConfig struct {
 //     (issuer, audience "cp-admin", signature, expiry, revocation). On success
 //     the attached AdminAuth is derived from the JWT claims (sub → KeyID,
 //     email → KeyName, type "admin_user").
-//  2. x-admin-key: <raw-key> — HMAC-SHA256 hashed and looked up in api_keys.
-//     On success the attached AdminAuth comes from auth.EffectivePrincipal,
-//     which honours owner delegation.
+//  2. X-Nexus-Admin-Key: <raw-key> — HMAC-SHA256 hashed and looked up in
+//     api_keys. On success the attached AdminAuth comes from
+//     auth.EffectivePrincipal, which honours owner delegation. The
+//     pre-namespace `x-admin-key` spelling is still accepted; see
+//     [adminAPIKey].
 //
 // Missing credentials, invalid JWTs, and unknown/disabled API keys all return
 // 401 with a JSON error envelope. JWT failures additionally set a 6750-style
@@ -96,7 +123,7 @@ func AdminAuth(cfg AdminAuthConfig) echo.MiddlewareFunc {
 				return authenticateJWT(c, cfg, bearerTok, next)
 			}
 
-			if apiKey := c.Request().Header.Get("x-admin-key"); apiKey != "" {
+			if apiKey := adminAPIKey(c.Request().Header, cfg.Logger); apiKey != "" {
 				return authenticateAPIKey(c, cfg, apiKey, next)
 			}
 

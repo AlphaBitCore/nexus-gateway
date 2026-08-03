@@ -40,10 +40,6 @@ func usageToNormalize(u provcore.Usage) *normalize.Usage {
 	return apcodec.UsageToNormalize(u)
 }
 
-func anthropicModelMaxOutput(model string) int {
-	return apcodec.AnthropicModelMaxOutput(model)
-}
-
 func mapAnthropicStreamError(etype, emsg string) error {
 	return apstream.MapAnthropicStreamError(etype, emsg)
 }

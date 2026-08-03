@@ -298,39 +298,6 @@ func registerPayloadCapture(l *cfgloader.Loader, d Deps) {
 	})
 }
 
-// registerStreamingCompliance wires the `streaming_compliance` Type B
-// shadow receiver. CP fires the invalidation with an empty state; the
-// handler re-reads system_metadata['streaming_compliance.config'] via
-// the canonical streampolicy.LoadGlobalDefault loader and pushes the
-// resulting Policy onto the live ProxyServer via SetStreamingPolicyGlobal.
-//
-// ConfigDB may be nil in tests / minimal embeds (the handler is
-// tolerant — a nil DB just means we skip the reload). ProxyServer may
-// also be nil in unit-level loader tests; the handler tolerates that
-// too so BuildConfigLoader can be invoked from a thin test harness.
-func registerStreamingCompliance(l *cfgloader.Loader, d Deps) {
-	cfgloader.RegisterRaw(l, configkey.StreamingCompliance, func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
-		// Hub now pushes the raw blob; the Store applies it via
-		// the canonical ApplyShadowState path. No DB re-read or per-server
-		// setter wrapper needed; Store.Get() readers on the hot path see
-		// the new policy atomically.
-		if d.StreamingPolicyStore == nil {
-			return nil, nil
-		}
-		if err := d.StreamingPolicyStore.ApplyShadowState(ctx, raw); err != nil {
-			return nil, fmt.Errorf("apply streaming compliance shadow state: %w", err)
-		}
-		policy := d.StreamingPolicyStore.Get()
-		d.Logger.Info("streaming compliance policy reloaded",
-			"mode", string(policy.Mode),
-			"failBehavior", string(policy.FailBehavior),
-			"chunkBytes", policy.ChunkBytes,
-			"hookTimeoutMs", policy.HookTimeoutMs,
-		)
-		return nil, nil
-	})
-}
-
 type onboardingState struct {
 	Enabled bool `json:"enabled"`
 }

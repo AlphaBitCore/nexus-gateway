@@ -173,3 +173,25 @@ func TestParseRetryAfter_invalidValue_returnsNil(t *testing.T) {
 		t.Errorf("invalid Retry-After must yield nil, got %v", pe.RetryAfter)
 	}
 }
+
+// Context-overflow classification: OpenAI signals an over-window prompt
+// with error.code "context_length_exceeded" (documented) or the message
+// "This model's maximum context length is N tokens..." (observed on
+// gpt-4o 400s). Both must map to CodeContextOverflow so the executor
+// can fail over to a larger-context target instead of treating it as a
+// terminal invalid_request.
+func TestNormalize_ContextLengthExceededCode_MapsToContextOverflow(t *testing.T) {
+	body := []byte(`{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"This model's maximum context length is 128000 tokens. However, your messages resulted in 191219 tokens."}}`)
+	pe := (specerrpkg.ErrorNormalizer{}).Normalize(400, http.Header{}, body)
+	if pe.Code != provcore.CodeContextOverflow {
+		t.Errorf("Code = %q, want %q", pe.Code, provcore.CodeContextOverflow)
+	}
+}
+
+func TestNormalize_MaxContextMessage_MapsToContextOverflow(t *testing.T) {
+	body := []byte(`{"error":{"type":"invalid_request_error","message":"This model's maximum context length is 65536 tokens."}}`)
+	pe := (specerrpkg.ErrorNormalizer{}).Normalize(400, http.Header{}, body)
+	if pe.Code != provcore.CodeContextOverflow {
+		t.Errorf("Code = %q, want %q", pe.Code, provcore.CodeContextOverflow)
+	}
+}

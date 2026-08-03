@@ -61,8 +61,23 @@ const (
 type GatewayCacheSkipReason string
 
 const (
-	GatewayCacheSkipReasonDisabled    GatewayCacheSkipReason = "disabled"    // cache module nil (config off)
-	GatewayCacheSkipReasonNoCache     GatewayCacheSkipReason = "no_cache"    // client sent x-nexus-aigw-no-cache
+	// GatewayCacheSkipReasonDisabled means no cache TIER is active — neither L1
+	// (extract_cache_config.enabled, default off) nor L2 (semantic_cache_config
+	// fully configured and enabled). It is a config posture, and an operator
+	// seeing it should look at the two cache settings pages.
+	//
+	// It used to be stamped for the no-target case as well, which made a config
+	// posture and a routing outcome indistinguishable in
+	// traffic_event.gateway_cache_skip_reason and in
+	// nexus_cache_lookups_total{result}. Anyone reading "disabled" to mean
+	// "caching is off" was making an inference the label could not support.
+	GatewayCacheSkipReasonDisabled GatewayCacheSkipReason = "disabled"
+	// GatewayCacheSkipReasonNoTargets means the cache tiers are active but
+	// routing produced no target to key an entry against, so there was nothing
+	// to look up. Distinct from Disabled: the remedy is a routing-rule or
+	// credential question, not a cache setting.
+	GatewayCacheSkipReasonNoTargets   GatewayCacheSkipReason = "no_targets"
+	GatewayCacheSkipReasonNoCache     GatewayCacheSkipReason = "no_cache"    // client sent X-Nexus-No-Cache
 	GatewayCacheSkipReasonPassthrough GatewayCacheSkipReason = "passthrough" // emergency passthrough.BypassCache active
 
 	// GatewayCacheSkipReasonEmbeddingsEndpoint is stamped when the request
@@ -76,6 +91,24 @@ const (
 	// gateway_cache_skip_reason. Pre-lookup short-circuit, peer to disabled /
 	// no_cache / passthrough — NOT a semantic-cache failure mode.
 	GatewayCacheSkipReasonEmbeddingsEndpoint GatewayCacheSkipReason = "embeddings_endpoint"
+
+	// GatewayCacheSkipReasonModalityEndpoint is stamped when the request
+	// targets a multimodal endpoint (image_generation / tts / stt). The
+	// response cache is short-circuited at pre-lookup: generative image
+	// output is expected to vary per call (a cached identical image is the
+	// wrong result), TTS audio and STT transcripts are large binary/derived
+	// payloads with near-zero byte-identical repeat probability, and a
+	// cached transcript would additionally be PII-at-rest keyed by audio
+	// hash. Endpoint-driven like embeddings_endpoint — not admin
+	// configurable, no per-modality cache knob exists by design.
+	GatewayCacheSkipReasonModalityEndpoint GatewayCacheSkipReason = "modality_endpoint"
+
+	// GatewayCacheSkipReasonRerankEndpoint is stamped for /v1/rerank. Reranking
+	// responses are ranking-specific to the exact query + document set with
+	// near-zero byte-identical repeat probability, so caching adds a key
+	// surface for negligible hit value. Endpoint-driven like the embeddings /
+	// modality skips above — not admin configurable.
+	GatewayCacheSkipReasonRerankEndpoint GatewayCacheSkipReason = "rerank_endpoint"
 
 	// GatewayCacheSkipReasonTimeSensitive is stamped when the freshness
 	// detector (cache/freshness) matches a Hub-pushed time-sensitive pattern

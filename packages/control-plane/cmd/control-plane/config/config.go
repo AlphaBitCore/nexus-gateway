@@ -31,7 +31,13 @@ type Config struct {
 	// agent-setup page (and any other page that needs an
 	// environment-aware URL) renders from real config rather than
 	// hardcoded hostnames.
-	PublicURL   string              `yaml:"publicURL"`
+	PublicURL string `yaml:"publicURL"`
+	// PrivateURL is the internal service-to-service base URL peer Nexus
+	// services dial (scheme + host[:port], no trailing slash). Optional:
+	// when empty it is auto-derived as http://<primary-outbound-IPv4>:<port>
+	// (platform.EffectivePrivateURL) — set it only for split-horizon or
+	// non-default topologies. Reported as staticInfo.privateUrl.
+	PrivateURL  string              `yaml:"privateURL,omitempty"`
 	Server      ServerConfig        `yaml:"server"`
 	Database    DatabaseConfig      `yaml:"database"`
 	Redis       redisfactory.Config `yaml:"redis"`
@@ -91,8 +97,13 @@ type AuthServerConfig struct {
 	// Issuer + "/oauth/introspect" when empty.
 	RevocationIntrospectURL string `yaml:"revocationIntrospectUrl"`
 	// RevocationReplayURL overrides the catchup endpoint the admin revocation
-	// checker polls on MQ reconnect. Defaults to Issuer + "/api/admin/revocations"
-	// when empty.
+	// checker polls on MQ reconnect. Defaults to Issuer +
+	// "/api/internal/revocations" when empty — the INTERNAL route, gated by
+	// rstokenauth, because the checker authenticates with the internal service
+	// token and holds no IAM identity. It used to default to
+	// "/api/admin/revocations", whose admin:revocation.read gate a service token
+	// cannot satisfy, so catchup answered 401 on every poll. An override pointing
+	// at the admin route will still 401 for the same reason.
 	RevocationReplayURL string `yaml:"revocationReplayUrl"`
 }
 
@@ -150,17 +161,16 @@ type LogConfig struct {
 	StackOnError bool   `yaml:"stackOnError"` // attach goroutine stack on error-level logs (env LOG_STACK_ON_ERROR)
 }
 
-// BFFConfig holds addresses for data-plane services that the BFF proxies to.
-// URLs stay in yaml (service-discovery shape, not secrets); the api token is
-// env-only per the "Secrets are env-only" binding and must match what
-// compliance-proxy itself reads from the same env var (single source of
-// truth: a 403 between CP and compliance-proxy means these two values
-// drifted apart).
+// BFFConfig holds settings for the data-plane services the BFF proxies to.
+// Peer service URLs are intentionally NOT configured here (or anywhere
+// locally): each peer reports its address to the Hub at registration and CP
+// resolves it at request time via shared/transport/peerurl. Only the
+// compliance-proxy API token remains — env-only per the "Secrets are
+// env-only" binding and must match what compliance-proxy itself reads from
+// the same env var (single source of truth: a 403 between CP and
+// compliance-proxy means these two values drifted apart).
 type BFFConfig struct {
-	ComplianceProxyURL        string `yaml:"complianceProxyUrl"`
-	AIGatewayURL              string `yaml:"aiGatewayUrl"`
-	ComplianceProxyRuntimeURL string `yaml:"complianceProxyRuntimeUrl"`
-	ComplianceProxyAPIToken   string `yaml:"-"` // env COMPLIANCE_PROXY_API_TOKEN — shared with compliance-proxy/runtimeapi auth
+	ComplianceProxyAPIToken string `yaml:"-"` // env COMPLIANCE_PROXY_API_TOKEN — shared with compliance-proxy/runtimeapi auth
 }
 
 // RegistryConfig holds Hub connection settings for thingclient registration.
@@ -334,11 +344,6 @@ func defaults() *Config {
 			Level:  "info",
 			Format: "json",
 		},
-		BFF: BFFConfig{
-			ComplianceProxyURL:        "http://127.0.0.1:3040",
-			AIGatewayURL:              "http://127.0.0.1:3050",
-			ComplianceProxyRuntimeURL: "http://127.0.0.1:3040",
-		},
 		Registry: RegistryConfig{
 			NexusHubURL: "http://127.0.0.1:3060",
 		},
@@ -372,18 +377,17 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CONTROL_PLANE_PUBLIC_URL"); v != "" {
 		cfg.PublicURL = v
 	}
+	if v := os.Getenv("CONTROL_PLANE_PRIVATE_URL"); v != "" {
+		cfg.PrivateURL = v
+	}
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		cfg.Database.URL = v
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
 	}
-	if v := os.Getenv("COMPLIANCE_PROXY_URL"); v != "" {
-		cfg.BFF.ComplianceProxyURL = v
-	}
-	if v := os.Getenv("AI_GATEWAY_URL"); v != "" {
-		cfg.BFF.AIGatewayURL = v
-	}
+	// Peer service URLs (ai-gateway, compliance-proxy) are resolved from the
+	// Hub via shared/transport/peerurl, never configured locally.
 	if v := os.Getenv("NEXUS_HUB_URL"); v != "" {
 		cfg.Registry.NexusHubURL = v
 	}
@@ -398,9 +402,6 @@ func applyEnvOverrides(cfg *Config) {
 	}
 
 	// BFF proxy tokens
-	if v := os.Getenv("COMPLIANCE_PROXY_RUNTIME_URL"); v != "" {
-		cfg.BFF.ComplianceProxyRuntimeURL = v
-	}
 	if v := os.Getenv("COMPLIANCE_PROXY_API_TOKEN"); v != "" {
 		cfg.BFF.ComplianceProxyAPIToken = v
 	}

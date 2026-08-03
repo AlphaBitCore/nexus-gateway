@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
 	"net/http"
@@ -29,6 +30,29 @@ func (h *Handler) writeError(w http.ResponseWriter, rec *audit.Record, status in
 
 func (h *Handler) writeDetailedErr(w http.ResponseWriter, rec *audit.Record, status int, code, message, hint string) {
 	h.writeIngressError(w, rec, status, code, message, hint)
+}
+
+// writeCodecErr writes an error from the codec / prepare-body path, preserving a
+// typed *provcore.ProviderError (its Status / Code / Type) so a codec Fail is not
+// flattened to a generic 400 that mislabels a non-400 codec error and drops the
+// type. An untyped error (plain fmt.Errorf: missing model, empty body) falls back
+// to a 400 with fallbackPrefix for context. A typed error that set neither Status
+// nor Code still yields a valid response (defaulted to 400 / invalid_request).
+func (h *Handler) writeCodecErr(w http.ResponseWriter, rec *audit.Record, err error, fallbackPrefix string) {
+	var pe *provcore.ProviderError
+	if errors.As(err, &pe) {
+		status := pe.Status
+		if status == 0 {
+			status = http.StatusBadRequest
+		}
+		code := pe.Code
+		if code == "" {
+			code = provcore.CodeInvalidRequest
+		}
+		h.writeDetailedErr(w, rec, status, code, pe.Message, "")
+		return
+	}
+	h.writeError(w, rec, http.StatusBadRequest, fallbackPrefix+err.Error())
 }
 
 // writeIngressError emits a gateway-generated error in the CALLER's ingress wire

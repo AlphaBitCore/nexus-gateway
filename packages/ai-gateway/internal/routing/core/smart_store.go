@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // SmartCatalog is the narrow surface the smart routing strategy needs
@@ -29,9 +30,26 @@ func NewSmartStoreDB(catalog SmartCatalog) SmartStore {
 }
 
 // ListEnabledChatModels returns all enabled chat models joined with their
-// enabled providers. This excludes embedding models since smart routing
-// is only for chat-type completions.
+// enabled providers — the candidate set for the LLM task-router on the
+// chat/responses endpoints. Embedding and other-modality models are excluded.
 func (s *smartStoreDB) ListEnabledChatModels(ctx context.Context) ([]SmartModelRow, error) {
+	return s.listEnabled(ctx, func(modelType string) bool { return modelType == "chat" })
+}
+
+// ListEnabledCandidates returns the enabled models whose modality can serve
+// the given endpoint kind, powering modality-aware `model=auto` on the
+// non-chat endpoints (image / audio / video / rerank). The chat/responses
+// kinds resolve to the same chat-only set as ListEnabledChatModels.
+func (s *smartStoreDB) ListEnabledCandidates(ctx context.Context, kind typology.EndpointKind) ([]SmartModelRow, error) {
+	return s.listEnabled(ctx, func(modelType string) bool {
+		return typology.EndpointKindAcceptsModelType(kind, modelType)
+	})
+}
+
+// listEnabled joins every enabled model whose type satisfies accept with its
+// enabled provider. Provider lookups are memoised so the scan is one pass over
+// the in-memory model index plus one provider read per distinct provider.
+func (s *smartStoreDB) listEnabled(ctx context.Context, accept func(modelType string) bool) ([]SmartModelRow, error) {
 	models, err := s.db.ListEnabledModels(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("smart store: list models: %w", err)
@@ -41,7 +59,7 @@ func (s *smartStoreDB) ListEnabledChatModels(ctx context.Context) ([]SmartModelR
 
 	var rows []SmartModelRow
 	for _, m := range models {
-		if m.Type != "chat" {
+		if !accept(m.Type) {
 			continue
 		}
 

@@ -189,7 +189,7 @@ func TestUpdateModel_HubFailure502(t *testing.T) {
 	mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	mock.ExpectQuery(`UPDATE "Model"`).
-		WithArgs(anyArgs(22)...).
+		WithArgs(anyArgs(25)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	hub := &hubSpy{invalidateErr: errors.New("hub down")}
 	aud := &auditSpy{}
@@ -302,7 +302,7 @@ func TestAddProviderModel_HubFailure502(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(anyArgs(20)...).
+		WithArgs(anyArgs(23)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	hub := &hubSpy{invalidateErr: errors.New("hub down")}
 	aud := &auditSpy{}

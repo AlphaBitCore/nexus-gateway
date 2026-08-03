@@ -206,7 +206,7 @@ func TestInitAuditWriter_nilSpill(t *testing.T) {
 	pcs := payloadcapture.NewStore(payloadcapture.DefaultConfig())
 	// Pass nil MQ producer — AuditWriter does not require a live producer
 	// to construct; it degrades gracefully.
-	w, normReg, err := InitAuditWriter(nil, spillfactory.FactoryConfig{Enabled: false}, config.AuditConfig{}, pcs, opsReg, discardLogger())
+	w, normReg, _, _, err := InitAuditWriter(nil, spillfactory.FactoryConfig{Enabled: false}, config.AuditConfig{}, pcs, opsReg, discardLogger())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -250,5 +250,32 @@ func TestInitMetricsRecorder_returnsNonNil(t *testing.T) {
 	rec := InitMetricsRecorder(opsReg)
 	if rec == nil {
 		t.Fatal("expected non-nil metrics recorder")
+	}
+}
+
+// Boot must actually COMPUTE the spill posture, not just carry a field for it.
+// The introspect-source tests build Describe(...) inside the test and hand it in
+// as a dep, so replacing this call with a zero Availability{} left every one of
+// them green while the runtime source reported "no backend" on a node that has
+// one.
+func TestInitAuditWriter_ComputesSpillAvailability(t *testing.T) {
+	spillCfg := spillfactory.FactoryConfig{Enabled: true, Backend: "localfs"}
+	spillCfg.Localfs.Root = t.TempDir()
+	pcs := payloadcapture.NewStore(payloadcapture.DefaultConfig())
+	opsReg := registry.NewRegistry(prometheus.NewRegistry())
+
+	_, _, availability, _, err := InitAuditWriter(nil, spillCfg, config.AuditConfig{}, pcs, opsReg, discardLogger())
+	if err != nil {
+		t.Fatalf("InitAuditWriter: %v", err)
+	}
+
+	if !availability.Configured {
+		t.Fatal("boot reported no spill backend while one was configured and built — the runtime source would tell an operator the opposite of the truth")
+	}
+	if availability.Backend != "localfs" || availability.Location != spillCfg.Localfs.Root {
+		t.Fatalf("availability = %+v, want the built localfs backend and its root", availability)
+	}
+	if !availability.HostLocal {
+		t.Fatal("a localfs backend was not marked host-local, so a multi-node deployment gets no warning")
 	}
 }

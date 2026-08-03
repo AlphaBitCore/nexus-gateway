@@ -255,7 +255,7 @@ func TestNewProxyServer_DefaultsAndFullConfig(t *testing.T) {
 
 	cfg := ProxyConfig{
 		OnboardingEnabled:        true,
-		OnboardingCPUIBaseURL:    "https://cp.example.com",
+		OnboardingCPUIBaseURL:    func() string { return "https://cp.example.com" },
 		Checker:                  checker,
 		ConnManager:              mgr,
 		IdleTimeout:              0, // → default
@@ -541,7 +541,7 @@ func TestServeHTTP_OnboardingIntercept_MonitoredHost_Returns407(t *testing.T) {
 	p := &ProxyServer{
 		logger:                discardLogger(),
 		checker:               checker,
-		onboardingCPUIBaseURL: "https://cp.example.com",
+		onboardingCPUIBaseURL: func() string { return "https://cp.example.com" },
 	}
 	p.onboardingEnabled.Store(true)
 
@@ -569,7 +569,7 @@ func TestServeHTTP_OnboardingIntercept_UnlistedHost_PassesThrough(t *testing.T) 
 	p := &ProxyServer{
 		logger:                discardLogger(),
 		checker:               checker,
-		onboardingCPUIBaseURL: "https://cp.example.com",
+		onboardingCPUIBaseURL: func() string { return "https://cp.example.com" },
 	}
 	p.onboardingEnabled.Store(true)
 
@@ -594,7 +594,7 @@ func TestServeHTTP_OnboardingIntercept_NilChecker_NoIntercept(t *testing.T) {
 	p := &ProxyServer{
 		logger:                discardLogger(),
 		checker:               nil,
-		onboardingCPUIBaseURL: "https://cp.example.com",
+		onboardingCPUIBaseURL: func() string { return "https://cp.example.com" },
 	}
 	p.onboardingEnabled.Store(true)
 
@@ -1442,7 +1442,7 @@ func TestServeHTTP_Onboarding_HostAndRemoteAddrFallbacks(t *testing.T) {
 	p := &ProxyServer{
 		logger:                discardLogger(),
 		checker:               checker,
-		onboardingCPUIBaseURL: "https://cp.example.com",
+		onboardingCPUIBaseURL: func() string { return "https://cp.example.com" },
 	}
 	p.onboardingEnabled.Store(true)
 

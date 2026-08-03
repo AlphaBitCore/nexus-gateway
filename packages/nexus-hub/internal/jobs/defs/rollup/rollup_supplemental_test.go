@@ -87,11 +87,20 @@ func TestFakeThresholds_Thresholds(t *testing.T) {
 
 // Rollup5mJob.processOneBucket — full happy path (one traffic_event row)
 
-// trafficEventCols lists the 43 SELECT columns that aggregateTrafficEvents
-// scans in exactly the order the Scan call expects them. Last two columns
-// Last two columns (embedding_cost_usd, ai_guard_cost_usd) cover internal-ops
-// cost rollup metrics.
-var trafficEventCols = []string{
+// trafficEventErrorClassTail lists the trailing error-class columns that only
+// the FLEET aggregator selects (traffic.error_class.* series); the per-Thing
+// SELECT stops before them. Fleet row builders append errorClassNilTail();
+// thing wrappers strip it via trimErrorClassTail.
+var trafficEventErrorClassTail = []string{
+	"provider_name", "routed_provider_name", "model_name", "routed_model_name",
+	"internal_purpose",
+}
+
+// trafficEventCols lists the 48 SELECT columns that aggregateTrafficEvents
+// scans in exactly the order the Scan call expects them:
+// embedding_cost_usd / ai_guard_cost_usd cover internal-ops cost rollup
+// metrics, followed by the error-class tail.
+var trafficEventCols = append([]string{
 	"source", "provider_id", "model_id",
 	"entity_id", "entity_type", "org_id",
 	"routed_provider_id",
@@ -108,6 +117,21 @@ var trafficEventCols = []string{
 	"normalized_strip_count", "normalized_strip_bytes", "cache_marker_injected",
 	"upstream_ttfb_ms", "upstream_total_ms", "request_hooks_ms", "response_hooks_ms",
 	"embedding_cost_usd", "ai_guard_cost_usd",
+}, trafficEventErrorClassTail...)
+
+// errorClassNilTail returns all-nil values for trafficEventErrorClassTail.
+func errorClassNilTail() []any {
+	tail := make([]any, len(trafficEventErrorClassTail))
+	for i := range tail {
+		tail[i] = (*string)(nil)
+	}
+	return tail
+}
+
+// trimErrorClassTail drops the fleet-only error-class tail so a fleet row
+// builder can feed the per-Thing column shape.
+func trimErrorClassTail(row []any) []any {
+	return row[:len(row)-len(trafficEventErrorClassTail)]
 }
 
 // oneTrafficEventRow returns one valid AddRow call matching trafficEventCols.
@@ -167,6 +191,11 @@ func oneTrafficEventRow(ts time.Time) []any {
 		nilInt,   // response_hooks_ms
 		nilF64,   // embedding_cost_usd
 		nilF64,   // ai_guard_cost_usd
+		nilStr,   // provider_name
+		nilStr,   // routed_provider_name
+		nilStr,   // model_name
+		nilStr,   // routed_model_name
+		nilStr,   // internal_purpose
 	}
 }
 
@@ -635,12 +664,13 @@ func TestThingRollup5m_Interval(t *testing.T) {
 
 // thingTrafficEventCols is the 42-column SELECT used by aggregateThingEvents
 // (prepends thing_id to trafficEventCols).
-var thingTrafficEventCols = append([]string{"thing_id"}, trafficEventCols...)
+var thingTrafficEventCols = append([]string{"thing_id"},
+	trafficEventCols[:len(trafficEventCols)-len(trafficEventErrorClassTail)]...)
 
 // oneThingTrafficEventRow returns one valid AddRow for thingTrafficEventCols.
 func oneThingTrafficEventRow(ts time.Time) []any {
 	thingID := "thing-1"
-	return append([]any{&thingID}, oneTrafficEventRow(ts)...)
+	return append([]any{&thingID}, trimErrorClassTail(oneTrafficEventRow(ts))...)
 }
 
 // TestThingRollup5m_AggregateThingEvents_OneRow exercises aggregateThingEvents

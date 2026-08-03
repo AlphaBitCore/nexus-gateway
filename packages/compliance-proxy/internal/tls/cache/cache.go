@@ -3,9 +3,11 @@ package cache
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -19,7 +21,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/tls/issuer"
 )
 
-// redisKeyPrefix is the key prefix for certificate entries in Redis.
+// redisKeyPrefix is the key prefix for certificate entries in Redis. The CA
+// fingerprint is appended to it (see caScope) so entries cannot outlive the CA
+// that minted them.
 const redisKeyPrefix = "nexus:proxy:cert:"
 
 // redisCertEntry is the JSON structure stored in Redis for each cached certificate.
@@ -95,7 +99,26 @@ func (c *CertCache) GetCertByHostname(hostname string) (*tls.Certificate, error)
 			c.lru.Put(hostname, cert, c.ttl)
 			return cert, nil
 		}
-		if err != nil {
+		switch {
+		case errors.Is(err, errCertKeyMaterial):
+			// Redis answered; the entry simply is not ours. A fresh leaf is minted
+			// below, so the request is unaffected — but the gauge must NOT be
+			// zeroed, because Redis is fine and an availability alert here would
+			// send an operator to the wrong system on a routine key rotation.
+			c.logger.Warn("cached cert is not decryptable by this process; minting a fresh leaf",
+				slog.String("hostname", hostname),
+				slog.String("error", err.Error()),
+				slog.String("remedy", "entries are scoped to the CA fingerprint, so a CA rotation alone cannot cause this. "+
+					"The key that decrypts a cached leaf is derived from the CA private key (local signing) or from the "+
+					"cert-cache DEK in Redis at nexus:proxy:cert-cache-dek (remote signing) — NOT from "+
+					"CREDENTIAL_ENCRYPTION_KEY, which is a different subsystem. Check that every proxy sharing this "+
+					"Redis derives the same key: two nodes holding different cert-cache DEKs under the same CA compute "+
+					"the same cache key and will overwrite each other's entries"),
+			)
+			if metrics.RedisAvailable != nil {
+				metrics.RedisAvailable.With().Set(1)
+			}
+		case err != nil:
 			c.logger.Warn("redis get failed, proceeding without cache",
 				slog.String("hostname", hostname),
 				slog.String("error", err.Error()),
@@ -103,7 +126,7 @@ func (c *CertCache) GetCertByHostname(hostname string) (*tls.Certificate, error)
 			if metrics.RedisAvailable != nil {
 				metrics.RedisAvailable.With().Set(0)
 			}
-		} else if metrics.RedisAvailable != nil {
+		case metrics.RedisAvailable != nil:
 			// Cache miss (cert == nil, err == nil): Redis is reachable but
 			// the key is absent. Reset the gauge so stale error state (0)
 			// from a prior failed request does not persist indefinitely.
@@ -141,12 +164,44 @@ func (c *CertCache) GetCertByHostname(hostname string) (*tls.Certificate, error)
 	return cert, nil
 }
 
+// errCertKeyMaterial marks a cached entry that Redis served correctly but this
+// process cannot decrypt. It is deliberately distinct from a transport failure:
+// Redis answered, so nothing is wrong with Redis, and reporting it as an
+// availability problem sends an operator to the wrong system.
+var errCertKeyMaterial = errors.New("cert cache: entry is not decryptable by this process")
+
+// redisKey scopes every entry to the CA that minted it.
+//
+// Without the scope, a CA rotation leaves entries keyed only by hostname holding
+// leaves signed by the previous CA and keys encrypted under the previous DEK.
+// Each one costs a Redis round-trip and a decrypt failure before the miss path
+// re-mints — measured on a live rotation: one WARN per hostname, then
+// self-healed once the new entry overwrote the old. Scoping turns that into an
+// ordinary miss, and the orphaned entries expire on their own TTL.
+//
+// The scope is the first 16 hex chars of the CA's SHA-256 fingerprint: enough to
+// separate CAs, short enough to keep the key readable in redis-cli.
+func (c *CertCache) redisKey(hostname string) string {
+	return redisKeyPrefix + c.caScope() + ":" + hostname
+}
+
+// caScope returns the short CA fingerprint used to namespace cache entries.
+// An issuer without a parsed CA yields "nocert", which cannot collide with a
+// real fingerprint and keeps the key well-formed.
+func (c *CertCache) caScope() string {
+	if c.iss == nil || c.iss.CACert() == nil {
+		return "nocert"
+	}
+	sum := sha256.Sum256(c.iss.CACert().Raw)
+	return hex.EncodeToString(sum[:])[:16]
+}
+
 // getFromRedis retrieves and decrypts a certificate from Redis.
 func (c *CertCache) getFromRedis(hostname string) (*tls.Certificate, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	key := redisKeyPrefix + hostname
+	key := c.redisKey(hostname)
 	data, err := c.redis.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil // cache miss, not an error
@@ -173,7 +228,12 @@ func (c *CertCache) getFromRedis(hostname string) (*tls.Certificate, error) {
 	// Decrypt the private key
 	privKey, err := c.iss.DecryptPrivateKey(encKey, nonce)
 	if err != nil {
-		return nil, fmt.Errorf("redis decrypt key for %s: %w", hostname, err)
+		// Wrapped in errCertKeyMaterial so the caller can tell "Redis is sick"
+		// from "this entry is not ours". With CA-scoped keys a decryptable-by-
+		// nobody entry should no longer be reachable at all; if one is, the DEK
+		// changed under a stable CA, which is a different operator problem and
+		// must not be reported as a Redis outage.
+		return nil, fmt.Errorf("%w: %s: %w", errCertKeyMaterial, hostname, err)
 	}
 
 	// Parse the certificate chain PEM
@@ -246,6 +306,5 @@ func (c *CertCache) putToRedis(hostname string, cert *tls.Certificate) error {
 		return fmt.Errorf("cert: marshal redis entry: %w", err)
 	}
 
-	key := redisKeyPrefix + hostname
-	return c.redis.Set(ctx, key, data, c.ttl).Err()
+	return c.redis.Set(ctx, c.redisKey(hostname), data, c.ttl).Err()
 }

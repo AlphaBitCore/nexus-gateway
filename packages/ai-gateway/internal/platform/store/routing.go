@@ -30,9 +30,21 @@ type RoutingRule struct {
 }
 
 // rulesCache caches all enabled routing rules with TTL.
+//
+// `loaded` (not `rules != nil`) is the freshness predicate. A deployment
+// with zero enabled routing rules is a legitimate, common state — it is
+// the shipped default and what the smoke harness configures for its
+// routing-OFF phases — and loadRoutingRules returns a nil slice for it.
+// Keying the hit on `rules != nil` therefore treated "cached: no rules"
+// as "never loaded" and re-queried Postgres on every single lookup — and
+// the request path performs one or two of them (route resolution always,
+// plus the smart-routing canonical probe when lazy canonicalization is
+// on). The flag makes the negative result cacheable and distinguishable
+// from "not loaded yet".
 type rulesCache struct {
 	mu        sync.RWMutex
 	rules     []RoutingRule
+	loaded    bool
 	expiresAt time.Time
 	sfg       singleflight.Group
 }
@@ -46,7 +58,7 @@ func (db *DB) GetEnabledRoutingRules(ctx context.Context) ([]RoutingRule, error)
 	db.initRulesCache()
 
 	db.rc.mu.RLock()
-	if time.Now().Before(db.rc.expiresAt) && db.rc.rules != nil {
+	if db.rc.loaded && time.Now().Before(db.rc.expiresAt) {
 		rules := db.rc.rules
 		db.rc.mu.RUnlock()
 		return rules, nil
@@ -63,6 +75,7 @@ func (db *DB) GetEnabledRoutingRules(ctx context.Context) ([]RoutingRule, error)
 	rules := v.([]RoutingRule)
 	db.rc.mu.Lock()
 	db.rc.rules = rules
+	db.rc.loaded = true
 	db.rc.expiresAt = time.Now().Add(rulesCacheTTL)
 	db.rc.mu.Unlock()
 

@@ -424,3 +424,36 @@ func TestBucketDroppedHeader(t *testing.T) {
 		}
 	}
 }
+
+// TestResolved_AllRequestHeaders pins the CORS-facing union view: it must
+// contain the base names plus every adapter extension (preflight happens
+// before format dispatch, so the browser-facing answer is the union), stay
+// lower-cased and sorted (deterministic CORS value), and be nil-receiver
+// safe like the other Resolved accessors.
+func TestResolved_AllRequestHeaders(t *testing.T) {
+	got := Default().AllRequestHeaders()
+
+	set := map[string]bool{}
+	for i, n := range got {
+		set[n] = true
+		if n != strings.ToLower(n) {
+			t.Errorf("AllRequestHeaders[%d] = %q, want lower-case", i, n)
+		}
+		if i > 0 && got[i-1] >= n {
+			t.Errorf("AllRequestHeaders not sorted at %d: %q >= %q", i, got[i-1], n)
+		}
+	}
+	for _, want := range []string{
+		"accept", "user-agent", "content-type", // base
+		"openai-beta", "anthropic-beta", "x-goog-user-project", // per-adapter
+	} {
+		if !set[want] {
+			t.Errorf("AllRequestHeaders missing %q — a browser client sending it would fail preflight", want)
+		}
+	}
+
+	var nilResolved *Resolved
+	if out := nilResolved.AllRequestHeaders(); out != nil {
+		t.Errorf("nil receiver: got %v, want nil", out)
+	}
+}

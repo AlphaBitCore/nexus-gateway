@@ -27,6 +27,17 @@ import (
 // packages/nexus-hub/internal/identity/agentca.
 var tlsRandReader io.Reader = rand.Reader
 
+// tlsGenerateKey / tlsCreateCertificate are the same kind of seam for the two
+// primitives that no longer consume the reader they are handed: since Go 1.26
+// the FIPS 140-3 module draws ECDSA key material and signature randomness from
+// its own DRBG, so a starved tlsRandReader cannot reach their error branches.
+// Only rand.Int (serial numbers) still reads the injected reader. Production
+// code never reassigns these.
+var (
+	tlsGenerateKey       = ecdsa.GenerateKey
+	tlsCreateCertificate = x509.CreateCertificate
+)
+
 // Engine manages a device CA and generates dynamic leaf certificates for TLS inspection.
 type Engine struct {
 	caCert   *x509.Certificate
@@ -164,7 +175,7 @@ func (e *Engine) IssueLeafCertByHostname(hostname string) (*CachedCert, error) {
 	}
 	e.cacheMu.RUnlock()
 
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), tlsRandReader)
+	leafKey, err := tlsGenerateKey(elliptic.P256(), tlsRandReader)
 	if err != nil {
 		return nil, fmt.Errorf("generate leaf key: %w", err)
 	}
@@ -183,7 +194,7 @@ func (e *Engine) IssueLeafCertByHostname(hostname string) (*CachedCert, error) {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
-	certDER, err := x509.CreateCertificate(tlsRandReader, template, e.caCert, &leafKey.PublicKey, e.caKey)
+	certDER, err := tlsCreateCertificate(tlsRandReader, template, e.caCert, &leafKey.PublicKey, e.caKey)
 	if err != nil {
 		return nil, fmt.Errorf("create leaf cert: %w", err)
 	}
@@ -235,7 +246,7 @@ func (e *Engine) CacheSize() int {
 }
 
 func generateCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), tlsRandReader)
+	key, err := tlsGenerateKey(elliptic.P256(), tlsRandReader)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -262,7 +273,7 @@ func generateCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		BasicConstraintsValid: true,
 	}
 
-	certDER, err := x509.CreateCertificate(tlsRandReader, template, template, &key.PublicKey, key)
+	certDER, err := tlsCreateCertificate(tlsRandReader, template, template, &key.PublicKey, key)
 	if err != nil {
 		return nil, nil, err
 	}

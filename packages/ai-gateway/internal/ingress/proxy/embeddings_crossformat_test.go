@@ -126,7 +126,7 @@ func TestProxy_Embeddings_OpenAIIngress_GeminiOnlyTarget_NoCompatibleProvider(t 
 	body := `{"model":"text-embedding-004","input":"hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-nexus-virtual-key", "dummy")
+	req.Header.Set("X-Nexus-Virtual-Key", "dummy")
 	rec := httptest.NewRecorder()
 	h(rec, req)
 

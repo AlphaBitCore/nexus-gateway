@@ -85,6 +85,13 @@ func (m *mockAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request,
 	}
 	r := m.responses[m.callIndex]
 	m.callIndex++
+	if r.resp != nil {
+		// Mirror the real specAdapter.executeWithBodyAndURL, which stamps the
+		// coercion rewrites onto the response's Coerced. A mock that dropped
+		// them would hide a double-merge of the x-nexus-coerced markers in the
+		// executor (the merge is the executor's, not the adapter's, job).
+		r.resp.Coerced = append([]string(nil), rewrites...)
+	}
 	return r.resp, r.err
 }
 
@@ -415,9 +422,13 @@ func TestExecutor_RateLimited_L2Retry(t *testing.T) {
 	if len(result.Attempts) != 2 {
 		t.Fatalf("expected 2 attempts, got %d", len(result.Attempts))
 	}
-	// One resolver call per target — the L2 retry reuses the resolved CallTarget.
-	if res.calls != 1 {
-		t.Fatalf("expected 1 resolver call per target, got %d", res.calls)
+	// Two resolver calls: one up front, one for the retry. The 429 that drove
+	// the retry also opened that credential's circuit, so the retry must ask
+	// the pool again rather than re-send to the credential it just tripped.
+	// With a sticky key the pool hands back the same credential when its
+	// circuit is still closed, so this costs nothing when nothing is wrong.
+	if res.calls != 2 {
+		t.Fatalf("expected 2 resolver calls (initial + re-resolve for the retry), got %d", res.calls)
 	}
 }
 
@@ -451,8 +462,12 @@ func TestExecutor_DefaultPolicy_RetriesOnceOn5xx(t *testing.T) {
 	if len(result.Attempts) != 2 {
 		t.Fatalf("expected 2 attempts on the single target (503 then 200), got %d", len(result.Attempts))
 	}
-	if res.calls != 1 {
-		t.Fatalf("the L2 retry must reuse the resolved target (1 resolver call), got %d", res.calls)
+	// The retry re-resolves (2 calls). A 503 does not open a credential
+	// circuit — only 429 and three consecutive 401/403 do — so the pool hands
+	// back the same credential here; the re-resolve exists for the cases where
+	// it would not.
+	if res.calls != 2 {
+		t.Fatalf("expected 2 resolver calls (initial + re-resolve for the retry), got %d", res.calls)
 	}
 }
 
@@ -806,5 +821,165 @@ func TestExecute_Success_FirstTry_NoRetryMetric(t *testing.T) {
 	}
 	if calls := cap.snapshot(); len(calls) != 0 {
 		t.Fatalf("first-try success must not emit retry metrics; got %+v", calls)
+	}
+}
+
+// Context overflow fails over to the NEXT target without retrying the
+// same one — the same model will always overflow, but a larger-context
+// sibling (e.g. the smart strategy's upgrade target) can serve the
+// request unchanged.
+func TestExecute_ContextOverflow_FailsOverToNextTarget(t *testing.T) {
+	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
+		{err: &provcore.ProviderError{Status: 400, Code: provcore.CodeContextOverflow, Message: "prompt is too long"}},
+		{resp: &provcore.Response{StatusCode: 200, Body: []byte(`ok`)}},
+	}}
+	reg := newRegistry(t, adapter)
+	exec := New(reg, okResolver(), nil, nil)
+
+	result := exec.Execute(context.Background(),
+		[]routingcore.RoutingTarget{target(providerSlug), target("bigger-window")},
+		baseReq(),
+		fastBackoffPolicy(3, configtypes.ErrorClass5xx),
+	)
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after context-overflow failover, got %d", result.StatusCode)
+	}
+	if len(result.Attempts) != 2 {
+		t.Fatalf("expected exactly 2 attempts (no same-target retry), got %d", len(result.Attempts))
+	}
+}
+
+// Context overflow on the LAST (or only) target returns the provider's
+// own error result — the client must see the upstream context error,
+// not a generic all-targets-exhausted.
+func TestExecute_ContextOverflow_LastTargetReturnsProviderError(t *testing.T) {
+	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
+		{err: &provcore.ProviderError{Status: 400, Code: provcore.CodeContextOverflow, Message: "prompt is too long"}},
+	}}
+	reg := newRegistry(t, adapter)
+	exec := New(reg, okResolver(), nil, nil)
+
+	result := exec.Execute(context.Background(),
+		[]routingcore.RoutingTarget{target(providerSlug)},
+		baseReq(),
+		fastBackoffPolicy(3, configtypes.ErrorClass5xx),
+	)
+
+	if errors.Is(result.Error, ErrAllTargetsExhausted) {
+		t.Fatalf("single-target overflow must return the provider error, not ErrAllTargetsExhausted")
+	}
+	if result.StatusCode != http.StatusBadRequest || result.ProviderError == nil || result.ProviderError.Code != provcore.CodeContextOverflow {
+		t.Fatalf("expected the provider's 400 context-overflow surfaced, got status=%d providerError=%+v err=%v",
+			result.StatusCode, result.ProviderError, result.Error)
+	}
+	if len(result.Attempts) != 1 {
+		t.Fatalf("expected exactly 1 attempt, got %d", len(result.Attempts))
+	}
+}
+
+// A ContextUpgradeOnly target is reserved for context-overflow failover:
+// transient failures (5xx/429/network) on the primary must NOT spill
+// onto the larger — typically pricier — upgrade model.
+func TestExecute_UpgradeOnlyTarget_SkippedForNonOverflowFailures(t *testing.T) {
+	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
+		{err: &provcore.ProviderError{Status: 500, Code: provcore.CodeUpstreamError, Message: "boom"}},
+	}}
+	reg := newRegistry(t, adapter)
+	exec := New(reg, okResolver(), nil, nil)
+
+	upgrade := target("big-window")
+	upgrade.ContextUpgradeOnly = true
+	result := exec.Execute(context.Background(),
+		[]routingcore.RoutingTarget{target(providerSlug), upgrade},
+		baseReq(),
+		fastBackoffPolicy(1),
+	)
+
+	if !errors.Is(result.Error, ErrAllTargetsExhausted) {
+		t.Fatalf("expected exhausted (upgrade target skipped for 5xx), got %v", result.Error)
+	}
+	if len(result.Attempts) != 1 {
+		t.Fatalf("expected 1 attempt (upgrade target must not run), got %d", len(result.Attempts))
+	}
+}
+
+func TestExecute_UpgradeOnlyTarget_UsedForContextOverflow(t *testing.T) {
+	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
+		{err: &provcore.ProviderError{Status: 400, Code: provcore.CodeContextOverflow, Message: "prompt is too long"}},
+		{resp: &provcore.Response{StatusCode: 200, Body: []byte(`ok`)}},
+	}}
+	reg := newRegistry(t, adapter)
+	exec := New(reg, okResolver(), nil, nil)
+
+	upgrade := target("big-window")
+	upgrade.ContextUpgradeOnly = true
+	result := exec.Execute(context.Background(),
+		[]routingcore.RoutingTarget{target(providerSlug), upgrade},
+		baseReq(),
+		fastBackoffPolicy(1),
+	)
+
+	if result.Error != nil || result.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 via upgrade target, got status=%d err=%v", result.StatusCode, result.Error)
+	}
+	if len(result.Attempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(result.Attempts))
+	}
+}
+
+// F2 orphan case: a downstream filter (narrowing / cross-format) can
+// leave a ContextUpgradeOnly target as the ONLY survivor. With nothing
+// attempted before it, it must run as an ordinary target — not be
+// skipped into a spurious zero-attempt all-targets-exhausted.
+func TestExecute_UpgradeOnlyTarget_AloneRunsAsNormal(t *testing.T) {
+	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
+		{resp: &provcore.Response{StatusCode: 200, Body: []byte(`ok`)}},
+	}}
+	reg := newRegistry(t, adapter)
+	exec := New(reg, okResolver(), nil, nil)
+
+	only := target("big-window")
+	only.ContextUpgradeOnly = true
+	result := exec.Execute(context.Background(),
+		[]routingcore.RoutingTarget{only},
+		baseReq(),
+		fastBackoffPolicy(1),
+	)
+
+	if result.Error != nil || result.StatusCode != http.StatusOK {
+		t.Fatalf("lone upgrade target must run as normal, got status=%d err=%v", result.StatusCode, result.Error)
+	}
+	if len(result.Attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(result.Attempts))
+	}
+}
+
+// F2 reorder case: health ranking can move a ContextUpgradeOnly target
+// ahead of its pick. First in the list with nothing attempted before
+// it, it must run as an ordinary target rather than being skipped.
+func TestExecute_UpgradeOnlyTarget_FirstRunsAsNormal(t *testing.T) {
+	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
+		{resp: &provcore.Response{StatusCode: 200, Body: []byte(`ok`)}},
+	}}
+	reg := newRegistry(t, adapter)
+	exec := New(reg, okResolver(), nil, nil)
+
+	upgrade := target("big-window")
+	upgrade.ContextUpgradeOnly = true
+	result := exec.Execute(context.Background(),
+		[]routingcore.RoutingTarget{upgrade, target(providerSlug)},
+		baseReq(),
+		fastBackoffPolicy(1),
+	)
+
+	if result.Error != nil || result.StatusCode != http.StatusOK {
+		t.Fatalf("front upgrade target must run as normal, got status=%d err=%v", result.StatusCode, result.Error)
+	}
+	if len(result.Attempts) != 1 {
+		t.Fatalf("expected first target attempted, got %d attempts", len(result.Attempts))
 	}
 }

@@ -43,11 +43,13 @@ import (
 // packages/agent/internal/identity/secretstore/fallback.go (osFile +
 // createTempFn).
 var (
-	ssoRandReader       io.Reader = rand.Reader
-	ssoMarshalECPrivKey           = x509.MarshalECPrivateKey
-	ssoNetListen                  = net.Listen
-	ssoRuntimeGOOS                = runtime.GOOS
-	ssoExecCommandStart           = func(name string, args ...string) error {
+	ssoRandReader        io.Reader = rand.Reader
+	ssoGenerateKey                 = ecdsa.GenerateKey
+	ssoCreateCertificate           = x509.CreateCertificate
+	ssoMarshalECPrivKey            = x509.MarshalECPrivateKey
+	ssoNetListen                   = net.Listen
+	ssoRuntimeGOOS                 = runtime.GOOS
+	ssoExecCommandStart            = func(name string, args ...string) error {
 		// Defense-in-depth: refuse to spawn a real browser process when the
 		// binary is a test binary. Any test that reaches this seam without
 		// installing a stub (e.g. via enrollment.SetExecCommandStart) would
@@ -340,7 +342,7 @@ func (f *Flow) ssoEnroll(ctx context.Context, code, verifier, redirectURI string
 // artifact; Hub does not verify it (auth is by device bearer token), so it
 // is self-signed rather than CA-signed.
 func generateSSODeviceIdentity(hostname string) (keyPEM, certPEM []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), ssoRandReader)
+	key, err := ssoGenerateKey(elliptic.P256(), ssoRandReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate key: %w", err)
 	}
@@ -358,7 +360,7 @@ func generateSSODeviceIdentity(hostname string) (keyPEM, certPEM []byte, err err
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	certDER, err := x509.CreateCertificate(ssoRandReader, template, template, &key.PublicKey, key)
+	certDER, err := ssoCreateCertificate(ssoRandReader, template, template, &key.PublicKey, key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create device cert: %w", err)
 	}

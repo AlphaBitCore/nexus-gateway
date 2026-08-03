@@ -10,9 +10,9 @@
 // hook whose match rules referenced rich Normalized fields.
 //
 // This package unifies the three ingress services on a single callback shape so
-// the contract is identical everywhere. Service-specific concerns (e.g.
-// stamping auditInfo.ResponseNormalized alongside ci.Normalized) ride
-// through the OnPayload option, never inlined into the helper itself.
+// the contract is identical everywhere. Service-specific side-effects ride
+// through the OnPayload option, never inlined into the helper itself — though
+// see OnPayload's own doc: no production caller currently passes one.
 package responseprehook
 
 import (
@@ -63,8 +63,14 @@ type Options struct {
 
 	// OnPayload, when non-nil, runs after ci.Normalized has been
 	// stamped with the successful Registry payload. Service-specific
-	// side-effects ride here — tlsbump uses it to stamp
-	// auditInfo.ResponseNormalized; ai-gateway leaves it nil.
+	// side-effects ride here.
+	//
+	// NO PRODUCTION CALLER PASSES ONE. This doc previously said tlsbump used
+	// it to stamp auditInfo.ResponseNormalized; tlsbump's
+	// buildSSEPreHookCallback does not set OnPayload, and nothing under
+	// shared/transport/streaming assigns that field. The option and its tests
+	// are kept because the seam is real and the mechanism works — but a reader
+	// looking for where ResponseNormalized gets written will not find it here.
 	//
 	// payload is the same pointer that was assigned to ci.Normalized
 	// — mutating it after the fact affects the hook executor's view.

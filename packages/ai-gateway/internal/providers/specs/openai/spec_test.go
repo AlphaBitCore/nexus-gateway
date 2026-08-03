@@ -58,6 +58,153 @@ func TestSpec_RequestShapes(t *testing.T) {
 	}
 }
 
+// TestPrepareBody_ReasoningQuirk_ChatAndResponsesAgree drives the REAL spec
+// through the REAL dispatcher with the request shapes the route layer actually
+// produces, and asserts both OpenAI wires agree on the reasoning-model sampling
+// strip. The unit tests around ApplyReasoningRewrites /
+// ApplyResponsesReasoningRewrites prove the two functions behave; only this one
+// proves they are WIRED — that a Responses body reaching PrepareBody comes back
+// stripped. The two dispatch routes differ (a chat body to an OpenAI-family
+// target takes the identity codec's native/cross-format leg; a Responses body
+// takes the Responses arm of the same codec, because FormatOpenAIResponses is
+// not OpenAI-family), so a wiring regression on either leg is invisible to the
+// function-level tests.
+//
+// The BodyFormat pairings below are the ones wiring/routes.go sets, not
+// convenient stand-ins: chat carries FormatOpenAI, /v1/responses carries
+// FormatOpenAIResponses (which the executor's nativeResponses branch preserves
+// through to dispatch). Pairing Responses with FormatOpenAI instead sends the
+// request down the passthrough leg it never takes in production.
+func TestPrepareBody_ReasoningQuirk_ChatAndResponsesAgree(t *testing.T) {
+	ad := testAdapter(t)
+	const model = "gpt-5.6-luna"
+
+	chatBody, chatRW, _, err := ad.PrepareBody(provdispatch.Request{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Body:       []byte(`{"model":"` + model + `","messages":[],"temperature":0.7,"top_p":0.9}`),
+		Target:     provcore.CallTarget{ProviderModelID: model},
+	})
+	if err != nil {
+		t.Fatalf("PrepareBody(chat): %v", err)
+	}
+
+	respBody, respRW, _, err := ad.PrepareBody(provdispatch.Request{
+		WireShape:  typology.WireShapeOpenAIResponses,
+		BodyFormat: provcore.FormatOpenAIResponses,
+		Body:       []byte(`{"model":"` + model + `","input":"hi","temperature":0.7,"top_p":0.9}`),
+		Target:     provcore.CallTarget{ProviderModelID: model},
+	})
+	if err != nil {
+		t.Fatalf("PrepareBody(responses): %v", err)
+	}
+
+	for _, w := range []struct {
+		wire string
+		body []byte
+		rw   []string
+	}{{"chat", chatBody, chatRW}, {"responses", respBody, respRW}} {
+		for _, p := range []string{"temperature", "top_p"} {
+			if strings.Contains(string(w.body), `"`+p+`"`) {
+				t.Errorf("%s: %s must be stripped for a reasoning model before dispatch; got %s", w.wire, p, w.body)
+			}
+		}
+		if len(w.rw) != 2 {
+			t.Errorf("%s: both strips must be reported to the caller (x-nexus-coerced); got %v", w.wire, w.rw)
+		}
+	}
+	// The wires must not merely both strip — they must report identically, or
+	// the same request tells the caller two different stories per ingress.
+	if len(chatRW) == len(respRW) {
+		for i := range chatRW {
+			if chatRW[i] != respRW[i] {
+				t.Errorf("rewrite[%d]: chat reports %q, responses reports %q", i, chatRW[i], respRW[i])
+			}
+		}
+	}
+	// Each wire must keep its own shape — the strip must not canonicalise one
+	// into the other.
+	if !strings.Contains(string(respBody), `"input"`) {
+		t.Errorf("responses body must stay responses-shape; got %s", respBody)
+	}
+	if !strings.Contains(string(chatBody), `"messages"`) {
+		t.Errorf("chat body must stay chat-shape; got %s", chatBody)
+	}
+}
+
+// TestPrepareBody_Responses_NonReasoningModel_KeepsSamplingParams pins the gate
+// on the wired path: only reasoning models lose their sampling params. Stripping
+// on every /v1/responses call would silently change output for gpt-4o callers.
+func TestPrepareBody_Responses_NonReasoningModel_KeepsSamplingParams(t *testing.T) {
+	ad := testAdapter(t)
+	body, rw, _, err := ad.PrepareBody(provdispatch.Request{
+		WireShape:  typology.WireShapeOpenAIResponses,
+		BodyFormat: provcore.FormatOpenAIResponses,
+		Body:       []byte(`{"model":"gpt-4o","input":"hi","temperature":0.7}`),
+		Target:     provcore.CallTarget{ProviderModelID: "gpt-4o"},
+	})
+	if err != nil {
+		t.Fatalf("PrepareBody: %v", err)
+	}
+	if !strings.Contains(string(body), `"temperature":0.7`) {
+		t.Errorf("non-reasoning model must keep the caller's temperature; got %s", body)
+	}
+	if len(rw) != 0 {
+		t.Errorf("nothing stripped → nothing reported; got %v", rw)
+	}
+}
+
+// TestPrepareBody_Responses_StreamingKeepsTheStrip pins §3a Rule 6 parity for
+// this quirk: a streaming /v1/responses request must reach the wire stripped
+// exactly as the non-streaming one does. Parity holds structurally today —
+// Execute prepares the body once via prepareBodyFull whatever req.Stream says,
+// and only the chat leg reads Stream (for stream_options) — so this asserts the
+// property rather than a branch, and goes red if a stream-only body path is
+// ever added that skips the codec.
+func TestPrepareBody_Responses_StreamingKeepsTheStrip(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		ad := testAdapter(t)
+		body, rw, _, err := ad.PrepareBody(provdispatch.Request{
+			WireShape:  typology.WireShapeOpenAIResponses,
+			BodyFormat: provcore.FormatOpenAIResponses,
+			Stream:     stream,
+			Body:       []byte(`{"model":"gpt-5.6-luna","input":"hi","temperature":0.7}`),
+			Target:     provcore.CallTarget{ProviderModelID: "gpt-5.6-luna"},
+		})
+		if err != nil {
+			t.Fatalf("PrepareBody(stream=%v): %v", stream, err)
+		}
+		if strings.Contains(string(body), `"temperature"`) {
+			t.Errorf("stream=%v: temperature must be stripped; got %s", stream, body)
+		}
+		if len(rw) != 1 {
+			t.Errorf("stream=%v: the strip must be reported; got %v", stream, rw)
+		}
+	}
+}
+
+// TestPrepareBody_Responses_StampsResolvedModel pins the other half of the
+// codec's Responses arm on the wired path: a catalog alias must leave as the
+// resolved upstream id. Without it an aliased or routing-repointed model ships
+// the alias to OpenAI and 404s — invisible whenever a catalog code happens to
+// equal the vendor's own name, which is the common case and therefore not
+// coverage.
+func TestPrepareBody_Responses_StampsResolvedModel(t *testing.T) {
+	ad := testAdapter(t)
+	body, _, _, err := ad.PrepareBody(provdispatch.Request{
+		WireShape:  typology.WireShapeOpenAIResponses,
+		BodyFormat: provcore.FormatOpenAIResponses,
+		Body:       []byte(`{"model":"my-catalog-alias","input":"hi"}`),
+		Target:     provcore.CallTarget{ProviderModelID: "gpt-4o"},
+	})
+	if err != nil {
+		t.Fatalf("PrepareBody: %v", err)
+	}
+	if !strings.Contains(string(body), `"model":"gpt-4o"`) {
+		t.Errorf("responses body must carry the resolved ProviderModelID; got %s", body)
+	}
+}
+
 func TestOpenAI_Transport_BuildURL(t *testing.T) {
 	transport := openai.NewTransport(slog.Default())
 	tgt := provcore.CallTarget{BaseURL: "https://api.openai.com/"}
@@ -101,7 +248,7 @@ func TestOpenAI_Transport_ApplyAuthMissingKey(t *testing.T) {
 }
 
 func TestOpenAI_Codec_RoundTrip(t *testing.T) {
-	codec := openai.IdentityCodec()
+	codec := openai.NewIdentityCodec(openai.OpenAIContract())
 	body := []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`)
 	encRes, err := codec.EncodeRequest(typology.WireShapeOpenAIChat, body, provcore.CallTarget{})
 	out := encRes.Body
@@ -137,7 +284,7 @@ func TestOpenAI_Codec_RoundTrip(t *testing.T) {
 // don't all need to re-parse the canonical body. Also covers DeepSeek's
 // non-OpenAI prompt_cache_hit_tokens field as a CacheReadTokens synonym.
 func TestIdentityCodec_DecodeCachedAndReasoningTokens(t *testing.T) {
-	codec := openai.IdentityCodec()
+	codec := openai.NewIdentityCodec(openai.OpenAIContract())
 	t.Run("openai_canonical", func(t *testing.T) {
 		body := []byte(`{"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70,"prompt_tokens_details":{"cached_tokens":40},"completion_tokens_details":{"reasoning_tokens":15}}}`)
 		decRes, err := codec.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})

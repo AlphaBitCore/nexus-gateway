@@ -104,6 +104,8 @@ func TestHandleStreamWithSubscription_Live_StampsProviderCacheTokens(t *testing.
 
 // streamMetricsCapture records the RecordRequest call the streaming
 // pipeline makes at stream end; other MetricsRecorder methods are no-ops.
+func (m *streamMetricsCapture) RecordError(_, _ string) {}
+
 type streamMetricsCapture struct {
 	mu       sync.Mutex
 	calls    int

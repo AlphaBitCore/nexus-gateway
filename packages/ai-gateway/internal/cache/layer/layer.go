@@ -33,6 +33,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
@@ -62,6 +63,14 @@ type Layer struct {
 	models      *configcache.SnapshotCache[store.Model]
 	credentials *configcache.SnapshotCache[store.Credential]
 	vkeys       *configcache.KeyCache[string, *store.VirtualKey]
+
+	// negVKeys caches known-absent virtual-key hashes so an unknown key costs
+	// one round-trip per TTL window, not one per request. See negvk.go.
+	negVKeys *lru.Cache[string, time.Time]
+	negVKTTL time.Duration
+	// now is the clock seam; tests override it to exercise TTL expiry
+	// without sleeping (defaults to time.Now).
+	now func() time.Time
 
 	// Secondary indices computed alongside snapshot loads. Replaced
 	// atomically; readers never see a torn state.
@@ -139,7 +148,12 @@ func newLayer(db *store.DB, pool PgxPool, log *slog.Logger, cfg Config) (*Layer,
 		cfg.VKTTL = 30 * time.Second
 	}
 
-	l := &Layer{db: db, pool: pool, log: log}
+	l := &Layer{db: db, pool: pool, log: log, negVKTTL: cfg.VKTTL, now: time.Now}
+	neg, err := newNegativeVKCache()
+	if err != nil {
+		return nil, fmt.Errorf("cachelayer: build vk negative cache: %w", err)
+	}
+	l.negVKeys = neg
 	if cfg.Metrics != nil {
 		cfg.Metrics.bindLayer(l)
 	}
@@ -253,8 +267,17 @@ func (l *Layer) ReloadCredentials(ctx context.Context) error {
 
 // InvalidateVirtualKeys evicts the named hashes from the VK cache.
 // Missing hashes are silently ignored. Returns the number of entries
-// actually removed.
+// actually removed from the positive cache.
+//
+// Negative entries for the same hashes are dropped too: a Hub
+// `virtual_keys` push carrying a newly created key's hash is exactly the
+// event that must retire a recorded "this key does not exist". They are not
+// counted in the return value, which stays the positive-cache eviction count
+// its callers and metrics already report.
 func (l *Layer) InvalidateVirtualKeys(hashes ...string) int {
+	for _, h := range hashes {
+		l.negVKeys.Remove(h)
+	}
 	n := l.vkeys.Invalidate(hashes...)
 	l.invalidationCount.Add(uint64(n))
 	if l.vkOnInvalidate != nil && n > 0 {
@@ -266,6 +289,7 @@ func (l *Layer) InvalidateVirtualKeys(hashes ...string) int {
 // PurgeVirtualKeys clears the entire VK cache. Used when the Hub sends
 // a reset signal (e.g. after a bulk VK migration).
 func (l *Layer) PurgeVirtualKeys() {
+	l.negVKeys.Purge()
 	n := l.vkeys.Size()
 	l.vkeys.Purge()
 	if l.vkOnInvalidate != nil && n > 0 {
@@ -275,27 +299,32 @@ func (l *Layer) PurgeVirtualKeys() {
 
 // Stats reports basic cache sizes and counters for ops introspection.
 type Stats struct {
-	ProvidersSize    int
-	ModelsSize       int
-	CredentialsSize  int
-	VirtualKeysSize  int
-	VKHits           uint64
-	VKMisses         uint64
-	VKInvalidations  uint64
-	TotalInvalidates uint64
+	ProvidersSize   int
+	ModelsSize      int
+	CredentialsSize int
+	VirtualKeysSize int
+	// NegativeVirtualKeysSize is the number of known-absent VK hashes
+	// currently short-circuiting the database. A persistently zero value
+	// while VKMisses climbs means bad keys are reaching Postgres.
+	NegativeVirtualKeysSize int
+	VKHits                  uint64
+	VKMisses                uint64
+	VKInvalidations         uint64
+	TotalInvalidates        uint64
 }
 
 // Stats returns a snapshot of the current counters.
 func (l *Layer) Stats() Stats {
 	hits, misses, inv := l.vkeys.Stats()
 	return Stats{
-		ProvidersSize:    l.providers.Size(),
-		ModelsSize:       l.models.Size(),
-		CredentialsSize:  l.credentials.Size(),
-		VirtualKeysSize:  l.vkeys.Size(),
-		VKHits:           hits,
-		VKMisses:         misses,
-		VKInvalidations:  inv,
-		TotalInvalidates: l.invalidationCount.Load(),
+		ProvidersSize:           l.providers.Size(),
+		ModelsSize:              l.models.Size(),
+		CredentialsSize:         l.credentials.Size(),
+		VirtualKeysSize:         l.vkeys.Size(),
+		NegativeVirtualKeysSize: l.negVKeys.Len(),
+		VKHits:                  hits,
+		VKMisses:                misses,
+		VKInvalidations:         inv,
+		TotalInvalidates:        l.invalidationCount.Load(),
 	}
 }

@@ -408,9 +408,9 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 // poolAdapter wraps *pgxpool.Pool to satisfy the notifier seam. It is
 // the only adapter layer between the pool and the listen loop: Acquire
 // returns a *pgxPoolConnAdapter that implements pooledListener directly
-// against *pgxpool.Conn. Tests inject a fakeNotifier that returns a
-// fake pooledListener directly, so no intermediate interface is needed
-// for testability.
+// against *pgxpool.Conn. Tests drive the listen loop through a fake
+// pooledListener directly, so no intermediate interface is needed for
+// testability.
 type poolAdapter struct {
 	pool *pgxpool.Pool
 }

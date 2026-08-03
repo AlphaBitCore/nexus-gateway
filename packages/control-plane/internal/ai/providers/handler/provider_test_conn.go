@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
@@ -155,7 +156,11 @@ func (h *Handler) decryptCredential(ctx context.Context, credID, providerID, enc
 // over TLS (service mesh or TLS-terminating ingress) so the key is never sent in
 // cleartext on the wire. Responses carry only a hasAPIKey boolean, never the key.
 func (h *Handler) forwardProviderTest(c echo.Context, providerName, adapterType, baseURL, apiKey string) error {
-	gwURL := strings.TrimRight(h.proxy.AIGatewayURL, "/") + "/internal/provider-test"
+	gwBase, err := h.aiGatewayBase(c.Request().Context())
+	if err != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", err)
+	}
+	gwURL := strings.TrimRight(gwBase, "/") + "/internal/provider-test"
 
 	payload, _ := json.Marshal(map[string]string{
 		"providerName": providerName,

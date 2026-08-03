@@ -205,6 +205,13 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 	things.POST("/deregister", thingsAPI.Deregister)
 	things.POST("/exemption", thingsAPI.ExemptionUpload)
 	things.GET("/update-check", thingsAPI.UpdateCheck)
+	// Peer service URL resolution (reported staticInfo privateUrl/publicUrl
+	// by service type). Registered before the `/:id/...` param route on
+	// purpose (echo static-over-param precedence; same reason as
+	// `/things/overrides` in the hub API group above). Service-token only —
+	// the handler 403s device-token (agent) callers: the private URL is an
+	// internal address that must not reach end-user devices.
+	things.GET("/service-url/:thing_type", thingsAPI.GetServiceURL)
 	// Per-agent attestation public key lookup, called by CP's
 	// AttestationKeyCache loader. Same deviceAuth group so service-token
 	// (CP) and device-token (agent self-introspection) callers both work.

@@ -12,6 +12,16 @@ import (
 type Record struct {
 	RequestID       string
 	ClientRequestID string
+	// EndUserID is the caller-declared end-user tag (the caller's own
+	// customer id, not a Nexus identity) — an opaque correlation key
+	// persisted verbatim onto traffic_event.end_user_id. Sourced from the
+	// X-Nexus-End-User-Id header or the ingress protocol's native field;
+	// never validated, never joined, never used for quota / routing / IAM.
+	EndUserID string
+	// SessionID is the caller-declared session/conversation tag — the grain
+	// between EndUserID and ClientRequestID. Same contract as EndUserID;
+	// sourced from the X-Nexus-Session-Id header only.
+	SessionID string
 	// TraceID links this event to upstream agent/compliance-proxy events for the
 	// same request. Extracted from the X-Nexus-Request-Id header; falls back to
 	// RequestID when the header is absent (direct-to-gateway traffic).
@@ -172,6 +182,26 @@ type Record struct {
 	// the gateway will check on future FT.SEARCH hits.
 	GatewayCacheL2EntryKey string
 	ProviderCacheStatus    ProviderCacheStatus
+
+	// ArtifactRefs is the JSON-encoded array of artifact references for
+	// binary-producing multimodal responses (image generation, TTS):
+	// [{"sha256","sizeBytes","mime"}] for byte-bearing artifacts (inline
+	// b64_json images, TTS audio bodies), [{"url"}] for URL-return images
+	// (reference only — the gateway NEVER dereferences the URL, and no
+	// content hash exists in that mode). Non-PII metadata; empty for
+	// non-multimodal traffic. Persisted to traffic_event.artifact_refs.
+	ArtifactRefs string
+
+	// ComplianceCoverage records what compliance scanning ACTUALLY ran for
+	// this request, stamped at request time (a view-time recompute from
+	// current config would misreport history): "prompt-only" (the request
+	// text leaves were scanned; binary output is not inspectable) or
+	// "none" (no hook pipeline was configured for this endpoint). Stamped
+	// only on multimodal endpoints in this slice; empty for chat/embeddings
+	// (no claim, existing behavior). Non-PII enum; persisted to
+	// traffic_event.compliance_coverage and rendered as the per-modality
+	// coverage badge.
+	ComplianceCoverage string
 
 	CacheKey string
 

@@ -20,6 +20,13 @@ type CheckLevel struct {
 	CurrentCents int64
 	LimitCents   int64
 	PeriodKey    string
+	// EnforcementMode is the resolved enforcement mode for this level
+	// ("reject" | "downgrade" | "notify-and-proceed"); empty when no
+	// enforcing policy/override matched (track-only and no-limit levels are
+	// never stamped). Lets post-settlement evaluators — the realtime relay's
+	// per-response over-limit sever — act on reject-mode levels without a
+	// second policy resolve or Redis read.
+	EnforcementMode string
 }
 
 // BuildCheckChain returns check levels including org hierarchy walk-up.

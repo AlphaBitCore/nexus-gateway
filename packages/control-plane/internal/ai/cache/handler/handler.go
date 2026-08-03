@@ -74,8 +74,9 @@ func newWithPool(pool cachestore.PgxPool, hub HubConfigChanger, aw *audit.Writer
 // RegisterRoutes mounts the prompt-cache admin endpoints under the
 // caller-supplied admin group, gated by the prompt-cache IAM resource.
 func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
-	g.GET("/cache/global", h.CacheGetGlobal, iamMW(iam.ResourcePromptCache.Action(iam.VerbRead)))
-	g.PUT("/cache/global", h.CachePutGlobal, iamMW(iam.ResourcePromptCache.Action(iam.VerbUpdate)))
+	// GET/PUT /cache/global are retired with Tier 1 (the cache master kill
+	// switch and the global normaliser gate). The prompt-cache IAM resource is
+	// unchanged — the adapter / provider / effective routes below still use it.
 
 	g.GET("/cache/adapters", h.CacheListAdapters, iamMW(iam.ResourcePromptCache.Action(iam.VerbRead)))
 	g.GET("/cache/adapter/:adapter_type", h.CacheGetAdapter, iamMW(iam.ResourcePromptCache.Action(iam.VerbRead)))

@@ -37,10 +37,10 @@ func TestBinwireAllFieldsRoundTrip(t *testing.T) {
 	// desynced the stream so this one was never reached.
 	cv := reflect.ValueOf(got)
 	ct := cv.Type()
-	for i := 0; i < cv.NumField(); i++ {
+	for i := range cv.NumField() {
 		f := cv.Field(i)
 		name := ct.Field(i).Name
-		if f.Kind() == reflect.Ptr && f.IsNil() {
+		if f.Kind() == reflect.Pointer && f.IsNil() {
 			t.Errorf("consumer field %s is nil after decode of a fully-populated record (field-id desync or unmapped id)", name)
 		}
 	}
@@ -53,12 +53,12 @@ func TestBinwireAllFieldsRoundTrip(t *testing.T) {
 	pv := reflect.ValueOf(m)
 	pt := pv.Type()
 	producerStr := map[string]bool{}
-	for i := 0; i < pv.NumField(); i++ {
+	for i := range pv.NumField() {
 		if pt.Field(i).Type.Kind() == reflect.String && pv.Field(i).String() != "" {
 			producerStr[pt.Field(i).Name] = true
 		}
 	}
-	for i := 0; i < cv.NumField(); i++ {
+	for i := range cv.NumField() {
 		f := cv.Field(i)
 		name := ct.Field(i).Name
 		if f.Kind() == reflect.String && producerStr[name] && f.String() == "" {
@@ -72,7 +72,7 @@ func TestBinwireAllFieldsRoundTrip(t *testing.T) {
 func populateAllFields(v reflect.Value) {
 	rawType := reflect.TypeOf(json.RawMessage(nil))
 	tp := v.Type()
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		f := v.Field(i)
 		if !f.CanSet() {
 			continue
@@ -99,7 +99,7 @@ func populateAllFields(v reflect.Value) {
 			mv := reflect.MakeMap(ft)
 			mv.SetMapIndex(reflect.ValueOf("k"), reflect.New(ft.Elem()).Elem())
 			f.Set(mv)
-		case ft.Kind() == reflect.Ptr:
+		case ft.Kind() == reflect.Pointer:
 			f.Set(reflect.New(ft.Elem()))
 			pe := f.Elem()
 			switch pe.Kind() {

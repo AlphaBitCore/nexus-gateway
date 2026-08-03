@@ -1240,6 +1240,80 @@ func TestUpsertOverrides_EmptyInstallID_Returns400(t *testing.T) {
 	}
 }
 
+// S-13: a rejected override is a client error. The store refuses a
+// severityOverride outside hard|soft|warn (persisting one silently stops the
+// rule from blocking); the handler must surface that as 400 with the per-rule
+// reasons, not as a 500 that tells the operator the server is broken.
+func TestUpsertOverrides_InvalidRules_Returns400WithPerRuleReasons(t *testing.T) {
+	store := newFakeStore()
+	store.upsertOvrErr = &rulepack.InvalidRulesError{Errors: []rulepack.RuleError{
+		{Index: 1, RuleID: "r-bogus", Reason: `invalid severityOverride "high" (want hard|soft|warn)`},
+	}}
+	h := newTestHandler(store, nil)
+	body := mustJSON(t, map[string]any{"overrides": []map[string]any{
+		{"ruleLocalId": "r-bogus", "severityOverride": "high"},
+	}})
+	c, rec := echoCtx(http.MethodPatch, "/rule-pack-installs/inst-1/overrides", body)
+	c.SetParamNames("installId")
+	c.SetParamValues("inst-1")
+	if err := h.UpsertOverrides(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Error string               `json:"error"`
+		Rules []rulepack.RuleError `json:"rules"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, rec.Body.String())
+	}
+	if got.Error != "validation_failed" {
+		t.Errorf("error = %q; want validation_failed", got.Error)
+	}
+	// The per-rule list is the point: an admin fixing a batch needs to know
+	// WHICH entry was refused, not just that something was.
+	if len(got.Rules) != 1 || got.Rules[0].RuleID != "r-bogus" {
+		t.Errorf("rules = %+v; want the one refused entry (r-bogus)", got.Rules)
+	}
+	if !strings.Contains(got.Rules[0].Reason, "hard|soft|warn") {
+		t.Errorf("reason %q must name the allowed set", got.Rules[0].Reason)
+	}
+}
+
+// Same discipline on the import path: InvalidRulesError had no status mapping
+// anywhere, so a bad severity or an uncompilable pattern arrived as a 500.
+func TestImport_InvalidRules_Returns400(t *testing.T) {
+	store := newFakeStore()
+	store.importErr = &rulepack.InvalidRulesError{Errors: []rulepack.RuleError{
+		{Index: 0, RuleID: "r1", Reason: `invalid severity "high" (want hard|soft|warn)`},
+	}}
+	h := newTestHandler(store, nil)
+	// Import reads the RAW request body as YAML — there is no JSON envelope.
+	// This pack is fully valid (namespaced name, v-prefixed semver, in-enum
+	// severity, compilable pattern) so it clears LoadYAML/ValidatePack and the
+	// only remaining error source is the injected store failure.
+	c, rec := echoCtx(http.MethodPost, "/rule-packs/import",
+		"name: t/p\nversion: v1.0.0\nmaintainer: t\nrules:\n  - id: r1\n    category: pii\n    severity: hard\n    pattern: x\n")
+	if err := h.Import(c); err != nil {
+		t.Fatal(err)
+	}
+	// The yaml above is deliberately VALID, so a 400 can only come from the
+	// injected store error. Without this the test would pass on any earlier
+	// 400 (a parse rejection) and prove nothing about the mapping.
+	if store.importHits != 1 {
+		t.Fatalf("ImportPack called %d times; the 400 must come from the store, not an earlier parse rejection (body=%s)",
+			store.importHits, rec.Body.String())
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if got := decodeBody(t, rec)["error"]; got != "validation_failed" {
+		t.Errorf("error = %v; want validation_failed", got)
+	}
+}
+
 func TestUpsertOverrides_StoreError_Returns500(t *testing.T) {
 	store := newFakeStore()
 	store.upsertOvrErr = errors.New("db error")

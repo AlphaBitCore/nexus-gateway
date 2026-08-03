@@ -31,6 +31,12 @@ const aiguardFallbackContextLimit = 8192
 // bulk of the context budget for the conversation being classified.
 const aiguardReserveOutput = 512
 
+// aiguardMinInputBudget is the content budget floor when the judge
+// prompt template consumes the model window (misconfiguration): some
+// newest content always reaches the judge, bounded, never the full
+// unbounded conversation.
+const aiguardMinInputBudget = 256
+
 // RuntimeConfig is the subset of configstore.AIGuardConfig that classifyImpl
 // requires per call. Keeping this narrow makes the hot path independent of
 // DB-shaped optional fields (credentials, provider IDs, etc.) — those are
@@ -42,7 +48,7 @@ type RuntimeConfig struct {
 	TimeoutMs          int
 	CacheTTLSeconds    int
 	// InputStrategy is one of the five inputstaging.Strategy constants.
-	// Empty string → defaults to StrategySystemPlusLastUser at classify time.
+	// Empty string → defaults to StrategyFullTruncated at classify time.
 	InputStrategy string
 	// ModelContextLimit is the judge model's context window in tokens.
 	// 0 → classify uses aiguardFallbackContextLimit (8192).
@@ -115,11 +121,17 @@ func Classify(
 // effective Content for the classify pipeline. When Messages is empty the
 // caller's Content is returned unchanged.
 //
+// The default strategy is full_truncated: the judge's value is violation
+// coverage, and dropping middle turns would blind it to content assembled
+// across turns. Under budget pressure inputstaging's enforcement drops
+// oldest messages first — completeness when space allows, newest content
+// when tight. Admins narrow the input via RuntimeConfig.InputStrategy.
+//
 // Overflow handling (fail-open): if Plan returns OverflowNone, the staged
 // content is used as-is. On any overflow kind, a Prometheus counter is
-// incremented and a warn is logged via slog.Default(), but the staged
-// (truncated) content is still forwarded to the judge — blocking on
-// overflow would turn a latency spike into a silent allow-all.
+// incremented and a debug line is logged, but the staged (budget-bounded)
+// content is still forwarded to the judge — blocking on overflow would
+// turn a latency spike into a silent allow-all.
 func applyInputStaging(req Request, cfg *RuntimeConfig) string {
 	if len(req.Messages) == 0 {
 		return req.Content
@@ -127,12 +139,32 @@ func applyInputStaging(req Request, cfg *RuntimeConfig) string {
 
 	strategy := inputstaging.Strategy(cfg.InputStrategy)
 	if !strategy.Valid() {
-		strategy = inputstaging.StrategySystemPlusLastUser
+		strategy = inputstaging.StrategyFullTruncated
 	}
 
 	contextLimit := cfg.ModelContextLimit
 	if contextLimit <= 0 {
 		contextLimit = aiguardFallbackContextLimit
+	}
+	// The judge prompt template wraps the staged content in the same
+	// window, so its tokens shrink the content budget. The raw template
+	// string approximates the rendered overhead (placeholders and their
+	// values are the same magnitude) without paying a render per call.
+	// Conservative estimate: the template is subtracted, so under-counting it
+	// would inflate the content budget and risk overflowing the judge model.
+	contextLimit -= inputstaging.EstimateTokensConservative(cfg.PromptTemplate)
+	if contextLimit < aiguardReserveOutput+aiguardMinInputBudget {
+		// The template consumes the window (misconfiguration). Floor the
+		// content budget instead of letting it collapse to zero — a zero
+		// budget would fail open and forward the UNBOUNDED conversation.
+		// Some newest content always ships; the judge call may still fail
+		// upstream, and the warn + counter surface the misconfiguration.
+		slog.Default().Warn("aiguard: judge context window too small for prompt template plus reply reserve; flooring content budget",
+			"model_context_limit", cfg.ModelContextLimit,
+			"floor", aiguardMinInputBudget,
+		)
+		InputOverflowTotal.WithLabelValues("template_budget_floor").Inc()
+		contextLimit = aiguardReserveOutput + aiguardMinInputBudget
 	}
 
 	plan, err := inputstaging.Plan(inputstaging.PlanInput{
@@ -151,7 +183,10 @@ func applyInputStaging(req Request, cfg *RuntimeConfig) string {
 	}
 
 	if plan.OverflowKind != inputstaging.OverflowNone {
-		slog.Default().Warn("aiguard: classify input overflow after inputstaging",
+		// Debug, not Warn: with the full_truncated default, a bounded
+		// overflow is steady-state on long conversations — the counter
+		// below carries the operator signal.
+		slog.Default().Debug("aiguard: classify input bounded by budget enforcement",
 			"overflow_kind", string(plan.OverflowKind),
 			"input_tokens", plan.InputTokens,
 			"budget", contextLimit-aiguardReserveOutput,
@@ -171,12 +206,10 @@ func applyInputStaging(req Request, cfg *RuntimeConfig) string {
 		}
 		sb.WriteString(m.Content)
 	}
-	// Last-resort hard cut, applied here inside ai-guard (not at the hook
-	// dispatch layer): inputstaging.Plan drops whole messages but never cuts
-	// within one, so a single oversized turn would reach the judge over-limit.
-	// Keep the newest content (tail) so the classification reflects the latest
-	// user input, not a stale preamble.
-	return inputstaging.TruncateToTokens(sb.String(), contextLimit-aiguardReserveOutput)
+	// No local hard cut: inputstaging's default budget enforcement already
+	// bounds the planned messages (oldest dropped first, an oversized
+	// newest turn tail-truncated), so the joined content fits the budget.
+	return sb.String()
 }
 
 // classifyImpl runs the full classify pipeline:

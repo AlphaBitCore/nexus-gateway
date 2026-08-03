@@ -79,7 +79,6 @@ func TestDecodeInterceptionDomainRows_PointerOverridesThreaded(t *testing.T) {
 	failBehavior := "fail_closed"
 	captureReq := true
 	captureResp := false
-	rawSpill := true
 	rows := []InterceptionDomainRow{
 		{
 			ID: "d1", Name: "n",
@@ -93,7 +92,6 @@ func TestDecodeInterceptionDomainRows_PointerOverridesThreaded(t *testing.T) {
 			StreamingFailBehavior:   &failBehavior,
 			CaptureRequestBody:      &captureReq,
 			CaptureResponseBody:     &captureResp,
-			RawBodySpillEnabled:     &rawSpill,
 		},
 	}
 	out, _ := decodeInterceptionDomainRows(rows)
@@ -119,9 +117,6 @@ func TestDecodeInterceptionDomainRows_PointerOverridesThreaded(t *testing.T) {
 	if d.CaptureResponseBody == nil || *d.CaptureResponseBody != captureResp {
 		t.Errorf("CaptureResponseBody pointer dropped: %v", d.CaptureResponseBody)
 	}
-	if d.RawBodySpillEnabled == nil || *d.RawBodySpillEnabled != rawSpill {
-		t.Errorf("RawBodySpillEnabled pointer dropped: %v", d.RawBodySpillEnabled)
-	}
 }
 
 func TestDecodeInterceptionDomainRows_NilPointersStayNil(t *testing.T) {
@@ -141,7 +136,7 @@ func TestDecodeInterceptionDomainRows_NilPointersStayNil(t *testing.T) {
 	if d.StreamingMode != nil || d.StreamingChunkBytes != nil ||
 		d.StreamingHookTimeoutMs != nil || d.StreamingMaxBufferBytes != nil ||
 		d.StreamingFailBehavior != nil || d.CaptureRequestBody != nil ||
-		d.CaptureResponseBody != nil || d.RawBodySpillEnabled != nil {
+		d.CaptureResponseBody != nil {
 		t.Errorf("nil pointer fields must stay nil for inherit-default semantics: %+v", d)
 	}
 }

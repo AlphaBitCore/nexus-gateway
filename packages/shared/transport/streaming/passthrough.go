@@ -4,7 +4,35 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync"
 )
+
+// relayBufSize is the read chunk for the passthrough relays. 32 KiB matches
+// what these functions have always used; it is large enough that a full SSE
+// frame usually lands in one read and small enough to keep time-to-first-byte
+// tight on a slow trickle.
+const relayBufSize = 32 * 1024
+
+// relayBufPool reuses the relay read buffer across streams. Every SSE response
+// that reaches a passthrough relay used to allocate a fresh 32 KiB here, and a
+// proxy serving many short streams paid that repeatedly — measured as the
+// dominant per-stream cost on short replies.
+//
+// sync.Pool is the right primitive for this one (playbook §2.2): a plain byte
+// slice is cheap to recreate, so losing the pool contents to a GC costs only a
+// re-allocation. The GC-stable-ring pattern is reserved for objects whose
+// construction is expensive (cgo scratch, zstd encoders).
+//
+// The buffer never escapes: it is written to the client and to the tee pipe
+// synchronously inside the loop, and both have consumed it before the next
+// Read overwrites it. So returning it on function exit is safe.
+var relayBufPool = sync.Pool{New: func() any {
+	b := make([]byte, relayBufSize)
+	return &b
+}}
+
+func getRelayBuf() *[]byte  { return relayBufPool.Get().(*[]byte) }
+func putRelayBuf(b *[]byte) { relayBufPool.Put(b) }
 
 // Passthrough copies an SSE stream directly from upstream to client with no
 // compliance inspection. It respects context cancellation and flushes after
@@ -12,7 +40,9 @@ import (
 func Passthrough(ctx context.Context, upstream io.Reader, client io.Writer) error {
 	flusher, canFlush := client.(http.Flusher)
 
-	buf := make([]byte, 32*1024) // 32 KB read buffer
+	bufp := getRelayBuf()
+	defer putRelayBuf(bufp)
+	buf := *bufp
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -57,6 +87,7 @@ func PassthroughWithAccumulator(ctx context.Context, upstream io.Reader, client 
 	go func() {
 		defer close(parseDone)
 		parser := NewSSEParser(pr)
+		defer parser.Release()
 		for {
 			evt, err := parser.Next()
 			if err != nil {
@@ -72,7 +103,9 @@ func PassthroughWithAccumulator(ctx context.Context, upstream io.Reader, client 
 		}
 	}()
 
-	buf := make([]byte, 32*1024)
+	bufp := getRelayBuf()
+	defer putRelayBuf(bufp)
+	buf := *bufp
 	var mainErr error
 	for {
 		if err := ctx.Err(); err != nil {

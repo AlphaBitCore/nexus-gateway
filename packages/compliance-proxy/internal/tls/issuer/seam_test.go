@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"errors"
 	"io"
 	"strings"
@@ -20,25 +21,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/testutil"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 )
-
-// failAfterReader delegates to inner for the first `at` Read calls then
-// returns err. Same shape as the entropy_seam_test.go probe in
-// agent/core/network/tls — sweeps thresholds so we hit each downstream
-// rand consumer (ecdsa.GenerateKey, rand.Int, x509.CreateCertificate).
-type failAfterReader struct {
-	inner io.Reader
-	err   error
-	calls *int
-	at    int
-}
-
-func (f *failAfterReader) Read(p []byte) (int, error) {
-	*f.calls++
-	if *f.calls > f.at {
-		return 0, f.err
-	}
-	return f.inner.Read(p)
-}
 
 // failingReader is a small io.Reader that always returns the given error.
 type failingReader struct{ err error }
@@ -66,9 +48,9 @@ func TestCertRandReader_ProductionDefault(t *testing.T) {
 	}
 }
 
-// TestSignCert_GenerateLeafKeyError — when entropy is starved, SignCert
-// must surface the ecdsa.GenerateKey failure as a `generate leaf key`
-// wrapped error and NOT return a partial cert.
+// TestSignCert_GenerateLeafKeyError — when ECDSA key generation fails,
+// SignCert must surface it as a `generate leaf key` wrapped error and NOT
+// return a partial cert.
 func TestSignCert_GenerateLeafKeyError(t *testing.T) {
 	dir := t.TempDir()
 	certPath, keyPath, err := testutil.WriteTestCA(dir)
@@ -80,8 +62,11 @@ func TestSignCert_GenerateLeafKeyError(t *testing.T) {
 		t.Fatalf("NewIssuer: %v", err)
 	}
 
-	restore := swapCertRandReader(t, failingReader{err: errors.New("starved")})
-	defer restore()
+	origGen := certGenerateKey
+	certGenerateKey = func(elliptic.Curve, io.Reader) (*ecdsa.PrivateKey, error) {
+		return nil, errors.New("key generation refused")
+	}
+	t.Cleanup(func() { certGenerateKey = origGen })
 
 	cert, err := iss.SignCert("entropy-down.example.com")
 	if err == nil {
@@ -95,12 +80,10 @@ func TestSignCert_GenerateLeafKeyError(t *testing.T) {
 	}
 }
 
-// TestSignCert_AllRandConsumerArms sweeps failAfter thresholds 1..80 so
-// every downstream rand consumer in SignCert (ecdsa.GenerateKey internal
-// reads, rand.Int for serial, x509.CreateCertificate for signature
-// randomization) gets exercised in at least one iteration. Same probe
-// pattern as agent/core/network/tls/entropy_seam_test.go.
-func TestSignCert_AllRandConsumerArms(t *testing.T) {
+// TestSignCert_SerialEntropyError — the serial draw is the one SignCert step
+// that still reads certRandReader, so a starved reader must surface as
+// `generate serial` with no cert returned.
+func TestSignCert_SerialEntropyError(t *testing.T) {
 	dir := t.TempDir()
 	certPath, keyPath, err := testutil.WriteTestCA(dir)
 	if err != nil {
@@ -110,36 +93,41 @@ func TestSignCert_AllRandConsumerArms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
+	defer swapCertRandReader(t, failingReader{err: errors.New("starved")})()
 
-	sawAny := false
-	wrapMatched := false
-	for at := 1; at < 80; at++ {
-		calls := 0
-		certRandReader = &failAfterReader{
-			inner: rand.Reader,
-			err:   errors.New("starved"),
-			calls: &calls,
-			at:    at,
-		}
-		host := "probe" + strings.Repeat("x", at) + ".example.com"
-		_, err := iss.SignCert(host)
-		certRandReader = rand.Reader
-		if err == nil {
-			continue
-		}
-		sawAny = true
-		msg := err.Error()
-		if strings.Contains(msg, "generate leaf key") ||
-			strings.Contains(msg, "generate serial") ||
-			strings.Contains(msg, "sign leaf cert") {
-			wrapMatched = true
-		}
+	cert, err := iss.SignCert("starved-serial.example.com")
+	if err == nil || !strings.Contains(err.Error(), "generate serial") {
+		t.Fatalf("starved serial draw should wrap %q; got %v", "generate serial", err)
 	}
-	if !sawAny {
-		t.Fatal("no failAfter threshold surfaced an entropy error from SignCert")
+	if cert != nil {
+		t.Error("error path must return nil cert")
 	}
-	if !wrapMatched {
-		t.Error("at least one threshold must wrap a known downstream consumer error")
+}
+
+// TestSignCert_SignLeafError — a signing failure after the key and serial are
+// minted must surface as `sign leaf cert`, not a panic or a partial cert.
+func TestSignCert_SignLeafError(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath, err := testutil.WriteTestCA(dir)
+	if err != nil {
+		t.Fatalf("WriteTestCA: %v", err)
+	}
+	iss, err := NewIssuer(certPath, keyPath, nil)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	orig := certCreateCertificate
+	certCreateCertificate = func(io.Reader, *x509.Certificate, *x509.Certificate, any, any) ([]byte, error) {
+		return nil, errors.New("signing refused")
+	}
+	t.Cleanup(func() { certCreateCertificate = orig })
+
+	cert, err := iss.SignCert("sign-refused.example.com")
+	if err == nil || !strings.Contains(err.Error(), "sign leaf cert") {
+		t.Fatalf("signing failure should wrap %q; got %v", "sign leaf cert", err)
+	}
+	if cert != nil {
+		t.Error("error path must return nil cert")
 	}
 }
 

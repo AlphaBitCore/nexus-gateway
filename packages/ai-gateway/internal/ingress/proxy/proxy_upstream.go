@@ -61,27 +61,49 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 		execResult = h.deps.Executor.Execute(r.Context(), routeResult.Targets, req, policy)
 	}
 
-	// Total attempt count for the response header. 1 means first-try success;
-	// 2+ means at least one L2 retry or L3 failover happened. Defensive floor
-	// at 1 — if the executor returned a result, at least one attempt ran.
-	attempts := len(execResult.Attempts)
+	// Upstream call count for the response header. 1 means first-try success;
+	// 2+ means at least one L2 retry or L3 failover happened. Counts only
+	// calls that reached a provider — a target abandoned before dispatch
+	// never made one. Defensive floor at 1 — if the executor returned a
+	// result, the client asked us to reach upstream at least once.
+	attempts := execResult.UpstreamAttempts()
 	if attempts < 1 {
 		attempts = 1
 	}
 
-	// Set credential ID and name from the successful attempt for audit tracking.
+	// Attribute the audit record to the attempt that actually reached a
+	// provider: its credential is the one that saw the outcome, which is the
+	// answer to "which key got rate-limited?". Fall back to the last entry
+	// only when nothing dispatched at all — it still names the target we were
+	// trying to reach, and there is no credential to report.
 	// rec.ModelName (requested side) was stamped right after readBody with the
 	// literal client model string; only Routed* fields get set here.
-	if n := len(execResult.Attempts); n > 0 {
-		last := execResult.Attempts[n-1]
-		rec.CredentialID = last.CredentialID
-		rec.CredentialName = last.CredentialName
-		rec.RoutedProviderID = last.Target.ProviderID
-		rec.RoutedProviderName = last.Target.ProviderName
-		rec.RoutedModelID = last.Target.ModelID
-		rec.RoutedModelName = last.Target.ModelCode
-		rec.TargetHost = upstreamHost(last.Target)
+	attributed := execResult.Terminal()
+	if attributed == nil {
+		if n := len(execResult.Attempts); n > 0 {
+			attributed = &execResult.Attempts[n-1]
+		}
 	}
+	if attributed != nil {
+		rec.CredentialID = attributed.CredentialID
+		rec.CredentialName = attributed.CredentialName
+		rec.RoutedProviderID = attributed.Target.ProviderID
+		rec.RoutedProviderName = attributed.Target.ProviderName
+		rec.RoutedModelID = attributed.Target.ModelID
+		rec.RoutedModelName = attributed.Target.ModelCode
+		rec.TargetHost = upstreamHost(attributed.Target)
+	}
+
+	// The executor has returned, so everything below writes to the client after
+	// however long the upstream took — up to the full upstream budget across
+	// retries and failover. The flat server.writeTimeout was armed when the
+	// request header was read and is sized for ordinary responses, so every
+	// write past this point (client-closed, rate-limited, all-providers-failed,
+	// and the 4xx envelope below) would be severed without this. Arming it once
+	// here covers them all: the deadline is absolute and lives on the
+	// connection. handleNonStream arms it again for the success body, which it
+	// writes from a later stage.
+	extendWriteDeadlineToUpstreamBudget(w)
 
 	if execResult.Error != nil {
 		// Client gone before we produced a response: the inbound request context
@@ -94,20 +116,41 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 		// attempt was about to report. (The body write is a no-op on a closed
 		// connection; the value is the audit/metrics attribution via rec.)
 		if ctxErr := r.Context().Err(); errors.Is(ctxErr, context.Canceled) || errors.Is(ctxErr, context.DeadlineExceeded) {
+			// No errors_total here: the client walked away, so nothing
+			// upstream failed and provider-availability alerting must not
+			// count it against the provider.
 			h.writeDetailedErr(w, rec, statusClientClosedRequest, "CLIENT_CLOSED", "client closed request before upstream responded", "")
 			return nil, routingcore.RoutingTarget{}, attempts, execResult.Error
 		}
-		// If the last attempt was rate-limited, propagate 429 so clients can
-		// back off rather than receiving an opaque 502.
-		if n := len(execResult.Attempts); n > 0 && execResult.Attempts[n-1].StatusCode == http.StatusTooManyRequests {
+
+		// The counter is O(1) and rate limits belong in it — an aggregate is
+		// exactly the right instrument for a failure mode whose whole shape is
+		// its rate. The per-attempt log is not, and stays below the rate-limit
+		// return: a rate-limit storm is high-volume by definition, so logging
+		// each one would put unbounded event volume on the hot failure path.
+		terminal := execResult.Terminal()
+		h.recordUpstreamFailure(terminal)
+
+		// A rate limit must reach the client as a 429 so it backs off; an
+		// opaque 502 tells it the provider is down, which is both false and
+		// the one message that will not produce a backoff.
+		//
+		// Code and Status are complementary signals here, not alternatives,
+		// so either one alone loses rate limits the other catches. Code is
+		// normalised from the provider's own error type, which catches a
+		// provider reporting "overloaded" on a non-429 status (Anthropic's
+		// 529). Status is what the provider actually replied, which catches a
+		// 429 whose body typed the cause as something else: the normalizers
+		// derive Code from the type and keep Status at the raw value, and the
+		// status fallback that would map 429 to rate_limited is skipped once a
+		// recognised type has set Code (an Anthropic "api_error" or a Gemini
+		// "UNAVAILABLE" on a 429 lands as upstream_error/429).
+		if terminal != nil &&
+			(terminal.Code == provcore.CodeRateLimited || terminal.StatusCode == http.StatusTooManyRequests) {
 			h.writeDetailedErr(w, rec, http.StatusTooManyRequests, "PROVIDER_RATE_LIMITED", "upstream rate limit exceeded", "")
 			return nil, routingcore.RoutingTarget{}, attempts, execResult.Error
 		}
-		for i, a := range execResult.Attempts {
-			if a.Error != "" {
-				logger.Error("executor attempt failed", "attempt", i+1, "provider", a.Target.ProviderName, "model", a.Target.ModelCode, "reason", a.Error)
-			}
-		}
+		logUpstreamFailures(logger, execResult.Attempts)
 		h.writeDetailedErr(w, rec, http.StatusBadGateway, "PROVIDER_UNAVAILABLE", "all upstream providers failed", "")
 		return nil, routingcore.RoutingTarget{}, attempts, execResult.Error
 	}
@@ -123,7 +166,19 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 	// path, matching the success-path forwarding at writeForwardedResponseHeaders.
 	if execResult.StatusCode >= 400 {
 		rec.StatusCode = execResult.StatusCode
+		// The upstream's own canonical cause, so this column can answer
+		// "the credential is rejected" vs "the request was malformed" vs
+		// "the prompt exceeds the window" — three failures an operator acts on
+		// differently and which a single blanket code cannot separate.
+		// PROVIDER_ERROR stays the value for a terminal 4xx that carries no
+		// canonical code: the classifier promises an envelope for this class,
+		// but its defensive fallback can reach here without one, and an
+		// unclassified failure must not borrow another failure's name.
 		rec.ErrorCode = "PROVIDER_ERROR"
+		if pe := execResult.ProviderError; pe != nil && pe.Code != "" {
+			rec.ErrorCode = pe.Code
+		}
+		h.recordUpstreamFailure(execResult.Terminal())
 		rec.ErrorReason = extractProviderErrorMessage(execResult.Body, execResult.StatusCode)
 		rec.RoutedProviderID = target.ProviderID
 		rec.RoutedProviderName = target.ProviderName
@@ -283,7 +338,7 @@ func (h *Handler) egressReshapeNonStream(ingress Ingress, target routingcore.Rou
 	return h.deps.CanonicalBridge.ResponseCanonicalToIngress(ingress.BodyFormat, body)
 }
 
-func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *audit.Record, result *executor.ExecutionResult, target routingcore.RoutingTarget, quotaInPrice, quotaOutPrice float64, quotaDecision *quota.Decision, endpointType, requestID string, start time.Time, logger *slog.Logger) {
+func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *audit.Record, result *executor.ExecutionResult, target routingcore.RoutingTarget, forwardedBody []byte, quotaInPrice, quotaOutPrice float64, quotaDecision *quota.Decision, endpointType, requestID string, start time.Time, logger *slog.Logger) {
 	respBody := result.Body
 	ingress, _ := IngressFromContext(r.Context())
 	// Reverse-decode the upstream's Responses-shape body back into
@@ -362,11 +417,34 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 			PromptTokens:     int(rec.PromptTokens),
 			CompletionTokens: int(rec.CompletionTokens),
 		}
+		// Multimodal units (image count / TTS chars) — the fallback the
+		// per-kind formulas price when the provider reports no usage tokens.
+		// TTS chars come from the FORWARDED request body (always in hand),
+		// NOT rec.RequestBody, which is empty when payload capture's
+		// storeRequestBody is off (the privacy-conscious default) — reading
+		// it there would silently price every TTS request at $0.
+		stampModalityUnits(&units, rec.EndpointType, forwardedBody, respBody)
+		// Underivable-units guard: a multimodal 2xx that yields neither usage
+		// tokens nor a modality unit prices at $0. Surface it (deduped per
+		// endpoint) so a truncated / malformed response or a missing field is
+		// visible instead of a silent zero — the WARN the cost formula
+		// comments and the SDD promise the stamping site owns.
+		if warnUnderivableModalityUnits(rec.EndpointType, result.StatusCode, units) {
+			warnUnderivableUnitsOnce(logger, rec.EndpointType, target.ModelID, result.Truncated)
+		}
 		cost := estimator.Lookup(rec.EndpointType)(units, metrics.ModelPrices{
 			InputUsdPerM:  &quotaInPrice,
 			OutputUsdPerM: &quotaOutPrice,
 		})
 		rec.EstimatedCostUsd = cost.Total
+	}
+	// Artifact reference stamp (non-PII): fingerprint byte-bearing
+	// artifacts over bytes the buffered non-stream response already holds;
+	// URL-return images store the reference only (never dereferenced). The
+	// content-type is the upstream response header (audio/mpeg for TTS),
+	// never the JSON hint stamped later for the CP reader.
+	if rec.ArtifactRefs == "" && result.StatusCode >= 200 && result.StatusCode < 300 {
+		rec.ArtifactRefs = buildArtifactRefs(rec.EndpointType, respBody, result.Headers.Get("Content-Type"))
 	}
 	// Stamp ProviderCacheStatus from upstream usage cache fields.
 	// Skip if already set (gateway-served paths stamp NA before reaching here).
@@ -470,6 +548,12 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// cache is disabled or no broker is wired, so there is nothing to
 	// persist here.
 
+	// This body is written only after the upstream call returned, which for a
+	// reasoning model is minutes after the request header was read and armed
+	// the flat server.writeTimeout. Lift the deadline to the upstream budget
+	// first or the write is severed and the client loses a completed (and
+	// already billed) inference. Mirrors the Responses-API path.
+	extendWriteDeadlineToUpstreamBudget(w)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(respBody)

@@ -222,9 +222,9 @@ func clearAllEnv(t *testing.T) {
 	for _, k := range []string{
 		"CONTROL_PLANE_PORT", "CONTROL_PLANE_PUBLIC_URL",
 		"DATABASE_URL", "REDIS_ADDRS", "LOG_LEVEL",
-		"COMPLIANCE_PROXY_URL", "AI_GATEWAY_URL", "NEXUS_HUB_URL",
+		"NEXUS_HUB_URL",
 		"CREDENTIAL_ENCRYPTION_KEY", "CREDENTIAL_KEY_MAP",
-		"AGENT_CA_DIR", "COMPLIANCE_PROXY_RUNTIME_URL",
+		"AGENT_CA_DIR",
 		"COMPLIANCE_PROXY_API_TOKEN",
 		"OTEL_ENDPOINT", "OTEL_SERVICE_NAME",
 		"MQ_DRIVER", "NATS_URL",
@@ -260,9 +260,10 @@ func TestLoad_MissingFile(t *testing.T) {
 	if cfg.Log.Level != "info" || cfg.Log.Format != "json" {
 		t.Errorf("Log defaults wrong: %+v", cfg.Log)
 	}
-	if cfg.BFF.ComplianceProxyURL != "http://127.0.0.1:3040" ||
-		cfg.BFF.AIGatewayURL != "http://127.0.0.1:3050" ||
-		cfg.BFF.ComplianceProxyRuntimeURL != "http://127.0.0.1:3040" {
+	// Peer service URLs are intentionally absent from config — they are
+	// Hub-resolved at request time (shared/transport/peerurl). BFF carries
+	// only the env-only compliance-proxy API token, empty by default.
+	if cfg.BFF.ComplianceProxyAPIToken != "" {
 		t.Errorf("BFF defaults wrong: %+v", cfg.BFF)
 	}
 	if cfg.Registry.NexusHubURL != "http://127.0.0.1:3060" {
@@ -360,6 +361,8 @@ log:
   file: "/var/log/cp.log"
   stackOnError: true
 bff:
+  # Stale peer-URL keys from a pre-Hub-resolution config file — the loader
+  # must ignore them (peer URLs are Hub-resolved, not configured).
   complianceProxyUrl: "http://cp.local:3040"
   aiGatewayUrl: "http://ai.local:3050"
   complianceProxyRuntimeUrl: "http://cp.local:3041"
@@ -417,10 +420,10 @@ httpClients:
 	if cfg.Log.Level != "debug" || cfg.Log.Format != "text" || cfg.Log.File != "/var/log/cp.log" || !cfg.Log.StackOnError {
 		t.Errorf("Log = %+v", cfg.Log)
 	}
-	if cfg.BFF.ComplianceProxyURL != "http://cp.local:3040" ||
-		cfg.BFF.AIGatewayURL != "http://ai.local:3050" ||
-		cfg.BFF.ComplianceProxyRuntimeURL != "http://cp.local:3041" {
-		t.Errorf("BFF = %+v", cfg.BFF)
+	// The stale bff peer-URL yaml keys above parse without error and land
+	// nowhere — BFFConfig has no URL fields anymore.
+	if cfg.BFF.ComplianceProxyAPIToken != "" {
+		t.Errorf("BFF = %+v (yaml must not set the env-only token)", cfg.BFF)
 	}
 	if cfg.Registry.NexusHubURL != "http://hub.local:3060" {
 		t.Errorf("Registry.NexusHubURL = %q", cfg.Registry.NexusHubURL)
@@ -527,13 +530,13 @@ func TestLoad_AllEnvOverrides(t *testing.T) {
 	// REDIS_* env knobs are consumed by redisfactory.LoadEnv at wiring time,
 	// not at config.Load. See packages/shared/storage/redisfactory.
 	t.Setenv("LOG_LEVEL", "debug")
-	t.Setenv("COMPLIANCE_PROXY_URL", "http://envcp")
-	t.Setenv("AI_GATEWAY_URL", "http://envai")
+	// The retired peer-URL env vars (ai-gateway / compliance-proxy addresses)
+	// are deliberately NOT set: the loader no longer reads them (peer URLs
+	// are Hub-resolved), and the assertion below locks the token-only shape.
 	t.Setenv("NEXUS_HUB_URL", "http://envhub")
 	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "envkey")
 	t.Setenv("CREDENTIAL_KEY_MAP", "v1:dead,v2:beef")
 	t.Setenv("AGENT_CA_DIR", "/env/ca")
-	t.Setenv("COMPLIANCE_PROXY_RUNTIME_URL", "http://envcpruntime")
 	t.Setenv("COMPLIANCE_PROXY_API_TOKEN", "envcptoken")
 	t.Setenv("OTEL_ENDPOINT", "envotel:4317")
 	t.Setenv("OTEL_SERVICE_NAME", "envsvc")
@@ -559,10 +562,7 @@ func TestLoad_AllEnvOverrides(t *testing.T) {
 	if cfg.Log.Level != "debug" {
 		t.Errorf("Log.Level = %q", cfg.Log.Level)
 	}
-	if cfg.BFF.ComplianceProxyURL != "http://envcp" ||
-		cfg.BFF.AIGatewayURL != "http://envai" ||
-		cfg.BFF.ComplianceProxyRuntimeURL != "http://envcpruntime" ||
-		cfg.BFF.ComplianceProxyAPIToken != "envcptoken" {
+	if cfg.BFF.ComplianceProxyAPIToken != "envcptoken" {
 		t.Errorf("BFF = %+v", cfg.BFF)
 	}
 	if cfg.Registry.NexusHubURL != "http://envhub" {

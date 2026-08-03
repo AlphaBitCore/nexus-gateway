@@ -16,6 +16,7 @@ const (
 	classTimeout
 	classRate429
 	class5xx
+	classContextOverflow
 )
 
 // classify maps an adapter.Execute outcome to (errClass, cfgpolicy.ErrorClass).
@@ -36,6 +37,12 @@ func classify(resp *provcore.Response, err error) (errClass, cfgpolicy.ErrorClas
 			return classTimeout, cfgpolicy.ErrorClassTimeout
 		case provcore.CodeUpstreamError:
 			return class5xx, cfgpolicy.ErrorClass5xx
+		case provcore.CodeContextOverflow:
+			// Target-permanent: the same model always overflows, so a
+			// same-target retry is pointless — but a larger-context
+			// sibling target can serve the request unchanged. The
+			// executor loop advances to the next target immediately.
+			return classContextOverflow, ""
 		case provcore.CodeInvalidRequest,
 			provcore.CodeAuthFailed,
 			provcore.CodeEndpointUnsupported,

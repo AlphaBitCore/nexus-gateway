@@ -35,6 +35,12 @@ func (h *Handler) RegisterAnalyticsRoutes(g *echo.Group, iamMW func(action strin
 	g.GET("/analytics/sparkline", h.AnalyticsSparkline, iamMW(iam.ResourceAnalytics.Action(iam.VerbRead)))
 	// Latency phase breakdown.
 	g.GET("/analytics/latency-phases", h.AnalyticsLatencyPhases, iamMW(iam.ResourceAnalytics.Action(iam.VerbRead)))
+	// Vendor bill reconciliation report + review-ack. IAM decision (owner,
+	// 2026-07-19): both the read and the lightweight review-ack write ride
+	// analytics.read — the report is part of the Cost/Analytics surface and
+	// acking a drift row is an annotation, not a high-privilege operation.
+	g.GET("/analytics/vendor-bill-reconciliation", h.VendorBillReconciliation, iamMW(iam.ResourceAnalytics.Action(iam.VerbRead)))
+	g.POST("/analytics/vendor-bill-reconciliation/:providerId/:day/review", h.VendorBillReconciliationReview, iamMW(iam.ResourceAnalytics.Action(iam.VerbRead)))
 }
 
 func (h *Handler) AnalyticsProviderDetail(c echo.Context) error {

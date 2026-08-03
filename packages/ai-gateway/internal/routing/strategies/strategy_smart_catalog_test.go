@@ -46,14 +46,19 @@ func TestBuildModelCatalog_GroupsByProviderShortKeys(t *testing.T) {
 	if len(groups[1].M) != 2 {
 		t.Fatalf("p-1 want 2 models, got %+v", groups[1].M)
 	}
-	if len(groups[1].M[0].F) != 2 || groups[1].M[0].F[0] != "vision" {
-		t.Fatalf("features on first p-1 model: %+v", groups[1].M[0].F)
+	// Models are ordered newest-generation-first within a provider, so
+	// "code-a2" precedes "code-a1" (natural-descending on the code).
+	if groups[1].M[0].I != "code-a2" || groups[1].M[1].I != "code-a1" {
+		t.Fatalf("p-1 models not newest-first: %+v", groups[1].M)
 	}
-	if groups[1].M[1].IP == nil || *groups[1].M[1].IP != 0.1 {
-		t.Fatalf("ip on second p-1 model: %+v", groups[1].M[1].IP)
+	if groups[1].M[1].F == nil || len(groups[1].M[1].F) != 2 || groups[1].M[1].F[0] != "vision" {
+		t.Fatalf("features on code-a1 (now second): %+v", groups[1].M[1].F)
 	}
-	if groups[1].M[1].MX == nil || *groups[1].M[1].MX != mx || groups[1].M[1].MO == nil || *groups[1].M[1].MO != mo {
-		t.Fatalf("mx/mo on second p-1 model: mx=%v mo=%v", groups[1].M[1].MX, groups[1].M[1].MO)
+	if groups[1].M[0].IP == nil || *groups[1].M[0].IP != 0.1 {
+		t.Fatalf("ip on code-a2 (now first): %+v", groups[1].M[0].IP)
+	}
+	if groups[1].M[0].MX == nil || *groups[1].M[0].MX != mx || groups[1].M[0].MO == nil || *groups[1].M[0].MO != mo {
+		t.Fatalf("mx/mo on code-a2 (now first): mx=%v mo=%v", groups[1].M[0].MX, groups[1].M[0].MO)
 	}
 }
 
@@ -80,3 +85,59 @@ func TestResolveSelectedModelID_ProviderScope(t *testing.T) {
 }
 
 func fp(f float64) *float64 { return &f }
+
+func TestNaturalCodeLess_VersionOrdering(t *testing.T) {
+	// Each pair: the first argument must sort strictly before the second.
+	less := []struct{ a, b string }{
+		{"claude-opus-4-6", "claude-opus-4-7"},
+		{"claude-opus-4-7", "claude-opus-4-8"},
+		{"gpt-5.4", "gpt-5.5"},
+		{"kimi-k2.5", "kimi-k2.6"},
+		{"gpt-4-turbo", "gpt-4o"},               // non-digit run tiebreak: '-' < 'o'
+		{"claude-opus-4-8", "claude-opus-4-10"}, // 8 < 10 numerically, not lexically
+		{"o1", "o3"},
+	}
+	for _, tc := range less {
+		if !naturalCodeLess(tc.a, tc.b) {
+			t.Errorf("naturalCodeLess(%q,%q)=false; want true", tc.a, tc.b)
+		}
+		if naturalCodeLess(tc.b, tc.a) {
+			t.Errorf("naturalCodeLess(%q,%q)=true; want false (asymmetry)", tc.b, tc.a)
+		}
+	}
+	if naturalCodeLess("gpt-4o", "gpt-4o") {
+		t.Error("equal codes must not be less than each other")
+	}
+}
+
+// The observed bug: the router picked the OLDEST same-tier generation. The
+// catalog now lists each provider's models newest-first, so the newest
+// generation (opus-4-8) appears before older ones (4-7, 4-6) — giving the
+// router a primacy signal the plain-text recency rule alone did not provide.
+func TestBuildModelCatalog_NewestGenerationFirst(t *testing.T) {
+	in := []core.SmartModelRow{
+		{ModelID: "m6", ModelCode: "claude-opus-4-6", ProviderID: "anthropic"},
+		{ModelID: "m8", ModelCode: "claude-opus-4-8", ProviderID: "anthropic"},
+		{ModelID: "m7", ModelCode: "claude-opus-4-7", ProviderID: "anthropic"},
+	}
+	raw := buildModelCatalog(in)
+	var groups []struct {
+		P string `json:"p"`
+		M []struct {
+			I string `json:"i"`
+		} `json:"m"`
+	}
+	if err := json.Unmarshal([]byte(raw), &groups); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(groups) != 1 || len(groups[0].M) != 3 {
+		t.Fatalf("unexpected catalog shape: %s", raw)
+	}
+	got := []string{groups[0].M[0].I, groups[0].M[1].I, groups[0].M[2].I}
+	want := []string{"claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("catalog order = %v; want newest-first %v", got, want)
+		}
+	}
+}

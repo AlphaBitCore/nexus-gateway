@@ -22,6 +22,8 @@ var modelJoinedColumns = []string{
 	// read all 4 prices from a single row (replaces the retired
 	// provider_pricing regex-index seam).
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+	// Audio-token rates (realtime models); NULL everywhere else.
+	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"features", "maxContextTokens", "maxOutputTokens", "aliases",
 	"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
 }
@@ -37,6 +39,7 @@ func makeModelJoinedRow(id, code string) []any {
 		&display, "https://api.openai.com", "gpt-4o", "chat", true,
 		&inP, &outP,
 		&crP, &cwP,
+		(*string)(nil), (*string)(nil), (*string)(nil),
 		[]string{"vision"},
 		pgtype.Int4{Int32: 128000, Valid: true},
 		pgtype.Int4{Int32: 16384, Valid: true},
@@ -282,4 +285,31 @@ func TestFetchModelPricing(t *testing.T) {
 			t.Errorf("expected scan err; got: %v", err)
 		}
 	})
+}
+
+// TestGetModelByCode_audioRatesParse pins the audio-rate scan: a
+// realtime model row with the three audio price columns set must surface
+// them as parsed floats (they feed realtimeCostFormula), and a chat row
+// (audio columns NULL) must leave the pointers nil.
+func TestGetModelByCode_audioRatesParse(t *testing.T) {
+	mock, db := newMockDB(t)
+	aiP, aoP, carP := "32.0", "64.0", "0.4"
+	row := makeModelJoinedRow("m-rt", "gpt-realtime-2.1")
+	row[15], row[16], row[17] = &aiP, &aoP, &carP // the three audio columns
+	mock.ExpectQuery(`FROM "Model" m\s+LEFT JOIN "Provider"`).
+		WithArgs("gpt-realtime-2.1").
+		WillReturnRows(pgxmock.NewRows(modelJoinedColumns).AddRow(row...))
+	got, err := db.GetModelByCode(context.Background(), "gpt-realtime-2.1")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.AudioInputPricePM == nil || *got.AudioInputPricePM != 32.0 {
+		t.Fatalf("AudioInputPricePM = %v, want 32.0", got.AudioInputPricePM)
+	}
+	if got.AudioOutputPricePM == nil || *got.AudioOutputPricePM != 64.0 {
+		t.Fatalf("AudioOutputPricePM = %v, want 64.0", got.AudioOutputPricePM)
+	}
+	if got.CachedAudioInputReadPricePM == nil || *got.CachedAudioInputReadPricePM != 0.4 {
+		t.Fatalf("CachedAudioInputReadPricePM = %v, want 0.4", got.CachedAudioInputReadPricePM)
+	}
 }

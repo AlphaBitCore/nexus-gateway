@@ -3,19 +3,26 @@
 package aigwsim
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 type Deps struct {
 	Logger *slog.Logger
+	// GatewayBase resolves the AI Gateway base URL from the Hub at request
+	// time (never configured locally). The simulator always forwards there —
+	// the caller can never choose the upstream host (SSRF posture).
+	GatewayBase peer.URLProvider
 }
 
 type Handler struct {
-	logger *slog.Logger
+	logger      *slog.Logger
+	gatewayBase peer.URLProvider
 }
 
 func New(d Deps) *Handler {
@@ -23,7 +30,7 @@ func New(d Deps) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{logger: logger}
+	return &Handler{logger: logger, gatewayBase: d.GatewayBase}
 }
 
 // errJSON is the canonical admin error envelope helper (see internal/platform/httperr).

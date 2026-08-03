@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
-	"strings"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
+	"github.com/goccy/go-json"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -47,6 +45,14 @@ type TrafficEvent struct {
 	// Request tracing
 	TraceID           *string `json:"traceId,omitempty"`
 	ExternalRequestID *string `json:"externalRequestId,omitempty"`
+	// Caller-declared correlation tags. EndUserID is the caller's own
+	// customer id (X-Nexus-End-User-Id header or protocol-native user
+	// field); SessionID groups a conversation's requests
+	// (X-Nexus-Session-Id header only). Both opaque, VK-scoped, never
+	// validated or joined to Nexus identities. NULL for compliance-proxy
+	// and agent rows.
+	EndUserID *string `json:"endUserId,omitempty"`
+	SessionID *string `json:"sessionId,omitempty"`
 	// Entity attribution
 	EntityType *string `json:"entityType,omitempty"` // "user" | "project" (unclassified rows store empty)
 	EntityID   *string `json:"entityId,omitempty"`
@@ -82,6 +88,16 @@ type TrafficEvent struct {
 	// entryKey so the gateway's IsPoisoned check fires on the next FT.SEARCH hit.
 	GatewayCacheL2EntryKey *string `json:"gatewayCacheL2EntryKey,omitempty"`
 	ProviderCacheStatus    *string `json:"providerCacheStatus,omitempty"`
+	// Multimodal audit stamps. ArtifactRefs: JSON-encoded array of artifact
+	// references ([{"sha256","sizeBytes","mime"}] byte-bearing, [{"url"}]
+	// URL-return — never dereferenced). ComplianceCoverage: request-time
+	// record of what scanning actually ran ("prompt-only"/"none"); drives
+	// the per-modality coverage badge. Both NULL for non-multimodal rows.
+	ArtifactRefs       *string `json:"artifactRefs,omitempty"`
+	ComplianceCoverage *string `json:"complianceCoverage,omitempty"`
+	// EndpointType is the request modality (chat / image_generation / tts /
+	// stt / …) — surfaced as the Traffic list's modality column and filter.
+	EndpointType *string `json:"endpointType,omitempty"`
 	// Prompt-cache metrics
 	CacheCreationTokens    *int     `json:"cacheCreationTokens,omitempty"`
 	CacheReadTokens        *int     `json:"cacheReadTokens,omitempty"`
@@ -194,10 +210,28 @@ type TrafficEventListParams struct {
 	// `identity->'project'->>'id'` and `identity->'vk'->>'id'`. NOTE:
 	// `identity->'apiCredential'` is the UPSTREAM provider's API key,
 	// NOT the client's Virtual Key — do not confuse the two.
-	ProjectID            string
-	VirtualKeyID         string
-	ModelUsed            string
-	RequestID            string
+	ProjectID    string
+	VirtualKeyID string
+	ModelUsed    string
+	// ModelExact matches the SERVED model exactly (same
+	// COALESCE(routed_model_name, model_name) expression the
+	// error-governance grouping keys on) — the drill-down filter.
+	// ModelUsed's substring match cannot express a class boundary
+	// (matching "gpt-4o" must not include "gpt-4o-mini"). FilterNone
+	// selects rows with no model at all.
+	ModelExact string
+	// EndpointType filters on the request modality
+	// (traffic_event.endpoint_type: chat / embeddings / image_generation /
+	// tts / stt / video_generation / rerank / guardrail / realtime / …).
+	// Exact match; empty = all modalities.
+	EndpointType string
+	RequestID    string
+	// EndUserID / SessionID filter on the caller-declared correlation
+	// columns. Exact match; both ride the [end_user_id, timestamp] /
+	// [session_id, timestamp] indexes so a correlation pivot stays cheap
+	// at any table size.
+	EndUserID            string
+	SessionID            string
 	HookDecision         string
 	ResponseHookDecision string
 	StatusCode           *int
@@ -228,15 +262,33 @@ type TrafficEventListParams struct {
 	// Exact match on a.routing_rule_id.
 	RoutingRuleID string
 	// ErrorCode filters by the structured failure-reason classification stored
-	// in a.error_code. Exact match on the raw stored value (upper-case codes
-	// such as "PROVIDER_ERROR"; "no_compatible_capability"-style reason codes
-	// live on request_hook_reason_code, not here).
+	// in a.error_code. Exact match on the raw stored value, which carries two
+	// vocabularies: upper-case codes such as "PROVIDER_UNAVAILABLE" for
+	// failures the gateway decided, and the provider's own lower_snake cause
+	// such as "auth_failed" for a terminal upstream 4xx. ("no_compatible_
+	// capability"-style reason codes live on request_hook_reason_code, not
+	// here.) See the error_code comment in schema/traffic.prisma for the full
+	// vocabulary and which producer writes which.
 	ErrorCode string
 	StartTime *time.Time
 	EndTime   *time.Time
 	Limit     int
 	Offset    int
 }
+
+// ErrorCodeUnclassified is the `?errorCode=` sentinel selecting rows whose
+// producer did not classify the failure (error_code NULL or empty) — the
+// error-governance view's "(unclassified)" classes. Double-underscore
+// delimiters keep it collision-free with both real error_code vocabularies
+// (SCREAMING_SNAKE gateway codes and lower_snake provider causes).
+const ErrorCodeUnclassified = "__unclassified__"
+
+// FilterNone is the `?provider=` / `?modelExact=` sentinel selecting rows
+// where the dimension is absent (both the routed and requested columns NULL
+// or empty) — early rejections that never resolved a provider/model. The
+// error-governance drill-down needs it because a class keyed on an empty
+// provider/model would otherwise match every value of that dimension.
+const FilterNone = "__none__"
 
 // trafficEventSelectColumns is the canonical SELECT column list for traffic events.
 const trafficEventSelectColumns = `
@@ -249,6 +301,7 @@ const trafficEventSelectColumns = `
 	a.request_hooks_us, a.response_hooks_us,
 	a.latency_breakdown,
 	a.trace_id, a.external_request_id,
+	a.end_user_id, a.session_id,
 	a.entity_type, a.entity_id, a.entity_name,
 	a.org_id, a.org_name, a.identity,
 	a.provider_id, a.provider_name,
@@ -259,6 +312,7 @@ const trafficEventSelectColumns = `
 	a.gateway_cache_status, a.gateway_cache_skip_reason, a.gateway_cache_kind,
 	a.gateway_cache_l2_entry_key,
 	a.provider_cache_status, a.gateway_cache_savings_usd,
+	a.artifact_refs, a.compliance_coverage, a.endpoint_type,
 	a.routed_provider_id, a.routed_provider_name,
 	a.routed_model_id, a.routed_model_name,
 	a.routing_rule_id, a.routing_rule_name,
@@ -346,6 +400,7 @@ func (store *Store) GetTrafficEvent(ctx context.Context, id string) (*TrafficEve
 		&a.RequestHooksUs, &a.ResponseHooksUs,
 		&a.LatencyBreakdown,
 		&a.TraceID, &a.ExternalRequestID,
+		&a.EndUserID, &a.SessionID,
 		&a.EntityType, &a.EntityID, &a.EntityName,
 		&a.OrgID, &a.OrgName, &a.Identity,
 		&a.ProviderID, &a.ProviderName,
@@ -356,6 +411,7 @@ func (store *Store) GetTrafficEvent(ctx context.Context, id string) (*TrafficEve
 		&a.GatewayCacheStatus, &a.GatewayCacheSkipReason, &a.GatewayCacheKind,
 		&a.GatewayCacheL2EntryKey,
 		&a.ProviderCacheStatus, &a.GatewayCacheSavingsUsd,
+		&a.ArtifactRefs, &a.ComplianceCoverage, &a.EndpointType,
 		&a.RoutedProviderID, &a.RoutedProviderName,
 		&a.RoutedModelID, &a.RoutedModelName,
 		&a.RoutingRuleID, &a.RoutingRuleName,
@@ -402,6 +458,7 @@ func scanOneTrafficEvent(row interface{ Scan(dest ...any) error }, a *TrafficEve
 		&a.RequestHooksUs, &a.ResponseHooksUs,
 		&a.LatencyBreakdown,
 		&a.TraceID, &a.ExternalRequestID,
+		&a.EndUserID, &a.SessionID,
 		&a.EntityType, &a.EntityID, &a.EntityName,
 		&a.OrgID, &a.OrgName, &a.Identity,
 		&a.ProviderID, &a.ProviderName,
@@ -412,6 +469,7 @@ func scanOneTrafficEvent(row interface{ Scan(dest ...any) error }, a *TrafficEve
 		&a.GatewayCacheStatus, &a.GatewayCacheSkipReason, &a.GatewayCacheKind,
 		&a.GatewayCacheL2EntryKey,
 		&a.ProviderCacheStatus, &a.GatewayCacheSavingsUsd,
+		&a.ArtifactRefs, &a.ComplianceCoverage, &a.EndpointType,
 		&a.RoutedProviderID, &a.RoutedProviderName,
 		&a.RoutedModelID, &a.RoutedModelName,
 		&a.RoutingRuleID, &a.RoutingRuleName,
@@ -447,184 +505,4 @@ func scanTrafficEventRows(rows pgx.Rows) ([]TrafficEvent, int, error) {
 		events = append(events, a)
 	}
 	return events, len(events), rows.Err()
-}
-
-func buildTrafficEventWhere(p TrafficEventListParams) (string, []any, int) {
-	args := []any{}
-	argIdx := 1
-
-	// Source filter — handler supplies DB values already mapped from UI domain.
-	// Empty = all data-plane sources (every CHECK-allowed value).
-	sources := p.DBSources
-	if len(sources) == 0 {
-		sources = domain.AllDataPlaneDBSources()
-	}
-	placeholders := make([]string, len(sources))
-	for i, s := range sources {
-		placeholders[i] = fmt.Sprintf("$%d", argIdx)
-		args = append(args, s)
-		argIdx++
-	}
-	where := fmt.Sprintf("WHERE a.source IN (%s)", strings.Join(placeholders, ","))
-
-	if p.Provider != "" {
-		// Filter by the provider that actually SERVED the request (routed),
-		// falling back to the requested provider for non-ai-gateway rows. The
-		// requested provider_name is NULL for OpenAI-style / "auto" traffic, so
-		// matching it would drop exactly the rows the served provider handled —
-		// and it would disagree with the analytics layer, which attributes by
-		// routed_provider.
-		where += fmt.Sprintf(` AND COALESCE(a.routed_provider_name, a.provider_name) = $%d`, argIdx)
-		args = append(args, p.Provider)
-		argIdx++
-	}
-	if p.EntityID != "" {
-		where += fmt.Sprintf(` AND a.entity_id = $%d`, argIdx)
-		args = append(args, p.EntityID)
-		argIdx++
-	}
-	if p.OrgID != "" {
-		where += fmt.Sprintf(` AND a.org_id = $%d`, argIdx)
-		args = append(args, p.OrgID)
-		argIdx++
-	}
-	if p.EntityType != "" {
-		where += fmt.Sprintf(` AND a.entity_type = $%d`, argIdx)
-		args = append(args, p.EntityType)
-		argIdx++
-	}
-	if p.ProjectID != "" {
-		where += fmt.Sprintf(` AND a.identity->'project'->>'id' = $%d`, argIdx)
-		args = append(args, p.ProjectID)
-		argIdx++
-	}
-	if p.VirtualKeyID != "" {
-		// identity.vk.id is the Virtual Key the client presented (what the
-		// `?virtualKeyId=` filter is meant to match). identity.apiCredential
-		// is something else entirely — the upstream provider's API key
-		// Nexus used to make the upstream call (real OpenAI / Anthropic
-		// token, totally different identifier). Producers renamed the
-		// VK key from "credential" to "vk" (see
-		// ai-gateway audit_test.go assertion 'Identity.credential should
-		// not exist — renamed to identity.vk'); this query was missed in
-		// that rename, so filtering by virtualKeyId silently returned
-		// zero rows. Fix: query the right JSON path.
-		where += fmt.Sprintf(` AND a.identity->'vk'->>'id' = $%d`, argIdx)
-		args = append(args, p.VirtualKeyID)
-		argIdx++
-	}
-	if p.ModelUsed != "" {
-		// Match the served model first (what cost/usage attribute to), falling
-		// back to the requested literal so a search still finds rows where
-		// routing did not substitute.
-		where += fmt.Sprintf(` AND COALESCE(a.routed_model_name, a.model_name) ILIKE $%d`, argIdx)
-		args = append(args, "%"+escapeILIKE(p.ModelUsed)+"%")
-		argIdx++
-	}
-	if p.RequestID != "" {
-		where += fmt.Sprintf(` AND a.id = $%d`, argIdx)
-		args = append(args, p.RequestID)
-		argIdx++
-	}
-	if p.HookDecision != "" {
-		where += fmt.Sprintf(` AND a.request_hook_decision = $%d`, argIdx)
-		args = append(args, p.HookDecision)
-		argIdx++
-	}
-	if p.ResponseHookDecision != "" {
-		where += fmt.Sprintf(` AND a.response_hook_decision = $%d`, argIdx)
-		args = append(args, p.ResponseHookDecision)
-		argIdx++
-	}
-	if p.StatusCode != nil {
-		where += fmt.Sprintf(` AND a.status_code = $%d`, argIdx)
-		args = append(args, *p.StatusCode)
-		argIdx++
-	} else if p.StatusRange != "" {
-		switch p.StatusRange {
-		case "2xx":
-			where += ` AND a.status_code >= 200 AND a.status_code <= 299`
-		case "4xx":
-			where += ` AND a.status_code >= 400 AND a.status_code <= 499`
-		case "5xx":
-			where += ` AND a.status_code >= 500 AND a.status_code <= 599`
-		}
-	}
-	if p.CacheStatus != nil {
-		where += fmt.Sprintf(` AND a.cache_status = $%d`, argIdx)
-		args = append(args, *p.CacheStatus)
-		argIdx++
-	}
-	if p.TargetHost != "" {
-		where += fmt.Sprintf(` AND a.target_host ILIKE $%d`, argIdx)
-		args = append(args, "%"+escapeILIKE(p.TargetHost)+"%")
-		argIdx++
-	}
-	if p.Path != "" {
-		where += fmt.Sprintf(` AND a.path ILIKE $%d`, argIdx)
-		args = append(args, "%"+escapeILIKE(p.Path)+"%")
-		argIdx++
-	}
-	if p.SourceProcess != "" {
-		where += fmt.Sprintf(` AND a.source_process ILIKE $%d`, argIdx)
-		args = append(args, "%"+escapeILIKE(p.SourceProcess)+"%")
-		argIdx++
-	}
-	if p.BumpStatus != "" {
-		where += fmt.Sprintf(` AND a.bump_status = $%d`, argIdx)
-		args = append(args, p.BumpStatus)
-		argIdx++
-	}
-	if len(p.ComplianceTags) > 0 {
-		// compliance_tags @> $N::text[] matches rows whose tag array
-		// contains every supplied tag. Callers pass repeated `?tag=...`
-		// query params — the filter behaves as AND across tags, so a
-		// row must carry all of them to match.
-		where += fmt.Sprintf(` AND a.compliance_tags @> $%d::text[]`, argIdx)
-		args = append(args, p.ComplianceTags)
-		argIdx++
-	}
-	if p.APIKeyFingerprint != "" {
-		where += fmt.Sprintf(` AND a.api_key_fingerprint = $%d`, argIdx)
-		args = append(args, p.APIKeyFingerprint)
-		argIdx++
-	}
-	if p.UsageExtractionStatus != "" {
-		where += fmt.Sprintf(` AND a.usage_extraction_status = $%d`, argIdx)
-		args = append(args, p.UsageExtractionStatus)
-		argIdx++
-	}
-	if p.ThingID != "" {
-		where += fmt.Sprintf(` AND a.thing_id = $%d`, argIdx)
-		args = append(args, p.ThingID)
-		argIdx++
-	}
-	if p.RoutingRuleID != "" {
-		where += fmt.Sprintf(` AND a.routing_rule_id = $%d`, argIdx)
-		args = append(args, p.RoutingRuleID)
-		argIdx++
-	}
-	if p.ErrorCode != "" {
-		where += fmt.Sprintf(` AND a.error_code = $%d`, argIdx)
-		args = append(args, p.ErrorCode)
-		argIdx++
-	}
-	if p.ExcludeInternal {
-		// internal_purpose is nullable; treat empty strings as "not internal"
-		// too so a buggy producer that sends '' instead of omitting the field
-		// still routes into the customer view.
-		where += ` AND (a.internal_purpose IS NULL OR a.internal_purpose = '')`
-	}
-	if p.StartTime != nil {
-		where += fmt.Sprintf(` AND a.timestamp >= $%d`, argIdx)
-		args = append(args, *p.StartTime)
-		argIdx++
-	}
-	if p.EndTime != nil {
-		where += fmt.Sprintf(` AND a.timestamp <= $%d`, argIdx)
-		args = append(args, *p.EndTime)
-		argIdx++
-	}
-
-	return where, args, argIdx
 }

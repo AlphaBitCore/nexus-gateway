@@ -103,7 +103,7 @@ func TestProxyHandler_MissingModel(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-nexus-virtual-key", "test-slug")
+	req.Header.Set("X-Nexus-Virtual-Key", "test-slug")
 	rec := httptest.NewRecorder()
 
 	h(rec, req)

@@ -7,7 +7,8 @@
 //     error code "discovery_unsupported"
 //   - Invalid adapterType → HTTP 400
 //   - Missing baseUrl → HTTP 400
-//   - SuggestModelType: embedding / audio / image / chat classification
+//   - SuggestModelType: embedding / realtime / rerank / video / tts / stt /
+//     image / chat classification
 package debug
 
 import (
@@ -34,11 +35,26 @@ func TestSuggestModelType(t *testing.T) {
 		{"text-embedding-3-small", "embedding"},
 		{"text-embedding-ada-002", "embedding"},
 		{"x-embedding-3", "embedding"},
-		{"whisper-1", "audio"},
-		{"tts-1", "audio"},
-		{"tts-1-hd", "audio"},
+		{"whisper-1", "stt"},
+		{"gpt-4o-transcribe", "stt"},
+		{"tts-1", "tts"},
+		{"tts-1-hd", "tts"},
+		{"gpt-4o-mini-tts", "tts"},
+		// A speech id is typed precisely; a bare "audio" id that is neither
+		// tts nor stt (gpt-audio chat-with-audio models) falls to the coarse
+		// audio arm, which runs after the precise arms.
+		{"gpt-audio-1.5", "audio"},
 		{"audio-preview", "audio"},
-		{"gpt-4o-transcribe", "audio"},
+		// realtime beats the audio arm: -whisper/-translate variants are
+		// realtime-family, not REST audio.
+		{"gpt-realtime-2.1", "realtime"},
+		{"gpt-realtime-2.1-mini", "realtime"},
+		{"gpt-realtime-whisper", "realtime"},
+		{"gpt-4o-realtime-preview", "realtime"},
+		{"rerank-3.5", "rerank"},
+		{"rerank-english-v3.0", "rerank"},
+		{"sora-2", "video"},
+		{"veo-3.0-generate", "video"},
 		{"dall-e-3", "image"},
 		{"dall-e-2", "image"},
 		{"gpt-image-1", "image"},

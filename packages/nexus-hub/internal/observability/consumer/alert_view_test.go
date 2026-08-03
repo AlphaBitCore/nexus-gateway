@@ -48,7 +48,7 @@ func TestDecodeAlertView_ParityWithFullDecode(t *testing.T) {
 	vv := reflect.ValueOf(view)
 	vt := vv.Type()
 	fv := reflect.ValueOf(full)
-	for i := 0; i < vv.NumField(); i++ {
+	for i := range vv.NumField() {
 		name := vt.Field(i).Name
 		ff := fv.FieldByName(name)
 		if !ff.IsValid() {

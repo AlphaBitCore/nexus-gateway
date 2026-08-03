@@ -36,6 +36,7 @@ type DarwinBridgeArgs struct {
 	NormalizeRegistry    *normalizecore.Registry
 	AttestationSigner    *attestation.Signer
 	Keystore             keystore.Store
+	AuditLossMode        string
 }
 
 // wireDarwinBackpressure is a no-op on non-darwin: linux/windows

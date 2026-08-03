@@ -156,6 +156,17 @@ const (
 	// (deploy order: schema → Hub → producers).
 	FldRequestHooksUs  FieldID = 103
 	FldResponseHooksUs FieldID = 104
+	// Multimodal audit stamps (image generation / TTS / video / realtime): the
+	// JSON-encoded artifact reference array and the request-time
+	// compliance-coverage enum. New ids — same FORWARD-INCOMPATIBLE deploy-order
+	// note as 103/104 (deploy order: schema → Hub → producers).
+	FldArtifactRefs       FieldID = 105
+	FldComplianceCoverage FieldID = 106
+	// End-user / session attribution ids. These and 105/106 above are ALL
+	// str-kind, so the ids must stay distinct — reusing one would decode a
+	// field silently into the other. Never renumber, never share.
+	FldEndUserID FieldID = 107
+	FldSessionID FieldID = 108
 )
 
 // AllFieldIDs returns every registered field-id in wire order. It exists so the
@@ -192,6 +203,7 @@ func AllFieldIDs() []FieldID {
 		FldRequestHooksMs, FldResponseHooksMs, FldLatencyBreakdown, FldAttestationVerified,
 		FldAttestationAgentID, FldSourceProcess, FldAction,
 		FldRequestHooksUs, FldResponseHooksUs,
+		FldArtifactRefs, FldComplianceCoverage, FldEndUserID, FldSessionID,
 	}
 }
 
@@ -265,6 +277,8 @@ func (m *TrafficEventMessage) AppendBinary(dst []byte) []byte {
 	// Optional strings (emit if non-empty).
 	dst = optStr(dst, FldTraceID, m.TraceID)
 	dst = optStr(dst, FldExternalRequestID, m.ExternalRequestID)
+	dst = optStr(dst, FldEndUserID, m.EndUserID)
+	dst = optStr(dst, FldSessionID, m.SessionID)
 	dst = optStr(dst, FldSourceIP, m.SourceIP)
 	dst = optStr(dst, FldTargetHost, m.TargetHost)
 	dst = optStr(dst, FldMethod, m.Method)
@@ -288,6 +302,8 @@ func (m *TrafficEventMessage) AppendBinary(dst []byte) []byte {
 	dst = optStr(dst, FldGatewayCacheKind, m.GatewayCacheKind)
 	dst = optStr(dst, FldGatewayCacheL2EntryKey, m.GatewayCacheL2EntryKey)
 	dst = optStr(dst, FldProviderCacheStatus, m.ProviderCacheStatus)
+	dst = optStr(dst, FldArtifactRefs, m.ArtifactRefs)
+	dst = optStr(dst, FldComplianceCoverage, m.ComplianceCoverage)
 	dst = optStr(dst, FldRoutedProviderID, m.RoutedProviderID)
 	dst = optStr(dst, FldRoutedProviderName, m.RoutedProviderName)
 	dst = optStr(dst, FldRoutedModelID, m.RoutedModelID)

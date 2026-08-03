@@ -58,6 +58,8 @@ type trackingMetricsRecorder struct {
 
 func (t *trackingMetricsRecorder) RecordRequest(_, _, _ string, _ int, _ time.Duration, _ metrics.Usage) {
 }
+
+func (t *trackingMetricsRecorder) RecordError(_, _ string)          {}
 func (t *trackingMetricsRecorder) RecordHookRequest(_, _, _ string) {}
 func (t *trackingMetricsRecorder) RecordTrafficExtract(_, _, outcome string) {
 	t.mu.Lock()
@@ -300,7 +302,7 @@ func TestSetResponseHeaders_StampsAllowlistAndOverhead(t *testing.T) {
 	if got := w.Header().Get("X-Nexus-Attempts"); got != "2" {
 		t.Errorf("attempts=%q", got)
 	}
-	if got := w.Header().Get("x-nexus-routed-model"); got != "gpt-4o" {
+	if got := w.Header().Get("X-Nexus-Routed-Model"); got != "gpt-4o" {
 		t.Errorf("routed-model=%q (substituted=true)", got)
 	}
 }
@@ -328,7 +330,7 @@ func TestSetResponseHeadersStream_StampsExpected(t *testing.T) {
 	if got := w.Header().Get("X-Nexus-Attempts"); got != "3" {
 		t.Errorf("attempts=%q", got)
 	}
-	if got := w.Header().Get("x-nexus-routed-model"); got != "claude-3" {
+	if got := w.Header().Get("X-Nexus-Routed-Model"); got != "claude-3" {
 		t.Errorf("routed-model=%q", got)
 	}
 }

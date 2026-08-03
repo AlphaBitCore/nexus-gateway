@@ -18,7 +18,12 @@ type Engine struct {
 // resolvedConfig is the pre-compiled, immutable snapshot derived from a
 // Config + bundled rules. Replaced atomically on every Reload.
 type resolvedConfig struct {
-	enabled bool // gates NormalizeUpstream; NormalizeKey always runs
+	// hasWork short-circuits NormalizeUpstream when nothing is configured to
+	// do: no enabled strip rule and no Provider with marker injection on.
+	// Derived at Reload from the resolved rules + provider settings — the
+	// engine runs on demand, there is no operator-facing global toggle.
+	// NormalizeKey always runs regardless.
+	hasWork bool
 
 	// keyRules maps adapter_type → rules that are safe for L0 key normalisation.
 	keyRules map[AdapterType][]ruleEntry
@@ -106,7 +111,6 @@ func (e *Engine) Reload(cfg Config) {
 	}
 
 	resolved := &resolvedConfig{
-		enabled:               cfg.NormaliserEnabled,
 		keyRules:              make(map[AdapterType][]ruleEntry),
 		upstreamRules:         make(map[AdapterType][]ruleEntry),
 		providerInjectEnabled: providerInject,
@@ -148,9 +152,30 @@ func (e *Engine) Reload(cfg Config) {
 		resolved.upstreamRules[rule.AdapterType] = append(resolved.upstreamRules[rule.AdapterType], entry)
 	}
 
+	// Demand-driven gate. The upstream rewrite runs only when something is
+	// actually configured to do: an enabled strip rule (upstreamRules only
+	// ever holds enabled rules — disabled ones are skipped above), or a
+	// Provider with cache_control marker injection on. There is no
+	// operator-facing global switch; enabling either feature is itself the
+	// demand.
+	for _, rules := range resolved.upstreamRules {
+		if len(rules) > 0 {
+			resolved.hasWork = true
+			break
+		}
+	}
+	if !resolved.hasWork {
+		for _, on := range providerInject {
+			if on {
+				resolved.hasWork = true
+				break
+			}
+		}
+	}
+
 	e.compiled.Store(resolved)
 	e.log.Debug("wirerewrite reloaded",
-		"upstream_enabled", cfg.NormaliserEnabled,
+		"has_work", resolved.hasWork,
 		"rule_count", countRules(resolved),
 	)
 }
@@ -184,12 +209,13 @@ func (e *Engine) NormalizeKey(format AdapterType, body []byte) []byte {
 
 // NormalizeUpstream strips and injects bytes in the body that WILL be
 // forwarded to the upstream provider. Returns the modified body and a
-// Result summary for audit. Gated by Config.NormaliserEnabled.
+// Result summary for audit. Runs on demand: it no-ops unless an enabled strip
+// rule or a marker-injecting Provider is configured (resolvedConfig.hasWork).
 // providerID is the Provider row UUID, used for per-Provider L4 settings.
 // Always fail-open: any error returns the original body.
 func (e *Engine) NormalizeUpstream(format AdapterType, providerID string, body []byte) ([]byte, Result) {
 	resolved := e.compiled.Load()
-	if resolved == nil || !resolved.enabled {
+	if resolved == nil || !resolved.hasWork {
 		return body, Result{}
 	}
 

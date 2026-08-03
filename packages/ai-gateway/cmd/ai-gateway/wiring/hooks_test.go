@@ -3,14 +3,74 @@ package wiring
 import (
 	"context"
 	"github.com/goccy/go-json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/pashagolub/pgxmock/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	hookwh "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/webhook"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 )
+
+// TestInitHookRegistry_webhookForwardInjectsRSTokenForOwnAIGuard proves the
+// internal token + PublicURL threaded into InitHookRegistry reach the
+// webhook-forward factory, so a hook aimed at this gateway's own AI-Guard
+// compliance-webhook authenticates (fixing the every-request 401) while a hook
+// aimed elsewhere stays unauthenticated.
+func TestInitHookRegistry_webhookForwardInjectsRSTokenForOwnAIGuard(t *testing.T) {
+	var seen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("X-RS-Token")
+		_, _ = w.Write([]byte(`{"decision":"approve"}`))
+	}))
+	defer srv.Close()
+
+	// The shared webhook client built by InitHookRegistry has no SSRF guard,
+	// so it can dial the 127.0.0.1 test server standing in for the gateway.
+	// The empty second base mirrors production wiring when no private URL
+	// could be derived — it must be filtered out, not matched.
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "internal-secret", []string{srv.URL, ""})
+	if err != nil {
+		t.Fatalf("InitHookRegistry: %v", err)
+	}
+	factory := reg.Get("webhook-forward")
+	if factory == nil {
+		t.Fatal("webhook-forward factory not registered")
+	}
+
+	build := func(endpoint string) hookcore.Hook {
+		h, err := factory(&hookcore.HookConfig{
+			ID: "wh", ImplementationID: "webhook-forward",
+			Config: map[string]any{"endpoint": endpoint},
+		})
+		if err != nil {
+			t.Fatalf("build hook for %q: %v", endpoint, err)
+		}
+		return h
+	}
+
+	// Trusted AI-Guard compliance-webhook → token injected.
+	seen = "unset"
+	if _, err := build(srv.URL+hookwh.AIGuardComplianceWebhookPath).Execute(context.Background(), &hookcore.HookInput{Stage: "request"}); err != nil {
+		t.Fatalf("execute trusted hook: %v", err)
+	}
+	if seen != "internal-secret" {
+		t.Fatalf("trusted endpoint X-RS-Token = %q; want the injected token", seen)
+	}
+
+	// Any other webhook URL → no token (no leak of the internal secret).
+	seen = "unset"
+	if _, err := build(srv.URL+"/some/other/webhook").Execute(context.Background(), &hookcore.HookInput{Stage: "request"}); err != nil {
+		t.Fatalf("execute other hook: %v", err)
+	}
+	if seen != "" {
+		t.Fatalf("non-AI-Guard endpoint X-RS-Token = %q; want no token", seen)
+	}
+}
 
 // TestInitHookRegistry_returnsNonNilRegistry verifies the hook registry
 // is built with a default webhook pool config.
@@ -21,7 +81,7 @@ func TestInitHookRegistry_returnsNonNilRegistry(t *testing.T) {
 		MaxIdleConnsPerHost: 2,
 		IdleConnTimeoutSec:  90,
 	}
-	reg, err := InitHookRegistry(cfg)
+	reg, err := InitHookRegistry(cfg, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -32,7 +92,7 @@ func TestInitHookRegistry_returnsNonNilRegistry(t *testing.T) {
 
 // TestInitHookRegistry_zeroConfig verifies zero-value config is accepted.
 func TestInitHookRegistry_zeroConfig(t *testing.T) {
-	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{})
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error with zero config: %v", err)
 	}
@@ -51,7 +111,7 @@ func TestInitNormEngine_returnsNonNil(t *testing.T) {
 
 // TestInitHookConfigCache_nilDBPath verifies nil DB produces a non-nil cache.
 func TestInitHookConfigCache_nilDBPath(t *testing.T) {
-	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +208,7 @@ func TestInitPayloadCaptureStore_loadErrorUsesDefaults(t *testing.T) {
 // DB is provided but no hooks are in the cache yet (Reload not called),
 // the cache is still non-nil and usable.
 func TestInitHookConfigCache_withDBNilPoolReturnsNonNil(t *testing.T) {
-	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

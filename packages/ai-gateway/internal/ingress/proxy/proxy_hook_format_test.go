@@ -32,6 +32,8 @@ type fakeMetricsRecorder struct {
 	extractCalls []extractCall
 }
 
+func (f *fakeMetricsRecorder) RecordError(_, _ string) {}
+
 type hookRequestCall struct {
 	ingressFormat string
 	stage         string

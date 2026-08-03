@@ -29,12 +29,13 @@ func InitRuntimeIntrospect(
 	cpIntrospect.Register(runtimeintrospect.SourceFunc{
 		SourceName: "config.flags",
 		Fn: func(_ context.Context) (any, error) {
+			// Peer service URLs (ai-gateway, compliance-proxy) are Hub-resolved
+			// at request time, not config flags — so they are not listed here.
 			return map[string]any{
-				"cp_id":          cpID,
-				"hostname":       cpHostname,
-				"server_port":    cfg.Server.Port,
-				"hub_url":        cfg.Registry.NexusHubURL,
-				"ai_gateway_url": cfg.BFF.AIGatewayURL,
+				"cp_id":       cpID,
+				"hostname":    cpHostname,
+				"server_port": cfg.Server.Port,
+				"hub_url":     cfg.Registry.NexusHubURL,
 			}, nil
 		},
 	})

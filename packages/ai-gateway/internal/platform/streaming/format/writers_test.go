@@ -28,6 +28,50 @@ func TestWriteTypedEvent_EmitsEventLine(t *testing.T) {
 	}
 }
 
+// A `data:` value containing newlines must go out as one `data: ` line per
+// line — an SSE client concatenates them back with the newlines restored, so
+// emitting the raw value would terminate the frame at the first newline and
+// silently truncate the payload. Providers send this for real: OpenAI-style
+// error bodies and any pretty-printed JSON an upstream chooses to stream.
+func TestWriteTypedEvent_MultiLineDataSplitsPerLine(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteTypedEvent(&buf, "error", "{\n  \"a\": 1\n}"); err != nil {
+		t.Fatal(err)
+	}
+	want := "event: error\ndata: {\ndata:   \"a\": 1\ndata: }\n\n"
+	if buf.String() != want {
+		t.Errorf("got %q, want %q", buf.String(), want)
+	}
+}
+
+// A trailing newline in the value yields a final empty `data:` line rather
+// than being swallowed, because the SSE client re-joins the lines with "\n"
+// and dropping it would change the payload the client reassembles.
+func TestWriteTypedEvent_TrailingNewlineKeepsEmptyDataLine(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteTypedEvent(&buf, "", "x\n"); err != nil {
+		t.Fatal(err)
+	}
+	want := "data: x\ndata: \n\n"
+	if buf.String() != want {
+		t.Errorf("got %q, want %q", buf.String(), want)
+	}
+}
+
+// A frame wider than the pooled scratch buffer must still be written whole.
+// The buffer grows via append for that frame and is not returned oversized,
+// but correctness of the wire bytes is what a client sees.
+func TestWriteTypedEvent_ValueLargerThanScratchBuffer(t *testing.T) {
+	var buf bytes.Buffer
+	big := strings.Repeat("z", 4096)
+	if err := WriteTypedEvent(&buf, "", big); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "data: "+big+"\n\n" {
+		t.Errorf("oversized frame not written verbatim: got %d bytes", buf.Len())
+	}
+}
+
 func TestWriteTypedEvent_EmptyTypeOmitsLine(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteTypedEvent(&buf, "", `{"x":1}`); err != nil {

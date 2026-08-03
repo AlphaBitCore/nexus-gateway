@@ -360,7 +360,7 @@ func TestCreateVirtualKey_HappyApplication(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-app", "app", strPtr("admin-1"))...))
 
 	future := time.Now().UTC().Add(30 * 24 * time.Hour)
-	body := `{"name":"app","vkType":"application","projectId":"p-1","expiresAt":"` + future.Format(time.RFC3339) + `","enabled":false,"allowedModels":["m-1"]}`
+	body := `{"name":"app","vkType":"application","projectId":"p-1","expiresAt":"` + future.Format(time.RFC3339) + `","enabled":false,"allowedModels":[{"providerId":"p","modelId":"m-1"}]}`
 	c, rec := makeJSONReq(t, http.MethodPost, "/api/admin/virtual-keys", body)
 	if err := h.CreateVirtualKey(c); err != nil {
 		t.Fatalf("CreateVirtualKey: %v", err)
@@ -495,11 +495,14 @@ func TestCreateVirtualKey_ApplicationWithoutExpiresAt(t *testing.T) {
 	}
 }
 
-// TestCreateVirtualKey_ApplicationExpiresAtTooFar covers the 3-month ceiling.
-func TestCreateVirtualKey_ApplicationExpiresAtTooFar(t *testing.T) {
+// TestCreateVirtualKey_ApplicationExpiresAtMissing covers the nil case: an
+// application VK may not be minted never-expiring. The distance of a supplied
+// expiry is deliberately unbounded (see
+// TestUpdateVirtualKey_ExpiryFarFuture_Accepted), so the ONLY create-time
+// expiry rejections are missing and past.
+func TestCreateVirtualKey_ApplicationExpiresAtMissing(t *testing.T) {
 	h, _, _, _ := newHandlerWithMockDB(t)
-	far := time.Now().UTC().AddDate(2, 0, 0)
-	body := `{"name":"app","vkType":"application","projectId":"p-1","expiresAt":"` + far.Format(time.RFC3339) + `"}`
+	body := `{"name":"app","vkType":"application","projectId":"p-1"}`
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", body)
 	if err := h.CreateVirtualKey(c); err != nil {
 		t.Fatalf("CreateVirtualKey: %v", err)
@@ -507,13 +510,13 @@ func TestCreateVirtualKey_ApplicationExpiresAtTooFar(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "must not exceed 3 months") {
+	if !strings.Contains(rec.Body.String(), "expiresAt is required") {
 		t.Errorf("body=%s", rec.Body.String())
 	}
 }
 
 // TestCreateVirtualKey_ApplicationExpiresAtPast covers the past-date rejection
-// shared via capApplicationExpiry — an application VK cannot be created with an
+// shared via requireApplicationExpiry — an application VK cannot be created with an
 // already-elapsed expiry.
 func TestCreateVirtualKey_ApplicationExpiresAtPast(t *testing.T) {
 	h, _, _, _ := newHandlerWithMockDB(t)
@@ -607,7 +610,7 @@ func TestCreateVirtualKey_NoAuth(t *testing.T) {
 
 	e := echo.New()
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"name":"n","vkType":"personal","enabled":true,"allowedModels":["m1"]}`))
+	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"name":"n","vkType":"personal","enabled":true,"allowedModels":[{"providerId":"p","modelId":"m1"}]}`))
 	r.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	c := e.NewContext(r, rec)
 	if err := h.CreateVirtualKey(c); err != nil {
@@ -699,7 +702,7 @@ func TestUpdateVirtualKey_HappySuperAdmin(t *testing.T) {
 	// non-expiry field updates + the super-admin ownership bypass. Clearing
 	// an application VK's expiry to never-expire is a separate (now-rejected)
 	// path covered by TestUpdateVirtualKey_NeverExpire_RejectedForApplication.
-	body := `{"enabled":false,"sourceApp":"x","rateLimitRpm":100,"allowedModels":["m-2"]}`
+	body := `{"enabled":false,"sourceApp":"x","rateLimitRpm":100,"allowedModels":[{"providerId":"p","modelId":"m-2"}]}`
 	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")
@@ -768,12 +771,41 @@ func TestUpdateVirtualKey_BadExpiresAt(t *testing.T) {
 	assertErrorEnvelope(t, rec, "", "validation_error")
 }
 
-// TestUpdateVirtualKey_ExpiryBeyondCap_Rejected closes the VK-expiry residual.
-// The admin PUT update path must enforce the SAME 3-month ceiling as
-// CreateVirtualKey + RenewVirtualKey for application VKs; without it an edit
-// could set an arbitrarily-far expiry and escape the re-approval cadence. The
-// rejection happens BEFORE any UPDATE / hub-notify / audit side effect.
-func TestUpdateVirtualKey_ExpiryBeyondCap_Rejected(t *testing.T) {
+// TestUpdateVirtualKey_ExpiryFarFuture_Accepted pins that an application VK's
+// expiry distance is NOT bounded: an admin may renew a key years out. Only the
+// presence and future-ness of expiresAt are enforced
+// (requireApplicationExpiry), so this update reaches the UPDATE and is
+// persisted rather than rejected.
+func TestUpdateVirtualKey_ExpiryFarFuture_Accepted(t *testing.T) {
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
+		WithArgs("vk-1").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "old", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).
+		WithArgs("nexus_user", "admin-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
+	mock.ExpectQuery(`UPDATE "VirtualKey"`).
+		WithArgs(anyN(10)...).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "new", strPtr("admin-1"))...))
+
+	farOut := time.Now().AddDate(3, 0, 0).Format("2006-01-02")
+	body := `{"enabled":true,"expiresAt":"` + farOut + `"}`
+	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
+	c.SetParamNames("id")
+	c.SetParamValues("vk-1")
+	if err := h.UpdateVirtualKey(c); err != nil {
+		t.Fatalf("UpdateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s; want 200 (expiry distance is unbounded)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateVirtualKey_ExpiryCleared_Rejected pins the one expiry rule that
+// still binds application VKs: they may never become never-expiring. Clearing
+// expiresAt to null is rejected BEFORE any UPDATE / hub-notify / audit side
+// effect.
+func TestUpdateVirtualKey_ExpiryCleared_Rejected(t *testing.T) {
 	h, mock, hub, aud := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
 		WithArgs("vk-1").
@@ -782,8 +814,7 @@ func TestUpdateVirtualKey_ExpiryBeyondCap_Rejected(t *testing.T) {
 		WithArgs("nexus_user", "admin-1").
 		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 
-	beyond := time.Now().AddDate(0, 4, 0).Format("2006-01-02")
-	body := `{"enabled":true,"expiresAt":"` + beyond + `"}`
+	body := `{"enabled":true,"expiresAt":null}`
 	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")
@@ -791,11 +822,11 @@ func TestUpdateVirtualKey_ExpiryBeyondCap_Rejected(t *testing.T) {
 		t.Fatalf("UpdateVirtualKey: %v", err)
 	}
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d body=%s; want 400 (expiry beyond the 3-month cap)", rec.Code, rec.Body.String())
+		t.Fatalf("status=%d body=%s; want 400 (application VK cannot clear its expiry)", rec.Code, rec.Body.String())
 	}
 	assertErrorEnvelope(t, rec, "", "validation_error")
-	if !strings.Contains(rec.Body.String(), "3 months") {
-		t.Errorf("error message %q should cite the 3-month cap", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "expiresAt is required") {
+		t.Errorf("error message %q should state expiresAt is required", rec.Body.String())
 	}
 	if len(hub.NotifyCalls()) != 0 || aud.count() != 0 {
 		t.Errorf("a rejected update must not notify the hub or write an audit row")
@@ -835,7 +866,7 @@ func TestUpdateVirtualKey_NeverExpire_RejectedForApplication(t *testing.T) {
 }
 
 // TestUpdateVirtualKey_PastDate_RejectedForApplication asserts the update path
-// shares the same past-date rejection as create/renew via capApplicationExpiry —
+// shares the same past-date rejection as create/renew via requireApplicationExpiry —
 // an edit cannot set an already-elapsed expiry on an application VK.
 func TestUpdateVirtualKey_PastDate_RejectedForApplication(t *testing.T) {
 	h, mock, hub, aud := newHandlerWithMockDB(t)

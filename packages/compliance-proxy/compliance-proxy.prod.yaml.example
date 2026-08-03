@@ -72,7 +72,12 @@ accessControl:
     - "192.168.0.0/16"
   domainAllowlist: []
   internalNetworkExceptions: []
-  # MUST be false in production — do not allow unlisted domains to pass through
+  # MUST be false in production. When true, CONNECTs to non-allowlisted domains
+  # are relayed as raw TCP with no inspection — combined with a wide
+  # sourceIpAllowlist and a publicly-reachable :3128 that is an OPEN PROXY (the
+  # 2026-07-09 incident). The service now REFUSES TO START if this is true while
+  # sourceIpAllowlist contains a /0 (0.0.0.0/0 or ::/0); keep it false here and
+  # keep :3128 off the public internet at the security-group / firewall layer.
   allowUnlistedPassthrough: false
 
 connections:
@@ -122,6 +127,9 @@ audit:
 
 compliance:
   enabled: true
+  # The trusted AI-Gateway base for compliance-webhook authentication is not
+  # configured here: it is resolved from the Hub (the ai-gateway's reported
+  # public/private URLs), so it cannot drift from the real deployment.
 
 runtimeApi:
   listenAddress: "127.0.0.1:3040"

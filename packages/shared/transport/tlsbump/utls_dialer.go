@@ -31,7 +31,16 @@ const earlyDataExtensionTypeID uint16 = 42
 // replayed fingerprint faithful to clients that advertised h2 (e.g. Cursor's
 // Electron connect-RPC), which a forced http/1.1 ALPN would have altered. On
 // any parse or handshake failure the function falls back to HelloChrome_Auto.
-func dialWithFingerprint(ctx context.Context, network, addr string, rawHello []byte, dialer *net.Dialer, proxyURL *url.URL) (net.Conn, error) {
+// alpnBothProtocols is the offer used when the caller can speak either protocol
+// (the h2 dispatcher probes with it and falls back on a non-h2 negotiation).
+// alpnHTTP1Only is for callers whose reader is an HTTP/1.x parser: offering h2
+// there lets the upstream pick a protocol the caller cannot read.
+var (
+	alpnBothProtocols = []string{"h2", "http/1.1"}
+	alpnHTTP1Only     = []string{"http/1.1"}
+)
+
+func dialWithFingerprint(ctx context.Context, network, addr string, rawHello []byte, dialer *net.Dialer, proxyURL *url.URL, alpn []string) (net.Conn, error) {
 	host, _, _ := net.SplitHostPort(addr)
 
 	conn, err := dialUpstreamTCP(ctx, network, addr, dialer, proxyURL)
@@ -45,14 +54,35 @@ func dialWithFingerprint(ctx context.Context, network, addr string, rawHello []b
 	if len(rawHello) > 0 {
 		fp := &utls.Fingerprinter{AllowBluntMimicry: true}
 		if s, fErr := fp.FingerprintClientHello(rawHello); fErr == nil {
-			overrideALPN(s, []string{"h2", "http/1.1"})
+			overrideALPN(s, alpn)
 			sanitizeForReplay(s)
 			spec = s
 			helloID = utls.HelloCustom
 		}
 	}
+	// No replayable ClientHello (or fingerprinting failed): derive the preset's
+	// spec and narrow ITS ALPN the same way, rather than handing utls a bare
+	// helloID.
+	//
+	// utls.Config.NextProtos does NOT reach a preset hello — the preset carries
+	// its own ALPN extension and it wins. Chrome's offers h2, so the h1 caller's
+	// offer stayed [h2, http/1.1] on this path even after the spec rewrite above
+	// was in place. A ClientHello-capture test is what surfaced that; reading the
+	// code had suggested the narrowing was already complete.
+	if spec == nil {
+		if s, sErr := utls.UTLSIdToSpec(helloID); sErr == nil {
+			overrideALPN(&s, alpn)
+			spec = &s
+			helloID = utls.HelloCustom
+		}
+	}
 
-	uconn := utls.UClient(conn, &utls.Config{ServerName: host}, helloID)
+	// NextProtos narrows the preset path too. overrideALPN above only rewrites a
+	// REPLAYED fingerprint spec; with no captured ClientHello the dial uses
+	// HelloChrome_Auto, whose own ALPN extension offers h2. Without this the h1
+	// caller's offer stayed [h2, http/1.1] on that path — which a behavioural
+	// ClientHello-capture test caught after the spec-only narrowing looked done.
+	uconn := utls.UClient(conn, &utls.Config{ServerName: host, NextProtos: alpn}, helloID)
 	if spec != nil {
 		if err := uconn.ApplyPreset(spec); err != nil {
 			// ApplyPreset failed — fall back to Chrome fingerprint.
@@ -94,7 +124,7 @@ func ProbeUpstreamCert(ctx context.Context, dstHost string, dstPort int, peekedH
 		dialer = &net.Dialer{}
 	}
 	addr := net.JoinHostPort(dstHost, fmt.Sprintf("%d", dstPort))
-	conn, err := dialWithFingerprint(ctx, "tcp", addr, peekedHello, dialer, nil)
+	conn, err := dialWithFingerprint(ctx, "tcp", addr, peekedHello, dialer, nil, alpnBothProtocols)
 	if err != nil {
 		return nil, err
 	}

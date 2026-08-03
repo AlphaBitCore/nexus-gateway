@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/lossmode"
 )
 
 const (
@@ -28,14 +30,14 @@ const (
 
 	// Audit loss modes (AuditConfig.LossMode). Every default is zero-loss, because
 	// durable audit is a product promise + a compliance requirement — the gateway
-	// must never silently drop an audit record. Two distinct "defaults" exist and
-	// must not be confused: the CONFIG default (config.defaults(), what an
-	// unset AI_GATEWAY_AUDIT_LOSS_MODE resolves to) is "spillblock"; the
-	// WithLossMode FALLBACK for an empty/unrecognised string is "block" (the most
-	// conservative no-loss mode, so a config typo can never start dropping). The
-	// lossy modes are an explicit opt-out for callers that do NOT need compliance
-	// audit and prefer raw throughput.
-	//   - spillblock (CONFIG default): like spill, but on a full spill channel it
+	// must never silently drop an audit record. There is now ONE default, not two:
+	// both the CONFIG default (config.defaults(), what an unset
+	// AI_GATEWAY_AUDIT_LOSS_MODE resolves to) and the WithLossMode fallback for an
+	// empty or unrecognised string are "spillblock", because WithLossMode delegates
+	// to lossmode.Resolve and lossmode.Default is SpillBlock. A config typo can
+	// therefore never start dropping. The lossy modes are an explicit opt-out for
+	// callers that do NOT need compliance audit and prefer raw throughput.
+	//   - spillblock (the default, and the empty/unknown fallback): like spill, but on a full spill channel it
 	//     back-pressures the request goroutine (parks on the channel) until a slot
 	//     frees instead of dropping. It also NEVER drops on a full spool QUOTA: the
 	//     single spill worker keeps the batch and retries while the recovery sweeper
@@ -43,7 +45,7 @@ const (
 	//     rather than shedding records. Genuinely lossless whenever a spool is wired;
 	//     the only drops are a genuine (non-quota) disk I/O error or shutdown. Identical
 	//     to spill in the normal regime; differs where spill would drop.
-	//   - block (empty/unknown fallback): when the in-heap buffer is full, Enqueue
+	//   - block: when the in-heap buffer is full, Enqueue
 	//     BACK-PRESSURES the request path (bounded wait for the flush to free space;
 	//     durable spill only if the pipeline is genuinely wedged past the wait).
 	//     Admission self-throttles to the audit persistence rate; nothing is
@@ -53,18 +55,13 @@ const (
 	//     saturated. Higher throughput, bounded loss only under extreme overload.
 	//   - drop: no wait — overflow is a counted bounded drop. Max throughput,
 	//     audit-lossy. For non-compliance callers only.
-	lossModeBlock      = "block"
-	lossModeSpill      = "spill"
-	lossModeDrop       = "drop"
-	lossModeSpillBlock = "spillblock"
-
-	// backpressureMaxWait bounds how long Enqueue back-pressures on a full buffer
-	// before falling back to a durable spill (so a genuinely wedged pipeline — e.g.
-	// NATS down — cannot hang a request goroutine forever). Under healthy NATS the
-	// flush frees space in well under this, so the wait is short and the request
-	// path simply throttles to the drain rate. backpressureTick re-checks for space
-	// between flush wakeups.
-	backpressureMaxWait = 10 * time.Second
+	// Spelled from shared/audit/lossmode so the four services cannot drift apart on the
+	// vocabulary. These aliases stay because the comparisons throughout this package are
+	// against a plain string field; the VALUES now have exactly one definition.
+	lossModeBlock      = string(lossmode.Block)
+	lossModeSpill      = string(lossmode.Spill)
+	lossModeDrop       = string(lossmode.Drop)
+	lossModeSpillBlock = string(lossmode.SpillBlock)
 
 	// consumerLinger bounds how long a consumer worker waits to fill a partial
 	// batch before publishing it. Under load a batch reaches batchMaxCount long
@@ -111,8 +108,9 @@ const (
 
 // EndpointType is the typed-string alias used to classify the API
 // endpoint a request targets. Values are the canonical
-// typology.EndpointKind strings ("chat", "embeddings", "stt", "tts",
-// "image_generation", "batch"). The constants below mirror the matching
+// typology.EndpointKind strings ("chat", "responses", "embeddings",
+// "rerank", "stt", "tts", "image_generation", "video_generation",
+// "guardrail", "batch", "realtime"). The constants below mirror the matching
 // typology kinds; downstream cost / Prometheus / audit MQ consumers all
 // read these strings verbatim.
 type EndpointType = string
@@ -127,6 +125,9 @@ const (
 	// (/v1/embeddings, Cohere /v1/embed, Gemini :embedContent, Vertex
 	// :embedContent, Voyage, Bedrock Titan/Cohere embed).
 	EndpointTypeEmbeddings EndpointType = "embeddings"
+	// EndpointTypeRerank covers /v1/rerank (document reranking; Cohere-shaped
+	// canonical, Cohere and Voyage providers).
+	EndpointTypeRerank EndpointType = "rerank"
 	// EndpointTypeSTT covers /v1/audio/transcriptions and
 	// /v1/audio/translations (speech-to-text endpoints).
 	EndpointTypeSTT EndpointType = "stt"
@@ -135,8 +136,17 @@ const (
 	// EndpointTypeImageGeneration covers /v1/images/generations,
 	// /v1/images/edits, and /v1/images/variations.
 	EndpointTypeImageGeneration EndpointType = "image_generation"
+	// EndpointTypeVideoGeneration covers the async /v1/videos family
+	// (submit, poll, content download, delete).
+	EndpointTypeVideoGeneration EndpointType = "video_generation"
 	// EndpointTypeBatch covers /v1/batches (async batch endpoints).
 	EndpointTypeBatch EndpointType = "batch"
+	// EndpointTypeGuardrail covers /v1/guardrail (standalone compliance-verdict
+	// endpoint; text in, allow/block/redact verdict out, no upstream relay).
+	EndpointTypeGuardrail EndpointType = "guardrail"
+	// EndpointTypeRealtime covers GET /v1/realtime (WebSocket realtime voice
+	// sessions: one row per in-band response plus a session row).
+	EndpointTypeRealtime EndpointType = "realtime"
 )
 
 // EndpointTypeFromPath maps the path-segment string used internally by

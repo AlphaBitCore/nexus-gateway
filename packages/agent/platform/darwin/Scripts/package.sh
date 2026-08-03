@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E23-S3: Package the .app bundle into a .pkg installer with LaunchDaemon.
+# Package the .app bundle into a .pkg installer with LaunchDaemon.
 # Optionally signs the .pkg if DEVELOPER_ID_INSTALLER env var is set.
 #
 # Usage: bash packages/agent/platform/darwin/Scripts/package.sh

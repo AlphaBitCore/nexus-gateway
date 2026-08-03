@@ -281,6 +281,49 @@ func TestUpdateModel_InvalidTypeRejected(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "chat, embedding") {
 		t.Errorf("error must enumerate allowed types: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "realtime") {
+		t.Errorf("error must enumerate the widened types (rerank, video, realtime): %s", rec.Body.String())
+	}
+}
+
+// TestUpdateModel_WidenedTypesAccepted locks the model-type vocabulary at
+// {chat, embedding, image, audio, tts, stt, rerank, video, realtime}: each
+// widened value must pass validation and reach the store (the UI has offered
+// `rerank` while this handler 400'd it — this test pins the fix; tts/stt are
+// the precise audio sub-types the catalog now carries), while a value outside
+// the set still gets a 400.
+func TestUpdateModel_WidenedTypesAccepted(t *testing.T) {
+	for _, typ := range []string{"rerank", "video", "realtime", "tts", "stt"} {
+		t.Run(typ, func(t *testing.T) {
+			mock, db := newMockStore(t)
+			now := time.Now().UTC().Truncate(time.Second)
+			mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
+				WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+			mock.ExpectQuery(`UPDATE "Model"`).
+				WithArgs(anyArgs(25)...).
+				WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+			h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+			c, rec := putReq(t, map[string]any{"type": typ}, "model-1")
+			if err := h.UpdateModel(c); err != nil {
+				t.Fatalf("UpdateModel(%s): %v", typ, err)
+			}
+			if rec.Code != http.StatusOK {
+				t.Errorf("type=%s status = %d; want 200; body=%s", typ, rec.Code, rec.Body.String())
+			}
+		})
+	}
+	t.Run("garbage-still-rejected", func(t *testing.T) {
+		mock, db := newMockStore(t)
+		now := time.Now().UTC()
+		mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
+			WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+		h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+		c, rec := putReq(t, map[string]any{"type": "completion"}, "model-1")
+		_ = h.UpdateModel(c)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("type=completion status = %d; want 400", rec.Code)
+		}
+	})
 }
 
 func TestUpdateModel_EmptyCodeRejected(t *testing.T) {
@@ -320,17 +363,11 @@ func TestUpdateModel_HappyAuditAndHubInvalidate(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
-	// UpdateModel store call → return updated row. 22 positional args
-	// ($1=id, $2...$22 = 21 COALESCE/CASE params; D-6 added 2 cached price cols).
+	// UpdateModel store call → return updated row. 25 positional args
+	// ($1=id, $2...$25 = 24 COALESCE/CASE params covering every mutable
+	// column, incl. the 2 cached-text and 3 realtime audio price columns).
 	mock.ExpectQuery(`UPDATE "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+		WithArgs(anyArgs(25)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	hub := &hubSpy{}
 	aud := &auditSpy{}
@@ -378,14 +415,7 @@ func TestUpdateModel_ValidCapabilityJsonAccepted(t *testing.T) {
 	mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	mock.ExpectQuery(`UPDATE "Model"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+		WithArgs(anyArgs(25)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	c, rec := putReq(t, map[string]any{

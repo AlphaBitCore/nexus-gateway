@@ -2,8 +2,6 @@ package proxy
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -32,60 +30,6 @@ func TestIngress_FromContext_Missing(t *testing.T) {
 	}
 	if got != (Ingress{}) {
 		t.Fatalf("IngressFromContext returned non-zero on empty ctx: %+v", got)
-	}
-}
-
-func TestIngress_ApplyHeaderOverride_OpenAIOnly(t *testing.T) {
-	tests := []struct {
-		name    string
-		ingress Ingress
-		header  string
-		wantOK  bool
-		wantFmt provcore.Format
-	}{
-		{
-			name:    "openai no header keeps openai",
-			ingress: Ingress{BodyFormat: provcore.FormatOpenAI},
-			header:  "",
-			wantOK:  true,
-			wantFmt: provcore.FormatOpenAI,
-		},
-		{
-			name:    "openai with valid header overrides",
-			ingress: Ingress{BodyFormat: provcore.FormatOpenAI},
-			header:  "anthropic",
-			wantOK:  true,
-			wantFmt: provcore.FormatAnthropic,
-		},
-		{
-			name:    "openai with invalid header rejects",
-			ingress: Ingress{BodyFormat: provcore.FormatOpenAI},
-			header:  "banana",
-			wantOK:  false,
-			wantFmt: provcore.FormatOpenAI,
-		},
-		{
-			name:    "anthropic ignores header",
-			ingress: Ingress{BodyFormat: provcore.FormatAnthropic},
-			header:  "openai",
-			wantOK:  true,
-			wantFmt: provcore.FormatAnthropic,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/", nil)
-			if tc.header != "" {
-				req.Header.Set("x-nexus-aigw-body-format", tc.header)
-			}
-			got, ok := tc.ingress.applyHeaderOverride(req)
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
-			}
-			if got.BodyFormat != tc.wantFmt {
-				t.Fatalf("BodyFormat = %q, want %q", got.BodyFormat, tc.wantFmt)
-			}
-		})
 	}
 }
 

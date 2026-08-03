@@ -583,6 +583,7 @@ type estimateNoopMetrics struct{}
 
 func (estimateNoopMetrics) RecordRequest(_, _, _ string, _ int, _ time.Duration, _ metricspkg.Usage) {
 }
+func (estimateNoopMetrics) RecordError(_, _ string)                                {}
 func (estimateNoopMetrics) RecordHookRequest(_, _, _ string)                       {}
 func (estimateNoopMetrics) RecordTrafficExtract(_, _, _ string)                    {}
 func (estimateNoopMetrics) RecordEstimate(_, _, _ string, _ time.Duration)         {}

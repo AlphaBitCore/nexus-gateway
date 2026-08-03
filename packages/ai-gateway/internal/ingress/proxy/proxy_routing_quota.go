@@ -10,7 +10,11 @@ import (
 // estimateTokens approximates the input token count of a request body for the
 // quota PRE-CHECK cost estimate only — which is explicitly an approximation,
 // reconciled to the actual usage post-call (see quota-architecture.md §6), so
-// precision is not required. It uses bytes/3 rather than utf8.RuneCount(body)/3:
+// precision is not required. This is the QUOTA-class estimate; a fit / context-
+// window check must use inputstaging.EstimateTokensConservative instead (biased
+// high so it never admits an overflowing model). Do not add a further
+// char→token heuristic — reuse the class that matches intent. It uses bytes/3
+// rather than utf8.RuneCount(body)/3:
 // counting runes over the whole ~50 KB body was ~7% of request-path CPU, and the
 // byte length needs no scan. bytes/3 equals the prior rune/3 for ASCII and
 // slightly OVER-estimates multi-byte UTF-8 (CJK), which is the safe direction for

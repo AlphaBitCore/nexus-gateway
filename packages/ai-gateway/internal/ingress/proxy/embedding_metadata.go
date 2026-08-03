@@ -60,6 +60,8 @@ func preStampEmbeddingRequestMeta(existing any, reqBody []byte, crossFormatRouti
 	// response does not report token usage (e.g. Gemini embedContent returns
 	// only the vector, no usageMetadata). OpenAI/Azure embeddings report real
 	// usage, so this estimate is only consumed when usage is absent.
+	// Cost/usage class — the average-case EstimateTokens is correct here; this
+	// is NOT a context-fit decision (those use EstimateTokensConservative).
 	estTokens := 0
 	if in := gjson.GetBytes(reqBody, "input"); in.Exists() {
 		if in.IsArray() {

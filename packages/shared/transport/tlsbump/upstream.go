@@ -5,18 +5,15 @@ package tlsbump
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/responseio"
 )
 
 // clientHelloKey is the per-request context key under which the raw TLS
@@ -181,9 +178,11 @@ func NewUpstreamTransportWith(maxConnsPerHost int, idleConnTimeout, dialTimeout 
 		// agent runs can take minutes before the first byte; 300s leaves the
 		// overall limit to the request ctx while still catching a wedged upstream.
 		ResponseHeaderTimeout: 300 * time.Second,
-		// fd.dial takes full ownership of the TLS handshake via uTLS; Go's
-		// transport will not wrap the returned conn with crypto/tls.
-		DialTLSContext: fd.dial,
+		// fd.dialH1 takes full ownership of the TLS handshake via uTLS; Go's
+		// transport will not wrap the returned conn with crypto/tls. It offers
+		// http/1.1 ONLY — this transport parses HTTP/1.x, so an h2 offer here
+		// lets the upstream pick a protocol it cannot read (see dialH1).
+		DialTLSContext: fd.dialH1,
 	}
 	// With a proxy configured, Go's stdlib emits CONNECT then TLS;
 	// GetProxyConnectHeader lets the agent's signer add X-Nexus-Attestation.
@@ -268,63 +267,4 @@ func (u *UpstreamTransport) ForwardRequest(ctx context.Context, req *http.Reques
 		UpstreamRequestMs.With(host, strconv.Itoa(resp.StatusCode)).Observe(durationMs)
 	}
 	return resp, nil
-}
-
-// isHopByHopHeader returns true if the header name is a hop-by-hop header
-// that must not be forwarded in proxy responses per RFC 7230 §6.1.
-func isHopByHopHeader(name string) bool {
-	return hopByHopHeaderSet[http.CanonicalHeaderKey(name)]
-}
-
-// copyResponse writes the upstream response back to the client response writer.
-// It strips hop-by-hop headers (static list and any names in Connection per
-// RFC 7230 §6.1), invokes hook (if non-nil) to let the caller mutate headers
-// before they are sent, writes the status code, and streams the body.
-//
-// The hook parameter uses responseio.HeaderHook so Phase 3 can inject
-// x-nexus-* response markers without changing this function's signature.
-func copyResponse(w http.ResponseWriter, resp *http.Response, hook responseio.HeaderHook) error {
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	// RFC 7230 §6.1: strip dynamic hop-by-hop headers listed in Connection
-	// before deleting Connection itself. Values iterates every Connection line.
-	for _, line := range resp.Header.Values("Connection") {
-		for _, name := range strings.Split(line, ",") {
-			if n := strings.TrimSpace(name); n != "" {
-				resp.Header.Del(n)
-			}
-		}
-	}
-
-	// Strip the static set of hop-by-hop headers (includes Connection itself).
-	for _, h := range hopByHopHeaders {
-		resp.Header.Del(h)
-	}
-
-	// Allow the caller to mutate headers (e.g. inject x-nexus-* markers).
-	if hook != nil {
-		hook(resp)
-	}
-
-	// Copy surviving response headers to the client.
-	for key, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(key, v)
-		}
-	}
-
-	w.WriteHeader(resp.StatusCode)
-
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return fmt.Errorf("copy response body: %w", err)
-	}
-
-	// Flush if the writer supports it (important for SSE / streaming).
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-
-	return nil
 }

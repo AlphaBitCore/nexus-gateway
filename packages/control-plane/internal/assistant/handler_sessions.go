@@ -147,14 +147,17 @@ func rankModel(code string) int {
 // the preference-ranked best of the offered set.
 func (h *Handler) ListModels(c echo.Context) error {
 	var reachable []string
-	if h.cfg.SystemVK != "" && h.cfg.AIGatewayURL != "" {
+	if h.cfg.SystemVK != "" {
 		// Best-effort: bound it tightly so a hung gateway never stalls this login-only
-		// picker endpoint (both modes fail open below).
+		// picker endpoint (both modes fail open below). A gateway whose Hub-reported
+		// URL is not resolvable yet also fails open — the picker must never empty.
 		mctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 		defer cancel()
-		cl := core.NewClient(core.Env{AIGatewayBaseURL: h.cfg.AIGatewayURL}, newBearerTokenSource(""), nil)
-		if got, err := cl.GatewayModels(mctx, h.cfg.SystemVK); err == nil {
-			reachable = got
+		if gwBase, gwErr := h.resolveAIGatewayBase(mctx); gwErr == nil {
+			cl := core.NewClient(core.Env{AIGatewayBaseURL: gwBase}, newBearerTokenSource(""), nil)
+			if got, err := cl.GatewayModels(mctx, h.cfg.SystemVK); err == nil {
+				reachable = got
+			}
 		}
 	}
 

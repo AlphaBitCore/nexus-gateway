@@ -40,7 +40,9 @@ type HubAPI interface {
 	GetThingServiceMeta(ctx context.Context, thingID string) (*hub.ThingServiceMeta, error)
 }
 
-// Deps is the construction-time arg shape.
+// Deps is the construction-time arg shape. Peer service URLs are not part
+// of it: infra reads service URLs from each Thing's Hub-reported staticInfo
+// (service_urls.go), never from local config.
 type Deps struct {
 	DB                       *store.DB
 	Hub                      HubAPI
@@ -49,14 +51,6 @@ type Deps struct {
 	ThingOverrideGroupLookup ThingOverrideGroupLookup
 	HubProxyClient           *http.Client
 	ComplianceProxyClient    *http.Client
-	Proxy                    ProxyConfig
-}
-
-// ProxyConfig holds BFF proxy settings the setup helper needs.
-type ProxyConfig struct {
-	ComplianceProxyRuntimeURL string
-	ComplianceProxyAPIToken   string
-	AIGatewayURL              string
 }
 
 // ThingOverrideGroupLookup mirrors handler/thingOverrideGroupLookup.
@@ -77,7 +71,6 @@ type Handler struct {
 	thingOverrideGroupLookupRef ThingOverrideGroupLookup
 	hubProxyClientRef           *http.Client
 	complianceProxyClient       *http.Client
-	proxy                       ProxyConfig
 
 	// servicePublicURLsQueryFn is the unit-test seam for the direct
 	// `h.db.Pool.Query` in GetServicePublicURLs. The default uses the
@@ -121,7 +114,6 @@ func New(d Deps) *Handler {
 		thingOverrideGroupLookupRef: d.ThingOverrideGroupLookup,
 		hubProxyClientRef:           d.HubProxyClient,
 		complianceProxyClient:       d.ComplianceProxyClient,
-		proxy:                       d.Proxy,
 	}
 	if d.DB != nil {
 		h.ops = opsstore.New(d.DB.InternalPool())

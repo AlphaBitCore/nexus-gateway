@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/compliancestore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
@@ -68,7 +69,14 @@ func (h *Handler) proxyClient() *http.Client {
 }
 
 func (h *Handler) proxyForward(c echo.Context, method, path string) error {
-	url := h.proxy.ComplianceProxyRuntimeURL + path
+	if h.proxy.ComplianceProxyBase == nil {
+		return peer.ServiceUnavailable(c, "compliance-proxy", peer.ErrUnavailable)
+	}
+	base, baseErr := h.proxy.ComplianceProxyBase(c.Request().Context())
+	if baseErr != nil {
+		return peer.ServiceUnavailable(c, "compliance-proxy", baseErr)
+	}
+	url := base + path
 	token := h.proxy.ComplianceProxyAPIToken
 
 	var bodyReader io.Reader

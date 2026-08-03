@@ -45,15 +45,35 @@ func TestStreamIdleWriter_WriteResetsDeadlinePerChunk(t *testing.T) {
 		t.Errorf("deadline %v not ~ now+90s (base %v)", got, before)
 	}
 
+	// The remaining writes of the same frame land inside the coalescing
+	// window and share that one reset — see writeDeadlineArmGranularity.
 	if _, err := w.Write([]byte("data: two\n\n")); err != nil {
 		t.Fatalf("write 2: %v", err)
 	}
+	if len(rec.deadlines) != 1 {
+		t.Errorf("writes within one granularity must share a reset; got %d", len(rec.deadlines))
+	}
+
+	// Once the window has passed, a producing stream must push the deadline
+	// forward again — otherwise a long stream would eventually be cut while
+	// still actively sending, which is exactly what this writer prevents.
+	time.Sleep(2 * writeDeadlineArmGranularity)
+	mid := time.Now()
+	if _, err := w.Write([]byte("data: three\n\n")); err != nil {
+		t.Fatalf("write 3: %v", err)
+	}
 	if len(rec.deadlines) != 2 {
-		t.Errorf("each chunk must reset the deadline; got %d resets, want 2", len(rec.deadlines))
+		t.Fatalf("write after the window must reset the deadline; got %d", len(rec.deadlines))
+	}
+	if !rec.deadlines[1].After(rec.deadlines[0]) {
+		t.Errorf("second reset %v must be later than the first %v", rec.deadlines[1], rec.deadlines[0])
+	}
+	if got := rec.deadlines[1]; got.Before(mid.Add(80*time.Second)) || got.After(mid.Add(120*time.Second)) {
+		t.Errorf("deadline %v not ~ now+90s (base %v)", got, mid)
 	}
 
 	// The bytes actually reach the underlying writer.
-	if body := rec.Body.String(); body != "data: one\n\ndata: two\n\n" {
+	if body := rec.Body.String(); body != "data: one\n\ndata: two\n\ndata: three\n\n" {
 		t.Errorf("underlying body = %q", body)
 	}
 }

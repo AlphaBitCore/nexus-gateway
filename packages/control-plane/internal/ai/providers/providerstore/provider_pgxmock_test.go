@@ -29,6 +29,7 @@ var (
 	modelCols    = []string{
 		"id", "code", "name", "description", "providerId", "providerModelId", "type", "features",
 		"inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+		"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		"maxContextTokens", "maxOutputTokens", "status", "deprecationDate", "replacedBy", "aliases",
 		"inputModalities", "outputModalities", "lifecycle", "capabilityJson", "enabled", "createdAt", "updatedAt",
 	}
@@ -57,7 +58,8 @@ func modelRow(id, code string) []any {
 	// features + aliases are NULL (nil) so the post-scan normalisation in
 	// CreateProviderWithChildren (nil → empty slice) is exercised.
 	return []any{id, code, "N", strptr("d"), "p1", "pm", "chat", []string(nil), (*float64)(nil), (*float64)(nil),
-		(*float64)(nil), (*float64)(nil), (*int)(nil), (*int)(nil), "active", (*time.Time)(nil), (*string)(nil), []string(nil),
+		(*float64)(nil), (*float64)(nil), (*float64)(nil), (*float64)(nil), (*float64)(nil),
+		(*int)(nil), (*int)(nil), "active", (*time.Time)(nil), (*string)(nil), []string(nil),
 		[]string{"text"}, []string{"text"}, "ga", (*[]byte)(nil), true, tNow, tNow}
 }
 
@@ -172,7 +174,7 @@ func TestCreateProviderWithChildren_Full(t *testing.T) {
 	m.ExpectBegin()
 	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
-	m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(20)...).
+	m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(23)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRow("m1", "gpt-4o")...))
 	m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(9)...).
 		WillReturnRows(pgxmock.NewRows(credCols).AddRow(credRow("c1")...))
@@ -227,7 +229,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 		m.ExpectBegin()
 		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
-		m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(20)...).WillReturnError(errors.New("bad model"))
+		m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(23)...).WillReturnError(errors.New("bad model"))
 		m.ExpectRollback()
 		if _, _, _, err := s.CreateProviderWithChildren(context.Background(), CreateParams{},
 			[]modelstore.CreateModelParams{{Code: "x"}}, nil); err == nil {

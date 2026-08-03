@@ -159,6 +159,7 @@ func InitHub(d HubDeps) (HubResult, error) {
 		BuildTime:      "",
 		StartTime:      d.ProcessStartTime.Format(time.RFC3339),
 		PublicURL:      cfg.PublicURL,
+		PrivateURL:     metricsplatform.EffectivePrivateURL(cfg.PrivateURL, cfg.Server.Host, cfg.Server.Port),
 	})
 	go func() {
 		time.Sleep(500 * time.Millisecond)

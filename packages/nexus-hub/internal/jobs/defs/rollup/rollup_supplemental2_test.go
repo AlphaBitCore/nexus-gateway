@@ -118,6 +118,11 @@ func richTrafficEventRow(ts time.Time) []any {
 		&respHooksMs,    // response_hooks_ms
 		(*float64)(nil), // embedding_cost_usd
 		(*float64)(nil), // ai_guard_cost_usd
+		(*string)(nil),  // provider_name
+		(*string)(nil),  // routed_provider_name
+		(*string)(nil),  // model_name
+		(*string)(nil),  // routed_model_name
+		(*string)(nil),  // internal_purpose
 	}
 }
 
@@ -129,7 +134,7 @@ func bumpExemptTrafficEventRow(ts time.Time) []any {
 	lat := 200
 	bump := "BUMP_EXEMPT_PASSTHROUGH"
 	hook := "BLOCK_SOFT"
-	return []any{
+	return append([]any{
 		&src, (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -145,7 +150,7 @@ func bumpExemptTrafficEventRow(ts time.Time) []any {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}
+	}, errorClassNilTail()...)
 }
 
 // bumpDisabledHookErrorRow exercises bumpDisabled + hookError branches.
@@ -154,7 +159,7 @@ func bumpDisabledHookErrorRow(ts time.Time) []any {
 	sc := 200
 	bump := "BUMP_DISABLED_BY_CONFIG"
 	hook := "ERROR"
-	return []any{
+	return append([]any{
 		&src, (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -170,7 +175,7 @@ func bumpDisabledHookErrorRow(ts time.Time) []any {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}
+	}, errorClassNilTail()...)
 }
 
 // hookUnknownRow exercises the hookUnknown default branch.
@@ -178,7 +183,7 @@ func hookUnknownRow(ts time.Time) []any {
 	src := "ai-gateway"
 	sc := 200
 	hook := "WEIRD_VALUE"
-	return []any{
+	return append([]any{
 		&src, (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -194,7 +199,7 @@ func hookUnknownRow(ts time.Time) []any {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}
+	}, errorClassNilTail()...)
 }
 
 // TestRollup5m_AggregateTrafficEvents_RichRow drives aggregateTrafficEvents
@@ -248,7 +253,7 @@ func TestRollup5m_AggregateTrafficEvents_ScanError(t *testing.T) {
 
 	mock.ExpectBegin()
 	// Return an int where a *string is expected → scan error.
-	badRows := pgxmock.NewRows(trafficEventCols).AddRow(
+	badRows := pgxmock.NewRows(trafficEventCols).AddRow(append([]any{
 		42, // source — wrong type
 		(*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil),
@@ -265,7 +270,7 @@ func TestRollup5m_AggregateTrafficEvents_ScanError(t *testing.T) {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	)
+	}, errorClassNilTail()...)...)
 	mock.ExpectQuery(`FROM traffic_event`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(badRows)
@@ -287,25 +292,25 @@ func TestRollup5m_AggregateTrafficEvents_ScanError(t *testing.T) {
 // richThingTrafficEventRow prepends a thingID to richTrafficEventRow.
 func richThingTrafficEventRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, richTrafficEventRow(ts)...)
+	return append([]any{&thingID}, trimErrorClassTail(richTrafficEventRow(ts))...)
 }
 
 // bumpExemptThingRow prepends thingID to bumpExemptTrafficEventRow.
 func bumpExemptThingRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, bumpExemptTrafficEventRow(ts)...)
+	return append([]any{&thingID}, trimErrorClassTail(bumpExemptTrafficEventRow(ts))...)
 }
 
 // bumpDisabledThingRow prepends thingID to bumpDisabledHookErrorRow.
 func bumpDisabledThingRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, bumpDisabledHookErrorRow(ts)...)
+	return append([]any{&thingID}, trimErrorClassTail(bumpDisabledHookErrorRow(ts))...)
 }
 
 // hookUnknownThingRow prepends thingID to hookUnknownRow.
 func hookUnknownThingRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, hookUnknownRow(ts)...)
+	return append([]any{&thingID}, trimErrorClassTail(hookUnknownRow(ts))...)
 }
 
 // TestThingRollup5m_AggregateThingEvents_RichRow exercises emitThingEventMetrics

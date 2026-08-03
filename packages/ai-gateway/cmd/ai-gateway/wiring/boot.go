@@ -4,6 +4,7 @@ package wiring
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -36,11 +37,14 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
@@ -75,9 +79,13 @@ type BootDeps struct {
 	// dispatch SSE handler between live (chunked_async) and buffer
 	// (buffer_full_block) modes. Hot-reloaded via configdispatch's
 	// streaming_compliance shadow handler.
-	StreamingPolicy    *streampolicy.Store
-	AuditWriter        *audit.Writer
-	NormalizeReg       *normcore.Registry // shared with proxy.Deps so L2 semantic cache sees a populated rctxFull.Normalized()
+	StreamingPolicy   *streampolicy.Store
+	AuditWriter       *audit.Writer
+	NormalizeReg      *normcore.Registry        // shared with proxy.Deps so L2 semantic cache sees a populated rctxFull.Normalized()
+	SpillAvailability spillfactory.Availability // whether an oversize body actually has anywhere to go; surfaced as the storage.spill runtime source
+	// SpillStore is kept so the storage.spill source can measure RESIDENCY when it
+	// is read rather than reporting a boot-time snapshot of a number that moves.
+	SpillStore         spillstore.SpillStore
 	MetricsRecorder    *epMetrics.Recorder
 	ResponseCache      *cache.Cache
 	NormEngine         *wirerewrite.Engine
@@ -167,7 +175,17 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 		return nil, nil, err
 	}
 	d.RateLimiter = InitRateLimiter(d.Rdb, logger)
-	d.GwHookRegistry, err = InitHookRegistry(cfg.HTTPClients.Webhook)
+	// Trusted AI-Guard bases = this gateway's own public + private URLs plus
+	// its loopback variants (a service knows itself and always answers on
+	// loopback when bound there or on all interfaces); a compliance-webhook
+	// hook endpoint on any of these hosts gets the internal X-RS-Token.
+	d.GwHookRegistry, err = InitHookRegistry(cfg.HTTPClients.Webhook, cfg.Auth.InternalServiceToken,
+		[]string{
+			cfg.PublicURL,
+			platform.EffectivePrivateURL(cfg.PrivateURL, cfg.Server.Host, cfg.Server.Port),
+			fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.Port),
+			fmt.Sprintf("http://localhost:%d", cfg.Server.Port),
+		})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -212,7 +230,7 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 	}
 	d.PayloadCapture = InitPayloadCaptureStore(ctx, d.DB)
 	d.StreamingPolicy = InitStreamingPolicyStore(ctx, d.DB)
-	d.AuditWriter, d.NormalizeReg, err = InitAuditWriter(d.MqProducer, cfg.Spill, cfg.Audit, d.PayloadCapture, d.OpsReg, logger)
+	d.AuditWriter, d.NormalizeReg, d.SpillAvailability, d.SpillStore, err = InitAuditWriter(d.MqProducer, cfg.Spill, cfg.Audit, d.PayloadCapture, d.OpsReg, logger)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -312,3 +312,27 @@ func TestSwapIfContentChanged_NoOpOnUnchangedContent(t *testing.T) {
 		t.Errorf("direct Swap must always bump: %d->%d", g0, g)
 	}
 }
+
+// TestHasContentScanningHook verifies the coverage-honesty predicate: a
+// pipeline of only metadata hooks reports no content scanner, while any
+// content-scanning hook (or an unaccounted hook) reports true.
+func TestHasContentScanningHook(t *testing.T) {
+	cases := []struct {
+		name  string
+		hooks []boundHook
+		want  bool
+	}{
+		{"empty", nil, false},
+		{"metadata only", []boundHook{bh(metaHook{}, "m1"), bh(metaHook{}, "m2")}, false},
+		{"has content hook", []boundHook{bh(metaHook{}, "m1"), bh(&prescanHook{}, "c1")}, true},
+		{"unaccounted hook counts as content", []boundHook{bh(unaccountedHook{}, "u1")}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Pipeline{hooks: tc.hooks}
+			if got := p.HasContentScanningHook(); got != tc.want {
+				t.Errorf("HasContentScanningHook = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

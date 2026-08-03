@@ -18,16 +18,19 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		log = slog.Default()
 	}
 	return provcore.AdapterSpec{
-		Format:             provcore.FormatAzureOpenAI,
-		Transport:          NewTransport(log),
-		SchemaCodec:        openai.IdentityCodec(),
-		StreamDecoder:      openai.NewStreamDecoder(log),
-		ErrorNormalizer:    openai.ErrorNormalizerInstance(),
-		PassthroughRewrite: openai.ApplyReasoningRewrites,
+		Format:    provcore.FormatAzureOpenAI,
+		Transport: NewTransport(log),
+		// Azure serves the same model families as OpenAI behind deployment
+		// URLs and returns the same wire 400s, so its identity codec
+		// carries the OpenAI wire-rule contract verbatim (reasoning
+		// max_tokens rename + sampling strips, ada-002 embedding strips).
+		// Deployments named after something other than their model simply
+		// match no rule gate, exactly as before.
+		SchemaCodec:     openai.NewIdentityCodec(openai.OpenAIContract()),
+		StreamDecoder:   openai.NewStreamDecoder(log),
+		ErrorNormalizer: openai.ErrorNormalizerInstance(),
 		// Azure OpenAI mirrors OpenAI's embeddings endpoint via deployment
 		// URL path: /openai/deployments/{deployment}/embeddings?api-version=…
-		// The IdentityCodec applies the same per-model rules as OpenAI
-		// (ada-002 dimension strip, text-embedding-3-* passthrough).
 		RequestShapes: []typology.WireShape{typology.WireShapeOpenAIChat, typology.WireShapeOpenAIEmbeddings},
 	}
 }

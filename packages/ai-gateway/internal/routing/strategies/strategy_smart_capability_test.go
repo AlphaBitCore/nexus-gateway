@@ -1,0 +1,150 @@
+package strategies
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/llm"
+	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+)
+
+// Capability hard filter: a candidate that DECLARES a feature list but
+// lacks the capability the request provably needs (vision for image
+// blocks, function_calling for tool definitions) is dropped before the
+// catalog is rendered — the router LLM can no longer pick a model that
+// would reject or silently ignore the request's images or tools.
+// Candidates with an EMPTY feature list pass (fail-open: absent catalog
+// metadata must not disqualify), and a dimension that would empty the
+// pool is skipped entirely (fail-open, trace-recorded).
+
+func imageRctx() *core.RoutingContext {
+	return &core.RoutingContext{Request: &normalize.NormalizedPayload{
+		Kind: normalize.KindAIChat,
+		Messages: []normalize.Message{
+			{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
+				{Type: normalize.ContentText, Text: "what is in this picture?"},
+				{Type: normalize.ContentImageRef, ImageRef: &normalize.BinaryRef{Size: 10, ContentType: "image/png", SHA256: "a"}},
+			}},
+		},
+	}}
+}
+
+func toolsRctx() *core.RoutingContext {
+	return &core.RoutingContext{Request: &normalize.NormalizedPayload{
+		Kind: normalize.KindAIChat,
+		Messages: []normalize.Message{
+			textMsg(normalize.RoleUser, "look up the weather"),
+		},
+		Tools: []normalize.ToolDef{{Name: "get_weather"}},
+	}}
+}
+
+func TestSmart_CapabilityFilter_ImageRequestDropsNonVisionCandidate(t *testing.T) {
+	blind := core.SmartModelRow{ModelID: "m-blind", ModelCode: "text-only", ProviderID: "p1", Features: []string{"function_calling", "streaming"}}
+	sighted := core.SmartModelRow{ModelID: "m-sighted", ModelCode: "sees-all", ProviderID: "p1", Features: []string{"vision", "streaming"}}
+	decider := &fakeDecider{decision: llm.Decision{ModelID: "sees-all", Reason: "vision"}}
+	fx := newSmartFixture(t, decider, []core.SmartModelRow{blind, sighted})
+	node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
+	trace := []core.TraceEntry{}
+	strat := &SmartStrategy{deps: fx.deps()}
+
+	out, err := strat.Evaluate(context.Background(), node, imageRctx(), &trace, 0, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(out) != 1 || out[0].ModelID != "m-sighted" {
+		t.Fatalf("unexpected targets: %+v", out)
+	}
+	if strings.Contains(decider.lastReq.SystemPrompt, "text-only") {
+		t.Errorf("catalog still contains the vision-less candidate for an image request")
+	}
+	found := false
+	for _, e := range trace {
+		if strings.Contains(e.Decision, "capability filter") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no capability-filter trace entry: %+v", trace)
+	}
+}
+
+func TestSmart_CapabilityFilter_ToolsRequestDropsNonFunctionCallingCandidate(t *testing.T) {
+	noTools := core.SmartModelRow{ModelID: "m-notools", ModelCode: "chat-only", ProviderID: "p1", Features: []string{"vision"}}
+	tools := core.SmartModelRow{ModelID: "m-tools", ModelCode: "tool-user", ProviderID: "p1", Features: []string{"function_calling"}}
+	decider := &fakeDecider{decision: llm.Decision{ModelID: "tool-user", Reason: "fc"}}
+	fx := newSmartFixture(t, decider, []core.SmartModelRow{noTools, tools})
+	node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
+	trace := []core.TraceEntry{}
+	strat := &SmartStrategy{deps: fx.deps()}
+
+	out, err := strat.Evaluate(context.Background(), node, toolsRctx(), &trace, 0, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(out) != 1 || out[0].ModelID != "m-tools" {
+		t.Fatalf("unexpected targets: %+v", out)
+	}
+	if strings.Contains(decider.lastReq.SystemPrompt, "chat-only") {
+		t.Errorf("catalog still contains the non-function-calling candidate for a tools request")
+	}
+}
+
+func TestSmart_CapabilityFilter_UndeclaredFeaturesPass(t *testing.T) {
+	mystery := core.SmartModelRow{ModelID: "m-mystery", ModelCode: "undeclared", ProviderID: "p1"} // no Features
+	blind := core.SmartModelRow{ModelID: "m-blind", ModelCode: "text-only", ProviderID: "p1", Features: []string{"streaming"}}
+	decider := &fakeDecider{decision: llm.Decision{ModelID: "undeclared", Reason: "only fit"}}
+	fx := newSmartFixture(t, decider, []core.SmartModelRow{mystery, blind})
+	node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
+	trace := []core.TraceEntry{}
+	strat := &SmartStrategy{deps: fx.deps()}
+
+	out, err := strat.Evaluate(context.Background(), node, imageRctx(), &trace, 0, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(out) != 1 || out[0].ModelID != "m-mystery" {
+		t.Fatalf("unexpected targets: %+v", out)
+	}
+	if !strings.Contains(decider.lastReq.SystemPrompt, "undeclared") {
+		t.Errorf("undeclared-features candidate must pass the capability filter")
+	}
+	if strings.Contains(decider.lastReq.SystemPrompt, "text-only") {
+		t.Errorf("declared-but-lacking candidate must be dropped")
+	}
+}
+
+func TestSmart_CapabilityFilter_DimensionEmptyingPoolIsSkipped(t *testing.T) {
+	// Every candidate declares features and none has vision: dropping all
+	// would leave the router nothing — the vision dimension is skipped
+	// (fail-open) and the pool stays intact.
+	a := core.SmartModelRow{ModelID: "m-a", ModelCode: "model-a", ProviderID: "p1", Features: []string{"streaming"}}
+	b := core.SmartModelRow{ModelID: "m-b", ModelCode: "model-b", ProviderID: "p1", Features: []string{"function_calling"}}
+	decider := &fakeDecider{decision: llm.Decision{ModelID: "model-a", Reason: "best effort"}}
+	fx := newSmartFixture(t, decider, []core.SmartModelRow{a, b})
+	node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
+	trace := []core.TraceEntry{}
+	strat := &SmartStrategy{deps: fx.deps()}
+
+	out, err := strat.Evaluate(context.Background(), node, imageRctx(), &trace, 0, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(out) != 1 || out[0].ModelID != "m-a" {
+		t.Fatalf("unexpected targets: %+v", out)
+	}
+	if !strings.Contains(decider.lastReq.SystemPrompt, "model-a") || !strings.Contains(decider.lastReq.SystemPrompt, "model-b") {
+		t.Errorf("pool must stay intact when the dimension would empty it")
+	}
+	found := false
+	for _, e := range trace {
+		if strings.Contains(e.Decision, "no candidate declares") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("skipped dimension must be trace-recorded: %+v", trace)
+	}
+}

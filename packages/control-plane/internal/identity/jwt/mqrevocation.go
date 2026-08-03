@@ -16,6 +16,7 @@ import (
 
 	"github.com/bits-and-blooms/bloom/v3"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/rstokenauth"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
@@ -57,9 +58,15 @@ type MQCheckerConfig struct {
 	// consumer reconnect.
 	ReplayURL string
 
-	// ReplayAuthHeader is sent verbatim as the Authorization header on both
-	// introspect and replay requests. Typically "Bearer <rs-access-token>".
-	ReplayAuthHeader string
+	// ServiceToken is the internal service token, sent as the X-RS-Token header
+	// (rstokenauth.Header) on the introspect and replay requests. Both are
+	// service-to-service CP calls, so a service token is the credential they can
+	// actually present — this checker holds no IAM identity.
+	//
+	// It was previously sent as `Authorization: Bearer <token>`, which the replay
+	// endpoint's guard does not read and the introspect handler ignores entirely.
+	// The replay route therefore answered 401 on every poll.
+	ServiceToken string
 
 	// HTTPClient is used for introspect and replay requests. Defaults to a
 	// client with a 5-second timeout when nil.
@@ -325,8 +332,8 @@ func (c *MQRevocationChecker) introspect(ctx context.Context, claims *Claims) (b
 		return false, fmt.Errorf("mqrevocation: introspect build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if c.cfg.ReplayAuthHeader != "" {
-		req.Header.Set("Authorization", c.cfg.ReplayAuthHeader)
+	if c.cfg.ServiceToken != "" {
+		req.Header.Set(rstokenauth.Header, c.cfg.ServiceToken)
 	}
 
 	resp, err := c.cfg.HTTPClient.Do(req)
@@ -456,8 +463,8 @@ func (c *MQRevocationChecker) RunCatchup(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("mqrevocation: catchup build request: %w", err)
 		}
-		if c.cfg.ReplayAuthHeader != "" {
-			req.Header.Set("Authorization", c.cfg.ReplayAuthHeader)
+		if c.cfg.ServiceToken != "" {
+			req.Header.Set(rstokenauth.Header, c.cfg.ServiceToken)
 		}
 
 		resp, err := c.cfg.HTTPClient.Do(req)

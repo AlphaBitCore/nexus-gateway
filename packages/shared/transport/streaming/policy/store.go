@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/goccy/go-json"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 )
 
@@ -57,12 +58,38 @@ func (s *Store) Set(p Policy) {
 // understands. Empty payloads load DefaultPolicy() — matching the
 // behaviour LoadGlobalDefault has on a missing system_metadata row.
 func (s *Store) ApplyShadowState(_ context.Context, raw json.RawMessage) error {
+	// An EMPTY or JSON-null payload carries no state, and installing defaults
+	// from it would silently revert whatever the admin configured.
+	//
+	// streaming_compliance is a Type-B key in configkey.go — "invalidation
+	// trigger — state stays null/{}" — so null is exactly what the Hub pushes,
+	// on every push. Measured on the compliance proxy before this guard: the boot
+	// load installed the admin's chunked_async at 10:30:50.045, and the first
+	// trigger overwrote it with the built-in passthrough default 70 ms later. The
+	// data plane then relayed every SSE stream uninspected — passthrough cannot
+	// accumulate and cannot reject — while the admin's setting said otherwise.
+	//
+	// The receiver's job on a trigger is to RE-READ its authoritative source;
+	// deciding that here is impossible (this Store has none), so the rule here is
+	// the narrower one that is always right: a trigger never resets state.
+	if isEmptyShadowPayload(raw) {
+		return nil
+	}
 	p, err := DecodeGlobalPolicy(raw)
 	if err != nil {
 		return err
 	}
 	s.Set(p)
 	return nil
+}
+
+// isEmptyShadowPayload reports whether a pushed shadow value carries no state:
+// absent, empty, JSON null, or an empty object. json.RawMessage("null") is four
+// bytes, so a len()==0 check alone does not catch the case the Hub actually
+// sends.
+func isEmptyShadowPayload(raw json.RawMessage) bool {
+	t := strings.TrimSpace(string(raw))
+	return t == "" || t == "null" || t == "{}"
 }
 
 // RawConfigLoader fetches the admin's streaming-policy JSON blob from

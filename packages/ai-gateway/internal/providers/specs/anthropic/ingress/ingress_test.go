@@ -1096,3 +1096,124 @@ func TestOpenAIToMessages_emptyContentAndNoToolCalls_fallbackTextBlock(t *testin
 		t.Errorf("expected fallback empty text block: %s", first.Raw)
 	}
 }
+
+// TestMessagesRequest_thinkingHistory_toReasoningContent pins the fix for
+// the confirmed drop: an assistant thinking block in a replayed history
+// must reach canonical as reasoning_content (text, L2 universal) plus a
+// per-block nexus_thinking carrier that preserves each block's signature
+// for the Anthropic round-trip. A cross-format target that needs the
+// reasoning back (DeepSeek thinking mode) then sees the real text instead
+// of an empty back-fill; an Anthropic target reconstructs the signed block.
+func TestMessagesRequest_thinkingHistory_toReasoningContent(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-opus-4-8",
+		"messages":[
+			{"role":"user","content":"solve it"},
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"step 1. step 2.","signature":"sig-abc"},
+				{"type":"text","text":"the answer is 42"}
+			]}
+		]
+	}`)
+	out, err := ingress.MessagesRequestToOpenAIChatCompletion(body, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var asst gjson.Result
+	for _, m := range gjson.GetBytes(out, "messages").Array() {
+		if m.Get("role").String() == "assistant" {
+			asst = m
+		}
+	}
+	if asst.Get("reasoning_content").String() != "step 1. step 2." {
+		t.Fatalf("thinking text must land in reasoning_content, not be dropped: %s", out)
+	}
+	if asst.Get("nexus_thinking.0.thinking").String() != "step 1. step 2." {
+		t.Fatalf("thinking text must ride the nexus_thinking block for the round-trip: %s", out)
+	}
+	if asst.Get("nexus_thinking.0.signature").String() != "sig-abc" {
+		t.Fatalf("signature must ride the nexus_thinking block for the round-trip: %s", out)
+	}
+	if asst.Get("content").String() != "the answer is 42" {
+		t.Fatalf("visible text must NOT be contaminated by the thinking: %s", out)
+	}
+}
+
+// TestMessagesRequest_multiBlockThinking_perBlockSignatures pins F2: a
+// replayed assistant turn with TWO signed thinking blocks plus a
+// redacted_thinking block must reach canonical as a nexus_thinking array that
+// keeps each block's OWN signature in order (Anthropic validates a signature
+// against the exact content it signed, so blocks must not be merged), and
+// preserves the redacted block's opaque data. reasoning_content joins only the
+// plaintext blocks.
+func TestMessagesRequest_multiBlockThinking_perBlockSignatures(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-opus-4-8",
+		"messages":[
+			{"role":"user","content":"go"},
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"first","signature":"sig-a"},
+				{"type":"thinking","thinking":"second","signature":"sig-b"},
+				{"type":"redacted_thinking","data":"opaque-xyz"},
+				{"type":"text","text":"done"}
+			]}
+		]
+	}`)
+	out, err := ingress.MessagesRequestToOpenAIChatCompletion(body, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var asst gjson.Result
+	for _, m := range gjson.GetBytes(out, "messages").Array() {
+		if m.Get("role").String() == "assistant" {
+			asst = m
+		}
+	}
+	nt := asst.Get("nexus_thinking").Array()
+	if len(nt) != 3 {
+		t.Fatalf("all three blocks must survive as distinct nexus_thinking entries: %s", out)
+	}
+	if nt[0].Get("thinking").String() != "first" || nt[0].Get("signature").String() != "sig-a" {
+		t.Fatalf("block 0 must keep its own text+signature in order: %s", out)
+	}
+	if nt[1].Get("thinking").String() != "second" || nt[1].Get("signature").String() != "sig-b" {
+		t.Fatalf("block 1 must keep its own text+signature in order (not merged with block 0): %s", out)
+	}
+	if nt[2].Get("redacted_data").String() != "opaque-xyz" {
+		t.Fatalf("redacted_thinking data must be preserved verbatim: %s", out)
+	}
+	if asst.Get("reasoning_content").String() != "first\nsecond" {
+		t.Fatalf("reasoning_content joins only the plaintext blocks in order: %s", out)
+	}
+}
+
+// TestMessagesRequest_thinkingWithToolCalls_toReasoningContent pins the
+// same on the assistant-with-tool_calls path.
+func TestMessagesRequest_thinkingWithToolCalls_toReasoningContent(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-opus-4-8",
+		"messages":[
+			{"role":"user","content":"look it up"},
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"I should search","signature":"sig-x"},
+				{"type":"tool_use","id":"tu_1","name":"search","input":{"q":"x"}}
+			]}
+		]
+	}`)
+	out, err := ingress.MessagesRequestToOpenAIChatCompletion(body, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, m := range gjson.GetBytes(out, "messages").Array() {
+		if m.Get("role").String() == "assistant" && m.Get("tool_calls").IsArray() {
+			if m.Get("reasoning_content").String() != "I should search" {
+				t.Fatalf("reasoning must survive on the tool_calls path: %s", out)
+			}
+			if m.Get("nexus_thinking.0.signature").String() != "sig-x" {
+				t.Fatalf("signature must survive on the tool_calls path: %s", out)
+			}
+			return
+		}
+	}
+	t.Fatalf("no assistant tool_calls message found: %s", out)
+}

@@ -31,10 +31,29 @@ func classifyCachePreLookup(
 		// is endpoint-driven regardless of admin cache config. The L2 semantic
 		// tier already self-skips embeddings.
 		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonEmbeddingsEndpoint
+	case endpointKind == typology.EndpointKindImageGeneration ||
+		endpointKind == typology.EndpointKindTTS ||
+		endpointKind == typology.EndpointKindSTT:
+		// Multimodal endpoints never use the response cache: generative
+		// image variety is the desired product (a cached identical image is
+		// the wrong answer), TTS/STT payloads are large binary/derived
+		// content with near-zero byte-identical repeat probability, and a
+		// cached transcript would be PII-at-rest keyed by audio hash.
+		// Endpoint-driven like the embeddings skip above; deliberately no
+		// per-modality cache knob.
+		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonModalityEndpoint
+	case endpointKind == typology.EndpointKindRerank:
+		// Rerank responses are ranking-specific to the exact query + document
+		// set with near-zero byte-identical repeat probability; skip the cache
+		// at pre-lookup, endpoint-driven like embeddings above.
+		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonRerankEndpoint
 	case !cacheEnabled:
 		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonDisabled
 	case !hasTargets:
-		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonDisabled
+		// Distinct from the cacheEnabled arm above: the tiers are on, routing
+		// simply produced nothing to key an entry against. Stamping "disabled"
+		// here made a config posture and a routing outcome read identically.
+		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonNoTargets
 	case passthroughBypassCache:
 		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonPassthrough
 	case hasNoCacheHeader:
@@ -116,12 +135,12 @@ func estimatedCostUSD(promptTok, completionTok int64, inPricePM, outPricePM floa
 
 // stampUnpricedCost writes metadata.cost.unpriced=true so cost surfaces can
 // show "$0 because no price is set" instead of silently reporting no spend,
-// which erodes trust in the cost feature. It is called only
-// from checkQuota, where the routed model's price POINTERS are inspected:
-// the caller has already established that the model has no price row at all
-// (both InputPricePM and OutputPricePM nil), which is distinct from a model
-// priced explicitly at 0 (genuinely free — never flagged). Returns the
-// updated metadata value (assign back to rec.Metadata).
+// which erodes trust in the cost feature. Its callers (checkQuota; the video
+// submit handler) inspect the routed model's price POINTERS and have already
+// established that the model has no price row at all (nil price pointers),
+// which is distinct from a model priced explicitly at 0 (genuinely free —
+// never flagged). Returns the updated metadata value (assign back to
+// rec.Metadata).
 func stampUnpricedCost(existing any) any {
 	md := mergeIntoMetadataMap(existing)
 	cost, _ := md["cost"].(map[string]any)

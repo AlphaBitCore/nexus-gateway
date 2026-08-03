@@ -1,7 +1,6 @@
 package tlsbump
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"sync"
@@ -218,7 +217,7 @@ func (x *bumpedExchange) runStreamingRequestPhase() bool {
 	// reach the central store. stampCPMarker also reads x.reqHookResult.
 	x.reqHookResult = &core.CompliancePipelineResult{Decision: compliance.Approve}
 
-	x.r = x.r.WithContext(context.WithValue(x.r.Context(), requestAuditKey{}, &requestAuditCtx{
+	x.auditCtx = &requestAuditCtx{
 		input:                 reqInput,
 		info:                  auditInfo,
 		requestCapture:        capture,
@@ -227,7 +226,7 @@ func (x *bumpedExchange) runStreamingRequestPhase() bool {
 		requestPipelineResult: x.reqHookResult,
 		matchedDomain:         x.matchedDomain,
 		adapter:               resolvedAdapter,
-	}))
+	}
 	return false
 }
 

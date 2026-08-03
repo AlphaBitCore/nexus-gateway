@@ -6,6 +6,7 @@ package hooks
 
 import (
 	"context"
+	"errors"
 	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
@@ -21,6 +22,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/hookstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 func TestTrimRight(t *testing.T) {
@@ -60,7 +63,7 @@ func TestRegisterHookExtrasRoutes_WiresFourEndpoints(t *testing.T) {
 	iamMW := func(_ string) echo.MiddlewareFunc {
 		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
 	}
-	h.RegisterHookExtrasRoutes(g, iamMW, ProxyConfig{AIGatewayURL: "http://localhost:3050"})
+	h.RegisterHookExtrasRoutes(g, iamMW, ProxyConfig{AIGatewayBase: peer.Static("http://localhost:3050")})
 
 	wanted := []struct {
 		method, path string
@@ -83,9 +86,13 @@ func TestRegisterHookExtrasRoutes_WiresFourEndpoints(t *testing.T) {
 			t.Errorf("missing route: %s %s", w.method, w.path)
 		}
 	}
-	// Verify proxy was stored.
-	if h.proxy.AIGatewayURL != "http://localhost:3050" {
-		t.Errorf("proxy not stored; got %q", h.proxy.AIGatewayURL)
+	// Verify proxy was stored: the Hub-backed provider resolves the value
+	// it was registered with.
+	if h.proxy.AIGatewayBase == nil {
+		t.Fatal("proxy not stored: nil AIGatewayBase provider")
+	}
+	if base, err := h.proxy.AIGatewayBase(context.Background()); err != nil || base != "http://localhost:3050" {
+		t.Errorf("proxy not stored; got %q, %v", base, err)
 	}
 }
 
@@ -373,7 +380,7 @@ func TestHookTest_BuiltinHook_ForwardsToAIGateway(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(hookConfigCols).AddRow(row...))
 
 	h := newHandler(mock, meta, nil, audit.NewWriter(nil, "", slog.Default()))
-	h.proxy = ProxyConfig{AIGatewayURL: gw.URL}
+	h.proxy = ProxyConfig{AIGatewayBase: peer.Static(gw.URL)}
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -418,7 +425,7 @@ func TestHookTest_WebhookWithNoEndpoint_ForwardsToAIGateway(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(hookConfigCols).AddRow(row...))
 
 	h := newHandler(mock, meta, nil, audit.NewWriter(nil, "", slog.Default()))
-	h.proxy = ProxyConfig{AIGatewayURL: gw.URL}
+	h.proxy = ProxyConfig{AIGatewayBase: peer.Static(gw.URL)}
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -443,7 +450,7 @@ func TestForwardHookTest_AIGatewayUnreachable_ReturnsBadGateway(t *testing.T) {
 
 	h := newHandler(mock, meta, nil, audit.NewWriter(nil, "", slog.Default()))
 	// Point at a port that refuses connections.
-	h.proxy = ProxyConfig{AIGatewayURL: "http://127.0.0.1:1"}
+	h.proxy = ProxyConfig{AIGatewayBase: peer.Static("http://127.0.0.1:1")}
 
 	hc := &hookstore.HookConfig{
 		ID:           "hc-1",
@@ -548,7 +555,7 @@ func TestForwardHookTest_AttachesBearer(t *testing.T) {
 	defer gw.Close()
 
 	h := newHandler(nil, nil, nil, audit.NewWriter(nil, "", slog.Default()))
-	h.proxy = ProxyConfig{AIGatewayURL: gw.URL, AIGatewayInternalToken: tok}
+	h.proxy = ProxyConfig{AIGatewayBase: peer.Static(gw.URL), AIGatewayInternalToken: tok}
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -561,5 +568,40 @@ func TestForwardHookTest_AttachesBearer(t *testing.T) {
 	}
 	if want := "Bearer " + tok; gotAuth != want {
 		t.Errorf("Authorization = %q; want %q", gotAuth, want)
+	}
+}
+
+// TestHookTest_ResolverError503 locks the peer-resolution failure UX on the
+// builtin-hook forward: a gateway whose Hub-reported URL cannot be resolved
+// yet answers 503 PEER_SERVICE_UNAVAILABLE — never a raw 500/502.
+func TestHookTest_ResolverError503(t *testing.T) {
+	mock, meta := newMockStore(t)
+	now := time.Now().UTC()
+	row := makeHookConfigRow(now)
+	row[2] = "builtin"
+	mock.ExpectQuery(`SELECT .* FROM "HookConfig" WHERE id`).
+		WithArgs("hc-1").
+		WillReturnRows(pgxmock.NewRows(hookConfigCols).AddRow(row...))
+
+	h := newHandler(mock, meta, nil, audit.NewWriter(nil, "", slog.Default()))
+	h.proxy = ProxyConfig{AIGatewayBase: func(context.Context) (string, error) {
+		return "", errors.New("peer service URL not reported yet")
+	}}
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u1")
+	c.SetParamNames("id")
+	c.SetParamValues("hc-1")
+
+	if err := h.HookTest(c); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d; want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing %s: %s", peer.CodeUnavailable, rec.Body.String())
 	}
 }

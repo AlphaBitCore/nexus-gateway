@@ -2,12 +2,10 @@
 package wiring
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -29,14 +27,14 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/proxy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	epMetrics "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store/asyncjob"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
+	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
@@ -51,14 +49,18 @@ import (
 
 // RouteDeps carries every subsystem the HTTP route layer needs.
 type RouteDeps struct {
-	Config            *config.Config
-	CacheLayer        *cachelayer.Layer
-	DB                *store.DB
-	VKAuth            *vkauth.Authenticator
-	RateLimiter       *ratelimit.Limiter
-	CredManager       *credmanager.Manager
-	RouterResolver    *routing.Resolver
-	Executor          *executor.TargetExecutor
+	Config         *config.Config
+	CacheLayer     *cachelayer.Layer
+	DB             *store.DB
+	VKAuth         *vkauth.Authenticator
+	RateLimiter    *ratelimit.Limiter
+	CredManager    *credmanager.Manager
+	RouterResolver *routing.Resolver
+	Executor       *executor.TargetExecutor
+	// Resolver is the shared (providerID, modelID) → CallTarget resolver
+	// (the same *provtarget.PgResolver the executor holds). The STT
+	// streaming-proxy handler resolves its single upstream target through it.
+	Resolver          provtarget.Resolver
 	HookConfigCache   *pipeline.HookConfigCache
 	GWHookRegistry    *hookcore.HookRegistry
 	ProviderReg       *provcore.Registry
@@ -127,6 +129,13 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 		rulePackLister = rulepack.NewStore(deps.DB.Pool)
 	}
 
+	// Async-job correlation store (the ServeVideo* family). Nil without a
+	// DB — the video routes then serve 503 VIDEO_STORE_UNAVAILABLE.
+	var asyncJobs asyncjob.Store
+	if deps.DB != nil {
+		asyncJobs = asyncjob.New(deps.DB.Pool)
+	}
+
 	handlerDeps := &proxy.Deps{
 		Models:                 deps.CacheLayer,
 		VKAuth:                 deps.VKAuth,
@@ -134,6 +143,8 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 		CredManager:            deps.CredManager,
 		Router:                 deps.RouterResolver,
 		Executor:               deps.Executor,
+		Resolver:               deps.Resolver,
+		AsyncJobs:              asyncJobs,
 		HookConfigCache:        deps.HookConfigCache,
 		ProviderReg:            deps.ProviderReg,
 		HealthTracker:          deps.HealthTracker,
@@ -228,6 +239,45 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 		// EndpointKind = chat (derived via typology.KindFromWireShape).
 		WireShape: typology.WireShapeAnthropicMessages, BodyFormat: provcore.FormatAnthropic,
 	}))
+	// Multimodal JSON-body routes (native-shape passthrough): image
+	// generation + TTS. Both carry `model` at the body root, so the full
+	// ServeProxy pipeline works; the cache is endpoint-skipped. The sibling
+	// multipart routes (images/edits|variations, audio/transcriptions|
+	// translations) need multipart model extraction and ship with that work.
+	mux.HandleFunc("POST /v1/images/generations", proxyHandler.ServeProxy(proxy.Ingress{
+		WireShape: typology.WireShapeOpenAIImages, BodyFormat: provcore.FormatOpenAI,
+	}))
+	mux.HandleFunc("POST /v1/audio/speech", proxyHandler.ServeProxy(proxy.Ingress{
+		WireShape: typology.WireShapeOpenAIAudioSpeech, BodyFormat: provcore.FormatOpenAI,
+	}))
+	// STT (speech-to-text): the multipart /v1/audio/transcriptions +
+	// /v1/audio/translations routes go through the PARALLEL streaming-proxy
+	// handler (ServeSTT), NOT the small-JSON ServeProxy pipeline — their body
+	// is a large one-shot binary stream (see e88-s5). Both share one wire
+	// shape; ServeSTT preserves the ingress path (transcriptions vs
+	// translations) verbatim to the upstream.
+	mux.HandleFunc("POST /v1/audio/transcriptions", proxyHandler.ServeSTT(proxy.Ingress{
+		WireShape: typology.WireShapeOpenAIAudioTranscriptions, BodyFormat: provcore.FormatOpenAI,
+	}))
+	mux.HandleFunc("POST /v1/audio/translations", proxyHandler.ServeSTT(proxy.Ingress{
+		WireShape: typology.WireShapeOpenAIAudioTranscriptions, BodyFormat: provcore.FormatOpenAI,
+	}))
+	// Reranking: canonical = Cohere shape (no OpenAI rerank API), so FormatCohere.
+	mux.HandleFunc("POST /v1/rerank", proxyHandler.ServeProxy(proxy.Ingress{
+		WireShape: typology.WireShapeCohereRerank, BodyFormat: provcore.FormatCohere,
+	}))
+	// Video generation (async): the parallel ServeVideo* family + the
+	// deliberately-unserved sub-route 404 envelopes (extracted to
+	// routes_video.go for the file-size ratchet).
+	mountVideoRoutes(mux, proxyHandler)
+	// Realtime voice relay (WebSocket): parallel handler, routes_realtime.go.
+	mountRealtimeRoutes(mux, proxyHandler)
+
+	// Guardrail: the standalone compliance-verdict endpoint runs the SAME hook
+	// pipeline the inline path runs over caller-supplied text and returns an
+	// allow/block/redact verdict — no upstream relay, so no Ingress wire shape
+	// (see e90-s1). Parallel handler (ServeGuardrail), not ServeProxy.
+	mux.HandleFunc("POST /v1/guardrail", proxyHandler.ServeGuardrail())
 	mux.HandleFunc("POST /v1/estimate", proxyHandler.ServeEstimate)
 
 	// Gemini native ingress.
@@ -284,47 +334,12 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 		readLimiter = deps.RateLimiter
 	}
 	readRL := vkReadRateLimit(readAuth, readLimiter, deps.Logger)
-	mux.HandleFunc("GET /v1/models", readRL(models.ModelsHandler(deps.DB, deps.VKAuth, deps.Logger)))
-	mux.HandleFunc("GET /v1/models/{model}", readRL(models.ModelDetailHandler(deps.DB, deps.VKAuth, deps.Logger)))
+	modelCatalog := selectModelCatalog(deps)
+	mux.HandleFunc("GET /v1/models", readRL(models.ModelsHandler(modelCatalog, deps.VKAuth, deps.Logger)))
+	mux.HandleFunc("GET /v1/models/{model}", readRL(models.ModelDetailHandler(modelCatalog, deps.VKAuth, deps.Logger)))
 	mux.HandleFunc("GET /v1/usage", readRL(envelope.UsageSummaryHandler(deps.DB, deps.VKAuth, deps.QuotaEngine, deps.Logger)))
 	mux.HandleFunc("GET /v1/usage/daily", readRL(envelope.UsageDailyHandler(deps.DB, deps.VKAuth, deps.Logger)))
 
-	// Middleware chain.
-	var h http.Handler = mux
-	h = middleware.ConnectionStage(
-		func(ctx context.Context) (*pipeline.PolicyResolver, error) {
-			return deps.HookConfigCache.Resolver(ctx), nil
-		},
-		5*time.Second, 30*time.Second, "AI_GATEWAY", deps.Logger,
-	)(h)
-	h = middleware.Logger(deps.Logger)(h)
-	h = middleware.Recovery(deps.Logger)(h)
-	if deps.Config.CORS.Enabled {
-		allowedMethods := deps.Config.CORS.AllowedMethods
-		if len(allowedMethods) == 0 {
-			allowedMethods = []string{"GET", "POST", "OPTIONS"}
-		}
-		allowedHeaders := deps.Config.CORS.AllowedHeaders
-		if len(allowedHeaders) == 0 {
-			allowedHeaders = []string{
-				"Content-Type", "Authorization", "x-nexus-virtual-key",
-				"x-request-id", "x-nexus-aigw-body-format", "x-nexus-aigw-no-cache",
-			}
-		}
-		h = middleware.CORS(middleware.CORSConfig{
-			AllowedOrigins: deps.Config.CORS.AllowedOrigins,
-			AllowedMethods: allowedMethods,
-			AllowedHeaders: allowedHeaders,
-			ExposeHeaders:  traffic.ExposeHeaders,
-			MaxAge:         deps.Config.CORS.MaxAgeSec,
-		})(h)
-		slog.Info("CORS enabled", "origins", deps.Config.CORS.AllowedOrigins)
-	}
-	h = telemetry.HTTPTrace("nexus-ai-gateway")(h)
-	// RequestID wraps outside HTTPTrace so the X-Nexus-Request-Id is on the
-	// request context before the server span is created: the tracer's
-	// IDGenerator derives the span's trace id from it, keeping the OTel trace
-	// id and the audit trace_id one and the same value.
-	h = middleware.RequestID(h)
-	return h
+	// Wrap the mounted mux with the ai-gateway middleware chain.
+	return applyMiddleware(mux, deps)
 }

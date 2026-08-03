@@ -43,9 +43,11 @@ func ExtractIngressModel(in Ingress, r *http.Request, body []byte) (modelID stri
 		provcore.FormatAnthropic,
 		provcore.FormatMiniMax,
 		provcore.FormatGLM,
+		provcore.FormatCohere,
 		provcore.FormatOpenAIResponses:
 		// /v1/responses uses the same top-level `model` field as
-		// chat-completions; extraction is identical. The stream flag
+		// chat-completions; extraction is identical. /v1/rerank (canonical
+		// Cohere shape) also carries the model in the body. The stream flag
 		// reads from body `stream:true` (not from path).
 		modelID = gjson.GetBytes(body, "model").String()
 	case provcore.FormatGemini:

@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // ctxFor builds an echo context for one of the split endpoints with the :id path param
@@ -309,7 +312,7 @@ func TestInterrupt_EmitsTurnAborted(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	h := New(Config{AIGatewayURL: mock.URL, CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
+	h := New(Config{AIGatewayBase: peer.Static(mock.URL), CPBaseURL: mock.URL, SystemVK: "nvk_test", Model: "m"})
 	rec, c := ctxFor(http.MethodPost, "/api/admin/assistant/sessions/s1/chat", "u-1", "s1", `{"message":"hi"}`)
 	if err := h.StartChat(c); err != nil {
 		t.Fatal(err)
@@ -334,5 +337,37 @@ func TestInterrupt_EmitsTurnAborted(t *testing.T) {
 	}
 	if !strings.Contains(grec.Body.String(), "turn_aborted") {
 		t.Fatalf("an interrupted turn must emit turn_aborted, got:\n%s", grec.Body.String())
+	}
+}
+
+// TestStartChat_ResolverError503_ReleasesSlot locks the peer-resolution
+// failure UX: when the AI Gateway's Hub-reported URL cannot be resolved the
+// chat is refused 503 PEER_SERVICE_UNAVAILABLE (never a raw 500), and the
+// just-claimed turn slot is released so a retry is not wrongly 409'd.
+func TestStartChat_ResolverError503_ReleasesSlot(t *testing.T) {
+	h := New(Config{
+		SystemVK: "nvk_test",
+		Model:    "m",
+		AIGatewayBase: func(context.Context) (string, error) {
+			return "", errors.New("peer service URL not reported yet")
+		},
+	})
+	rec, c := ctxFor(http.MethodPost, "/api/admin/assistant/sessions/s1/chat", "u-1", "s1", `{"message":"hi"}`)
+	if err := h.StartChat(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Fatalf("503 body must carry %s, got %s", peer.CodeUnavailable, rec.Body.String())
+	}
+	// The slot must have been released: a retry gets the same 503, not 409.
+	rec2, c2 := ctxFor(http.MethodPost, "/api/admin/assistant/sessions/s1/chat", "u-1", "s1", `{"message":"hi"}`)
+	if err := h.StartChat(c2); err != nil {
+		t.Fatal(err)
+	}
+	if rec2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("retry after resolver failure must be 503 (slot released), got %d (%s)", rec2.Code, rec2.Body.String())
 	}
 }

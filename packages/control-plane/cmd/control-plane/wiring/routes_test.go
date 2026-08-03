@@ -83,7 +83,9 @@ func TestInitRoutes_WithAIGuardDispatcher_MountsRoutes(t *testing.T) {
 	})
 
 	cfg := &config.Config{}
-	cfg.BFF.AIGatewayURL = "http://127.0.0.1:3050"
+	// No peer URL is configured anywhere: the AI Guard dispatcher resolves
+	// the gateway from the Hub (cfg.Registry.NexusHubURL) at dispatch time.
+	cfg.Registry.NexusHubURL = "http://127.0.0.1:3060"
 	cfg.Auth.InternalServiceToken = "test-token"
 	cfg.AIGuard.DispatchTimeoutSec = 10
 

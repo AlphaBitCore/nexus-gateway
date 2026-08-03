@@ -64,7 +64,7 @@ func emitAudit(logger *slog.Logger, audCtx *requestAuditCtx, respInput *core.Hoo
 	if result == nil {
 		// No response pipeline executed; default decision stays empty
 		// rather than fabricating an Approve.
-		result = &core.CompliancePipelineResult{Decision: compliance.Approve}
+		result = uninspectedResponse()
 	}
 	bo.auditEmitter.EmitDual(respInput, *info, reqResult, result, "BUMP_SUCCESS",
 		statusCode, int(time.Since(requestStart).Milliseconds()),

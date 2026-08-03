@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
@@ -47,62 +46,6 @@ func SetMetricsRecorder(fn func(provider, class, outcome string)) {
 		return
 	}
 	metricsRecord = fn
-}
-
-// Attempt records the outcome of a single upstream call.
-type Attempt struct {
-	Target         routingcore.RoutingTarget
-	CredentialID   string
-	CredentialName string
-	StatusCode     int
-	Error          string
-	LatencyMs      int
-	// RetryReason is the cfgpolicy.ErrorClass string ("network",
-	// "timeout", "429", "5xx") that classified this attempt as a
-	// retryable failure. Empty on success and on terminal 4xx
-	// (CodeInvalidRequest / CodeAuthFailed / CodeEndpointUnsupported /
-	// CodeNoCompatibleProvider). Stamped regardless of whether a retry
-	// actually happened so the audit row records why each attempt would
-	// have been retryable.
-	RetryReason string
-}
-
-// ExecutionResult is the aggregate outcome of [TargetExecutor.Execute].
-// It is decoupled from [provcore.Response] so that callers (proxy
-// handler) can rely on a stable shape independent of provider changes.
-type ExecutionResult struct {
-	StatusCode int
-	Headers    http.Header
-	Body       []byte                 // non-streaming; nil for streaming
-	Stream     provcore.StreamSession // streaming; nil for non-streaming
-	Usage      provcore.Usage
-	// Coerced lists any in-place request rewrites the adapter applied before
-	// dispatching upstream, formatted as "<from>→<to>". Sourced from
-	// provcore.Response.Coerced. Empty when no rewrite occurred.
-	Coerced []string
-	// Truncated propagates provcore.Response.Truncated: the non-streaming
-	// upstream body was clamped at the read cap (or decompressed-size bound)
-	// before usage extraction, so the parsed token counts are incomplete. The
-	// handler stamps usage_extraction_status="truncated" instead of "ok".
-	Truncated bool
-	Target    routingcore.RoutingTarget
-	Attempts  []Attempt
-	Error     error
-	// ProviderError is the canonical, normalised view of an upstream 4xx
-	// (or other non-retryable provider failure). Set on the terminal
-	// classNoFailoverNoRetry path so the handler can reshape the error
-	// envelope into the ingress format (a client calling OpenAI
-	// /v1/chat/completions must not receive an Anthropic-shaped error
-	// body). Body still carries the upstream's raw bytes for the
-	// same-format passthrough case. Nil on success.
-	ProviderError *provcore.ProviderError
-	// TargetMethod + TargetPath capture the upstream URL the executor
-	// actually dispatched to — sourced from Response.TargetMethod /
-	// TargetPath (success) or ProviderError.TargetMethod / TargetPath
-	// (4xx/5xx). Empty for synthetic transport failures that never
-	// reached the network; the handler falls back to client method/path.
-	TargetMethod string
-	TargetPath   string
 }
 
 // TargetExecutor walks an ordered list of RoutingTargets, resolves
@@ -197,11 +140,13 @@ func (e *TargetExecutor) Execute(
 // request — once for cache key computation, then reused as the wire
 // body sent upstream.
 //
-// Subsequent retries on targets[0] and any failover to targets[1+]
-// fall back to the regular Execute path (bridge translation +
-// Adapter.PrepareBody). PrepareBody is idempotent so behaviour is
-// indistinguishable from Execute; this only optimises the success-path
-// common case (first attempt of the primary target succeeds).
+// Every attempt of targets[0] — including retries — resends the
+// prepared body via Adapter.ExecuteWithBody, keeping the prepare
+// stage's side channels (coercion rewrites → x-nexus-coerced, the
+// codec's URLOverride) intact across transient-failure retries.
+// Failover to targets[1+] goes through the regular per-target
+// translation path. PrepareBody is idempotent, so resending the
+// prepared bytes is byte-equivalent to re-preparing.
 //
 // preparedBody MUST be the bytes Adapter.PrepareBody would produce for
 // targets[0]; preparedRewrites MUST be the rewrites slice from the same
@@ -227,9 +172,11 @@ func (e *TargetExecutor) ExecuteWithPreparedBody(
 	})
 }
 
-// preparedFirstAttempt carries the PrepareBody output for the very first
-// attempt on the first target. Once consumed, prepared.body is set to
-// nil so subsequent attempts go through the normal path.
+// preparedFirstAttempt carries the PrepareBody output for the first
+// target: every attempt of targets[0] (retries included) resends this
+// body + side channels via ExecuteWithBody; failover targets take the
+// normal translation path. consumed marks that the primary used it
+// (diagnostic; the tIdx==0 gate alone scopes it to the first target).
 type preparedFirstAttempt struct {
 	body        []byte
 	rewrites    []string
@@ -250,7 +197,24 @@ func (e *TargetExecutor) executeInner(
 
 	attemptCounter := 0
 
+	// lastAttemptedClass is the terminal class of the most recent target
+	// we actually attempted (not one skipped/continue'd). attemptedAny
+	// distinguishes "nothing has run yet" from "a prior target ran".
+	// Together they gate ContextUpgradeOnly targets: skip one only when a
+	// real prior target ran and did NOT overflow. When nothing ran yet —
+	// the flagged target was reordered to the front or is the only
+	// survivor of a downstream filter (health rank, narrowing,
+	// cross-format), all of which can orphan the ordering the smart
+	// strategy emitted — treat it as an ordinary target rather than
+	// silently dropping it (which would be a dead feature or a spurious
+	// all-targets-exhausted 502).
+	var lastAttemptedClass errClass
+	attemptedAny := false
+
 	for tIdx, target := range targets {
+		if target.ContextUpgradeOnly && attemptedAny && lastAttemptedClass != classContextOverflow {
+			continue
+		}
 		callTarget, err := e.resolver.Resolve(ctx, target.ProviderID, target.ModelID, provtarget.ResolveHints{StickyKey: base.StickyKey})
 		if err != nil {
 			attempts = append(attempts, Attempt{Target: target, Error: fmt.Sprintf("resolve: %v", err)})
@@ -286,33 +250,53 @@ func (e *TargetExecutor) executeInner(
 		// 400s with "Missing required parameter: messages". This mirrors the
 		// proxy-level needsCanonicalization=false rule and the egress
 		// native-passthrough skip — all three sites must agree.
-		nativeResponses := base.WireShape == typology.WireShapeOpenAIResponses &&
+		// Detect /v1/responses ingress by BodyFormat, NOT WireShape. The
+		// cache-prep leg downgrades resolved.WireShape to chat when the PRIMARY
+		// target cannot serve the Responses wire (so the executor treats a
+		// canonicalized primary as chat-kind), but resolved.BodyFormat stays
+		// FormatOpenAIResponses. Keying nativeResponses on WireShape made a
+		// responses-serving FAILOVER target (mixed target list: non-responses
+		// primary, responses-serving secondary) unrecognisable — its verbatim
+		// Responses body was posted to the chat URL and 400'd. BodyFormat is
+		// per-request-stable, so each target decides its own passthrough.
+		nativeResponses := base.BodyFormat == provcore.FormatOpenAIResponses &&
 			e.bridge != nil && e.bridge.ServesResponses(callTarget.Format, callTarget.ServesResponsesAPI)
-		if e.bridge != nil && !nativeResponses {
-			switch ingressKind {
-			case typology.EndpointKindChat:
+		if e.bridge != nil {
+			switch {
+			case nativeResponses:
+				// Restore the Responses wire per-target so BuildURL targets
+				// /v1/responses even when base.WireShape was downgraded to chat
+				// for a non-responses primary earlier in the target list.
+				req.WireShape = typology.WireShapeOpenAIResponses
+			case ingressKind == typology.EndpointKindChat:
 				req.WireShape = e.bridge.ChatWireShapeForTarget(callTarget.Format)
-			case typology.EndpointKindEmbeddings:
+			case ingressKind == typology.EndpointKindEmbeddings:
 				req.WireShape = e.bridge.EmbeddingsWireShapeForTarget(callTarget.Format)
+			case ingressKind == typology.EndpointKindImageGeneration:
+				req.WireShape = e.bridge.ImagesWireShapeForTarget(callTarget.Format)
+			case ingressKind == typology.EndpointKindRerank:
+				req.WireShape = e.bridge.RerankWireShapeForTarget(callTarget.Format)
 			}
 		}
 
 		// On targets[0] when a prepared body was supplied, the prepared
 		// bytes are already in callTarget.Format (PrepareBody did the
-		// codec encode), so skip the bridge translation. Subsequent
-		// targets and retry-after-prepared-failure go through the normal
-		// translation path — chat and embeddings each have their own
-		// canonical→target-wire hub codec.
+		// codec encode), so skip the bridge translation — for every
+		// attempt of that target, retries included (the prepared side
+		// channels must survive a transient-failure retry). Subsequent
+		// targets go through the normal translation path — chat,
+		// embeddings, and images each have their own canonical→
+		// target-wire hub codec.
 		usePrepared := tIdx == 0 && prepared != nil && !prepared.consumed && prepared.body != nil
-		// bridgeURLOverride carries an embeddings codec's endpoint-selection
-		// action suffix (Gemini :embedContent vs :batchEmbedContents) across
-		// the cross-format bridge translation below. The body is already in
-		// target wire shape after the bridge encode, so adapter.Execute's
-		// internal PrepareBody hits its same-format passthrough and never
-		// re-derives the override — we MUST thread it explicitly to the
-		// attempt or the batch body ({"requests":[…]}) is POSTed to the
-		// single-embed URL and Gemini 400s.
 		var bridgeURLOverride string
+		// bridgeRewrites carries the per-model coercions the bridge's codec
+		// encode applied (contract rules on the target codec). They must be
+		// merged into the winning attempt's Coerced: the adapter's own
+		// PrepareBody runs the idempotent re-entry differential on the bridged
+		// body and finds nothing left to apply, so without this the
+		// x-nexus-coerced signal is silently lost on every bridge-translated
+		// attempt.
+		var bridgeRewrites []string
 		switch {
 		case usePrepared:
 			req.Body = prepared.body
@@ -323,54 +307,90 @@ func (e *TargetExecutor) executeInner(
 			// Responses request shape the upstream /v1/responses expects).
 			req.Body = base.Body
 			req.BodyFormat = base.BodyFormat
-		case e.bridge != nil && base.BodyFormat != callTarget.Format && ingressKind == typology.EndpointKindChat:
-			wireBody, terr := e.bridge.IngressChatToWire(base.BodyFormat, callTarget.Format, base.Body, callTarget, base.Stream)
+		case e.bridge != nil && base.BodyFormat != callTarget.Format:
+			// Unified per-kind bridge translation (chat / embeddings / image /
+			// rerank), each returning the codec side channels — urlOverride
+			// (embeddings endpoint suffix) and rewrites (per-model coercions).
+			tr, terr := e.bridgeTranslateForTarget(ingressKind, base, callTarget)
 			if terr != nil {
-				attempts = append(attempts, Attempt{Target: target, Error: fmt.Sprintf("hub translate: %v", terr)})
+				attempts = append(attempts, translateAttempt(target, terr))
 				continue
 			}
-			req.Body = wireBody
-			req.BodyFormat = callTarget.Format
-		case e.bridge != nil && base.BodyFormat != callTarget.Format && ingressKind == typology.EndpointKindEmbeddings:
-			wireBody, urlOverride, terr := e.bridge.IngressEmbeddingsToWire(base.BodyFormat, callTarget.Format, base.Body, callTarget)
-			if terr != nil {
-				attempts = append(attempts, Attempt{Target: target, Error: fmt.Sprintf("hub translate: %v", terr)})
-				continue
+			if tr != nil {
+				req.Body = tr.body
+				req.BodyFormat = callTarget.Format
+				bridgeURLOverride = tr.urlOverride
+				bridgeRewrites = tr.rewrites
 			}
-			req.Body = wireBody
-			req.BodyFormat = callTarget.Format
-			bridgeURLOverride = urlOverride
 		}
 
 		// L2 — per-target retry loop.
 		var lastErrCl cfgpolicy.ErrorClass
+	attemptLoop:
 		for tryIdx := 1; tryIdx <= maxPerTarget; tryIdx++ {
+			// A retry must not reuse the credential whose circuit the previous
+			// attempt may have just opened — see reResolveForRetry. A prepared
+			// body carries the resolved model stamp, so it stays valid across a
+			// same-target credential re-resolve (only the credential changes)
+			// and is deliberately re-dispatched on retries too, preserving its
+			// coercion + url-override side channels.
+			if tryIdx > 1 {
+				retryTarget, rerr := e.reResolveForRetry(ctx, target, base.StickyKey)
+				if rerr != nil {
+					attempts = append(attempts, Attempt{Target: target, Error: fmt.Sprintf("resolve (retry %d): %v", tryIdx, rerr)})
+					metricsRecord(target.ProviderName, string(lastErrCl), "failover_no_credential")
+					break attemptLoop
+				}
+				callTarget = retryTarget
+				req.Target = callTarget
+			}
 			attemptCounter++
 			attemptCtx := nexushttp.WithAttempt(ctx, attemptCounter)
 
 			var outcome attemptOutcome
 			switch {
-			case usePrepared && tryIdx == 1:
-				// First attempt of the primary target with prepared
-				// body — call adapter.ExecuteWithBody to skip the
-				// adapter's internal PrepareBody.
+			case usePrepared:
+				// Every attempt of the primary target with a prepared body —
+				// including retries — calls adapter.ExecuteWithBody so the
+				// adapter's internal PrepareBody is skipped AND the prepare
+				// stage's side channels survive: the rewrites feed the
+				// x-nexus-coerced header (a coerced image request retried
+				// after a transient failure must not lose its markers) and
+				// the urlOverride feeds the dispatched URL (an embeddings
+				// batch retry must not fall back to the single-embed URL).
 				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, prepared.body, prepared.rewrites, prepared.urlOverride)
 				prepared.consumed = true
-			case bridgeURLOverride != "":
-				// Cross-format embeddings translated by the bridge: req.Body is
-				// already the target wire body, but the codec's endpoint-selection
-				// override (Gemini :batchEmbedContents) only exists here. Hand the
-				// prepared body + override straight to ExecuteWithBody so the
-				// override reaches the dispatched URL — adapter.Execute would
-				// passthrough the same-format body and emit no override.
-				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, req.Body, nil, bridgeURLOverride)
+			case bridgeURLOverride != "" || len(bridgeRewrites) > 0:
+				// Cross-format bodies translated by the bridge whose codec
+				// emitted side-channel output that only exists here: the
+				// embeddings endpoint-selection override (Gemini
+				// :batchEmbedContents) and/or the image codec's coercion
+				// rewrites. Hand the prepared body + side channels straight
+				// to ExecuteWithBody so they reach the dispatched URL /
+				// x-nexus-coerced header — adapter.Execute would passthrough
+				// the same-format body and emit neither.
+				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, req.Body, bridgeRewrites, bridgeURLOverride)
 			default:
 				outcome = e.attempt(attemptCtx, adapter, req, target)
 			}
+			// Coercion markers reach the winning attempt's Coerced directly
+			// from the dispatch path: both the bridge leg and every prepared
+			// attempt (first attempt and retry alike) hand their rewrites to
+			// attemptWithBody → adapter.ExecuteWithBody, which stamps them onto
+			// the response. The default leg (adapter.Execute) re-derives its own
+			// Coerced from PrepareBody's idempotent differential and carries no
+			// pre-applied rewrites. A post-attempt re-merge here would therefore
+			// DOUBLE the x-nexus-coerced markers on the common cross-format and
+			// prepared-retry paths, so there is deliberately none.
 			outcome.attempt.CredentialID = callTarget.CredentialID
 			outcome.attempt.CredentialName = callTarget.CredentialName
 			e.recordCredentialStats(callTarget.CredentialID, &outcome)
 			attempts = append(attempts, outcome.attempt)
+			// Set on every real attempt so a later ContextUpgradeOnly gate
+			// reads the class of the last target actually run — resolve /
+			// adapter continue paths never corrupt it.
+			lastAttemptedClass = outcome.class
+			attemptedAny = true
 
 			switch outcome.class {
 			case classSuccess:
@@ -382,6 +402,19 @@ func (e *TargetExecutor) executeInner(
 			case classNoFailoverNoRetry:
 				outcome.execResult.Attempts = attempts
 				return outcome.execResult
+			case classContextOverflow:
+				// Never retry the same target — the same model always
+				// overflows. Fail over when another target exists (the
+				// smart strategy arms a larger-context upgrade target);
+				// on the last target return the provider's own error so
+				// the client sees the upstream context error, not a
+				// generic all-targets-exhausted.
+				if tIdx == len(targets)-1 {
+					outcome.execResult.Attempts = attempts
+					return outcome.execResult
+				}
+				metricsRecord(target.ProviderName, "context_overflow", "failover_context_overflow")
+				break attemptLoop
 			}
 
 			// Retryable failure path.
@@ -419,123 +452,3 @@ func (e *TargetExecutor) executeInner(
 }
 
 // attemptOutcome captures one call attempt and the executor's classification.
-type attemptOutcome struct {
-	attempt    Attempt
-	execResult *ExecutionResult // populated on classSuccess and classNoFailoverNoRetry
-	class      errClass
-	errCl      cfgpolicy.ErrorClass // empty unless class is one of the retryable kinds
-}
-
-func (e *TargetExecutor) attempt(ctx context.Context, adapter provcore.Adapter, req provcore.Request, target routingcore.RoutingTarget) attemptOutcome {
-	start := time.Now()
-	resp, err := adapter.Execute(ctx, req)
-	return e.classifyAttempt(start, resp, err, target)
-}
-
-// attemptWithBody is attempt's twin for the cache-MISS first-attempt
-// path: skips Adapter.PrepareBody by calling Adapter.ExecuteWithBody
-// with the body the cache layer already produced. Classification and
-// outcome shape match attempt() exactly.
-func (e *TargetExecutor) attemptWithBody(ctx context.Context, adapter provcore.Adapter, req provcore.Request, target routingcore.RoutingTarget, body []byte, rewrites []string, urlOverride string) attemptOutcome {
-	start := time.Now()
-	resp, err := adapter.ExecuteWithBody(ctx, req, body, rewrites, urlOverride)
-	return e.classifyAttempt(start, resp, err, target)
-}
-
-func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Response, err error, target routingcore.RoutingTarget) attemptOutcome {
-	latency := int(time.Since(start).Milliseconds())
-
-	a := Attempt{
-		Target:    target,
-		LatencyMs: latency,
-	}
-
-	cls, errCl := classify(resp, err)
-	a.RetryReason = string(errCl)
-
-	switch cls {
-	case classSuccess:
-		a.StatusCode = resp.StatusCode
-		e.recordHealth(target, true, latency)
-		return attemptOutcome{
-			attempt: a,
-			class:   cls,
-			execResult: &ExecutionResult{
-				StatusCode:   resp.StatusCode,
-				Headers:      resp.Headers,
-				Body:         resp.Body,
-				Stream:       resp.Stream,
-				Usage:        resp.Usage,
-				Coerced:      resp.Coerced,
-				Truncated:    resp.Truncated,
-				Target:       target,
-				TargetMethod: resp.TargetMethod,
-				TargetPath:   resp.TargetPath,
-			},
-		}
-	case classNoFailoverNoRetry:
-		// 4xx terminal — surface the upstream body + headers directly so
-		// the handler can either pass through (ingress == upstream) or
-		// reshape the envelope for a cross-format client.
-		var pe *provcore.ProviderError
-		if errors.As(err, &pe) {
-			a.StatusCode = pe.Status
-			a.Error = pe.Error()
-			e.recordHealth(target, false, latency)
-			return attemptOutcome{
-				attempt: a,
-				class:   cls,
-				execResult: &ExecutionResult{
-					StatusCode:    pe.Status,
-					Headers:       pe.Headers,
-					Body:          pe.Raw,
-					Target:        target,
-					ProviderError: pe,
-					TargetMethod:  pe.TargetMethod,
-					TargetPath:    pe.TargetPath,
-				},
-			}
-		}
-		// classifier promised a ProviderError for this class; defensive fallback.
-		a.Error = "no-failover error without provider envelope"
-		e.recordHealth(target, false, latency)
-		return attemptOutcome{
-			attempt:    a,
-			class:      cls,
-			execResult: &ExecutionResult{StatusCode: http.StatusInternalServerError, Target: target},
-		}
-	default:
-		// Retryable failure (network / timeout / 429 / 5xx).
-		var pe *provcore.ProviderError
-		if errors.As(err, &pe) {
-			a.StatusCode = pe.Status
-			a.Error = pe.Error()
-		} else if err != nil {
-			a.Error = err.Error()
-		}
-		e.recordHealth(target, false, latency)
-		return attemptOutcome{
-			attempt: a,
-			class:   cls,
-			errCl:   errCl,
-		}
-	}
-}
-
-func (e *TargetExecutor) recordHealth(target routingcore.RoutingTarget, success bool, latencyMs int) {
-	if e.health == nil {
-		return
-	}
-	if success {
-		e.health.RecordSuccess(target.ProviderID, target.ProviderName, latencyMs)
-	} else {
-		e.health.RecordFailure(target.ProviderID, target.ProviderName, latencyMs)
-	}
-}
-
-func (e *TargetExecutor) recordCredentialStats(credID string, o *attemptOutcome) {
-	if e.stats == nil || credID == "" {
-		return
-	}
-	e.stats.RecordAttempt(credID, o.attempt.StatusCode, o.attempt.Error)
-}

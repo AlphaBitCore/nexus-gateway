@@ -61,7 +61,7 @@ func TestIngressChatToWire_StreamIntentReachesNonOpenAITarget(t *testing.T) {
 	body := minimalNativeChatRequest(t, provcore.FormatGemini)
 	ct := dummyCallTarget(provcore.FormatAnthropic)
 
-	streamed, err := b.IngressChatToWire(provcore.FormatGemini, provcore.FormatAnthropic, body, ct, true)
+	streamed, _, err := b.IngressChatToWire(provcore.FormatGemini, provcore.FormatAnthropic, body, ct, true)
 	if err != nil {
 		t.Fatalf("IngressChatToWire stream=true: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestIngressChatToWire_StreamIntentReachesNonOpenAITarget(t *testing.T) {
 		t.Errorf("stream=true must stamp anthropic body stream:true; got %s", streamed)
 	}
 
-	nonStreamed, err := b.IngressChatToWire(provcore.FormatGemini, provcore.FormatAnthropic, body, ct, false)
+	nonStreamed, _, err := b.IngressChatToWire(provcore.FormatGemini, provcore.FormatAnthropic, body, ct, false)
 	if err != nil {
 		t.Fatalf("IngressChatToWire stream=false: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestIngressChatToWire_PassthroughEveryFormat(t *testing.T) {
 		t.Run(string(ingress), func(t *testing.T) {
 			body := minimalNativeChatRequest(t, ingress)
 			ct := dummyCallTarget(ingress)
-			out, err := b.IngressChatToWire(ingress, ingress, body, ct, false)
+			out, _, err := b.IngressChatToWire(ingress, ingress, body, ct, false)
 			if err != nil {
 				t.Fatalf("passthrough: %v", err)
 			}
@@ -133,7 +133,7 @@ func TestIngressChatToWire_AllChatRoutableCrossPairs(t *testing.T) {
 			t.Run(string(ingress)+"_to_"+string(target), func(t *testing.T) {
 				body := minimalNativeChatRequest(t, ingress)
 				ct := dummyCallTarget(target)
-				wire, err := b.IngressChatToWire(ingress, target, body, ct, false)
+				wire, _, err := b.IngressChatToWire(ingress, target, body, ct, false)
 				if err != nil {
 					t.Fatalf("IngressChatToWire: %v", err)
 				}

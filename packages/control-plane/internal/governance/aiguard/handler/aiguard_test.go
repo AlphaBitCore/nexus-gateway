@@ -18,6 +18,8 @@ import (
 	aiguard "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/aiguard/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // stubStore is an in-memory double for aiguard.ConfigStore. Keeps the
@@ -382,7 +384,7 @@ func TestHTTPDispatcher_PostsClassify(t *testing.T) {
 	defer srv.Close()
 
 	d := &aiguard.HTTPDispatcher{
-		BaseURL:    srv.URL,
+		Base:       peer.Static(srv.URL),
 		Token:      "test-token",
 		HTTPClient: srv.Client(),
 	}
@@ -424,7 +426,7 @@ func TestHTTPDispatcher_UpstreamError(t *testing.T) {
 	defer srv.Close()
 
 	d := &aiguard.HTTPDispatcher{
-		BaseURL:    srv.URL,
+		Base:       peer.Static(srv.URL),
 		Token:      "t",
 		HTTPClient: srv.Client(),
 	}
@@ -809,7 +811,7 @@ func TestDryRun_MalformedJSON(t *testing.T) {
 // TestHTTPDispatcher_DefaultsHTTPClient locks the nil-client fallback:
 // when no HTTPClient is supplied the dispatcher synthesises one. We
 // can't talk to the synthesised client's real provider, so we point
-// BaseURL at a closed (localhost:invalid) URL and just confirm the
+// Base at a closed (localhost:invalid) URL and just confirm the
 // dispatcher reaches the network step — proving the nil-client default
 // branch executed before erroring out.
 func TestHTTPDispatcher_DefaultsHTTPClient(t *testing.T) {
@@ -819,8 +821,8 @@ func TestHTTPDispatcher_DefaultsHTTPClient(t *testing.T) {
 	}))
 	defer srv.Close()
 	d := &aiguard.HTTPDispatcher{
-		BaseURL: srv.URL,
-		Token:   "t",
+		Base:  peer.Static(srv.URL),
+		Token: "t",
 		// HTTPClient deliberately nil — exercises the default-client branch.
 	}
 	resp, err := d.Dispatch(context.Background(), aiguard.DryRunRequest{DetectorType: "x", Content: "y"})
@@ -842,7 +844,7 @@ func TestHTTPDispatcher_BadResponseJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 	d := &aiguard.HTTPDispatcher{
-		BaseURL:    srv.URL,
+		Base:       peer.Static(srv.URL),
 		Token:      "t",
 		HTTPClient: srv.Client(),
 	}
@@ -858,7 +860,7 @@ func TestHTTPDispatcher_DoError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	srv.Close() // close before dispatch — Do() returns error.
 	d := &aiguard.HTTPDispatcher{
-		BaseURL:    srv.URL,
+		Base:       peer.Static(srv.URL),
 		Token:      "t",
 		HTTPClient: srv.Client(),
 	}
@@ -873,7 +875,7 @@ func TestHTTPDispatcher_DoError(t *testing.T) {
 // containing a control character.
 func TestHTTPDispatcher_NewRequestError(t *testing.T) {
 	d := &aiguard.HTTPDispatcher{
-		BaseURL:    "http://\x7f", // DEL → url.Parse rejects via http.NewRequestWithContext.
+		Base:       peer.Static("http://\x7f"), // DEL → url.Parse rejects via http.NewRequestWithContext.
 		Token:      "t",
 		HTTPClient: http.DefaultClient,
 	}
@@ -905,5 +907,48 @@ func TestRegisterRoutes_MountsThree(t *testing.T) {
 	}
 	if len(want) > 0 {
 		t.Fatalf("missing routes: %v", want)
+	}
+}
+
+// TestHTTPDispatcher_ResolverErrorWrapsPeerUnavailable locks the dispatcher
+// contract: a failed Hub resolution of the gateway base URL surfaces as an
+// error wrapping peer.ErrUnavailable so DryRun can map it to 503.
+func TestHTTPDispatcher_ResolverErrorWrapsPeerUnavailable(t *testing.T) {
+	d := &aiguard.HTTPDispatcher{
+		Base: func(context.Context) (string, error) {
+			return "", errors.New("peer service URL not reported yet")
+		},
+		Token: "tok",
+	}
+	_, err := d.Dispatch(context.Background(), aiguard.DryRunRequest{DetectorType: "x", Content: "y"})
+	if !errors.Is(err, peer.ErrUnavailable) {
+		t.Fatalf("want error wrapping peer.ErrUnavailable, got %v", err)
+	}
+}
+
+// TestDryRun_ResolverError_503 locks the failure UX: an unresolved gateway is
+// a transient 503 PEER_SERVICE_UNAVAILABLE, distinct from the 502 used for
+// downstream dispatch failures against a resolved gateway.
+func TestDryRun_ResolverError_503(t *testing.T) {
+	e := echo.New()
+	dispatcher := &aiguard.HTTPDispatcher{
+		Base: func(context.Context) (string, error) {
+			return "", errors.New("peer service URL not reported yet")
+		},
+		Token: "tok",
+	}
+	h := newHandler(t, &stubStore{}, nil, dispatcher, nil)
+	e.POST("/api/admin/ai-guard/dry-run", h.DryRun)
+
+	payload := `{"detector_type":"x","content":"y"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/ai-guard/dry-run", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing %s: %s", peer.CodeUnavailable, rec.Body.String())
 	}
 }

@@ -105,6 +105,26 @@ func NewPipeline(hooks []boundHook, perHookTimeout, totalTimeout time.Duration, 
 	}
 }
 
+// HasContentScanningHook reports whether the pipeline contains at least one
+// hook that actually inspects request/response content (as opposed to
+// metadata-only hooks: rate limit, IP access, request size, webhook). It is
+// body-independent — the answer depends only on the resolved hook set — so a
+// caller can distinguish "a content hook scanned this request" from "only
+// metadata hooks ran". Used to stamp an honest compliance-coverage value: a
+// pipeline of only metadata hooks scanned no content and must not be reported
+// as prompt-scanned. A hook that does not implement RawContentPrescanner is
+// treated as content-scanning (conservative: we cannot prove it is
+// metadata-only), matching MayMatchRawContent's unaccounted-hook posture.
+func (p *Pipeline) HasContentScanningHook() bool {
+	for i := range p.hooks {
+		pre, ok := p.hooks[i].hook.(core.RawContentPrescanner)
+		if !ok || pre.ScansContent() {
+			return true
+		}
+	}
+	return false
+}
+
 // MayMatchRawContent reports whether any content-scanning hook in this pipeline
 // could match the raw request body — a cheap prefilter the caller uses to decide
 // whether the expensive structured extraction can be skipped.

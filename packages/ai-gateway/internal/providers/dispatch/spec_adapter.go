@@ -3,8 +3,8 @@ package dispatch
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -64,6 +64,15 @@ func (a *specAdapter) SupportsShape(shape typology.WireShape) bool {
 func (a *specAdapter) Execute(ctx context.Context, req Request) (*Response, error) {
 	body, rewrites, urlOverride, err := a.prepareBodyFull(req)
 	if err != nil {
+		// A codec Fail that is ALREADY a typed *ProviderError (its own Status /
+		// Code / Type, e.g. a nexus-field rejection) survives verbatim — do not
+		// re-wrap it into a generic 400, which would discard the codec's type
+		// and mislabel a non-400 codec error. Only an untyped codec error
+		// (plain fmt.Errorf: missing model, empty body) gets the generic 400.
+		var pe *ProviderError
+		if errors.As(err, &pe) {
+			return nil, pe
+		}
 		return nil, &ProviderError{
 			Status:  http.StatusBadRequest,
 			Code:    CodeInvalidRequest,
@@ -301,6 +310,15 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		ps.AddBreakdown(string(traffic.PhaseRespAdapter), int(time.Since(respAdapterStart).Milliseconds()))
 	}
 	if err != nil {
+		// A structured *ProviderError from the codec's decode propagates
+		// verbatim: it carries a deliberate status/code the codec chose for a
+		// 2xx upstream body (e.g. the cross-shape image codec's content-policy
+		// 400, whose CodeInvalidRequest keeps it out of retry/failover). Only
+		// unstructured decode failures get the generic 502 wrap.
+		var pe *ProviderError
+		if errors.As(err, &pe) {
+			return nil, pe
+		}
 		return nil, &ProviderError{
 			Status:  http.StatusBadGateway,
 			Code:    CodeUpstreamError,
@@ -375,11 +393,11 @@ func (a *specAdapter) ListModels(ctx context.Context, target CallTarget) ([]stri
 	return ids, true, err
 }
 
-// PrepareBody picks between passthrough and SchemaCodec.EncodeRequest.
-// Returns the wire body, the list of in-place rewrites applied (empty when
-// none), and any encoding error. Rewrites are only possible on the
-// passthrough path; the codec path always returns an empty rewrite list.
-// Idempotent; no side effects.
+// PrepareBody triages between the native leg (codec.RewriteNative) and the
+// cross-format leg (codec.EncodeRequest). Returns the wire body, the list
+// of in-place rewrites applied (empty when none), and any encoding error.
+// Both legs can report rewrites: per-model rules live in the codec and
+// fire from either entry point. Idempotent; no side effects.
 //
 // PrepareBody returns the codec's URLOverride alongside the body so a
 // caller reusing the prepared body on the cache-MISS fast path can pass
@@ -398,24 +416,92 @@ func (a *specAdapter) prepareBodyFull(req Request) (body []byte, rewrites []stri
 	if req.WireShape == typology.WireShapeNone {
 		return nil, nil, "", nil
 	}
-	// Use the passthrough rewrite path when both sides share the OpenAI wire
-	// shape (e.g. FormatOpenAI → FormatMoonshot / FormatDeepSeek). The model
-	// field must be rewritten even across distinct-but-compatible formats;
-	// codec EncodeRequest on those adapters is an identity pass that would
-	// leave the original model ID in the body.
-	if req.BodyFormat == a.spec.Format || (req.BodyFormat.IsOpenAIFamily() && a.spec.Format.IsOpenAIFamily()) {
-		b, rw, e := rewritePassthroughModel(req, a.spec.PassthroughRewrite, a.spec.PassthroughRewriteApplies, a.spec.PassthroughModelInBody)
-		return b, rw, "", e
+	if a.nativeLeg(req) {
+		return a.prepareNative(req)
 	}
-	// Canonical OpenAI input needs codec translation. Codecs may apply
-	// per-target rewrites of their own (e.g. spec_anthropic strips
-	// temperature/top_p for claude-opus-4-7) and surface them so the
-	// x-nexus-coerced header reflects what the upstream actually saw.
+	// Cross-format leg: canonical OpenAI input needs codec translation.
+	// Codecs may apply per-model rewrites of their own (sampling-param
+	// strips, parameter renames) and surface them so the x-nexus-coerced
+	// header reflects what the upstream actually saw.
 	result, encErr := a.spec.SchemaCodec.EncodeRequest(req.WireShape, req.Body, req.Target)
 	if encErr != nil {
 		return nil, nil, "", encErr
 	}
 	return result.Body, result.Rewrites, result.URLOverride, nil
+}
+
+// nativeLeg is the same-spec triage: may this body skip the canonical
+// round-trip and take the codec's RewriteNative differential instead? The
+// decision is three keys, not format equality — a naive
+// `BodyFormat == Format` check already shipped a 400 once (see
+// prepareUpstreamBody's history in stage_cache_body.go):
+//
+//  1. true same format;
+//  2. both sides OpenAI-family (the 12 compat siblings share the wire —
+//     the model field must still be rewritten across
+//     distinct-but-compatible formats, which is exactly the differential);
+//  3. the Responses capability: a /v1/responses body headed to a target
+//     that natively serves the Responses wire — formats differ
+//     (FormatOpenAIResponses is not OpenAI-family), yet verbatim-plus-diff
+//     is correct. The capability defaults from the adapter's declared
+//     RequestShapes with the per-provider ServesResponsesAPI override on
+//     top (same semantics as the ingress-side canonicalbridge decision, so
+//     the cache-prep and executor legs cannot triage differently).
+func (a *specAdapter) nativeLeg(req Request) bool {
+	if req.BodyFormat == a.spec.Format {
+		return true
+	}
+	if req.BodyFormat.IsOpenAIFamily() && a.spec.Format.IsOpenAIFamily() {
+		return true
+	}
+	if req.BodyFormat == FormatOpenAIResponses && req.WireShape == typology.WireShapeOpenAIResponses {
+		// Downgrade-only override, matching the canonicalbridge decision and
+		// the field's own contract: an explicit false forces the canonical
+		// leg; true cannot exceed the adapter's declared RequestShapes — an
+		// operator flag must never route a verbatim Responses body onto a
+		// wire whose codec cannot serve it.
+		if req.Target.ServesResponsesAPI != nil && !*req.Target.ServesResponsesAPI {
+			return false
+		}
+		return a.spec.SupportsShape(typology.WireShapeOpenAIResponses)
+	}
+	return false
+}
+
+// prepareNative runs the native leg: dispatch-owned guards, then the
+// codec's same-spec differential. The codec is always in the path — what
+// this leg skips is only the trip through the OpenAI canonical spec.
+func (a *specAdapter) prepareNative(req Request) ([]byte, []string, string, error) {
+	// Strip the gateway-internal `nexus` namespace before anything else.
+	// The native leg forwards req.Body to upstream (modulo the codec's
+	// differential) and no upstream understands the namespace — most 4xx
+	// the request. The cross-format leg must NOT strip: its codecs CONSUME
+	// nexus.ext.<provider>.<key> (canonicalext) during translation.
+	body := stripNexusNamespace(req.Body)
+
+	// Degenerate target: nothing to stamp and no quirk can key on an empty
+	// model id. Preserved from the legacy passthrough.
+	if req.Target.ProviderModelID == "" {
+		return body, nil, "", nil
+	}
+
+	// Non-object carve-out — a stated dispatch-level exception to the
+	// codec-always-in-path invariant: a JSON edit on a non-object body
+	// (malformed garbage, a bare scalar/array) does not forward the
+	// client's bytes, it FABRICATES a synthetic object. We would then send
+	// an invented request upstream on the shared credential while the audit
+	// row stored the client's original bytes (wire ≠ audit). Forward
+	// verbatim and let the upstream return its own error. Leading-byte
+	// scan only — no full validation pass (the upstream already validates).
+	if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 || t[0] != '{' {
+		return body, nil, "", nil
+	}
+
+	res, err := a.spec.SchemaCodec.RewriteNative(req.WireShape, body, req.Target, req.Stream)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return res.Body, res.Rewrites, res.URLOverride, nil
 }
 
 // applyURLOverride replaces the action suffix of a provider URL with
@@ -438,185 +524,6 @@ func applyURLOverride(baseURL, override string) string {
 	}
 	// Non-colon override: full URL replacement.
 	return override
-}
-
-func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any, string) []string, rewriteApplies func(string) bool, modelInBody bool) ([]byte, []string, error) {
-	// Strip the gateway-internal `nexus` namespace from the body before
-	// any further work The passthrough path forwards req.Body
-	// to upstream verbatim (modulo model rewrite), and the cross-format
-	// codec path rebuilds the body from canonical fields — only this
-	// passthrough is at risk of leaking gateway extensions to upstream.
-	// Without this strip, OpenAI / Anthropic / Gemini / etc. reject the
-	// request with "Unrecognized request argument supplied: nexus" (or
-	// equivalent). canonicalext consumers (e.g. nexus.ext.<provider>.<key>)
-	// only run on the cross-format codec path which never reaches here.
-	body := stripNexusNamespace(req.Body)
-
-	if req.Target.ProviderModelID == "" {
-		return body, nil, nil
-	}
-	// The passthrough rewrites the top-level `model` field only for wires that
-	// carry it there. Two sources qualify:
-	//   1. OpenAI-family bodies on an OpenAI wire shape — the model sits at the
-	//      JSON root and `payload["model"] = X` substitution is valid.
-	//   2. A non-OpenAI-family adapter that declares PassthroughModelInBody
-	//      (today only Anthropic `/v1/messages`), whose native wire also puts
-	//      the model at the body root but whose EncodeRequest — the usual
-	//      ProviderModelID-stamping site — is skipped on the same-format
-	//      native passthrough. Without this the client-facing alias / a
-	//      routing-changed model reaches the upstream verbatim and 404s.
-	// Wires that carry the model elsewhere leave both false and pass through
-	// untouched: Gemini (URL path, set by Transport.BuildURL from
-	// ProviderModelID), Bedrock (model deleted from body, encoded into the URL
-	// by its codec). The stream_options / PassthroughRewrite map path below
-	// stays OpenAI-chat-only, so an Anthropic body only ever takes the
-	// surgical top-level `model` rewrite — never OpenAI-specific injection.
-	openAIWire := req.WireShape == typology.WireShapeOpenAIChat ||
-		req.WireShape == typology.WireShapeOpenAIEmbeddings ||
-		req.WireShape == typology.WireShapeOpenAICompletionsLegacy
-	rewriteBodyModel := (openAIWire && req.BodyFormat.IsOpenAIFamily()) || modelInBody
-	if !rewriteBodyModel {
-		return body, nil, nil
-	}
-	if len(body) == 0 {
-		return body, nil, nil
-	}
-	// Fast path: the map[string]any unmarshal+marshal below is a full round-trip
-	// of the (often large) body whose ONLY purpose, in the common case, is to set
-	// the top-level `model`. That round-trip is needed only when a per-adapter
-	// rewrite or the streaming-usage option must mutate the parsed map — i.e.
-	// WireShapeOpenAIChat with a non-nil passthroughRewrite or a streaming
-	// request. Otherwise a surgical sjson edit of just `model` avoids decoding the
-	// whole body (the dominant per-request allocation on the hot path).
-	//
-	// Guard: more than one `"model"` occurrence may be a duplicate top-level key.
-	// sjson edits the FIRST occurrence; JSON parsers and the cache-key
-	// canonicaliser take last-wins — so fall back to the map path (last-wins) for
-	// correctness on that pathological shape. The prepared body's byte layout is
-	// not persisted (traffic_event stores the original client body) and the cache
-	// key re-canonicalises, so sjson's layout difference vs the map path is safe.
-	// The map round-trip is needed only when something must mutate the parsed
-	// body: a streaming-usage option, or a per-adapter rewrite that ACTUALLY
-	// applies to this model. PassthroughRewriteApplies answers the latter without
-	// decoding — so a non-reasoning model on an adapter whose only rewrite is the
-	// reasoning-quirk strip takes the surgical sjson path instead of the
-	// (dominant) full decode+marshal. Nil probe ⇒ assume it may apply (keep the
-	// map path), preserving prior behavior.
-	rewriteMayApply := passthroughRewrite != nil &&
-		(rewriteApplies == nil || rewriteApplies(req.Target.ProviderModelID))
-	needsMap := req.WireShape == typology.WireShapeOpenAIChat &&
-		(req.Stream || rewriteMayApply)
-	// Passthrough does at most ONE thing to the body: set the top-level `model`.
-	// We deliberately do NOT pre-validate the whole body with json.Valid first.
-	// A malformed client body is the client's problem — sjson forwards it (or
-	// errors) and the upstream returns the error; an enterprise caller does not
-	// submit garbage JSON, and even under attack an upstream 400 is harmless to
-	// the gateway. The full-body gjson.ValidBytes scan it replaced was the single
-	// largest CPU cost on the passthrough hot path (~46% of this function) for a
-	// validation the upstream already performs. The dup-key guard stays: sjson
-	// edits the FIRST `"model"`, but JSON parsers take last-wins, so a body with
-	// two top-level model keys must fall to the map path or the routing rewrite
-	// would silently target the wrong model — a correctness bug, not a client
-	// error.
-	if !needsMap && bytes.Count(body, []byte(`"model"`)) <= 1 {
-		// Only rewrite when the body is a JSON object. sjson.SetBytes on a
-		// non-object body (malformed garbage, empty, a bare scalar/array) does
-		// NOT forward the client's bytes — it FABRICATES a synthetic
-		// {"model":X}. We would then send that invented request upstream on the
-		// shared credential while the audit row stored the client's original
-		// bytes (wire ≠ audit). cd3164876's intent was to FORWARD the malformed
-		// body and let the upstream return the error; honour that by forwarding
-		// non-object bodies unchanged. The check is a leading-byte scan (no full
-		// parse), so the json.Valid-removal perf win is preserved.
-		if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 || t[0] != '{' {
-			return body, nil, nil
-		}
-		// Skip the rewrite entirely when the body already carries the provider's
-		// model id (the common case where the client requests the upstream model
-		// name directly, e.g. no alias). sjson.SetBytes would otherwise rebuild
-		// the whole ~50 KB body to write an identical value — a pure-waste
-		// allocation on the hot path. GetBytes stops at the top-level model field,
-		// so this no-op check does not scan the whole body.
-		if gjson.GetBytes(body, "model").String() == req.Target.ProviderModelID {
-			return body, nil, nil
-		}
-		out, err := sjson.SetBytes(body, "model", req.Target.ProviderModelID)
-		if err != nil {
-			return nil, nil, err
-		}
-		return out, nil, nil
-	}
-	// Streaming all-skip: a conformant streaming body — provider model already
-	// set, stream:true, and stream_options.include_usage already present — needs
-	// NO rewrite. Return it untouched (zero allocation) instead of paying the
-	// map round-trip below just to re-emit byte-identical content. This is the
-	// common shape when the client sends the upstream model name and already
-	// requests usage (the OpenAI-stream SDK default). gjson scans + json.Valid
-	// are alloc-free; malformed bodies are NOT skipped — they fall to the map
-	// path's json.Unmarshal which preserves the 400 contract. A benchmark
-	// confirmed map[string]any is the lowest-alloc round-trip when a rewrite IS
-	// needed (it beats sjson and map[string]json.RawMessage), so the map path is
-	// kept for that case — only the no-op case is short-circuited here.
-	if req.Stream && req.WireShape == typology.WireShapeOpenAIChat && !rewriteMayApply {
-		// No pre-validation (see the non-stream fast path above): a malformed body
-		// is the client's problem. One parse for all three fields (GetManyBytes).
-		// If all three already conform, forward verbatim; otherwise fall to the map
-		// path, which both applies the usage option and rejects malformed bodies.
-		r := gjson.GetManyBytes(body, "model", "stream", "stream_options.include_usage")
-		if r[0].String() == req.Target.ProviderModelID && r[1].Exists() && r[2].Exists() {
-			return body, nil, nil
-		}
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, nil, err
-	}
-	payload["model"] = req.Target.ProviderModelID
-	// Per-adapter rewrites are owned by the target adapter (Rule 3) and
-	// reach us via the AdapterSpec.PassthroughRewrite callback. No
-	// adapter-specific knowledge lives in this generic dispatch.
-	var rewrites []string
-	if passthroughRewrite != nil && req.WireShape == typology.WireShapeOpenAIChat {
-		rewrites = passthroughRewrite(payload, req.Target.ProviderModelID)
-	}
-	if req.Stream && req.WireShape == typology.WireShapeOpenAIChat {
-		applyStreamUsageOption(payload)
-	}
-	out, err := json.Marshal(payload)
-	if err != nil {
-		return nil, nil, err
-	}
-	return out, rewrites, nil
-}
-
-// applyStreamUsageOption ensures stream_options.include_usage is true so
-// OpenAI-compatible upstreams (OpenAI, Moonshot, Kimi, …) emit the final
-// usage chunk in the SSE stream. Without this the openaiAccumulator cannot
-// extract token counts and the audit row gets usage_extraction_status =
-// streaming_unavailable instead of streaming_reported. Only touches the
-// field when the caller has not already set it.
-//
-// Also defensively sets `stream: true` on the payload when missing. Native
-// OpenAI-ingress streaming requests already carry `stream: true` from the
-// client, so the rewrite is a no-op for the passthrough path. Cross-format
-// ingresses (Gemini's :streamGenerateContent, Anthropic's stream:true)
-// canonicalize to a chat-completions body that DOESN'T set the stream
-// field — when the gateway then adds stream_options, OpenAI rejects with
-// HTTP 400 "stream_options requires stream enabled". We're only inside
-// this function because the request is streaming (gated by req.Stream
-// upstream), so setting stream:true is always correct here.
-func applyStreamUsageOption(payload map[string]any) {
-	if _, ok := payload["stream"]; !ok {
-		payload["stream"] = true
-	}
-	so, _ := payload["stream_options"].(map[string]any)
-	if so == nil {
-		so = map[string]any{}
-		payload["stream_options"] = so
-	}
-	if _, ok := so["include_usage"]; !ok {
-		so["include_usage"] = true
-	}
 }
 
 // stripNexusNamespace drops the top-level `nexus` key from a JSON body

@@ -105,6 +105,9 @@ func (h *Handler) CreateUserVirtualKey(c echo.Context) error {
 	if body.AllowedModels != nil {
 		allowedModels = body.AllowedModels
 	}
+	if msg := validateAllowedModels(allowedModels); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+	}
 
 	vk, err := h.vks.CreateVirtualKey(c.Request().Context(), vkstore.CreateVirtualKeyParams{
 		Name:                        body.Name,
@@ -189,6 +192,9 @@ func (h *Handler) UpdateUserVirtualKey(c echo.Context) error {
 	}
 	if body.AllowedModels != nil {
 		raw, _ := json.Marshal(body.AllowedModels)
+		if msg := validateAllowedModels(raw); msg != "" {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+		}
 		params.AllowedModels = raw
 	}
 

@@ -599,7 +599,7 @@ func approveHookBumpFailedRow(ts time.Time) []any {
 	hook := "APPROVE"
 	bump := "BUMP_FAILED_PASSTHROUGH"
 	upTotal := 80 // > lat → us = lat - upTotal = 50 - 80 = -30 → clamped to 0
-	return []any{
+	return append([]any{
 		&src, (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -615,7 +615,7 @@ func approveHookBumpFailedRow(ts time.Time) []any {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), &upTotal, (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}
+	}, errorClassNilTail()...)
 }
 
 // TestRollup5m_EmitEventMetrics_ApproveHookBumpFailed exercises the
@@ -651,7 +651,7 @@ func TestRollup5m_EmitEventMetrics_ApproveHookBumpFailed(t *testing.T) {
 // approveHookBumpFailedThingRow prepends a thingID to approveHookBumpFailedRow.
 func approveHookBumpFailedThingRow(ts time.Time) []any {
 	thingID := "thing-approve-1"
-	return append([]any{&thingID}, approveHookBumpFailedRow(ts)...)
+	return append([]any{&thingID}, trimErrorClassTail(approveHookBumpFailedRow(ts))...)
 }
 
 // TestThingRollup5m_EmitThingEventMetrics_ApproveHookBumpFailed exercises the

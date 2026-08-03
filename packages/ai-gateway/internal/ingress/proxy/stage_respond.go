@@ -44,9 +44,9 @@ func (st respondStage) run() bool {
 		h.handleStreamWithSubscription(s.r, s.w, s.rec, sub, target, result.Coerced, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
 	} else {
 		// Stamp the PhaseSink values onto rec NOW so
-		// setResponseHeaders can emit x-nexus-aigw-upstream-*
-		// headers. The finalize defer redundantly does the same
-		// at request end — idempotent.
+		// setResponseHeaders can emit the upstream timings in
+		// Server-Timing. The finalize defer redundantly does the
+		// same at request end — idempotent.
 		s.rec.UpstreamTtfbMs = s.phaseSink.TtfbMs()
 		s.rec.UpstreamTotalMs = s.phaseSink.TotalMs()
 		h.setResponseHeaders(s.w, s.rec, target, s.routeResult, s.start, s.execAttempts)
@@ -62,7 +62,7 @@ func (st respondStage) run() bool {
 		// in which case there is no L2 write to perform.
 		if s.gatewayCacheStatus == audit.GatewayCacheMiss {
 			var l2CanonMsgs []normcore.Message
-			if np := s.rctxFull.Normalized(); np != nil {
+			if np := s.cacheNormalized(); np != nil {
 				l2CanonMsgs = np.Messages
 			}
 			h.scheduleL2Write(
@@ -76,7 +76,7 @@ func (st respondStage) run() bool {
 				s.logger,
 			)
 		}
-		h.handleNonStream(s.r, s.w, s.rec, result, target, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
+		h.handleNonStream(s.r, s.w, s.rec, result, target, s.body, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
 	}
 	return false
 }

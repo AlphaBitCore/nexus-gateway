@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	pgxmock "github.com/pashagolub/pgxmock/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // TestChatStreamEmitsFileEvent drives a turn where the model calls write_file; the
@@ -45,7 +47,7 @@ func TestChatStreamEmitsFileEvent(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	spill := &fakeSpill{}
 
-	h := New(Config{AIGatewayURL: gw.URL, CPBaseURL: gw.URL, SystemVK: "nvk_test", Model: "m", Pool: mock, Spill: spill})
+	h := New(Config{AIGatewayBase: peer.Static(gw.URL), CPBaseURL: gw.URL, SystemVK: "nvk_test", Model: "m", Pool: mock, Spill: spill})
 
 	// DB ops for the turn: memory index (system prompt), fresh-session load (no rows →
 	// start fresh), write_file quota check + insert, and the post-turn session save.

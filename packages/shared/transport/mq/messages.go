@@ -17,11 +17,17 @@ import (
 // but a tag added here without a matching tag there is silently dropped on the
 // Hub. Enforced by TestTrafficEventMessage_NoStructDrift in that package.
 type TrafficEventMessage struct {
-	ID                string    `json:"id"`
-	Source            string    `json:"source"`
-	TraceID           string    `json:"traceId,omitempty"`
-	ExternalRequestID string    `json:"externalRequestId,omitempty"`
-	Timestamp         time.Time `json:"timestamp"`
+	ID                string `json:"id"`
+	Source            string `json:"source"`
+	TraceID           string `json:"traceId,omitempty"`
+	ExternalRequestID string `json:"externalRequestId,omitempty"`
+	// EndUserID and SessionID are the caller-declared correlation tags
+	// (their customer id / their conversation id, not Nexus identities):
+	// opaque, gateway-sourced only, persisted verbatim onto
+	// traffic_event.{end_user_id,session_id}; empty for CP/agent frames.
+	EndUserID string    `json:"endUserId,omitempty"`
+	SessionID string    `json:"sessionId,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 
 	SourceIP   string `json:"sourceIp,omitempty"`
 	TargetHost string `json:"targetHost,omitempty"`
@@ -67,8 +73,8 @@ type TrafficEventMessage struct {
 
 	// IngressFormat is the wire shape the CLIENT used on the request — the
 	// provcore.Format key of the ingress endpoint that was hit ("openai",
-	// "openai-responses", "anthropic", "gemini", …), post any
-	// x-nexus-aigw-body-format override. Stamped from audit.Record.IngressFormat;
+	// "openai-responses", "anthropic", "gemini", …).
+	// Stamped from audit.Record.IngressFormat;
 	// persisted onto traffic_event.ingress_format. The captured request AND
 	// response bodies are stored in THIS frame (client-facing), so the
 	// control-plane view-time normalize must decode them with this format, not
@@ -108,15 +114,18 @@ type TrafficEventMessage struct {
 	// this string as the poison-list entryKey; before this field the UI
 	// posted traffic_event.id, which never matched the gateway's
 	// IsPoisoned check.
-	GatewayCacheL2EntryKey string  `json:"gatewayCacheL2EntryKey,omitempty"`
-	ProviderCacheStatus    string  `json:"providerCacheStatus,omitempty"`
-	OriginTZ               *string `json:"originTz,omitempty"`
-	RoutedProviderID       string  `json:"routedProviderId,omitempty"`
-	RoutedProviderName     string  `json:"routedProviderName,omitempty"`
-	RoutedModelID          string  `json:"routedModelId,omitempty"`
-	RoutedModelName        string  `json:"routedModelName,omitempty"`
-	RoutingRuleID          string  `json:"routingRuleId,omitempty"`
-	RoutingRuleName        string  `json:"routingRuleName,omitempty"`
+	GatewayCacheL2EntryKey string `json:"gatewayCacheL2EntryKey,omitempty"`
+	ProviderCacheStatus    string `json:"providerCacheStatus,omitempty"`
+	// Multimodal (image/TTS) non-PII stamps; see audit.Record for semantics.
+	ArtifactRefs       string  `json:"artifactRefs,omitempty"`
+	ComplianceCoverage string  `json:"complianceCoverage,omitempty"`
+	OriginTZ           *string `json:"originTz,omitempty"`
+	RoutedProviderID   string  `json:"routedProviderId,omitempty"`
+	RoutedProviderName string  `json:"routedProviderName,omitempty"`
+	RoutedModelID      string  `json:"routedModelId,omitempty"`
+	RoutedModelName    string  `json:"routedModelName,omitempty"`
+	RoutingRuleID      string  `json:"routingRuleId,omitempty"`
+	RoutingRuleName    string  `json:"routingRuleName,omitempty"`
 
 	// Dual hook pipeline — each stage (request + response) records its own
 	// decision, reason, reason_code, executions, and blocking rule.
@@ -297,31 +306,4 @@ type TrafficEventMessage struct {
 	// Surfaced verbatim onto traffic_event.action. Useful when filtering rows
 	// by emitter intent rather than the catch-all `source` enum.
 	Action string `json:"action,omitempty"`
-}
-
-// AdminAuditMessage is the MQ wire format for admin audit log events.
-// Published by Control Plane to "nexus.event.admin-audit".
-// Consumers (hub-db-writer, hub-alerting) deserialize from this.
-//
-// The hash chain (previousHash / integrityHash) is computed Hub-side in
-// packages/nexus-hub/internal/observability/audit/chain.go; sending hashes on the wire
-// would let any CP replica fork the chain. The CP just formats + publishes.
-type AdminAuditMessage struct {
-	ID             string    `json:"id"`
-	Timestamp      time.Time `json:"timestamp"`
-	ActorID        string    `json:"actorId"`
-	ActorLabel     string    `json:"actorLabel"`
-	ActorRole      string    `json:"actorRole"`
-	SourceIP       string    `json:"sourceIp,omitempty"`
-	Action         string    `json:"action"`
-	EntityType     string    `json:"entityType"`
-	EntityID       string    `json:"entityId"`
-	BeforeState    any       `json:"beforeState,omitempty"`
-	AfterState     any       `json:"afterState,omitempty"`
-	NexusRequestID string    `json:"nexusRequestId,omitempty"`
-	// Via records the channel that initiated the mutation — "assistant" for an
-	// AI-initiated admin write performed by the web assistant, empty for a direct
-	// human/UI action. The Hub consumer feeds it into the audit hash chain so the
-	// AI-attribution marker is tamper-evident.
-	Via string `json:"via,omitempty"`
 }

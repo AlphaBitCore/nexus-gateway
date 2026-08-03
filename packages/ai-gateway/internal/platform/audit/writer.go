@@ -128,6 +128,14 @@ type Writer struct {
 	// a top allocator + CPU cost on the request path it was meant to protect.
 	spillLogCount atomic.Uint64
 
+	// noSpoolLogCount rate-limits the "no durable spool configured" drop log
+	// (finding L-7). Deliberately a SEPARATE counter from spillLogCount: the two
+	// causes are unrelated — one is a misconfigured deployment, the other a failing
+	// disk — and sharing a throttle would let a storm of either hide the first
+	// occurrence of the other, which is precisely the class of silence this audit
+	// path exists to eliminate.
+	noSpoolLogCount atomic.Uint64
+
 	// spillCh hands overflow records from the request path to the async spill
 	// worker. On a full in-heap buffer, Enqueue does a NON-BLOCKING send here and
 	// returns immediately — the expensive marshal + NDJSON write happens on the

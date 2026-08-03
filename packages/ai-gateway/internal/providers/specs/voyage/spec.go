@@ -37,8 +37,10 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		SchemaCodec:     newCodec(),
 		StreamDecoder:   newStreamDecoder(log),
 		ErrorNormalizer: errorNormalizer{},
-		// Voyage AI serves only the embeddings endpoint; chat-completions
-		// is not available (https://docs.voyageai.com).
-		RequestShapes: []typology.WireShape{typology.WireShapeVoyageEmbeddings},
+		// Voyage AI serves embeddings and reranking (/v1/rerank); no
+		// chat-completions (https://docs.voyageai.com). The rerank canonical
+		// is Cohere-shaped — this adapter owns the canonical→Voyage
+		// translation (top_n → top_k); see rerank_codec.go.
+		RequestShapes: []typology.WireShape{typology.WireShapeVoyageEmbeddings, typology.WireShapeVoyageRerank},
 	}
 }

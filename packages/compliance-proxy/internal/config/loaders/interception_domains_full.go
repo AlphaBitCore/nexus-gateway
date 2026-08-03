@@ -38,7 +38,6 @@ type InterceptionDomainRow struct {
 	StreamingFailBehavior   *string
 	CaptureRequestBody      *bool
 	CaptureResponseBody     *bool
-	RawBodySpillEnabled     *bool
 }
 
 // InterceptionPathRow mirrors the path query output. PatternsJSON arrives
@@ -74,7 +73,7 @@ func LoadInterceptionDomainsFull(ctx context.Context, db *sql.DB) ([]domain.Inte
 		       enabled, priority, updated_at,
 		       streaming_mode, streaming_chunk_bytes, streaming_hook_timeout_ms,
 		       streaming_max_buffer_bytes, streaming_fail_behavior,
-		       capture_request_body, capture_response_body, raw_body_spill_enabled
+		       capture_request_body, capture_response_body
 		FROM "interception_domain"
 		WHERE enabled = true
 		ORDER BY priority DESC, created_at ASC
@@ -93,7 +92,7 @@ func LoadInterceptionDomainsFull(ctx context.Context, db *sql.DB) ([]domain.Inte
 			&r.Enabled, &r.Priority, &r.UpdatedAt,
 			&r.StreamingMode, &r.StreamingChunkBytes, &r.StreamingHookTimeoutMs,
 			&r.StreamingMaxBufferBytes, &r.StreamingFailBehavior,
-			&r.CaptureRequestBody, &r.CaptureResponseBody, &r.RawBodySpillEnabled,
+			&r.CaptureRequestBody, &r.CaptureResponseBody,
 		); err != nil {
 			return nil, fmt.Errorf("scan interception domain: %w", err)
 		}
@@ -162,7 +161,6 @@ func decodeInterceptionDomainRows(rows []InterceptionDomainRow) ([]domain.Interc
 			StreamingFailBehavior:   r.StreamingFailBehavior,
 			CaptureRequestBody:      r.CaptureRequestBody,
 			CaptureResponseBody:     r.CaptureResponseBody,
-			RawBodySpillEnabled:     r.RawBodySpillEnabled,
 			Paths:                   nil,
 		}
 		domainsByID[d.ID] = len(out)

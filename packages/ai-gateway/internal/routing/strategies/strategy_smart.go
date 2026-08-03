@@ -3,7 +3,6 @@ package strategies
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"strings"
 	"time"
 
@@ -52,26 +51,6 @@ func (c *SmartConfig) timeoutMs() int {
 	return 3000
 }
 
-// smartCatalogProvider is one provider group in the router system prompt JSON.
-// Keys are intentionally short to reduce tokens; see llm.DefaultSystemPrompt.
-type smartCatalogProvider struct {
-	ProviderID string            `json:"p"`
-	Models     []smartCatalogRow `json:"m"`
-}
-
-// smartCatalogRow is one routable model. JSON key i is Model.code only
-// (the UUID Model.id and providerModelId are intentionally omitted from
-// the catalog JSON — the router LLM is shown the short customer-facing code).
-// ip/op USD per 1M tokens, f = feature tags, mx/mo = context and output limits.
-type smartCatalogRow struct {
-	ID       string   `json:"i"`
-	InPM     *float64 `json:"ip,omitempty"`
-	OutPM    *float64 `json:"op,omitempty"`
-	Features []string `json:"f,omitempty"`
-	MaxCtx   *int     `json:"mx,omitempty"`
-	MaxOut   *int     `json:"mo,omitempty"`
-}
-
 // SmartStrategy calls a router LLM to select the best model from
 // available candidates.
 type SmartStrategy struct {
@@ -82,6 +61,17 @@ func (s *SmartStrategy) Type() string { return "smart" }
 
 func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry, _ int, _ RecurseFunc) ([]core.RoutingTarget, error) {
 	start := time.Now()
+
+	// model=auto on a non-chat endpoint: the LLM task-router (token sizing,
+	// task classification, tool/vision capability) is chat-specific and has no
+	// meaning for image / audio / video / rerank generation. Pick
+	// deterministically among that endpoint modality's enabled models instead
+	// — health/latency ranking downstream orders them — so auto is
+	// modality-aware and never crosses into a chat model.
+	if !endpointUsesLLMRouter(rctx.EndpointType) {
+		return s.modalityAutoTargets(ctx, rctx, trace, start)
+	}
+
 	if node.RouterProviderID == "" || node.RouterModelID == "" {
 		*trace = append(*trace, core.TraceEntry{
 			StrategyType: "smart",
@@ -108,6 +98,21 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		return smartFallback(ctx, cfg, s.deps, trace, start)
 	}
 
+	// Resolve the router model's own declared context window from the
+	// raw (pre-VK-filter) rows — the router model routes traffic, it is
+	// not itself a routing candidate, so the VK allowlist must not hide
+	// it. 0 (not found / undeclared) lets the prompt builder fall back
+	// to its conservative built-in window.
+	routerCtxLimit := 0
+	for _, c := range candidates {
+		if c.ProviderID == cfg.RouterProviderID && (c.ModelID == cfg.RouterModelID || c.ModelCode == cfg.RouterModelID) {
+			if c.MaxContextTokens != nil {
+				routerCtxLimit = *c.MaxContextTokens
+			}
+			break
+		}
+	}
+
 	// Filter by VK allowed models if present.
 	if rctx.VirtualKey != nil && len(rctx.VirtualKey.AllowedModels) > 0 {
 		var filtered []core.SmartModelRow
@@ -128,6 +133,69 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		return smartFallback(ctx, cfg, s.deps, trace, start)
 	}
 
+	estTokens, estImages := 0, 0
+	if rctx.Request != nil && rctx.Request.Kind.IsAI() {
+		estTokens, estImages = estimateRequestTokens(rctx.Request)
+
+		// Capability hard filter FIRST: capability is a definite binary
+		// constraint (a non-vision model genuinely cannot serve images),
+		// whereas the context filter below is a coarse size estimate. A
+		// candidate that declares features but lacks what the request
+		// provably needs (vision for image blocks, function_calling for
+		// tool definitions) is removed before the router sees the
+		// catalog. Undeclared feature lists pass, and a dimension that
+		// would empty the pool is skipped (both fail-open). Running this
+		// before the size filter means a capable-but-maybe-tight model
+		// survives to the context filter's keep-largest fallback (whose
+		// overflow risk the executor's context-overflow failover catches)
+		// rather than being size-dropped while a blind model is kept.
+		capKept, capDropped, skippedDims := filterByCapability(candidates, estImages > 0, len(rctx.Request.Tools) > 0)
+		candidates = capKept
+		if capDropped > 0 {
+			*trace = append(*trace, core.TraceEntry{
+				StrategyType: "smart",
+				Decision:     fmt.Sprintf("capability filter: dropped %d/%d candidates lacking required features", capDropped, capDropped+len(capKept)),
+				DurationMs:   int(time.Since(start).Milliseconds()),
+			})
+		}
+		for _, dim := range skippedDims {
+			*trace = append(*trace, core.TraceEntry{
+				StrategyType: "smart",
+				Decision:     fmt.Sprintf("capability filter: no candidate declares %q; dimension skipped (fail-open)", dim),
+				DurationMs:   int(time.Since(start).Milliseconds()),
+			})
+		}
+
+		// Hard context-window filter: drop candidates whose declared
+		// context window provably cannot hold this request. The catalog's
+		// mx value is only a hint to the router LLM — and the router is
+		// shown only a bounded slice of the recent conversation, so it
+		// cannot judge the true request size (tool and assistant history
+		// usually dominate). The filter runs here, on the full canonical
+		// payload, so an undersized model never even appears in the
+		// catalog.
+		reserve := defaultOutputReserveTokens
+		if rctx.Request.Params != nil && rctx.Request.Params.MaxTokens != nil && *rctx.Request.Params.MaxTokens > 0 {
+			reserve = *rctx.Request.Params.MaxTokens
+		}
+		required := estTokens + reserve
+		kept, dropped, noneFit := filterByContextWindow(candidates, required)
+		candidates = kept
+		if noneFit {
+			*trace = append(*trace, core.TraceEntry{
+				StrategyType: "smart",
+				Decision:     fmt.Sprintf("context filter: no candidate fits est. %d tokens; keeping largest-context candidates (overflow risk)", required),
+				DurationMs:   int(time.Since(start).Milliseconds()),
+			})
+		} else if dropped > 0 {
+			*trace = append(*trace, core.TraceEntry{
+				StrategyType: "smart",
+				Decision:     fmt.Sprintf("context filter: dropped %d/%d candidates below est. %d required tokens", dropped, dropped+len(kept), required),
+				DurationMs:   int(time.Since(start).Milliseconds()),
+			})
+		}
+	}
+
 	// 2. Build model catalog JSON.
 	catalog := buildModelCatalog(candidates)
 
@@ -138,13 +206,14 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 	}
 	systemPrompt = strings.Replace(systemPrompt, "{modelCatalog}", catalog, 1)
 
-	// 4. Filter the canonical request payload for role=user content.
-	// The smart router LLM picks a model based on what the end user
-	// asked for, so system / assistant / tool roles are dropped here.
-	// Two negative-case short-circuits immediately follow the filter so
-	// the router LLM is never called with empty or non-AI content —
-	// eliminating wasted upstream cost and codec-level rejections on
-	// Anthropic-shape routers.
+	// 4. Project the canonical request to the router conversation:
+	// user + assistant turns, in order. Client system messages are
+	// excluded — they are large (agent frameworks) and low-signal for
+	// routing; the metadata line below carries the request shape
+	// instead. Tool-role plumbing is excluded the same way. Two
+	// negative-case short-circuits keep the router LLM from being
+	// called with empty or non-AI content — eliminating wasted upstream
+	// cost and codec-level rejections on Anthropic-shape routers.
 	if rctx.Request == nil || !rctx.Request.Kind.IsAI() {
 		*trace = append(*trace, core.TraceEntry{
 			StrategyType: "smart",
@@ -153,13 +222,17 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		})
 		return smartFallback(ctx, cfg, s.deps, trace, start)
 	}
-	var userMsgs []normcore.Message
+	var convMsgs []normcore.Message
+	hasUser := false
 	for _, m := range rctx.Request.Messages {
-		if m.Role == normcore.RoleUser {
-			userMsgs = append(userMsgs, m)
+		if m.Role == normcore.RoleUser || m.Role == normcore.RoleAssistant {
+			convMsgs = append(convMsgs, m)
+			if m.Role == normcore.RoleUser {
+				hasUser = true
+			}
 		}
 	}
-	if len(userMsgs) == 0 {
+	if !hasUser {
 		*trace = append(*trace, core.TraceEntry{
 			StrategyType: "smart",
 			Decision:     "smart routing: no user content in request; using default",
@@ -167,6 +240,15 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		})
 		return smartFallback(ctx, cfg, s.deps, trace, start)
 	}
+
+	// Request-shape metadata for the router: it sees only a bounded
+	// text slice of the conversation, so the counts it needs for
+	// capability matching (vision, function calling, long context —
+	// rule 2 of the default prompt) ride in one cheap line.
+	systemPrompt += fmt.Sprintf(
+		"\n\n## Request Metadata\nIncoming request: ~%d input tokens, %d images, %d tool definitions.",
+		estTokens, estImages, len(rctx.Request.Tools),
+	)
 
 	// 5. Hand off to the Decider (llm.Decider).
 	if s.deps.RouterLLM == nil {
@@ -178,13 +260,14 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		return smartFallback(ctx, cfg, s.deps, trace, start)
 	}
 	decision, err := s.deps.RouterLLM.Decide(ctx, llm.Request{
-		SystemPrompt:     systemPrompt,
-		UserMessages:     userMsgs,
-		Temperature:      cfg.temperature(),
-		MaxTokens:        cfg.maxTokens(),
-		Timeout:          time.Duration(cfg.timeoutMs()) * time.Millisecond,
-		RouterProviderID: cfg.RouterProviderID,
-		RouterModelID:    cfg.RouterModelID,
+		SystemPrompt:       systemPrompt,
+		Messages:           convMsgs,
+		RouterContextLimit: routerCtxLimit,
+		Temperature:        cfg.temperature(),
+		MaxTokens:          cfg.maxTokens(),
+		Timeout:            time.Duration(cfg.timeoutMs()) * time.Millisecond,
+		RouterProviderID:   cfg.RouterProviderID,
+		RouterModelID:      cfg.RouterModelID,
 	})
 	if err != nil {
 		*trace = append(*trace, core.TraceEntry{
@@ -235,7 +318,7 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		DurationMs:   durationMs,
 	})
 
-	return []core.RoutingTarget{*target}, nil
+	return s.armContextUpgrade(ctx, candidates, selected, target, trace, start), nil
 }
 
 // resolveSelectedModelID maps the router-returned token to an internal model
@@ -289,64 +372,4 @@ func resolveSelectedModelID(token, providerID string, candidates []core.SmartMod
 		return matchedID, true
 	}
 	return "", false
-}
-
-// smartFallback resolves the default model from SmartConfig, or returns empty.
-func smartFallback(ctx context.Context, cfg *SmartConfig, deps SmartDeps, trace *[]core.TraceEntry, start time.Time) ([]core.RoutingTarget, error) {
-	if cfg.DefaultProviderID == "" || cfg.DefaultModelID == "" {
-		return nil, nil
-	}
-	target, err := deps.Lookup(ctx, cfg.DefaultProviderID, cfg.DefaultModelID)
-	if err != nil {
-		return nil, nil //nolint:nilerr // smart fallback is best-effort; missing default is not fatal
-	}
-	*trace = append(*trace, core.TraceEntry{
-		StrategyType: "smart",
-		Decision:     fmt.Sprintf("falling back to default %s [%s/%s]", core.FormatTargetFriendly(target), cfg.DefaultProviderID, cfg.DefaultModelID),
-		DurationMs:   int(time.Since(start).Milliseconds()),
-	})
-	return []core.RoutingTarget{*target}, nil
-}
-
-// buildModelCatalog converts candidate rows into compact JSON for the system
-// prompt: providers with nested models (i = Model.code, optional pricing and
-// limits). We send the customer-facing code rather than the UUID so the LLM
-// has a recognisable, short token to return; resolveSelectedModelID maps it
-// back to a UUID for the runtime lookup.
-func buildModelCatalog(candidates []core.SmartModelRow) string {
-	order := make([]string, 0)
-	seen := make(map[string]struct{})
-	byProvider := make(map[string][]smartCatalogRow)
-	for _, c := range candidates {
-		if _, ok := seen[c.ProviderID]; !ok {
-			seen[c.ProviderID] = struct{}{}
-			order = append(order, c.ProviderID)
-		}
-		row := smartCatalogRow{ID: c.ModelCode}
-		if c.InputPricePM != nil {
-			row.InPM = c.InputPricePM
-		}
-		if c.OutputPricePM != nil {
-			row.OutPM = c.OutputPricePM
-		}
-		if len(c.Features) > 0 {
-			row.Features = c.Features
-		}
-		if c.MaxContextTokens != nil {
-			row.MaxCtx = c.MaxContextTokens
-		}
-		if c.MaxOutputTokens != nil {
-			row.MaxOut = c.MaxOutputTokens
-		}
-		byProvider[c.ProviderID] = append(byProvider[c.ProviderID], row)
-	}
-	out := make([]smartCatalogProvider, 0, len(order))
-	for _, pid := range order {
-		out = append(out, smartCatalogProvider{
-			ProviderID: pid,
-			Models:     byProvider[pid],
-		})
-	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	return string(b)
 }

@@ -84,10 +84,9 @@ func ValidatePack(pack *Pack) ([]string, error) {
 		if strings.TrimSpace(r.Category) == "" {
 			return nil, fmt.Errorf("rulepack: rules[%d] (%q) missing category", i, r.RuleID)
 		}
-		switch r.Severity {
-		case "hard", "soft", "warn":
-			// ok
-		default:
+		// Same closed enum as the persistence and override paths — one map, so
+		// the three gates cannot drift apart (this was a hand-copied switch).
+		if _, ok := validSeverities[r.Severity]; !ok {
 			return nil, fmt.Errorf("rulepack: rules[%d] (%q) invalid severity %q (want hard|soft|warn)", i, r.RuleID, r.Severity)
 		}
 		if r.Pattern == "" {

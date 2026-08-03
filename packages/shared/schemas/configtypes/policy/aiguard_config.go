@@ -23,7 +23,7 @@ type AIGuardConfig struct {
 	Cache_ttl_seconds   int32           `db:"cache_ttl_seconds"`
 	Backend_fingerprint string          `db:"backend_fingerprint"`
 	// Input_strategy is the inputstaging strategy for classify input truncation.
-	// One of the five inputstaging.Strategy constants. Default "system_plus_last_user".
+	// One of the five inputstaging.Strategy constants. Default "full_truncated".
 	Input_strategy string `db:"input_strategy"`
 	// Model_context_limit is the judge model context window in tokens. 0 = unknown, pipeline falls back to 8192.
 	Model_context_limit int32     `db:"model_context_limit"`

@@ -165,7 +165,7 @@ type anthropicTool struct {
 
 func (n *AnthropicMessagesNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req anthropicRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return zeroAnthropic(meta), fmt.Errorf("anthropic-messages: request unmarshal: %w", err)
 	}
 	if len(req.Messages) == 0 {
@@ -349,7 +349,7 @@ type anthropicUsage struct {
 
 func (n *AnthropicMessagesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp anthropicResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroAnthropic(meta), fmt.Errorf("anthropic-messages: response unmarshal: %w", err)
 	}
 	out := core.NormalizedPayload{

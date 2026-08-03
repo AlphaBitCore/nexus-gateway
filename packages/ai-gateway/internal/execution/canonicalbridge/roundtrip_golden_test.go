@@ -219,7 +219,7 @@ func TestRoundTripGolden_S2_TargetWire(t *testing.T) {
 			}
 			t.Run(string(row.ingress)+"_to_"+string(lm.target), func(t *testing.T) {
 				ct := provcore.CallTarget{Format: lm.target, ProviderModelID: FixtureProviderModel(lm.target)}
-				wire, err := b.IngressChatToWire(row.ingress, lm.target, raw, ct, false)
+				wire, _, err := b.IngressChatToWire(row.ingress, lm.target, raw, ct, false)
 				if err != nil {
 					t.Fatalf("IngressChatToWire(%s→%s): %v", row.ingress, lm.target, err)
 				}
@@ -249,7 +249,7 @@ func TestRoundTripGolden_openaiToAnthropicPreservesCoreFields(t *testing.T) {
 		Format:          provcore.FormatAnthropic,
 		ProviderModelID: FixtureProviderModel(provcore.FormatAnthropic),
 	}
-	wire, err := b.IngressChatToWire(provcore.FormatOpenAI, provcore.FormatAnthropic, raw, ct, false)
+	wire, _, err := b.IngressChatToWire(provcore.FormatOpenAI, provcore.FormatAnthropic, raw, ct, false)
 	if err != nil {
 		t.Fatal(err)
 	}

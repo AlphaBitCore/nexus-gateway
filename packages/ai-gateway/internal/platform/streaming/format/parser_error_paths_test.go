@@ -11,11 +11,15 @@ import (
 type failingWriter struct {
 	okBeforeErr int
 	n           int
+	// attempts counts every Write call, failures included, so a test can
+	// assert that a caller stopped writing rather than pushing on.
+	attempts int
 }
 
 var errFail = errors.New("simulated write failure")
 
 func (w *failingWriter) Write(p []byte) (int, error) {
+	w.attempts++
 	if w.n >= w.okBeforeErr {
 		return 0, errFail
 	}
@@ -108,6 +112,33 @@ func TestWriteTypedEvent_DataLineWriteError(t *testing.T) {
 	err := WriteTypedEvent(w, "evt", "payload")
 	if !errors.Is(err, errFail) {
 		t.Errorf("expected errFail on data-line write, got %v", err)
+	}
+}
+
+// A client that disconnects mid-frame must abort the frame, not keep writing
+// its remaining lines: the caller uses this error to stop the whole stream and
+// release the upstream leg. Here the break happens on the FIRST of several
+// `data:` lines, which is the arm a single-line payload never reaches.
+func TestWriteTypedEvent_MultiLineAbortsOnWriteError(t *testing.T) {
+	// 1 ok write (event:), then fail on the first of two data: lines.
+	w := &failingWriter{okBeforeErr: 1}
+	err := WriteTypedEvent(w, "evt", "first\nsecond")
+	if !errors.Is(err, errFail) {
+		t.Fatalf("expected errFail on the first data line, got %v", err)
+	}
+	if w.attempts != 2 {
+		t.Errorf("expected the frame to stop at the failed write, got %d write attempts", w.attempts)
+	}
+}
+
+// The terminating blank line completes the frame; failing to write it leaves
+// the client holding an unterminated event, so that error must reach the
+// caller too rather than being reported as a successful frame.
+func TestWriteTypedEvent_BlankLineWriteError(t *testing.T) {
+	// event:, data: first, data: second all succeed; the trailing "\n" fails.
+	w := &failingWriter{okBeforeErr: 3}
+	if err := WriteTypedEvent(w, "evt", "first\nsecond"); !errors.Is(err, errFail) {
+		t.Errorf("expected errFail on the frame terminator, got %v", err)
 	}
 }
 

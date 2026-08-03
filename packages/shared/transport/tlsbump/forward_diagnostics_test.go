@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -108,5 +109,52 @@ func TestCancelCause(t *testing.T) {
 	defer cancel2()
 	if got := cancelCause(expired); got != "our_deadline" {
 		t.Errorf("deadline-exceeded ctx → %q, want our_deadline", got)
+	}
+}
+
+// TestBodyLooksLikeEventStream is the guard for the distinction that made the
+// buffered-stream diagnostic worth having at all.
+//
+// The pre-read heuristic it replaced (looksLikeStreamingResponse) answers "chunked or no
+// Content-Length", which describes nearly every dynamically generated JSON response — it
+// was true on 4 of 4 ordinary chat completions measured through the live proxy. A flag
+// that is always set cannot distinguish the incident from the normal case, so raising it
+// as an operator signal produced a WARN on every request.
+//
+// The two directions below are therefore not symmetric decoration. The JSON cases are the
+// ones that matter: they are what the old heuristic got wrong, and a false positive here
+// costs an operator a WARN per request.
+func TestBodyLooksLikeEventStream(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"sse data frame", "data: {\"delta\":\"hi\"}\n\ndata: [DONE]\n\n", true},
+		{"sse named event", "event: message\ndata: {}\n\n", true},
+		{"sse retry directive", "retry: 3000\ndata: {}\n\n", true},
+		{"sse after leading blank line", "\ndata: {}\n\n", true},
+		{"sse with CRLF", "\r\ndata: {}\r\n\r\n", true},
+
+		// A chat completion is the body this fires on in production if the check is
+		// written loosely — note it CONTAINS the substring "data" nowhere, but the
+		// quoted-key cases below do.
+		{"ordinary chat completion json", `{"id":"chatcmpl-x","choices":[{"message":{"content":"ok"}}]}`, false},
+		{"json with a quoted data key", `{"data":[{"id":"a"}],"object":"list"}`, false},
+		{"json with a quoted event key", `{"event":"created","id":"evt_1"}`, false},
+		{"json pretty-printed so the key starts a line", "{\n  \"data\": [1,2,3]\n}", false},
+		{"empty body", "", false},
+		{"plain text", "upstream error: bad gateway\n", false},
+
+		// The window is a bound, not a scan of the whole body: a 100 KiB JSON document
+		// that happens to contain an SSE-looking line far in must not be reclassified,
+		// and a real stream always declares itself in its first frame.
+		{"sse marker beyond the window", strings.Repeat("x", 400) + "\ndata: {}\n", false},
+	}
+	for _, c := range cases {
+		if got := bodyLooksLikeEventStream([]byte(c.body)); got != c.want {
+			t.Errorf("%s: bodyLooksLikeEventStream = %v, want %v (body %.60q)",
+				c.name, got, c.want, c.body)
+		}
 	}
 }

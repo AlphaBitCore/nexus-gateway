@@ -58,21 +58,20 @@ func buildInvalidRegexDomainRows() *sqlmock.Rows {
 	failBehavior := "PASSTHROUGH"
 	capReq := false
 	capResp := false
-	rawSpill := false
 	rows := sqlmock.NewRows([]string{
 		"id", "name", "host_pattern", "host_match_type", "adapter_id",
 		"network_zone", "default_path_action", "on_adapter_error",
 		"enabled", "priority", "updated_at",
 		"streaming_mode", "streaming_chunk_bytes", "streaming_hook_timeout_ms",
 		"streaming_max_buffer_bytes", "streaming_fail_behavior",
-		"capture_request_body", "capture_response_body", "raw_body_spill_enabled",
+		"capture_request_body", "capture_response_body",
 	}).AddRow(
 		"dom-1", "bad-regex-domain", "[invalid", "REGEX", "http-adapter",
 		"PUBLIC", "PROCESS", "FAIL_OPEN",
 		true, 100, time.Now(),
 		&streamingMode, &chunkBytes, &hookTimeoutMs,
 		&maxBufBytes, &failBehavior,
-		&capReq, &capResp, &rawSpill,
+		&capReq, &capResp,
 	)
 	return rows
 }

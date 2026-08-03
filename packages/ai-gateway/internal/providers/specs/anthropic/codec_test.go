@@ -1475,14 +1475,6 @@ func TestCodec_EncodeRequest_PartsContentEmptyArray(t *testing.T) {
 	}
 }
 
-// TestAnthropicModelMaxOutput_Claude3HaikuFamily pins the missing
-// claude-3-haiku branch (line 730-731) — 4096 floor.
-func TestAnthropicModelMaxOutput_Claude3HaikuFamily(t *testing.T) {
-	if got := anthropicModelMaxOutput("claude-3-haiku-20240307"); got != 4096 {
-		t.Errorf("claude-3-haiku=%d want 4096", got)
-	}
-}
-
 // TestMessagesRequestToOpenAI_ToolNameEmptyIsSkipped pins line 108-110.
 func TestMessagesRequestToOpenAI_ToolNameEmptyIsSkipped(t *testing.T) {
 	body, err := MessagesRequestToOpenAIChatCompletion([]byte(`{

@@ -33,6 +33,14 @@ heartbeatIntervalSec: 60
 auditDrainIntervalSec: 30
 auditBatchSize: 200
 auditRetentionDays: 30
+# Audit-overflow policy (shared/audit/lossmode): spillblock | block | spill | drop.
+# "spill" on purpose, and stated explicitly here because an omitted key resolves to the
+# shared no-loss default (spillblock) — which is the mode this service deliberately does
+# NOT want. A no-loss mode must block until the record is durable, and a SQLite write under
+# WAL contention can wait out the 5s busy_timeout; on the agent that stall lands on the
+# host's own packet path. Overflow is written durably OFF the caller's goroutine and a drop
+# is counted only when that path is also saturated.
+auditLossMode: spill
 
 defaultAction: "passthrough"
 

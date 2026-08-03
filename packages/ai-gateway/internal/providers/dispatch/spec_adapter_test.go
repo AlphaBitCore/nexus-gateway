@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	openaicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/codec"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -70,8 +71,9 @@ type fakeCodec struct {
 	usage       Usage
 	urlOverride string
 
-	encodeCalled bool
-	decodeCalled bool
+	encodeCalled        bool
+	decodeCalled        bool
+	rewriteNativeCalled bool
 }
 
 func (c *fakeCodec) EncodeRequest(_ typology.WireShape, body []byte, _ CallTarget) (EncodeResult, error) {
@@ -140,7 +142,7 @@ func (n *fakeErrorNormalizer) Normalize(status int, _ http.Header, body []byte) 
 	}
 }
 
-func specFrom(t *fakeTransport, c *fakeCodec, s *fakeStreamDecoder, n *fakeErrorNormalizer, f Format) AdapterSpec {
+func specFrom(t *fakeTransport, c SchemaCodec, s *fakeStreamDecoder, n *fakeErrorNormalizer, f Format) AdapterSpec {
 	return AdapterSpec{
 		Format:          f,
 		Transport:       t,
@@ -167,7 +169,10 @@ func TestSpecAdapter_Passthrough(t *testing.T) {
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatAnthropic,
 		Body:       []byte(`{"model":"claude","messages":[]}`),
-		Target:     CallTarget{APIKey: "sk-x"},
+		// The resolved model matches the body: the codec's differential is a
+		// zero-copy no-op, so the upstream bytes stay verbatim while the
+		// codec is still IN the path (asserted below).
+		Target: CallTarget{APIKey: "sk-x", ProviderModelID: "claude"},
 	}
 	resp, err := adapter.Execute(context.Background(), req)
 	if err != nil {
@@ -179,11 +184,61 @@ func TestSpecAdapter_Passthrough(t *testing.T) {
 	if codec.encodeCalled {
 		t.Errorf("passthrough must not invoke codec.EncodeRequest")
 	}
+	if !codec.rewriteNativeCalled {
+		t.Errorf("the native leg must reach codec.RewriteNative — the codec is always in the path")
+	}
 	if !bytes.Equal(tr.lastReqBody, req.Body) {
 		t.Errorf("upstream body mismatch: got %q want %q", tr.lastReqBody, req.Body)
 	}
 	if resp.BodyFormat != FormatAnthropic {
 		t.Errorf("expected response BodyFormat anthropic, got %s", resp.BodyFormat)
+	}
+}
+
+// TestSpecAdapter_Execute_PreservesTypedCodecError pins station 2 of the
+// typed-errors-survive path: when the codec Fails with a typed *ProviderError
+// (its own Status / Code / Type), Execute must return THAT error verbatim, not
+// re-wrap it into a generic 400 that discards the type and mislabels a non-400
+// codec failure.
+func TestSpecAdapter_Execute_PreservesTypedCodecError(t *testing.T) {
+	typed := &ProviderError{Status: 422, Code: "custom_code", Type: "custom_type", Message: "codec says no"}
+	codec := &fakeCodec{encodeErr: typed}
+	adapter := NewSpecAdapter(specFrom(&fakeTransport{}, codec, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic), slog.Default())
+
+	// Native leg (BodyFormat == adapter format) → RewriteNative → typed Fail.
+	_, err := adapter.Execute(context.Background(), Request{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: FormatAnthropic,
+		Body:       []byte(`{"model":"claude","messages":[]}`),
+		Target:     CallTarget{APIKey: "sk-x", ProviderModelID: "claude"},
+	})
+	var pe *ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected a *ProviderError, got %T: %v", err, err)
+	}
+	if pe.Status != 422 || pe.Code != "custom_code" || pe.Type != "custom_type" {
+		t.Fatalf("codec's typed error must survive verbatim, not be re-wrapped to a generic 400; got %+v", pe)
+	}
+}
+
+// TestSpecAdapter_Execute_WrapsUntypedCodecError pins the fallback: a plain
+// (untyped) codec error still becomes the generic 400 invalid_request.
+func TestSpecAdapter_Execute_WrapsUntypedCodecError(t *testing.T) {
+	codec := &fakeCodec{encodeErr: errors.New("missing model")}
+	adapter := NewSpecAdapter(specFrom(&fakeTransport{}, codec, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic), slog.Default())
+
+	_, err := adapter.Execute(context.Background(), Request{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: FormatAnthropic,
+		Body:       []byte(`{"model":"claude","messages":[]}`),
+		Target:     CallTarget{APIKey: "sk-x", ProviderModelID: "claude"},
+	})
+	var pe *ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected a *ProviderError wrapper, got %T: %v", err, err)
+	}
+	if pe.Status != http.StatusBadRequest || pe.Code != CodeInvalidRequest {
+		t.Fatalf("untyped codec error must become the generic 400 invalid_request; got %+v", pe)
 	}
 }
 
@@ -320,8 +375,8 @@ func TestSpecAdapter_Passthrough_RewritesModelToProviderModelID(t *testing.T) {
 // is the regression guard for the bug where routing OpenAI-shape bodies
 // to FormatMoonshot/Mistral/Groq/... left payload["model"] equal to the
 // caller's original code (e.g. "claude-opus-4-7") instead of the target
-// provider's ProviderModelID. specAdapter.rewritePassthroughModel used
-// to whitelist only OpenAI/DeepSeek/GLM and silently dropped through
+// provider's ProviderModelID. The dispatch model rewrite used to
+// whitelist only OpenAI/DeepSeek/GLM and silently dropped through
 // for the ten OpenAI-compat re-users that share IdentityCodec; those
 // upstreams then 4xx'd with "model not found" and the proxy surfaced
 // "all upstream providers failed".
@@ -343,7 +398,7 @@ func TestSpecAdapter_Passthrough_RewritesModelForAllOpenAIWireShapeFormats(t *te
 					}, nil
 				},
 			}
-			adapter := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, fmtTag), slog.Default())
+			adapter := NewSpecAdapter(specFrom(tr, openaicodec.New(openaicodec.Contract{}), &fakeStreamDecoder{}, &fakeErrorNormalizer{}, fmtTag), slog.Default())
 
 			req := Request{
 				WireShape:  typology.WireShapeOpenAIChat,
@@ -373,9 +428,9 @@ func TestSpecAdapter_Passthrough_RewritesModelForAllOpenAIWireShapeFormats(t *te
 // (or equivalent for Anthropic / Gemini) — observed against OpenAI on the live
 // passthrough path, which runs no dry-run short-circuit to mask the leak.
 //
-// Coverage is per-ingress shape because rewritePassthroughModel has
-// distinct exit paths: OpenAI-wire-shape parses+rewrites+marshals the
-// payload, non-OpenAI-shape returns verbatim. Both must strip nexus.*.
+// Coverage is per-ingress shape because the native leg has distinct exit
+// paths per wire (the identity codec edits OpenAI wires; other shapes
+// return verbatim). Both classes must strip nexus.*.
 // The cross-format codec path is intentionally NOT covered here because
 // codecs rebuild the wire body from canonical fields and never see the
 // passthrough function.
@@ -483,7 +538,7 @@ func TestSpecAdapter_Passthrough_MalformedJSONIsForwarded(t *testing.T) {
 		captured <- b
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	}}
-	adapter := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
+	adapter := NewSpecAdapter(specFrom(tr, openaicodec.New(openaicodec.Contract{}), &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	_, err := adapter.Execute(context.Background(), Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
@@ -619,13 +674,12 @@ func TestSpecAdapter_HeaderAllowList(t *testing.T) {
 // spec_openai/rewrites_test.go and spec_moonshot/rewrites_test.go.
 
 // TestSpecAdapter_ReasoningModel_ResponseCoerced verifies that when a
-// passthrough request targets a gpt-5 reasoning model and includes
-// max_tokens, the returned Response.Coerced contains the rewrite descriptor
-// and the upstream body has max_completion_tokens instead of max_tokens.
-// The test wires a minimal inline PassthroughRewrite that mirrors what
-// openai.ApplyReasoningRewrites does, so this test exercises the
-// SpecAdapter passthrough machinery without an import cycle into
-// spec_openai (which itself imports providers).
+// native-leg request targets a rule-carrying model and includes
+// max_tokens, the returned Response.Coerced contains the rewrite
+// descriptor and the upstream body has max_completion_tokens instead of
+// max_tokens. The test wires a minimal inline contract that mirrors the
+// openai reasoning rename, so it exercises the SpecAdapter machinery
+// without an import cycle into spec_openai (which imports providers).
 func TestSpecAdapter_ReasoningModel_ResponseCoerced(t *testing.T) {
 	t.Parallel()
 
@@ -642,20 +696,12 @@ func TestSpecAdapter_ReasoningModel_ResponseCoerced(t *testing.T) {
 			}, nil
 		},
 	}
-	codec := &fakeCodec{}
+	codec := openaicodec.New(openaicodec.Contract{Chat: []openaicodec.FieldRule{{
+		Applies:  func(modelID string) bool { return modelID == "gpt-5" },
+		Field:    "max_tokens",
+		RenameTo: "max_completion_tokens",
+	}}})
 	spec := specFrom(tr, codec, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI)
-	spec.PassthroughRewrite = func(payload map[string]any, modelID string) []string {
-		if modelID != "gpt-5" {
-			return nil
-		}
-		var rewrites []string
-		if v, ok := payload["max_tokens"]; ok {
-			payload["max_completion_tokens"] = v
-			delete(payload, "max_tokens")
-			rewrites = append(rewrites, "max_tokens→max_completion_tokens")
-		}
-		return rewrites
-	}
 	adapter := NewSpecAdapter(spec, slog.Default())
 
 	req := Request{
@@ -723,9 +769,8 @@ func TestSpecAdapter_NonReasoningModel_CoercedEmpty(t *testing.T) {
 func TestSpecAdapter_PrepareBody_ExposedAndIdempotent(t *testing.T) {
 	t.Parallel()
 
-	codec := &fakeCodec{}
 	adapter := NewSpecAdapter(
-		specFrom(&fakeTransport{}, codec, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI),
+		specFrom(&fakeTransport{}, openaicodec.New(openaicodec.Contract{}), &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI),
 		slog.Default(),
 	)
 
@@ -998,4 +1043,25 @@ func TestSpecAdapter_ListModels_transportError(t *testing.T) {
 	if !supported {
 		t.Error("supported should be true even on transport error (the transport ran)")
 	}
+}
+
+// RewriteNative mirrors the model-in-body differential the real identity /
+// anthropic codecs apply (stamp the resolved provider model), so
+// fakeCodec-composed adapters behave like production wiring on the native
+// leg while keeping the encodeCalled spy meaningful: the native leg must
+// reach THIS method, never EncodeRequest.
+func (c *fakeCodec) RewriteNative(_ typology.WireShape, nativeBody []byte, target CallTarget, _ bool) (EncodeResult, error) {
+	c.rewriteNativeCalled = true
+	if c.encodeErr != nil {
+		return EncodeResult{}, c.encodeErr
+	}
+	out, err := SurgicalModelStamp(nativeBody, target.ProviderModelID)
+	if err != nil {
+		return EncodeResult{}, err
+	}
+	return EncodeResult{Body: out}, nil
+}
+
+func (s schemaCodecFunc) RewriteNative(_ typology.WireShape, nativeBody []byte, _ CallTarget, _ bool) (EncodeResult, error) {
+	return EncodeResult{Body: nativeBody}, nil
 }

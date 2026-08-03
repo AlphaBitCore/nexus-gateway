@@ -36,6 +36,17 @@ const (
 // Matches the same seam pattern used by packages/shared/identity/pkce.
 var caRandReader io.Reader = rand.Reader
 
+// caGenerateKey / caCreateCertificate are the same kind of seam for the two
+// primitives that no longer consume the reader they are handed: since Go 1.26
+// the FIPS 140-3 module draws ECDSA key material and signature randomness
+// from its own DRBG, so a starved caRandReader cannot reach their error
+// branches. Only rand.Int (serial numbers) still reads the injected reader.
+// Production never reassigns them.
+var (
+	caGenerateKey       = ecdsa.GenerateKey
+	caCreateCertificate = x509.CreateCertificate
+)
+
 // CA holds the agent certificate authority state.
 type CA struct {
 	mu      sync.RWMutex
@@ -170,7 +181,7 @@ func (ca *CA) SignAttestationCSR(csrPEM string, subjectCN string) (*CertResult, 
 		// as an mTLS client cert.
 	}
 
-	certDER, err := x509.CreateCertificate(caRandReader, template, ca.cert, csr.PublicKey, ca.key)
+	certDER, err := caCreateCertificate(caRandReader, template, ca.cert, csr.PublicKey, ca.key)
 	if err != nil {
 		return nil, fmt.Errorf("sign attestation CSR: %w", err)
 	}
@@ -184,7 +195,7 @@ func (ca *CA) SignAttestationCSR(csrPEM string, subjectCN string) (*CertResult, 
 }
 
 func (ca *CA) generate(certPath, keyPath string) error {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), caRandReader)
+	key, err := caGenerateKey(elliptic.P256(), caRandReader)
 	if err != nil {
 		return fmt.Errorf("generate CA key: %w", err)
 	}
@@ -203,7 +214,7 @@ func (ca *CA) generate(certPath, keyPath string) error {
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}
 
-	certDER, err := x509.CreateCertificate(caRandReader, template, template, &key.PublicKey, key)
+	certDER, err := caCreateCertificate(caRandReader, template, template, &key.PublicKey, key)
 	if err != nil {
 		return fmt.Errorf("create CA cert: %w", err)
 	}

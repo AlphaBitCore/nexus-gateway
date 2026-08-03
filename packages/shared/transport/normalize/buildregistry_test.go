@@ -173,3 +173,81 @@ func TestBuildRegistry_NormalizeFallbackThroughTier3(t *testing.T) {
 		t.Error("Tier 3 fallback produced empty Kind — chain isn't wired")
 	}
 }
+
+// TestBuildRegistry_MultimodalTextCodecs pins the multimodal text codecs into
+// the shared registry: the image/tts/stt path-keyed codecs must resolve for
+// both the adapter-keyed and the path-only (intercepted) lookups, and — the
+// load-bearing case — the TTS binary response must NOT be misdetected as an
+// openai-chat `partial` (which is what happened before the codec existed).
+func TestBuildRegistry_MultimodalTextCodecs(t *testing.T) {
+	reg := BuildRegistry()
+	ctx := context.Background()
+
+	t.Run("image request → ai-image, prompt as user text", func(t *testing.T) {
+		p, err := reg.Normalize(ctx, []byte(`{"model":"dall-e-3","prompt":"a red fox","n":1}`),
+			core.Meta{AdapterType: "openai", Direction: core.DirectionRequest, ContentType: "application/json", EndpointPath: "/v1/images/generations"})
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if p.Kind != core.KindAIImage {
+			t.Fatalf("kind=%s want ai-image", p.Kind)
+		}
+	})
+
+	t.Run("tts request via PATH-ONLY key (intercepted) → ai-tts", func(t *testing.T) {
+		p, err := reg.Normalize(ctx, []byte(`{"model":"tts-1","input":"hi"}`),
+			core.Meta{AdapterType: "some-host-label", Direction: core.DirectionRequest, ContentType: "application/json", EndpointPath: "/v1/audio/speech"})
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if p.Kind != core.KindAITTS {
+			t.Fatalf("kind=%s want ai-tts (path-only key must resolve)", p.Kind)
+		}
+	})
+
+	t.Run("tts binary response is NOT misdetected as openai-chat partial", func(t *testing.T) {
+		audio := []byte{0xff, 0xfb, 0x90, 0x00, 0x01, 0x02}
+		p, err := reg.Normalize(ctx, audio,
+			core.Meta{AdapterType: "openai", Direction: core.DirectionResponse, ContentType: "audio/mpeg", EndpointPath: "/v1/audio/speech"})
+		if err != nil {
+			t.Fatalf("tts response must claim cleanly, got err=%v", err)
+		}
+		if p.Protocol == "openai-chat" {
+			t.Fatalf("tts response misdetected as openai-chat (the bug this codec fixes)")
+		}
+		if p.Kind != core.KindHTTPBinary {
+			t.Fatalf("kind=%s want http-binary summary", p.Kind)
+		}
+	})
+
+	t.Run("stt transcript response → ai-stt assistant text", func(t *testing.T) {
+		p, err := reg.Normalize(ctx, []byte(`{"text":"hello world"}`),
+			core.Meta{AdapterType: "openai", Direction: core.DirectionResponse, ContentType: "application/json", EndpointPath: "/v1/audio/transcriptions"})
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if p.Kind != core.KindAISTT {
+			t.Fatalf("kind=%s want ai-stt", p.Kind)
+		}
+	})
+}
+
+// TestBuildRegistry_STTSegmentsOnly pins that a verbose_json transcription with
+// only `segments[]` (no top-level `text`) still resolves to ai-stt through the
+// full registry walk — a field-spec score would otherwise sink it below the
+// tier threshold and soft-fall it to generic-http, losing the transcript view.
+func TestBuildRegistry_STTSegmentsOnly(t *testing.T) {
+	reg := BuildRegistry()
+	p, err := reg.Normalize(context.Background(),
+		[]byte(`{"segments":[{"text":"first "},{"text":"second"}],"duration":3.0}`),
+		core.Meta{AdapterType: "openai", Direction: core.DirectionResponse, ContentType: "application/json", EndpointPath: "/v1/audio/transcriptions"})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if p.Kind != core.KindAISTT {
+		t.Fatalf("kind=%s want ai-stt (segments-only must not fall through)", p.Kind)
+	}
+	if len(p.Messages) == 0 {
+		t.Fatal("segments-only transcript produced no message")
+	}
+}

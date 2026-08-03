@@ -84,12 +84,16 @@ func (m *modelStoreAdapter) GetModelByID(ctx context.Context, modelID string) (p
 	if err != nil {
 		return provtarget.ModelRow{}, err
 	}
-	return provtarget.ModelRow{
+	row := provtarget.ModelRow{
 		ID:              mod.ID,
 		ProviderID:      mod.ProviderID,
 		ProviderModelID: mod.ProviderModelID,
 		Disabled:        !mod.Enabled,
-	}, nil
+	}
+	if mod.MaxOutputTokens != nil {
+		row.MaxOutputTokens = *mod.MaxOutputTokens
+	}
+	return row, nil
 }
 
 // credentialStoreAdapter satisfies provtarget.CredentialStore via credmanager.Manager.
@@ -97,11 +101,17 @@ type credentialStoreAdapter struct{ mgr *credmanager.Manager }
 
 func (c *credentialStoreAdapter) ResolveForProvider(ctx context.Context, providerID, credentialID string) (string, string, string, error) {
 	if credentialID != "" {
-		apiKey, err := c.mgr.GetDecrypted(ctx, credentialID)
+		// Ownership + usability are enforced inside the manager on every
+		// call: this branch serves both pool-selected candidates (already
+		// provider-scoped, so the guard is a no-op for them) and pinned
+		// async-job follow-ups, whose credential ID crosses a persistence
+		// boundary and must not resolve another provider's key or a
+		// disabled/retired one.
+		apiKey, credName, err := c.mgr.GetDecryptedForProvider(ctx, providerID, credentialID)
 		if err != nil {
 			return "", "", "", fmt.Errorf("credential %q: %w", credentialID, err)
 		}
-		return apiKey, credentialID, "", nil
+		return apiKey, credentialID, credName, nil
 	}
 	return c.mgr.GetForProvider(ctx, providerID)
 }

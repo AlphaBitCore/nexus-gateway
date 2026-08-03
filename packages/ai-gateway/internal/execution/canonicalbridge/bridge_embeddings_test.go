@@ -168,7 +168,7 @@ func TestIngressEmbeddingsToCanonical_UnsupportedFormat(t *testing.T) {
 func TestIngressEmbeddingsToWire_SameFormatPassthrough(t *testing.T) {
 	b := newEmbedBridge()
 	body := []byte(`{"texts":["x"],"model":"embed-english-v3.0"}`)
-	out, override, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatCohere, body, provcore.CallTarget{})
+	out, override, _, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatCohere, body, provcore.CallTarget{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestIngressEmbeddingsToWire_SameFormatPassthrough(t *testing.T) {
 func TestIngressEmbeddingsToWire_CrossFormat(t *testing.T) {
 	b := newEmbedBridge()
 	body := []byte(`{"texts":["hi"],"model":"embed-english-v3.0","input_type":"search_query"}`)
-	out, _, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, body, provcore.CallTarget{})
+	out, _, _, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, body, provcore.CallTarget{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestIngressEmbeddingsToWire_CrossFormat(t *testing.T) {
 
 func TestIngressEmbeddingsToWire_NoCodec(t *testing.T) {
 	b := newEmbedBridge()
-	_, _, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, provcore.FormatAnthropic, []byte(`{}`), provcore.CallTarget{})
+	_, _, _, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, provcore.FormatAnthropic, []byte(`{}`), provcore.CallTarget{})
 	if err == nil {
 		t.Fatal("want error for missing target codec")
 	}
@@ -210,7 +210,7 @@ func TestIngressEmbeddingsToWire_NoCodec(t *testing.T) {
 func TestIngressEmbeddingsToWire_InvalidCanonicalize(t *testing.T) {
 	b := newEmbedBridge()
 	// Invalid Cohere body — canonicalizer errors first.
-	_, _, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, []byte(`not-json`), provcore.CallTarget{})
+	_, _, _, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, []byte(`not-json`), provcore.CallTarget{})
 	if err == nil {
 		t.Fatal("want error from canonicalizer")
 	}
@@ -330,4 +330,8 @@ func TestHasJSONField(t *testing.T) {
 	if hasJSONField([]byte(`{"a":1}`), "b") != false {
 		t.Fatal("b should not exist")
 	}
+}
+
+func (stubEmbedCodec) RewriteNative(_ typology.WireShape, nativeBody []byte, _ provcore.CallTarget, _ bool) (provcore.EncodeResult, error) {
+	return provcore.EncodeResult{Body: nativeBody}, nil
 }

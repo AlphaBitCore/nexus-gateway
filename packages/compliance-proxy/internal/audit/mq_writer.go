@@ -1,14 +1,18 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/lossmode"
 )
 
 // MQBatchWriter publishes compliance-proxy audit events to MQ in batches.
@@ -23,6 +27,19 @@ type MQBatchWriter struct {
 	flushInterval time.Duration
 	ndjson        *NDJSONWriter
 	logger        *slog.Logger
+
+	// lossMode is the audit-overflow policy (shared/audit/lossmode). Zero value is the
+	// empty Mode, which Resolve maps to the no-loss default — so a writer built without
+	// WithLossMode is never accidentally lossy.
+	lossMode lossmode.Mode
+
+	// spoolLogCount / dropLogCount throttle the two overflow log lines. Both
+	// conditions are per-event and can repeat for every request, so the lines are
+	// sampled while the Prometheus counters carry the true rate — an unthrottled
+	// ERROR per dropped event puts thousands of lines/second onto the same disk the
+	// NDJSON spool is trying to use, at exactly the moment the box is saturated.
+	spoolLogCount atomic.Uint64
+	dropLogCount  atomic.Uint64
 
 	// thingID / thingName identify the emitting compliance-proxy instance;
 	// stamped onto every TrafficEventMessage so traffic_event.thing_id and
@@ -82,6 +99,7 @@ func NewMQBatchWriter(
 	}
 
 	w := &MQBatchWriter{
+		lossMode:      lossmode.Default,
 		producer:      producer,
 		queue:         queue,
 		batchSize:     batchSize,
@@ -114,18 +132,10 @@ func (w *MQBatchWriter) Enqueue(event AuditEvent) {
 			EnqueueTotal.With("mq").Inc()
 		}
 	default:
-		if EnqueueTotal != nil {
-			EnqueueTotal.With("ndjson").Inc()
-		}
-		if NDJSONActive != nil {
-			NDJSONActive.With().Set(1)
-		}
-		w.logger.Warn("audit/mq_writer: channel full, writing to NDJSON fallback")
-		if w.ndjson != nil {
-			if err := w.ndjson.Write(event); err != nil {
-				w.logger.Error("audit/mq_writer: NDJSON fallback write failed", "error", err)
-			}
-		}
+		// Channel full: run the configured overflow policy. See mq_writer_overflow.go —
+		// this used to unconditionally claim a durable NDJSON write before checking
+		// whether a spool even existed.
+		w.handleOverflow(event)
 	}
 }
 
@@ -294,12 +304,31 @@ func (w *MQBatchWriter) flushBatch(ctx context.Context, events []AuditEvent) err
 
 	for _, e := range events {
 		msg := toMessage(e, w.thingID, w.thingName)
-		data, err := json.Marshal(msg)
-		if err != nil {
+		buf := msgBufPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		// Encode into the pooled buffer rather than json.Marshal, which finishes by
+		// copying its result into a fresh exact-size slice. That copy is one
+		// ~message-sized allocation per audit event — i.e. per bumped request — and
+		// measured as 45% of the bytes this loop allocates at chat body sizes.
+		// goccy's Encoder applies the same HTMLEscape + NormalizeUTF8 flags as
+		// Marshal, so the bytes are identical apart from the trailing newline
+		// stripped below.
+		if err := json.NewEncoder(buf).Encode(msg); err != nil {
 			w.logger.Error("audit/mq_writer: marshal failed", "eventId", e.ID, "error", err)
+			reclaimMsgBuf(buf)
 			continue
 		}
-		if err := w.producer.Enqueue(ctx, w.queue, data); err != nil {
+		data := buf.Bytes()
+		if n := len(data); n > 0 && data[n-1] == '\n' {
+			data = data[:n-1]
+		}
+		// data ALIASES buf. Enqueue must have taken the bytes by the time it
+		// returns (mq.Producer.Enqueue's contract), so the buffer is reclaimed
+		// immediately afterwards — on the error path too, since the retry unit is
+		// the AuditEvent slice and fallbackToNDJSON re-marshals from it.
+		err := w.producer.Enqueue(ctx, w.queue, data)
+		reclaimMsgBuf(buf)
+		if err != nil {
 			return fmt.Errorf("mq enqueue failed after %d events: %w",
 				len(events), err)
 		}

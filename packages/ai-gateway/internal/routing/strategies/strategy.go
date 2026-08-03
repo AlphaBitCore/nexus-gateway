@@ -127,14 +127,17 @@ type SmartDeps struct {
 }
 
 // RegisterAllStrategies registers all built-in strategy implementations.
-// If smartDeps is non-nil the "smart" strategy (model=auto) is also registered.
-func RegisterAllStrategies(reg *StrategyRegistry, lookup core.TargetLookup, smartDeps *SmartDeps) {
+// latencyStats is injected into the latency strategy (nil → every target reads
+// as cold, degrading to a safe random load-balance). If smartDeps is non-nil the
+// "smart" strategy (model=auto) is also registered.
+func RegisterAllStrategies(reg *StrategyRegistry, lookup core.TargetLookup, latencyStats core.LatencyStatsFunc, smartDeps *SmartDeps) {
 	reg.Register(&SingleStrategy{lookup: lookup})
 	reg.Register(&FallbackStrategy{})
 	reg.Register(&LoadbalanceStrategy{})
 	reg.Register(&ConditionalStrategy{})
 	reg.Register(&ABSplitStrategy{lookup: lookup})
 	reg.Register(&PolicyStrategy{})
+	reg.Register(&LatencyStrategy{lookup: lookup, latencyStats: latencyStats})
 	if smartDeps != nil {
 		reg.Register(&SmartStrategy{deps: *smartDeps})
 	}

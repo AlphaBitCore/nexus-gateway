@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"github.com/goccy/go-json"
 	"log/slog"
@@ -266,31 +267,62 @@ func extractNullableTimeFromBody(body []byte, field string) (present bool, t *ti
 	return false, nil, "invalid " + field + ": expected RFC3339 or YYYY-MM-DD"
 }
 
-// capApplicationExpiry is the single source of truth for the maker-checker
-// lifetime cap on APPLICATION virtual keys, enforced identically at create
-// (CreateVirtualKey), edit (UpdateVirtualKey), and renewal (RenewVirtualKey).
-// An application VK must carry a bounded, future expiry so the re-approval
-// cadence cannot be escaped by minting/editing a never-expiring or
-// far-future key. Returns "" when expiresAt is acceptable, otherwise the 400
+// requireApplicationExpiry is the single source of truth for the expiry rule on
+// APPLICATION virtual keys, enforced identically at create (CreateVirtualKey),
+// edit (UpdateVirtualKey), and renewal (RenewVirtualKey). An application VK
+// must carry a future expiry so a key issued to a service can never become
+// permanently valid. Returns "" when expiresAt is acceptable, otherwise the 400
 // validation message; callers wrap it in errJSON(..., "validation_error", "").
 //
-// All three checks anchor to time.Now().UTC() so the comparison is timezone-
-// stable regardless of the request's parsed offset:
+// Both checks anchor to time.Now().UTC() so the comparison is timezone-stable
+// regardless of the request's parsed offset:
 //   - nil (never-expire / cleared)   → rejected
-//   - expiresAt > now + 3 months     → rejected
 //   - expiresAt <= now (past/now)    → rejected
 //
+// The expiry distance is deliberately NOT bounded: admins own the renewal
+// cadence for their own keys, and a fixed ceiling only blocked edits without
+// constraining what already existed.
+//
 // Personal VKs are exempt and must not be passed to this helper.
-func capApplicationExpiry(expiresAt *time.Time) (errMsg string) {
+func requireApplicationExpiry(expiresAt *time.Time) (errMsg string) {
 	if expiresAt == nil {
 		return "expiresAt is required for application virtual keys"
 	}
-	now := time.Now().UTC()
-	if expiresAt.After(now.AddDate(0, 3, 0)) {
-		return "expiresAt must not exceed 3 months from now"
-	}
-	if !expiresAt.After(now) {
+	if !expiresAt.After(time.Now().UTC()) {
 		return "expiresAt must be in the future"
+	}
+	return ""
+}
+
+// allowedModelRef mirrors the AI Gateway's store.AllowedModelRef — the exact
+// shape the gateway unmarshals the persisted VirtualKey.allowedModels column
+// into. CP stores that column verbatim (json.RawMessage), so a create/update
+// body carrying any other shape is persisted intact and only fails later, at
+// the gateway, where an unparseable value 401s every request the VK makes with
+// an opaque decoder error. Validating the shape here — at the write boundary —
+// converts that deferred, cryptic failure into an immediate, clear 400.
+type allowedModelRef struct {
+	ProviderID string `json:"providerId"`
+	ModelID    string `json:"modelId"`
+}
+
+// validateAllowedModels returns a non-empty error message when raw is not a
+// JSON array of {providerId, modelId} objects with non-empty values. A nil/empty
+// value or an empty array means "no restriction" and is valid. Extra object keys
+// are allowed (the gateway ignores them). Decoding uses the same goccy/go-json
+// the gateway uses, so acceptance here guarantees the gateway can parse it.
+func validateAllowedModels(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var refs []allowedModelRef
+	if err := json.Unmarshal(raw, &refs); err != nil {
+		return "allowedModels must be a JSON array of {providerId, modelId} objects"
+	}
+	for i, r := range refs {
+		if r.ProviderID == "" || r.ModelID == "" {
+			return fmt.Sprintf("allowedModels[%d] requires a non-empty providerId and modelId", i)
+		}
 	}
 	return ""
 }

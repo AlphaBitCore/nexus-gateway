@@ -1,6 +1,6 @@
 // Package routerllm encapsulates the "ask an LLM to pick a model" half
 // of smart routing. The Decider interface is a pure decision function:
-// given a prepared system prompt, a list of user messages, and routing
+// given a prepared system prompt, the recent conversation, and routing
 // metadata, return the picked model. The smart strategy depends only on
 // this interface — it does not import the provider adapter registry,
 // the provtarget resolver, the canonical-OpenAI JSON wire format, or
@@ -41,11 +41,19 @@ type Request struct {
 	// catalog is required for the router to pick anything.
 	SystemPrompt string
 
-	// UserMessages is the slice of role=user messages from the
-	// original request, already filtered. Each Message can carry
-	// multimodal content; the Decider's prompt builder projects
-	// ContentText blocks only.
-	UserMessages []normcore.Message
+	// Messages is the recent conversation from the original request —
+	// user and assistant turns, already filtered by the smart strategy
+	// (client system messages are excluded: they are large and
+	// low-signal for routing; the metadata line in SystemPrompt carries
+	// the request shape instead). Each Message can carry multimodal
+	// content; the Decider's prompt builder projects ContentText blocks
+	// only.
+	Messages []normcore.Message
+
+	// RouterContextLimit is the router model's declared context window
+	// (maxContextTokens) in tokens. 0 means undeclared; the prompt
+	// builder falls back to a conservative built-in window.
+	RouterContextLimit int
 
 	Temperature float64
 	MaxTokens   int

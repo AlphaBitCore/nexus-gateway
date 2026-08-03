@@ -335,6 +335,9 @@ func decodeGeminiEmbeddingResponse(nativeBody, reqBody []byte) (provcore.DecodeR
 				// Approximate tokens as chars/4 — the canonical heuristic
 				// when token counts aren't surfaced. Better than 0 for
 				// cost accounting; admins can tune the multiplier later.
+				// This is cost-accounting (accuracy-class), not a fit check —
+				// a context-window decision would use the conservative
+				// upper-bound estimate, not this average-case ratio.
 				promptTokens += t.Int() / 4
 			}
 			return true

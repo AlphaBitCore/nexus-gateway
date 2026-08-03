@@ -3,7 +3,7 @@ module github.com/AlphaBitCore/nexus-gateway/packages/agent/ui
 go 1.25.0
 
 require (
-	github.com/AlphaBitCore/nexus-gateway/packages/agent v0.0.0-20260605141610-29f7f6afe759
+	github.com/AlphaBitCore/nexus-gateway/packages/agent v0.0.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/wailsapp/wails/v2 v2.12.0
 )
@@ -34,7 +34,12 @@ require (
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )
+
+// Sibling package resolved via go.work + replace. agent/ui is NESTED inside
+// the packages/agent module dir, so the sibling is the parent (..), not
+// ../agent. See CLAUDE.md → "replace directives in go.mod".
+replace github.com/AlphaBitCore/nexus-gateway/packages/agent => ..

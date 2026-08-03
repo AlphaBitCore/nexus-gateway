@@ -96,17 +96,26 @@ mq:
     # and docker-compose.yml.
     url: "nats://localhost:4222"
 
+# CORS serves third-party browser apps calling /v1/* directly from a
+# different origin. The gateway's own console traffic is same-origin
+# behind the deployment nginx and needs none of this.
 cors:
   enabled: false
   allowedOrigins: []
   allowedMethods: ["GET", "POST", "OPTIONS"]
-  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  # Extra request headers your browser clients send, on top of the
+  # built-in set the gateway always allows (its own auth/correlation/
+  # feature headers plus everything the forward-header allowlist relays
+  # to providers). Entries here EXTEND that set — they cannot remove
+  # from it, so a stale list can no longer break the gateway's own
+  # header reads at preflight.
+  allowedHeaders: []
   maxAgeSec: 600
 
 # Response cache (Redis). Stores non-stream upstream JSON keyed by
 # SHA-256 of (provider, model, post-hook body bytes). Override TTL
 # via env AI_GATEWAY_CACHE_TTL (any time.ParseDuration value).
-# Streaming and requests carrying x-nexus-aigw-no-cache always bypass.
+# Streaming and requests carrying X-Nexus-No-Cache always bypass.
 cache:
   enabled: true
   ttl: 5m
@@ -140,6 +149,12 @@ observability:
 # under a burst or a transient NATS/Hub-DB outage. An operator (or a sweeper)
 # re-ingests the spool once the pipeline recovers.
 audit:
+  # Audit-overflow policy (shared/audit/lossmode): spillblock | block | spill | drop.
+  # spillblock is the no-loss default — the spool below is the primary overflow buffer and the
+  # request path back-pressures only when it is ALSO saturated. Stated explicitly here rather
+  # than left implicit: an operator reading this file should be able to see the durability
+  # posture without inferring it from a Go default. Env: AI_GATEWAY_AUDIT_LOSS_MODE.
+  lossMode: spillblock
   # On-disk spill root. Empty disables disk spill — a genuine overflow then
   # becomes a loud, counted drop (audit.mq_dropped_total). The default is
   # writable on the appliance (the ai-gateway unit's ReadWritePaths covers
@@ -165,3 +180,21 @@ routing:
     backoffInitial: 250ms
     backoffMax: 5s
     backoffJitter: 0.2
+
+# Body spill: bodies at or above the inline-vs-spill threshold are written to an
+# object store and the audit row keeps a reference instead of the bytes.
+#
+# Stated explicitly, and disabled, on purpose. This template previously carried NO
+# spill block at all, so the shipping posture of a compliance product was readable
+# only by inferring a Go default from source — the same silence finding S-3 exists
+# to remove, one layer up. `enabled: false` means every captured body stays inline
+# on traffic_event_payload, bounded by payloadCapture.maxInlineBodyBytes.
+#
+# The SHIPPING posture for a real deployment is `ai-gateway.prod.yaml.example`, which
+# enables the s3 backend. It is not the default here because s3 needs a bucket that
+# only the operator can create, and a spill backend pointing at a bucket that does
+# not exist fails every capture. All four server services must agree on one backend
+# and one root, or the control-plane read path cannot resolve a ref another node
+# wrote (see spillstore-architecture.md section 3).
+spill:
+  enabled: false

@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/llm"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -35,6 +37,10 @@ type fakeSmartStore struct {
 }
 
 func (f *fakeSmartStore) ListEnabledChatModels(_ context.Context) ([]core.SmartModelRow, error) {
+	return f.rows, f.err
+}
+
+func (f *fakeSmartStore) ListEnabledCandidates(_ context.Context, _ typology.EndpointKind) ([]core.SmartModelRow, error) {
 	return f.rows, f.err
 }
 
@@ -129,6 +135,57 @@ func TestSmart_HappyPath_PicksRouterDecision(t *testing.T) {
 	}
 	if decider.lastReq.SystemPrompt == "" {
 		t.Errorf("expected non-empty system prompt with catalog inlined")
+	}
+}
+
+// TestSmart_NonChatEndpoint_ModalityAutoNoLLM pins modality-aware auto: on a
+// non-chat endpoint (image generation), model=auto resolves to every modality
+// candidate deterministically and MUST NOT invoke the chat LLM task-router.
+func TestSmart_NonChatEndpoint_ModalityAutoNoLLM(t *testing.T) {
+	decider := &fakeDecider{decision: llm.Decision{ModelID: "must-not-be-used"}}
+	candidates := []core.SmartModelRow{
+		{ModelID: "img-1", ProviderID: "p-openai", ProviderName: "openai", ProviderModelID: "gpt-image-1"},
+		{ModelID: "img-2", ProviderID: "p-gemini", ProviderName: "gemini", ProviderModelID: "gemini-2.5-flash-image"},
+	}
+	fx := newSmartFixture(t, decider, candidates)
+	node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
+	trace := []core.TraceEntry{}
+	strat := &SmartStrategy{deps: fx.deps()}
+	rctx := &core.RoutingContext{EndpointType: typology.EndpointKindImageGeneration}
+
+	out, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("modality-auto must return every image candidate, got %+v", out)
+	}
+	if decider.calls != 0 {
+		t.Fatalf("LLM router must NOT be called on a non-chat endpoint; got %d calls", decider.calls)
+	}
+}
+
+// TestSmart_NonChatEndpoint_RespectsVKAllowlist verifies modality-aware auto
+// still honours the VK allowed-models allowlist.
+func TestSmart_NonChatEndpoint_RespectsVKAllowlist(t *testing.T) {
+	candidates := []core.SmartModelRow{
+		{ModelID: "img-1", ProviderID: "p-openai", ProviderName: "openai", ProviderModelID: "gpt-image-1"},
+		{ModelID: "img-2", ProviderID: "p-gemini", ProviderName: "gemini", ProviderModelID: "gemini-2.5-flash-image"},
+	}
+	fx := newSmartFixture(t, &fakeDecider{}, candidates)
+	trace := []core.TraceEntry{}
+	strat := &SmartStrategy{deps: fx.deps()}
+	rctx := &core.RoutingContext{
+		EndpointType: typology.EndpointKindImageGeneration,
+		VirtualKey:   &core.VKContext{AllowedModels: []store.AllowedModelRef{{ProviderID: "p-openai", ModelID: "img-1"}}},
+	}
+
+	out, err := strat.Evaluate(context.Background(), core.StrategyNode{}, rctx, &trace, 0, nil)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(out) != 1 || out[0].ModelID != "img-1" {
+		t.Fatalf("modality-auto must filter to the VK allowlist, got %+v", out)
 	}
 }
 

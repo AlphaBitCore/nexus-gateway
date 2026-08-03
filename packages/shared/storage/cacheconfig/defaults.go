@@ -11,8 +11,6 @@ package cacheconfig
 // added to the Go struct since the last admin save (forward-compat).
 func CodeDefaults() ProviderEffective {
 	return ProviderEffective{
-		NormaliserEnabled:       false,
-		CacheMasterKillSwitch:   false,
 		MarkerInjectEnabled:     false,
 		MarkerBoundary3Enabled:  false,
 		CacheEnabled:            false,

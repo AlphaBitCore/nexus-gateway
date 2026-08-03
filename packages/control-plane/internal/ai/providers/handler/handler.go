@@ -22,6 +22,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	cpgx "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/pgx"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 )
@@ -44,13 +45,23 @@ type HubInvalidator interface {
 // ProxyConfig is the BFF proxy snapshot providers/ needs to call
 // out to ai-gateway for credential probe + reliability tests.
 type ProxyConfig struct {
-	ComplianceProxyRuntimeURL string
-	ComplianceProxyAPIToken   string
-	AIGatewayURL              string
+	// AIGatewayBase resolves the AI Gateway base URL from the Hub at
+	// request time (never configured locally).
+	AIGatewayBase peer.URLProvider
 	// AIGatewayInternalToken is the shared internal-service bearer token
 	// presented on CP→ai-gateway /internal/* calls (provider-test,
 	// credential probe, embedding-probe).
 	AIGatewayInternalToken string
+}
+
+// aiGatewayBase resolves the AI Gateway base URL for one outbound call.
+// A nil provider (hand-built test Handler without proxy wiring) resolves
+// to the same transient failure as an unresolved peer.
+func (h *Handler) aiGatewayBase(ctx context.Context) (string, error) {
+	if h.proxy.AIGatewayBase == nil {
+		return "", peer.ErrUnavailable
+	}
+	return h.proxy.AIGatewayBase(ctx)
 }
 
 // Deps is the construction-time arg shape.

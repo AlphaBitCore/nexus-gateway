@@ -3,6 +3,7 @@ package wiring
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -26,7 +27,7 @@ func buildMinimalRouteDeps(t *testing.T) RouteDeps {
 		t.Fatalf("forward header allowlist: %v", err)
 	}
 	adapterReg := InitProviderRegistry(allowlist, discardLogger())
-	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5})
+	reg, err := InitHookRegistry(config.HTTPClientPoolConfig{TimeoutSec: 5}, "", nil)
 	if err != nil {
 		t.Fatalf("hook registry: %v", err)
 	}
@@ -84,6 +85,9 @@ func getSharedCoreHandler(t *testing.T) http.Handler {
 	t.Helper()
 	sharedCoreHandlerOnce.Do(func() {
 		mux := http.NewServeMux()
+		// Registered before mounting so the probes are wrapped by the same
+		// production middleware chain MountCoreRoutes puts around /v1/*.
+		registerWriteDeadlineProbes(mux)
 		deps := buildMinimalRouteDeps(t)
 		sharedCoreHandler = MountCoreRoutes(mux, deps)
 	})
@@ -184,6 +188,142 @@ func TestMountCoreRoutes_readEndpointsRegisteredAndAuthGated(t *testing.T) {
 		// Without a VK the inner handler must reject, never serve a 200.
 		if rr.Code == http.StatusOK {
 			t.Errorf("%s: unauthenticated request unexpectedly returned 200", path)
+		}
+	}
+}
+
+// TestMountCoreRoutes_multimodalRoutesRegisteredAndVKGated verifies the
+// multimodal JSON-body data-plane routes (image generation + TTS) are
+// registered and flow through the SAME ServeProxy chain as chat: never
+// 404 (registered), never 200 without a VK (auth-gated), and the status
+// matches what /v1/chat/completions returns for the identical
+// unauthenticated request — middleware-chain parity, not a bespoke path.
+func TestMountCoreRoutes_multimodalRoutesRegisteredAndVKGated(t *testing.T) {
+	h := getSharedCoreHandler(t)
+
+	// Reference: what the chat route (known-good VK-gated ServeProxy chain)
+	// returns for an unauthenticated request against these deps.
+	chatReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
+	chatRR := httptest.NewRecorder()
+	h.ServeHTTP(chatRR, chatReq)
+	if chatRR.Code == http.StatusNotFound || chatRR.Code == http.StatusOK {
+		t.Fatalf("chat reference route misbehaved: %d", chatRR.Code)
+	}
+
+	cases := []struct {
+		path string
+		body string
+	}{
+		{"/v1/images/generations", `{"model":"dall-e-3","prompt":"a red fox"}`},
+		{"/v1/audio/speech", `{"model":"tts-1","input":"hello","voice":"alloy"}`},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code == http.StatusNotFound {
+			t.Errorf("%s: route not registered (404)", tc.path)
+		}
+		if rr.Code == http.StatusOK {
+			t.Errorf("%s: unauthenticated request unexpectedly returned 200", tc.path)
+		}
+		if rr.Code != chatRR.Code {
+			t.Errorf("%s: status %d differs from chat's %d — must share the same ServeProxy middleware chain", tc.path, rr.Code, chatRR.Code)
+		}
+	}
+
+	// STT multipart routes are registered on the PARALLEL ServeSTT handler
+	// (e88-s5). They must be registered (not 404) and VK-gated (not 200 without
+	// a VK); the exact rejection status may differ from chat's ServeProxy chain
+	// (multipart Content-Type validation runs before auth on this path), so
+	// this only asserts registered + auth-gated, not middleware-chain parity.
+	for _, path := range []string{"/v1/audio/transcriptions", "/v1/audio/translations"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("x"))
+		req.Header.Set("Content-Type", "multipart/form-data; boundary=xyz")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code == http.StatusNotFound {
+			t.Errorf("%s: STT route not registered (404)", path)
+		}
+		if rr.Code == http.StatusOK {
+			t.Errorf("%s: unauthenticated STT request unexpectedly returned 200", path)
+		}
+	}
+
+	// Guardrail is the parallel compliance-verdict handler (e90-s1). It must be
+	// registered (not 404) and VK-gated: an unauthenticated request with a valid
+	// JSON body authenticates before evaluating, so it returns 401, never 200.
+	{
+		req := httptest.NewRequest(http.MethodPost, "/v1/guardrail", strings.NewReader(`{"content":"hi"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code == http.StatusNotFound {
+			t.Error("/v1/guardrail: route not registered (404)")
+		}
+		if rr.Code == http.StatusOK {
+			t.Error("/v1/guardrail: unauthenticated request unexpectedly returned 200")
+		}
+	}
+
+	// The image multipart siblings are still deferred (multipart model
+	// extraction + ingress-path preservation not yet built for images): they
+	// must 404, not 5xx.
+	for _, path := range []string{"/v1/images/edits", "/v1/images/variations"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("x"))
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404 (deferred multipart route), got %d", path, rr.Code)
+		}
+	}
+
+	// The async video family (e88-s6): submit + poll + content + delete are
+	// registered on the PARALLEL ServeVideo* handlers. Submit and poll MUST
+	// mount together (submit alone would strand every job) — assert BOTH are
+	// registered (not 404) and VK-gated (not 200 without a key).
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/videos"},
+		{http.MethodGet, "/v1/videos/vid_123"},
+		{http.MethodGet, "/v1/videos/vid_123/content"},
+		{http.MethodDelete, "/v1/videos/vid_123"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		if tc.method == http.MethodPost {
+			req.Header.Set("Content-Type", "multipart/form-data; boundary=xyz")
+		}
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code == http.StatusNotFound {
+			t.Errorf("%s %s: video route not registered (404)", tc.method, tc.path)
+		}
+		if rr.Code == http.StatusOK {
+			t.Errorf("%s %s: unauthenticated video request unexpectedly returned 200", tc.method, tc.path)
+		}
+	}
+
+	// Deliberately-unserved video sub-routes must answer an OpenAI-shaped 404
+	// ENVELOPE (not the mux's bare-text 404): a JSON body with a machine code,
+	// so an SDK can distinguish "not served" from a wrong base URL.
+	for _, tc := range []struct{ method, path, code string }{
+		{http.MethodGet, "/v1/videos", "VIDEO_LIST_UNSUPPORTED"},
+		{http.MethodPost, "/v1/videos/vid_123/remix", "VIDEO_OP_UNSUPPORTED"},
+		{http.MethodPost, "/v1/videos/edits", "VIDEO_OP_UNSUPPORTED"},
+		{http.MethodPost, "/v1/videos/extensions", "VIDEO_OP_UNSUPPORTED"},
+		{http.MethodPost, "/v1/videos/characters", "VIDEO_OP_UNSUPPORTED"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s %s: want 404, got %d", tc.method, tc.path, rr.Code)
+		}
+		if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("%s %s: Content-Type = %q, want the JSON error envelope", tc.method, tc.path, ct)
+		}
+		if !strings.Contains(rr.Body.String(), tc.code) {
+			t.Errorf("%s %s: body %q missing machine code %s", tc.method, tc.path, rr.Body.String(), tc.code)
 		}
 	}
 }

@@ -45,12 +45,15 @@ var ErrDuplicatePackVersion = errors.New("rulepack: (name, version) already exis
 // pgUniqueViolation is the PostgreSQL SQLSTATE for a unique_violation.
 const pgUniqueViolation = "23505"
 
-// validSeverities is the closed authoring-severity enum. Mirrors the set
-// enforced by ValidatePack (yaml.go); kept here so the persistence layer can
-// reject a bad severity even when the caller bypassed LoadYAML/ValidatePack
-// (e.g. a direct JSON admin-form write). A severity typo silently downgrades
-// a blocking rule at runtime (severityToDecision maps any unknown value to
-// Approve), so this gate is a correctness backstop, not cosmetics.
+// validSeverities is the closed severity enum, and the single source for all
+// three gates that write a severity the runtime will read: ValidatePack
+// (yaml.go), validateRules on the persistence path (so a caller that bypassed
+// LoadYAML/ValidatePack — e.g. a direct JSON admin-form write — is still
+// checked), and UpsertOverrides. A severity typo silently downgrades a
+// blocking rule at runtime (severityEnforces accepts only hard|soft and maps
+// anything else to non-enforcing), so these gates are a correctness backstop,
+// not cosmetics — which is exactly why the override path, missing from this
+// list until S-13, was able to disable enforcement with a 200.
 var validSeverities = map[string]struct{}{
 	"hard": {}, "soft": {}, "warn": {},
 }
@@ -249,6 +252,36 @@ func (s *Store) Install(ctx context.Context, in Install) (*Install, error) {
 // Pass Disabled=false + SeverityOverride="" to clear a specific override's
 // severity swap while keeping the row.
 func (s *Store) UpsertOverrides(ctx context.Context, installID string, overrides []Override) error {
+	// Validate the WHOLE batch before writing any of it. Two reasons:
+	//
+	//  1. A severityOverride outside validSeverities silently DISABLES
+	//     enforcement for that rule — severityEnforces() accepts only
+	//     hard|soft and returns false for anything else, so an override of
+	//     e.g. "high" leaves the rule matching and reporting but no longer
+	//     blocking or redacting. The authoring paths (ValidatePack and
+	//     validateRules) have always gated this; this path writes the same
+	//     runtime field and was the one hole in the enum.
+	//  2. All-or-nothing: the loop below Execs per override, so validating
+	//     inline would leave the earlier rows of a rejected batch applied.
+	//
+	// An empty SeverityOverride means "clear the severity swap" (see the
+	// NULLIF below) and is always allowed.
+	var bad []RuleError
+	for i, o := range overrides {
+		if o.SeverityOverride == "" {
+			continue
+		}
+		if _, ok := validSeverities[o.SeverityOverride]; !ok {
+			bad = append(bad, RuleError{
+				Index:  i,
+				RuleID: o.RuleLocalID,
+				Reason: fmt.Sprintf("invalid severityOverride %q (want hard|soft|warn)", o.SeverityOverride),
+			})
+		}
+	}
+	if len(bad) > 0 {
+		return &InvalidRulesError{Errors: bad}
+	}
 	for _, o := range overrides {
 		_, err := s.pool.Exec(ctx,
 			`INSERT INTO "rule_override" (id, "installId", "ruleLocalId", disabled, "severityOverride", "updatedAt")

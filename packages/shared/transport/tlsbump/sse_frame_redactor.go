@@ -45,18 +45,43 @@ type adapterWireCodec struct {
 	ctx     context.Context
 	adapter traffic.Adapter
 	path    string
+	// scratch is the reused destination for the string-to-bytes conversion
+	// ExtractStreamChunk requires (finding C-20). A POINTER, not a []byte: this struct
+	// is stored in a streaming.WireTextCodec interface and its methods take a value
+	// receiver, so a slice field would be copied per call and never grow. The pointer is
+	// copied instead, and the slice header it addresses persists.
+	//
+	// One codec value per request — the Model-A substrate and the frame redactor each
+	// construct their own — so the scratch is per-request state, not shared, and needs no
+	// synchronization. Safe to reuse because no adapter returns a segment aliasing its
+	// input: verified across 49 built-in adapters by
+	// TestExtractStreamChunk_SegmentsNeverAliasTheInput, and structurally guaranteed in
+	// safe Go, where string(buf) always copies.
+	scratch *[]byte
 }
 
 // ChunkText returns the visible text a single SSE frame carries on its native
 // wire. A frame with no text segments (tool_use / ping / role / [DONE] /
 // reasoning-only) or a decode error reports ok=false and is passed verbatim.
 func (c adapterWireCodec) ChunkText(data string) (string, bool) {
-	nc, err := c.adapter.ExtractStreamChunk(c.ctx, []byte(data), c.path)
+	buf := c.scratchFor(data)
+	nc, err := c.adapter.ExtractStreamChunk(c.ctx, buf, c.path)
 	if err != nil {
 		return "", false
 	}
 	txt := strings.Join(nc.Segments, "")
 	return txt, txt != ""
+}
+
+// scratchFor fills the reused buffer with data and returns it. Falls back to a fresh
+// allocation when no scratch was wired, so a codec built without one still works — the
+// zero value must not silently hand ExtractStreamChunk a nil buffer.
+func (c adapterWireCodec) scratchFor(data string) []byte {
+	if c.scratch == nil {
+		return []byte(data)
+	}
+	*c.scratch = append((*c.scratch)[:0], data...)
+	return *c.scratch
 }
 
 // newSSEFrameRedactor builds the redactor for one SSE response. Returns nil
@@ -69,7 +94,7 @@ func newSSEFrameRedactor(ctx context.Context, adapter traffic.Adapter, path stri
 		return nil
 	}
 	return &sseFrameRedactor{
-		codec:            adapterWireCodec{ctx: ctx, adapter: adapter, path: path},
+		codec:            adapterWireCodec{ctx: ctx, adapter: adapter, path: path, scratch: new([]byte)},
 		adapter:          adapter,
 		logger:           logger,
 		strictFailClosed: strictFailClosed,

@@ -247,6 +247,18 @@ func (b *Bridge) EndpointRoutable(ep typology.WireShape, ingress, target provcor
 		// Capability mismatch (dimensions / batch / encoding) surfaces at the
 		// routing pre-filter, not here.
 		return b.EmbeddingsRoutable(ingress, target)
+	case typology.EndpointKindImageGeneration:
+		// Cross-shape image codec (canonical = OpenAI images): OpenAI-family
+		// targets passthrough natively, Gemini goes through the image leg of
+		// :generateContent. Other image-kind targets stay unroutable until
+		// their leg is demand-gated open.
+		return b.ImagesRoutable(ingress, target)
+	case typology.EndpointKindRerank:
+		// Rerank canonical = Cohere shape (no OpenAI rerank API): a Cohere
+		// target passes through natively, a Voyage target goes through the
+		// canonical→Voyage translation codec. Other rerank-kind targets stay
+		// unroutable until their leg is demand-gated open.
+		return b.RerankRoutable(ingress, target)
 	default:
 		return ingress == target
 	}
@@ -378,9 +390,16 @@ func (b *Bridge) IngressChatToCanonical(ingress provcore.Format, body []byte, ct
 // so it must be stamped on before the target codec encodes, or a codec that
 // propagates `stream` from the canonical input (Anthropic) emits a
 // non-streaming upstream request and the client's stream loses all content.
-func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget, stream bool) ([]byte, error) {
+//
+// The codec's in-place coercions (rewrites) are returned alongside the body:
+// per-model rules execute inside this encode (the codec contract), and the
+// post-bridge re-entry differential is idempotent — it finds nothing left to
+// apply and reports nothing — so a caller that drops the rewrites here
+// silently loses the caller-visible x-nexus-coerced signal on every
+// bridge-translated attempt.
+func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget, stream bool) ([]byte, []string, error) {
 	if ingress == target {
-		return body, nil
+		return body, nil, nil
 	}
 	// /v1/responses ingress + a target that serves the Responses wire
 	// (per-provider capability, downgrade-only override on ct): forward the
@@ -389,21 +408,29 @@ func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte,
 	// predicate before deciding whether to call this at all, so the two sites
 	// agree on the wire shape sent upstream.
 	if ingress == provcore.FormatOpenAIResponses && b.ServesResponses(target, ct.ServesResponsesAPI) {
-		return body, nil
+		return body, nil, nil
 	}
 	canon, err := b.IngressChatToCanonical(ingress, body, ct)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if stream {
 		canon = EnsureCanonicalStream(canon)
 	}
+	// This is the cross-format failover leg. Strip the Anthropic-private
+	// nexus_thinking carrier before an OpenAI-wire identity codec forwards it
+	// verbatim to a foreign upstream. The PRIMARY leg (cache-prep prepared
+	// body, whose bytes attempt-0 sends) never reaches this function, so it
+	// calls StripInternalCarriersForTarget directly — both legs share the one
+	// method below.
+	canon = b.StripInternalCarriersForTarget(canon, target)
+	wireShape := chatWireShapeForFormat(target)
 	codec, ok := b.codecs[target]
 	if !ok || codec == nil {
-		return nil, fmt.Errorf("canonicalbridge: no codec for format %q", target)
+		return nil, nil, fmt.Errorf("canonicalbridge: no codec for format %q", target)
 	}
-	encRes, err := codec.EncodeRequest(chatWireShapeForFormat(target), canon, ct)
-	return encRes.Body, err
+	encRes, err := codec.EncodeRequest(wireShape, canon, ct)
+	return encRes.Body, encRes.Rewrites, err
 }
 
 // EnsureCanonicalStream stamps `stream: true` onto an OpenAI-canonical chat
@@ -548,24 +575,27 @@ func (b *Bridge) IngressEmbeddingsToCanonical(ingress provcore.Format, body []by
 // batch body ({"requests":[…]}) to the single-embed URL, which Gemini rejects
 // with `Unknown name "requests": Cannot find field`.
 // urlOverride is "" on the same-format passthrough and for codecs that do not
-// switch endpoints (OpenAI/Cohere embeddings).
-func (b *Bridge) IngressEmbeddingsToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) (wireBody []byte, urlOverride string, err error) {
+// switch endpoints (OpenAI/Cohere embeddings). The codec's rewrites are
+// returned for the same reason as the chat counterpart's: per-model rules
+// (ada-002 strips) execute inside this encode and are invisible to the
+// idempotent re-entry differential.
+func (b *Bridge) IngressEmbeddingsToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) (wireBody []byte, urlOverride string, rewrites []string, err error) {
 	if ingress == target {
-		return body, "", nil
+		return body, "", nil, nil
 	}
 	canon, err := b.IngressEmbeddingsToCanonical(ingress, body, ct)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	codec, ok := b.codecs[target]
 	if !ok || codec == nil {
-		return nil, "", fmt.Errorf("canonicalbridge: no codec for format %q", target)
+		return nil, "", nil, fmt.Errorf("canonicalbridge: no codec for format %q", target)
 	}
 	encRes, err := codec.EncodeRequest(embeddingsWireShapeForFormat(target), canon, ct)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
-	return encRes.Body, encRes.URLOverride, nil
+	return encRes.Body, encRes.URLOverride, encRes.Rewrites, nil
 }
 
 // ResponseCanonicalToIngressEmbeddings converts canonical OpenAI
@@ -774,7 +804,7 @@ func (b *Bridge) SelfCheck() error {
 				Format:          target,
 				ProviderModelID: FixtureProviderModel(target),
 			}
-			if _, err := b.IngressChatToWire(ingress, target, body, ct, false); err != nil {
+			if _, _, err := b.IngressChatToWire(ingress, target, body, ct, false); err != nil {
 				return fmt.Errorf("canonicalbridge: %s→%s unusable: %w", ingress, target, err)
 			}
 		}

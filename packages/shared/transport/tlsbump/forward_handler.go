@@ -164,6 +164,10 @@ func (f *bumpedFlow) serveRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	x.stampCPMarker()
+	//nolint:bodyclose // The body IS closed — see the defer six lines below. It
+	// closes the captured `upstreamBody` rather than `resp.Body` on purpose, and
+	// bodyclose cannot follow the value through that capture. Rewriting it to
+	// satisfy the linter would reintroduce the leak the comment describes.
 	resp, ok := x.forwardUpstream()
 	if !ok {
 		return
@@ -180,6 +184,11 @@ func (f *bumpedFlow) serveRequest(w http.ResponseWriter, r *http.Request) {
 	if x.runResponseStage(resp) {
 		return
 	}
+	// The stream-through arm defers its audit row to here so the row carries the
+	// upstream timings the PhaseSink stamps off the body read, and a latency_ms that
+	// includes the transfer (finding C-34). A defer rather than a call after the relay,
+	// so a panic in the relay still writes the row. No-op on every other arm.
+	defer x.runDeferredAudit()
 	x.relayResponse(resp)
 }
 

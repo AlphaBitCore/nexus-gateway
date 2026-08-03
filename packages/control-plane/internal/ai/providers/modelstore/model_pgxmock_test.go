@@ -22,7 +22,7 @@ func intptr(i int) *int         { return &i }
 
 // anyArgs builds n AnyArg matchers. pgxmock treats a missing WithArgs as
 // "expect zero arguments", so queries whose exact args aren't the point of the
-// assertion (the 20/22-placeholder INSERT/UPDATE) still need an explicit
+// assertion (the 23/25-placeholder INSERT/UPDATE) still need an explicit
 // matcher — otherwise the expectation silently fails to match and the injected
 // rows/error never run, making the test pass for the wrong reason.
 func anyArgs(n int) []any {
@@ -37,12 +37,13 @@ var modelCols = []string{
 	"id", "code", "name", "description", "providerId", "providerModelId",
 	"type", "features", "inputPricePerMillion", "outputPricePerMillion",
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"maxContextTokens", "maxOutputTokens", "status", "deprecationDate",
 	"replacedBy", "aliases", "inputModalities", "outputModalities",
 	"lifecycle", "capabilityJson", "enabled", "createdAt", "updatedAt",
 }
 
-// modelRowValues returns one row's 25 column values in scanModel order, for a
+// modelRowValues returns one row's 28 column values in scanModel order, for a
 // fully-populated model so every nullable column exercises its non-nil scan.
 func modelRowValues(id, code string) []any {
 	now := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
@@ -51,6 +52,7 @@ func modelRowValues(id, code string) []any {
 		id, code, "GPT-4o", strptr("desc"), "prov1", "gpt-4o",
 		"chat", []string{"chat"}, f64ptr(2.5), f64ptr(10),
 		f64ptr(1.25), f64ptr(5),
+		f64ptr(32), f64ptr(64), f64ptr(0.4),
 		intptr(128000), intptr(4096), "active", (*time.Time)(nil),
 		(*string)(nil), []string{"alias1"}, []string{"text"}, []string{"text"},
 		"ga", &cap, true, now, now,
@@ -62,9 +64,9 @@ func modelRowValues(id, code string) []any {
 func modelRowNullSlices(id, code string) []any {
 	v := modelRowValues(id, code)
 	v[7] = []string(nil)  // features
-	v[17] = []string(nil) // aliases
-	v[18] = []string(nil) // inputModalities
-	v[19] = []string(nil) // outputModalities
+	v[20] = []string(nil) // aliases
+	v[21] = []string(nil) // inputModalities
+	v[22] = []string(nil) // outputModalities
 	return v
 }
 
@@ -177,6 +179,7 @@ func TestCreateModel_AppliesDefaults(t *testing.T) {
 			pgxmock.AnyArg(), "new-model", "New", (*string)(nil), "prov1", "pm", "chat",
 			[]string{}, // Features defaulted
 			(*float64)(nil), (*float64)(nil), (*float64)(nil), (*float64)(nil),
+			(*float64)(nil), (*float64)(nil), (*float64)(nil), // audio rates omitted → NULL
 			(*int)(nil), (*int)(nil),
 			[]string{},       // Aliases defaulted
 			[]string{"text"}, // InputModalities defaulted
@@ -199,7 +202,7 @@ func TestCreateModel_AppliesDefaults(t *testing.T) {
 
 func TestCreateModel_Error(t *testing.T) {
 	store, mock := newMockStore(t)
-	mock.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(20)...).WillReturnError(errors.New("unique violation"))
+	mock.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(23)...).WillReturnError(errors.New("unique violation"))
 	if _, err := store.CreateModel(context.Background(), CreateModelParams{Code: "x"}); err == nil {
 		t.Fatal("insert error should surface")
 	}
@@ -210,7 +213,7 @@ func TestUpdateModel_WithModalities(t *testing.T) {
 	in := []string{"text", "image"}
 	out := []string{"text"}
 	mock.ExpectQuery(`UPDATE "Model" SET`).
-		WithArgs(anyArgs(22)...).
+		WithArgs(anyArgs(25)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRowValues("m1", "gpt-4o")...))
 	got, err := store.UpdateModel(context.Background(), "m1", UpdateModelParams{
 		Name: strptr("Renamed"), InputModalities: &in, OutputModalities: &out,
@@ -219,9 +222,45 @@ func TestUpdateModel_WithModalities(t *testing.T) {
 		t.Fatalf("UpdateModel: got=%v err=%v", got, err)
 	}
 
-	mock.ExpectQuery(`UPDATE "Model"`).WithArgs(anyArgs(22)...).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`UPDATE "Model"`).WithArgs(anyArgs(25)...).WillReturnError(errors.New("boom"))
 	if _, err := store.UpdateModel(context.Background(), "m1", UpdateModelParams{}); err == nil {
 		t.Fatal("update error should surface")
+	}
+}
+
+// TestUpdateModel_AudioRatesRoundTrip asserts the realtime audio-rate columns
+// round-trip: the three rates the admin saves are threaded into the UPDATE's
+// positional args ($11..$13) and the values the DB returns are scanned back
+// onto the model. Realtime spend attribution bills against the STORED rates,
+// so a dropped field here silently zero-prices that audio component.
+func TestUpdateModel_AudioRatesRoundTrip(t *testing.T) {
+	store, mock := newMockStore(t)
+	args := anyArgs(25)
+	args[10] = f64ptr(32)  // $11 audioInputPricePerMillion
+	args[11] = f64ptr(64)  // $12 audioOutputPricePerMillion
+	args[12] = f64ptr(0.4) // $13 cachedAudioInputReadPricePerMillion
+	mock.ExpectQuery(`UPDATE "Model" SET`).
+		WithArgs(args...).
+		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRowValues("m1", "gpt-realtime")...))
+	got, err := store.UpdateModel(context.Background(), "m1", UpdateModelParams{
+		AudioInputPricePerMillion:           f64ptr(32),
+		AudioOutputPricePerMillion:          f64ptr(64),
+		CachedAudioInputReadPricePerMillion: f64ptr(0.4),
+	})
+	if err != nil || got == nil {
+		t.Fatalf("UpdateModel: got=%v err=%v", got, err)
+	}
+	if got.AudioInputPricePerMillion == nil || *got.AudioInputPricePerMillion != 32 {
+		t.Errorf("audioInputPricePerMillion = %v; want 32", got.AudioInputPricePerMillion)
+	}
+	if got.AudioOutputPricePerMillion == nil || *got.AudioOutputPricePerMillion != 64 {
+		t.Errorf("audioOutputPricePerMillion = %v; want 64", got.AudioOutputPricePerMillion)
+	}
+	if got.CachedAudioInputReadPricePerMillion == nil || *got.CachedAudioInputReadPricePerMillion != 0.4 {
+		t.Errorf("cachedAudioInputReadPricePerMillion = %v; want 0.4", got.CachedAudioInputReadPricePerMillion)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet: %v", err)
 	}
 }
 

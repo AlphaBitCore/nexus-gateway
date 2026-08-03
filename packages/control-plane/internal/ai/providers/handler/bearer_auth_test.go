@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/pashagolub/pgxmock/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // cpInternalToken is the shared internal-service token threaded through
@@ -26,7 +28,7 @@ func TestForwardProviderTest_AttachesBearer(t *testing.T) {
 	defer srv.Close()
 
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL:           srv.URL,
+		AIGatewayBase:          peer.Static(srv.URL),
 		AIGatewayInternalToken: cpInternalToken,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -53,7 +55,7 @@ func TestForwardEmbeddingProbe_AttachesBearer(t *testing.T) {
 	defer srv.Close()
 
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL:           srv.URL,
+		AIGatewayBase:          peer.Static(srv.URL),
 		AIGatewayInternalToken: cpInternalToken,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -86,7 +88,7 @@ func TestProbeCredential_AttachesBearer(t *testing.T) {
 	defer srv.Close()
 
 	h := newHandler(db, &hubSpy{}, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL:           srv.URL,
+		AIGatewayBase:          peer.Static(srv.URL),
 		AIGatewayInternalToken: cpInternalToken,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -115,7 +117,7 @@ func TestForwardDiscoverModels_AttachesBearer(t *testing.T) {
 	defer srv.Close()
 
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
-		AIGatewayURL:           srv.URL,
+		AIGatewayBase:          peer.Static(srv.URL),
 		AIGatewayInternalToken: cpInternalToken,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)

@@ -49,6 +49,7 @@ var (
 		"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled",
 		"inputPricePerMillion", "outputPricePerMillion",
 		"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+		"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		"features", "maxContextTokens", "maxOutputTokens", "aliases",
 		// Capability matrix columns:
 		"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
@@ -72,7 +73,7 @@ var (
 
 func strPtr(s string) *string { return &s }
 
-// makeModelRow builds a 19-column row matching the cachelayer loadModels SELECT.
+// makeModelRow builds a row matching the cachelayer loadModels SELECT (see modelCols).
 func makeModelRow(id, code, providerID string, enabled bool) []any {
 	display := "OpenAI"
 	inP := "3.0"
@@ -84,6 +85,8 @@ func makeModelRow(id, code, providerID string, enabled bool) []any {
 		"openai", "openai", &display, "https://api.openai.com",
 		"gpt-4o", "chat", enabled,
 		&inP, &outP, &crP, &cwP,
+		// Audio rates: nil on non-realtime models (schema default).
+		(*string)(nil), (*string)(nil), (*string)(nil),
 		[]string{"vision"},
 		pgtype.Int4{Int32: 128000, Valid: true},
 		pgtype.Int4{Int32: 16384, Valid: true},

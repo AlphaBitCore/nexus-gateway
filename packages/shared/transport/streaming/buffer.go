@@ -36,12 +36,15 @@ func (c *BufferConfig) withDefaults() BufferConfig {
 //
 // Wiring: sse.go's buffer-mode branch installs a callback (built
 // by shared/transport/normalize/responseprehook.Builder) that runs
-// the body through Registry.Normalize and stamps both
+// the body through Registry.Normalize and stamps ci.Normalized — so
+// hooks see the real claim — before BufferPipeline.Process kicks off
+// the hook executor.
 //
-//	(a) ci.Normalized — so hooks see the real claim
-//	(b) auditInfo.ResponseNormalized — so the audit row carries it
-//
-// before BufferPipeline.Process kicks off the hook executor. Without
+// It stamps ci.Normalized and nothing else. This comment used to list a
+// second effect, "auditInfo.ResponseNormalized — so the audit row carries
+// it", which was never true here: no production caller passes
+// responseprehook's OnPayload, and nothing under
+// shared/transport/streaming assigns that field. Without
 // this, hooks always saw a flat-text Normalized (built from
 // extractDeltaText concat in buildCheckpointInput), which kept the
 // admin hook ecosystem from acting on adapter-specific structure
@@ -159,6 +162,7 @@ func (b *BufferPipeline) Process(
 	var rawBuf bytes.Buffer
 	teedUpstream := io.TeeReader(upstream, &rawBuf)
 	parser := NewSSEParserWithLogger(teedUpstream, b.logger)
+	defer parser.Release()
 
 	var (
 		events []*SSEEvent
@@ -204,12 +208,13 @@ func (b *BufferPipeline) Process(
 	// Phase 2: Run compliance hooks on the full content.
 	checkpointInput := buildCheckpointInput(baseInput, fullText.String())
 
-	// Invoke caller-provided pre-hook callback so the compliance
-	// hook executor sees a Registry-normalized payload rather than the
-	// flat-text fallback. Callback closes over the Registry + adapter +
+	// Invoke caller-provided pre-hook callback so the compliance hook
+	// executor sees a Registry-normalized payload rather than the flat-text
+	// fallback. The callback closes over the Registry + adapter +
 	// content-type at the call site (sse.go's buffer branch) and stamps
-	// both checkpointInput.Normalized AND auditInfo.ResponseNormalized
-	// (the latter is what lands in audit_events.normalized_response).
+	// checkpointInput.Normalized only — it does NOT write
+	// auditInfo.ResponseNormalized, which an earlier version of this comment
+	// claimed. That field is populated on neither SSE path.
 	if b.preHook != nil {
 		b.preHook(rawBuf.Bytes(), checkpointInput)
 	}
@@ -303,28 +308,4 @@ func (b *BufferPipeline) Process(
 		// Approve or Abstain — replay all buffered events unchanged.
 		return result, b.replay(ctx, client, events)
 	}
-}
-
-// replay writes the given SSE events to the client, teeing into the
-// capture buffer when WithBodyCapture is enabled and flushing after each
-// frame for incremental delivery. Resolves the flusher BEFORE wrapping
-// in MultiWriter — interface satisfactions don't pass through it.
-func (b *BufferPipeline) replay(ctx context.Context, client io.Writer, events []*SSEEvent) error {
-	flusher, canFlush := client.(http.Flusher)
-	writer := client
-	if b.captureBuf != nil {
-		writer = io.MultiWriter(client, b.captureBuf)
-	}
-	for _, evt := range events {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err := WriteSSEEvent(writer, evt); err != nil {
-			return fmt.Errorf("buffer pipeline: write event: %w", err)
-		}
-		if canFlush {
-			flusher.Flush()
-		}
-	}
-	return nil
 }

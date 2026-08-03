@@ -324,6 +324,7 @@ func (e *Engine) Check(ctx context.Context, chain []CheckLevel, estimate CostEst
 		chain[lv.chainIdx].CurrentCents = currentCents
 		chain[lv.chainIdx].LimitCents = lv.limitCents
 		chain[lv.chainIdx].PeriodKey = lv.periodKey
+		chain[lv.chainIdx].EnforcementMode = lv.enforcementMode
 
 		// 3. Check if over limit.
 		if currentCents+estimatedCents > lv.limitCents {

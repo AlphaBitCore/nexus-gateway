@@ -67,7 +67,7 @@ func TestCrossFormatChatRoundTrip(t *testing.T) {
 			}
 			ct := provcore.CallTarget{Format: c.target, ProviderModelID: FixtureProviderModel(c.target)}
 
-			wire, err := b.IngressChatToWire(c.ingress, c.target, body, ct, false)
+			wire, _, err := b.IngressChatToWire(c.ingress, c.target, body, ct, false)
 			if err != nil {
 				t.Fatalf("IngressChatToWire(%s): %v", name, err)
 			}
@@ -102,7 +102,7 @@ func TestCrossFormatEmbeddingsRoundTrip(t *testing.T) {
 	for _, target := range []provcore.Format{provcore.FormatGemini, provcore.FormatCohere, provcore.FormatOpenAI} {
 		t.Run("req_openai_to_"+string(target), func(t *testing.T) {
 			ct := provcore.CallTarget{Format: target, ProviderModelID: FixtureProviderModel(target)}
-			wire, _, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, target, []byte(canonReq), ct)
+			wire, _, _, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, target, []byte(canonReq), ct)
 			if err != nil {
 				t.Fatalf("IngressEmbeddingsToWire(openai→%s): %v", target, err)
 			}
@@ -172,7 +172,7 @@ func TestIngressEmbeddingsToWire_GeminiEndpointSelection(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			wire, override, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, provcore.FormatGemini, []byte(c.canonReq), ct)
+			wire, override, _, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, provcore.FormatGemini, []byte(c.canonReq), ct)
 			if err != nil {
 				t.Fatalf("IngressEmbeddingsToWire: %v", err)
 			}

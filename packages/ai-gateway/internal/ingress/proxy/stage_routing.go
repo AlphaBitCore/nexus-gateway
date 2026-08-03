@@ -73,7 +73,7 @@ func (st routingStage) run() bool {
 	}
 	if routeResult == nil || len(routeResult.Targets) == 0 {
 		s.logger.Debug("no routing targets resolved; trying passthrough fallback", "model", s.modelID)
-		fallbackResult, fallbackErr := h.resolveNoMatchPassthrough(s.r.Context(), s.modelID, s.vkMeta, s.resolved)
+		fallbackResult, fallbackErr := h.resolveNoMatchPassthrough(s.r.Context(), s.modelID, s.vkMeta, s.resolved, typology.EndpointKind(s.endpointType))
 		if fallbackErr != nil {
 			var routingErr *routingFallbackError
 			if errors.As(fallbackErr, &routingErr) {
@@ -163,7 +163,7 @@ func (st routingStage) run() bool {
 		if len(incompatible) > 0 {
 			providerFormat = string(incompatible[0].ProviderFormat)
 		}
-		h.writeNoCompatibleProvider(s.w, s.rec, s.resolved.BodyFormat, providerFormat)
+		h.writeNoCompatibleProvider(s.w, s.rec, s.resolved.BodyFormat, providerFormat, typology.KindFromWireShape(s.resolved.WireShape))
 		return false
 	}
 	routeResult.Targets = compat
@@ -203,7 +203,7 @@ func (st routingStage) run() bool {
 	return true
 }
 
-func (h *Handler) resolveNoMatchPassthrough(ctx context.Context, requestedModel string, vkMeta *vkauth.VKMeta, in Ingress) (*routingcore.RouteResult, error) {
+func (h *Handler) resolveNoMatchPassthrough(ctx context.Context, requestedModel string, vkMeta *vkauth.VKMeta, in Ingress, endpointKind typology.EndpointKind) (*routingcore.RouteResult, error) {
 	if h.deps == nil || h.deps.Models == nil {
 		return nil, &routingFallbackError{
 			status:  http.StatusInternalServerError,
@@ -238,6 +238,21 @@ func (h *Handler) resolveNoMatchPassthrough(ctx context.Context, requestedModel 
 		}
 	}
 
+	// Modality guard for the requested-model passthrough: reject a model whose
+	// modality does not match the endpoint (e.g. an image model addressed on
+	// /v1/chat/completions) with a clean 400 rather than forwarding it upstream
+	// to fail. The rule-based paths get the same guard via the resolver's
+	// filterByModality; this covers the explicit-model path the resolver never
+	// sees.
+	if !typology.EndpointKindAcceptsModelType(endpointKind, model.Type) {
+		return nil, &routingFallbackError{
+			status:  http.StatusBadRequest,
+			code:    "MODEL_MODALITY_MISMATCH",
+			message: "model " + requestedModel + " (" + model.Type + ") cannot serve a " + string(endpointKind) + " request",
+			hint:    "Use a model whose modality matches this endpoint",
+		}
+	}
+
 	providerName := model.ProviderName
 	if providerName == "" {
 		providerName = model.ProviderID
@@ -250,6 +265,10 @@ func (h *Handler) resolveNoMatchPassthrough(ctx context.Context, requestedModel 
 	if adapterType == "" {
 		adapterType = string(in.BodyFormat)
 	}
+	maxOut := 0
+	if model.MaxOutputTokens != nil {
+		maxOut = *model.MaxOutputTokens
+	}
 	target := routingcore.RoutingTarget{
 		ProviderID:      model.ProviderID,
 		ProviderName:    providerName,
@@ -257,8 +276,10 @@ func (h *Handler) resolveNoMatchPassthrough(ctx context.Context, requestedModel 
 		ModelID:         model.ID,
 		ModelCode:       model.Code,
 		ModelName:       model.Name,
+		ModelType:       model.Type,
 		ProviderModelID: model.ProviderModelID,
 		BaseURL:         model.ProviderBaseURL,
+		MaxOutputTokens: maxOut,
 		Source:          "passthrough-fallback",
 	}
 	return &routingcore.RouteResult{

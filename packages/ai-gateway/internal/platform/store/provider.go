@@ -54,7 +54,7 @@ type Model struct {
 	// records the real upstream domain instead of falling back
 	// to the provider name.
 	ProviderModelID string // String sent on the upstream wire to the provider.
-	Type            string // chat | embedding | image | audio
+	Type            string // chat | embedding | image | audio | rerank | video | realtime
 	Enabled         bool
 	InputPricePM    *float64 // per million tokens
 	OutputPricePM   *float64
@@ -66,10 +66,20 @@ type Model struct {
 	// (e.g. Anthropic 1.25×). NULL = no surcharge; cost calculation
 	// falls back to InputPricePM.
 	CachedInputWritePricePM *float64
-	Features                []string // vision, function_calling, streaming, json_mode, thinking, ...
-	MaxContextTokens        *int
-	MaxOutputTokens         *int
-	Aliases                 []string // Alternate request strings that resolve to this row
+	// Audio-token rates — realtime models bill text and audio components of
+	// one response simultaneously at different rates. NULL on non-realtime
+	// models. Both primary audio rates (and both text rates) must be
+	// non-NULL and > 0 for a model to be realtime-priced.
+	AudioInputPricePM  *float64
+	AudioOutputPricePM *float64
+	// CachedAudioInputReadPricePM — cached audio input READ price. NULL = no
+	// discount; falls back to AudioInputPricePM (mirrors the text cache-read
+	// fallback).
+	CachedAudioInputReadPricePM *float64
+	Features                    []string // vision, function_calling, streaming, json_mode, thinking, ...
+	MaxContextTokens            *int
+	MaxOutputTokens             *int
+	Aliases                     []string // Alternate request strings that resolve to this row
 	// (e.g. "gpt-4o-2024-08-06" → "gpt-4o"). Read by
 	// ResolveModelCandidates for code-set hydration.
 	InputModalities  []string // e.g. ["text"], ["text","image"]

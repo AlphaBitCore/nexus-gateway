@@ -27,7 +27,7 @@ func TestPrependVia_Existing(t *testing.T) {
 
 func TestPrependVia_TwoHopChain(t *testing.T) {
 	// Production maximum is 2 hops (front {agent|compliance-proxy} + ai-gateway).
-	// Per nexus-response-markers.md §4, the 3-hop agent → compliance-proxy →
+	// Per nexus-headers.md §4, the 3-hop agent → compliance-proxy →
 	// ai-gateway chain is not a production traffic path.
 	h := http.Header{}
 	PrependVia(h, "ai-gateway")
@@ -71,15 +71,15 @@ func TestPrependChain_PreservesEmptyInnerPosition(t *testing.T) {
 	// the empty inner position becomes a trailing "" preserved via the
 	// "value, " trailing-empty form. Strict 1:1 with X-Nexus-Via.
 	h := http.Header{}
-	h.Set("X-Nexus-Mode", "") // AIGW reserved this position with empty value
-	PrependChain(h, "X-Nexus-Mode", "mitm")
-	if got := h.Get("X-Nexus-Mode"); got != "mitm, " {
-		t.Errorf("got %q, want %q", got, "mitm, ")
+	h.Set("X-Nexus-Mode", "")                  // AIGW reserved this position with empty value
+	PrependChain(h, "X-Nexus-Mode", "inspect") // outer hop (agent/CP tlsbump) prepends its real mode
+	if got := h.Get("X-Nexus-Mode"); got != "inspect, " {
+		t.Errorf("got %q, want %q", got, "inspect, ")
 	}
 }
 
 func TestExposeHeaders_HasAllMarkers(t *testing.T) {
-	// Entry list must match the catalogue in nexus-response-markers.md.
+	// Entry list must match the catalogue in nexus-headers.md.
 	want := []string{
 		"X-Nexus-Via",
 		"X-Nexus-Request-Id",
@@ -98,6 +98,16 @@ func TestExposeHeaders_HasAllMarkers(t *testing.T) {
 		"X-Nexus-Domain-Rule",
 		"Server-Timing",
 		"X-Nexus-Attestation",
+	}
+	// Catalogue-size contract: the doc declares exactly this many markers.
+	// A silent add or delete in ExposeHeaders must fail here so the
+	// catalogue tables stay in lockstep with the code.
+	const catalogueTotal = 17
+	if len(want) != catalogueTotal {
+		t.Errorf("want list has %d entries; the documented catalogue total is %d", len(want), catalogueTotal)
+	}
+	if len(ExposeHeaders) != catalogueTotal {
+		t.Errorf("ExposeHeaders has %d entries; the documented catalogue total is %d", len(ExposeHeaders), catalogueTotal)
 	}
 	got := append([]string{}, ExposeHeaders...)
 	sort.Strings(got)

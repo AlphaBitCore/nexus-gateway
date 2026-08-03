@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -97,6 +98,17 @@ func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 }
 
 // CORSConfig holds CORS middleware settings.
+//
+// The middleware joins what it is given — it owns no header lists of its
+// own. The wiring layer composes AllowedHeaders as
+//
+//	gateway-required ∪ provider-forwardable ∪ operator extras
+//
+// (traffic.AcceptHeaders ∪ forwardheader allowlist ∪ yaml cors.allowedHeaders)
+// so an operator can only EXTEND the set, never shrink it below what the
+// gateway's own read sites and the forward path need. Over-listing is
+// harmless — the gateway ignores names it does not read, and the
+// forward-header gate still default-denies them toward providers.
 type CORSConfig struct {
 	AllowedOrigins []string
 	AllowedMethods []string
@@ -107,7 +119,41 @@ type CORSConfig struct {
 	MaxAge        int
 }
 
+// UnionHeaderNames merges header-name lists into one deduplicated slice.
+// Names are compared case-insensitively (HTTP header names are), the
+// first-seen spelling wins, and the result is sorted so the emitted CORS
+// value is deterministic across restarts.
+func UnionHeaderNames(lists ...[]string) []string {
+	seen := map[string]string{}
+	for _, l := range lists {
+		for _, n := range l {
+			n = strings.TrimSpace(n)
+			if n == "" {
+				continue
+			}
+			k := strings.ToLower(n)
+			if _, ok := seen[k]; !ok {
+				seen[k] = n
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for _, n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // CORS returns middleware that handles Cross-Origin Resource Sharing.
+//
+// Every response on a request that carries an Origin gets `Vary: Origin`
+// (via Add, preserving any existing Vary): the response differs by Origin,
+// so a shared cache must not serve one origin's copy to another —
+// including the "disallowed origin" copy, which carries no CORS headers at
+// all. Preflight responses grant Allow-Methods/-Headers only to allowed
+// origins; a disallowed origin gets a bare 204 that the browser then
+// rejects, rather than a readout of what the gateway would accept.
 func CORS(cfg CORSConfig) func(http.Handler) http.Handler {
 	origins := make(map[string]bool, len(cfg.AllowedOrigins))
 	allowAll := false
@@ -118,16 +164,8 @@ func CORS(cfg CORSConfig) func(http.Handler) http.Handler {
 		origins[o] = true
 	}
 
-	methods := "GET, POST, PUT, DELETE, OPTIONS"
-	if len(cfg.AllowedMethods) > 0 {
-		methods = strings.Join(cfg.AllowedMethods, ", ")
-	}
-
-	headers := "Content-Type, Authorization, x-nexus-virtual-key, x-request-id"
-	if len(cfg.AllowedHeaders) > 0 {
-		headers = strings.Join(cfg.AllowedHeaders, ", ")
-	}
-
+	methods := strings.Join(cfg.AllowedMethods, ", ")
+	headers := strings.Join(cfg.AllowedHeaders, ", ")
 	exposeHeaders := strings.Join(cfg.ExposeHeaders, ", ")
 
 	maxAge := "86400"
@@ -143,18 +181,25 @@ func CORS(cfg CORSConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			if allowAll || origins[origin] {
+			w.Header().Add("Vary", "Origin")
+			allowed := allowAll || origins[origin]
+			if allowed {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
 				if exposeHeaders != "" {
 					w.Header().Set("Access-Control-Expose-Headers", exposeHeaders)
 				}
 			}
 
 			if r.Method == http.MethodOptions {
-				w.Header().Set("Access-Control-Allow-Methods", methods)
-				w.Header().Set("Access-Control-Allow-Headers", headers)
-				w.Header().Set("Access-Control-Max-Age", maxAge)
+				if allowed {
+					if methods != "" {
+						w.Header().Set("Access-Control-Allow-Methods", methods)
+					}
+					if headers != "" {
+						w.Header().Set("Access-Control-Allow-Headers", headers)
+					}
+					w.Header().Set("Access-Control-Max-Age", maxAge)
+				}
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -186,3 +231,13 @@ func (sw *statusWriter) Flush() {
 func (sw *statusWriter) Unwrap() http.ResponseWriter {
 	return sw.ResponseWriter
 }
+
+// Compile-time assertion that the wrapper stays unwrappable.
+// http.ResponseController walks Unwrap() until it finds a writer that
+// implements the capability it wants; this wrapper sits between the proxy
+// handlers and the real connection, so dropping Unwrap silently severs
+// SetWriteDeadline (and Hijack) from the connection. Nothing else would fail:
+// the wrapper still satisfies http.ResponseWriter, the build stays green, and
+// every long non-stream inference starts dying against the flat
+// server.writeTimeout at runtime instead.
+var _ interface{ Unwrap() http.ResponseWriter } = (*statusWriter)(nil)

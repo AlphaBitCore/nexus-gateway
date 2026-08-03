@@ -197,11 +197,7 @@ func (h *Handler) Import(c echo.Context) error {
 	}
 	saved, err := h.store.ImportPack(c.Request().Context(), pack)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, rulepack.ErrDuplicatePackVersion) {
-			status = http.StatusConflict
-		}
-		return c.JSON(status, map[string]any{"error": err.Error()})
+		return respondImportError(c, err)
 	}
 	if warnings == nil {
 		warnings = []string{}
@@ -308,8 +304,11 @@ func (h *Handler) UpsertOverrides(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "malformed_json", "detail": err.Error()})
 	}
+	// An out-of-enum severityOverride is refused here (see rulepacks_errors.go):
+	// it would leave the rule matching and reporting while it silently stopped
+	// blocking, and that is the caller's typo to fix, not a server fault.
 	if err := h.store.UpsertOverrides(c.Request().Context(), installID, body.Overrides); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return respondWriteError(c, err)
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceRulePack, iam.VerbUpdate)

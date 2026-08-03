@@ -16,20 +16,22 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // Handler forwards pattern perf-test requests to the AI Gateway.
 type Handler struct {
-	gatewayURL    string
+	gatewayBase   peer.URLProvider
 	internalToken string
 	logger        *slog.Logger
 }
 
-// New builds the handler from the BFF's AI-Gateway base URL + internal token.
-func New(gatewayURL, internalToken string, logger *slog.Logger) *Handler {
-	return &Handler{gatewayURL: gatewayURL, internalToken: internalToken, logger: logger}
+// New builds the handler from the Hub-backed AI-Gateway URL provider + the
+// internal service token.
+func New(gatewayBase peer.URLProvider, internalToken string, logger *slog.Logger) *Handler {
+	return &Handler{gatewayBase: gatewayBase, internalToken: internalToken, logger: logger}
 }
 
 // RegisterRoutes wires POST /rule-packs/pattern-perf-test onto the admin group.
@@ -58,7 +60,11 @@ func (h *Handler) Test(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "pattern is required", "code": "validation_error"})
 	}
 
-	gwURL := strings.TrimRight(h.gatewayURL, "/") + "/internal/pattern-perf-test"
+	gwBase, gwErr := h.gatewayBase(c.Request().Context())
+	if gwErr != nil {
+		return peer.ServiceUnavailable(c, "ai-gateway", gwErr)
+	}
+	gwURL := strings.TrimRight(gwBase, "/") + "/internal/pattern-perf-test"
 	payload, _ := json.Marshal(map[string]string{"pattern": body.Pattern, "flags": body.Flags})
 
 	client := nexushttp.New(nexushttp.Config{

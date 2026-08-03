@@ -16,6 +16,7 @@ import (
 	"net/http"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	openaicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/codec"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
@@ -28,10 +29,21 @@ import (
 // is rejected with a 400 per Rule 3 (per-model wire quirk).
 // DecodeResponse: identity for all endpoints; Usage extraction is delegated
 // to provcore.ExtractUsage (shared OpenAI normalizer) consistent with Rule 5.
-type GLMCodec struct{}
+//
+// family is an empty-contract OpenAI identity codec: GLM is OpenAI-family
+// on the wire, so its native-leg differential (RewriteNative) must match
+// every other OpenAI-chat sibling's family-wide behaviour — see
+// RewriteNative in rewrite_native.go. GLM has no probed per-model
+// sampling quirk (quirk-coverage registry: forward-unprobed), so the
+// contract is empty.
+type GLMCodec struct {
+	family provcore.SchemaCodec
+}
 
 // New returns the GLM SchemaCodec.
-func New() provcore.SchemaCodec { return GLMCodec{} }
+func New() provcore.SchemaCodec {
+	return GLMCodec{family: openaicodec.New(openaicodec.Contract{})}
+}
 
 // EncodeRequest translates a canonical OpenAI-shaped body to the GLM wire body.
 //

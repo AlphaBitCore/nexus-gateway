@@ -34,6 +34,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	sharednormalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -115,8 +117,8 @@ func newHandlerWithProxy(proxyURL string, client *http.Client) *Handler {
 		Audit:  noopAuditWriter(),
 		Logger: silentLogger(),
 		Proxy: ProxyConfig{
-			ComplianceProxyRuntimeURL: proxyURL,
-			ComplianceProxyAPIToken:   "tok-test",
+			ComplianceProxyBase:     peer.Static(proxyURL),
+			ComplianceProxyAPIToken: "tok-test",
 		},
 		HTTPClient: client,
 	})
@@ -130,9 +132,18 @@ type testSpillStore struct {
 	contentType string
 	getErr      error
 	readErr     error // when set, Get returns a reader that fails mid-read
+	// backend overrides the reported backend name. The spill-read diagnosis
+	// compares a ref's backend against the CONFIGURED store's backend, so tests
+	// that exercise that comparison need to control both sides.
+	backend string
 }
 
-func (s *testSpillStore) Backend() string { return "test" }
+func (s *testSpillStore) Backend() string {
+	if s.backend != "" {
+		return s.backend
+	}
+	return "test"
+}
 func (s *testSpillStore) Put(_ context.Context, _ io.Reader, _ int64, _ spillstore.PutOptions) (sharedaudit.SpillRef, error) {
 	return sharedaudit.SpillRef{}, nil
 }
@@ -374,6 +385,31 @@ func TestListTrafficEvents_WithFilters_DBError_Returns500(t *testing.T) {
 	_ = h.ListTrafficEvents(c)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+// TestListTrafficEvents_CorrelationParams pins the handler-side mapping of
+// the correlation query params: ?endUserId= / ?sessionId= must reach the
+// store as exact-match predicates on end_user_id / session_id with the
+// caller-supplied values (the drawer's click-to-pivot contract).
+func TestListTrafficEvents_CorrelationParams(t *testing.T) {
+	h, mock := newHandlerWithMock(t)
+	mock.ExpectQuery(`SELECT COUNT.*a\.end_user_id = \$\d+ AND a\.session_id = \$\d+`).
+		WithArgs(pgxmock.AnyArg(), "cust-42", "conv-7").
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`FROM traffic_event a.*a\.end_user_id = \$\d+ AND a\.session_id = \$\d+`).
+		WithArgs(pgxmock.AnyArg(), "cust-42", "conv-7", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"dummy"}))
+
+	c, rec := echoCtxQ(http.MethodGet, "/traffic", "source=vk&endUserId=cust-42&sessionId=conv-7")
+	if err := h.ListTrafficEvents(c); err != nil {
+		t.Fatalf("ListTrafficEvents: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("correlation params did not reach the store query: %v", err)
 	}
 }
 
@@ -2048,10 +2084,10 @@ func TestComplianceReport_HookHealthDBError_Returns500(t *testing.T) {
 
 // traffic.go — GetTrafficEvent success path (record != nil, spillStore branch)
 
-// trafficEventGetCols lists the 97 columns scanned by GetTrafficEvent
-// (trafficEventSelectColumns 91 cols + 6 payload columns).
+// trafficEventGetCols lists the 99 columns scanned by GetTrafficEvent
+// (trafficEventSelectColumns 93 cols + 6 payload columns).
 var trafficEventGetCols = []string{
-	// trafficEventSelectColumns (91 cols)
+	// trafficEventSelectColumns (93 cols)
 	"id", "source", "timestamp",
 	"source_ip", "target_host", "method", "path",
 	"target_method", "target_path",
@@ -2061,6 +2097,7 @@ var trafficEventGetCols = []string{
 	"request_hooks_us", "response_hooks_us",
 	"latency_breakdown",
 	"trace_id", "external_request_id",
+	"end_user_id", "session_id",
 	"entity_type", "entity_id", "entity_name",
 	"org_id", "org_name", "identity",
 	"provider_id", "provider_name",
@@ -2071,6 +2108,7 @@ var trafficEventGetCols = []string{
 	"gateway_cache_status", "gateway_cache_skip_reason", "gateway_cache_kind",
 	"gateway_cache_l2_entry_key",
 	"provider_cache_status", "gateway_cache_savings_usd",
+	"artifact_refs", "compliance_coverage", "endpoint_type",
 	"routed_provider_id", "routed_provider_name",
 	"routed_model_id", "routed_model_name",
 	"routing_rule_id", "routing_rule_name",
@@ -2127,6 +2165,8 @@ func newTrafficEventRow() *pgxmock.Rows {
 		[]byte(`null`),
 		// group 8: trace_id, external_request_id (*string)
 		nil, nil,
+		// group 8b: end_user_id, session_id (*string)
+		nil, nil,
 		// group 9: entity_type, entity_id, entity_name (*string)
 		nil, nil, nil,
 		// group 10: org_id, org_name (*string), identity (json.RawMessage) — 3 values
@@ -2145,6 +2185,8 @@ func newTrafficEventRow() *pgxmock.Rows {
 		// gateway_cache_skip_reason, gateway_cache_kind, gateway_cache_l2_entry_key,
 		// provider_cache_status (*string); gateway_cache_savings_usd (*float64)
 		nil, nil, nil, nil, nil, nil,
+		// artifact_refs, compliance_coverage, endpoint_type (*string) — multimodal stamps
+		nil, nil, nil,
 		// group 17: routed_provider_id, routed_provider_name (*string)
 		nil, nil,
 		// group 18: routed_model_id, routed_model_name (*string)
@@ -2248,6 +2290,8 @@ func TestGetTrafficEvent_WithSpillStore_ResolvesFailed_StillReturns200(t *testin
 		[]byte(`null`),
 		// group 8: trace_id, external_request_id
 		nil, nil,
+		// group 8b: end_user_id, session_id
+		nil, nil,
 		// group 9: entity_type, entity_id, entity_name
 		nil, nil, nil,
 		// group 10: org_id, org_name, identity
@@ -2266,6 +2310,8 @@ func TestGetTrafficEvent_WithSpillStore_ResolvesFailed_StillReturns200(t *testin
 		// gateway_cache_skip_reason, gateway_cache_kind, gateway_cache_l2_entry_key,
 		// provider_cache_status, gateway_cache_savings_usd
 		nil, nil, nil, nil, nil, nil,
+		// artifact_refs, compliance_coverage, endpoint_type — multimodal stamps
+		nil, nil, nil,
 		// group 17: routed_provider_id, routed_provider_name
 		nil, nil,
 		// group 18: routed_model_id, routed_model_name
@@ -2341,13 +2387,13 @@ func TestGetTrafficEventNormalized_Success_Returns200(t *testing.T) {
 			"inline_request_body", "inline_request_encoding",
 			"inline_response_body", "inline_response_encoding",
 			"request_content_type", "response_content_type",
-			"request_spill_ref", "response_spill_ref",
+			"request_spill_ref", "response_spill_ref", "endpoint_type",
 		}).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			[]byte(reqBody), "text",
 			nil, "",
 			"application/json", "",
-			nil, nil,
+			nil, nil, "chat",
 		))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-norm-1/normalized")
@@ -2396,5 +2442,52 @@ func TestResolveSpillBody_IntegrityCheck(t *testing.T) {
 	lj, _ := json.Marshal(legacy)
 	if _, err := h.resolveSpillBody(context.Background(), lj); err != nil {
 		t.Errorf("empty-sha legacy ref must skip verification, got %v", err)
+	}
+}
+
+// TestProxyForward_ResolverError503 locks the peer-resolution failure UX on
+// the compliance-proxy runtime forwards: an unresolved compliance-proxy is a
+// transient 503 PEER_SERVICE_UNAVAILABLE, distinct from the 502 used when a
+// resolved compliance-proxy is unreachable.
+func TestProxyForward_ResolverError503(t *testing.T) {
+	h := New(Deps{
+		Audit:  noopAuditWriter(),
+		Logger: silentLogger(),
+		Proxy: ProxyConfig{
+			ComplianceProxyBase: func(context.Context) (string, error) {
+				return "", errors.New("peer service URL not reported yet")
+			},
+			ComplianceProxyAPIToken: "tok-test",
+		},
+	})
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/proxy/health", nil)
+	rec := httptest.NewRecorder()
+	if err := h.ProxyHealth(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("ProxyHealth: %v", err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing %s: %s", peer.CodeUnavailable, rec.Body.String())
+	}
+}
+
+// TestProxyForward_NilProvider503 locks the hand-wired-Handler case: a nil
+// provider behaves like an unresolved peer (503), never a panic or 500.
+func TestProxyForward_NilProvider503(t *testing.T) {
+	h := New(Deps{Audit: noopAuditWriter(), Logger: silentLogger()})
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/proxy/health", nil)
+	rec := httptest.NewRecorder()
+	if err := h.ProxyHealth(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("ProxyHealth: %v", err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), peer.CodeUnavailable) {
+		t.Errorf("body missing %s: %s", peer.CodeUnavailable, rec.Body.String())
 	}
 }

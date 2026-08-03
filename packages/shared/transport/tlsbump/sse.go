@@ -49,7 +49,6 @@ func resolveStreamingMode(bo *bumpOptions, matched *domain.InterceptionDomain) s
 			matched.StreamingFailBehavior,
 			matched.CaptureRequestBody,
 			matched.CaptureResponseBody,
-			matched.RawBodySpillEnabled,
 		)
 	}
 	merged := streampolicy.Resolve(g, override)
@@ -126,16 +125,34 @@ func handleSSEResponse(
 	// send a clean status, so this check must precede the header copy. The
 	// agent NE host-packet path passes strictFailClosed=false, skips this
 	// guard, and stays fail-open by design (CLAUDE.md NE safety rule).
-	if bo.strictFailClosed && respInput != nil {
+	//
+	// The pipeline built here is the ONE response pipeline for the whole SSE path
+	// (finding C-19): the scope-derived mode routing below and whichever streaming
+	// mode runs all reuse this instance. It previously built with a literal `true`
+	// and discarded the result, and each mode then rebuilt it — three identical
+	// builds per request for a strict caller, two for a non-strict one.
+	// bo.strictFailClosed is the same value the literal was, because this block
+	// only runs for a strict caller; passing the field makes the one build correct
+	// for both postures.
+	var responsePipeline *compliance.Pipeline
+	if respInput != nil {
 		// Endpoint type is not classified at SSE stage — pass "" so all hooks
-		// are considered, mirroring the per-mode BuildPipeline calls below.
-		if _, pErr := bo.policyResolver.BuildPipeline(
+		// are considered.
+		p, pErr := bo.policyResolver.BuildPipeline(
 			"response", "COMPLIANCE_PROXY",
 			"", nil,
 			bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
-			true, // strict
+			bo.strictFailClosed,
 			logger,
-		); pErr != nil {
+		)
+		responsePipeline = p
+		// Only a strict caller can reach a non-nil error: every error return inside
+		// BuildPipeline is gated on strictFailClosed AND a fail-closed hook, so the
+		// agent's non-strict host-packet path is fail-open by construction and
+		// arrives at the modes below with a usable-or-nil pipeline, never a refusal
+		// (CLAUDE.md NE safety rule). Pinned by
+		// TestNonStrictBuildPipeline_NeverErrors_FailOpenByConstruction.
+		if pErr != nil {
 			logger.Error("SSE response blocked: mandatory fail-closed hook unbuildable under strict policy",
 				"target", respInput.TargetHost,
 				"error", pErr,
@@ -173,7 +190,7 @@ func handleSSEResponse(
 		}
 	}
 
-	// Inject x-nexus-via + x-nexus-cp-* markers BEFORE the first flush so
+	// Inject the X-Nexus-* chain markers BEFORE the first flush so
 	// the client receives them as HTTP response headers (not trailers).
 	// This is the SSE equivalent of markerHook on the non-streaming path.
 	stampMarkers(ctx, w.Header(), bo.identity)
@@ -206,14 +223,13 @@ func handleSSEResponse(
 		"statusCode", resp.StatusCode,
 		"contentType", resp.Header.Get("Content-Type"),
 	)
-	logger.Debug("SSE handler entry",
-		"mode", mode,
-		"audCtxNil", audCtx == nil,
-		"respInputNil", respInput == nil,
-		"auditInfoNil", auditInfo == nil,
-		"statusCode", resp.StatusCode,
-		"contentType", resp.Header.Get("Content-Type"),
-	)
+	// A second, Debug-level entry line used to sit here with six attributes. It was
+	// deleted rather than guarded with logger.Enabled (finding C-4's remainder): three of
+	// its six attributes duplicated the Info line above, and the other three were nil
+	// checks on audCtx / respInput / auditInfo — internal invariants every path below
+	// already handles, i.e. development scaffolding rather than a diagnostic. Deleting
+	// costs nothing at any level and needs no guard; guarding would have kept six
+	// argument boxes per SSE response for a line nothing greps.
 
 	// Build a UsageAccumulator when the request was detected as AI
 	// traffic. The accumulator sees every parsed SSE frame and produces
@@ -281,10 +297,12 @@ func handleSSEResponse(
 
 	// Scope-derived routing (mirror ai-gateway stream_shape.go §B2): an enforcing
 	// response scope OVERRIDES the admin streaming mode — the audit-only live path
-	// cannot enforce, so enforcing traffic must route to buffer or Model A. The probe
-	// is reused as the Model A prescan/confirm pipeline.
-	var responseProbe *compliance.Pipeline
-	mode, responseProbe = scopeRouteSSEMode(bo, mode, respInput, audCtx, logger)
+	// cannot enforce, so enforcing traffic must route to buffer or Model A. This
+	// reads the capabilities off the pipeline built above; it does not build one.
+	if responsePipeline != nil {
+		hasAdapter := audCtx != nil && audCtx.adapter != nil
+		mode = overrideStreamingModeForScope(mode, responsePipeline.MayBlock(), responsePipeline.MayRedact(), hasAdapter)
+	}
 
 	switch mode {
 	case "passthrough":
@@ -315,37 +333,12 @@ func handleSSEResponse(
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
 
 	case "live":
-		// Build a response pipeline for checkpoint evaluation.
+		// The response pipeline for checkpoint evaluation was built once at SSE
+		// entry. A build failure never reaches here — it refuses with 451 up there —
+		// so a nil pipeline means only that the scope has no response hooks.
 		var pipelineExec streaming.PipelineExecutor
-		if respInput != nil {
-			// Endpoint type not classified at SSE stage — pass empty string so all hooks run.
-			respPipeline, pErr := bo.policyResolver.BuildPipeline(
-				"response", "COMPLIANCE_PROXY",
-				"", nil,
-				bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
-				bo.strictFailClosed, // per-caller: false for the agent NE host-packet path (fail-open); true for the compliance-proxy appliance (refuse on unbuildable fail-closed hook)
-				logger,
-			)
-			if pErr != nil {
-				// Strict (appliance) fail-closed is refused up front by the
-				// guard at SSE entry (clean 451 before headers); reaching here
-				// means a non-strict caller, so fall back to passthrough.
-				logger.Warn("failed to build SSE live pipeline, falling back to passthrough",
-					"error", pErr,
-				)
-				var captureBuf *streaming.CappedBuffer
-				var dest io.Writer = w
-				if captureMax > 0 {
-					captureBuf = streaming.NewCappedBuffer(captureMax)
-					dest = io.MultiWriter(w, captureBuf)
-				}
-				_ = streaming.Passthrough(ctx, resp.Body, dest)
-				emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
-				return
-			}
-			if respPipeline != nil {
-				pipelineExec = respPipeline
-			}
+		if responsePipeline != nil {
+			pipelineExec = responsePipeline
 		}
 
 		if pipelineExec == nil && acc == nil {
@@ -391,35 +384,13 @@ func handleSSEResponse(
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, result, resp.StatusCode, requestStart, finalizeUsage(ctx, acc), livePipeline.CapturedBytes())
 
 	case "buffer":
+		// Same single pipeline as every other mode, built once at SSE entry. The
+		// build-failure fallback that used to live here is gone with the duplicate
+		// build: a strict caller is refused with 451 at entry, and a non-strict
+		// caller cannot produce a build error at all, so the branch was unreachable.
 		var pipelineExec streaming.PipelineExecutor
-		if respInput != nil {
-			// Endpoint type not classified at SSE buffer stage — pass empty string so all hooks run.
-			respPipeline, pErr := bo.policyResolver.BuildPipeline(
-				"response", "COMPLIANCE_PROXY",
-				"", nil,
-				bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
-				bo.strictFailClosed, // per-caller: false for the agent NE host-packet path (fail-open); true for the compliance-proxy appliance (refuse on unbuildable fail-closed hook)
-				logger,
-			)
-			if pErr != nil {
-				// Strict fail-closed is refused up front by the SSE-entry guard;
-				// reaching here means a non-strict caller → passthrough fallback.
-				logger.Warn("failed to build SSE buffer pipeline, falling back to passthrough",
-					"error", pErr,
-				)
-				var captureBuf *streaming.CappedBuffer
-				var dest io.Writer = w
-				if captureMax > 0 {
-					captureBuf = streaming.NewCappedBuffer(captureMax)
-					dest = io.MultiWriter(w, captureBuf)
-				}
-				_ = streaming.Passthrough(ctx, resp.Body, dest)
-				emitAudit(logger, audCtx, respInput, auditInfo, bo, nil, resp.StatusCode, requestStart, traffic.UsageMeta{}, captureBuf.Bytes())
-				return
-			}
-			if respPipeline != nil {
-				pipelineExec = respPipeline
-			}
+		if responsePipeline != nil {
+			pipelineExec = responsePipeline
 		}
 
 		if pipelineExec == nil && acc == nil {
@@ -484,10 +455,10 @@ func handleSSEResponse(
 	case "modela":
 		// redact-scope under chunked_async with a per-host adapter: prescan-gated
 		// real-time streaming with a bounded tail + escalate-to-buffer redaction via
-		// the shared Model-A engine (fail-OPEN wire substrate). responseProbe + the
+		// the shared Model-A engine (fail-OPEN wire substrate). responsePipeline + the
 		// adapter are non-nil here (the routing reached "modela" only on MayRedact +
 		// an available adapter).
-		runSSEModelA(ctx, w, resp, audCtx, respInput, auditInfo, bo, logger, requestStart, responseProbe, acc, captureMax)
+		runSSEModelA(ctx, w, resp, audCtx, respInput, auditInfo, bo, logger, requestStart, responsePipeline, acc, captureMax)
 
 	default:
 		logger.Warn("unknown streaming mode, using passthrough", "mode", mode)

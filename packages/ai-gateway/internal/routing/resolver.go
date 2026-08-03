@@ -328,6 +328,10 @@ func (r *Resolver) lookupTarget(ctx context.Context, providerID, modelID string)
 	if p.Region != nil {
 		region = *p.Region
 	}
+	maxOut := 0
+	if m.MaxOutputTokens != nil {
+		maxOut = *m.MaxOutputTokens
+	}
 	return &core.RoutingTarget{
 		ProviderID:         p.ID,
 		ProviderName:       p.Name,
@@ -335,10 +339,12 @@ func (r *Resolver) lookupTarget(ctx context.Context, providerID, modelID string)
 		ModelID:            m.ID,
 		ModelCode:          m.Code,
 		ModelName:          m.Name,
+		ModelType:          m.Type,
 		ProviderModelID:    m.ProviderModelID,
 		BaseURL:            p.BaseURL,
 		Region:             region,
 		ServesResponsesAPI: p.ServesResponsesAPI,
+		MaxOutputTokens:    maxOut,
 	}, nil
 }
 
@@ -405,6 +411,11 @@ func (r *Resolver) ResolveTargets(ctx context.Context, rctx *core.RoutingContext
 	allTargets := make([]core.RoutingTarget, 0, len(plan.Targets)+len(plan.RecoveryTargets))
 	allTargets = append(allTargets, plan.Targets...)
 	allTargets = append(allTargets, plan.RecoveryTargets...)
+
+	// Modality guard (all strategies): drop any target whose catalog model type
+	// cannot serve this endpoint's modality, so no strategy dispatches a
+	// cross-modality model. See applyModalityGuard (resolver_modality.go).
+	allTargets = r.applyModalityGuard(allTargets, rctx, plan)
 
 	// When the embeddings capability pre-filter has rejected every target,
 	// return a structured error so the handler can surface available_capabilities.

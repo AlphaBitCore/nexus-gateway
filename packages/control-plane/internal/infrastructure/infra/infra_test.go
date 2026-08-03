@@ -255,7 +255,6 @@ func TestNew_WiresAllFields(t *testing.T) {
 	stub := &stubGroupLookup{}
 	hubClient := &http.Client{Timeout: time.Second}
 	cpClient := &http.Client{Timeout: time.Second}
-	proxy := ProxyConfig{AIGatewayURL: "http://gw"}
 	_, db := newMockDB(t)
 	h := New(Deps{
 		DB:                       db,
@@ -265,16 +264,12 @@ func TestNew_WiresAllFields(t *testing.T) {
 		ThingOverrideGroupLookup: stub,
 		HubProxyClient:           hubClient,
 		ComplianceProxyClient:    cpClient,
-		Proxy:                    proxy,
 	})
 	if h.db != db || h.hub != hub || h.audit != aw || h.logger != log {
 		t.Error("required fields not wired")
 	}
 	if h.thingOverrideGroupLookupRef != stub || h.hubProxyClientRef != hubClient || h.complianceProxyClient != cpClient {
 		t.Error("optional fields not wired")
-	}
-	if h.proxy.AIGatewayURL != "http://gw" {
-		t.Error("proxy config not wired")
 	}
 }
 

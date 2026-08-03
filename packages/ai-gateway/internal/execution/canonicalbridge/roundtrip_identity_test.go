@@ -45,12 +45,12 @@ func TestShapeRoundTripIdentity(t *testing.T) {
 				}
 
 				// A → canonical → B
-				wireB, err := b.IngressChatToWire(a, viaB, bodyA, dummyCallTarget(viaB), false)
+				wireB, _, err := b.IngressChatToWire(a, viaB, bodyA, dummyCallTarget(viaB), false)
 				if err != nil {
 					t.Fatalf("A→B (%s→%s): %v", a, viaB, err)
 				}
 				// B → canonical → A
-				bodyA2, err := b.IngressChatToWire(viaB, a, wireB, dummyCallTarget(a), false)
+				bodyA2, _, err := b.IngressChatToWire(viaB, a, wireB, dummyCallTarget(a), false)
 				if err != nil {
 					t.Fatalf("B→A (%s→%s): %v", viaB, a, err)
 				}

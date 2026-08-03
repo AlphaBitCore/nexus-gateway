@@ -8,6 +8,7 @@ import (
 	alerteval "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/errorcode"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
@@ -586,7 +587,9 @@ func TestCredentialAuthFailuresCascade_OnEventAndFire(t *testing.T) {
 		StatusCode: intPtr(401),
 	}))
 
-	// 10 OK responses, 5 401s with no errorCode (= upstream auth fail).
+	// 10 OK responses, 5 401s the UPSTREAM produced. The gateway stamps
+	// auth_failed on those; it never leaves them unclassified, which is why
+	// this fixture no longer omits the code.
 	for range 10 {
 		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			CredentialID: strPtr("c1"),
@@ -597,6 +600,7 @@ func TestCredentialAuthFailuresCascade_OnEventAndFire(t *testing.T) {
 		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			CredentialID: strPtr("c1"),
 			StatusCode:   intPtr(401),
+			ErrorCode:    strPtr(errorcode.AuthFailed),
 		}))
 	}
 	// 5/15 = 33% > 20%
@@ -961,14 +965,15 @@ func TestProviderUpstreamError_FilteringAndFire(t *testing.T) {
 			RoutedProviderID: strPtr("openai"),
 		}))
 	}
-	// 10 upstream 500s.
+	// 10 upstream 500s, carrying the canonical code the adapter stamps.
 	for range 10 {
 		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			StatusCode:       intPtr(503),
+			ErrorCode:        strPtr(errorcode.UpstreamError),
 			RoutedProviderID: strPtr("openai"),
 		}))
 	}
-	// 5 Nexus-classified 5xx (not counted as numerator since errorCode set).
+	// 5 gateway-side 5xx — observed, but never counted against the provider.
 	for range 5 {
 		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			StatusCode:       intPtr(503),

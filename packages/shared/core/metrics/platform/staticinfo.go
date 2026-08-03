@@ -2,9 +2,11 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
@@ -27,6 +29,12 @@ type BuildInfo struct {
 	// shown in agent install instructions) without hardcoding host
 	// names.
 	PublicURL string
+	// PrivateURL is the internal service-to-service base URL peer Nexus
+	// services dial. Server Things populate it via EffectivePrivateURL
+	// (yaml/env override, else auto-derived from the primary outbound
+	// IPv4 + the service's listen port). Empty for client Things (Agent
+	// — an external caller that uses PublicURL like any other client).
+	PrivateURL string
 }
 
 // CaptureStaticInfo gathers the L2 static-identity payload (spec §5.6) for the
@@ -54,8 +62,47 @@ func CaptureStaticInfo(b BuildInfo) registry.StaticInfo {
 		BuildTime:         b.BuildTime,
 		StartTime:         b.StartTime,
 		PublicURL:         b.PublicURL,
+		PrivateURL:        b.PrivateURL,
 		DeviceFingerprint: computeDeviceFingerprint(),
 	}
+}
+
+// EffectivePrivateURL resolves the internal service-to-service base URL a
+// server Thing reports as staticInfo.privateUrl. Precedence:
+//
+//  1. The yaml/env `privateURL` override (trailing slash trimmed).
+//  2. A SPECIFIC bind host: when the service binds one interface (the
+//     single-host appliance binds 127.0.0.1 behind nginx), the advertised
+//     URL MUST use that host — a socket bound to loopback refuses
+//     connections addressed to the machine's LAN IP, even from the same
+//     box, so advertising the primary IP would be connection-refused in
+//     exactly the shipped topology.
+//  3. Wildcard/empty bind (all interfaces): the primary-outbound IPv4 —
+//     reachable from peers on any box.
+//
+// Returns "" when nothing resolves (no override, wildcard bind, no route)
+// — the consumer-side resolver treats an absent privateUrl as
+// not-yet-reported and retries.
+func EffectivePrivateURL(override, bindHost string, port int) string {
+	if override != "" {
+		return strings.TrimRight(override, "/")
+	}
+	if port <= 0 {
+		return ""
+	}
+	host := strings.TrimSpace(bindHost)
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = primaryOutboundIP()
+	}
+	if host == "" {
+		return ""
+	}
+	// IPv6 hosts need bracketing in URLs; bracket only when needed.
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		return fmt.Sprintf("http://[%s]:%d", host, port)
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
 // friendlyOSName maps runtime.GOOS to the marketing OS name shown in the

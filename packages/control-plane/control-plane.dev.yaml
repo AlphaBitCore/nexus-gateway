@@ -57,17 +57,20 @@ log:
   # shadow push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
   # warn by default: debug is high-volume and grows the log file fast. Raise to
   # debug per session (or via the Hub log_level shadow) when actively debugging.
-  level: "warn"
+  # info at boot to match *.prod.yaml.example and the level the Hub shadow
+  # pushes anyway: the yaml governs only the boot window, and leaving it at warn
+  # hid every boot posture line (audit overflow policy, spillstore backend,
+  # streaming policy) in exactly the environment where they are read.
+  level: "info"
   format: "text"
   file: "logs/control-plane.log"
   stackOnError: true
 
-bff:
-  complianceProxyUrl: "http://127.0.0.1:3040"
-  complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
-  aiGatewayUrl: "http://127.0.0.1:3050"
-  # complianceProxyApiToken is env-only (COMPLIANCE_PROXY_API_TOKEN) and
-  # must match what compliance-proxy itself reads from the same env var.
+# Peer service URLs (ai-gateway, compliance-proxy) are NOT configured here:
+# each peer reports its address to the Hub and CP resolves it at request
+# time (shared/transport/peerurl).
+# complianceProxyApiToken is env-only (COMPLIANCE_PROXY_API_TOKEN) and
+# must match what compliance-proxy itself reads from the same env var.
 
 # Hub registration (thingclient). Symmetric with ai-gateway /
 # compliance-proxy. Env override: NEXUS_HUB_URL.

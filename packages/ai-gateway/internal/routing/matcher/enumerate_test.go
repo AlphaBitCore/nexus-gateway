@@ -277,3 +277,38 @@ func TestEnumerate_NilLookup_ReturnsNil(t *testing.T) {
 		t.Errorf("nil lookup must short-circuit to nil, got %+v", branches)
 	}
 }
+
+func TestEnumerate_Latency_AllTargetsWithNote(t *testing.T) {
+	node := core.StrategyNode{
+		Type: "latency",
+		LatencyTargets: []core.LatencyTarget{
+			{ProviderID: "openai", ModelID: "gpt-4"},
+			{ProviderID: "azure", ModelID: "gpt-4"},
+		},
+	}
+	branches := EnumerateTerminalTargets(context.Background(), node, &core.RoutingContext{}, enumLookup)
+	if len(branches) != 2 {
+		t.Fatalf("expected both latency targets enumerated, got %d", len(branches))
+	}
+	if math.Abs(sumProb(branches)-1.0) > 1e-9 {
+		t.Errorf("even shares should sum to 1.0, got %v", sumProb(branches))
+	}
+	for _, b := range branches {
+		if !b.Matched {
+			t.Errorf("latency targets are always reachable, got Matched=false for %s", b.Target.ProviderID)
+		}
+		if !strings.Contains(b.Note, "runtime p95") {
+			t.Errorf("expected a runtime-p95 note, got %q", b.Note)
+		}
+	}
+	if b := findBranch(branches, "openai", "gpt-4"); b == nil || b.Target.ProviderName != "openai-name" {
+		t.Errorf("lookup not invoked per latency branch")
+	}
+}
+
+func TestEnumerate_Latency_Empty(t *testing.T) {
+	node := core.StrategyNode{Type: "latency"}
+	if branches := EnumerateTerminalTargets(context.Background(), node, &core.RoutingContext{}, enumLookup); branches != nil {
+		t.Errorf("empty latency node should enumerate no branches, got %+v", branches)
+	}
+}

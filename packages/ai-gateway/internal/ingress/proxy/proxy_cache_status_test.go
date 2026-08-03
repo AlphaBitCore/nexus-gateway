@@ -60,6 +60,34 @@ func TestClassifyCachePreLookup(t *testing.T) {
 			cacheEnabled: true, targets: true,
 			wantStatus: "", wantReason: "",
 		},
+		// Multimodal endpoints short-circuit like embeddings: endpoint-driven,
+		// regardless of admin cache config — generative image variety is the
+		// product, TTS/STT payloads are binary/derived, a cached transcript
+		// would be PII-at-rest. No per-modality cache knob exists by design.
+		{
+			name:         "image_generation short-circuits even with cache enabled + targets",
+			endpointKind: typology.EndpointKindImageGeneration,
+			cacheEnabled: true, targets: true,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonModalityEndpoint,
+		},
+		{
+			name:         "tts short-circuits even with cache enabled + targets",
+			endpointKind: typology.EndpointKindTTS,
+			cacheEnabled: true, targets: true,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonModalityEndpoint,
+		},
+		{
+			name:         "stt short-circuits and wins over no-cache header + passthrough",
+			endpointKind: typology.EndpointKindSTT,
+			cacheEnabled: true, hasNoCacheHeader: true, targets: true, passthroughBypassCache: true,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonModalityEndpoint,
+		},
+		{
+			name:         "rerank short-circuits with its own reason, endpoint-driven",
+			endpointKind: typology.EndpointKindRerank,
+			cacheEnabled: true, targets: true,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonRerankEndpoint,
+		},
 		// Cache off short-circuits before all other checks (matches
 		// production: a nil cache module never sees a request).
 		{
@@ -68,7 +96,10 @@ func TestClassifyCachePreLookup(t *testing.T) {
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonDisabled,
 		},
 		{
-			name:         "cache disabled with no targets",
+			// Both conditions hold. "disabled" must win: turning a tier on is the
+			// actionable first step, and reporting no_targets here would send the
+			// operator to their routing rules while caching was off anyway.
+			name:         "cache disabled AND no targets → disabled wins",
 			cacheEnabled: false, targets: false,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonDisabled,
 		},
@@ -80,11 +111,15 @@ func TestClassifyCachePreLookup(t *testing.T) {
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonNoCache,
 		},
 
-		// Empty target list — defensive Skipped + disabled reason.
+		// Empty target list with the tiers ON is a ROUTING outcome, not a config
+		// posture, so it gets its own reason. While both stamped "disabled",
+		// traffic_event.gateway_cache_skip_reason and
+		// nexus_cache_lookups_total{result} could not tell an operator whether to
+		// look at the cache settings or at their routing rules.
 		{
-			name:         "empty targets",
+			name:         "empty targets while cache is enabled → no_targets, not disabled",
 			cacheEnabled: true, targets: false,
-			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonDisabled,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonNoTargets,
 		},
 
 		// Happy path: caller proceeds to BuildKey + Lookup.

@@ -1,12 +1,15 @@
 package profiling
 
 import (
+	"bytes"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -166,9 +169,51 @@ func TestStart_HTTPAddrBusy(t *testing.T) {
 		t.Fatalf("bind: %v", err)
 	}
 	defer func() { _ = ln.Close() }()
-	t.Setenv(EnvAddr, ln.Addr().String()) // already in use → ListenAndServe fails
+	busy := ln.Addr().String()
+
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(restore)
+
+	t.Setenv(EnvAddr, busy) // already in use → the bind must fail
 	startHTTP()
-	time.Sleep(100 * time.Millisecond) // let the goroutine hit the error branch
+	time.Sleep(100 * time.Millisecond)
+
+	out := buf.String()
+	// The claim is the defect, not the failure: an operator who reads "listening"
+	// and then profiles that address is measuring whatever else holds the port.
+	if strings.Contains(out, "pprof http listening") {
+		t.Errorf("claimed to be listening on a port it could not bind:\n%s", out)
+	}
+	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, busy) {
+		t.Errorf("want an ERROR naming %s, got:\n%s", busy, out)
+	}
+}
+
+// A bindable address must log the success line exactly once, and carry the
+// RESOLVED address — an operator given ":0" needs the port that was chosen, not
+// the wildcard they asked for.
+func TestStart_HTTPAddrLogsResolvedAddr(t *testing.T) {
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(restore)
+
+	t.Setenv(EnvAddr, "127.0.0.1:0")
+	startHTTP()
+	time.Sleep(50 * time.Millisecond)
+
+	out := buf.String()
+	if strings.Count(out, "pprof http listening") != 1 {
+		t.Fatalf("want exactly one listening line, got:\n%s", out)
+	}
+	if strings.Contains(out, "addr=127.0.0.1:0") {
+		t.Errorf("logged the requested wildcard port instead of the resolved one:\n%s", out)
+	}
+	if strings.Contains(out, "level=ERROR") {
+		t.Errorf("a successful bind must not log an error:\n%s", out)
+	}
 }
 
 // Unknown profile name → pprof.Lookup returns nil → writeLookup is a no-op.
@@ -320,4 +365,100 @@ func containsToken(s, tok string) bool {
 		}
 	}
 	return false
+}
+
+// dumpSignal is the platform seam that got GOOS=windows out of the enforced set
+// of the agent cross-build gate. The assertion is per-platform on purpose: on
+// Unix the capture signal must be a real one and named in the boot line an
+// operator greps for, and on Windows it must be absent rather than borrowed from
+// SIGBREAK or SIGINT — binding a profile capture to a keystroke or to a shutdown
+// signal would be worse than having no capture at all.
+func TestDumpSignal_MatchesThePlatformContract(t *testing.T) {
+	sig, name := dumpSignal()
+	if runtime.GOOS == "windows" {
+		if sig != nil || name != "" {
+			t.Errorf("windows must have no capture signal, got %v/%q", sig, name)
+		}
+		return
+	}
+	if sig == nil {
+		t.Fatal("unix must have a capture signal")
+	}
+	if name != "SIGUSR1" {
+		t.Errorf("signal name = %q; the boot line advertises it, so it must be the real name", name)
+	}
+	if sig != syscall.SIGUSR1 {
+		t.Errorf("capture signal = %v, want SIGUSR1", sig)
+	}
+}
+
+// With no capture signal, startSignalDump must say so and NOT create the dump
+// directory: an operator reading "dumps armed" on a platform that cannot arm them
+// is the failure this split exists to prevent.
+func TestStartSignalDump_NoSignalIsAnnouncedNotArmed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this asserts the no-signal branch; on windows it is the only branch and is covered above")
+	}
+	orig := dumpSignalFn
+	dumpSignalFn = func() (os.Signal, string) { return nil, "" }
+	t.Cleanup(func() { dumpSignalFn = orig })
+
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(restore)
+
+	dir := filepath.Join(t.TempDir(), "never-created")
+	t.Setenv(EnvDir, dir)
+	startSignalDump("svc")
+
+	out := buf.String()
+	if strings.Contains(out, "dumps armed") {
+		t.Errorf("claimed to arm dumps with no capture signal:\n%s", out)
+	}
+	if !strings.Contains(out, "unavailable on this platform") {
+		t.Errorf("want an explicit unavailable line, got:\n%s", out)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("the dump directory must not be created when nothing can trigger a dump")
+	}
+}
+
+// The exposure of the pprof endpoint is REPORTED, not assumed. The line used to
+// say "(loopback profiling)" for whatever address the operator gave — and
+// .env.example suggests ":6060", a wildcard bind — so it asserted the endpoint
+// was unreachable off-box while advertising the opposite. A heap profile on a
+// gateway carries request-body bytes, so the label is about real content.
+func TestStartHTTP_ReportsTheActualExposure(t *testing.T) {
+	t.Run("loopback bind says loopback", func(t *testing.T) {
+		var buf bytes.Buffer
+		restore := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(restore)
+
+		t.Setenv(EnvAddr, "127.0.0.1:0")
+		startHTTP()
+		time.Sleep(50 * time.Millisecond)
+		if !strings.Contains(buf.String(), "exposure=\"loopback only\"") {
+			t.Errorf("want a loopback exposure, got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("wildcard bind says reachable off-host", func(t *testing.T) {
+		var buf bytes.Buffer
+		restore := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(restore)
+
+		t.Setenv(EnvAddr, ":0")
+		startHTTP()
+		time.Sleep(50 * time.Millisecond)
+		out := buf.String()
+		if strings.Contains(out, "loopback only") {
+			t.Errorf("a wildcard bind must not be reported as loopback:\n%s", out)
+		}
+		if !strings.Contains(out, "REACHABLE OFF-HOST") {
+			t.Errorf("want the off-host warning on a wildcard bind, got:\n%s", out)
+		}
+	})
 }

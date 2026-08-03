@@ -19,6 +19,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // routingRuleCols mirrors store/routing_rule.go rrColumns. Kept local so the
@@ -994,7 +996,7 @@ func TestValidateSmartRuleMatchConditions_LiteralsNotArray(t *testing.T) {
 // 400/validation_error.
 func TestRoutingSimulate_BindError(t *testing.T) {
 	h := New(Deps{
-		Proxy:  ProxyConfig{AIGatewayURL: "http://127.0.0.1:1"},
+		Proxy:  ProxyConfig{AIGatewayBase: peer.Static("http://127.0.0.1:1")},
 		Logger: silentLogger(),
 	})
 	e := echo.New()

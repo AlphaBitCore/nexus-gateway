@@ -38,7 +38,7 @@ func TestHandleNonStream_Truncated_StampsTruncatedStatus(t *testing.T) {
 	}
 
 	h.handleNonStream(openAIIngressRequest(t), httptest.NewRecorder(), rec, result,
-		target, 2.0, 2.0, nil, "chat", "req", time.Now(), slog.Default())
+		target, nil, 2.0, 2.0, nil, "chat", "req", time.Now(), slog.Default())
 
 	if rec.UsageExtractionStatus != "truncated" {
 		t.Errorf("UsageExtractionStatus=%q want truncated", rec.UsageExtractionStatus)
@@ -65,7 +65,7 @@ func TestHandleNonStream_NotTruncated_StampsOK(t *testing.T) {
 	}
 
 	h.handleNonStream(openAIIngressRequest(t), httptest.NewRecorder(), rec, result,
-		target, 2.0, 2.0, nil, "chat", "req", time.Now(), slog.Default())
+		target, nil, 2.0, 2.0, nil, "chat", "req", time.Now(), slog.Default())
 
 	if rec.UsageExtractionStatus != "ok" {
 		t.Errorf("UsageExtractionStatus=%q want ok", rec.UsageExtractionStatus)

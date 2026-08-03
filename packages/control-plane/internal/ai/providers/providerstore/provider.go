@@ -235,15 +235,17 @@ func (s *Store) CreateProviderWithChildren(
 			INSERT INTO "Model" (id, code, name, description, "providerId", "providerModelId", type, features,
 				"inputPricePerMillion", "outputPricePerMillion",
 				"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
+				"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 				"maxContextTokens", "maxOutputTokens",
 				aliases, "inputModalities", "outputModalities", lifecycle, "capabilityJson",
 				enabled, "createdAt", "updatedAt")
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, NOW(), NOW())
 			RETURNING %s
 		`, modelstore.ModelColumns),
 			uuid.New().String(), p.Code, p.Name, p.Description, pr.ID, p.ProviderModelID, p.Type, features,
 			p.InputPricePerMillion, p.OutputPricePerMillion,
 			p.CachedInputReadPricePerMillion, p.CachedInputWritePricePerMillion,
+			p.AudioInputPricePerMillion, p.AudioOutputPricePerMillion, p.CachedAudioInputReadPricePerMillion,
 			p.MaxContextTokens, p.MaxOutputTokens,
 			aliases, inputMod, outputMod, lifecycle, p.CapabilityJson,
 			p.Enabled,
@@ -251,6 +253,7 @@ func (s *Store) CreateProviderWithChildren(
 			&m.ID, &m.Code, &m.Name, &m.Description, &m.ProviderID, &m.ProviderModelID,
 			&m.Type, &m.Features, &m.InputPricePerMillion, &m.OutputPricePerMillion,
 			&m.CachedInputReadPricePerMillion, &m.CachedInputWritePricePerMillion,
+			&m.AudioInputPricePerMillion, &m.AudioOutputPricePerMillion, &m.CachedAudioInputReadPricePerMillion,
 			&m.MaxContextTokens, &m.MaxOutputTokens, &m.Status, &m.DeprecationDate, &m.ReplacedBy, &m.Aliases,
 			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson,
 			&m.Enabled, &m.CreatedAt, &m.UpdatedAt,

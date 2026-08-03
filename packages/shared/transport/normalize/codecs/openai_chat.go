@@ -201,7 +201,7 @@ type openAIToolDef struct {
 
 func (n *OpenAIChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var req openAIChatRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if err := decodeLenient(raw, &req); err != nil {
 		return core.NormalizedPayload{
 			Kind:             core.KindAIChat,
 			NormalizeVersion: core.SchemaVersion,
@@ -510,7 +510,7 @@ func looksLikeOpenAIEventStream(raw []byte) bool {
 
 func (n *OpenAIChatNormalizer) normalizeNonStreamResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	var resp openAIChatResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	if err := decodeLenient(raw, &resp); err != nil {
 		return core.NormalizedPayload{
 			Kind:             core.KindAIChat,
 			NormalizeVersion: core.SchemaVersion,

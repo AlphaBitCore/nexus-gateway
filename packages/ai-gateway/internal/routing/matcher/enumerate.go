@@ -96,6 +96,9 @@ func enumerate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingCo
 	case "ab_split":
 		return enumerateABSplit(ctx, node.ABTargets, lookup, path, prob)
 
+	case "latency":
+		return enumerateLatency(ctx, node.LatencyTargets, lookup, path, prob)
+
 	case "policy":
 		// Stage-0 only; contributes narrowing, not terminal targets.
 		return nil
@@ -182,6 +185,28 @@ func enumerateABSplit(ctx context.Context, targets []core.ABTarget, lookup core.
 		branchProb := prob * (float64(t.Weight) / float64(totalWeight))
 		p := joinPath(path, fmt.Sprintf("ab_split[%d,w=%d/%d]", i, t.Weight, totalWeight))
 		out = append(out, singleBranch(ctx, t.ProviderID, t.ModelID, lookup, p, branchProb, true))
+	}
+	return out
+}
+
+// enumerateLatency lists every latency target as a reachable terminal. Unlike
+// the weighted strategies the live selection order is driven by runtime p95 (not
+// a static weight), so a meaningful per-branch probability cannot be computed
+// offline; each target is reported with the even share prob/n and a Note that
+// the live order is latency-driven with bounded exploration.
+func enumerateLatency(ctx context.Context, targets []core.LatencyTarget, lookup core.TargetLookup, path string, prob float64) []core.BranchedTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	share := prob / float64(len(targets))
+	out := make([]core.BranchedTarget, 0, len(targets))
+	for i, t := range targets {
+		p := joinPath(path, fmt.Sprintf("latency[%d]", i))
+		b := singleBranch(ctx, t.ProviderID, t.ModelID, lookup, p, share, true)
+		if b.Note == "" {
+			b.Note = "order is runtime p95-ranked with bounded exploration"
+		}
+		out = append(out, b)
 	}
 	return out
 }

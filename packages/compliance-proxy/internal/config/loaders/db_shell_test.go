@@ -295,7 +295,7 @@ const interceptionDomainsQuery = `
 		       enabled, priority, updated_at,
 		       streaming_mode, streaming_chunk_bytes, streaming_hook_timeout_ms,
 		       streaming_max_buffer_bytes, streaming_fail_behavior,
-		       capture_request_body, capture_response_body, raw_body_spill_enabled
+		       capture_request_body, capture_response_body
 		FROM "interception_domain"
 		WHERE enabled = true
 		ORDER BY priority DESC, created_at ASC
@@ -314,7 +314,7 @@ var interceptionDomainCols = []string{
 	"enabled", "priority", "updated_at",
 	"streaming_mode", "streaming_chunk_bytes", "streaming_hook_timeout_ms",
 	"streaming_max_buffer_bytes", "streaming_fail_behavior",
-	"capture_request_body", "capture_response_body", "raw_body_spill_enabled",
+	"capture_request_body", "capture_response_body",
 }
 
 var interceptionPathCols = []string{"id", "domain_id", "patterns_json", "match_type", "action"}
@@ -475,5 +475,5 @@ func domainRowOK(enabled bool) *sqlmock.Rows {
 			enabled, 10, time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC),
 			nil, nil, nil,
 			nil, nil,
-			nil, nil, nil)
+			nil, nil)
 }

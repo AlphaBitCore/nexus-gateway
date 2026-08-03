@@ -16,6 +16,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
 // --- ProbeCredential ---
@@ -59,7 +61,7 @@ func TestProbeCredential_GatewayUnreachable502(t *testing.T) {
 	mock.ExpectQuery(`FROM "Credential" WHERE id`).WithArgs("cred-1").
 		WillReturnRows(pgxmock.NewRows(credentialMetadataCols).AddRow(makeCredentialRow(now)...))
 	// Point at a host that will fail DNS / connect immediately.
-	proxy := ProxyConfig{AIGatewayURL: "http://127.0.0.1:1"}
+	proxy := ProxyConfig{AIGatewayBase: peer.Static("http://127.0.0.1:1")}
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, proxy)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"timeoutSeconds":1}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -91,7 +93,7 @@ func TestProbeCredential_ForwardsToGateway(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true,"latencyMs":42}`))
 	}))
 	defer srv.Close()
-	proxy := ProxyConfig{AIGatewayURL: srv.URL}
+	proxy := ProxyConfig{AIGatewayBase: peer.Static(srv.URL)}
 	hub := &hubSpy{}
 	aud := &auditSpy{}
 	h := newHandler(db, hub, aud, nil, nil, nil, proxy)
@@ -127,7 +129,7 @@ func TestProbeCredential_GatewayNonOKBodyForwarded(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":false,"error":"invalid_api_key"}`))
 	}))
 	defer srv.Close()
-	proxy := ProxyConfig{AIGatewayURL: srv.URL}
+	proxy := ProxyConfig{AIGatewayBase: peer.Static(srv.URL)}
 	aud := &auditSpy{}
 	h := newHandler(db, nil, aud, nil, nil, nil, proxy)
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
