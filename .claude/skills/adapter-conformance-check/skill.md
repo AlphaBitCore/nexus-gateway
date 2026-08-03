@@ -43,29 +43,30 @@ grep -nE 'claude-|gpt-[345]|kimi-|deepseek-|gemini-|o[1-9]|"thinking"' \
 
 If anything matches, move the logic into the adapter's own package and wire it via `AdapterSpec.PassthroughRewrite` (or codec-internal methods if it's a codec concern).
 
-## Step 2 — Verify every adapter wires PassthroughRewrite when applicable
+## Step 2 — Verify per-model rules ride the right mechanism per adapter
 
 ```bash
-# Adapters that ARE expected to have a PassthroughRewrite:
-# - spec_openai      (gpt-5.x / o-series reasoning rewrites)
-# - spec_azure_openai (same — reuses spec_openai.ApplyReasoningRewrites)
-# - spec_moonshot    (kimi-k2.5 / k2.6 fixed-temp strip)
-#
-# Adapters that DO NOT need one (today):
-# - All Tier-1 codecs (spec_anthropic, spec_gemini, spec_bedrock,
-#   spec_cohere, spec_replicate) — per-model quirks live in codec.go
-# - OpenAI-compat siblings with no current per-model quirks
-#   (spec_deepseek, spec_glm, spec_minimax, spec_mistral, spec_xai,
-#   spec_groq, spec_perplexity, spec_together, spec_fireworks,
-#   spec_huggingface, spec_vertex)
-grep -L "PassthroughRewrite" \
-  packages/ai-gateway/internal/providers/specs/openai/spec.go \
-  packages/ai-gateway/internal/providers/specs/azure/spec.go \
-  packages/ai-gateway/internal/providers/specs/compat/moonshot/spec.go
-# Expected: empty (the field IS wired in all three).
+# The PassthroughRewrite mechanism is DELETED: every adapter's rules ride
+# its codec (identity-codec Contract for the OpenAI family; codec-internal
+# rules for the translation codecs). Any reappearance of the callback is
+# drift:
+grep -rn "PassthroughRewrite" \
+  packages/ai-gateway/internal/providers/ --include="*.go"
+# Expected: empty.
+
+# Rule-carrying OpenAI-family adapters construct their contract:
+# - spec_openai / spec_azure_openai → rewrites.OpenAIContract()
+# - spec_moonshot → moonshot.Contract() (fixed-temp field rules)
+# - spec_deepseek → deepseek.Contract() (thinking-model structural rules)
+# Tier-1 codecs (spec_anthropic, spec_gemini, spec_bedrock, spec_cohere,
+# spec_replicate): per-model quirks live in codec.go. Remaining
+# OpenAI-compat siblings with no probed quirk construct the identity
+# codec with the zero Contract.
 ```
 
-When you add an adapter (or a new per-model quirk to an existing one), add `PassthroughRewrite: <YourAdapter>.ApplyRewrites` to `NewSpec`.
+When you add a per-model quirk to an OpenAI-family adapter, add a
+`FieldRule` (with its observed-400 evidence) to the sibling's contract in
+its `rewrites` package — never a new callback.
 
 ## Step 3 — Scan hand-rolled error envelopes (Rule 6, §9.5)
 

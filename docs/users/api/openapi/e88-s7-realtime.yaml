@@ -1,0 +1,224 @@
+# Hand-maintained OpenAPI spec for the AI Gateway realtime voice ingress
+# (e88-s7). Verified claim-by-claim against the AI Gateway source (the single
+# source of truth): the route mounts in
+# packages/ai-gateway/cmd/ai-gateway/wiring/routes_realtime.go, the parallel
+# handler + admission chain in
+# packages/ai-gateway/internal/ingress/proxy/realtime_handler.go, the dial in
+# realtime_dial.go, the session/pump/metering in
+# realtime_{session,pump,metering}.go, and the pure event/usage/close machinery
+# in packages/ai-gateway/internal/ingress/realtimeproxy/{tap,session}.go.
+# See docs/developers/specs/e88-s7-realtime-voice-relay.md.
+#
+# WebSocket note: this is the gateway's first WebSocket surface. OpenAPI cannot
+# express the bidirectional message protocol, so this spec documents ONLY the
+# HTTP upgrade handshake and the pre-upgrade error envelopes (the plain-HTTP
+# refusals the caller can receive before the 101). Once the connection upgrades,
+# the wire protocol is the OpenAI Realtime API event stream, relayed verbatim —
+# see https://developers.openai.com/api/docs/api-reference/realtime-client-events
+# and .../realtime-server-events. Post-upgrade policy terminations arrive as an
+# OpenAI-shaped `error` event followed by a WebSocket close frame (see the
+# x-realtime-close-codes and x-realtime-error-event extensions below), NOT as an
+# HTTP status.
+openapi: 3.1.0
+info:
+    title: Nexus AI Gateway — Realtime voice (/v1/realtime)
+    version: dev
+    description: |-
+        The AI Gateway realtime voice ingress: a server-side WebSocket relay of
+        the OpenAI Realtime API. A server-side client opens a WebSocket to
+        `GET /v1/realtime?model=<model>` with a virtual-key bearer token; the
+        gateway runs its admission chain on the plain-HTTP upgrade request,
+        dials the resolved provider (`wss://…/v1/realtime`, provider key
+        injected, client credentials/headers/subprotocols never forwarded),
+        and only then hijacks the client connection. It then relays the two
+        directions verbatim — the request/response wire protocol is the
+        provider's own Realtime event stream, unchanged.
+
+        **P1 dark launch.** The realtime model is reachable ONLY by a virtual
+        key whose `allowedModels` explicitly names it. An empty `allowedModels`
+        (unrestricted for every other endpoint) is NOT entitled here, because an
+        unbounded voice session is the most expensive billable surface; a
+        non-entitled or unroutable model returns a single 404
+        `NO_COMPATIBLE_PROVIDER` non-disclosure envelope. Entitle a dedicated
+        realtime virtual key — adding the model to a busy unrestricted key
+        restricts all of that key's other traffic.
+
+        **Built-in bounds (not admin knobs).** A per-VK concurrent-session cap
+        (default 2 — raise via env for production fan-out), a per-WS-frame read
+        ceiling, a 65-minute hard session guard, and a 60-second by-hash VK
+        status recheck that severs a revoked key mid-session.
+
+        **Metering.** One `traffic_event` row per in-band `response.done`
+        (context is re-billed per response, so a row is exactly one exchange,
+        priced across the six text/audio/cached components) plus one $0 session
+        row at close. No content scanning runs in either direction in P1;
+        `compliance_coverage` is `none` on every row.
+    x-realtime-close-codes:
+        description: >-
+            WebSocket close codes the relay sends on a post-upgrade termination,
+            each preceded by an OpenAI-shaped error event on a policy sever.
+        codes:
+            "1000": Normal — a clean client or upstream close, or the session
+                guard firing.
+            "1003": Unsupported data — a binary frame was received (the protocol
+                is text-frames only).
+            "1008": Policy violation — the virtual key was revoked mid-session,
+                or a reject/downgrade cost quota was crossed.
+            "1009": Message too big — a frame exceeded the per-WS-frame ceiling.
+            "1011": Internal error — a relay write timeout or recovered panic.
+    x-realtime-error-event:
+        description: >-
+            The OpenAI-shaped error event the relay sends to the client before a
+            policy/guard/upstream-loss close.
+        example:
+            type: error
+            error:
+                type: gateway_error
+                code: REALTIME_QUOTA_EXCEEDED
+                message: cost quota exceeded
+servers:
+    - url: /
+      description: AI Gateway data-plane origin.
+paths:
+    /v1/realtime:
+        get:
+            operationId: realtimeConnect
+            summary: Open a realtime voice WebSocket session
+            description: |-
+                Upgrade to a WebSocket and relay a realtime voice session to the
+                resolved provider. This is a WebSocket handshake, not a normal
+                GET: a successful handshake returns `101 Switching Protocols`
+                and the connection carries the OpenAI Realtime event stream
+                thereafter. All responses documented here are the PRE-upgrade
+                outcomes; after `101`, terminations are WebSocket close frames.
+            parameters:
+                - name: model
+                  in: query
+                  required: true
+                  description: >-
+                      The customer-facing model id (resolved to a provider model
+                      via routing). Required — a missing value returns 400
+                      `REALTIME_MODEL_REQUIRED`.
+                  schema:
+                      type: string
+                  example: gpt-realtime-2.1
+                - name: Upgrade
+                  in: header
+                  required: true
+                  description: Must be `websocket`; otherwise 400 `REALTIME_UPGRADE_REQUIRED`.
+                  schema:
+                      type: string
+                      enum: [websocket]
+                - name: Authorization
+                  in: header
+                  required: true
+                  description: >-
+                      `Bearer <virtual-key>`. The key must be entitled for the
+                      realtime model via `allowedModels` (see the dark-launch
+                      note). The client credential is stripped and never
+                      forwarded upstream.
+                  schema:
+                      type: string
+            responses:
+                "101":
+                    description: >-
+                        Switching Protocols — the session is live. Subsequent
+                        traffic is the OpenAI Realtime event stream, relayed
+                        verbatim. Terminations arrive as WebSocket close frames
+                        (see x-realtime-close-codes), not HTTP statuses.
+                "400":
+                    description: >-
+                        Malformed upgrade — `REALTIME_UPGRADE_REQUIRED` (not a
+                        WebSocket upgrade) or `REALTIME_MODEL_REQUIRED` (missing
+                        `?model=`).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorEnvelope"
+                "401":
+                    description: Missing or invalid virtual-key bearer token.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorEnvelope"
+                "403":
+                    description: The virtual key is disabled or expired.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorEnvelope"
+                "404":
+                    description: >-
+                        `NO_COMPATIBLE_PROVIDER` — the model does not exist, is
+                        not routable, or the virtual key is not entitled for it
+                        (single non-disclosure envelope; a probe cannot tell
+                        "exists but not entitled" from "does not exist").
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorEnvelope"
+                "429":
+                    description: >-
+                        `RATE_LIMITED` (per-VK RPM), `GENERATIVE_CONCURRENCY_LIMIT`
+                        (per-VK concurrent-session cap; carries `Retry-After`), or
+                        `QUOTA_EXCEEDED` (a reject/downgrade cost cap already
+                        exceeded at upgrade).
+                    headers:
+                        Retry-After:
+                            description: Seconds to wait, on the concurrency-cap refusal.
+                            schema:
+                                type: string
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorEnvelope"
+                "502":
+                    description: >-
+                        `REALTIME_UPSTREAM_UNAVAILABLE` — no routed provider
+                        completed the WebSocket handshake within the dial budget.
+                        The body is static (no upstream host/TLS detail).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorEnvelope"
+                "503":
+                    description: >-
+                        `QUOTA_MODEL_UNPRICED` — the routed (pinned) model has no
+                        complete realtime pricing (text and audio, input and
+                        output rates all non-null and > 0) and a cost quota is
+                        actively enforced; the gateway fails closed rather than
+                        meter real audio spend at $0.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorEnvelope"
+components:
+    schemas:
+        ErrorEnvelope:
+            type: object
+            description: >-
+                The gateway's standard pre-upgrade error envelope (the same
+                shape every AI Gateway data-plane refusal uses).
+            required: [error]
+            properties:
+                error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                        code:
+                            type: string
+                            description: Stable machine-readable code.
+                            examples:
+                                - REALTIME_UPGRADE_REQUIRED
+                                - REALTIME_MODEL_REQUIRED
+                                - NO_COMPATIBLE_PROVIDER
+                                - GENERATIVE_CONCURRENCY_LIMIT
+                                - QUOTA_EXCEEDED
+                                - QUOTA_MODEL_UNPRICED
+                                - REALTIME_UPSTREAM_UNAVAILABLE
+                        message:
+                            type: string
+                            description: Human-readable explanation.
+                        hint:
+                            type: string
+                            description: Optional remediation hint.

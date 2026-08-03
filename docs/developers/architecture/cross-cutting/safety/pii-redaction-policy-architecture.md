@@ -55,6 +55,47 @@ The action means:
 
 The hook is registered in `builtins.Registry` alongside the other content-touching hooks. When `_rulePackInstalls` is present on the config, the factory delegates to the `rulepack-engine` so admin-managed rule packs flow through the same matcher.
 
+**Which matcher engine is in force is a build-tag choice, and every running service now says so.** An
+untagged build compiles the pure-Go RE2 matcher; `-tags vectorscan` compiles the single-pass cgo one.
+The difference is not cosmetic: RE2 scans **every pattern separately over every segment** and does not
+cap scan size, so cost grows with both body size and pattern count. Measured on a live compliance
+proxy on the RE2 path, a 400 KB request body added **~3 s** of latency (the same body direct to the
+provider took 0.84–1.83 s), with **96% of process CPU inside `regexp.(*machine)`** and
+`unicode.SimpleFold` alone at 6% from case-insensitive patterns. A small body costs effectively
+nothing, so the fallback is invisible until someone sends a large one.
+
+Because that choice was previously answerable only by inspecting the build — and a cross-compiled
+production binary has already lost its cgo engine once — `matcher.DescribeEngine()` reports the
+compiled engine, its `singlePass` property and the operational consequence. The
+compliance proxy logs it at boot and serves it as the **`policy.matcher`** runtime-introspection
+source; the AI Gateway serves the same source. A build whose description and compiled matcher
+disagreed would be worse than silence, so a test pins `DescribeEngine()` against what
+`CompileDefault` actually returns.
+
+**The RE2 path fans its per-pattern scans out across cores.** The scans are
+independent, so parallelising them changes no result; it is the only lever that
+helps on this engine. A union alternation was benchmarked against this deployment's
+own 423 seeded rules and REFUTED — Go's `regexp` walks a union with a state set
+proportional to the whole pattern set, making it 13% slower at 100 patterns, 44%
+slower at 423, and 2.4× slower once anything matches (it pays for the union pass and
+then the per-pattern demux). Single-pass multi-pattern matching is what the
+Vectorscan build provides.
+
+Fan-out is gated on **measured** thresholds, not chosen ones: at least 4 patterns and
+at least 2048 byte×pattern units of work, which sits just above the largest measured
+losing point (2 patterns × 512 B, 4 × 64 B). Above it the win is 3–7× — 423 patterns
+over 400 KB drops from 4.31 s to 0.73 s, and a live 400 KB request through the
+compliance proxy from ~4.3 s to ~1.6 s. At saturation it is neutral by construction:
+fan-out creates no CPU.
+
+Because the only way a parallel matcher can be wrong is by changing a verdict at
+scale, the guards are differential rather than illustrative: sequential-vs-parallel
+hits must be identical **including order** (the redact path applies spans in the
+order it receives them), every pattern's hits must survive the merge, and the
+compliance-proxy harness carries a `scan-scale` arm sending the same sensitive value
+in a tiny body and in a ~200 KB body with the value at the very end, requiring the
+same hook decision and the raw value absent from both stored bodies.
+
 Detection runs against the **canonical projection** of the input — text segments addressed against the `NormalizedPayload`, walked via the embedded `TextOnlyContentScanning` helper. `Execute` dispatches on the single `onMatch.action` into one of three paths:
 
 - **Approve path** (`executeApprove`) — used when `onMatch.action = "approve"`. Short-circuits on the first match, sets `Reason = "PII detected: <id>"`, `ReasonCode = PII_DETECTED`, tags `compliance:pii` + `severity:confidential`, leaves the decision at `Approve` and the payload untouched (detect-for-tagging-only). No spans are collected.

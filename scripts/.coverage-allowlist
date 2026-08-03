@@ -72,7 +72,7 @@
 # Phase 7 pushed each package as far as unit tests can reach (see D-10
 # outcome table in docs/developers/specs/e85/decision-log.md). The residual
 # in each package is integration-bound:
-#   - agent/wiring  82.3% — cmdRun's subsystem construction relocated here
+#   - agent/wiring  79.6% — cmdRun's subsystem construction relocated here
 #       (one Init*/Wire*/Start* per subsystem; seams unit-tested with an
 #       injected memory keystore). Residual is D OS (BuildBridgeDeps writes
 #       the device CA under the OS StateDir; Win/Linux path helpers) and

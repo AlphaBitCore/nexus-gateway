@@ -101,10 +101,16 @@ Add the adapter under `packages/shared/traffic/adapters/api/<provider>/` and reg
 
 ### 6. Seed provider + initial models
 
-Add a `Provider` row to `tools/db-migrate/seed/fixtures/Provider.json` and per-`Model`
-entries to `tools/db-migrate/seed/fixtures/Model.json` (both are JSON arrays — append the
-new objects). Alternatively, add them to the source DB and re-run
-`tools/db-migrate/scripts/extract-reference-fixtures.ts` to regenerate both fixture files.
+Add a `Provider` row to `tools/db-migrate/seed/fixtures/Provider.json` (hand-maintained).
+
+Models are NOT edited in `Model.json` directly — that file, plus the wizard's
+`provider-templates/*.json` + `index.json`, are GENERATED from the single source of
+truth `tools/db-migrate/model-catalog.json`. Add a provider block there (with a
+`template` object for the wizard and, for each model to seed, a `seed` block carrying
+its `id`/modalities/timestamps) and run `npm run gen:model-catalog`. `npm run
+check:model-catalog` guards drift. See the generator header in
+`tools/db-migrate/gen-model-catalog.mjs` for the catalog schema.
+
 Also update `tools/db-migrate/seed/seed.ts` if the provider needs a cache-price backfill
 multiplier (`cachePriceBackfill` block).
 

@@ -61,7 +61,7 @@ Reasoning tokens, function calls, vision inputs, and structured outputs survive 
 PII detection, data classification, keyword filtering, content safety, rate limiting, IP allowlists, request-size validation, webhook forwarders, per-stage audit (request hooks and response hooks recorded independently), body capture (inline up to 256 KiB, the remainder in spill storage at `packages/shared/storage/spillstore/`), SIEM forwarding (`packages/nexus-hub/internal/observability/siem/`), three-tier kill switch, and emergency passthrough.
 
 ### Modalities
-Chat, embeddings, structured outputs, function and tool calling, vision input, and reasoning tokens.
+Chat, embeddings, structured outputs, function and tool calling, vision input, reasoning tokens, image generation, text-to-speech, speech-to-text, async video generation, realtime voice (WebSocket), document rerank, and standalone guardrail verdicts.
 
 ### Enterprise governance
 - **IAM** with RBAC and ABAC over NRN resource identifiers (`packages/shared/identity/iam/`).

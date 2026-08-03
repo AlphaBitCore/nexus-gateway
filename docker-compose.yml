@@ -1,3 +1,10 @@
+# Local DEVELOPMENT infrastructure only — PostgreSQL, Valkey, NATS. The five
+# services run on the host via `go run` (see scripts/dev-start.sh).
+#
+# For a full stack from published images, use deploy/docker-compose.yml
+# instead. The two files are deliberately separate: this one exists so a
+# developer can run services from source against containerised dependencies.
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -22,9 +29,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # E61-S3 (2026-05-20): Swapped redis:7-alpine → valkey/valkey-bundle:8-trixie.
-  #
-  # Why valkey-bundle?
+  # Why valkey-bundle rather than plain valkey or redis?
   #   The official Valkey project ships two bundled images on Docker Hub:
   #   valkey/valkey-bundle (all modules: search, json, bloom, ldap) and
   #   valkey/valkey-extensions (subset). valkey-bundle is the simplest
@@ -37,8 +42,8 @@ services:
   #   project's OSS-readiness requirement (CLAUDE.md C-7).
   #
   # Why trixie (Debian) not alpine?
-  #   valkey-bundle does not publish alpine-tagged images for version 8 as of
-  #   2026-05-20.  The trixie (Debian 13 testing) image is the official slim
+  #   valkey-bundle publishes no alpine-tagged image for version 8. The trixie
+  #   (Debian 13 testing) image is the official slim
   #   variant supplied by the Valkey project and is equivalent in footprint for
   #   dev/CI purposes.  Pinned to 8-trixie so minor patch bumps auto-update
   #   while the major-version contract holds.

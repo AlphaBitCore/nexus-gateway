@@ -23,19 +23,49 @@ export function shouldSeedDemo(envValue: string | undefined): boolean {
   return envValue !== 'false'
 }
 
+/**
+ * Run a tier, collecting its failure rather than letting it cancel the tiers
+ * after it. Tier A failing is not a reason to skip Bootstrap: a data conflict in
+ * one reference table used to mean a fresh install finished with no super-admin
+ * and no way to log in, because the throw unwound before Bootstrap ever ran. The
+ * seed still fails overall — main() reports every failed tier at the end — but
+ * an install that can be logged into and repaired beats one that cannot.
+ */
+async function runTier(
+  label: string,
+  run: () => Promise<void>,
+  failures: { tier: string; error: unknown }[],
+): Promise<void> {
+  console.log(label)
+  try {
+    await run()
+  } catch (error) {
+    failures.push({ tier: label, error })
+    console.error(`[seed] ${label}: FAILED — ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) throw new Error('seed: DATABASE_URL is required. Set it in tools/db-migrate/.env.')
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) })
+  const failures: { tier: string; error: unknown }[] = []
   try {
-    console.log('[seed] Tier A: reference catalog')
-    await seedReference(prisma)
-    console.log('[seed] Bootstrap: minimal tenant (org, project, super-admin, system-assistant VK)')
-    await seedBootstrap(prisma)
+    await runTier('[seed] Tier A: reference catalog', () => seedReference(prisma), failures)
+    await runTier(
+      '[seed] Bootstrap: minimal tenant (org, project, super-admin, system-assistant VK)',
+      () => seedBootstrap(prisma),
+      failures,
+    )
     if (shouldSeedDemo(process.env.SEED_DEMO)) {
-      console.log('[seed] Tier B: demo tenant (set SEED_DEMO=false to skip)')
-      await seedDemo(prisma)
+      await runTier('[seed] Tier B: demo tenant (set SEED_DEMO=false to skip)', () => seedDemo(prisma), failures)
     } else {
       console.log('[seed] SEED_DEMO=false — skipping demo tenant')
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((f) => f.error),
+        `seed: ${failures.length} tier(s) failed (${failures.map((f) => f.tier).join('; ')})`,
+      )
     }
     console.log('[seed] Done.')
   } finally {

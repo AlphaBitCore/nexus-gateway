@@ -1,0 +1,5354 @@
+{
+  "_comment": "SINGLE SOURCE OF TRUTH for the model catalog. Edit ONLY this file. tools/db-migrate/seed/fixtures/Model.json and packages/control-plane-ui/public/provider-templates/*.json + index.json are GENERATED from it by tools/db-migrate/gen-model-catalog.mjs and byte-checked by `npm run check:model-catalog`. Schema: see the generator header.",
+  "providers": [
+    {
+      "key": "openai",
+      "template": {
+        "name": "openai",
+        "displayName": "OpenAI",
+        "description": "OpenAI API — GPT-5, GPT-4o, o-series reasoning, and embedding models.",
+        "baseUrl": "https://api.openai.com",
+        "adapterType": "openai"
+      },
+      "seedProviderId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
+      "models": [
+        {
+          "code": "gpt-4o",
+          "name": "GPT-4o",
+          "description": "Most capable GPT-4 model. Great for complex tasks requiring advanced reasoning, vision, and tool use.",
+          "providerModelId": "gpt-4o",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 1.25,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "06056793-2ab1-4975-a0db-66896ca56134",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:04.678+00:00",
+            "updatedAt": "2026-05-10T16:40:49.056+00:00"
+          }
+        },
+        {
+          "code": "gpt-4o-mini",
+          "name": "GPT-4o Mini",
+          "description": "Small, fast, and affordable. Best for lightweight tasks.",
+          "providerModelId": "gpt-4o-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": 0.6,
+          "cachedInputReadPricePerMillion": 0.075,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "3f45ca57-c842-4e40-a901-4d607f3fe064",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:04.947+00:00",
+            "updatedAt": "2026-05-10T16:40:49.304+00:00"
+          }
+        },
+        {
+          "code": "gpt-4-turbo",
+          "name": "GPT-4 Turbo",
+          "description": "Previous generation GPT-4. Good balance of capability and cost. Deprecated — prefer GPT-4o. Text-only: the gpt-4-turbo endpoint rejects image_url content (\"only supported by certain models\").",
+          "providerModelId": "gpt-4-turbo",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 10,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 4096,
+          "inTemplate": true,
+          "seed": {
+            "id": "9e180605-9630-404c-9b3a-aac49f4cd767",
+            "status": "deprecated",
+            "deprecationDate": "2026-10-23T00:00:00+00:00",
+            "replacedBy": "gpt-5.5",
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:05.215+00:00",
+            "updatedAt": "2026-05-10T16:40:49.574+00:00"
+          }
+        },
+        {
+          "code": "o1",
+          "name": "o1",
+          "description": "Advanced reasoning model for complex math, science, and coding tasks.",
+          "providerModelId": "o1",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "function_calling"
+          ],
+          "inputPricePerMillion": 15,
+          "outputPricePerMillion": 60,
+          "cachedInputReadPricePerMillion": 7.5,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 100003,
+          "inTemplate": true,
+          "seed": {
+            "id": "eb00781a-9eb5-467c-ada6-535a53eb50c0",
+            "status": "deprecated",
+            "deprecationDate": "2025-07-28T00:00:00+00:00",
+            "replacedBy": "o3",
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:05.485+00:00",
+            "updatedAt": "2026-05-10T16:40:49.813+00:00"
+          }
+        },
+        {
+          "code": "o3-mini",
+          "name": "o3 Mini",
+          "description": "Reasoning model optimized for STEM and agentic workflows.",
+          "providerModelId": "o3-mini",
+          "type": "chat",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": 1.1,
+          "outputPricePerMillion": 4.4,
+          "cachedInputReadPricePerMillion": 0.55,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 100003,
+          "inTemplate": true,
+          "seed": {
+            "id": "af53ba68-7c04-4fa0-84f6-d06f6c15ec9c",
+            "status": "deprecated",
+            "deprecationDate": "2026-10-23T00:00:00+00:00",
+            "replacedBy": "gpt-5.5",
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:05.752+00:00",
+            "updatedAt": "2026-05-10T16:40:50.098+00:00"
+          }
+        },
+        {
+          "code": "o3",
+          "name": "o3",
+          "description": "High-capability reasoning model.",
+          "providerModelId": "o3",
+          "type": "chat",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": 2.0,
+          "outputPricePerMillion": 8.0,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 100003,
+          "inTemplate": true,
+          "seed": {
+            "id": "fa8b2162-2a72-48a3-be86-956c29d9f6b1",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:06.019+00:00",
+            "updatedAt": "2026-05-10T16:40:50.338+00:00"
+          }
+        },
+        {
+          "code": "o4-mini",
+          "name": "o4 Mini",
+          "description": "Compact reasoning model in the o-series family.",
+          "providerModelId": "o4-mini",
+          "type": "chat",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": 1.1,
+          "outputPricePerMillion": 4.4,
+          "cachedInputReadPricePerMillion": 0.275,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 100003,
+          "inTemplate": true,
+          "seed": {
+            "id": "336c5475-8c81-4e9e-9a29-a1c26517bce0",
+            "status": "deprecated",
+            "deprecationDate": "2026-10-23T00:00:00+00:00",
+            "replacedBy": "gpt-5.4-mini",
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:06.724+00:00",
+            "updatedAt": "2026-05-10T16:40:50.621+00:00"
+          }
+        },
+        {
+          "code": "gpt-5.6-sol",
+          "name": "GPT-5.6 Sol",
+          "description": "Latest flagship GPT-5 model for complex reasoning, coding, and professional work.",
+          "providerModelId": "gpt-5.6-sol",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "d21483ca-7ff2-4acd-94a0-4023b0a7574f",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-5.6-terra",
+          "name": "GPT-5.6 Terra",
+          "description": "Balanced GPT-5.6 tier. Best price-to-performance for production traffic.",
+          "providerModelId": "gpt-5.6-terra",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.25,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "d062f699-99b3-4d19-b4a8-b25a15505836",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-5.6-luna",
+          "name": "GPT-5.6 Luna",
+          "description": "Fast, affordable GPT-5.6 tier for high-volume routing and simple agent steps.",
+          "providerModelId": "gpt-5.6-luna",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 6,
+          "cachedInputReadPricePerMillion": 0.1,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "755531b0-871b-4527-954d-7c4cac6f1ca4",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-5.5",
+          "name": "GPT-5.5",
+          "description": "Previous flagship GPT-5 generation for complex reasoning, coding, and professional work.",
+          "providerModelId": "gpt-5.5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "6bf24832-0b9a-4175-b5e3-e0de4c9ed387",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:06.99+00:00",
+            "updatedAt": "2026-05-10T16:40:50.861+00:00"
+          }
+        },
+        {
+          "code": "gpt-5.4",
+          "name": "GPT-5.4",
+          "description": "More affordable GPT-5 model for coding and professional work.",
+          "providerModelId": "gpt-5.4",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.25,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "b30ca49e-34a3-4183-b67e-50306cc387e2",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:07.255+00:00",
+            "updatedAt": "2026-05-10T16:40:51.151+00:00"
+          }
+        },
+        {
+          "code": "gpt-5.4-mini",
+          "name": "GPT-5.4 Mini",
+          "description": "Strongest mini model for coding, computer use, and subagents.",
+          "providerModelId": "gpt-5.4-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.75,
+          "outputPricePerMillion": 4.5,
+          "cachedInputReadPricePerMillion": 0.075,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 272000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "83ef5dcd-45c6-494a-97c1-0d08ab54832c",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:07.519+00:00",
+            "updatedAt": "2026-05-10T16:40:51.5+00:00"
+          }
+        },
+        {
+          "code": "gpt-5.4-nano",
+          "name": "GPT-5.4 Nano",
+          "description": "Lowest-latency, lowest-cost GPT-5 variant for high-volume tasks.",
+          "providerModelId": "gpt-5.4-nano",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 1.25,
+          "cachedInputReadPricePerMillion": 0.02,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 272000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "b299b0f2-8e10-4deb-aed9-2def5b7ea2b7",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:08.088+00:00",
+            "updatedAt": "2026-05-10T16:40:51.741+00:00"
+          }
+        },
+        {
+          "code": "gpt-4.1",
+          "name": "GPT-4.1",
+          "description": "GPT-4.1 multimodal model.",
+          "providerModelId": "gpt-4.1",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 2.0,
+          "outputPricePerMillion": 8.0,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1047576,
+          "maxOutputTokens": 32768,
+          "inTemplate": true,
+          "seed": {
+            "id": "30427b06-24a9-420a-a574-893d18585acf",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:08.355+00:00",
+            "updatedAt": "2026-05-10T16:40:51.981+00:00"
+          }
+        },
+        {
+          "code": "gpt-4.1-mini",
+          "name": "GPT-4.1 Mini",
+          "description": "Balanced GPT-4.1 tier with the full 1M-token context window.",
+          "providerModelId": "gpt-4.1-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.4,
+          "outputPricePerMillion": 1.6,
+          "cachedInputReadPricePerMillion": 0.1,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1047576,
+          "maxOutputTokens": 32768,
+          "inTemplate": true,
+          "seed": {
+            "id": "d104b39c-0767-4215-9dd7-0097489a6da1",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-4.1-nano",
+          "name": "GPT-4.1 Nano",
+          "description": "Cheapest GPT-4.1 tier with the full 1M-token context window.",
+          "providerModelId": "gpt-4.1-nano",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.1,
+          "outputPricePerMillion": 0.4,
+          "cachedInputReadPricePerMillion": 0.025,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1047576,
+          "maxOutputTokens": 32768,
+          "inTemplate": true,
+          "seed": {
+            "id": "2d30504c-c68b-492a-857c-9a9c597c840d",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "text-embedding-3-small",
+          "name": "Text Embedding 3 Small",
+          "description": "Most cost-effective embedding model. Good for most use cases.",
+          "providerModelId": "text-embedding-3-small",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.02,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "a7387e60-64a9-49b5-9acf-cf62c4cde100",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "embedding"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": {
+              "embeddings": {
+                "max_batch_size": 2048,
+                "max_input_tokens": 8191,
+                "default_dimension": 1536,
+                "supported_dimensions": [
+                  512,
+                  1024,
+                  1536
+                ],
+                "supported_encoding_formats": [
+                  "float",
+                  "base64"
+                ]
+              }
+            },
+            "createdAt": "2026-05-08T14:45:08.62+00:00",
+            "updatedAt": "2026-05-10T16:40:52.222+00:00"
+          }
+        },
+        {
+          "code": "text-embedding-3-large",
+          "name": "Text Embedding 3 Large",
+          "description": "Most capable embedding model. Best for high-accuracy retrieval.",
+          "providerModelId": "text-embedding-3-large",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.13,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "1d5f88f6-ff4c-4422-9623-4d1a0f5e127e",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "embedding"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": {
+              "embeddings": {
+                "max_batch_size": 2048,
+                "max_input_tokens": 8191,
+                "default_dimension": 3072,
+                "supported_dimensions": [
+                  256,
+                  512,
+                  1024,
+                  3072
+                ],
+                "supported_encoding_formats": [
+                  "float",
+                  "base64"
+                ]
+              }
+            },
+            "createdAt": "2026-05-08T14:45:09.55+00:00",
+            "updatedAt": "2026-05-10T16:40:52.523+00:00"
+          }
+        },
+        {
+          "code": "dall-e-3",
+          "name": "DALL-E 3",
+          "description": "OpenAI image generation API.",
+          "providerModelId": "dall-e-3",
+          "type": "image",
+          "features": [],
+          "inputPricePerMillion": 0,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": false,
+          "seed": {
+            "id": "217c7211-30ad-4768-8cc3-5eea304eadbd",
+            "status": "disabled",
+            "deprecationDate": "2026-05-12T00:00:00+00:00",
+            "replacedBy": "gpt-image-2",
+            "enabled": false,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:09.816+00:00",
+            "updatedAt": "2026-05-10T16:40:52.765+00:00"
+          }
+        },
+        {
+          "code": "whisper-1",
+          "name": "Whisper 1",
+          "description": "OpenAI speech-to-text API.",
+          "providerModelId": "whisper-1",
+          "type": "stt",
+          "features": [],
+          "inputPricePerMillion": 100,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": false,
+          "seed": {
+            "id": "f69056cf-a9b2-4129-a31b-5f503c5030a0",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "audio"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:10.078+00:00",
+            "updatedAt": "2026-05-10T16:40:53.004+00:00"
+          }
+        },
+        {
+          "code": "gpt-image-2",
+          "name": "GPT Image 2",
+          "description": "OpenAI flagship image generation and editing model.",
+          "providerModelId": "gpt-image-2",
+          "type": "image",
+          "features": [
+            "vision"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": 1.25,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "90431d05-2846-4dbf-a93d-85bf30738c98",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-image-1.5",
+          "name": "GPT Image 1.5",
+          "description": "Previous-generation flagship image generation and editing model. Text output tokens include model reasoning tokens.",
+          "providerModelId": "gpt-image-1.5",
+          "type": "image",
+          "features": [
+            "vision"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 32,
+          "cachedInputReadPricePerMillion": 1.25,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "bf9f8254-4eff-4c55-9e29-72dc6e85904c",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-image-1-mini",
+          "name": "GPT Image 1 Mini",
+          "description": "Cost-efficient image generation and editing model.",
+          "providerModelId": "gpt-image-1-mini",
+          "type": "image",
+          "features": [
+            "vision"
+          ],
+          "inputPricePerMillion": 2.0,
+          "outputPricePerMillion": 8.0,
+          "cachedInputReadPricePerMillion": 0.2,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "da1243ab-6a7b-4eef-8cf9-35ac411bf6cf",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "chatgpt-image-latest",
+          "name": "ChatGPT Image (latest)",
+          "description": "Floating alias tracking the image model currently used by ChatGPT. Text output tokens include model reasoning tokens.",
+          "providerModelId": "chatgpt-image-latest",
+          "type": "image",
+          "features": [
+            "vision"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 32,
+          "cachedInputReadPricePerMillion": 1.25,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "1060057a-6b47-449a-a71f-8bb11a53bb41",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-realtime-2.1",
+          "name": "GPT Realtime 2.1",
+          "description": "Flagship realtime speech-to-speech model with audio, text and image input.",
+          "providerModelId": "gpt-realtime-2.1",
+          "type": "realtime",
+          "features": [
+            "streaming",
+            "vision"
+          ],
+          "inputPricePerMillion": 32,
+          "outputPricePerMillion": 64,
+          "cachedInputReadPricePerMillion": 0.4,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "e8f63a42-dfba-4ee4-81c4-1dfa68bb2cb8",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "audio"
+            ],
+            "outputModalities": [
+              "text",
+              "audio"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-realtime-2.1-mini",
+          "name": "GPT Realtime 2.1 Mini",
+          "description": "Cost-efficient realtime speech-to-speech model with audio, text and image input.",
+          "providerModelId": "gpt-realtime-2.1-mini",
+          "type": "realtime",
+          "features": [
+            "streaming",
+            "vision"
+          ],
+          "inputPricePerMillion": 10,
+          "outputPricePerMillion": 20,
+          "cachedInputReadPricePerMillion": 0.3,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "6180e0e1-f090-4a68-91fa-13fb22ff8afb",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "audio"
+            ],
+            "outputModalities": [
+              "text",
+              "audio"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-realtime-translate",
+          "name": "GPT Realtime Translate",
+          "description": "Realtime speech translation model. Billed per minute of audio, not per token.",
+          "providerModelId": "gpt-realtime-translate",
+          "type": "realtime",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": null,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "ccafa321-7d90-418b-862c-282acf57364a",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "audio"
+            ],
+            "outputModalities": [
+              "text",
+              "audio"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-realtime-whisper",
+          "name": "GPT Realtime Whisper",
+          "description": "Realtime speech transcription model. Billed per minute of audio, not per token.",
+          "providerModelId": "gpt-realtime-whisper",
+          "type": "realtime",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": null,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "2b840228-102d-45bd-aff8-405384bb2e7b",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "audio"
+            ],
+            "outputModalities": [
+              "text",
+              "audio"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-audio-1.5",
+          "name": "GPT Audio 1.5",
+          "description": "Flagship audio-in / audio-out chat model.",
+          "providerModelId": "gpt-audio-1.5",
+          "type": "audio",
+          "features": [
+            "streaming",
+            "function_calling"
+          ],
+          "inputPricePerMillion": 32,
+          "outputPricePerMillion": 64,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "7db0a550-198d-4f21-b49c-c6ffb8fff9b8",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "audio"
+            ],
+            "outputModalities": [
+              "text",
+              "audio"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-audio-mini",
+          "name": "GPT Audio Mini",
+          "description": "Cost-efficient audio-in / audio-out chat model.",
+          "providerModelId": "gpt-audio-mini",
+          "type": "audio",
+          "features": [
+            "streaming",
+            "function_calling"
+          ],
+          "inputPricePerMillion": 10,
+          "outputPricePerMillion": 20,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "f5049231-a514-4b31-876f-c03c6f12ee65",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "audio"
+            ],
+            "outputModalities": [
+              "text",
+              "audio"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-4o-transcribe",
+          "name": "GPT-4o Transcribe",
+          "description": "Speech-to-text transcription model.",
+          "providerModelId": "gpt-4o-transcribe",
+          "type": "stt",
+          "features": [],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "5c0659e3-872b-424f-b9ce-90887a618aa3",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "audio"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-4o-mini-transcribe",
+          "name": "GPT-4o Mini Transcribe",
+          "description": "Cost-efficient speech-to-text transcription model.",
+          "providerModelId": "gpt-4o-mini-transcribe",
+          "type": "stt",
+          "features": [],
+          "inputPricePerMillion": 1.25,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "0b0250fa-4700-4f21-948b-8e268a736eb5",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "audio"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-4o-transcribe-diarize",
+          "name": "GPT-4o Transcribe Diarize",
+          "description": "Speech-to-text transcription with speaker diarization.",
+          "providerModelId": "gpt-4o-transcribe-diarize",
+          "type": "stt",
+          "features": [],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "4124695a-1790-4d14-a651-3202a0d6acce",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "audio"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gpt-4o-mini-tts",
+          "name": "GPT-4o Mini TTS",
+          "description": "Text-to-speech model. Text input tokens in, audio output tokens out.",
+          "providerModelId": "gpt-4o-mini-tts",
+          "type": "tts",
+          "features": [],
+          "inputPricePerMillion": 0.6,
+          "outputPricePerMillion": 12,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "3860bede-219a-4a06-a956-0664ea665284",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "audio"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "sora-2",
+          "name": "Sora 2",
+          "description": "Video generation model. Billed per second of video, not per token.",
+          "providerModelId": "sora-2",
+          "type": "video",
+          "features": [],
+          "inputPricePerMillion": 100000,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "27464292-efde-42e2-b9f2-81a17d350096",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "video"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "sora-2-pro",
+          "name": "Sora 2 Pro",
+          "description": "High-fidelity video generation model. Billed per second of video at a resolution-dependent rate, not per token.",
+          "providerModelId": "sora-2-pro",
+          "type": "video",
+          "features": [],
+          "inputPricePerMillion": 100000,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "9c5eef81-3388-4062-a343-710489da2277",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "video"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "key": "anthropic",
+      "template": {
+        "name": "anthropic",
+        "displayName": "Anthropic",
+        "description": "Anthropic API — Claude model family.",
+        "baseUrl": "https://api.anthropic.com",
+        "adapterType": "anthropic"
+      },
+      "seedProviderId": "dee77e2b-fbe8-4281-9d87-cd8886f90450",
+      "models": [
+        {
+          "code": "claude-fable-5",
+          "name": "Claude Fable 5",
+          "description": "Frontier Claude. Highest capability for the hardest reasoning, agentic, and coding work.",
+          "providerModelId": "claude-fable-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "inputPricePerMillion": 10,
+          "outputPricePerMillion": 50,
+          "cachedInputReadPricePerMillion": 1,
+          "cachedInputWritePricePerMillion": 12.5,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "f77528f2-fc3c-4db5-937f-0ad04bf35c60",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "claude-sonnet-5",
+          "name": "Claude Sonnet 5",
+          "description": "Balanced Claude 5. Best price-to-performance for production traffic.",
+          "providerModelId": "claude-sonnet-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 0.2,
+          "cachedInputWritePricePerMillion": 2.5,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "5ffc919c-7dcd-46da-a134-957d5fa6a0c2",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "claude-opus-4-8",
+          "name": "Claude Opus 4.8",
+          "description": "Top-tier Claude 4. Strong reasoning, agentic, and coding capability.",
+          "providerModelId": "claude-opus-4-8",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "ca338705-f3e1-4590-9159-02d74fec6813",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "claude-opus-4-7",
+          "name": "Claude Opus 4.7",
+          "description": "Top-tier Claude 4. Strong reasoning, agentic, and coding capability.",
+          "providerModelId": "claude-opus-4-7",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "bff825a3-7f51-4a87-8b31-03ef745993a0",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:10.34+00:00",
+            "updatedAt": "2026-05-10T16:40:53.243+00:00"
+          }
+        },
+        {
+          "code": "claude-opus-4-6",
+          "name": "Claude Opus 4.6",
+          "description": "Previous Claude Opus 4 generation. Strong reasoning and agentic capabilities.",
+          "providerModelId": "claude-opus-4-6",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "5f388862-78ab-4670-b1f4-bf2e96695f59",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:10.604+00:00",
+            "updatedAt": "2026-05-10T16:40:53.484+00:00"
+          }
+        },
+        {
+          "code": "claude-opus-4-5",
+          "name": "Claude Opus 4.5",
+          "description": "Earlier Claude Opus 4 generation. Strong reasoning and agentic capabilities.",
+          "providerModelId": "claude-opus-4-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "aliases": [
+            "claude-opus-4-5-20251101"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 64000,
+          "inTemplate": true,
+          "seed": {
+            "id": "94b422b8-159b-40e4-aba7-29129df64f36",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "claude-sonnet-4-6",
+          "name": "Claude Sonnet 4.6",
+          "description": "Balanced Claude 4. Strong price-to-performance for production traffic.",
+          "providerModelId": "claude-sonnet-4-6",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "inputPricePerMillion": 3,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.3,
+          "cachedInputWritePricePerMillion": 3.75,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "862cd7ce-0927-4296-88a2-ebb0ff482e5c",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:10.868+00:00",
+            "updatedAt": "2026-05-10T16:40:53.772+00:00"
+          }
+        },
+        {
+          "code": "claude-sonnet-4-5",
+          "name": "Claude Sonnet 4.5",
+          "description": "Earlier Claude Sonnet 4 generation. Strong price-to-performance for production traffic.",
+          "providerModelId": "claude-sonnet-4-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "aliases": [
+            "claude-sonnet-4-5-20250929"
+          ],
+          "inputPricePerMillion": 3,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.3,
+          "cachedInputWritePricePerMillion": 3.75,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 64000,
+          "inTemplate": true,
+          "seed": {
+            "id": "5686a34b-147a-47db-a210-75a9e5f93f52",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:11.131+00:00",
+            "updatedAt": "2026-05-10T16:40:54.011+00:00"
+          }
+        },
+        {
+          "code": "claude-haiku-4-5",
+          "name": "Claude Haiku 4.5",
+          "description": "Fast, affordable Claude 4 tier. Optimised for high-volume routing, summarisation, and simple agent steps.",
+          "providerModelId": "claude-haiku-4-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "aliases": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": 0.1,
+          "cachedInputWritePricePerMillion": 1.25,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 64000,
+          "inTemplate": true,
+          "seed": {
+            "id": "e65623cf-60e8-489f-a91f-6e4869216d15",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:11.396+00:00",
+            "updatedAt": "2026-05-10T16:40:54.291+00:00"
+          }
+        },
+        {
+          "code": "claude-opus-4-1",
+          "name": "Claude Opus 4.1",
+          "description": "Earlier Claude Opus generation. Deprecated by the vendor; migrate to claude-opus-4-8.",
+          "providerModelId": "claude-opus-4-1",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "thinking"
+          ],
+          "aliases": [
+            "claude-opus-4-1-20250805"
+          ],
+          "inputPricePerMillion": 15,
+          "outputPricePerMillion": 75,
+          "cachedInputReadPricePerMillion": 1.5,
+          "cachedInputWritePricePerMillion": 18.75,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 32000,
+          "inTemplate": true,
+          "seed": {
+            "id": "e94494db-5076-422c-a30b-5e35e0bea13a",
+            "status": "deprecated",
+            "deprecationDate": "2026-06-05T00:00:00+00:00",
+            "replacedBy": "claude-opus-4-8",
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:11.663+00:00",
+            "updatedAt": "2026-05-10T16:40:54.532+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "key": "google-gemini",
+      "template": {
+        "name": "google-gemini",
+        "displayName": "Google Gemini",
+        "description": "Google Gemini API — Gemini 2.5 and embedding models.",
+        "baseUrl": "https://generativelanguage.googleapis.com",
+        "adapterType": "gemini"
+      },
+      "seedProviderId": "c6e3b252-303a-45fd-b5dd-f9467eeba669",
+      "models": [
+        {
+          "code": "gemini-3.5-flash",
+          "name": "Gemini 3.5 Flash",
+          "description": "Latest balanced Gemini. Strong price-to-performance for production traffic.",
+          "providerModelId": "gemini-3.5-flash",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode",
+            "thinking"
+          ],
+          "inputPricePerMillion": 1.5,
+          "outputPricePerMillion": 9,
+          "cachedInputReadPricePerMillion": 0.15,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "b0412b60-b33e-4225-8be7-299810158cac",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gemini-3.1-flash-lite",
+          "name": "Gemini 3.1 Flash Lite",
+          "description": "Fast, affordable Gemini tier for high-volume routing and simple agent steps.",
+          "providerModelId": "gemini-3.1-flash-lite",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode",
+            "thinking"
+          ],
+          "inputPricePerMillion": 0.25,
+          "outputPricePerMillion": 1.5,
+          "cachedInputReadPricePerMillion": 0.025,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "162f3bff-d489-4b9e-ae11-878df72bceb1",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gemini-2.5-pro",
+          "name": "Gemini 2.5 Pro",
+          "description": "High-capability Gemini 2.5 Pro.",
+          "providerModelId": "gemini-2.5-pro",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode",
+            "thinking"
+          ],
+          "inputPricePerMillion": 1.25,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 0.125,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "a546c0eb-a6a5-490a-a1c0-00cec727053e",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:12.239+00:00",
+            "updatedAt": "2026-05-10T16:40:54.82+00:00"
+          }
+        },
+        {
+          "code": "gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash",
+          "description": "Fast Gemini 2.5 Flash.",
+          "providerModelId": "gemini-2.5-flash",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 2.5,
+          "cachedInputReadPricePerMillion": 0.03,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "f2b78c3c-fd1d-4297-916c-6ae75418c7f7",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:12.506+00:00",
+            "updatedAt": "2026-05-10T16:40:55.064+00:00"
+          }
+        },
+        {
+          "code": "gemini-2.5-flash-lite",
+          "name": "Gemini 2.5 Flash-Lite",
+          "description": "Lowest-cost Gemini 2.5 tier.",
+          "providerModelId": "gemini-2.5-flash-lite",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.1,
+          "outputPricePerMillion": 0.4,
+          "cachedInputReadPricePerMillion": 0.01,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "30723f51-4774-428b-b974-50dc7b660d2f",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:12.994+00:00",
+            "updatedAt": "2026-05-10T16:40:55.342+00:00"
+          }
+        },
+        {
+          "code": "gemini-3-pro-image",
+          "name": "Gemini 3 Pro Image",
+          "description": "Top-tier Gemini image generation.",
+          "providerModelId": "gemini-3-pro-image",
+          "type": "image",
+          "features": [
+            "vision",
+            "streaming"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 120,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 32768,
+          "inTemplate": true,
+          "seed": {
+            "id": "b3d05302-15f4-40ed-aa2d-c3aace1ef1e8",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "image"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gemini-3.1-flash-image",
+          "name": "Gemini 3.1 Flash Image",
+          "description": "Balanced Gemini image generation.",
+          "providerModelId": "gemini-3.1-flash-image",
+          "type": "image",
+          "features": [
+            "vision",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.5,
+          "outputPricePerMillion": 60,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 65536,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "d432086a-6ed7-4363-8666-e7971f694645",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "image"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gemini-3.1-flash-lite-image",
+          "name": "Gemini 3.1 Flash Lite Image",
+          "description": "Fast, affordable Gemini image generation.",
+          "providerModelId": "gemini-3.1-flash-lite-image",
+          "type": "image",
+          "features": [
+            "vision",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.25,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 65536,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "aa6bad38-b9b6-4b88-9f89-875feac61c51",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "image"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gemini-2.5-flash-image",
+          "name": "Gemini 2.5 Flash Image",
+          "description": "Earlier Gemini image generation.",
+          "providerModelId": "gemini-2.5-flash-image",
+          "type": "image",
+          "features": [
+            "vision",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 32768,
+          "maxOutputTokens": 32768,
+          "inTemplate": true,
+          "seed": {
+            "id": "7166156e-8714-4916-8a77-d1023612599f",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "image"
+            ],
+            "outputModalities": [
+              "image"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gemini-embedding-001",
+          "name": "Gemini Embedding 001",
+          "description": "Latest Google text embedding model. Successor to text-embedding-004 with improved retrieval quality.",
+          "providerModelId": "gemini-embedding-001",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 2048,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "002bbb70-0c9d-45bf-9107-5711f3d1aa8c",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "embedding"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": {
+              "embeddings": {
+                "max_batch_size": 100,
+                "max_input_tokens": 2048,
+                "default_dimension": 3072,
+                "supported_dimensions": [
+                  768,
+                  1536,
+                  3072
+                ],
+                "supported_task_types": [
+                  "RETRIEVAL_QUERY",
+                  "RETRIEVAL_DOCUMENT",
+                  "SEMANTIC_SIMILARITY",
+                  "CLASSIFICATION",
+                  "CLUSTERING",
+                  "QUESTION_ANSWERING",
+                  "FACT_VERIFICATION"
+                ],
+                "supported_encoding_formats": [
+                  "float"
+                ]
+              }
+            },
+            "createdAt": "2026-05-08T14:45:14.962+00:00",
+            "updatedAt": "2026-05-10T16:40:56.389+00:00"
+          }
+        },
+        {
+          "code": "text-embedding-004",
+          "name": "Text Embedding 004",
+          "description": "Previous-generation Google text embedding model. DISABLED 2026-05-21: Google v1beta returns 404 (\"not found for API version v1beta, or is not supported for embedContent\") for our project API key — likely region/quota-restricted on this model id. Use gemini-embedding-001 instead (documented successor with improved retrieval quality, verified working with the same API key).",
+          "providerModelId": "text-embedding-004",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.025,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 2048,
+          "maxOutputTokens": null,
+          "inTemplate": false,
+          "seed": {
+            "id": "55cb4856-66ce-469f-95b9-37b08a7a21ca",
+            "status": "deprecated",
+            "deprecationDate": null,
+            "replacedBy": "gemini-embedding-001",
+            "enabled": false,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "embedding"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": {
+              "embeddings": {
+                "max_batch_size": 100,
+                "max_input_tokens": 2048,
+                "default_dimension": 768,
+                "supported_dimensions": [
+                  768
+                ],
+                "supported_task_types": [
+                  "RETRIEVAL_QUERY",
+                  "RETRIEVAL_DOCUMENT",
+                  "SEMANTIC_SIMILARITY",
+                  "CLASSIFICATION",
+                  "CLUSTERING",
+                  "QUESTION_ANSWERING",
+                  "FACT_VERIFICATION"
+                ],
+                "supported_encoding_formats": [
+                  "float"
+                ]
+              }
+            },
+            "createdAt": "2026-05-08T14:45:15.443+00:00",
+            "updatedAt": "2026-05-10T16:40:56.627+00:00"
+          }
+        },
+        {
+          "code": "gemini-embedding-2",
+          "name": "Gemini Embedding 2",
+          "description": "Latest Gemini embedding model. Accepts text and image input.",
+          "providerModelId": "gemini-embedding-2",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "511f62ae-b03c-4fb8-a763-472fdbc88851",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text",
+              "image"
+            ],
+            "outputModalities": [
+              "embedding"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "key": "azure-openai",
+      "template": {
+        "name": "azure-openai",
+        "displayName": "Azure OpenAI",
+        "description": "Azure OpenAI Service — enterprise-hosted OpenAI models with data residency and compliance.",
+        "baseUrl": "https://{resource}.openai.azure.com",
+        "adapterType": "azure-openai"
+      },
+      "models": [
+        {
+          "code": "azure-gpt-5.6-sol",
+          "name": "Azure GPT-5.6 Sol",
+          "description": "GPT-5.6 Sol on Azure OpenAI. Current flagship reasoning tier.",
+          "providerModelId": "gpt-5.6-sol",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5.6-terra",
+          "name": "Azure GPT-5.6 Terra",
+          "description": "GPT-5.6 Terra on Azure OpenAI. Balanced cost and capability.",
+          "providerModelId": "gpt-5.6-terra",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.25,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5.6-luna",
+          "name": "Azure GPT-5.6 Luna",
+          "description": "GPT-5.6 Luna on Azure OpenAI. Lowest-cost 5.6 tier.",
+          "providerModelId": "gpt-5.6-luna",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 6,
+          "cachedInputReadPricePerMillion": 0.1,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5.5",
+          "name": "Azure GPT-5.5",
+          "description": "GPT-5.5 on Azure OpenAI.",
+          "providerModelId": "gpt-5.5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 30,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5.4",
+          "name": "Azure GPT-5.4",
+          "description": "GPT-5.4 on Azure OpenAI.",
+          "providerModelId": "gpt-5.4",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.25,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 922000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5.4-mini",
+          "name": "Azure GPT-5.4 Mini",
+          "description": "Smaller, cheaper GPT-5.4 tier on Azure OpenAI.",
+          "providerModelId": "gpt-5.4-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.75,
+          "outputPricePerMillion": 4.5,
+          "cachedInputReadPricePerMillion": 0.075,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 272000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5.4-nano",
+          "name": "Azure GPT-5.4 Nano",
+          "description": "Smallest GPT-5.4 tier on Azure OpenAI.",
+          "providerModelId": "gpt-5.4-nano",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 1.25,
+          "cachedInputReadPricePerMillion": 0.02,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 272000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5",
+          "name": "Azure GPT-5",
+          "description": "GPT-5 on Azure OpenAI.",
+          "providerModelId": "gpt-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.25,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 0.125,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 272000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-5-mini",
+          "name": "Azure GPT-5 Mini",
+          "description": "Smaller, cheaper GPT-5 tier on Azure OpenAI.",
+          "providerModelId": "gpt-5-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.25,
+          "outputPricePerMillion": 2,
+          "cachedInputReadPricePerMillion": 0.025,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 272000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-4.1",
+          "name": "Azure GPT-4.1",
+          "description": "GPT-4.1 on Azure OpenAI. 1M-token context.",
+          "providerModelId": "gpt-4.1",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 2.0,
+          "outputPricePerMillion": 8.0,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1047576,
+          "maxOutputTokens": 32768,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-4.1-mini",
+          "name": "Azure GPT-4.1 Mini",
+          "description": "Smaller, cheaper GPT-4.1 tier on Azure OpenAI.",
+          "providerModelId": "gpt-4.1-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.4,
+          "outputPricePerMillion": 1.6,
+          "cachedInputReadPricePerMillion": 0.1,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1047576,
+          "maxOutputTokens": 32768,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-4.1-nano",
+          "name": "Azure GPT-4.1 Nano",
+          "description": "Smallest GPT-4.1 tier on Azure OpenAI.",
+          "providerModelId": "gpt-4.1-nano",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.1,
+          "outputPricePerMillion": 0.4,
+          "cachedInputReadPricePerMillion": 0.025,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1047576,
+          "maxOutputTokens": 32768,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-o3",
+          "name": "Azure o3",
+          "description": "OpenAI o3 reasoning model on Azure OpenAI.",
+          "providerModelId": "o3",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 2.0,
+          "outputPricePerMillion": 8.0,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 100000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-o4-mini",
+          "name": "Azure o4-mini",
+          "description": "OpenAI o4-mini reasoning model on Azure OpenAI.",
+          "providerModelId": "o4-mini",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 1.1,
+          "outputPricePerMillion": 4.4,
+          "cachedInputReadPricePerMillion": 0.275,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 100000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-o1",
+          "name": "Azure o1",
+          "description": "Earlier-generation OpenAI o1 reasoning model on Azure OpenAI.",
+          "providerModelId": "o1",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 15,
+          "outputPricePerMillion": 60,
+          "cachedInputReadPricePerMillion": 7.5,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 100000,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-4o",
+          "name": "Azure GPT-4o",
+          "description": "GPT-4o on Azure OpenAI.",
+          "providerModelId": "gpt-4o",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 1.25,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 16384,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-gpt-4o-mini",
+          "name": "Azure GPT-4o Mini",
+          "description": "Smaller, cheaper GPT-4o tier on Azure OpenAI.",
+          "providerModelId": "gpt-4o-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.165,
+          "outputPricePerMillion": 0.66,
+          "cachedInputReadPricePerMillion": 0.075,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 16384,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-text-embedding-3-small",
+          "name": "Azure Text Embedding 3 Small",
+          "description": "OpenAI text-embedding-3-small on Azure OpenAI.",
+          "providerModelId": "text-embedding-3-small",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.02,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8191,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "azure-text-embedding-3-large",
+          "name": "Azure Text Embedding 3 Large",
+          "description": "OpenAI text-embedding-3-large on Azure OpenAI.",
+          "providerModelId": "text-embedding-3-large",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.13,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8191,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "deepseek",
+      "template": {
+        "name": "deepseek",
+        "displayName": "DeepSeek",
+        "description": "DeepSeek API — V4 chat and reasoning models.",
+        "baseUrl": "https://api.deepseek.com",
+        "adapterType": "deepseek"
+      },
+      "seedProviderId": "35584423-e803-44e1-8430-cacf9b6fbc18",
+      "models": [
+        {
+          "code": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "description": "Fast, cost-effective V4 model. Strong multilingual reasoning and coding at competitive pricing.",
+          "providerModelId": "deepseek-v4-flash",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.14,
+          "outputPricePerMillion": 0.28,
+          "cachedInputReadPricePerMillion": 0.0028,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048565,
+          "maxOutputTokens": 393216,
+          "inTemplate": true,
+          "seed": {
+            "id": "7b36ec2a-5455-4a41-a295-fce787cc28dd",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:15.707+00:00",
+            "updatedAt": "2026-05-10T16:40:56.916+00:00"
+          }
+        },
+        {
+          "code": "deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "Advanced V4 model with extended context and improved capability for complex tasks.",
+          "providerModelId": "deepseek-v4-pro",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.435,
+          "outputPricePerMillion": 0.87,
+          "cachedInputReadPricePerMillion": 0.003625,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048565,
+          "maxOutputTokens": 393216,
+          "inTemplate": true,
+          "seed": {
+            "id": "18fe13bc-c14a-4f55-ae9e-1a9da78edbd5",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:15.972+00:00",
+            "updatedAt": "2026-05-10T16:40:57.159+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "key": "minimax",
+      "template": {
+        "name": "minimax",
+        "displayName": "MiniMax",
+        "description": "MiniMax API — OpenAI-compatible MoE chat models.",
+        "baseUrl": "https://api.minimax.io",
+        "adapterType": "minimax"
+      },
+      "models": [
+        {
+          "code": "minimax-m3",
+          "name": "MiniMax M3",
+          "description": "MiniMax M3 — current flagship. 1M context with vision and reasoning.",
+          "providerModelId": "MiniMax-M3",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 1.2,
+          "cachedInputReadPricePerMillion": 0.06,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "minimax-m2-7",
+          "name": "MiniMax M2.7",
+          "description": "MiniMax M2.7 conversational model.",
+          "providerModelId": "MiniMax-M2.7",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 1.2,
+          "cachedInputReadPricePerMillion": 0.06,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 204800,
+          "maxOutputTokens": 16384,
+          "inTemplate": true
+        },
+        {
+          "code": "minimax-m2-5",
+          "name": "MiniMax M2.5",
+          "description": "MiniMax M2.5 conversational model with prompt caching.",
+          "providerModelId": "MiniMax-M2.5",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 1.2,
+          "cachedInputReadPricePerMillion": 0.03,
+          "cachedInputWritePricePerMillion": 0.375,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 8192,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "glm",
+      "template": {
+        "name": "glm",
+        "displayName": "GLM (Zhipu AI)",
+        "description": "Zhipu AI API — GLM-4.x and GLM-5 series models.",
+        "baseUrl": "https://open.bigmodel.cn",
+        "adapterType": "glm"
+      },
+      "models": [
+        {
+          "code": "glm-5.1",
+          "name": "GLM-5.1",
+          "description": "Zhipu GLM-5.1 — current flagship.",
+          "providerModelId": "glm-5.1",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.4,
+          "outputPricePerMillion": 4.4,
+          "cachedInputReadPricePerMillion": 0.26,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "glm-5",
+          "name": "GLM-5",
+          "description": "Zhipu GLM-5 general-purpose model.",
+          "providerModelId": "glm-5",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 3.2,
+          "cachedInputReadPricePerMillion": 0.2,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "glm-5-code",
+          "name": "GLM-5 Code",
+          "description": "Zhipu GLM-5 tuned for code generation and agentic coding.",
+          "providerModelId": "glm-5-code",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.2,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": 0.3,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "glm-4.7",
+          "name": "GLM-4.7",
+          "description": "Zhipu GLM-4.7 general-purpose model.",
+          "providerModelId": "glm-4.7",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.6,
+          "outputPricePerMillion": 2.2,
+          "cachedInputReadPricePerMillion": 0.11,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "glm-4.7-flash",
+          "name": "GLM-4.7 Flash",
+          "description": "Free, low-latency GLM-4.7 tier.",
+          "providerModelId": "glm-4.7-flash",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": 0,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "glm-4.6",
+          "name": "GLM-4.6",
+          "description": "Zhipu GLM-4.6 general-purpose model.",
+          "providerModelId": "glm-4.6",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.6,
+          "outputPricePerMillion": 2.2,
+          "cachedInputReadPricePerMillion": 0.11,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "glm-4.6v",
+          "name": "GLM-4.6V",
+          "description": "Zhipu GLM-4.6 vision model.",
+          "providerModelId": "glm-4.6v",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 0.9,
+          "cachedInputReadPricePerMillion": 0.05,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "glm-4.5-flash",
+          "name": "GLM-4.5 Flash",
+          "description": "Free, low-latency GLM-4.5 tier.",
+          "providerModelId": "glm-4.5-flash",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": 0,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 32000,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "moonshot",
+      "template": {
+        "name": "moonshot",
+        "displayName": "Moonshot (Kimi)",
+        "description": "Moonshot OpenAI-compatible API — Kimi models.",
+        "baseUrl": "https://api.moonshot.cn",
+        "adapterType": "moonshot"
+      },
+      "seedProviderId": "64119a02-f3e4-4ff3-a023-e2289bc3135c",
+      "models": [
+        {
+          "code": "kimi-k2.6",
+          "name": "Kimi K2.6",
+          "description": "Kimi K2.6 — latest Kimi model, 256K context, automatic prefix caching, best overall quality.",
+          "providerModelId": "kimi-k2.6",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.95,
+          "outputPricePerMillion": 4,
+          "cachedInputReadPricePerMillion": 0.16,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "b1c43ce4-1b19-4d81-8e74-f9c0a8393ff9",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:16.236+00:00",
+            "updatedAt": "2026-05-10T16:40:57.439+00:00"
+          }
+        },
+        {
+          "code": "kimi-k2.7-code",
+          "name": "Kimi K2.7 Code",
+          "description": "Moonshot's most capable coding model. 256K context.",
+          "providerModelId": "kimi-k2.7-code",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.95,
+          "outputPricePerMillion": 4,
+          "cachedInputReadPricePerMillion": 0.19,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "db66ad53-bbcc-4704-825f-f986ef8e1388",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "kimi-k2.7-code-highspeed",
+          "name": "Kimi K2.7 Code Highspeed",
+          "description": "Kimi K2.7 Code at higher throughput. Same model, double the price.",
+          "providerModelId": "kimi-k2.7-code-highspeed",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.9,
+          "outputPricePerMillion": 8,
+          "cachedInputReadPricePerMillion": 0.38,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "1f3b65ff-3edd-4664-aa1d-601afb265bb3",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "kimi-k2.5",
+          "name": "Kimi K2.5",
+          "description": "Kimi K2.5 — 256K context, automatic prefix caching, improved instruction following.",
+          "providerModelId": "kimi-k2.5",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.6,
+          "outputPricePerMillion": 3,
+          "cachedInputReadPricePerMillion": 0.1,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": 16384,
+          "inTemplate": true,
+          "seed": {
+            "id": "86d0e3a8-3eab-4809-8c7c-4a22d93a391d",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:16.979+00:00",
+            "updatedAt": "2026-05-10T16:40:57.68+00:00"
+          }
+        },
+        {
+          "code": "kimi-k2-thinking",
+          "name": "Kimi K2 Thinking",
+          "description": "Kimi K2 Thinking — 256K context, extended reasoning / chain-of-thought model.",
+          "providerModelId": "kimi-k2-thinking",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision",
+            "prompt_caching",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.95,
+          "outputPricePerMillion": 4,
+          "cachedInputReadPricePerMillion": 0.475,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": 16384,
+          "inTemplate": false,
+          "seed": {
+            "id": "200298f3-1d55-43c7-b51d-843797240cec",
+            "status": "deprecated",
+            "deprecationDate": "2026-06-03T00:00:00+00:00",
+            "replacedBy": "kimi-k2.6",
+            "enabled": false,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:17.244+00:00",
+            "updatedAt": "2026-05-10T16:40:57.964+00:00"
+          }
+        },
+        {
+          "code": "moonshot-v1-128k",
+          "name": "Moonshot (Kimi) 128K",
+          "description": "Kimi chat model with 128k context.",
+          "providerModelId": "moonshot-v1-128k",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 4096,
+          "inTemplate": true,
+          "seed": {
+            "id": "ca94f1a2-8a03-499b-b7b8-433621e8504a",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:17.509+00:00",
+            "updatedAt": "2026-05-10T16:40:58.205+00:00"
+          }
+        },
+        {
+          "code": "moonshot-v1-128k-vision-preview",
+          "name": "Moonshot V1 128K Vision",
+          "description": "Moonshot V1 128K with image input.",
+          "providerModelId": "moonshot-v1-128k-vision-preview",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 4096,
+          "inTemplate": true,
+          "seed": {
+            "id": "4a88b4b0-dd5f-4511-8f43-19b85c2fed49",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "moonshot-v1-32k",
+          "name": "Moonshot (Kimi) 32K",
+          "description": "Kimi chat model with 32k context.",
+          "providerModelId": "moonshot-v1-32k",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 3,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 32768,
+          "maxOutputTokens": 4096,
+          "inTemplate": true,
+          "seed": {
+            "id": "6d3a7d64-6127-4b44-92d2-9dff6989d2fc",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:17.772+00:00",
+            "updatedAt": "2026-05-10T16:40:58.488+00:00"
+          }
+        },
+        {
+          "code": "moonshot-v1-32k-vision-preview",
+          "name": "Moonshot V1 32K Vision",
+          "description": "Moonshot V1 32K with image input.",
+          "providerModelId": "moonshot-v1-32k-vision-preview",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 3,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 32768,
+          "maxOutputTokens": 4096,
+          "inTemplate": true,
+          "seed": {
+            "id": "aa576fb5-89fb-4cba-b7da-36532900f91b",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "moonshot-v1-8k",
+          "name": "Moonshot (Kimi) 8K",
+          "description": "Kimi chat model with 8k context.",
+          "providerModelId": "moonshot-v1-8k",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 2,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": 4096,
+          "inTemplate": true,
+          "seed": {
+            "id": "85b48c68-fe0e-4c11-b885-6b0ab6643e27",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-05-08T14:45:18.639+00:00",
+            "updatedAt": "2026-05-10T16:40:58.728+00:00"
+          }
+        },
+        {
+          "code": "moonshot-v1-8k-vision-preview",
+          "name": "Moonshot V1 8K Vision",
+          "description": "Moonshot V1 8K with image input.",
+          "providerModelId": "moonshot-v1-8k-vision-preview",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "vision"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 2,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": 4096,
+          "inTemplate": true,
+          "seed": {
+            "id": "1eba94fb-bc61-42e9-a36d-e9af819ef44f",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-07-15T00:00:00+00:00",
+            "updatedAt": "2026-07-15T00:00:00+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "key": "xai",
+      "template": {
+        "name": "xai",
+        "displayName": "xAI",
+        "description": "xAI Grok — OpenAI-compatible API.",
+        "baseUrl": "https://api.x.ai",
+        "adapterType": "xai"
+      },
+      "models": [
+        {
+          "code": "grok-4.5",
+          "name": "Grok 4.5",
+          "description": "xAI Grok 4.5 — current flagship. Strongest reasoning and tool use.",
+          "providerModelId": "grok-4.5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 6,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 500000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "grok-4.3",
+          "name": "Grok 4.3",
+          "description": "xAI Grok 4.3. 1M context at lower cost than 4.5.",
+          "providerModelId": "grok-4.3",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.25,
+          "outputPricePerMillion": 2.5,
+          "cachedInputReadPricePerMillion": 0.2,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "grok-4-1-fast-reasoning",
+          "name": "Grok 4.1 Fast (Reasoning)",
+          "description": "Low-cost 2M-context Grok with reasoning enabled.",
+          "providerModelId": "grok-4-1-fast-reasoning",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 0.5,
+          "cachedInputReadPricePerMillion": 0.05,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 2000000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "grok-4-1-fast-non-reasoning",
+          "name": "Grok 4.1 Fast (Non-reasoning)",
+          "description": "Low-cost 2M-context Grok with reasoning disabled.",
+          "providerModelId": "grok-4-1-fast-non-reasoning",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 0.5,
+          "cachedInputReadPricePerMillion": 0.05,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 2000000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "grok-code-fast",
+          "name": "Grok Code Fast",
+          "description": "xAI Grok tuned for fast code generation.",
+          "providerModelId": "grok-code-fast",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 1.5,
+          "cachedInputReadPricePerMillion": 0.02,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 256000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "groq",
+      "template": {
+        "name": "groq",
+        "displayName": "Groq",
+        "description": "Groq high-speed inference — OpenAI-compatible API serving Llama and other open-weight models.",
+        "baseUrl": "https://api.groq.com",
+        "adapterType": "groq"
+      },
+      "models": [
+        {
+          "code": "meta-llama/llama-4-maverick-17b-128e-instruct",
+          "name": "Llama 4 Maverick 17B (Groq)",
+          "description": "Meta Llama 4 Maverick served on Groq LPUs.",
+          "providerModelId": "meta-llama/llama-4-maverick-17b-128e-instruct",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 0.6,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 8192,
+          "inTemplate": true
+        },
+        {
+          "code": "meta-llama/llama-4-scout-17b-16e-instruct",
+          "name": "Llama 4 Scout 17B (Groq)",
+          "description": "Meta Llama 4 Scout served on Groq LPUs.",
+          "providerModelId": "meta-llama/llama-4-scout-17b-16e-instruct",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.11,
+          "outputPricePerMillion": 0.34,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 8192,
+          "inTemplate": true
+        },
+        {
+          "code": "qwen/qwen3-32b",
+          "name": "Qwen3 32B (Groq)",
+          "description": "Alibaba Qwen3 32B served on Groq LPUs.",
+          "providerModelId": "qwen/qwen3-32b",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.29,
+          "outputPricePerMillion": 0.59,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "openai/gpt-oss-120b",
+          "name": "GPT-OSS 120B (Groq)",
+          "description": "OpenAI's open-weight 120B model served on Groq LPUs.",
+          "providerModelId": "openai/gpt-oss-120b",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": 0.6,
+          "cachedInputReadPricePerMillion": 0.075,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 32766,
+          "inTemplate": true
+        },
+        {
+          "code": "openai/gpt-oss-20b",
+          "name": "GPT-OSS 20B (Groq)",
+          "description": "OpenAI's open-weight 20B model served on Groq LPUs.",
+          "providerModelId": "openai/gpt-oss-20b",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.075,
+          "outputPricePerMillion": 0.3,
+          "cachedInputReadPricePerMillion": 0.0375,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 32768,
+          "inTemplate": true
+        },
+        {
+          "code": "llama-3.3-70b-versatile",
+          "name": "Llama 3.3 70B Versatile (Groq)",
+          "description": "Meta Llama 3.3 70B served on Groq LPUs.",
+          "providerModelId": "llama-3.3-70b-versatile",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.59,
+          "outputPricePerMillion": 0.79,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 32768,
+          "inTemplate": true
+        },
+        {
+          "code": "llama-3.1-8b-instant",
+          "name": "Llama 3.1 8B Instant (Groq)",
+          "description": "Meta Llama 3.1 8B served on Groq LPUs. Lowest latency.",
+          "providerModelId": "llama-3.1-8b-instant",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.05,
+          "outputPricePerMillion": 0.08,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 8192,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "together",
+      "template": {
+        "name": "together",
+        "displayName": "Together AI",
+        "description": "Together AI serverless — OpenAI-compatible API serving open-weight models (Llama, Qwen, Mixtral, DeepSeek). Model list per 2026-04 vendor docs; admin should verify against https://docs.together.ai/docs/serverless-models before customer-facing use.",
+        "baseUrl": "https://api.together.xyz",
+        "adapterType": "together"
+      },
+      "models": [
+        {
+          "code": "moonshotai/Kimi-K2.5",
+          "name": "Kimi K2.5 (Together)",
+          "description": "Moonshot Kimi K2.5 on Together serverless. 256k context with vision.",
+          "providerModelId": "moonshotai/Kimi-K2.5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.5,
+          "outputPricePerMillion": 2.8,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 256000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "zai-org/GLM-4.7",
+          "name": "GLM-4.7 (Together)",
+          "description": "Zhipu GLM-4.7 on Together serverless.",
+          "providerModelId": "zai-org/GLM-4.7",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.45,
+          "outputPricePerMillion": 2,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "Qwen/Qwen3.5-397B-A17B",
+          "name": "Qwen3.5 397B (Together)",
+          "description": "Alibaba Qwen3.5 397B MoE on Together serverless.",
+          "providerModelId": "Qwen/Qwen3.5-397B-A17B",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.6,
+          "outputPricePerMillion": 3.6,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+          "name": "Qwen3 Coder 480B (Together)",
+          "description": "Alibaba Qwen3 Coder 480B MoE on Together serverless.",
+          "providerModelId": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 2,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 256000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "deepseek-ai/DeepSeek-V3.1",
+          "name": "DeepSeek V3.1 (Together)",
+          "description": "DeepSeek V3.1 on Together serverless.",
+          "providerModelId": "deepseek-ai/DeepSeek-V3.1",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.6,
+          "outputPricePerMillion": 1.7,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 16384,
+          "inTemplate": true
+        },
+        {
+          "code": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+          "name": "Llama 4 Maverick 17B (Together)",
+          "description": "Meta Llama 4 Maverick on Together serverless.",
+          "providerModelId": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.27,
+          "outputPricePerMillion": 0.85,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+          "name": "Llama 3.3 70B Turbo (Together)",
+          "description": "Meta Llama 3.3 70B on Together serverless.",
+          "providerModelId": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.88,
+          "outputPricePerMillion": 0.88,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "perplexity",
+      "template": {
+        "name": "perplexity",
+        "displayName": "Perplexity Sonar",
+        "description": "Perplexity Sonar API — search-grounded chat with Chain-of-Thought reasoning options. OpenAI-compatible wire format.",
+        "baseUrl": "https://api.perplexity.ai",
+        "adapterType": "perplexity"
+      },
+      "models": [
+        {
+          "code": "sonar-pro",
+          "name": "Sonar Pro",
+          "description": "Perplexity Sonar Pro — grounded search-backed answers with citations.",
+          "providerModelId": "sonar-pro",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "search"
+          ],
+          "inputPricePerMillion": 3,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 8000,
+          "inTemplate": true
+        },
+        {
+          "code": "sonar",
+          "name": "Sonar",
+          "description": "Perplexity Sonar — low-cost grounded search-backed answers.",
+          "providerModelId": "sonar",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "search"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 1,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "sonar-reasoning-pro",
+          "name": "Sonar Reasoning Pro",
+          "description": "Perplexity Sonar Reasoning Pro — chain-of-thought over grounded search.",
+          "providerModelId": "sonar-reasoning-pro",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "search",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 2.0,
+          "outputPricePerMillion": 8.0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "sonar-reasoning",
+          "name": "Sonar Reasoning",
+          "description": "Perplexity Sonar Reasoning — lower-cost reasoning over grounded search.",
+          "providerModelId": "sonar-reasoning",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "search",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "sonar-deep-research",
+          "name": "Sonar Deep Research",
+          "description": "Perplexity Sonar Deep Research — multi-step research reports.",
+          "providerModelId": "sonar-deep-research",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "search",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 2.0,
+          "outputPricePerMillion": 8.0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "pplx-embed-v1-4b",
+          "name": "Perplexity Embed v1 4B",
+          "description": "Perplexity embedding model, 4B parameters.",
+          "providerModelId": "pplx-embed-v1-4b",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.03,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 32768,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "pplx-embed-v1-0.6b",
+          "name": "Perplexity Embed v1 0.6B",
+          "description": "Perplexity embedding model, 0.6B parameters. Lowest cost.",
+          "providerModelId": "pplx-embed-v1-0.6b",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.004,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 32768,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "fireworks",
+      "template": {
+        "name": "fireworks",
+        "displayName": "Fireworks AI",
+        "description": "Fireworks AI serverless inference — OpenAI-compatible API serving open-weight models with optimized inference profiles. Model list per 2026-04 training data; admin must verify against https://fireworks.ai/models before customer-facing use (this provider's catalog rotates frequently).",
+        "baseUrl": "https://api.fireworks.ai",
+        "adapterType": "fireworks"
+      },
+      "models": [
+        {
+          "code": "accounts/fireworks/models/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro (Fireworks)",
+          "description": "DeepSeek V4 Pro on Fireworks. 1M context, 384k output.",
+          "providerModelId": "accounts/fireworks/models/deepseek-v4-pro",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.74,
+          "outputPricePerMillion": 3.48,
+          "cachedInputReadPricePerMillion": 0.145,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 384000,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash (Fireworks)",
+          "description": "DeepSeek V4 Flash on Fireworks. 1M context at low cost.",
+          "providerModelId": "accounts/fireworks/models/deepseek-v4-flash",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.14,
+          "outputPricePerMillion": 0.28,
+          "cachedInputReadPricePerMillion": 0.028,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 384000,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/glm-5p2",
+          "name": "GLM-5.2 (Fireworks)",
+          "description": "Zhipu GLM-5.2 on Fireworks. 1M context.",
+          "providerModelId": "accounts/fireworks/models/glm-5p2",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.4,
+          "outputPricePerMillion": 4.4,
+          "cachedInputReadPricePerMillion": 0.26,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 131072,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/glm-5p1",
+          "name": "GLM-5.1 (Fireworks)",
+          "description": "Zhipu GLM-5.1 on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/glm-5p1",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.4,
+          "outputPricePerMillion": 4.4,
+          "cachedInputReadPricePerMillion": 0.26,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 202800,
+          "maxOutputTokens": 131072,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/glm-4p7",
+          "name": "GLM-4.7 (Fireworks)",
+          "description": "Zhipu GLM-4.7 on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/glm-4p7",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.6,
+          "outputPricePerMillion": 2.2,
+          "cachedInputReadPricePerMillion": 0.3,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 202800,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/kimi-k2p7-code",
+          "name": "Kimi K2.7 Code (Fireworks)",
+          "description": "Moonshot Kimi K2.7 Code on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/kimi-k2p7-code",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.95,
+          "outputPricePerMillion": 4,
+          "cachedInputReadPricePerMillion": 0.19,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/kimi-k2p6",
+          "name": "Kimi K2.6 (Fireworks)",
+          "description": "Moonshot Kimi K2.6 on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/kimi-k2p6",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.95,
+          "outputPricePerMillion": 4,
+          "cachedInputReadPricePerMillion": 0.16,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/qwen3p7-plus",
+          "name": "Qwen3.7 Plus (Fireworks)",
+          "description": "Alibaba Qwen3.7 Plus on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/qwen3p7-plus",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.4,
+          "outputPricePerMillion": 1.6,
+          "cachedInputReadPricePerMillion": 0.08,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": 65536,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct",
+          "name": "Qwen3 Coder 480B (Fireworks)",
+          "description": "Alibaba Qwen3 Coder 480B MoE on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.45,
+          "outputPricePerMillion": 1.8,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/minimax-m3",
+          "name": "MiniMax M3 (Fireworks)",
+          "description": "MiniMax M3 on Fireworks. 512k context.",
+          "providerModelId": "accounts/fireworks/models/minimax-m3",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 1.2,
+          "cachedInputReadPricePerMillion": 0.06,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 512000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/llama4-maverick-instruct-basic",
+          "name": "Llama 4 Maverick (Fireworks)",
+          "description": "Meta Llama 4 Maverick on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/llama4-maverick-instruct-basic",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.22,
+          "outputPricePerMillion": 0.88,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/llama4-scout-instruct-basic",
+          "name": "Llama 4 Scout (Fireworks)",
+          "description": "Meta Llama 4 Scout on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/llama4-scout-instruct-basic",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": 0.6,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "accounts/fireworks/models/gpt-oss-120b",
+          "name": "GPT-OSS 120B (Fireworks)",
+          "description": "OpenAI's open-weight 120B model on Fireworks.",
+          "providerModelId": "accounts/fireworks/models/gpt-oss-120b",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": 0.6,
+          "cachedInputReadPricePerMillion": 0.015,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 32768,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "mistral",
+      "template": {
+        "name": "mistral",
+        "displayName": "Mistral",
+        "description": "Mistral La Plateforme — OpenAI-compatible API serving Mistral's flagship + specialist models.",
+        "baseUrl": "https://api.mistral.ai",
+        "adapterType": "mistral"
+      },
+      "models": [
+        {
+          "code": "mistral-large-latest",
+          "name": "Mistral Large",
+          "description": "Mistral Large — current flagship, floating alias. 256k context with vision.",
+          "providerModelId": "mistral-large-latest",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.5,
+          "outputPricePerMillion": 1.5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "mistral-medium-latest",
+          "name": "Mistral Medium",
+          "description": "Mistral Medium — floating alias. Reasoning and vision.",
+          "providerModelId": "mistral-medium-latest",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 1.5,
+          "outputPricePerMillion": 7.5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "mistral-small-latest",
+          "name": "Mistral Small",
+          "description": "Mistral Small — floating alias. Lowest-cost general tier.",
+          "providerModelId": "mistral-small-latest",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.06,
+          "outputPricePerMillion": 0.18,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "pixtral-large-latest",
+          "name": "Pixtral Large",
+          "description": "Mistral Pixtral Large — vision-first multimodal model.",
+          "providerModelId": "pixtral-large-latest",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 6,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "codestral-latest",
+          "name": "Codestral",
+          "description": "Mistral Codestral — code generation and fill-in-the-middle.",
+          "providerModelId": "codestral-latest",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 3,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 32000,
+          "maxOutputTokens": 8191,
+          "inTemplate": true
+        },
+        {
+          "code": "devstral-latest",
+          "name": "Devstral",
+          "description": "Mistral Devstral — agentic software engineering.",
+          "providerModelId": "devstral-latest",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.4,
+          "outputPricePerMillion": 2,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 256000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "devstral-small-latest",
+          "name": "Devstral Small",
+          "description": "Smaller, cheaper Devstral tier.",
+          "providerModelId": "devstral-small-latest",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode"
+          ],
+          "inputPricePerMillion": 0.1,
+          "outputPricePerMillion": 0.3,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 256000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "magistral-medium-latest",
+          "name": "Magistral Medium",
+          "description": "Mistral Magistral Medium — reasoning model.",
+          "providerModelId": "magistral-medium-latest",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 40000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "magistral-small-latest",
+          "name": "Magistral Small",
+          "description": "Smaller, cheaper Magistral reasoning tier.",
+          "providerModelId": "magistral-small-latest",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.5,
+          "outputPricePerMillion": 1.5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 40000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "ministral-8b-latest",
+          "name": "Ministral 8B",
+          "description": "Mistral Ministral 8B — edge-scale model with vision.",
+          "providerModelId": "ministral-8b-latest",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": 0.15,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 262144,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "mistral-embed",
+          "name": "Mistral Embed",
+          "description": "Mistral text embedding model.",
+          "providerModelId": "mistral-embed",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.1,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "codestral-embed",
+          "name": "Codestral Embed",
+          "description": "Mistral code-specialised embedding model.",
+          "providerModelId": "codestral-embed",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "cohere",
+      "template": {
+        "name": "cohere",
+        "displayName": "Cohere",
+        "description": "Cohere Chat v2 — Command A/R family with native tool use, RAG citations, and multilingual support.",
+        "baseUrl": "https://api.cohere.com",
+        "adapterType": "cohere"
+      },
+      "seedProviderId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+      "models": [
+        {
+          "code": "command-a-03-2025",
+          "name": "Command A (2025-03)",
+          "description": "Cohere's current flagship. Excels at tool use, agentic tasks, and RAG — 256k context.",
+          "providerModelId": "command-a-03-2025",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "tool_use"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 256000,
+          "maxOutputTokens": 8000,
+          "inTemplate": true
+        },
+        {
+          "code": "command-r7b-12-2024",
+          "name": "Command R7B (2024-12)",
+          "description": "Compact 7B Command model. Low-latency retrieval and summarisation.",
+          "providerModelId": "command-r7b-12-2024",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "tool_use"
+          ],
+          "inputPricePerMillion": 0.0375,
+          "outputPricePerMillion": 0.15,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 4096,
+          "inTemplate": true
+        },
+        {
+          "code": "command-r-plus-08-2024",
+          "name": "Command R+ (2024-08)",
+          "description": "Pinned 2024-08 snapshot of Command R+ for reproducible deployments.",
+          "providerModelId": "command-r-plus-08-2024",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "tool_use"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 4096,
+          "inTemplate": true
+        },
+        {
+          "code": "command-r-08-2024",
+          "name": "Command R (2024-08)",
+          "description": "Pinned 2024-08 snapshot of Command R for reproducible deployments.",
+          "providerModelId": "command-r-08-2024",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "tool_use"
+          ],
+          "inputPricePerMillion": 0.15,
+          "outputPricePerMillion": 0.6,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 4096,
+          "inTemplate": true
+        },
+        {
+          "code": "embed-v4.0",
+          "name": "Embed v4",
+          "description": "Cohere Embed v4 — 128k context, multimodal retrieval.",
+          "providerModelId": "embed-v4.0",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.12,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "embed-english-v3.0",
+          "name": "Embed English v3",
+          "description": "Cohere Embed v3 English model. Best-in-class retrieval and semantic search for English text.",
+          "providerModelId": "embed-english-v3.0",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.1,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 512,
+          "maxOutputTokens": null,
+          "inTemplate": false,
+          "seed": {
+            "id": "293245a3-c21c-4a73-8861-9b056b2d56f6",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "embedding"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": {
+              "embeddings": {
+                "max_batch_size": 96,
+                "max_input_tokens": 512,
+                "default_dimension": 1024,
+                "supported_dimensions": [
+                  1024
+                ],
+                "supported_input_types": [
+                  "search_document",
+                  "search_query",
+                  "classification",
+                  "clustering"
+                ],
+                "supported_embedding_types": [
+                  "float",
+                  "int8",
+                  "uint8",
+                  "binary",
+                  "ubinary"
+                ]
+              }
+            },
+            "createdAt": "2026-05-20T00:00:00+00:00",
+            "updatedAt": "2026-05-20T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "embed-multilingual-v3.0",
+          "name": "Embed Multilingual v3",
+          "description": "Cohere Embed v3 multilingual model. Semantic search and retrieval across 100+ languages.",
+          "providerModelId": "embed-multilingual-v3.0",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.1,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 512,
+          "maxOutputTokens": null,
+          "inTemplate": false,
+          "seed": {
+            "id": "30c77ee8-2acf-4ca2-92ac-9dca82d4c84d",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "embedding"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": {
+              "embeddings": {
+                "max_batch_size": 96,
+                "max_input_tokens": 512,
+                "default_dimension": 1024,
+                "supported_dimensions": [
+                  1024
+                ],
+                "supported_input_types": [
+                  "search_document",
+                  "search_query",
+                  "classification",
+                  "clustering"
+                ],
+                "supported_embedding_types": [
+                  "float",
+                  "int8",
+                  "uint8",
+                  "binary",
+                  "ubinary"
+                ]
+              }
+            },
+            "createdAt": "2026-05-20T00:00:00+00:00",
+            "updatedAt": "2026-05-20T00:00:00+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "key": "huggingface",
+      "template": {
+        "name": "huggingface",
+        "displayName": "Hugging Face Inference",
+        "description": "Hugging Face TGI — OpenAI-compatible chat completions on Hugging Face's serverless inference (api-inference.huggingface.co). Model availability and pricing depend on the active provider partnership; admin should verify against https://huggingface.co/docs/api-inference/index before customer-facing use.",
+        "baseUrl": "https://api-inference.huggingface.co",
+        "adapterType": "huggingface"
+      },
+      "models": [
+        {
+          "code": "meta-llama/Llama-3.3-70B-Instruct",
+          "name": "Llama 3.3 70B Instruct",
+          "description": "Meta's Llama 3.3 70B served via HF TGI (OpenAI-compat /v1/chat/completions).",
+          "providerModelId": "meta-llama/Llama-3.3-70B-Instruct",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": null,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+          "name": "Llama 3.1 8B Instruct",
+          "description": "Smaller Llama 3.1 8B for cheap latency-sensitive workloads.",
+          "providerModelId": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+          "type": "chat",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": null,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "Qwen/Qwen2.5-72B-Instruct",
+          "name": "Qwen 2.5 72B Instruct",
+          "description": "Alibaba Qwen 2.5 72B served via HF TGI.",
+          "providerModelId": "Qwen/Qwen2.5-72B-Instruct",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": null,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "mistralai/Mistral-7B-Instruct-v0.3",
+          "name": "Mistral 7B Instruct v0.3",
+          "description": "Mistral's compact 7B instruct model.",
+          "providerModelId": "mistralai/Mistral-7B-Instruct-v0.3",
+          "type": "chat",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": null,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 32768,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "replicate",
+      "template": {
+        "name": "replicate",
+        "displayName": "Replicate",
+        "description": "Replicate predictions API — open-weight LLMs hosted as versioned models. Each model is identified as `owner/name:version`; the Replicate codec wraps OpenAI-canonical chat into the prediction `{version, input}` envelope. Model list per 2026-04 vendor docs; admin should pin specific versions and verify availability against https://replicate.com/explore before customer-facing use.",
+        "baseUrl": "https://api.replicate.com",
+        "adapterType": "replicate"
+      },
+      "models": [
+        {
+          "code": "anthropic/claude-4.5-sonnet",
+          "name": "Claude Sonnet 4.5 (Replicate)",
+          "description": "Anthropic Claude Sonnet 4.5 proxied through Replicate.",
+          "providerModelId": "anthropic/claude-4.5-sonnet",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 3,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "anthropic/claude-4.5-haiku",
+          "name": "Claude Haiku 4.5 (Replicate)",
+          "description": "Anthropic Claude Haiku 4.5 proxied through Replicate.",
+          "providerModelId": "anthropic/claude-4.5-haiku",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1,
+          "outputPricePerMillion": 5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "openai/gpt-5",
+          "name": "GPT-5 (Replicate)",
+          "description": "OpenAI GPT-5 proxied through Replicate.",
+          "providerModelId": "openai/gpt-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 1.25,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "openai/gpt-5-mini",
+          "name": "GPT-5 Mini (Replicate)",
+          "description": "OpenAI GPT-5 Mini proxied through Replicate.",
+          "providerModelId": "openai/gpt-5-mini",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.25,
+          "outputPricePerMillion": 2,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "google/gemini-3-pro",
+          "name": "Gemini 3 Pro (Replicate)",
+          "description": "Google Gemini 3 Pro proxied through Replicate.",
+          "providerModelId": "google/gemini-3-pro",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 12,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "deepseek-ai/deepseek-v3.1",
+          "name": "DeepSeek V3.1 (Replicate)",
+          "description": "DeepSeek V3.1 hosted on Replicate.",
+          "providerModelId": "deepseek-ai/deepseek-v3.1",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning"
+          ],
+          "inputPricePerMillion": 0.672,
+          "outputPricePerMillion": 2.016,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 163840,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "ibm-granite/granite-3.3-8b-instruct",
+          "name": "Granite 3.3 8B (Replicate)",
+          "description": "IBM Granite 3.3 8B — open-weight, hosted on Replicate.",
+          "providerModelId": "ibm-granite/granite-3.3-8b-instruct",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.03,
+          "outputPricePerMillion": 0.25,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        },
+        {
+          "code": "xai/grok-4",
+          "name": "Grok 4 (Replicate)",
+          "description": "xAI Grok 4 proxied through Replicate.",
+          "providerModelId": "xai/grok-4",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 7.2,
+          "outputPricePerMillion": 36,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": null,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "bedrock",
+      "template": {
+        "name": "bedrock",
+        "displayName": "AWS Bedrock",
+        "description": "AWS Bedrock — multi-model envelope serving Anthropic Claude, Meta Llama, Mistral, Cohere Command, and Amazon Titan models. Region-specific host (bedrock-runtime.<region>.amazonaws.com) and SigV4 auth. Model availability varies by region; admin should verify against https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html before customer-facing use.",
+        "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "adapterType": "bedrock"
+      },
+      "models": [
+        {
+          "code": "anthropic.claude-opus-4-8",
+          "name": "Claude Opus 4.8 (Bedrock)",
+          "description": "Anthropic Claude Opus 4.8 on Amazon Bedrock.",
+          "providerModelId": "anthropic.claude-opus-4-8",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "anthropic.claude-opus-4-7",
+          "name": "Claude Opus 4.7 (Bedrock)",
+          "description": "Anthropic Claude Opus 4.7 on Amazon Bedrock.",
+          "providerModelId": "anthropic.claude-opus-4-7",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "anthropic.claude-sonnet-5",
+          "name": "Claude Sonnet 5 (Bedrock)",
+          "description": "Anthropic Claude Sonnet 5 on Amazon Bedrock.",
+          "providerModelId": "anthropic.claude-sonnet-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 0.2,
+          "cachedInputWritePricePerMillion": 2.5,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "anthropic.claude-sonnet-4-6",
+          "name": "Claude Sonnet 4.6 (Bedrock)",
+          "description": "Anthropic Claude Sonnet 4.6 on Amazon Bedrock.",
+          "providerModelId": "anthropic.claude-sonnet-4-6",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 3,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.3,
+          "cachedInputWritePricePerMillion": 3.75,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 64000,
+          "inTemplate": true
+        },
+        {
+          "code": "anthropic.claude-fable-5",
+          "name": "Claude Fable 5 (Bedrock)",
+          "description": "Anthropic Claude Fable 5 on Amazon Bedrock.",
+          "providerModelId": "anthropic.claude-fable-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 10,
+          "outputPricePerMillion": 50,
+          "cachedInputReadPricePerMillion": 1,
+          "cachedInputWritePricePerMillion": 12.5,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "amazon.nova-2-lite-v1:0",
+          "name": "Nova 2 Lite",
+          "description": "Amazon Nova 2 Lite — 1M context at low cost.",
+          "providerModelId": "amazon.nova-2-lite-v1:0",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 2.5,
+          "cachedInputReadPricePerMillion": 0.075,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 64000,
+          "inTemplate": true
+        },
+        {
+          "code": "amazon.nova-pro-v1:0",
+          "name": "Nova Pro",
+          "description": "Amazon Nova Pro — highest-capability Nova tier.",
+          "providerModelId": "amazon.nova-pro-v1:0",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.8,
+          "outputPricePerMillion": 3.2,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 300000,
+          "maxOutputTokens": 10000,
+          "inTemplate": true
+        },
+        {
+          "code": "amazon.nova-lite-v1:0",
+          "name": "Nova Lite",
+          "description": "Amazon Nova Lite — low-cost multimodal tier.",
+          "providerModelId": "amazon.nova-lite-v1:0",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.06,
+          "outputPricePerMillion": 0.24,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 300000,
+          "maxOutputTokens": 10000,
+          "inTemplate": true
+        },
+        {
+          "code": "amazon.nova-micro-v1:0",
+          "name": "Nova Micro",
+          "description": "Amazon Nova Micro — text-only, lowest cost.",
+          "providerModelId": "amazon.nova-micro-v1:0",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.035,
+          "outputPricePerMillion": 0.14,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 10000,
+          "inTemplate": true
+        },
+        {
+          "code": "meta.llama3-3-70b-instruct-v1:0",
+          "name": "Llama 3.3 70B (Bedrock)",
+          "description": "Meta Llama 3.3 70B on Amazon Bedrock.",
+          "providerModelId": "meta.llama3-3-70b-instruct-v1:0",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.72,
+          "outputPricePerMillion": 0.72,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 131072,
+          "maxOutputTokens": 4096,
+          "inTemplate": true
+        },
+        {
+          "code": "cohere.command-r-plus-v1:0",
+          "name": "Command R+ (Bedrock)",
+          "description": "Cohere Command R+ on Amazon Bedrock.",
+          "providerModelId": "cohere.command-r-plus-v1:0",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 3,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 4096,
+          "inTemplate": true
+        },
+        {
+          "code": "amazon.titan-text-premier-v1:0",
+          "name": "Titan Text Premier",
+          "description": "Amazon Titan Text Premier.",
+          "providerModelId": "amazon.titan-text-premier-v1:0",
+          "type": "chat",
+          "features": [
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.5,
+          "outputPricePerMillion": 1.5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 42000,
+          "maxOutputTokens": 32000,
+          "inTemplate": true
+        },
+        {
+          "code": "mistral.mistral-large-3-675b-instruct",
+          "name": "Mistral Large 3 (Bedrock)",
+          "description": "Mistral Large 3 on Amazon Bedrock.",
+          "providerModelId": "mistral.mistral-large-3-675b-instruct",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming"
+          ],
+          "inputPricePerMillion": 0.5,
+          "outputPricePerMillion": 1.5,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 8192,
+          "inTemplate": true
+        },
+        {
+          "code": "amazon.titan-embed-text-v2:0",
+          "name": "Titan Text Embeddings v2",
+          "description": "Amazon Titan text embedding model, v2.",
+          "providerModelId": "amazon.titan-embed-text-v2:0",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.02,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "vertex",
+      "template": {
+        "name": "vertex",
+        "displayName": "Google Vertex AI",
+        "description": "Google Vertex AI — managed Gemini family + partner models on Google Cloud, with project-scoped IAM and regional hosts. Adapter is Vertex multi-model; admin must verify per-region availability against https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models before customer-facing use.",
+        "baseUrl": "https://us-central1-aiplatform.googleapis.com",
+        "adapterType": "vertex"
+      },
+      "models": [
+        {
+          "code": "vertex-gemini-3-pro-preview",
+          "name": "Gemini 3 Pro (Vertex)",
+          "description": "Google Gemini 3 Pro on Vertex AI.",
+          "providerModelId": "gemini-3-pro-preview",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 12,
+          "cachedInputReadPricePerMillion": 0.2,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65535,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-gemini-3.5-flash",
+          "name": "Gemini 3.5 Flash (Vertex)",
+          "description": "Google Gemini 3.5 Flash on Vertex AI.",
+          "providerModelId": "gemini-3.5-flash",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.5,
+          "outputPricePerMillion": 9,
+          "cachedInputReadPricePerMillion": 0.15,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65535,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-gemini-3-flash-preview",
+          "name": "Gemini 3 Flash (Vertex)",
+          "description": "Google Gemini 3 Flash on Vertex AI.",
+          "providerModelId": "gemini-3-flash-preview",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.5,
+          "outputPricePerMillion": 3,
+          "cachedInputReadPricePerMillion": 0.05,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65535,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-gemini-3.1-flash-lite",
+          "name": "Gemini 3.1 Flash Lite (Vertex)",
+          "description": "Google Gemini 3.1 Flash Lite on Vertex AI.",
+          "providerModelId": "gemini-3.1-flash-lite",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.25,
+          "outputPricePerMillion": 1.5,
+          "cachedInputReadPricePerMillion": 0.025,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-gemini-2.5-pro",
+          "name": "Gemini 2.5 Pro (Vertex)",
+          "description": "Google Gemini 2.5 Pro on Vertex AI.",
+          "providerModelId": "gemini-2.5-pro",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 1.25,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 0.125,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65535,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash (Vertex)",
+          "description": "Google Gemini 2.5 Flash on Vertex AI.",
+          "providerModelId": "gemini-2.5-flash",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 2.5,
+          "cachedInputReadPricePerMillion": 0.03,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65535,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-claude-sonnet-5",
+          "name": "Claude Sonnet 5 (Vertex)",
+          "description": "Anthropic Claude Sonnet 5 on Vertex AI.",
+          "providerModelId": "claude-sonnet-5",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": 0.2,
+          "cachedInputWritePricePerMillion": 2.5,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-claude-opus-4-8",
+          "name": "Claude Opus 4.8 (Vertex)",
+          "description": "Anthropic Claude Opus 4.8 on Vertex AI.",
+          "providerModelId": "claude-opus-4-8",
+          "type": "chat",
+          "features": [
+            "vision",
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true
+        },
+        {
+          "code": "vertex-gemini-embedding-2",
+          "name": "Gemini Embedding 2 (Vertex)",
+          "description": "Google Gemini Embedding 2 on Vertex AI.",
+          "providerModelId": "gemini-embedding-2",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0.2,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 8192,
+          "maxOutputTokens": null,
+          "inTemplate": true
+        }
+      ]
+    },
+    {
+      "key": "local-inference",
+      "seedProviderId": "b8a43cf6-0b38-4fa8-9fed-d56459c63a2a",
+      "models": [
+        {
+          "code": "local-bge-small",
+          "name": "Local BGE Small",
+          "description": "Placeholder embedding model for the local inference server. Admin reconfigures providerModelId and dimension after deploying their inference server.",
+          "providerModelId": "BAAI/bge-small-en-v1.5",
+          "type": "embedding",
+          "features": [],
+          "inputPricePerMillion": 0,
+          "outputPricePerMillion": 0,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 512,
+          "maxOutputTokens": null,
+          "inTemplate": false,
+          "seed": {
+            "id": "d22e86fb-3990-4b94-b69a-661c4ecdb326",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": false,
+            "inputModalities": [
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-06-13T06:35:32.837+00:00",
+            "updatedAt": "2026-06-13T06:35:32.837+00:00"
+          }
+        }
+      ]
+    }
+  ]
+}

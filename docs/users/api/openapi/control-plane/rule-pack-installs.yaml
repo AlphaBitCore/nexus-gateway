@@ -274,15 +274,27 @@ paths:
                                   disabled: true
                                 - ruleLocalId: pi-002
                                   disabled: false
-                                  severityOverride: high
+                                  severityOverride: warn
             responses:
                 "400":
-                    description: Bad Request — `installId` missing or body malformed.
+                    description: |-
+                        Bad Request — `installId` missing, body malformed, or at least one
+                        override rejected by validation (`error: validation_failed`, with a
+                        `rules` array naming each offending entry's index, rule id and
+                        reason). Nothing is persisted when validation fails: the batch is
+                        all-or-nothing.
                     content:
                         application/json:
                             schema:
                                 type: object
                                 additionalProperties: {}
+                            example:
+                                error: validation_failed
+                                detail: 'rulepack: invalid rules: rule[1] "pi-002": invalid severityOverride "high" (want hard|soft|warn)'
+                                rules:
+                                    - index: 1
+                                      ruleId: pi-002
+                                      reason: invalid severityOverride "high" (want hard|soft|warn)
                 "500":
                     description: Internal Server Error — the overrides could not be persisted.
                     content:
@@ -365,7 +377,18 @@ components:
                     description: When true, the targeted rule is suppressed for this install.
                 severityOverride:
                     type: string
-                    description: Replacement severity for the targeted rule within this install. Stored as supplied; the handler does not constrain its value.
+                    enum:
+                        - hard
+                        - soft
+                        - warn
+                    description: |-
+                        Replacement severity for the targeted rule within this install.
+                        Constrained to the same closed enum as an authored rule: only
+                        `hard` and `soft` enforce, so any other value would leave the
+                        rule matching and reporting while it silently stopped blocking
+                        or redacting. An out-of-enum value is refused with 400. Omit
+                        the field (or send an empty string) to clear a previously set
+                        severity swap and fall back to the pack's own severity.
             required:
                 - id
                 - installId

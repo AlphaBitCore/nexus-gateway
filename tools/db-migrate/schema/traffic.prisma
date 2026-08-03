@@ -76,6 +76,24 @@ model traffic_event {
   // Request tracing
   trace_id                   String?                   @map("trace_id")
   external_request_id        String?                   @map("external_request_id")
+  /// Caller-declared end-user identifier — an opaque correlation tag for the
+  /// caller's OWN user base (their customer id), so an external system can
+  /// join traffic rows to its user table. Sourced by the AI Gateway from the
+  /// X-Nexus-End-User-Id request header, falling back to the protocol-native
+  /// field (OpenAI-family top-level `user` / `safety_identifier`, Anthropic
+  /// `metadata.user_id`). Never validated, never joined to Nexus identities,
+  /// never used for quota/routing/IAM; meaningful only within the caller's
+  /// VK scope. NULL for compliance-proxy and agent rows.
+  end_user_id                String?                   @map("end_user_id")
+  /// Caller-declared session/conversation identifier — the grain between
+  /// end_user_id (one per user) and external_request_id (one per request),
+  /// so an external system can group a conversation's requests: cost per
+  /// thread, replay of a misbehaving dialogue. Sourced by the AI Gateway
+  /// from the X-Nexus-Session-Id request header only (chat protocols carry
+  /// no reliable native session field). Same trust model as end_user_id:
+  /// opaque, caller-asserted, VK-scoped, never validated or joined.
+  /// NULL for compliance-proxy and agent rows.
+  session_id                 String?                   @map("session_id")
   // Entity attribution (who/what originated this traffic)
   entity_type                String?                   @map("entity_type") // "user" | "project" | "unknown"
   entity_id                  String?                   @map("entity_id")
@@ -126,6 +144,18 @@ model traffic_event {
   /// will match against; before this column the UI posted traffic_event.id
   /// which never matched, making the action a silent no-op in production.
   gateway_cache_l2_entry_key String?                   @map("gateway_cache_l2_entry_key")
+  /// Multimodal audit stamps (image generation / TTS), both non-PII and NULL
+  /// for non-multimodal traffic. artifact_refs: JSON-encoded array of
+  /// artifact references — [{"sha256","sizeBytes","mime"}] for byte-bearing
+  /// artifacts (inline b64_json images, TTS audio), [{"url"}] for URL-return
+  /// images (reference only; the gateway never dereferences the URL and no
+  /// content hash exists in that mode). compliance_coverage: request-time
+  /// record of what compliance scanning actually ran ("prompt-only"/"none"),
+  /// rendered as the per-modality coverage badge — stamped at request time
+  /// because a view-time recompute from current config would misreport
+  /// history.
+  artifact_refs              String?                   @map("artifact_refs")
+  compliance_coverage        String?                   @map("compliance_coverage")
   provider_cache_status      String?                   @map("provider_cache_status")
   routed_provider_id         String?                   @map("routed_provider_id")
   routed_provider_name       String?                   @map("routed_provider_name")
@@ -178,14 +208,33 @@ model traffic_event {
   usage_extraction_status    String?                   @map("usage_extraction_status")
   /// Structured failure-reason classification (E34-S3). Any producer that
   /// classifies a non-2xx outcome may populate this with its own enum
-  /// vocabulary. ai-gateway uses RATE_LIMITED / QUOTA_EXCEEDED /
-  /// ROUTING_NO_MATCH / AUTH_INVALID / AUTH_KEY_EXPIRED / USAGE_QUERY_FAILED
-  /// (sourced from writeDetailedErr's `code` arg). compliance-proxy may use
-  /// codes for hook reject / bump failure / inspection block; agent may use
-  /// codes for local interception decisions. NULL on success AND on
-  /// failures the producer chose not to classify (e.g. raw upstream
-  /// 5xx propagated unchanged — leave NULL so upstream-error alerts can
-  /// distinguish them from Nexus-classified failures).
+  /// vocabulary. Two vocabularies coexist here by design, and which one a row
+  /// carries says who decided the request failed:
+  ///
+  /// ai-gateway writes SCREAMING_SNAKE codes for failures the GATEWAY decided
+  /// — RATE_LIMITED / QUOTA_EXCEEDED / ROUTING_NO_MATCH / AUTH_INVALID /
+  /// AUTH_KEY_EXPIRED / USAGE_QUERY_FAILED / CLIENT_CLOSED /
+  /// PROVIDER_RATE_LIMITED / PROVIDER_UNAVAILABLE (sourced from
+  /// writeDetailedErr's `code` arg, so they are also the client-facing
+  /// envelope code).
+  ///
+  /// For a terminal upstream 4xx it instead writes the PROVIDER's own
+  /// canonical cause in lower_snake — auth_failed / invalid_request /
+  /// context_overflow / endpoint_unsupported / not_implemented /
+  /// no_compatible_provider — taken from ProviderError.Code, the same
+  /// vocabulary the executor classifies on. These rows are DB-only; the
+  /// client receives the provider's own error envelope, not this code.
+  /// PROVIDER_ERROR remains the value for a terminal 4xx that carried no
+  /// canonical code, so it now means "unclassified upstream 4xx" rather than
+  /// "any upstream 4xx" — a query filtering error_code = 'PROVIDER_ERROR'
+  /// matches rows written before this narrowing and only the unclassified
+  /// ones after it.
+  ///
+  /// compliance-proxy may use codes for hook reject / bump failure /
+  /// inspection block; agent may use codes for local interception decisions.
+  /// NULL on success AND on failures the producer chose not to classify (e.g.
+  /// raw upstream 5xx propagated unchanged — leave NULL so upstream-error
+  /// alerts can distinguish them from Nexus-classified failures).
   error_code                 String?                   @map("error_code")
   /// Human-readable failure description paired with error_code. For ops to
   /// skim without looking up the code dictionary (the `message` arg to
@@ -313,6 +362,8 @@ model traffic_event {
   @@index([source, timestamp])
   @@index([timestamp])
   @@index([entity_id, timestamp])
+  @@index([end_user_id, timestamp])
+  @@index([session_id, timestamp])
   @@index([thing_id, timestamp])
   // E41 v2: partial index optimised for the credential-health-rollup query
   // (WHERE source='ai-gateway' AND credential_id IS NOT NULL AND timestamp >= …).

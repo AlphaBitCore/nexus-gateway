@@ -37,6 +37,29 @@ runs the pre-tunnel gates:
   is yaml-fixed at boot; the domain allowlist merges static yaml with dynamic DB
   entries and is hot-swapped atomically via `SwapDomainAllowlist` when the Hub
   pushes a change.
+- **Unlisted-passthrough downgrade (`allowUnlistedPassthrough`, default off).**
+  When enabled, a `CONNECT` rejected *only* for `ErrDomainDenied` (target not in
+  the domain allowlist) is downgraded to a transparent raw-TCP relay
+  (`serveUnlistedPassthrough`) instead of a `403` — no MITM, no audit. It is a
+  monitor-a-subset-only dev posture; other rejections (`ErrIPDenied`,
+  `ErrPrivateIP`) still refuse. Two guards keep this from becoming an **open
+  proxy** (the failure mode behind the 2026-07-09 incident, where the flag was on
+  with an all-permitting source allowlist and `:3128` reachable from the internet,
+  and external parties relayed SMTP scans through the appliance):
+  - **Boot fail-closed guard** (`config.validate`): the process refuses to start
+    when `allowUnlistedPassthrough=true` *and* `sourceIpAllowlist` contains a `/0`
+    (all-address) range — that combination is an open relay by definition. An
+    empty `sourceIpAllowlist` denies all (safe); only an explicit `/0` trips it.
+  - **SSRF guard on the downgrade** (`Checker.CheckPassthroughTarget`): because
+    `CheckConnect` returns `ErrDomainDenied` *before* its private-IP check, the
+    passthrough branch runs that check explicitly before relaying, so an unlisted
+    `CONNECT` can never be tunneled to a private/reserved target (cloud metadata,
+    RFC1918, loopback) — a `403 rejected_private_ip`.
+
+  **Production posture:** `allowUnlistedPassthrough=false`, `sourceIpAllowlist`
+  restricted to the internal/managed-device network, and `:3128` **never** exposed
+  to `0.0.0.0/0` at the security-group / firewall layer (the appliance is reached
+  by enrolled devices over internal paths, not the public internet).
 - **Connection-stage hooks.** With only the target host known (pre-tunnel),
   connection-stage compliance hooks run and can block before the tunnel opens.
 

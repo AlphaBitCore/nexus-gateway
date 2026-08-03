@@ -32,7 +32,7 @@ This document covers the network-interception part of the COMPLIANCE sidebar sec
 
 **What you see.** A single settings form.
 
-**Controls.** A default mode select; numeric inputs for chunk bytes, hook timeout (ms), and max buffer bytes; a fail-behavior select; and switches for capture-request-body, capture-response-body, and raw-body-spill-enabled. An always-visible per-mode disclosure note states, in one plain sentence each, exactly what compliance enforcement every mode performs — including the wire risk an admin must see before choosing a real-time mode over buffering.
+**Controls.** A default mode select; numeric inputs for chunk bytes, hook timeout (ms), and max buffer bytes; a fail-behavior select; and switches for capture-request-body and capture-response-body. An always-visible per-mode disclosure note states, in one plain sentence each, exactly what compliance enforcement every mode performs — including the wire risk an admin must see before choosing a real-time mode over buffering.
 
 **Key concepts.** The default mode picks the enforcement-versus-latency trade-off for streamed responses:
 
@@ -40,7 +40,15 @@ This document covers the network-interception part of the COMPLIANCE sidebar sec
 - `chunked_async` — real-time streaming with best-effort inflight redaction. High performance, but it carries a bounded-fragment risk: a complete sensitive value is never delivered, yet a short leading fragment may reach the client before redaction engages. Choose `buffer_full_block` for guaranteed redaction.
 - `buffer_full_block` — the full response is buffered and scanned before any byte is delivered; redaction and hard-block are guaranteed (strong compliance), at the cost of higher time-to-first-byte.
 
-The fail behavior is `fail_open` (continue on a hook error or timeout) or `fail_close` (block under `buffer_full_block`, audit-flag under `chunked_async`). A stream larger than the max buffer bytes spills to the spill store when raw-body-spill is enabled, or is truncated otherwise.
+The fail behavior is `fail_open` (continue on a hook error or timeout) or `fail_close` (block under `buffer_full_block`, audit-flag under `chunked_async`). A stream larger than the max buffer bytes spills to the spill store when the node has one configured. With no spill backend it is kept inline up to the inline threshold and the record is flagged as truncated — the recorded size stays the real size, so a reader can see how much was dropped, and the node logs a warning naming the missing backend.
+
+**Where an oversize body goes is a node fact, not a setting on this page.** There used to be
+a raw-body-spill switch here; it has been removed because nothing ever read it. Whether a
+body spills is decided solely by whether the node has a spill backend configured and by the
+inline threshold. To see what a node will actually do, open **Infrastructure → Nodes → the
+node → Runtime State** and read the `storage.spill` entry: it reports whether a backend
+exists, which one, where it stores, and whether that location is readable only from that one
+host.
 
 **Where the data comes from.** `systemApi` — `getStreamingComplianceConfig`, `updateStreamingComplianceConfig`.
 
@@ -52,7 +60,7 @@ The fail behavior is `fail_open` (continue on a hook error or timeout) or `fail_
 
 **Controls.** Switches for store-request-body and store-response-body — turning one on raises a danger confirmation dialog, while turning one off applies immediately. Numeric inputs set the maximum inline body bytes (default 262144, i.e. 256 KiB), the maximum request bytes (default 10485760, i.e. 10 MiB), and the maximum response bytes (default 10485760). The response-body switch carries a note about streaming responses.
 
-**Key concepts.** The maximum inline body bytes is the threshold below which a body is stored inline; a body above it spills to the spill store (configured on the Streaming Compliance tab). Enabling capture is gated behind an explicit compliance acknowledgement.
+**Key concepts.** The maximum inline body bytes is the threshold below which a body is stored inline; a body above it spills to the spill store when the node has a spill backend configured. With no backend the body is kept inline up to that same threshold and flagged as truncated, so the setting bounds what is stored either way — it previously did not, and an oversize body was kept whole under a limit named for the opposite. The threshold is not self-enforcing: check `storage.spill` on the node's Runtime State tab to see whether a backend exists. Enabling capture is gated behind an explicit compliance acknowledgement.
 
 **Where the data comes from.** `systemApi` — `getPayloadCaptureConfig`, `updatePayloadCaptureConfig`.
 

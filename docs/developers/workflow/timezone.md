@@ -71,6 +71,31 @@ User-entered times round-trip through the same boundary, using `date-fns-tz`:
   this calendar day").
 - `utcToLocalInput` — the inverse of `localInputToUTC`, rendering a UTC instant
   as a `datetime-local` value for editing.
+- `utcToDateInput` — the inverse of `endOfDayUTC`, rendering a UTC instant as
+  the `YYYY-MM-DD` calendar day it falls on in the display zone, for a
+  `<input type="date">` value.
+- `dateInputFromToday` — the calendar day a whole-day / whole-month offset from
+  today in the display zone (`{ days: 1 }` is tomorrow on the viewer's
+  calendar), for a `<input type="date">` `min` or default value.
+
+A `<input type="date">` carries no timezone: it exchanges a bare calendar day,
+and the user reads its calendar against their own clock. So a date control is
+**anchored to the display zone on every leg** — seed with `utcToDateInput`,
+bound with `dateInputFromToday`, submit with `endOfDayUTC`. Two shortcuts look
+equivalent and are not, because each silently anchors one leg to UTC while the
+rest of the page renders local:
+
+- `instant.toISOString().slice(0, 10)` to seed a picker yields the **UTC** day,
+  which disagrees with the `formatDate` beside it whenever the instant's UTC day
+  differs from the viewer's. Use `utcToDateInput`.
+- `new Date()` + `setDate`/`setMonth` (local fields) then `.toISOString()`
+  (UTC) mixes both anchors in one expression, so the result is off by a day for
+  part of every day — a zone-dependent window, not an edge case. Use
+  `dateInputFromToday`, whose offsets are civil arithmetic and so are also
+  immune to the 23- and 25-hour local days at a DST transition.
+
+Note that `check:tz` (§4) scans Go only, so neither shortcut is caught by CI;
+the date-control helpers above are the guard.
 
 ## 4. The CI guard
 

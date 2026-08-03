@@ -84,6 +84,10 @@ The 30 rules currently in the Go source, grouped by `sourceType`:
 | `thing`    | `agent.cert_expiration_imminent`              | medium           | 86400 s          | schedule poll        |
 | `system`   | `system.channel_test`                         | info             | 0 s              | synthetic (UI test)  |
 
+**How the two upstream-fault rules tell "the provider broke" from "we rejected it".** `provider.upstream_error` and `credential.auth_failures_cascade` must blame a provider only for the provider's own faults. Both select their numerator with `errorcode.IsUpstream(traffic_event.error_code)` (`packages/shared/schemas/errorcode`), which is true only for the canonical codes an adapter stamps when an upstream answered and rejected us — never for a gateway-side decision (`ROUTING_NO_MATCH`, `QUOTA_EXCEEDED`, `AUTH_INVALID_KEY`, …), and never for `no_compatible_provider`, which means no upstream was ever called.
+
+Both rules previously selected on `error_code` being **empty**, on the contract that Nexus leaves upstream failures unclassified and codes only its own rejects. The gateway does not honour that contract — it classifies every upstream failure — so the condition was unreachable and **neither rule had ever fired in production** (verified 2026-07-15 against the live database: zero 5xx rows carry an empty `error_code`). They are old in the registry and new in effect; expect them to start producing alerts that were always warranted. Their thresholds are untuned for the same reason and should be observed before being adjusted.
+
 Builtin/seed lockstep is enforced by `TestBuiltinRulesAppearInSeed` and `TestSeedRulesAppearInBuiltin` in `packages/nexus-hub/internal/alerts/engine/rules/builtin_seed_lockstep_test.go` — adding a rule in one place without the other breaks the build.
 
 ## 5. Evaluation loop

@@ -52,9 +52,13 @@ When the endpoint is embeddings, a capability cache is wired, and the request ca
 
 A plan is marked `Substituted` when the first resolved target's model differs from the requested model; `OriginalModelID` preserves what the client asked for.
 
+### Modality guard (all endpoints)
+
+After the strategies produce targets, `applyModalityGuard` drops every target whose catalog model type cannot serve the request's endpoint modality. It runs once over the flattened primary+recovery set, uniformly across **every** strategy (`single`, `loadbalance`, `conditional`, `latency`, `smart`, `fallback`) and the requested-model passthrough path — so no rule authoring mistake or auto pick can dispatch an image model for a chat request, or a chat model onto `/v1/images/generations`. The decision is `typology.EndpointKindAcceptsModelType(kind, target.ModelType)`: each endpoint kind accepts the catalog `type` of the models that can serve it (`chat`→`chat`, `embeddings`→`embedding`, `image_generation`→`image`, `tts`→`tts`|`audio`, `stt`→`stt`|`audio`, `realtime`→`realtime`|`audio`, `video_generation`→`video`|`image`, `rerank`→`rerank`). Audio endpoints dual-accept the precise sub-type (`tts`/`stt`/`realtime`) and the coarse `audio` fallback, so a catalog that types its audio models precisely (the shipped catalog does) gets clean cross-sub-modality rejection while an older coarse-`audio` catalog still routes. Kinds that bind to no catalog model (`guardrail`, `batch`, `job`, `models`) and targets with an empty `ModelType` impose no constraint — the guard only ever removes a positively-mismatched modality. A drop is **non-silent**: a WARN plus a stage-2 `PipelineTrace` entry records it so an operator debugging a downstream 404 sees the guard as the cause. The filter is in place, one string comparison per target, no allocation on the hot path. When the guard empties the set, `ResolveTargets` surfaces `no_compatible_provider`; on the explicit-requested-model passthrough path (which the resolver never re-runs) the handler applies the same check and returns `400 MODEL_MODALITY_MISMATCH` rather than forwarding a wrong-modality model to the provider for a 502.
+
 ## 5. The strategy tree
 
-`Config` is a tree of `StrategyNode` values — a discriminated union whose `Type` selects which fields apply. The `StrategyRegistry` evaluates the tree recursively up to a depth limit of ten, and is frozen after registration so the live set is immutable. `RegisterAllStrategies` always registers six strategies; the seventh, `smart`, is registered only when its dependencies are wired.
+`Config` is a tree of `StrategyNode` values — a discriminated union whose `Type` selects which fields apply. The `StrategyRegistry` evaluates the tree recursively up to a depth limit of ten, and is frozen after registration so the live set is immutable. `RegisterAllStrategies` always registers seven strategies; the eighth, `smart`, is registered only when its dependencies are wired.
 
 | Type | Behavior |
 |---|---|
@@ -63,10 +67,19 @@ A plan is marked `Substituted` when the first resolved target's model differs fr
 | `loadbalance` | Weighted-random selection across `weightedTargets`; a non-positive total weight yields no targets. |
 | `conditional` | Evaluates branches in order and recurses into the first whose `when` predicate matches, else the `default`. |
 | `ab_split` | Weighted-random selection across inline `abTargets` (`{providerId, modelId, weight}`). |
+| `latency` | Orders inline `latencyTargets` (`{providerId, modelId}`) by measured p95 latency — the fastest tier first, with bounded exploration of low-sample targets. See "Latency-aware ordering" below. |
 | `policy` | A no-op at evaluation time — policy nodes contribute only to stage-0 narrowing. |
 | `smart` | LLM-dispatch routing; the router model picks the target from the request content. Detailed in [smart-routing-architecture.md](smart-routing-architecture.md). |
 
 Each evaluation appends a `TraceEntry` describing its decision, so the simulate endpoint and audit trace can replay the path.
+
+### Latency-aware ordering
+
+The `latency` strategy ranks its targets by a **windowed per-target p95 latency** so an operator can route to the measured-fastest provider instead of hand-setting weights. It reuses the health tracker's existing per-provider sample window (`HealthTracker` already records `{success, latencyMs}` per upstream attempt over a 5-minute / 100-sample window); a read-side `GetLatencyP95` computes the nearest-rank p95 over the **successful** in-window samples (a slow timeout or fast 4xx must not move the latency ranking — error behavior is the health band's job) plus the total sample count.
+
+Ordering is stateless and per-request. Warm targets (≥ 20 in-window samples) are quantized into 100 ms latency buckets — targets within one bucket are treated as equally fast, so sub-bucket jitter never reorders them, and the smoothed multi-sample window keeps any tier change slow (this quantization-plus-smoothing is the anti-oscillation guard that stops thundering-herd flap onto the currently-fastest target). The fastest occupied bucket is shuffled so served load spreads across equally-fast providers. Cold targets (too few samples) earn a small, bounded share of served traffic via ε-greedy exploration so their speed can be learned without a slow-and-idle target being re-promoted to the fastest tier indefinitely. When no health tracker is wired, or on a cold start, every target reads cold and the strategy degrades to a safe random load-balance.
+
+This ordering composes with — and is subordinate to — the health-aware band reorder described below: the strategy emits its targets in latency order, and `HealthRanker` then stable-sorts them by band, so **health band dominates and latency orders within a band** (a fast-but-failing provider is still tried last). The per-target p95 + bucket + explore/exploit decision is recorded on the `TraceEntry`, so it rides the existing `traffic_event.routing_trace` audit surface with no new observability plumbing.
 
 ## 6. Match conditions
 
@@ -74,7 +87,7 @@ Each evaluation appends a `TraceEntry` describing its decision, so the simulate 
 
 - `models` — `Model.id` UUIDs, matched by intersecting against the request's hydrated `CandidateIDs`.
 - `requestedModelLiterals` — raw request strings (such as `auto`) that are not `Model.code` values.
-- `modelTypes`, `providers` — matched against the requested model's type and provider.
+- `modelTypes`, `providers` — matched against the requested model's type and provider. The type vocabulary is the catalog `Model.type` set (`chat`, `embedding`, `image`, `audio`, `tts`, `stt`, `realtime`, `video`, `rerank`); audio models are typed precisely (`tts`/`stt`/`realtime`) in the shipped catalog, with the coarse `audio` retained for back-compat.
 - `projects` — matched against the virtual key's project.
 - `virtualKeys` — matched against the virtual key name, with `*` glob support.
 
@@ -89,6 +102,7 @@ The `/internal/routing-simulate` endpoint runs `Resolver.Explain`, which execute
 A `RoutingTarget` is a resolved `provider+model` ready for dispatch. Beyond identifiers it carries:
 
 - `AdapterType` — copied verbatim from `Provider.adapter_type`; downstream consumers read it as the authoritative wire format rather than deriving it from the provider name. See [provider-adapter-architecture.md](provider-adapter-architecture.md).
+- `ModelType` — the catalog `Model.type` (`chat`/`embedding`/`image`/`tts`/`stt`/`realtime`/`video`/`rerank`), carried so the modality guard (§4) can reject a target whose modality does not match the request's endpoint without a second catalog lookup. Empty means unclassified and imposes no constraint.
 - `ModelCode` — the customer-facing identifier, returned to clients in the `X-Nexus-Routed-Model` response header so they can correlate without seeing the internal UUID.
 - `Region` — mirrors `Provider.region` and feeds the data-residency compliance hook; an empty string means the provider is unclassified and must be treated as "unknown region", not "any region".
 
@@ -98,7 +112,8 @@ The `RoutingContext.Request` field holds the canonical `NormalizedPayload` built
 
 - `packages/ai-gateway/internal/routing/resolver.go` — pipeline orchestration, model hydration, capability pre-filter
 - `packages/ai-gateway/internal/routing/core/` — `StrategyNode`, `RoutingContext`, `RoutingTarget`, `RoutingPlan`, `RouteResult`, `HealthRanker`
-- `packages/ai-gateway/internal/routing/strategies/` — strategy registry and the seven strategy implementations
+- `packages/ai-gateway/internal/routing/strategies/` — strategy registry and the eight strategy implementations (`strategy_latency.go` reads the health tracker's windowed p95)
+- `packages/ai-gateway/internal/platform/store/health.go` — `HealthTracker`, the shared p95 latency window (`GetLatencyP95`)
 - `packages/ai-gateway/internal/routing/matcher/` — match-condition evaluation, MongoDB-style expressions, stage-0 narrowing, terminal-target enumeration
 - `packages/ai-gateway/internal/routing/capability/` — embeddings capability descriptor and compatibility rules
 - `packages/ai-gateway/internal/platform/store/routing.go` — `RoutingRule`, rule cache, `GetEnabledRoutingRules`

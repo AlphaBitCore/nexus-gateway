@@ -1,211 +1,211 @@
-# Nexus AI-Gateway 性能与开关全解（含 Bifrost 对比）
+# Nexus AI-Gateway Performance and Switches Explained (with Bifrost Comparison)
 
-> 面向：技术负责人、运维、以及"为什么开了某个开关性能会降"的所有提问者。
-> 读法：**第 1 节是概要**（给老板/决策看结论）；**第 2 节起是详细**（数据、机制、架构图）。
-> 测试基线日期：2026-06-24，host-native c6i.4xlarge（16 vCPU），mock LLM 零延迟，loadtest 闭环压测。
+> Audience: tech leads, operators, and anyone asking "why did performance drop after enabling a switch".
+> How to read: **Section 1 is the summary** (conclusions for managers/decision-makers); **Section 2 onward is the detail** (data, mechanisms, architecture diagrams).
+> Test baseline date: 2026-06-24, host-native c6i.4xlarge (16 vCPU), mock LLM with zero latency, loadtest closed-loop benchmark.
 
 ---
 
-## 1. 概要（先看这里）
+## 1. Summary (start here)
 
-### 1.1 一句话结论
+### 1.1 One-sentence conclusion
 
-- **裸网关能力（hooks-OFF、cache-OFF）：Nexus 在每一个维度都超过 Bifrost**，并且是在**额外完成持久化审计**的前提下做到的。
-- **开启内容合规（hooks-ON）：性能会下降——这是"逐字节内容检查"对比"无脑转发"的必然代价，不是 bug。** 非流式约低 13%，流式约低 35%。
-- **每多开一个开关，就多一份每请求的工作**。Nexus 的设计原则是**默认精简、按需开启**，并把能异步的（审计）全部放到旁路、不碰核心链路。
+- **Bare gateway capability (hooks-OFF, cache-OFF): Nexus beats Bifrost on every dimension**, and does so while **additionally performing persistent auditing**.
+- **With content compliance enabled (hooks-ON): performance drops — this is the inevitable cost of "byte-by-byte content inspection" versus "blind forwarding", not a bug.** Non-streaming is ~13% lower, streaming ~35% lower.
+- **Every additional switch enabled adds per-request work**. Nexus's design principle is **lean by default, enable on demand**, and everything that can be async (auditing) is moved to the side path, never touching the core path.
 
-### 1.2 结果速览
+### 1.2 Results at a glance
 
-| 场景 | Nexus | Bifrost | 结论 |
+| Scenario | Nexus | Bifrost | Conclusion |
 |---|---|---|---|
-| 非流式 RPS（裸网关） | 6484–7352 | 6018–6377 | **Nexus 胜 +2~20%** |
-| 流式 RPS / token吞吐（裸，对齐256tok） | ~3000 / ~785k | ~1350 / ~350k | **Nexus 胜 ~2.2×** |
-| 流式 TTFT 尾延迟（裸） | p95 292–550ms | p95 2190–3455ms | **Nexus 胜 6~7×** |
-| 非流式 RPS（hooks-ON 5个内容hook） | 4891–5545 | 6018–6377 | Nexus 低 ~13% |
-| 流式 RPS（hooks-ON，对齐256tok） | 802–989 | 1322–1394 | Nexus 低 ~35% |
-| 成功率（全部场景） | 100% | 100% | 持平 |
-| gw CPU（裸/hooks-ON 非流式） | 41% / 58% | 90~98% | **Nexus 更省，远未饱和** |
+| Non-streaming RPS (bare gateway) | 6484–7352 | 6018–6377 | **Nexus wins +2~20%** |
+| Streaming RPS / token throughput (bare, aligned 256tok) | ~3000 / ~785k | ~1350 / ~350k | **Nexus wins ~2.2×** |
+| Streaming TTFT tail latency (bare) | p95 292–550ms | p95 2190–3455ms | **Nexus wins 6~7×** |
+| Non-streaming RPS (hooks-ON, 5 content hooks) | 4891–5545 | 6018–6377 | Nexus ~13% lower |
+| Streaming RPS (hooks-ON, aligned 256tok) | 802–989 | 1322–1394 | Nexus ~35% lower |
+| Success rate (all scenarios) | 100% | 100% | Tied |
+| gw CPU (bare / hooks-ON non-streaming) | 41% / 58% | 90~98% | **Nexus uses less, far from saturated** |
 
-### 1.3 三句话讲清"为什么开关一开就降速"
+### 1.3 Three sentences explaining "why enabling a switch slows things down"
 
-1. **cache 开**：每请求多一次缓存键计算 + 查找；并且历史上 freshness 规则用 `(?i)` 正则扫整个 50KB 请求体（已修为子串匹配，~1000× 提速）。命中率低时，这些开销 > 收益 → 反而更慢。
-2. **hooks-ON 非流式**：每请求多一次**全 body 内容提取（gjson 解析 50KB）+ 正则/vectorscan 扫描**，同步在核心链路上 → 加延迟 → 固定并发下 RPS 下降 ~13%。
-3. **hooks-ON 流式**：在上面基础上，响应是**逐块流式**的——内容检查需要 tee 缓冲 + 分块 checkpoint + 流结束后扫描整段响应，这套协调引入**等待延迟**（gw 此时是 idle-waiting，不是 CPU 烧满），所以流式降幅最大（~35%）。
+1. **cache on**: each request pays one extra cache-key computation + lookup; historically, the freshness rules also scanned the entire 50KB request body with a `(?i)` regex (since fixed to substring matching, ~1000× speedup). When the hit rate is low, these costs exceed the benefit → net slowdown.
+2. **hooks-ON non-streaming**: each request pays one extra **full-body content extraction (gjson parse of 50KB) + regex/vectorscan scan**, synchronously on the core path → added latency → RPS drops ~13% at fixed concurrency.
+3. **hooks-ON streaming**: on top of the above, the response is **streamed chunk by chunk** — content inspection requires tee buffering + per-chunk checkpoints + scanning the full response after the stream ends. This coordination introduces **waiting latency** (the gw is idle-waiting at this point, not CPU-saturated), so streaming shows the largest drop (~35%).
 
 ---
 
-## 2. 性能优化全历程：我们改了什么
+## 2. The full performance-optimization journey: what we changed
 
-起点：旧版 "hooks-OFF" 实测只有 ~70 RPS（0.54× Bifrost）。根因是**默认配置把缓存 + freshness + 请求改写全打开了**，每请求在 50KB body 上做大量无谓工作，其中 freshness 用 `(?i)` 正则对整个 body 逐关键词扫描，烧掉 99% CPU。
+Starting point: the old "hooks-OFF" build measured only ~70 RPS (0.54× Bifrost). Root cause: **the default configuration had cache + freshness + request rewriting all enabled**, doing large amounts of pointless work on the 50KB body per request — with freshness scanning the entire body keyword-by-keyword via a `(?i)` regex, burning 99% of CPU.
 
-按以下顺序逐项优化（均只改 Nexus 自己的代码）：
+Optimizations were applied in the following order (all changing only Nexus's own code):
 
-| # | 优化 | 机制 | 收益 |
+| # | Optimization | Mechanism | Gain |
 |---|---|---|---|
-| 1 | **freshness 正则 → 子串** | `(?i)` 正则（逐 rune NFA 大小写折叠）→ 预降小写关键词 + `strings.Contains`；候选文本每请求只降一次小写 | 大 body 上 ~1000×，判定完全一致（差分门绿） |
-| 2 | **缓存默认关、按需开** | L1 exact-match / L2 semantic / freshness / gemini provider 缓存默认全 OFF（prisma + Go store 兜底 + seed fixtures） | 开箱即精简直通；移除默认的缓存查找 + freshness 扫描 |
-| 3 | **请求改写族默认关** | `normaliser_enabled` / `marker_inject` / `marker_boundary3` 默认 OFF；移除 field-order 归一化 | 去掉 ~27% alloc + 篡改转发请求的风险，对性能/正确性双赢 |
-| 4 | **L1/L2 缓存层解耦** | 缓存阶段改为"L1 **或** L2 任一启用即工作"，各自独立门控；去掉 L1 充当总闸的混淆 | 修正 L1 关时 L2 被连带关掉的缺陷；差分门 pin |
-| 5 | **CP-UI 缓存风险提示** | L1/L2/Provider 三张卡加提示：缓存可选、每请求有开销、命中率低会拖累 | 让管理员理解利弊，少踩坑 |
+| 1 | **freshness regex → substring** | `(?i)` regex (rune-by-rune NFA case folding) → pre-lowercased keywords + `strings.Contains`; candidate text lowercased only once per request | ~1000× on large bodies, verdicts fully identical (differential gate green) |
+| 2 | **Cache off by default, opt-in** | L1 exact-match / L2 semantic / freshness / gemini provider cache all default OFF (prisma + Go store fallback + seed fixtures) | Lean passthrough out of the box; removes the default cache lookup + freshness scan |
+| 3 | **Request-rewrite family off by default (demand-driven)** | The upstream rewrite engine has no global switch: at `Reload` it derives `hasWork` from "are there enabled strip rules / does any provider have marker injection on"; with no config the whole segment short-circuits; `marker_inject` / `marker_boundary3` default OFF; removed field-order normalization (the L0 cache-key's `NormalizeKey` always runs) | Removes ~27% alloc + the risk of tampering with forwarded requests — a win for both performance and correctness; one fewer "forgot to enable the global switch" trap |
+| 4 | **L1/L2 cache layer decoupling** | Cache stage changed to "works if **either** L1 **or** L2 is enabled", each gated independently; removes the confusion of L1 acting as a master switch | Fixes the defect where disabling L1 also disabled L2; pinned by the differential gate |
+| 5 | **CP-UI cache risk hints** | Added hints to the L1/L2/Provider cards: cache is optional, has per-request overhead, and a low hit rate drags performance | Lets admins understand the trade-offs and avoid pitfalls |
 
-**审计旁路（关键架构事实）**：请求处理只把**原始字节**入队交给异步 audit writer goroutine；**zstd 压缩 + JSON marshal + 归一化全在异步 batch 路径**，payload/normalized 甚至延迟到**查看时**才解码计算。实测高负载下无 back-pressure → **审计旁路不碰核心链路**（这是一条 binding：旁路可以慢慢做，但绝不能影响核心链路）。
+**Audit side path (key architectural fact)**: request handling only enqueues the **raw bytes** to an async audit writer goroutine; **zstd compression + JSON marshal + normalization all happen on the async batch path**; payload/normalized are even deferred until **view time** to decode and compute. Measured under high load with no back-pressure → **the audit side path does not touch the core path** (this is a binding rule: the side path may work slowly, but must never affect the core path).
 
 ---
 
-## 3. 全维度对比数据（详细）
+## 3. Full-dimension comparison data (detailed)
 
-> 公平性说明：流式原始基线 Bifrost 是 256 token/请求、Nexus profile 默认 64，二者不可直接比 RPS/吞吐；已把 Nexus 对齐到 **256 token/请求** 重测。非流式输出 token 对 RPS 影响可忽略（响应体相对 50KB 输入极小）。
+> Fairness note: in the original streaming baselines, Bifrost was 256 tokens/request while the Nexus profile defaulted to 64 — the two are not directly comparable on RPS/throughput; Nexus was re-tested aligned to **256 tokens/request**. For non-streaming, the effect of output tokens on RPS is negligible (the response body is tiny relative to the 50KB input).
 
-### 3.1 非流式（裸网关，cache-OFF/hooks-OFF）
+### 3.1 Non-streaming (bare gateway, cache-OFF/hooks-OFF)
 
-| 并发 | Nexus RPS | Bifrost RPS | Nexus p95/p99 | Bifrost p95/p99 |
+| Concurrency | Nexus RPS | Bifrost RPS | Nexus p95/p99 | Bifrost p95/p99 |
 |---|---|---|---|---|
-| 100 | 6484（稳态） | 6377 | 38/68 | 38/74 |
+| 100 | 6484 (steady state) | 6377 | 38/68 | 38/74 |
 | 200 | 6390 | 6298 | 82/123 | 88/158 |
 | 400 | 6482 | 6119 | 126/172 | 165/291 |
-| 800 | 6635（稳态7352） | 6122 | 200/254 | 259/426 |
+| 800 | 6635 (steady state 7352) | 6122 | 200/254 | 259/426 |
 | 1200 | 6672 | 6143 | 278/316 | 363/586 |
 | 1600 | 6448 | 6018 | 357/422 | 454/679 |
 
-### 3.2 流式（裸网关，对齐 256 token）
+### 3.2 Streaming (bare gateway, aligned to 256 tokens)
 
-| 并发 | Nexus RPS | Bifrost RPS | Nexus tok/s | Bifrost tok/s | Nexus TTFT p95 | Bifrost TTFT p95 |
+| Concurrency | Nexus RPS | Bifrost RPS | Nexus tok/s | Bifrost tok/s | Nexus TTFT p95 | Bifrost TTFT p95 |
 |---|---|---|---|---|---|---|
 | 100 | 2996 | 1394 | 767k | 357k | 58 | 123 |
 | 800 | 3072 | 1352 | 787k | 346k | **292** | 2190 |
 | 1600 | 3089 | 1322 | 791k | 338k | **550** | 3455 |
 
-Bifrost 流式中继在高并发下尾延迟塌陷（p95 到 3455ms），Nexus 的 SSE 中继（passthrough + tee）分布极紧 → 2.2× 吞吐 + 6~7× 更好的尾延迟。
+Bifrost's streaming relay collapses on tail latency at high concurrency (p95 up to 3455ms); Nexus's SSE relay (passthrough + tee) keeps an extremely tight distribution → 2.2× throughput + 6~7× better tail latency.
 
-### 3.3 hooks-ON（5 个内容扫描 hook：pii-scanner / keyword-blocker / request-content-safety / pii-outbound-scanner / response-content-safety）
+### 3.3 hooks-ON (5 content-scanning hooks: pii-scanner / keyword-blocker / request-content-safety / pii-outbound-scanner / response-content-safety)
 
-| 场景 | Nexus hooks-ON | Bifrost | Nexus hooks-OFF | 备注 |
+| Scenario | Nexus hooks-ON | Bifrost | Nexus hooks-OFF | Notes |
 |---|---|---|---|---|
-| 非流式 RPS | 4891–5545 | 6018–6377 | 6484–7352 | 开 hook 掉 ~15%，比 Bifrost 低 ~13% |
-| 流式 RPS（256tok） | 802–989 | 1322–1394 | 2996–3089 | 开 hook 掉 ~3×，比 Bifrost 低 ~35% |
+| Non-streaming RPS | 4891–5545 | 6018–6377 | 6484–7352 | Hooks cost ~15%; ~13% below Bifrost |
+| Streaming RPS (256tok) | 802–989 | 1322–1394 | 2996–3089 | Hooks cost ~3×; ~35% below Bifrost |
 
-CPU：hooks-ON 非流式 gw 峰值 ~58%/1600%（hooks-OFF 41%）——**hooks 加了 CPU 但远未饱和**；流式时 gw 反而 idle-waiting（采样几乎为空）→ 流式瓶颈是**延迟/阻塞**不是 CPU。
+CPU: hooks-ON non-streaming gw peaks at ~58%/1600% (hooks-OFF 41%) — **hooks add CPU but stay far from saturation**; during streaming the gw is instead idle-waiting (samples almost empty) → the streaming bottleneck is **latency/blocking**, not CPU.
 
 ---
 
-## 4. 为什么 cache-on / hooks-on 会降速：机制详解
+## 4. Why cache-on / hooks-on slow things down: mechanisms in detail
 
-### 4.1 请求生命周期（裸 vs hooks-ON）
+### 4.1 Request lifecycle (bare vs hooks-ON)
 
 ```mermaid
 flowchart LR
-    A[客户端请求 50KB] --> B[鉴权/VK/quota/路由<br/>admissionStage ~22% CPU]
-    B --> C{cache 启用?}
-    C -->|否-默认| D[直接准备上游 body]
-    C -->|是| C1[freshness 检测 + L1键 + L1查找<br/>+ L2语义查找]
+    A[Client request 50KB] --> B[Auth/VK/quota/routing<br/>admissionStage ~22% CPU]
+    B --> C{cache enabled?}
+    C -->|No - default| D[Prepare upstream body directly]
+    C -->|Yes| C1[freshness check + L1 key + L1 lookup<br/>+ L2 semantic lookup]
     C1 --> D
-    D --> E{hooks 启用?}
-    E -->|否-默认| F[转发上游]
-    E -->|是| E1[<b>内容提取 gjson 解析50KB</b><br/>+ 5个hook扫描文本<br/>同步,加延迟]
+    D --> E{hooks enabled?}
+    E -->|No - default| F[Forward upstream]
+    E -->|Yes| E1[<b>Content extraction: gjson parse 50KB</b><br/>+ 5 hooks scan text<br/>synchronous, adds latency]
     E1 --> F
-    F --> G[读上游响应]
-    G --> H[入队原始字节<br/>→ 异步审计旁路]
-    H --> I[返回客户端]
-    H -.异步.-> J[zstd压缩+JSON marshal<br/>→ NATS缓冲]
-    J -.查看时.-> K[CP 解码+归一化]
+    F --> G[Read upstream response]
+    G --> H[Enqueue raw bytes<br/>→ async audit side path]
+    H --> I[Return to client]
+    H -.async.-> J[zstd compress + JSON marshal<br/>→ NATS buffer]
+    J -.at view time.-> K[CP decode + normalize]
 ```
 
-**核心链路**（影响延迟/RPS）：B→...→F→G→I。**旁路**（不影响核心链路）：H→J→K 全异步。
-每多开一个开关（cache / hooks），就在核心链路上插入一段**同步**工作 → 加延迟 → RPS 降。
+**Core path** (affects latency/RPS): B→...→F→G→I. **Side path** (does not affect the core path): H→J→K, fully async.
+Every additional switch (cache / hooks) inserts a segment of **synchronous** work on the core path → added latency → RPS drops.
 
-### 4.2 cache-on 为什么可能更慢
+### 4.2 Why cache-on can be slower
 
 ```mermaid
 flowchart TD
-    R[请求] --> K[计算缓存键<br/>归一化body]
-    K --> L{L1 命中?}
-    L -->|命中,少数| HIT[直接返回-省了上游往返]
-    L -->|未命中,多数| M{freshness规则?}
-    M --> N[L2 语义查找-embedding]
-    N --> UP[转发上游]
+    R[Request] --> K[Compute cache key<br/>normalize body]
+    K --> L{L1 hit?}
+    L -->|Hit, minority| HIT[Return directly - saves an upstream round trip]
+    L -->|Miss, majority| M{freshness rule?}
+    M --> N[L2 semantic lookup - embedding]
+    N --> UP[Forward upstream]
     style HIT fill:#9f9
     style M fill:#fdd
 ```
 
-- 缓存的收益只在**命中**时兑现（省一次上游往返）。
-- 但**每个请求**（含未命中）都要付：键计算 + 归一化 + L1 查找（+ L2 embedding）。
-- 历史上还要付 freshness 正则扫 50KB（已修）。
-- **命中率低时：所有请求付开销，极少请求拿收益 → 净亏损、更慢。** 这就是为什么缓存是 opt-in、且 UI 提示"命中率低会拖累系统"。
+- The cache's benefit is realized only on a **hit** (saving one upstream round trip).
+- But **every request** (including misses) pays: key computation + normalization + L1 lookup (+ L2 embedding).
+- Historically it also paid the freshness regex scan over 50KB (since fixed).
+- **When the hit rate is low: all requests pay the cost, very few reap the benefit → net loss, slower.** This is why the cache is opt-in and the UI warns "a low hit rate drags the system down".
 
-### 4.3 hooks-ON 非流式为什么慢 13%
+### 4.3 Why hooks-ON non-streaming is 13% slower
 
-profile 实测：开 5 个内容 hook 后，gjson 解析从 ~8% 升到 ~25% CPU。来源是 `extractRequestContentForHooks` → `adapter.ExtractRequest`：**为了找到要扫描的文本，必须把 50KB JSON 解析成内容段**（请求 + 响应各一次）。
+Measured via profile: with 5 content hooks enabled, gjson parsing rises from ~8% to ~25% CPU. The source is `extractRequestContentForHooks` → `adapter.ExtractRequest`: **to find the text to scan, the 50KB JSON must be parsed into content segments** (once for the request and once for the response).
 
 ```mermaid
 flowchart LR
-    B[50KB JSON body] --> X[ExtractRequest: gjson解析<br/>抽出所有文本段]
-    X --> S[rulepack引擎: 每段跑正则/vectorscan]
-    S --> D{命中PII/关键词?}
-    D -->|否,多数| OK[放行]
-    D -->|是| RED[脱敏span+改写转发body]
+    B[50KB JSON body] --> X[ExtractRequest: gjson parse<br/>extract all text segments]
+    X --> S[rulepack engine: run regex/vectorscan on each segment]
+    S --> D{PII/keyword hit?}
+    D -->|No, majority| OK[Allow]
+    D -->|Yes| RED[Redact spans + rewrite forwarded body]
 ```
 
-- 提取是**一次、跨 5 个 hook 共享**的（不是每 hook 重复），但 gjson 解析 50KB 本身就贵，且**同步在请求路径**。
-- 注意：原 handoff 担心的 cgo 调度税（pthread_cond_wait 31%、900万次上下文切换）**已被之前的 cgo-scan-semaphore + GC稳定 scratch-ring 提交修复**——当前 profile 里看不到它了。所以现在 hooks-ON 非流式的瓶颈是 **gjson 内容提取**，不是 cgo 扫描。
+- Extraction is done **once and shared across the 5 hooks** (not repeated per hook), but a gjson parse of 50KB is expensive in itself, and it is **synchronous on the request path**.
+- Note: the cgo scheduling tax the original handoff worried about (pthread_cond_wait 31%, 9 million context switches) **was already fixed by the earlier cgo-scan-semaphore + GC-stable scratch-ring commits** — it no longer appears in the current profile. So the current hooks-ON non-streaming bottleneck is **gjson content extraction**, not cgo scanning.
 
-### 4.4 hooks-ON 流式为什么慢 3×（最难）
+### 4.4 Why hooks-ON streaming is 3× slower (the hardest one)
 
 ```mermaid
 flowchart TD
-    UP[上游逐块流式响应] --> T[tee: 一路实时转发客户端<br/>一路缓冲攒整段]
-    T --> RELAY[chunked_async: 每8192字节checkpoint<br/>实时转发]
-    T --> SCAN[流结束后扫描整段响应<br/>响应hook: PII/内容安全]
-    RELAY --> C[客户端]
-    SCAN -.审计/标记.-> AUD[审计]
+    UP[Upstream chunked streaming response] --> T[tee: one leg forwards to client in real time<br/>one leg buffers the full body]
+    T --> RELAY[chunked_async: checkpoint every 8192 bytes<br/>real-time forwarding]
+    T --> SCAN[Scan full response after stream ends<br/>response hooks: PII/content safety]
+    RELAY --> C[Client]
+    SCAN -.audit/labels.-> AUD[Audit]
     style SCAN fill:#fdd
 ```
 
-- 流式下，响应不是一次到齐，而是逐块。内容检查需要 **tee 缓冲 + 分块 checkpoint + 流结束后扫描整段**。
-- 这套协调（每流的缓冲/同步/收尾）引入**等待延迟**——实测 gw 此时 CPU 采样几乎为空（idle-waiting），证明瓶颈是**阻塞/协调延迟**，不是算力。
-- 固定并发下，每流耗时变长 → 并发槽位被占住 → RPS 大幅下降。
-- 这是**结构性**的：你在对比"逐块检查每字节的响应" vs "无脑转发字节"。Bifrost 什么都不做，所以快。
+- Under streaming, the response does not arrive all at once but chunk by chunk. Content inspection requires **tee buffering + per-chunk checkpoints + a full-body scan after the stream ends**.
+- This coordination (per-stream buffering/synchronization/teardown) introduces **waiting latency** — measured gw CPU samples are almost empty at this point (idle-waiting), proving the bottleneck is **blocking/coordination latency**, not compute.
+- At fixed concurrency, each stream takes longer → concurrency slots stay occupied → RPS drops sharply.
+- This is **structural**: you are comparing "inspecting every byte of the response chunk by chunk" vs "blindly forwarding bytes". Bifrost does nothing, so it is fast.
 
 ---
 
-## 5. 各开关/功能：作用与利弊
+## 5. Each switch/feature: purpose and trade-offs
 
-| 开关 / 功能 | 作用 | 利 | 弊（性能） | 默认 |
+| Switch / feature | Purpose | Benefit | Cost (performance) | Default |
 |---|---|---|---|---|
-| **L1 响应缓存** | exact-match 命中直接返回 | 命中省整次上游往返 | 每请求键计算+查找；命中率低净亏 | OFF |
-| **L2 语义缓存** | embedding 相似命中 | 近似 query 也能命中 | 每请求 embedding 计算，更重 | OFF |
-| **freshness 规则** | 时效性 query 跳过缓存 | 避免返回过期答案 | 命中跳过全部缓存层（设计如此） | OFF |
-| **请求改写/归一化** | 调整转发 body 提升上游缓存命中 | 上游 provider 缓存命中率↑ | 解析+改写 body，有篡改风险 | OFF |
-| **gemini provider 缓存** | 上游 Gemini 上下文缓存标记 | 省上游 token 成本 | 仅 gemini；标记注入开销 | OFF |
-| **内容 hooks（PII/合规）** | 逐请求扫描+脱敏 | **合规刚需**：拦截/脱敏敏感数据 | 非流式 +提取扫描；流式 +缓冲协调 | OFF |
-| **payload capture** | 存请求/响应体到审计 | 可审计、可回溯 | 异步旁路，不碰核心链路 | OFF |
-| **审计（block 模式）** | 100% 持久不丢 | 合规/计费可信 | 旁路缓冲在 NATS；优雅背压 | ON |
-| **streaming chunked_async** | 实时转发+仅审计 hook | 流式实时性 | 比纯 passthrough 略重 | chunked_async |
+| **L1 response cache** | Return directly on exact-match hit | A hit saves an entire upstream round trip | Per-request key computation + lookup; net loss when hit rate is low | OFF |
+| **L2 semantic cache** | Hit via embedding similarity | Similar queries can also hit | Per-request embedding computation, heavier | OFF |
+| **freshness rules** | Time-sensitive queries skip the cache | Avoids returning stale answers | A match skips all cache layers (by design) | OFF |
+| **Request rewrite/normalization** | Adjust forwarded body to improve upstream cache hits | Upstream provider cache hit rate ↑ | Parse + rewrite body, tampering risk | OFF |
+| **gemini provider cache** | Upstream Gemini context-cache markers | Saves upstream token cost | gemini only; marker injection overhead | OFF |
+| **Content hooks (PII/compliance)** | Per-request scanning + redaction | **Compliance necessity**: block/redact sensitive data | Non-streaming: + extraction & scan; streaming: + buffering & coordination | OFF |
+| **payload capture** | Store request/response bodies for audit | Auditable, traceable | Async side path, does not touch the core path | OFF |
+| **Audit (block mode)** | 100% persistent, no loss | Trustworthy for compliance/billing | Side-path buffering in NATS; graceful back-pressure | ON |
+| **streaming chunked_async** | Real-time forwarding + audit-only hooks | Streaming real-time behavior | Slightly heavier than pure passthrough | chunked_async |
 
-**选型建议**：默认全精简直通即可获得最佳吞吐；只有**真实业务需要**时再开对应开关，并知晓其每请求代价。合规场景（必须 PII 脱敏）应接受 hooks-ON 的开销——它换来的是数据安全，而非性能。
-
----
-
-## 6. hooks-ON 还能优化的方向（路线图）
-
-当前 hooks-ON 未追平 Bifrost。可挖的杠杆（按预期收益排序）：
-
-1. **非命中路径免结构化提取**：先用合并的 vectorscan DB 扫**原始字节**一遍；无命中（绝大多数请求）直接放行，**跳过 50KB gjson 解析**；仅命中时才做结构化提取+脱敏地址映射。预期显著降非流式延迟。
-2. **跨 hook 单次扫描**：同 stage 所有正则类 hook 规则合并成一个 Vectorscan DB，扫一次、按 pattern-ID demux 回各 hook（cgo 税已修，此项主要省扫描字节量）。
-3. **流式增量脱敏**：响应边流边扫（滑动窗口处理跨块模式），避免"攒整段再扫"的协调延迟——这是流式追平的关键，也是最难的工程。
-4. **共享提取**：cache/audit/hook 三处对同一 body 的解析合一（lazy 物化一次共享）。
-
-> 诚实结论：在做**真实强制脱敏**的前提下，hooks-ON 流式很难"远超"一个什么都不做的裸代理；现实目标是**把开销压到可接受**（接近持平）。上述 #1/#3 是达成"非流式持平、流式可接受"的主要路径。
+**Selection advice**: the all-lean passthrough default already yields the best throughput; enable a switch only when a **real business need** exists, knowing its per-request cost. Compliance scenarios (PII redaction is mandatory) should accept the hooks-ON overhead — it buys data safety, not performance.
 
 ---
 
-## 7. 复现实验的命令（rig 就绪）
+## 6. Remaining hooks-ON optimization directions (roadmap)
 
-- 构建（**必须在 EC2 上**，否则 vectorscan 链接出错）：`CGO_LDFLAGS="-lstdc++ -lm" go build -tags vectorscan ...`
-- 压测（loadtest 机）：`/usr/local/bin/loadtest -config <profile> -target http://172.31.0.36:3050/v1/chat/completions -vk <bench-vk> -model mock-gpt-4o -stages 100:20s,200:20s,400:20s,800:25s,1200:25s,1600:25s -out <dir>`
-- 流式对齐 256tok：用 `max_tokens=256` 的 profile。
-- 启用 hooks：`update "HookConfig" set enabled=true where name in (...)` → 重启 hub→cp→gw → 确认 `hook_configs size=5`。
-- 抓 profile：`kill -USR1 <gw MainPID>` → `/var/log/nexus-pprof/` → `go tool pprof -top`。
+hooks-ON has not yet caught up with Bifrost. Available levers (ordered by expected gain):
+
+1. **Skip structured extraction on the no-hit path**: first scan the **raw bytes** once with a merged vectorscan DB; on no hit (the vast majority of requests) allow directly, **skipping the 50KB gjson parse**; only on a hit do structured extraction + redaction address mapping. Expected to significantly reduce non-streaming latency.
+2. **Single scan across hooks**: merge all regex-class hook rules of the same stage into one Vectorscan DB, scan once, demux back to each hook by pattern ID (the cgo tax is already fixed; this mainly saves scanned bytes).
+3. **Streaming incremental redaction**: scan the response as it streams (sliding window to handle cross-chunk patterns), avoiding the coordination latency of "buffer the whole body, then scan" — this is the key to streaming parity and the hardest engineering.
+4. **Shared extraction**: unify the three parses of the same body by cache/audit/hook (lazily materialize once and share).
+
+> Honest conclusion: with **real enforced redaction** in place, hooks-ON streaming can hardly "far exceed" a bare proxy that does nothing; the realistic goal is to **push the overhead down to acceptable** (close to parity). Items #1/#3 above are the main path to "non-streaming parity, streaming acceptable".
 
 ---
 
-*结果文件：rig `/var/log/perf/`（bifrost-* / nexus-lean-* / nexus-hookson-*）。profile：rig `/var/log/nexus-pprof/`。*
+## 7. Commands to reproduce the experiments (rig ready)
+
+- Build (**must be on EC2**, otherwise vectorscan linking fails): `CGO_LDFLAGS="-lstdc++ -lm" go build -tags vectorscan ...`
+- Load test (loadtest machine): `/usr/local/bin/loadtest -config <profile> -target http://172.31.0.36:3050/v1/chat/completions -vk <bench-vk> -model mock-gpt-4o -stages 100:20s,200:20s,400:20s,800:25s,1200:25s,1600:25s -out <dir>`
+- Streaming aligned to 256tok: use a profile with `max_tokens=256`.
+- Enable hooks: `update "HookConfig" set enabled=true where name in (...)` → restart hub→cp→gw → confirm `hook_configs size=5`.
+- Capture a profile: `kill -USR1 <gw MainPID>` → `/var/log/nexus-pprof/` → `go tool pprof -top`.
+
+---
+
+*Result files: rig `/var/log/perf/` (bifrost-* / nexus-lean-* / nexus-hookson-*). Profiles: rig `/var/log/nexus-pprof/`.*

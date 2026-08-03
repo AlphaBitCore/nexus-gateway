@@ -424,16 +424,6 @@ kinds:
           tier: confirm
           iamAction: iam.ResourceSettings.Action(iam.VerbUpdate)
         - method: GET
-          path: /api/admin/cache/global
-          operationId: cacheGetGlobal
-          tier: auto
-          iamAction: iam.ResourcePromptCache.Action(iam.VerbRead)
-        - method: PUT
-          path: /api/admin/cache/global
-          operationId: cachePutGlobal
-          tier: confirm
-          iamAction: iam.ResourcePromptCache.Action(iam.VerbUpdate)
-        - method: GET
           path: /api/admin/cache/overrides
           operationId: cacheListOverrides
           tier: auto

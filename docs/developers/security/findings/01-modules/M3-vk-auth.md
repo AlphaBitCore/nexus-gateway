@@ -26,7 +26,7 @@
 ---
 
 ## SEC-M3-02 — Virtual key accepted as `?key=` URL query parameter  
-> **STATUS: FIXED** (2026-06-09) — removed the Gemini `?key=` URL-query VK carrier from `extractVKToken` entirely; only the `x-goog-api-key` header carries the VK (what real Gemini SDKs use). Removal also closes the OpenAI-route `x-nexus-aigw-body-format: gemini` escalation (no carrier left to inherit). Breaks kill-chains A1-KC4 / W-A6-4 / the A2 VK-in-URL replay. Regression: `TestExtractVKToken_Gemini_QueryParam_NotAccepted`.
+> **STATUS: FIXED** (2026-06-09) — removed the Gemini `?key=` URL-query VK carrier from `extractVKToken` entirely; only the `x-goog-api-key` header carries the VK (what real Gemini SDKs use). Removal also closes the OpenAI-route `x-nexus-aigw-body-format: gemini` escalation (no carrier left to inherit). Breaks kill-chains A1-KC4 / W-A6-4 / the A2 VK-in-URL replay. Regression: `TestExtractVKToken_Gemini_QueryParam_NotAccepted`. The `x-nexus-aigw-body-format` override header has since been removed outright, so remediation item (3) below is moot and no route can flip its ingress format to inherit another format's carrier.
 
 ### (original) — plaintext VK leaks to fronting-proxy/LB access logs, browser history, on-path Referer — **MEDIUM** (3/3)
 

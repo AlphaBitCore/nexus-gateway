@@ -17,7 +17,7 @@ the design rationale is captured in
 
 ## Prerequisites
 
-- Go 1.25+, Node 20+, Packer 1.10+.
+- Go 1.26+, Node 20+, Packer 1.10+.
 - AWS credentials with `AWS_PROFILE=<profile>` exporting EC2 + S3 + IAM
   permissions in `us-east-1`.
 - A `t3.medium` or larger key pair on the target account if you intend to

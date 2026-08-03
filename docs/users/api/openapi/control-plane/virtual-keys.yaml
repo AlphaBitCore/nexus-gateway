@@ -111,8 +111,9 @@ paths:
                 Only `name` is unconditionally required. `vkType` defaults to "application"
                 when omitted, and `allowedModels` defaults to an empty list. When the
                 resolved type is "application", `projectId` and `expiresAt` become required,
-                `expiresAt` must not exceed three months from now, and the key is created in
-                "pending" status awaiting approval; other types are created "active".
+                `expiresAt` must be in the future (its distance is not bounded), and the key
+                is created in "pending" status awaiting approval; other types are created
+                "active".
 
                 Names must be unique: application keys share one deployment-wide namespace,
                 and personal keys are unique per owner. A taken name is rejected with 409
@@ -155,7 +156,24 @@ paths:
                                         - "null"
                                     description: Per-minute request limit for the compare endpoint.
                                 allowedModels:
-                                    description: Allowed-model allowlist as a JSON value. Defaults to an empty list when omitted.
+                                    description: |-
+                                        Allowlist of models this key may call, as an array of
+                                        {providerId, modelId} objects. An empty array (the default when
+                                        omitted) allows all models. The AI Gateway matches each request
+                                        against these provider + model ids; a body that is not an array
+                                        of {providerId, modelId} objects (e.g. bare model-code strings)
+                                        is rejected with 400 validation_error.
+                                    type: array
+                                    items:
+                                        type: object
+                                        properties:
+                                            providerId:
+                                                type: string
+                                            modelId:
+                                                type: string
+                                        required:
+                                            - providerId
+                                            - modelId
                                 vkType:
                                     type: string
                                     description: Virtual key type. Defaults to "application" when omitted.
@@ -167,7 +185,7 @@ paths:
                                         - string
                                         - "null"
                                     format: date-time
-                                    description: Expiry timestamp. Required for application keys and must not exceed three months from now.
+                                    description: Expiry timestamp. Required for application keys and must be in the future; the distance is not bounded.
                             required:
                                 - name
                         example:
@@ -175,8 +193,8 @@ paths:
                             projectId: 1f0b9c2d-3e4f-5061-7283-94a5b6c7d8e9
                             vkType: application
                             allowedModels:
-                                - gpt-4o
-                                - claude-sonnet-4-6
+                                - providerId: 1f0b9c2d-3e4f-5061-7283-94a5b6c7d8e9
+                                  modelId: 7a8b9c0d-1e2f-3a4b-5c6d-7e8f90a1b2c3
                             enabled: true
                             expiresAt: 2026-04-15T00:00:00Z
             responses:
@@ -235,7 +253,8 @@ paths:
                                 projectId: 1f0b9c2d-3e4f-5061-7283-94a5b6c7d8e9
                                 enabled: true
                                 allowedModels:
-                                    - gpt-4o
+                                    - providerId: 1f0b9c2d-3e4f-5061-7283-94a5b6c7d8e9
+                                      modelId: 7a8b9c0d-1e2f-3a4b-5c6d-7e8f90a1b2c3
                                 key: nvk_a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90
                                 createdAt: 2026-01-15T08:30:00Z
                                 updatedAt: 2026-01-15T08:30:00Z
@@ -283,11 +302,11 @@ paths:
             description: |-
                 Updates mutable fields of a virtual key. All body fields are optional;
                 omitted fields are left unchanged. For **application** keys the same
-                governance cap as create/renew applies to any `expiresAt` change: it must
-                be present (a null `expiresAt` — never-expire — is rejected) and must not
-                exceed three months from now. For **personal** keys `expiresAt` is
-                uncapped and a null value clears the expiry. Non-super-admin callers may
-                only update keys they own. The data plane cache is invalidated so the
+                expiry rule as create/renew applies to any `expiresAt` change: it must be
+                present (a null `expiresAt` — never-expire — is rejected) and in the
+                future; the distance is not bounded. For **personal** keys `expiresAt` is
+                unrestricted and a null value clears the expiry. Non-super-admin callers
+                may only update keys they own. The data plane cache is invalidated so the
                 change takes effect immediately.
             x-nexus-iam-action: iam.ResourceVirtualKey.Action(iam.VerbUpdate)
             x-nexus-tier: confirm
@@ -331,7 +350,23 @@ paths:
                                         - "null"
                                     description: Per-minute request limit for the compare endpoint.
                                 allowedModels:
-                                    description: Allowed-model allowlist as a JSON value. Left unchanged when omitted.
+                                    description: |-
+                                        Allowlist of models this key may call, as an array of
+                                        {providerId, modelId} objects; an empty array allows all models.
+                                        Left unchanged when omitted. A body that is not an array of
+                                        {providerId, modelId} objects is rejected with 400
+                                        validation_error.
+                                    type: array
+                                    items:
+                                        type: object
+                                        properties:
+                                            providerId:
+                                                type: string
+                                            modelId:
+                                                type: string
+                                        required:
+                                            - providerId
+                                            - modelId
                                 expiresAt:
                                     type:
                                         - string
@@ -339,13 +374,14 @@ paths:
                                     format: date-time
                                     description: |-
                                         Expiry timestamp. Omit to leave unchanged. For application keys it must
-                                        be non-null and within three months from now (null/never-expire and dates
-                                        beyond the cap are rejected). For personal keys, pass null to clear.
+                                        be non-null and in the future (null/never-expire and past dates are
+                                        rejected); the distance is not bounded. For personal keys, pass null to clear.
                         example:
                             enabled: false
                             rateLimitRpm: 120
                             allowedModels:
-                                - gpt-4o
+                                - providerId: 1f0b9c2d-3e4f-5061-7283-94a5b6c7d8e9
+                                  modelId: 7a8b9c0d-1e2f-3a4b-5c6d-7e8f90a1b2c3
             responses:
                 "404":
                     description: Not Found
@@ -597,7 +633,7 @@ paths:
             summary: Renew an active virtual key
             description: |-
                 Extends the expiry of an active application virtual key. `expiresAt` is
-                required, must be in the future, and must not exceed three months from now.
+                required and must be in the future; the distance is not bounded.
                 The data plane cache is invalidated so the new expiry takes effect on the
                 next request. Returns 404 when the key is not found, not active, or not an
                 active application key.
@@ -620,7 +656,7 @@ paths:
                                 expiresAt:
                                     type: string
                                     format: date-time
-                                    description: New expiry. Must be in the future and within three months from now.
+                                    description: New expiry. Must be in the future; the distance is not bounded.
                             required:
                                 - expiresAt
                         example:
@@ -754,7 +790,21 @@ components:
                         - integer
                         - "null"
                 allowedModels:
-                    description: arbitrary JSON value
+                    description: |-
+                        Allowlist of models this key may call, as an array of
+                        {providerId, modelId} objects. An empty array means all models
+                        are allowed.
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            providerId:
+                                type: string
+                            modelId:
+                                type: string
+                        required:
+                            - providerId
+                            - modelId
                 ownerId:
                     type:
                         - string

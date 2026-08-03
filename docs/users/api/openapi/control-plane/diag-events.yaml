@@ -166,6 +166,21 @@ paths:
                 unparseable value, or supplying from >= to is rejected with HTTP 400.
             x-nexus-iam-action: iam.ResourceObservability.Action(iam.VerbRead)
             x-nexus-tier: auto
+            parameters:
+                - name: from
+                  in: query
+                  required: true
+                  description: Inclusive start of the requested time window in RFC3339 format.
+                  schema:
+                    type: string
+                    format: date-time
+                - name: to
+                  in: query
+                  required: true
+                  description: Exclusive end of the requested time window in RFC3339 format. Must be later than from.
+                  schema:
+                    type: string
+                    format: date-time
             responses:
                 "503":
                     description: Database is not configured / unavailable.
@@ -234,6 +249,20 @@ paths:
             x-nexus-iam-action: iam.ResourceObservability.Action(iam.VerbRead)
             x-nexus-tier: auto
             parameters:
+                - name: from
+                  in: query
+                  required: true
+                  description: Inclusive start of the requested time window in RFC3339 format.
+                  schema:
+                    type: string
+                    format: date-time
+                - name: to
+                  in: query
+                  required: true
+                  description: Exclusive end of the requested time window in RFC3339 format. Must be later than from.
+                  schema:
+                    type: string
+                    format: date-time
                 - name: nodeType
                   in: query
                   required: false

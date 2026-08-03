@@ -35,6 +35,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 // Case-insensitive — yaml convention varies (camelCase in Go services,
 // snake_case in legacy configs). Match against the LAST word of the key.
@@ -95,21 +96,36 @@ function listYamlFiles() {
   } else {
     cmd = 'git ls-files "*.yaml" "*.yml" "*.yaml.example" "packages/**/*.yaml" "packages/**/*.yaml.example"';
   }
+  // A git failure (e.g. .git/index.lock held by a parallel session) must fail
+  // the gate — an empty list is indistinguishable from "nothing to check" and
+  // would pass vacuously.
+  let out;
   try {
-    const out = execSync(cmd, { encoding: 'utf-8' });
-    return out
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => /\.(ya?ml(\.example)?)$/.test(s))
-      .filter((s) => !EXCLUDE_PATH_RE.test(s));
-  } catch {
-    return [];
+    out = execSync(cmd, { encoding: 'utf-8' });
+  } catch (err) {
+    console.error(`check-no-yaml-secrets: git file listing failed (${err.message.trim()}); refusing to pass on an empty list.`);
+    process.exit(2);
   }
+  return out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => /\.(ya?ml(\.example)?)$/.test(s))
+    .filter((s) => !EXCLUDE_PATH_RE.test(s));
 }
 
 function readFile(path) {
+  // In --staged mode read the INDEX blob — the content that would actually be
+  // committed — never the working tree, which may carry unstaged edits on a
+  // partially staged file.
   try {
-    return execSync(`cat "${path}"`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    if (STAGED) {
+      return execSync(`git show :"${path}"`, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    }
+    return readFileSync(path, 'utf-8');
   } catch {
     return null;
   }

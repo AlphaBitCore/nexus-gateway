@@ -114,7 +114,7 @@ If you are about to edit code in an area that is genuinely **not** covered by an
 | Multi-endpoint coordination, per-endpoint-kind routing fan-out | `docs/developers/architecture/cross-cutting/foundation/multi-endpoint-coordination-architecture.md` |
 | `packages/shared/transport/mq/**`, NATS JetStream subjects / streams / consumers, MQ-vs-HTTP/WS decision | `docs/developers/architecture/cross-cutting/foundation/mq-architecture.md` |
 | `packages/nexus-hub/internal/jobs/**`, cron jobs, retention purge, drift check | `docs/developers/architecture/cross-cutting/foundation/jobs-architecture.md` |
-| Response metadata envelope (`nexus.*` markers: version, cost, model, cache status, routing) | `docs/developers/architecture/cross-cutting/foundation/nexus-response-markers.md` |
+| Nexus HTTP header contract — response markers (via / cache / routing / quota / hook chains) and request headers (VK carriers, correlation, feature flags, CORS allowlist composition) | `docs/developers/architecture/cross-cutting/foundation/nexus-headers.md` |
 
 ## Cross-cutting — observability
 
@@ -173,6 +173,7 @@ If you are about to edit code in an area that is genuinely **not** covered by an
 | Editing area / file glob | Read FIRST |
 |---|---|
 | `nexus-ami/**` — Packer template, install / first-boot / harden scripts, prod-shape `*.config.yaml`, systemd unit files for the AMI / bare-metal appliance form factor | `docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md` |
+| `docker/**`, `deploy/**`, `scripts/release/**` — container image Dockerfiles, the quickstart `docker compose` stack, and the release build/tag/publish scripts | `docs/developers/architecture/cross-cutting/deployment/container-image-architecture.md` |
 
 ## Adding a new arch doc
 

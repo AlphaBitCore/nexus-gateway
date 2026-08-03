@@ -1,0 +1,455 @@
+# Hand-maintained OpenAPI spec for the AI Gateway data-plane video ingress
+# (e88-s6). Verified claim-by-claim against the AI Gateway source (the single
+# source of truth): the route mounts in
+# packages/ai-gateway/cmd/ai-gateway/wiring/routes.go, the parallel handlers in
+# packages/ai-gateway/internal/ingress/proxy/{video_handler,video_follow_handler,
+# video_content_handler,video_veo}.go, the multipart parser in
+# packages/ai-gateway/internal/ingress/videoproxy/parse.go, the job store in
+# packages/ai-gateway/internal/platform/store/asyncjob/, and the Veo codec in
+# packages/ai-gateway/internal/providers/specs/gemini/codec/videos.go.
+# Field names, types, optionality, status codes, and error envelopes mirror the
+# code. See docs/developers/specs/e88-s6-video-async.md.
+#
+# Async note: video is the FIRST async endpoint kind — submit returns a JOB
+# object (not a completion), and the client polls / downloads / deletes by id.
+# The gateway owns a correlation store (gateway_async_job) that binds the
+# provider job id -> virtual key -> submit-time credential; every follow-up is
+# authz'd on that row (unknown / foreign id -> 404 non-disclosure, never
+# forwarded upstream).
+openapi: 3.1.0
+info:
+    title: Nexus AI Gateway — Video generation (/v1/videos)
+    version: dev
+    description: |-
+        The AI Gateway video ingress (async). `POST /v1/videos` submits a
+        generation job as `multipart/form-data` and returns a video **job
+        object** (status `queued` / `in_progress`), NOT a completion. The
+        client then polls `GET /v1/videos/{id}` until `status = completed`,
+        downloads the artifact with `GET /v1/videos/{id}/content`, and may
+        cancel with `DELETE /v1/videos/{id}`.
+
+        These are parallel handlers (not the small-JSON ServeProxy pipeline):
+        the submit is a large multipart upload and the follow-ups are governed
+        passthroughs keyed by a gateway-owned correlation store. The submit is
+        governed like image generation — virtual-key auth, per-VK rate limit,
+        a per-VK non-terminal-jobs render cap, the request-side compliance hook
+        pipeline over the `prompt` (a content match hard-blocks 403
+        `GENERATIVE_PROMPT_BLOCKED` even observe-only; the video output is an
+        uninspectable artifact so the prompt is the only control point), and an
+        advisory cost check. The `input_reference` image is NOT scanned.
+
+        Canonical = OpenAI `/v1/videos`. When routing resolves an
+        OpenAI-shape provider the submit is native passthrough; when it
+        resolves a Google Gemini provider the **Veo cross-shape leg** applies —
+        the codec translates canonical <-> Veo `:predictLongRunning` +
+        long-running operations, with per-leg capability differences
+        (video-variant only, best-effort local delete, lossy size mapping).
+
+        Cost (single cost-bearing row): the submit row stamps
+        `requested seconds x per-second price` (estimate-as-floor); the poll
+        that first observes completion reconciles live quota with the same
+        seconds x price value; poll / content / delete rows stamp $0.
+servers:
+    - url: https://gateway.example.com
+      description: AI Gateway base URL (deployment-specific)
+security:
+    - virtualKey: []
+    - bearerVirtualKey: []
+tags:
+    - name: Videos
+      description: Async video generation, poll, download, and delete.
+paths:
+    /v1/videos:
+        post:
+            tags: [Videos]
+            operationId: createVideo
+            summary: Submit a video generation job (multipart)
+            description: |-
+                Submit a generation job. The body is `multipart/form-data`
+                (what the official SDKs send). Returns a video job object with
+                a status of `queued` or `in_progress` — the render runs
+                asynchronously; poll `GET /v1/videos/{id}` for completion.
+            requestBody:
+                required: true
+                content:
+                    multipart/form-data:
+                        schema:
+                            $ref: '#/components/schemas/VideoCreateForm'
+            responses:
+                '200':
+                    description: Job accepted and correlated.
+                    headers:
+                        X-Nexus-Coerced:
+                            $ref: '#/components/headers/XNexusCoerced'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VideoJob'
+                '400':
+                    $ref: '#/components/responses/BadRequest'
+                '401':
+                    $ref: '#/components/responses/Unauthorized'
+                '403':
+                    $ref: '#/components/responses/PromptBlocked'
+                '404':
+                    $ref: '#/components/responses/NoProvider'
+                '413':
+                    $ref: '#/components/responses/TooLarge'
+                '429':
+                    $ref: '#/components/responses/RateLimited'
+                '502':
+                    $ref: '#/components/responses/UpstreamError'
+                '503':
+                    $ref: '#/components/responses/StoreUnavailable'
+        get:
+            tags: [Videos]
+            operationId: listVideos
+            summary: Not served (returns a 404 envelope)
+            description: |-
+                Listing is deliberately not served: the provider list is
+                account-wide and would leak other virtual keys' jobs. Poll a
+                specific job by id instead. Returns an OpenAI-shaped 404
+                envelope with `code = VIDEO_LIST_UNSUPPORTED` (not a bare
+                text 404).
+            responses:
+                '404':
+                    $ref: '#/components/responses/Unsupported'
+    /v1/videos/{id}:
+        parameters:
+            - $ref: '#/components/parameters/VideoId'
+        get:
+            tags: [Videos]
+            operationId: getVideo
+            summary: Poll a video job
+            description: |-
+                Return the job object's current state. The gateway relays the
+                provider's job object verbatim (the OpenAI leg) or the codec's
+                canonical translation (the Veo leg); `expires_at` reaches the
+                caller on every poll. The first poll that observes a terminal
+                state reconciles the job's live quota. An unknown or foreign
+                id is a 404 non-disclosure (never forwarded upstream); a
+                retention-expired job is a 410.
+            responses:
+                '200':
+                    description: The current job object.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VideoJob'
+                '401':
+                    $ref: '#/components/responses/Unauthorized'
+                '404':
+                    $ref: '#/components/responses/JobNotFound'
+                '410':
+                    $ref: '#/components/responses/JobExpired'
+                '429':
+                    $ref: '#/components/responses/RateLimited'
+                '502':
+                    $ref: '#/components/responses/UpstreamError'
+                '503':
+                    $ref: '#/components/responses/StoreUnavailable'
+        delete:
+            tags: [Videos]
+            operationId: deleteVideo
+            summary: Cancel / delete a video job
+            description: |-
+                Relay a provider delete (OpenAI leg) or mark the job canceled
+                locally (Veo leg — Veo long-running operations are not
+                client-deletable, so the provider-side render continues to
+                completion and is still billed). Returns the canonical
+                deletion object.
+            responses:
+                '200':
+                    description: The deletion object.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VideoDeleted'
+                '401':
+                    $ref: '#/components/responses/Unauthorized'
+                '404':
+                    $ref: '#/components/responses/JobNotFound'
+                '410':
+                    $ref: '#/components/responses/JobExpired'
+                '502':
+                    $ref: '#/components/responses/UpstreamError'
+                '503':
+                    $ref: '#/components/responses/StoreUnavailable'
+    /v1/videos/{id}/content:
+        parameters:
+            - $ref: '#/components/parameters/VideoId'
+            - name: variant
+              in: query
+              required: false
+              description: |-
+                  Which artifact to download. The OpenAI leg passes
+                  `video` / `thumbnail` / `spritesheet` through; the Veo leg
+                  serves `video` only (any other value -> 400).
+              schema:
+                  type: string
+                  enum: [video, thumbnail, spritesheet]
+                  default: video
+        get:
+            tags: [Videos]
+            operationId: getVideoContent
+            summary: Download the generated artifact (streamed)
+            description: |-
+                Stream the artifact bytes through the gateway. The response is
+                the raw artifact with the provider's Content-Type (restricted
+                to `video/mp4`, `image/jpeg`, `image/png`, `image/webp`),
+                `X-Content-Type-Options: nosniff`, and
+                `Content-Disposition: attachment`. The gateway fingerprints
+                what it relays (sha256 / size) but stores no artifact bytes.
+                A hard 1 GiB ceiling applies: a declared-oversize artifact is a
+                502 before any byte; a mid-stream overflow aborts the
+                connection (never a silent short file). On the Veo leg the
+                gateway re-polls the operation and dereferences the provider
+                artifact URI under an SSRF + host-allow-list guard.
+            responses:
+                '200':
+                    description: The artifact bytes.
+                    headers:
+                        Content-Disposition:
+                            schema: { type: string }
+                            description: Always `attachment`.
+                        X-Content-Type-Options:
+                            schema: { type: string }
+                            description: Always `nosniff`.
+                    content:
+                        video/mp4:
+                            schema: { type: string, format: binary }
+                        image/jpeg:
+                            schema: { type: string, format: binary }
+                        image/png:
+                            schema: { type: string, format: binary }
+                        image/webp:
+                            schema: { type: string, format: binary }
+                '400':
+                    $ref: '#/components/responses/BadRequest'
+                '401':
+                    $ref: '#/components/responses/Unauthorized'
+                '404':
+                    $ref: '#/components/responses/JobNotFound'
+                '410':
+                    $ref: '#/components/responses/JobExpired'
+                '502':
+                    $ref: '#/components/responses/ContentUpstreamError'
+                '503':
+                    $ref: '#/components/responses/StoreUnavailable'
+components:
+    securitySchemes:
+        virtualKey:
+            type: apiKey
+            in: header
+            name: x-nexus-virtual-key
+            description: A gateway virtual key.
+        bearerVirtualKey:
+            type: http
+            scheme: bearer
+            description: The virtual key as a Bearer token (`Authorization: Bearer <vk>`).
+    parameters:
+        VideoId:
+            name: id
+            in: path
+            required: true
+            description: |-
+                The job id returned by submit. On the Veo leg this is the
+                opaque `veo_`-prefixed encoding of the provider operation name.
+            schema:
+                type: string
+    headers:
+        XNexusCoerced:
+            description: |-
+                Present when the gateway losslessly could not preserve a
+                parameter and coerced it (Veo leg — e.g. an OpenAI pixel
+                `size` mapped to `aspectRatio` + `resolution`). A
+                comma-separated list of `field:from->to` markers.
+            schema:
+                type: string
+    schemas:
+        VideoCreateForm:
+            type: object
+            required: [prompt, model]
+            properties:
+                prompt:
+                    type: string
+                    minLength: 1
+                    maxLength: 32000
+                    description: The generation prompt. Scanned by the compliance pipeline.
+                model:
+                    type: string
+                    description: A gateway model alias (rewritten to the resolved provider model).
+                seconds:
+                    type: string
+                    description: |-
+                        Requested duration as a positive-integer string
+                        (bounded <= 300 as a sanity ceiling; the provider owns
+                        its own enum and its 400 relays). Absent -> the default
+                        (4) is used for both the wire and the cost estimate.
+                size:
+                    type: string
+                    description: |-
+                        Requested frame size (e.g. `1280x720`). Passed through
+                        on the OpenAI leg; on the Veo leg mapped (lossily) to
+                        `aspectRatio` + `resolution` with an `X-Nexus-Coerced`
+                        marker (an unmapped size -> 400).
+                input_reference:
+                    type: string
+                    format: binary
+                    description: |-
+                        Optional reference image (a file part named exactly
+                        `input_reference`). Fingerprinted, NOT content-scanned
+                        (binary). A file part under any other name -> 400 on
+                        the Veo leg.
+        VideoJob:
+            type: object
+            description: The canonical video job object.
+            properties:
+                id: { type: string }
+                object: { type: string, enum: [video] }
+                model: { type: string }
+                status:
+                    type: string
+                    enum: [queued, in_progress, completed, failed]
+                    description: |-
+                        Lifecycle status. The Veo leg never reports `queued`
+                        (its long-running operation has no queued state —
+                        `in_progress` from the start).
+                progress:
+                    type: integer
+                    description: 0-100 (Veo leg synthesizes 0 while running, 100 on completion).
+                seconds:
+                    type: integer
+                    description: The billed duration.
+                created_at: { type: integer, description: Unix seconds. }
+                completed_at:
+                    type: integer
+                    description: Unix seconds; may be absent (the Veo leg reports no completion time).
+                expires_at:
+                    type: integer
+                    description: |-
+                        Unix seconds after which the artifact is no longer
+                        downloadable (provider retention).
+                error:
+                    $ref: '#/components/schemas/VideoJobError'
+            required: [id, object, model, status, created_at, expires_at]
+        VideoJobError:
+            type: object
+            nullable: true
+            properties:
+                code: { type: string }
+                message: { type: string }
+        VideoDeleted:
+            type: object
+            properties:
+                id: { type: string }
+                object: { type: string, enum: [video] }
+                deleted: { type: boolean }
+        Error:
+            type: object
+            description: The OpenAI-shaped gateway error envelope.
+            properties:
+                error:
+                    type: object
+                    properties:
+                        message: { type: string }
+                        type: { type: string }
+                        code:
+                            oneOf:
+                                - type: string
+                                - type: integer
+                        hint: { type: string }
+                    required: [message, type]
+            required: [error]
+    responses:
+        BadRequest:
+            description: Malformed multipart / governance-bound violation / unsupported field.
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        Unauthorized:
+            description: Missing / invalid / disabled / expired virtual key.
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        PromptBlocked:
+            description: |-
+                The prompt matched a content rule (`GENERATIVE_PROMPT_BLOCKED`),
+                or a redaction was required but the wire cannot carry it
+                (`REDACT_INFLIGHT_UNSUPPORTED`).
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        NoProvider:
+            description: No provider is configured to serve this video model (`NO_COMPATIBLE_PROVIDER`).
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        TooLarge:
+            description: The submit body exceeds the size ceiling (`VIDEO_UPLOAD_TOO_LARGE`).
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        RateLimited:
+            description: |-
+                Per-key rate limit (`RATE_LIMITED`), generative concurrency
+                (`GENERATIVE_CONCURRENCY_LIMIT`), the non-terminal-jobs render
+                cap (`VIDEO_JOBS_LIMIT`), or a cost quota (`QUOTA_EXCEEDED`).
+            headers:
+                Retry-After:
+                    schema: { type: string }
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        UpstreamError:
+            description: |-
+                The upstream provider failed, could not be resolved, or could
+                not be correlated: `UPSTREAM_ERROR` / `PROVIDER_RESOLVE_FAILED`
+                / `VIDEO_CORRELATION_FAILED` / `NO_COMPATIBLE_PROVIDER` (when
+                a resolver / adapter is misconfigured) / `PROVIDER_AUTH_UNAVAILABLE`
+                / `PROVIDER_AUTH_FAILED` / `VIDEO_UPSTREAM_BUILD_FAILED`; or a
+                provider 4xx/5xx normalized to the OpenAI envelope.
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        ContentUpstreamError:
+            description: |-
+                The artifact could not be relayed: a non-allowlisted
+                Content-Type (`VIDEO_CONTENT_TYPE_REJECTED`), an oversize
+                artifact (`VIDEO_CONTENT_TOO_LARGE`), a guarded-fetch failure
+                (`VIDEO_ARTIFACT_FETCH_FAILED`), or a provider error.
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        StoreUnavailable:
+            description: |-
+                The gateway is running without its database and the async-job
+                correlation guarantee cannot be honored
+                (`VIDEO_STORE_UNAVAILABLE`), or the routed model has no price
+                configured under an actively-enforced cost quota
+                (`QUOTA_MODEL_UNPRICED` — fail-closed rather than let
+                seconds-of-GPU spend bypass the cap).
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        JobNotFound:
+            description: |-
+                No job with this id exists for this key (`VIDEO_JOB_NOT_FOUND`)
+                — a non-disclosure: an unknown id and a foreign key's job are
+                indistinguishable, and never forwarded upstream.
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        JobExpired:
+            description: The job's gateway retention window has passed (`VIDEO_JOB_EXPIRED`).
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        Unsupported:
+            description: |-
+                A deliberately-unserved sub-route (list / remix / edits /
+                extensions / characters) — an OpenAI-shaped 404 envelope with
+                `code = VIDEO_LIST_UNSUPPORTED` or `VIDEO_OP_UNSUPPORTED`.
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }

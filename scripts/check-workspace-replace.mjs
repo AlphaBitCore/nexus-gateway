@@ -43,7 +43,7 @@
 
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
-import { dirname, basename, resolve } from 'node:path';
+import { dirname, basename, resolve, relative } from 'node:path';
 
 const REPO_ROOT = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
 
@@ -69,6 +69,19 @@ function ownModulePath(modFile) {
 // directly, without touching the filesystem, so the self-test fixture can drive
 // the exact regexes that silently rotted in F-0317. `ownModule` is passed in so
 // the self-test does not need a real `module` line resolved from disk.
+// expectedReplaceTarget computes the relative path a go.mod's replace directive
+// must point at, from the requiring module's directory to the sibling's
+// directory. Both live under packages/ and are named by their module-path last
+// segment, so the sibling dir is `packages/<name>`. A FLAT sibling
+// (packages/ai-gateway -> packages/shared) yields `../shared`; a NESTED module
+// (packages/agent/ui -> packages/agent) yields `..` — the reason a hardcoded
+// `../<name>` is wrong for nested modules and breaks their workspace-OFF build.
+// Pure string math (no filesystem) so the self-test fixtures drive it directly.
+function expectedReplaceTarget(modFile, name) {
+  const rel = relative(dirname(modFile), `packages/${name}`).split('\\').join('/');
+  return rel === '' ? '.' : rel;
+}
+
 function checkModText(modFile, text, ownModule) {
   const violations = [];
   const lines = text.split('\n');
@@ -104,7 +117,7 @@ function checkModText(modFile, text, ownModule) {
         msg:
           `require for sibling \`packages/${r.name}\` is at \`${r.version}\` — must be exactly \`v0.0.0\`. ` +
           `Real pseudo-versions trigger Go 1.25 to re-validate against GitHub and silently pull stale snapshots. ` +
-          `Fix: change to \`v0.0.0\` and ensure the matching \`replace => ../${r.name}\` directive is present.`,
+          `Fix: change to \`v0.0.0\` and ensure the matching \`replace => ${expectedReplaceTarget(modFile, r.name)}\` directive is present.`,
       });
     }
   }
@@ -119,11 +132,11 @@ function checkModText(modFile, text, ownModule) {
         line: r.lineNo,
         msg:
           `require for sibling \`packages/${r.name}\` has no matching \`replace\` directive. ` +
-          `Add: \`replace github.com/AlphaBitCore/nexus-gateway/packages/${r.name} => ../${r.name}\`.`,
+          `Add: \`replace github.com/AlphaBitCore/nexus-gateway/packages/${r.name} => ${expectedReplaceTarget(modFile, r.name)}\`.`,
       });
       continue;
     }
-    const expectedTarget = `../${r.name}`;
+    const expectedTarget = expectedReplaceTarget(modFile, r.name);
     if (replace.target !== expectedTarget) {
       violations.push({
         file: modFile,
@@ -187,9 +200,43 @@ if (process.argv.includes('--selftest')) {
     'replace github.com/AlphaBitCore/nexus-gateway/packages/shared => ../shared',
   ].join('\n');
 
-  const badViolations = checkModText('selftest-bad/go.mod', badMod, ownModule);
-  const goodViolations = checkModText('selftest-good/go.mod', goodMod, ownModule);
+  // A NESTED module (packages/agent/ui depends on the parent packages/agent):
+  // the correct replace target is `..`, NOT `../agent`. The good fixture uses
+  // `..` and must pass; the bad fixture uses the flat-convention `../agent` and
+  // must be rejected (that path resolves to packages/agent/agent and breaks the
+  // workspace-OFF build).
+  // Block-form require (the indented `\tgithub...` inside `require ( … )`) — the
+  // real agent/ui/go.mod form and the only shape REQUIRE_LINE_RE matches.
+  const nestedOwn = 'github.com/AlphaBitCore/nexus-gateway/packages/agent/ui';
+  const nestedGoodMod = [
+    'module github.com/AlphaBitCore/nexus-gateway/packages/agent/ui',
+    '',
+    'require (',
+    '\tgithub.com/AlphaBitCore/nexus-gateway/packages/agent v0.0.0',
+    ')',
+    '',
+    'replace github.com/AlphaBitCore/nexus-gateway/packages/agent => ..',
+  ].join('\n');
+  const nestedBadMod = nestedGoodMod.replace('=> ..', '=> ../agent');
+  const nestedGoodViolations = checkModText('packages/agent/ui/go.mod', nestedGoodMod, nestedOwn);
+  const nestedBadViolations = checkModText('packages/agent/ui/go.mod', nestedBadMod, nestedOwn);
+
+  const badViolations = checkModText('packages/example/go.mod', badMod, ownModule);
+  const goodViolations = checkModText('packages/example/go.mod', goodMod, ownModule);
   const failures = [];
+  if (nestedGoodViolations.length !== 0) {
+    failures.push(
+      `self-test FAILED: the nested-module good fixture (replace => ..) produced ` +
+        `${nestedGoodViolations.length} violation(s); expected 0 — the expected-path math must ` +
+        `compute the real relative path for nested modules, not a hardcoded ../<name>.`,
+    );
+  }
+  if (nestedBadViolations.length === 0) {
+    failures.push(
+      'self-test FAILED: the nested-module bad fixture (replace => ../agent) produced ZERO ' +
+        'violations — the flat-convention path that breaks the nested workspace-OFF build was accepted.',
+    );
+  }
   if (badViolations.length === 0) {
     failures.push(
       'self-test FAILED: the known-bad fixture produced ZERO violations — the require/replace ' +

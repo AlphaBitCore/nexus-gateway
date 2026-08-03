@@ -1,6 +1,6 @@
 # Jobs Architecture
 
-Hub runs all of Nexus's periodic housekeeping in a **single in-process scheduler** built on `github.com/robfig/cron/v3`. There is no Sidekiq, no Celery, no Kubernetes `CronJob` resource, and no Postgres-based work queue. The 49 jobs documented in §5 are registered once at Hub boot, run inside the Hub process, and persist their definitions + run history to two Postgres tables (`job`, `job_run`) so the admin UI can show "last run / next run / 7-day run history" without scraping logs.
+Hub runs all of Nexus's periodic housekeeping in a **single in-process scheduler** built on `github.com/robfig/cron/v3`. There is no Sidekiq, no Celery, no Kubernetes `CronJob` resource, and no Postgres-based work queue. The 51 jobs documented in §5 are registered once at Hub boot, run inside the Hub process, and persist their definitions + run history to two Postgres tables (`job`, `job_run`) so the admin UI can show "last run / next run / 7-day run history" without scraping logs.
 
 Anchor packages:
 
@@ -65,7 +65,7 @@ Two optional capabilities are detected by type assertion:
 `InitScheduler` runs four steps in order, and each must finish before the next starts:
 
 1. `New(logger).WithJobStore(jobStore).WithReplicaID(hubID)` — wire dependencies. No I/O yet.
-2. `sched.Register(...)` × N (49 calls) — populate the in-memory `jobs map[string]*entry`. Each entry defaults to enabled; the persisted `enabled` flag from `job.enabled` will overwrite this in step 3.
+2. `sched.Register(...)` × N (51 calls) — populate the in-memory `jobs map[string]*entry`. Each entry defaults to enabled; the persisted `enabled` flag from `job.enabled` will overwrite this in step 3.
 3. `sched.SyncDefinitions(ctx)` — for every registered job, upsert `(id, name, description, interval_sec)` into the `job` table, then read back `enabled` and reconcile the in-memory atomic. **`SyncDefinitions` does not touch the `enabled` column on upsert** — admin disables survive Hub restarts, code changes to name/description/interval propagate.
 4. `sched.RecoverStaleRuns(ctx)` — flip every `job_run` row still in `status='running'` to `'interrupted'`. These are orphans from the previous Hub process that died mid-Run; without this step the admin UI would show them as perpetually running.
 5. `sched.Start()` — construct the cron engine, register every enabled entry via `cron.AddFunc("@every <interval>", runOne)`, start the engine, then kick off every `OnStartRunner.RunOnStart()=true` entry in a detached goroutine so `Start` returns promptly.
@@ -115,13 +115,13 @@ The 49 rows below are the complete production catalogue. Every row is anchored t
 
 The 8 multi-cadence variants (rows whose file column says "cadence variant") are constructed at runtime from helper structs (`rollup_merge.go`, `thing_rollup_merge.go`, `ops_rollup_cascade.go`) rather than having one `JobID` const each. These IDs are the only ones the `scripts/check-jobs-catalogue.sh` pre-commit gate machine-verifies; the rest are honor-system but every static `JobID` const present in the tree must appear below.
 
-### 5.1 Traffic + ops rollup pipeline (15 jobs)
+### 5.1 Traffic + ops rollup pipeline (16 jobs)
 
 The 5-minute → 1-hour → 1-day → 1-month rollup cascade for both fleet-wide traffic metrics and per-Thing traffic metrics, plus the parallel ops-metrics cascade.
 
 | ID | File | Default cadence | Purpose |
 |---|---|---|---|
-| `rollup-5m` | `defs/rollup/rollup_5m.go` | 1 min | Aggregates `traffic_event` rows into `metric_rollup_5m` every minute, catching up from the last committed bucket to the most recent sealed 5-minute bucket. |
+| `rollup-5m` | `defs/rollup/rollup_5m.go` | 1 min | Aggregates `traffic_event` rows into `metric_rollup_5m` every minute, catching up from the last committed bucket to the most recent sealed 5-minute bucket. Also emits the `traffic.error_class.*` series (failed rows keyed by errorCode\|statusRange\|provider\|model, 500-classes-per-bucket cap with `__overflow__` fold) that backs the Control Plane error-governance view's rollup-first read. |
 | `merge-1h` | `defs/rollup/rollup_merge.go` (cadence variant) | 5 min | Merges `metric_rollup_5m` into `metric_rollup_1h`, catching up from the persisted watermark to the most recent sealed 1-hour bucket. |
 | `merge-1d` | `defs/rollup/rollup_merge.go` (cadence variant) | 1 hour | Merges `metric_rollup_1h` into `metric_rollup_1d`, catching up to the most recent sealed 1-day bucket. |
 | `merge-1mo` | `defs/rollup/rollup_merge.go` (cadence variant) | 24 hour | Merges `metric_rollup_1d` into `metric_rollup_1mo` using calendar-month bucket boundaries. |
@@ -129,13 +129,15 @@ The 5-minute → 1-hour → 1-day → 1-month rollup cascade for both fleet-wide
 | `thing-merge-1h` | `defs/rollup/thing_rollup_merge.go` (cadence variant) | 5 min | Per-Thing variant of `merge-1h`. |
 | `thing-merge-1d` | `defs/rollup/thing_rollup_merge.go` (cadence variant) | 1 hour | Per-Thing variant of `merge-1d`. |
 | `thing-merge-1mo` | `defs/rollup/thing_rollup_merge.go` (cadence variant) | 24 hour | Per-Thing variant of `merge-1mo` (calendar-month boundaries). |
-| `rollup-correction` | `defs/rollup/rollup_correction.go` | 24 hour | Recomputes fleet rollups across the trailing correction window (default 7 days) to absorb late-arriving events. Re-runs every 5-minute bucket then re-merges the 1h, 1d, and (for any sealed month the window touched) 1mo layers, with the watermark write suppressed so the backfill never rewinds the live cursor. |
+| `rollup-correction` | `defs/rollup/rollup_correction.go` | 24 hour | Recomputes fleet rollups across the trailing correction window (default 7 days) to absorb late-arriving events. Re-runs every 5-minute bucket then re-merges the 1h, 1d, and (for any sealed month the window touched) 1mo layers, with the watermark write suppressed so the backfill never rewinds the live cursor. Because it drives the same per-bucket aggregation as `rollup-5m`, it also (back)fills the `traffic.error_class.*` series — including, once after the series first ships, the trailing week of history (triggering it right after that deploy shortens the error-governance view's rollup warm-up). |
 | `thing-rollup-correction` | `defs/rollup/thing_rollup_correction.go` | 24 hour | Per-Thing twin of `rollup-correction`: re-aggregates the per-Thing pipeline over the trailing window so late events whose per-Thing 5m bucket already sealed are not permanently under-counted. |
 | `metrics-rollup` | `defs/metrics/metrics_rollup.go` | 1 hour | Aggregates device fleet status/OS (GAUGE snapshots, excluded from the merge cascade) and agent action volume into `metric_rollup_1h`. |
 | `ops-rollup-5m` | `defs/metrics/ops_rollup_5m.go` | 1 min | Aggregates `metric_ops_raw` into `metric_ops_rollup_5m` — the tier that owns the raw read. Services keep per-instance rows; agents collapse into a single fleet-aggregate row (`thing_id IS NULL`) unless in diagnostic mode for the bucket. |
 | `ops-rollup-1h` | `defs/metrics/ops_rollup_1h.go` | 5 min | Aggregates `metric_ops_raw` into `metric_ops_rollup_1h`. Services keep per-instance rows; agents collapse into a single fleet-aggregate row (`thing_id IS NULL`) per metric+dim unless in diagnostic mode for the bucket. |
 | `ops-rollup-1d` | `defs/metrics/ops_rollup_cascade.go` (cadence variant) | 1 hour | Aggregates `metric_ops_rollup_1h` into `metric_ops_rollup_1d`. Sample-count-weighted averages; histograms merge element-wise. Preserves the fleet vs per-thing distinction from the 1h layer. |
 | `ops-rollup-1mo` | `defs/metrics/ops_rollup_cascade.go` (cadence variant) | 24 hour | Aggregates `metric_ops_rollup_1d` into `metric_ops_rollup_1mo` once per day, calendar-month boundaries; current (unsealed) month always excluded. |
+
+| `vendor-bill-reconcile` | `defs/vendorbill/reconcile.go` | 24 hour | Pulls each covered provider's authoritative daily billed USD from the vendor cost API (OpenAI/Anthropic via `internal/vendorbill` sources) over a trailing window (ends today−2, N=4 days), diffs against our estimated spend (`metric_rollup_1d` `billed_cost_usd`, `routed_provider` dim), and UPSERTs per-provider-per-day rows into `vendor_bill_reconciliation`. `coverage` = `scoped` \| `org_only` \| `fetch_failed`; a fetch failure records no vendor number and no diff (never fabricated); a vendor-absent day is skipped (absence ≠ zero). Admin keys are env-only. |
 
 ### 5.2 Health + reliability rollup (2 jobs)
 
@@ -160,7 +162,7 @@ Periodic purge and Redis-to-DB drain jobs.
 | `credential-stats-flush` | `defs/retention/credential_stats_flush.go` | 60 sec | Drains per-credential usage counters and timestamps from Redis into the `Credential` table. Runs frequently to keep `lastUsedAt`, `lastSuccessAt`, `lastFailureAt`, and `totalUsageCount` up to date without high-frequency concurrent DB writes. |
 | `credential-circuit-flush` | `defs/retention/credential_circuit_flush.go` | 30 sec | Drains `cred:circuit:dirty` Redis set into `Credential.circuit*` columns. Uses an in-flight working set for at-least-once delivery; rehydrates Redis from DB on first run after restart. |
 
-### 5.4 State-poll alerts (6 jobs)
+### 5.4 State-poll alerts (7 jobs)
 
 Class-1 alert jobs (in the alerting taxonomy): poll DB state every interval and raise/resolve alerts based on the snapshot. Distinct from `alerteval-engine` (§5.9), which is class-4 streaming over MQ.
 
@@ -172,6 +174,8 @@ Class-1 alert jobs (in the alerting taxonomy): poll DB state every interval and 
 | `credential-stale-alerts` | `defs/health/credential_stale_alerts.go` | 1 hour | Polls `Credential.lastSuccessAt` for enabled credentials and raises `credential.stale_last_success` when no successful use in `params.staleAfterDays`; auto-resolves once a credential is used successfully again. |
 | `agent-cert-expiration-alerts` | `defs/health/agent_cert_expiration_alerts.go` | 1 hour | Polls `thing_agent.cert_expires_at` for desktop-agent Things and raises `agent.cert_expiration_imminent` as each warn-day threshold (default 30 / 14 / 7 / 1 days) approaches. Auto-resolves on renewal. |
 | `cache-quality-monitor` | `defs/health/cache_quality_monitor.go` | 5 min | Detects elevated error rates in normaliser-modified requests over the past 30 minutes and auto-reverts all active rules to `dry_run_always` when the error rate exceeds 3× baseline, preventing normaliser-induced quality regressions. |
+| `vendor-bill-drift-alerts` | `defs/vendorbill/drift_alert.go` | 24 hour | Class-1 state-poll: raises `vendor.bill_drift` for `scoped` `vendor_bill_reconciliation` rows whose drift exceeds BOTH floors (`|diff_pct|` > `thresholdPct` AND `|diff_usd|` > `thresholdUsd`); `org_only` / `fetch_failed` rows are display-only and never alert. Auto-resolves rows that no longer breach (e.g. after a late vendor revision). |
+| `vendor-bill-sync-alerts` | `defs/vendorbill/sync_alert.go` | 24 hour | Class-1 state-poll: raises `vendor.bill_sync_failed` (per provider) when a `fetch_failed` row stays unhealed past `staleHours` (default 25 — one run cycle + margin), i.e. the vendor cost-API sync is persistently broken (revoked/wrong-type key, lost scope, blocked egress), not a one-off transient. Uses `updated_at` age as the "didn't self-heal" signal so a transient error never ages into an alert. Auto-resolves when the sync recovers. Closes the blind spot the drift job leaves by treating `fetch_failed` as display-only. |
 
 ### 5.5 Expiry + auto-revert (7 jobs)
 

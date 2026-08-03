@@ -110,13 +110,17 @@ Each is written to the appropriate per-service `.env` file under `/etc/nexus/`
 which the systemd unit picks up via `EnvironmentFile=`. File mode `0640`,
 owner `root:nexus` (services run as `nexus` and read; only root can rewrite).
 
-Infra URLs (`NEXUS_HUB_URL`, `AI_GATEWAY_URL`, `COMPLIANCE_PROXY_URL`,
-`COMPLIANCE_PROXY_RUNTIME_URL`) bind to `localhost` with fixed ports (see
-§6) and are baked into the env files of the services that actually read
-them — the Hub's own env file does NOT carry `NEXUS_HUB_URL` (that is the
-registration URL the *other three* use to reach the Hub; the Hub never
-reads it). Loopback `REDIS_ADDRS` / `NATS_URL` / `AUTH_SERVER_URL` /
-`AUTH_SERVER_JWKS_URL` come from the yaml configs, not env.
+The one infra URL env var is `NEXUS_HUB_URL`, bound to `localhost` with the
+fixed Hub port (see §6) and baked into the env files of the services that
+actually read it — the Hub's own env file does NOT carry `NEXUS_HUB_URL`
+(that is the registration URL the *other three* use to reach the Hub; the
+Hub never reads it). Peer service URLs (`AI_GATEWAY_URL`,
+`COMPLIANCE_PROXY_URL`, `COMPLIANCE_PROXY_RUNTIME_URL`) no longer exist as
+env vars: each service reports its own `publicUrl` / `privateUrl` to the Hub
+at registration and peers resolve the reported value at request time
+(`shared/transport/peerurl`). Loopback `REDIS_ADDRS` / `NATS_URL` /
+`AUTH_SERVER_URL` / `AUTH_SERVER_JWKS_URL` come from the yaml configs, not
+env.
 
 Two values are stamped later by `first-boot.sh` because they depend on the
 instance's detected IP: `publicURL` (sed-stamped into all four yamls —

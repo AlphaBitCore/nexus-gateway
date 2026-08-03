@@ -258,20 +258,25 @@ else {
 # PostgreSQL-native RANGE partitioning has no Prisma representation and lives in
 # hand-written SQL. Without re-applying it, metric_ops_raw stays a plain table and
 # the Hub `ops-raw-partition` job fails every cycle (SQLSTATE 42P17). Re-runnable.
+#
+# Applied through `prisma db execute`, which resolves the target from DATABASE_URL
+# exactly like the `db push` above and like the container migrator
+# (docker/db-migrator/entrypoint.sh) — and which also removes the need for the
+# `Get-Content | docker exec` pipe, since PowerShell has no `<` redirection. The
+# previous form hardcoded a container name, a role and a database name, and sent
+# both streams to $null, so a real abort stayed invisible. Never soften this back
+# to a warning: the file aborts at its FIRST failing statement, so a partial apply
+# leaves the correctness-bearing objects further down the file missing while the
+# bring-up still looks green. See the sh twin in dev-start.sh for the observed case.
 $extrasSql = Join-Path $dbMigrateDir 'schema-extras.sql'
-if (Test-Path $extrasSql) {
-    # PowerShell has no `<` input redirection — pipe the file content into psql.
-    Get-Content -Raw $extrasSql | docker exec -i nexus-postgres psql -U postgres -d nexus_gateway -q -v ON_ERROR_STOP=1 *> $null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "Applied schema-extras.sql (metric_ops_raw → RANGE-partitioned)"
-    }
-    else {
-        Write-Warn "Could not apply schema-extras.sql — Hub ops-raw-partition job will error until fixed"
-    }
+if (-not (Test-Path $extrasSql)) {
+    Write-Err "schema-extras.sql not found at $extrasSql — the PostgreSQL-native objects (metric_ops_raw partitioning, the partial unique indexes that keep agent identity and virtual-key names unique, the cache view + function) cannot be applied"
 }
-else {
-    Write-Warn "schema-extras.sql not found at $extrasSql — Hub ops-raw-partition job may error"
+npx prisma db execute --file schema-extras.sql
+if ($LASTEXITCODE -ne 0) {
+    Write-Err "Applying schema-extras.sql failed — the error above names the first statement that aborted, and EVERY statement after it was skipped. Fix that statement's cause (a data conflict blocking a unique index is the usual one; see tools/db-migrate/manual-scripts/) and re-run, because the database is now missing PostgreSQL-native objects the services depend on"
 }
+Write-Ok "Applied schema-extras.sql (metric_ops_raw → RANGE-partitioned, partial/expression indexes, cache view + function)"
 
 # ─── 4b. Seed database ─────────────────────────────────────────────────────
 

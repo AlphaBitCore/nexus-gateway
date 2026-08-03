@@ -110,11 +110,11 @@ model ExtractCacheConfig {
   @@map("extract_cache_config")
 }
 
-/// E38-S13 — Prompt Cache 3-Tier Config, Tier 1 (truly global, singleton).
-/// JSONB shape governed by Go struct `cacheconfig.GlobalConfig`
-/// in `packages/shared/cacheconfig/types.go`.
-/// Knobs: normaliser_enabled, cache_master_kill_switch.
-/// Adding a new global knob requires updating the Go struct only — no DB migration.
+/// RETIRED — the Tier-1 global cache switches (cache master kill switch +
+/// the normaliser gate) are removed; nothing reads or writes this table any
+/// more. Emergency cache-off = the fleet disable-all / Emergency Passthrough
+/// bypassCache; the upstream rewrite is demand-driven off Tier-2/3 settings.
+/// The table is left in place (no schema change) and is pending a later drop.
 model CacheGlobalConfig {
   id        String   @id @default("singleton")
   config    Json     @default("{}")
