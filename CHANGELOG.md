@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-08-23
+
 ### Changed
 
 - **`error.code` is a string on every error the gateway itself produces.** A
@@ -636,7 +638,6 @@ All notable changes to this project are documented here. The format follows
   is named rather than silently dropped — the drop fused the text either side
   into one utterance that was never sent.
 
-||||||| 8d850e575
 - **Vendor-bill reconciliation no longer reports a day the rollup correction
   pass has not rebuilt yet.** The reconciliation basis (`metric_rollup_1d`
   `vendor_spend_usd`) is produced for historical days by `rollup-correction`,
