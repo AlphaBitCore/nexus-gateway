@@ -14,7 +14,7 @@ func TestBuildModelCatalog_GroupsByProviderShortKeys(t *testing.T) {
 	in := []core.SmartModelRow{
 		// Catalog `i` is Model.code, not the UUID id.
 		{ModelID: "m-b", ModelCode: "code-b", ModelName: "B", ProviderID: "p-2", ProviderName: "Prov Two", ProviderModelID: "api-b"},
-		{ModelID: "m-a1", ModelCode: "code-a1", ModelName: "A1", ProviderID: "p-1", ProviderName: "Prov One", ProviderModelID: "api-a1", Features: []string{"vision", "streaming"}},
+		{ModelID: "m-a1", ModelCode: "code-a1", ModelName: "A1", ProviderID: "p-1", ProviderName: "Prov One", ProviderModelID: "api-a1", Features: []string{"function_calling", "streaming"}},
 		{ModelID: "m-a2", ModelCode: "code-a2", ModelName: "A2", ProviderID: "p-1", ProviderName: "Prov One", ProviderModelID: "api-a2", InputPricePM: fp(0.1), OutputPricePM: fp(0.2),
 			MaxContextTokens: &mx, MaxOutputTokens: &mo},
 	}
@@ -51,7 +51,7 @@ func TestBuildModelCatalog_GroupsByProviderShortKeys(t *testing.T) {
 	if groups[1].M[0].I != "code-a2" || groups[1].M[1].I != "code-a1" {
 		t.Fatalf("p-1 models not newest-first: %+v", groups[1].M)
 	}
-	if groups[1].M[1].F == nil || len(groups[1].M[1].F) != 2 || groups[1].M[1].F[0] != "vision" {
+	if groups[1].M[1].F == nil || len(groups[1].M[1].F) != 2 || groups[1].M[1].F[0] != "function_calling" {
 		t.Fatalf("features on code-a1 (now second): %+v", groups[1].M[1].F)
 	}
 	if groups[1].M[0].IP == nil || *groups[1].M[0].IP != 0.1 {
@@ -139,5 +139,30 @@ func TestBuildModelCatalog_NewestGenerationFirst(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("catalog order = %v; want newest-first %v", got, want)
 		}
+	}
+}
+
+// The router LLM's only way to tell a vision model from a text-only one. It
+// used to be the `vision` tag inside f; when vision stopped being stored, a
+// prompt still asking for that tag would have matched nothing at all.
+func TestBuildModelCatalog_CarriesNonTextInputModalities(t *testing.T) {
+	out := buildModelCatalog([]core.SmartModelRow{
+		{ModelID: "m1", ModelCode: "sees-images", ProviderID: "p1", InputModalities: []string{"text", "image"}},
+	})
+	if !strings.Contains(out, `"in"`) || !strings.Contains(out, `"image"`) {
+		t.Errorf("catalog = %s; the router cannot tell this model accepts images", out)
+	}
+}
+
+// Every model in the catalog accepts text, so spelling it out on every row
+// would spend prompt budget on a constant. Measured on the seeded chat
+// catalogue, carrying the arrays verbatim instead of the non-text remainder
+// costs an extra ~40% on top of the +12% this encoding already adds.
+func TestBuildModelCatalog_OmitsTextOnlyInput(t *testing.T) {
+	out := buildModelCatalog([]core.SmartModelRow{
+		{ModelID: "m1", ModelCode: "text-only", ProviderID: "p1", InputModalities: []string{"text"}},
+	})
+	if strings.Contains(out, `"in"`) {
+		t.Errorf("catalog = %s; a text-only model should carry no modality key", out)
 	}
 }

@@ -23,9 +23,10 @@ package responses
 
 import (
 	"fmt"
-	"github.com/goccy/go-json"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -58,6 +59,14 @@ func DecodeResponsesResponse(raw []byte) ([]byte, provcore.Usage, error) {
 	}
 	if !gjson.ValidBytes(raw) {
 		return nil, provcore.Usage{}, fmt.Errorf("spec_openai: Responses-API response body is not valid JSON")
+	}
+
+	// A Responses body can report failure inside an HTTP 200. Decoding it
+	// into a canonical response would hand the caller a success envelope
+	// for an answer the upstream disowned, so the failure is raised as a
+	// ProviderError before any canonical shape is built.
+	if pe := responsesTerminalFailure(raw); pe != nil {
+		return nil, provcore.Usage{}, pe
 	}
 
 	// Usage extraction via provcore.ExtractUsage (shared/normalize Tier-1
@@ -311,65 +320,6 @@ func EncodeResponsesResponse(canonical []byte, requestID, modelOverride string) 
 	}
 
 	return out, nil
-}
-
-// mapResponsesStatusToFinishReason converts Responses-API status +
-// incomplete_details.reason into a chat-completions finish_reason.
-// Per OpenAI's documented mapping:
-//
-//	completed                                  → stop (or tool_calls when output had function_call items)
-//	incomplete (max_output_tokens)             → length
-//	incomplete (content_filter)                → content_filter
-//	failed / errored                           → stop (canonical has no error-class finish_reason)
-//	in_progress / queued                       → stop (defensive; non-stream should never see these)
-func mapResponsesStatusToFinishReason(status, incompleteReason string, hadToolCalls bool) string {
-	switch status {
-	case "completed":
-		if hadToolCalls {
-			return "tool_calls"
-		}
-		return "stop"
-	case "incomplete":
-		switch incompleteReason {
-		case "max_output_tokens":
-			return "length"
-		case "content_filter":
-			return "content_filter"
-		default:
-			return "length"
-		}
-	case "failed", "errored":
-		return "stop"
-	default:
-		return "stop"
-	}
-}
-
-// mapFinishReasonToResponsesStatus is the inverse: canonical
-// finish_reason → Responses status.
-func mapFinishReasonToResponsesStatus(finish string) string {
-	switch finish {
-	case "length", "max_tokens", "content_filter":
-		return "incomplete"
-	case "", "stop", "tool_calls":
-		return "completed"
-	default:
-		return "completed"
-	}
-}
-
-// mapFinishReasonToResponsesIncompleteReason maps a finish_reason that
-// implies incomplete status to the Responses incomplete_details.reason
-// field. Returns "" when finish_reason does not imply incomplete.
-func mapFinishReasonToResponsesIncompleteReason(finish string) string {
-	switch finish {
-	case "length", "max_tokens":
-		return "max_output_tokens"
-	case "content_filter":
-		return "content_filter"
-	default:
-		return ""
-	}
 }
 
 // buildCanonicalUsage projects a Responses-shape usage block onto a

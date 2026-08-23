@@ -1,6 +1,10 @@
 package codec
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+)
 
 // Per-model sampling-parameter policy for the Anthropic wire: which Claude
 // families accept temperature / top_p / top_k, which reject the
@@ -23,7 +27,7 @@ import "strings"
 // control, which the emitted rewrite makes visible via the x-nexus-coerced
 // response header.
 //
-// Family matching (hasFamilyPrefix) covers the dated variants Anthropic ships
+// Family matching (specutil.MatchesFamily) covers the dated variants Anthropic ships
 // (claude-opus-4-5 also matches claude-opus-4-5-20251101). Populate this
 // list only from a direct probe against api.anthropic.com: the vendor's own
 // deprecation table under-reports the rejecting set, omitting
@@ -60,33 +64,11 @@ func anthropicModelRejectsSamplingParams(model string) bool {
 		return false
 	}
 	for _, prefix := range claudeModelsAcceptingSamplingParams {
-		if hasFamilyPrefix(model, prefix) {
+		if specutil.MatchesFamily(model, prefix) {
 			return false
 		}
 	}
 	return true
-}
-
-// hasFamilyPrefix matches a family name at a version boundary: after the prefix
-// the model id must have a `-`, a `.`, or nothing at all. A bare strings.HasPrefix
-// would let a hypothetical future "claude-20-..." inherit "claude-2"'s
-// accepts-sampling carve-out — the fail-UNSAFE direction, since a rejecting
-// family would then have its params forwarded and 400 (the exact incident the
-// allowlist prevents). The dated variants Anthropic ships stay matched
-// (claude-opus-4-6 → claude-opus-4-6-20251101, boundary '-'). Mirrors the
-// OpenAI codec's hasFamilyPrefix.
-func hasFamilyPrefix(model, family string) bool {
-	if !strings.HasPrefix(model, family) {
-		return false
-	}
-	if len(model) == len(family) {
-		return true
-	}
-	switch model[len(family)] {
-	case '-', '.':
-		return true
-	}
-	return false
 }
 
 // anthropicModelRejectsTempTopPTogether reports whether the model

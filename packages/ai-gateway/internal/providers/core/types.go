@@ -55,6 +55,17 @@ type CallTarget struct {
 	// divergence between what we advertise and what we send upstream.
 	MaxOutputTokens int
 
+	// Reasons: this model thinks before answering. The catalogue records it;
+	// until now nothing carried it here, so an egress codec could not ask
+	// whether the model it was about to call reasons at all — and a codec that
+	// cannot ask sends a reasoning parameter to every model or to none.
+	//
+	// The flag alone does not make a correct translation possible: a budget
+	// wire also needs that model's minimum and maximum, and a level wire needs
+	// its legal levels, none of which the catalogue carries yet. It is the part
+	// that is knowable today.
+	Reasons bool
+
 	// Extras carries provider-specific configuration that doesn't fit in
 	// the universal fields above. Keys are dot-namespaced: "azure.apiVersion",
 	// "aws.accessKey", "gcp.serviceAccountJSON", etc.
@@ -176,10 +187,14 @@ type Chunk struct {
 	Delta          string          // text delta (assistant content), canonical UTF-8
 	ReasoningDelta string          // reasoning / thinking text (Anthropic thinking_delta, OpenAI / DeepSeek delta.reasoning_content). Kept separate from Delta so audit / hooks aggregate only assistant-visible content.
 	ToolCallDeltas []ToolCallDelta // partial tool call updates (OpenAI shape)
-	Usage          *Usage          // set when provider emits usage mid-stream or at end
-	Done           bool            // terminal chunk (equivalent to provider's "[DONE]" / message_stop)
-	RawBytes       []byte          // provider-native bytes (SSE frame incl. "data: " prefix, or NDJSON line)
-	NativeEvent    string          // optional provider event name (e.g. "message_delta")
+	// NexusThinking carries a complete Anthropic thinking block only after its
+	// provider signature has arrived. It is an opaque exact-replay carrier;
+	// ordinary reasoning text is never enough to synthesize a native block.
+	NexusThinking []NexusThinkingBlock
+	Usage         *Usage // set when provider emits usage mid-stream or at end
+	Done          bool   // terminal chunk (equivalent to provider's "[DONE]" / message_stop)
+	RawBytes      []byte // provider-native bytes (SSE frame incl. "data: " prefix, or NDJSON line)
+	NativeEvent   string // optional provider event name (e.g. "message_delta")
 	// FinishReason carries the canonical OpenAI finish_reason ("stop",
 	// "length", "tool_calls", "content_filter", ...) once the provider's
 	// stream signals completion. Each stream decoder maps its wire's
@@ -215,6 +230,19 @@ type ToolCallDelta struct {
 	ID        string
 	Name      string
 	Arguments string
+	// ThoughtSignature is Gemini's provider-native signature for this exact
+	// functionCall Part. It is omitted when unsigned.
+	ThoughtSignature string
+}
+
+// NexusThinkingBlock is the typed representation of the existing
+// `nexus_thinking` per-message extension. Index is stream-local and is not
+// serialized; Thinking/Signature/RedactedData replay the native block.
+type NexusThinkingBlock struct {
+	Index        int    `json:"-"`
+	Thinking     string `json:"thinking,omitempty"`
+	Signature    string `json:"signature,omitempty"`
+	RedactedData string `json:"redacted_data,omitempty"`
 }
 
 // ProbeResult is the outcome of [Adapter.Probe].
@@ -258,17 +286,77 @@ func (e *ProviderError) Error() string {
 // use these exactly; new codes require a single-line addition here so
 // callers have a single source of truth.
 const (
-	CodeInvalidRequest      = "invalid_request"
-	CodeAuthFailed          = "auth_failed"
-	CodeRateLimited         = "rate_limited"
-	CodeTimeout             = "timeout"
-	CodeUpstreamError       = "upstream_error"
-	CodeEndpointUnsupported = "endpoint_unsupported"
+	CodeInvalidRequest = "invalid_request"
+	CodeAuthFailed     = "auth_failed"
+	CodeRateLimited    = "rate_limited"
+	// CodeProviderQuotaExhausted is the provider ACCOUNT's budget being spent,
+	// not a rate limit and not a bad request. It is account-scoped, so every
+	// model behind that provider is equally unusable until the window resets
+	// or the customer raises the limit — which means the request should move
+	// to a different provider, and the credential should not be penalised for
+	// a key that is perfectly valid.
+	CodeProviderQuotaExhausted = "provider_quota_exhausted"
+	CodeTimeout                = "timeout"
+	CodeUpstreamError          = "upstream_error"
+	CodeEndpointUnsupported    = "endpoint_unsupported"
 	// CodeContextOverflow: prompt exceeds the model's window; the executor fails over to a larger target, never same-target retry.
 	CodeContextOverflow      = "context_overflow"
 	CodeNotImplemented       = "not_implemented"
 	CodeNoCompatibleProvider = "no_compatible_provider"
+	// CodeClientGone: the caller's context was cancelled, so the transport
+	// error says nothing about the provider. Distinct from CodeTimeout
+	// because the two demand opposite reactions — a timeout is evidence
+	// against the upstream and a cancellation is evidence about the client.
+	// Collapsing them recorded a health failure against an innocent provider
+	// every time a user pressed stop, and a cancellation storm could push
+	// every provider it touched past the unavailability threshold.
+	CodeClientGone = "client_gone"
+	// CodeLocalProcessing: the upstream answered 2xx — and billed for it —
+	// and WE failed afterwards, reading or decoding what it sent. Reporting
+	// that as an upstream error made it retryable, and every retry is a fresh
+	// billed generation for a request that was already paid for once. The
+	// upstream is not at fault and cannot fix it by being asked again.
+	CodeLocalProcessing = "local_processing_failed"
+	// CodeSpendLimitExceeded is OUR ceiling, not the upstream's: a request
+	// asking for more billable units than the gateway will multiply from one
+	// call (image `n`, rerank documents). Distinct from CodeInvalidRequest,
+	// which is the body being wrong — this body is well-formed and the
+	// provider would have served it. Naming it separately is what lets an
+	// operator group spend refusals apart from codec faults, and lets a caller
+	// tell "I asked for too many" from "you could not translate my request".
+	//
+	// Gateway-internal, so it stays OUT of CanonicalCodes and out of the Hub's
+	// shared vocabulary — for the same reason CodeClientGone and
+	// CodeLocalProcessing do. That slice enumerates the codes an ADAPTER
+	// produces from an upstream response, which is what the Hub's
+	// upstream-vs-gateway alert split keys on. No adapter can ever emit this
+	// one: the request never reached an upstream.
+	// The VALUE is UPPER_SNAKE, unlike its lower_snake neighbours, because it
+	// is the only code here that reaches a CALLER through the gateway's own
+	// error envelope rather than through a normalised provider error — and
+	// that surface is UPPER_SNAKE by a contract sdk_compat pins.
+	CodeSpendLimitExceeded = "SPEND_LIMIT_EXCEEDED"
 )
+
+// CanonicalCodes enumerates every code above. It exists so a code added to the
+// const block cannot quietly skip the surfaces that have to know about it —
+// the shared vocabulary the Hub reads, and the upstream/gateway split its
+// alert rules key on. The contract test counts against this slice, so a new
+// constant that is not added here fails to compile the intent rather than
+// passing silently, which is how provider_upstream_error spent its whole
+// production life counting nothing.
+var CanonicalCodes = []string{
+	CodeInvalidRequest,
+	CodeAuthFailed,
+	CodeRateLimited,
+	CodeProviderQuotaExhausted,
+	CodeTimeout,
+	CodeUpstreamError,
+	CodeEndpointUnsupported,
+	CodeContextOverflow,
+	CodeNotImplemented,
+	CodeNoCompatibleProvider,
+}
 
 // ReadAllLimit is the conservative upper bound for reading a provider
 // response body when no per-request cap is supplied (e.g. health

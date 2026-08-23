@@ -4,9 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"github.com/goccy/go-json"
+	"strconv"
 	"strings"
+
+	"github.com/goccy/go-json"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 )
 
 // Streaming response (SSE)
@@ -29,15 +33,85 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 
+	// An ordered accumulator, not per-kind buckets. Grouping by kind loses
+	// wire order — and worse, it fuses text that arrived on either side of
+	// a tool call or a media part into one block, changing the model's own
+	// words. Only CONSECUTIVE text deltas coalesce, which is what makes a
+	// streamed row read the same as its non-streamed twin.
+	type toolCallState struct {
+		use *core.ToolUse
+	}
 	type candidateState struct {
 		role         string
-		text         strings.Builder
-		thoughtText  strings.Builder
 		finishReason string
-		toolUses     []*core.ToolUse
-		toolResults  []*core.ToolResult
-		images       []*core.BinaryRef
+		blocks       []core.ContentBlock
+		// sealed marks the trailing block as closed to coalescing. It is
+		// needed only for SYNTHETIC text: a marker is text-shaped but is
+		// not the model speaking, so the next delta must start its own
+		// block. Blocks of another kind — a tool call, a media element —
+		// need no seal, because appendKind's type check already refuses to
+		// merge into them.
+		sealed     bool
+		byPosition map[int]*toolCallState
 	}
+	// appendText merges a delta into the trailing text block when the last
+	// thing seen was also text, and starts a new block otherwise. That is
+	// the whole difference between "the model said A then called a tool then
+	// said B" and "the model said AB".
+	appendKind := func(st *candidateState, kind core.ContentType, s string) {
+		if n := len(st.blocks); n > 0 && !st.sealed && st.blocks[n-1].Type == kind {
+			st.blocks[n-1].Text += s
+			return
+		}
+		st.blocks = append(st.blocks, core.ContentBlock{Type: kind, Text: s})
+		st.sealed = false
+	}
+	// appendSealed emits a synthetic block that neither merges into what
+	// precedes it nor accepts what follows.
+	appendSealed := func(st *candidateState, s string) {
+		st.blocks = append(st.blocks, core.ContentBlock{Type: core.ContentText, Text: s})
+		st.sealed = true
+	}
+	// Gemini streams functionCall arguments as cumulative snapshots. Keep the
+	// first block's position and replace its input with the latest snapshot;
+	// repeated snapshots must not become duplicate tool calls.
+	upsertToolCall := func(st *candidateState, candidate, position int, p geminiPart) {
+		fc := p.FunctionCall
+		if st.byPosition == nil {
+			st.byPosition = make(map[int]*toolCallState)
+		}
+		// Part position owns snapshot continuity. Native IDs are not unique
+		// enough to merge occurrences: if Gemini repeats one ID in two Parts,
+		// preserve both so downstream duplicate-ID validation can fail closed.
+		call := st.byPosition[position]
+		if call == nil {
+			args := "{}"
+			if len(fc.Args) > 0 {
+				if raw, err := json.Marshal(fc.Args); err == nil {
+					args = string(raw)
+				}
+			}
+			id := fc.ID
+			if id == "" {
+				id = geminiFallbackCallID(fc.Name, args, fmt.Sprintf("candidates.%d.content.parts", candidate), position)
+			}
+			call = &toolCallState{use: &core.ToolUse{CallID: id, Name: fc.Name, Input: fc.Args, ThoughtSignature: p.ThoughtSignature}}
+			st.blocks = append(st.blocks, core.ContentBlock{Type: core.ContentToolUse, ToolUse: call.use})
+		} else {
+			if fc.ID != "" {
+				call.use.CallID = fc.ID
+			}
+			if fc.Name != "" {
+				call.use.Name = fc.Name
+			}
+			call.use.Input = fc.Args
+			if p.ThoughtSignature != "" {
+				call.use.ThoughtSignature = p.ThoughtSignature
+			}
+		}
+		st.byPosition[position] = call
+	}
+
 	candidates := map[int]*candidateState{}
 	var order []int
 	var usage *core.Usage
@@ -77,7 +151,7 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 			// the body still readable as an http-text blob.
 			sawAny = true
 		}
-		for _, c := range chunk.Candidates {
+		for cpos, c := range chunk.Candidates {
 			st, ok := candidates[c.Index]
 			if !ok {
 				st = &candidateState{}
@@ -101,21 +175,25 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 			if c.Content.Role != "" && st.role == "" {
 				st.role = c.Content.Role
 			}
-			for _, p := range c.Content.Parts {
+			// Frame index of the frame being folded, 0-based over
+			// data-bearing frames — totalFrames was incremented on entry.
+			frame := totalFrames - 1
+			for pi, p := range c.Content.Parts {
 				switch {
 				case p.Text != nil:
+					// Reasoning is a kind, not a separate channel. Hoisting
+					// it out of the ordered list left the text deltas on
+					// either side of it adjacent, so they fused into one
+					// utterance — the same defect the accumulator was
+					// introduced to remove, on the one kind it skipped.
+					kind := core.ContentText
 					if p.Thought {
-						st.thoughtText.WriteString(*p.Text)
-					} else {
-						st.text.WriteString(*p.Text)
+						kind = core.ContentReasoning
 					}
+					appendKind(st, kind, *p.Text)
 					sawAny = true
 				case p.FunctionCall != nil:
-					st.toolUses = append(st.toolUses, &core.ToolUse{
-						CallID: p.FunctionCall.ID,
-						Name:   p.FunctionCall.Name,
-						Input:  p.FunctionCall.Args,
-					})
+					upsertToolCall(st, c.Index, pi, p)
 					sawAny = true
 				case p.FunctionResponse != nil:
 					tr := &core.ToolResult{CallID: p.FunctionResponse.ID}
@@ -124,14 +202,32 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 							tr.Output = string(b)
 						}
 					}
-					st.toolResults = append(st.toolResults, tr)
+					st.blocks = append(st.blocks, core.ContentBlock{Type: core.ContentToolResult, ToolResult: tr})
 					sawAny = true
 				case p.InlineData != nil:
-					st.images = append(st.images, &core.BinaryRef{
-						ContentType: p.InlineData.MimeType,
-						Size:        int64(len(p.InlineData.Data)),
-						SHA256:      stableHashHint(p.InlineData.Data),
-					})
+					// Gemini delivers a complete inlineData part inside one
+					// chunk, so the bytes are whole within this frame and an
+					// sse: locator addresses them exactly.
+					st.blocks = append(st.blocks, mediaBlock(capturedMedia(
+						p.InlineData.MimeType,
+						p.InlineData.Data,
+						locator.SSE(frame, "candidates."+strconv.Itoa(cpos)+".content.parts."+strconv.Itoa(pi)+".inlineData.data"),
+					)))
+					sawAny = true
+				case p.FileData != nil:
+					st.blocks = append(st.blocks, mediaBlock(geminiFileDataMedia(p.FileData.MimeType, p.FileData.FileURI)))
+					sawAny = true
+				case len(p.unmatched) > 0:
+					// The no-silent-drop rule applies to the stream fold too;
+					// closing it only on the non-stream path would leave the
+					// class half-fixed.
+					// Through appendKind, not a raw append: a raw text block
+					// becomes a coalescing target, so the next delta fuses
+					// into the marker and the model's word is glued to
+					// synthetic text. Every text-shaped emission on this
+					// path goes through the same door.
+					appendSealed(st,
+						payloadSafeText("[unrecognised gemini part: ", geminiPartKeys(p.unmatched)+"]"))
 					sawAny = true
 				}
 			}
@@ -163,19 +259,26 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 			if resp.ModelVersion != "" {
 				out.Model = resp.ModelVersion
 			}
-			for _, c := range resp.Candidates {
+			for ci, c := range resp.Candidates {
 				if c.Content == nil {
 					continue
 				}
-				// Same response-side role-default rule as normalizeResponse:
-				// empty role on the response side means assistant, not user.
-				role := geminiRoleToCanonical(c.Content.Role)
-				if c.Content.Role == "" {
-					role = core.RoleAssistant
+				// Default the WIRE role, then map — the same shape the SSE
+				// fold below uses. Mapping first and overriding the result
+				// expresses the identical rule a second way, and a rule
+				// written twice is a rule that drifts. The default matters
+				// because geminiRoleToCanonical("") is user, which is
+				// backwards on the response side.
+				role := c.Content.Role
+				if role == "" {
+					role = "model"
 				}
 				out.Messages = append(out.Messages, core.Message{
-					Role:         role,
-					Content:      geminiPartsToBlocks(c.Content.Parts),
+					Role: geminiRoleToCanonical(role),
+					// This arm handles a whole non-SSE response body that
+					// reached the stream normalizer, so plain json: paths
+					// address it — no frame indirection.
+					Content:      geminiPartsToBlocks(c.Content.Parts, locator.JoinPath("candidates", ci)+".content.parts"),
 					FinishReason: c.FinishReason,
 				})
 			}
@@ -199,21 +302,7 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 			role = "model"
 		}
 		msg := core.Message{Role: geminiRoleToCanonical(role), FinishReason: st.finishReason}
-		if t := st.thoughtText.String(); t != "" {
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentReasoning, Text: t})
-		}
-		if t := st.text.String(); t != "" {
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentText, Text: t})
-		}
-		for _, tu := range st.toolUses {
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentToolUse, ToolUse: tu})
-		}
-		for _, tr := range st.toolResults {
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentToolResult, ToolResult: tr})
-		}
-		for _, img := range st.images {
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentImageRef, ImageRef: img})
-		}
+		msg.Content = append(msg.Content, st.blocks...)
 		out.Messages = append(out.Messages, msg)
 		if out.FinishReason == "" {
 			out.FinishReason = st.finishReason

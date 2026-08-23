@@ -30,7 +30,16 @@ describe('NormalizedPayloadView multimodal kinds', () => {
           role: 'assistant',
           content: [
             { type: 'text', text: 'a vivid red fox' },
-            { type: 'image_ref', imageRef: { size: 2048, contentType: 'image/png', sha256: '' } },
+            {
+              type: 'media',
+              mediaRef: {
+                modality: 'image',
+                mime: 'image/png',
+                sizeBytes: 2048,
+                source: 'captured',
+                locator: 'json:data.0.b64_json',
+              },
+            },
           ],
         },
       ],
@@ -39,9 +48,45 @@ describe('NormalizedPayloadView multimodal kinds', () => {
       <NormalizedPayloadView payload={payload} direction="response" />,
     );
     expect(screen.getByText('a vivid red fox')).toBeInTheDocument();
-    // The image_ref card shows mime; the raw base64 is never present.
+    // The card reports the real format, not the bare word "image" every
+    // format used to collapse to, and the raw base64 never reaches the DOM.
     expect(container.textContent).toContain('image/png');
     expect(container.textContent).not.toMatch(/[A-Za-z0-9+/]{200,}={0,2}/); // no long b64 blob
+  });
+
+  it('offers no control for media whose bytes were never retained', () => {
+    const payload: NormalizedPayload = {
+      kind: 'ai-chat',
+      normalizeVersion: 'v3',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'media',
+              mediaRef: {
+                modality: 'audio',
+                mime: 'audio/wav',
+                sizeBytes: 9644,
+                source: 'fingerprint',
+                sha256: 'a'.repeat(64),
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const { container } = renderWithProviders(
+      <NormalizedPayloadView payload={payload} direction="request" />,
+    );
+    // The no-dead-control invariant itself is exercised in the shared
+    // card's own suite, with a working resolver — asserting it here would
+    // pass for the wrong reason, because this surface passes no resolver at
+    // all and therefore renders no control in ANY custody state.
+    // What this test owns is the drawer's rendering of the metadata.
+    expect(container.textContent).toContain('audio/wav');
+    expect(container.textContent).toContain('audio');
+    expect(container.textContent).toContain('9.4 KB');
   });
 
   it('renders an ai-tts input as message text', () => {

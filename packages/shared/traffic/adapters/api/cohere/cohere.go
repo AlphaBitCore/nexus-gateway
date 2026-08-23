@@ -251,7 +251,15 @@ func (a *Adapter) DetectResponseUsage(_ *http.Response, body []byte) traffic.Usa
 		v := int(ct.Int())
 		usage.CompletionTokens = &v
 	}
-	if usage.PromptTokens == nil && usage.CompletionTokens == nil {
+	// cached_tokens sits beside tokens / billed_units rather than inside
+	// either. It was never read, so intercepted Cohere traffic showed zero
+	// cache reads on a provider that reports them — observed live at 992 of
+	// 1431 input tokens on one call.
+	if cr := gjson.GetBytes(body, "usage.cached_tokens"); cr.Exists() && cr.Type == gjson.Number {
+		v := int(cr.Int())
+		usage.CacheReadTokens = &v
+	}
+	if usage.PromptTokens == nil && usage.CompletionTokens == nil && usage.CacheReadTokens == nil {
 		usage.Status = traffic.UsageStatusParseFailed
 	}
 	return usage

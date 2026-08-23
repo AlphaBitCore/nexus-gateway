@@ -100,8 +100,7 @@ func TestS150_CostStampedAcrossIngress(t *testing.T) {
 			if status != 200 {
 				rb := string(respBody)
 				if a.skipOnNoMatch && (strings.Contains(rb, "ROUTING_NO_MATCH") || strings.Contains(rb, "no available provider")) {
-					t.Skipf("%s: no provider seeded locally for this ingress (ROUTING_NO_MATCH); "+
-						"seed a credential to exercise this arm. body=%q", a.name, truncate(respBody, 160))
+					requireProviderSeeded(t, a.name, truncate(respBody, 160))
 				}
 				t.Fatalf("%s: expected 200, got %d (%q)", a.name, status, truncate(respBody, 200))
 			}

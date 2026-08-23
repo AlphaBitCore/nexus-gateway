@@ -18,6 +18,23 @@ const (
 	providerHealthWindow            = 30 * time.Minute
 	providerHealthDegradedThreshold = 0.05
 	providerHealthUnavailThreshold  = 0.25
+
+	// providerHealthMinSamples is the evidence a verdict against a provider
+	// needs before it is worth stating.
+	//
+	// A rate over a handful of requests is not a rate. With no floor, one
+	// failed request in a thirty-minute window put the provider at 100% error
+	// and marked it unavailable — which fired the provider.unavailable alert
+	// and, in the UI, condemned a provider that nothing was wrong with. An
+	// operator then had nothing to click: this status is DERIVED from the
+	// window and cannot be reset by hand, so it looked stuck until the window
+	// rolled the request off.
+	//
+	// Twenty means the unavailable threshold needs at least six failures
+	// rather than one, which is a signal instead of an accident. Below the
+	// floor no adverse verdict is stated at all; sampleCount is written
+	// regardless, so a reader can see the verdict rests on little traffic.
+	providerHealthMinSamples = 20
 )
 
 // ProviderHealthRollupJob queries the last 30 minutes of ai-gateway traffic
@@ -67,18 +84,50 @@ func (j *ProviderHealthRollupJob) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("collect: %w", err)
 	}
-	if len(rows) == 0 {
-		j.logger.Debug("no provider traffic in window", "windowStart", windowStart.Format(time.RFC3339))
-		return nil
-	}
-
 	for _, r := range rows {
 		if err := j.upsert(ctx, r, windowStart); err != nil {
 			j.logger.Error("upsert provider health", "providerId", r.providerID, "error", err)
 		}
 	}
+	// Runs whether or not anything had traffic — an empty window is exactly
+	// when every remaining verdict is stale, and the early return that used to
+	// sit here skipped that case.
+	if err := j.clearStaleVerdicts(ctx, windowStart); err != nil {
+		j.logger.Error("clear stale provider health", "error", err)
+	}
 	j.logger.Info("provider health rollup complete", "providers", len(rows))
 	return nil
+}
+
+// clearStaleVerdicts resets any provider the current window has nothing to say
+// about.
+//
+// The collect query GROUPs traffic BY provider, so it only ever upserts
+// providers that appear IN the window. Without this, a provider that stops
+// receiving traffic keeps whatever status it last got forever — and because the
+// status is derived, an operator cannot clear it by hand. Seen in production:
+// google-gemini frozen at `unavailable` on a sampleCount of 1, hours after the
+// single failed request that produced it, while later runs updated the
+// providers that did have traffic and left that row alone.
+//
+// The reset lands on `healthy` with a zeroed sample count for the same reason
+// the evidence floor does: no traffic in the window is not evidence of failure,
+// `healthy` is the weaker of the two claims available, and the row still
+// carries sampleCount so a reader can see the verdict rests on nothing. This
+// table feeds the UI and alerts only — routing uses the gateway's own
+// in-process window — so a cleared verdict cannot misroute traffic.
+func (j *ProviderHealthRollupJob) clearStaleVerdicts(ctx context.Context, windowStart time.Time) error {
+	_, err := j.pool.Exec(ctx, `
+		UPDATE "ProviderHealth"
+		   SET status             = 'healthy',
+		       "rollingErrorRate" = 0,
+		       "sampleCount"      = 0,
+		       "windowStart"      = $1,
+		       "updatedAt"        = NOW()
+		 WHERE "windowStart" < $1
+		   AND (status <> 'healthy' OR "sampleCount" <> 0)
+	`, windowStart)
+	return err
 }
 
 func (j *ProviderHealthRollupJob) collect(ctx context.Context, windowStart time.Time) ([]providerHealthRow, error) {
@@ -118,19 +167,31 @@ func (j *ProviderHealthRollupJob) collect(ctx context.Context, windowStart time.
 	return result, pgRows.Err()
 }
 
+// healthStatus is the verdict, separated from the write so the thresholds and
+// the evidence floor can be exercised without a database.
+func healthStatus(total int, errorRate float64) string {
+	if total < providerHealthMinSamples {
+		// Not enough traffic to state a rate. Saying "healthy" here is the
+		// weaker claim of the two available, and the row carries sampleCount
+		// so a reader can see what the verdict rests on.
+		return "healthy"
+	}
+	switch {
+	case errorRate > providerHealthUnavailThreshold:
+		return "unavailable"
+	case errorRate > providerHealthDegradedThreshold:
+		return "degraded"
+	}
+	return "healthy"
+}
+
 func (j *ProviderHealthRollupJob) upsert(ctx context.Context, r providerHealthRow, windowStart time.Time) error {
 	errorRate := 0.0
 	if r.total > 0 {
 		errorRate = float64(r.errors) / float64(r.total)
 	}
 
-	status := "healthy"
-	switch {
-	case errorRate > providerHealthUnavailThreshold:
-		status = "unavailable"
-	case errorRate > providerHealthDegradedThreshold:
-		status = "degraded"
-	}
+	status := healthStatus(r.total, errorRate)
 
 	_, err := j.pool.Exec(ctx, `
 		INSERT INTO "ProviderHealth"

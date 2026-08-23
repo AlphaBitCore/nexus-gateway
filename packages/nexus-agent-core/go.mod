@@ -2,7 +2,7 @@ module github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/goccy/go-json v0.10.6

@@ -46,15 +46,16 @@ func toMessage(e AuditEvent, thingID, thingName string) mq.TrafficEventMessage {
 		// / .action; the consumer reads via stripNulPtr(e.SourceProcess) /
 		// stripNulPtr(e.Action). Static values per emitter — Action carries
 		// the role of the event in the proxy pipeline.
-		SourceProcess: "compliance-proxy",
-		Action:        "compliance-traffic",
-		TraceID:       e.TraceID,
-		Timestamp:     e.Timestamp,
-		SourceIP:      e.SourceIP,
-		Identity:      identity,
-		TargetHost:    e.TargetHost,
-		Method:        e.Method,
-		Path:          e.Path,
+		SourceProcess:     "compliance-proxy",
+		Action:            "compliance-traffic",
+		TraceID:           e.TraceID,
+		ExternalRequestID: e.ExternalRequestID,
+		Timestamp:         e.Timestamp,
+		SourceIP:          e.SourceIP,
+		Identity:          identity,
+		TargetHost:        e.TargetHost,
+		Method:            e.Method,
+		Path:              e.Path,
 		// The compliance-proxy is a transparent forwarder — the upstream
 		// path equals the client-requested path, so target_path mirrors
 		// path 1:1 and target_method mirrors method.

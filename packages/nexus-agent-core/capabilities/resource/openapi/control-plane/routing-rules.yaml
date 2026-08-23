@@ -80,7 +80,10 @@ paths:
                 required; the handler rejects a missing or empty value for any of these
                 with 400. `strategyType` must be one of the recognized routing
                 strategies (`single`, `fallback`, `loadbalance`, `conditional`,
-                `ab_split`, `policy`, `smart`); any other value is rejected with 400.
+                `ab_split`, `smart`, `latency`); any other value is rejected with 400.
+                `policy` was accepted while it had no implementation and is now
+                rejected — a rule carrying it was persisted, broadcast, and then
+                resolved to nothing on every gateway.
                 `config` must parse as a strategy object — a non-object JSON document
                 (array, string, number) or an object whose embedded `type` is not a
                 recognized strategy node type is rejected with 400 before the rule is
@@ -90,8 +93,9 @@ paths:
                 `matchConditions.organizations` key is rejected with 422 in favor of
                 `projects`. A supplied `retryPolicy` is validated for bounds before
                 persistence; omitting it makes the rule inherit the AI Gateway YAML
-                default. `enabled` defaults to true and `pipelineStage` defaults to 1
-                when omitted.
+                default. `enabled` defaults to true. `pipelineStage` defaults to 1
+                when omitted and only 1 is accepted — stage 0 (policy narrowing) is
+                removed, and an explicit 0 returns 400 `pipeline_stage_invalid`.
             x-nexus-iam-action: iam.ResourceRoutingRule.Action(iam.VerbCreate)
             x-nexus-tier: confirm
             requestBody:
@@ -118,7 +122,7 @@ paths:
                                         - loadbalance
                                         - conditional
                                         - ab_split
-                                        - policy
+                                        - latency
                                         - smart
                                 config:
                                     description: >-
@@ -140,7 +144,15 @@ paths:
                                     type:
                                         - integer
                                         - "null"
-                                    description: Pipeline stage the rule belongs to. Defaults to 1 when omitted or null; an explicit 0 is preserved.
+                                    enum: [1, null]
+                                    description: >-
+                                        Pipeline stage the rule belongs to. Only 1 (route) is
+                                        accepted; omitted or null defaults to 1. Any other value
+                                        is rejected with 400 `pipeline_stage_invalid` rather than
+                                        coerced, so a caller never gets a rule they did not ask
+                                        for. Stage 0 (policy narrowing) has been removed — model
+                                        access is governed by the virtual key's allowed-models
+                                        list, which is an allow list with no deny counterpart.
                                 fallbackChain:
                                     description: >-
                                         Ordered inline recovery-target list as an array of
@@ -170,7 +182,68 @@ paths:
                                             type: integer
                                             minimum: 1
                                             maximum: 5
-                                            description: Maximum retry attempts per target. When non-zero, must be in [1,5].
+                                            description: >-
+                                                Dispatches one target may take on this REQUEST, clamped to [1,5]. It
+                                                covers both ways a target is tried again — retried in place within a
+                                                turn, and returned to later after other targets have been tried — so
+                                                a target that spends it inside its first turn is not selected again.
+                                                This is the cap an admin writing the number is capping;
+                                                maxUpstreamCalls cannot lift it.
+                                        maxUpstreamCalls:
+                                            type: integer
+                                            minimum: 1
+                                            maximum: 20
+                                            description: >-
+                                                Total upstream calls one request may make, counting every dispatch
+                                                across every target and rule, including the same-target attempts
+                                                maxAttemptsPerTarget governs. Omit to inherit the reach the target list
+                                                already has (targets x maxAttemptsPerTarget), which is also the most
+                                                the walk can spend at ANY setting: each target's allowance is its own,
+                                                and no other target can spend what it leaves behind. A value takes
+                                                attempts away; a value above the derived ceiling buys nothing, because
+                                                no target has one left to give. To grant a target more attempts, raise
+                                                maxAttemptsPerTarget. When non-zero, must be in [1,20].
+                                        maxWalkDuration:
+                                            type: string
+                                            description: >-
+                                                Wall-clock time one request may spend being walked across targets, as a
+                                                Go duration string ("10m", "45s"). Bounds patience where
+                                                maxUpstreamCalls bounds spend; the two fail in different directions, so
+                                                an unresponsive upstream exhausts this one and an expensive one
+                                                exhausts the other. Checked before each dispatch, never during one, so
+                                                a walk admitted just inside the deadline can exceed it by one attempt.
+                                                Omit to inherit the gateway default. When set, must be between 1s and
+                                                1h — a BARE NUMBER is read as NANOSECONDS, so 600 expires the walk
+                                                before its first dispatch and turns every request on the rule into a
+                                                502 with every target skipped; write "10m".
+                                            example: 10m
+                                        backoffInitial:
+                                            type: string
+                                            description: >-
+                                                Wait before the first same-target retry, as a Go duration string
+                                                ("250ms"). Doubles per attempt up to backoffMax. Omit to inherit the
+                                                gateway default. When set, must be between 1ms and 1m — a BARE NUMBER is
+                                                read as NANOSECONDS, so 250 is not a pause at all and a rule written to
+                                                slow its retries down speeds them up.
+                                            example: 250ms
+                                        backoffMax:
+                                            type: string
+                                            description: >-
+                                                Ceiling the doubling backoff clamps at, as a Go duration string ("5s").
+                                                Omit to inherit the gateway default. When set, must be between 1ms and 1m
+                                                — a BARE NUMBER is read as NANOSECONDS, and this value is the ceiling the
+                                                walk actually uses, so 5 clamps every wait to nothing whatever
+                                                backoffInitial says.
+                                            example: 5s
+                                        backoffJitter:
+                                            type: number
+                                            description: >-
+                                                Fraction of the computed wait applied as uniform +/- jitter, so retries
+                                                from many concurrent requests do not land together. 0.2 means +/-20%.
+                                                Must be between 0 and 1: above 1 the swing exceeds the wait it jitters,
+                                                so a pause is as likely to be nothing as to be the configured value. Omit
+                                                to inherit the gateway default.
+                                            example: 0.2
                                         retryOn:
                                             type: array
                                             description: Error classes that trigger a retry.
@@ -308,7 +381,7 @@ paths:
                 All body fields are optional; omitting a field leaves the column
                 unchanged. When supplied, `strategyType` must be one of the recognized
                 strategies (`single`, `fallback`, `loadbalance`, `conditional`,
-                `ab_split`, `policy`, `smart`) and `config` must parse as a strategy
+                `ab_split`, `smart`, `latency`) and `config` must parse as a strategy
                 object — an unknown strategy or a malformed config is rejected with 400.
                 The JSON fields use explicit presence detection — for `retryPolicy`, an
                 absent field leaves it unchanged while an explicit `null` clears the
@@ -355,7 +428,7 @@ paths:
                                         - loadbalance
                                         - conditional
                                         - ab_split
-                                        - policy
+                                        - latency
                                         - smart
                                 config:
                                     description: New strategy configuration. Omit to leave unchanged. When supplied, must parse as a strategy object; a non-object document or an unrecognized embedded `type` is rejected with 400.
@@ -397,7 +470,68 @@ paths:
                                             type: integer
                                             minimum: 1
                                             maximum: 5
-                                            description: Maximum retry attempts per target. When non-zero, must be in [1,5].
+                                            description: >-
+                                                Dispatches one target may take on this REQUEST, clamped to [1,5]. It
+                                                covers both ways a target is tried again — retried in place within a
+                                                turn, and returned to later after other targets have been tried — so
+                                                a target that spends it inside its first turn is not selected again.
+                                                This is the cap an admin writing the number is capping;
+                                                maxUpstreamCalls cannot lift it.
+                                        maxUpstreamCalls:
+                                            type: integer
+                                            minimum: 1
+                                            maximum: 20
+                                            description: >-
+                                                Total upstream calls one request may make, counting every dispatch
+                                                across every target and rule, including the same-target attempts
+                                                maxAttemptsPerTarget governs. Omit to inherit the reach the target list
+                                                already has (targets x maxAttemptsPerTarget), which is also the most
+                                                the walk can spend at ANY setting: each target's allowance is its own,
+                                                and no other target can spend what it leaves behind. A value takes
+                                                attempts away; a value above the derived ceiling buys nothing, because
+                                                no target has one left to give. To grant a target more attempts, raise
+                                                maxAttemptsPerTarget. When non-zero, must be in [1,20].
+                                        maxWalkDuration:
+                                            type: string
+                                            description: >-
+                                                Wall-clock time one request may spend being walked across targets, as a
+                                                Go duration string ("10m", "45s"). Bounds patience where
+                                                maxUpstreamCalls bounds spend; the two fail in different directions, so
+                                                an unresponsive upstream exhausts this one and an expensive one
+                                                exhausts the other. Checked before each dispatch, never during one, so
+                                                a walk admitted just inside the deadline can exceed it by one attempt.
+                                                Omit to inherit the gateway default. When set, must be between 1s and
+                                                1h — a BARE NUMBER is read as NANOSECONDS, so 600 expires the walk
+                                                before its first dispatch and turns every request on the rule into a
+                                                502 with every target skipped; write "10m".
+                                            example: 10m
+                                        backoffInitial:
+                                            type: string
+                                            description: >-
+                                                Wait before the first same-target retry, as a Go duration string
+                                                ("250ms"). Doubles per attempt up to backoffMax. Omit to inherit the
+                                                gateway default. When set, must be between 1ms and 1m — a BARE NUMBER is
+                                                read as NANOSECONDS, so 250 is not a pause at all and a rule written to
+                                                slow its retries down speeds them up.
+                                            example: 250ms
+                                        backoffMax:
+                                            type: string
+                                            description: >-
+                                                Ceiling the doubling backoff clamps at, as a Go duration string ("5s").
+                                                Omit to inherit the gateway default. When set, must be between 1ms and 1m
+                                                — a BARE NUMBER is read as NANOSECONDS, and this value is the ceiling the
+                                                walk actually uses, so 5 clamps every wait to nothing whatever
+                                                backoffInitial says.
+                                            example: 5s
+                                        backoffJitter:
+                                            type: number
+                                            description: >-
+                                                Fraction of the computed wait applied as uniform +/- jitter, so retries
+                                                from many concurrent requests do not land together. 0.2 means +/-20%.
+                                                Must be between 0 and 1: above 1 the swing exceeds the wait it jitters,
+                                                so a pause is as likely to be nothing as to be the configured value. Omit
+                                                to inherit the gateway default.
+                                            example: 0.2
                                         retryOn:
                                             type: array
                                             description: Error classes that trigger a retry.
@@ -519,7 +653,7 @@ paths:
                                         - loadbalance
                                         - conditional
                                         - ab_split
-                                        - policy
+                                        - latency
                                         - smart
                                 config:
                                     description: New strategy configuration. Omit to leave unchanged. When supplied, must parse as a strategy object; a non-object document or an unrecognized embedded `type` is rejected with 400.
@@ -561,7 +695,68 @@ paths:
                                             type: integer
                                             minimum: 1
                                             maximum: 5
-                                            description: Maximum retry attempts per target. When non-zero, must be in [1,5].
+                                            description: >-
+                                                Dispatches one target may take on this REQUEST, clamped to [1,5]. It
+                                                covers both ways a target is tried again — retried in place within a
+                                                turn, and returned to later after other targets have been tried — so
+                                                a target that spends it inside its first turn is not selected again.
+                                                This is the cap an admin writing the number is capping;
+                                                maxUpstreamCalls cannot lift it.
+                                        maxUpstreamCalls:
+                                            type: integer
+                                            minimum: 1
+                                            maximum: 20
+                                            description: >-
+                                                Total upstream calls one request may make, counting every dispatch
+                                                across every target and rule, including the same-target attempts
+                                                maxAttemptsPerTarget governs. Omit to inherit the reach the target list
+                                                already has (targets x maxAttemptsPerTarget), which is also the most
+                                                the walk can spend at ANY setting: each target's allowance is its own,
+                                                and no other target can spend what it leaves behind. A value takes
+                                                attempts away; a value above the derived ceiling buys nothing, because
+                                                no target has one left to give. To grant a target more attempts, raise
+                                                maxAttemptsPerTarget. When non-zero, must be in [1,20].
+                                        maxWalkDuration:
+                                            type: string
+                                            description: >-
+                                                Wall-clock time one request may spend being walked across targets, as a
+                                                Go duration string ("10m", "45s"). Bounds patience where
+                                                maxUpstreamCalls bounds spend; the two fail in different directions, so
+                                                an unresponsive upstream exhausts this one and an expensive one
+                                                exhausts the other. Checked before each dispatch, never during one, so
+                                                a walk admitted just inside the deadline can exceed it by one attempt.
+                                                Omit to inherit the gateway default. When set, must be between 1s and
+                                                1h — a BARE NUMBER is read as NANOSECONDS, so 600 expires the walk
+                                                before its first dispatch and turns every request on the rule into a
+                                                502 with every target skipped; write "10m".
+                                            example: 10m
+                                        backoffInitial:
+                                            type: string
+                                            description: >-
+                                                Wait before the first same-target retry, as a Go duration string
+                                                ("250ms"). Doubles per attempt up to backoffMax. Omit to inherit the
+                                                gateway default. When set, must be between 1ms and 1m — a BARE NUMBER is
+                                                read as NANOSECONDS, so 250 is not a pause at all and a rule written to
+                                                slow its retries down speeds them up.
+                                            example: 250ms
+                                        backoffMax:
+                                            type: string
+                                            description: >-
+                                                Ceiling the doubling backoff clamps at, as a Go duration string ("5s").
+                                                Omit to inherit the gateway default. When set, must be between 1ms and 1m
+                                                — a BARE NUMBER is read as NANOSECONDS, and this value is the ceiling the
+                                                walk actually uses, so 5 clamps every wait to nothing whatever
+                                                backoffInitial says.
+                                            example: 5s
+                                        backoffJitter:
+                                            type: number
+                                            description: >-
+                                                Fraction of the computed wait applied as uniform +/- jitter, so retries
+                                                from many concurrent requests do not land together. 0.2 means +/-20%.
+                                                Must be between 0 and 1: above 1 the swing exceeds the wait it jitters,
+                                                so a pause is as likely to be nothing as to be the configured value. Omit
+                                                to inherit the gateway default.
+                                            example: 0.2
                                         retryOn:
                                             type: array
                                             description: Error classes that trigger a retry.
@@ -760,7 +955,68 @@ components:
                             type: integer
                             minimum: 1
                             maximum: 5
-                            description: Maximum retry attempts per target.
+                            description: >-
+                                Dispatches one target may take on this REQUEST, clamped to [1,5]. It
+                                covers both ways a target is tried again — retried in place within a
+                                turn, and returned to later after other targets have been tried — so
+                                a target that spends it inside its first turn is not selected again.
+                                This is the cap an admin writing the number is capping;
+                                maxUpstreamCalls cannot lift it.
+                        maxUpstreamCalls:
+                            type: integer
+                            minimum: 1
+                            maximum: 20
+                            description: >-
+                                Total upstream calls one request may make, counting every dispatch
+                                across every target and rule, including the same-target attempts
+                                maxAttemptsPerTarget governs. Omit to inherit the reach the target list
+                                already has (targets x maxAttemptsPerTarget), which is also the most
+                                the walk can spend at ANY setting: each target's allowance is its own,
+                                and no other target can spend what it leaves behind. A value takes
+                                attempts away; a value above the derived ceiling buys nothing, because
+                                no target has one left to give. To grant a target more attempts, raise
+                                maxAttemptsPerTarget. When non-zero, must be in [1,20].
+                        maxWalkDuration:
+                            type: string
+                            description: >-
+                                Wall-clock time one request may spend being walked across targets, as a
+                                Go duration string ("10m", "45s"). Bounds patience where
+                                maxUpstreamCalls bounds spend; the two fail in different directions, so
+                                an unresponsive upstream exhausts this one and an expensive one
+                                exhausts the other. Checked before each dispatch, never during one, so
+                                a walk admitted just inside the deadline can exceed it by one attempt.
+                                Omit to inherit the gateway default. When set, must be between 1s and
+                                1h — a BARE NUMBER is read as NANOSECONDS, so 600 expires the walk
+                                before its first dispatch and turns every request on the rule into a
+                                502 with every target skipped; write "10m".
+                            example: 10m
+                        backoffInitial:
+                            type: string
+                            description: >-
+                                Wait before the first same-target retry, as a Go duration string
+                                ("250ms"). Doubles per attempt up to backoffMax. Omit to inherit the
+                                gateway default. When set, must be between 1ms and 1m — a BARE NUMBER is
+                                read as NANOSECONDS, so 250 is not a pause at all and a rule written to
+                                slow its retries down speeds them up.
+                            example: 250ms
+                        backoffMax:
+                            type: string
+                            description: >-
+                                Ceiling the doubling backoff clamps at, as a Go duration string ("5s").
+                                Omit to inherit the gateway default. When set, must be between 1ms and 1m
+                                — a BARE NUMBER is read as NANOSECONDS, and this value is the ceiling the
+                                walk actually uses, so 5 clamps every wait to nothing whatever
+                                backoffInitial says.
+                            example: 5s
+                        backoffJitter:
+                            type: number
+                            description: >-
+                                Fraction of the computed wait applied as uniform +/- jitter, so retries
+                                from many concurrent requests do not land together. 0.2 means +/-20%.
+                                Must be between 0 and 1: above 1 the swing exceeds the wait it jitters,
+                                so a pause is as likely to be nothing as to be the configured value. Omit
+                                to inherit the gateway default.
+                            example: 0.2
                         retryOn:
                             type: array
                             description: Error classes that trigger a retry.

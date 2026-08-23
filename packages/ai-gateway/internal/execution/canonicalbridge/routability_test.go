@@ -331,12 +331,12 @@ func TestAnthropicStreamEncoder_MessageStartCarriesUsage(t *testing.T) {
 	}
 }
 
-// TestAnthropicStreamEncoder_ReasoningDelta covers stream_encoders.go:251-268
-// — the ReasoningDelta path that opens a thinking content_block and emits
-// a thinking_delta.
+// TestAnthropicStreamEncoder_SignedThinkingCarrier covers the provider-owned
+// thinking carrier path. Unsigned ReasoningDelta is not promoted to native
+// Anthropic thinking.
 func TestAnthropicStreamEncoder_ReasoningDelta(t *testing.T) {
 	enc := newAnthropicStreamEncoder()
-	out, err := enc.Write(context.Background(), provcore.Chunk{ReasoningDelta: "I should consider..."})
+	out, err := enc.Write(context.Background(), provcore.Chunk{NexusThinking: []provcore.NexusThinkingBlock{{Index: 0, Thinking: "I should consider...", Signature: "sig-think"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,6 +349,9 @@ func TestAnthropicStreamEncoder_ReasoningDelta(t *testing.T) {
 	}
 	if !strings.Contains(s, "I should consider...") {
 		t.Errorf("expected reasoning text in delta; got %s", s)
+	}
+	if !strings.Contains(s, "signature_delta") || !strings.Contains(s, "sig-think") {
+		t.Errorf("expected exact signature delta; got %s", s)
 	}
 }
 

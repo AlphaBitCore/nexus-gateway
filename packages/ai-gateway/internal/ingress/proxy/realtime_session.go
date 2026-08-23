@@ -15,6 +15,7 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/realtimeproxy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
@@ -22,6 +23,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"net/http"
 )
 
 // realtimeQuota is the narrow quota surface the per-response settlement
@@ -250,10 +252,16 @@ func (s *realtimeSession) teardown(reason realtimeproxy.CloseReason, code websoc
 // short bound — a dead client must not stall the teardown behind the full
 // relay write deadline.
 func (s *realtimeSession) sendClientErrorEvent(code, message string) {
+	// The Realtime error EVENT wraps the same inner shape an HTTP error uses,
+	// so its inner type comes from the same vocabulary. "gateway_error" was in
+	// none — the defect AP-3 removed from "proxy_error" on the HTTP side,
+	// surviving here. These four closes are all gateway-side (upstream gone,
+	// quota, session guard, key revoked), which is what api_error names; the
+	// identity of each stays in the UPPER_SNAKE code, as everywhere else.
 	evt := map[string]any{
 		"type": "error",
 		"error": map[string]any{
-			"type":    "gateway_error",
+			"type":    envelope.OpenAIErrorTypeForStatus(http.StatusBadGateway),
 			"code":    code,
 			"message": message,
 		},

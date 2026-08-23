@@ -184,6 +184,7 @@ func (w *QueueWriter) buildRow(e sharedaudit.AuditEvent) event.Event {
 	row := event.Event{
 		ID:                e.ID,
 		TraceID:           e.TraceID,
+		ExternalRequestID: e.ExternalRequestID,
 		Timestamp:         e.Timestamp,
 		SourceIP:          e.SourceIP,
 		TargetHost:        e.TargetHost,

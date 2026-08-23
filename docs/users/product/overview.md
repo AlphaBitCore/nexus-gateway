@@ -55,7 +55,7 @@ Reasoning tokens, function calls, vision inputs, and structured outputs survive 
 - Token-based or USD-based budgets.
 - Hard limits reject with `429`; soft limits fire alerts.
 - Real-time accounting: counters update on every traffic event, with no batch lag.
-- Seven routing strategies in `packages/ai-gateway/internal/routing/strategies/`: `single`, `fallback`, `loadbalance`, `conditional`, `absplit`, `policy`, `smart`.
+- Seven routing strategies in `packages/ai-gateway/internal/routing/strategies/`: `single`, `fallback`, `loadbalance`, `conditional`, `ab_split`, `latency`, `smart`.
 
 ### Compliance pipeline
 PII detection, data classification, keyword filtering, content safety, rate limiting, IP allowlists, request-size validation, webhook forwarders, per-stage audit (request hooks and response hooks recorded independently), body capture (inline up to 256 KiB, the remainder in spill storage at `packages/shared/storage/spillstore/`), SIEM forwarding (`packages/nexus-hub/internal/observability/siem/`), three-tier kill switch, and emergency passthrough.

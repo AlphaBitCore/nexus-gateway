@@ -193,10 +193,11 @@ func InitThingClient(ctx context.Context, d TCInitDeps) TCInitResult {
 	slog.Info("registered with Hub as Thing", "thingID", agID)
 
 	staticInfo := platform.CaptureStaticInfo(platform.BuildInfo{
-		ServiceVersion: "ai-gateway/0.1.0",
-		StartTime:      d.ProcessStartTime.Format(time.RFC3339),
-		PublicURL:      d.Cfg.PublicURL,
-		PrivateURL:     platform.EffectivePrivateURL(d.Cfg.PrivateURL, d.Cfg.Server.Host, d.Cfg.Server.Port),
+		Service:      "ai-gateway",
+		BuildVersion: d.BuildVersion,
+		StartTime:    d.ProcessStartTime.Format(time.RFC3339),
+		PublicURL:    d.Cfg.PublicURL,
+		PrivateURL:   platform.EffectivePrivateURL(d.Cfg.PrivateURL, d.Cfg.Server.Host, d.Cfg.Server.Port),
 	})
 	go func() {
 		time.Sleep(500 * time.Millisecond)
@@ -341,9 +342,10 @@ func MountRoutes(
 			d.CacheLayer, d.AuditWriter, d.AiguardConfigCache, logger)
 	}
 	return MountCoreRoutes(mux, RouteDeps{
-		Config: cfg, CacheLayer: d.CacheLayer, DB: d.DB, VKAuth: d.VkAuth,
+		Config: cfg, CacheLayer: d.CacheLayer, DB: d.DB, Rdb: d.Rdb, VKAuth: d.VkAuth,
 		RateLimiter: d.RateLimiter, CredManager: d.CredManager,
 		RouterResolver: d.RouterResolver, Executor: d.TargetExecutor,
+		CapCache:        d.CapCache,
 		Resolver:        d.PtResolver,
 		HookConfigCache: d.HookConfigCache, GWHookRegistry: d.GwHookRegistry,
 		ProviderReg: d.AdapterReg, HealthTracker: d.HealthTracker,

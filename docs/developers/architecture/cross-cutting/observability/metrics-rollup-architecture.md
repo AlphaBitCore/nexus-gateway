@@ -71,7 +71,26 @@ When `rollup_watermark` has no row for a job (fresh deployment, or a job seeded 
 
 **Cost is a passthrough, never re-priced (single canonical price source).** For success + non-cache rows the rollup emits `billed_cost_usd` equal to the row's `estimated_cost_usd` — the cost the AI Gateway already computed once from the **Model table** (cache-aware) and stamped onto the event. The rollup does **not** consult any second price source or recompute cost from tokens × price; it sums the gateway-stamped value verbatim. This is what keeps enforcement and reporting in lockstep: the live quota counter is incremented by the same `estimated_cost_usd` at reconcile time, and the gateway boot Backfill re-seeds the counter from `metric_rollup_1h.billed_cost_usd` — so the runtime counter and the rolled-up ledger price a given model identically and cannot drift across a reboot (audit F-0163; the retired `provider_pricing` table that once caused this drift is gone). See [quota-architecture.md §2a](../safety/quota-architecture.md#2a-single-canonical-price-source) and [cost-estimation-architecture.md](../../services/ai-gateway/cost-estimation-architecture.md).
 
-The internal-ops cost knob `excludeInternalOpsFromBilled` controls whether L2-embedding and ai-guard classifier costs fold into `billed_cost_usd`. It defaults to off — internal-ops costs are real money and count toward the quota-bearing billed total unless an operator opts out, in which case those costs stay on their dedicated `embedding_cost_usd` / `ai_guard_cost_usd` series only.
+Internal-ops costs (L2 embedding, ai-guard classifier, smart-router call) therefore **never** fold into `billed_cost_usd` — that exclusion is structural, not configurable. The `excludeInternalOpsFromBilled` knob is vestigial and is ignored by the aggregator: it lives in the Hub's config while the gateway that charges the live counter is never told it exists, so any value that moved `billed_cost_usd` would put the two sides out of step across a reboot. Those costs stay fully visible on their own series — `embedding_cost_usd`, `ai_guard_cost_usd`, and the vendor-spend series below.
+
+Stamping `RoutedProviderID` on the ai-guard classifier's own `traffic_event` row (needed for the `ai_guard_cost_usd` component of vendor spend below) has a side effect on the general per-row fan-out above: that row previously carried no `routed_provider` dimension at all, so an operator who enables AI-Guard now sees `request_count`, `total_tokens`, latency, status counts, and `billed_total_tokens` step up under the classifier's serving provider in Analytics → By Provider, with no config change explaining it — `billed_cost_usd` itself is unaffected, since the classifier row's `estimated_cost_usd` stays unset.
+
+### Vendor-spend series (`vendor_spend_usd`, `vendor_spend_internal_usd`)
+
+`rollup-5m` also emits the two series a vendor-bill reconciliation reads: every dollar the gateway caused a vendor to charge, attributed to the provider that was **actually charged**. This is the one emission in the aggregator that does not follow the per-row dimension fan-out above (`rollup_5m_vendor_spend.go`), because a single `traffic_event` row can owe money to several vendors at once: a request served by Anthropic whose smart-router ran on OpenAI and whose L2 embedding ran on a third provider owes all three. Vendor spend is therefore emitted **per cost component**, each under the `routed_provider=<provider id>` dimension of the provider that billed for that component — never under a global dimension, since summing the per-provider rows is the reconciliation total and a global row would double it.
+
+| Component | Provider dimension | Included when |
+| --- | --- | --- |
+| `estimated_cost_usd` (customer traffic) | `routed_provider_id` | tokens were produced and the response was not a gateway-cache hit — status-agnostic |
+| `router_cost_usd` (smart-router call) | `router_provider_id` | non-zero |
+| `embedding_cost_usd` (L2 lookup) | `embedding_provider_id` | non-zero |
+| `ai_guard_cost_usd` (classifier) | `routed_provider_id` — on an ai-guard row the classifier call *is* the request | non-zero |
+
+`vendor_spend_internal_usd` is the internal-ops subset of the same total (the last three rows), so a report can separate estimator error from internal overhead. Three rules carry the correctness of the series:
+
+- **Inclusion is per component, never per row.** The customer component is gated on tokens + non-cache-hit and is deliberately status-agnostic (a client abort or a post-generation block still produced tokens the vendor charges for). The internal components take no gate at all: a non-zero value already means the call happened. A row-level cache gate would be wrong — the embedding cost is stamped on every L1 miss that triggered an embedding call, *including a row that then scored an L2 hit*, which is exactly the case the L2 cache exists to create.
+- **A component with no provider id is dropped, not folded.** Rows written before the attribution columns shipped carry internal-ops costs with no provider. A cost no vendor's bill can be matched against is reported as a gap; folding it into the serving provider is the misattribution the series exists to eliminate.
+- **Not quota-bearing.** `billed_cost_usd` remains the only series the live quota counter and its boot backfill consume (see above). Both vendor-spend series are plain additive sums, so they ride the merge cascade's `Sum` default from 5m through 1h / 1d / 1mo unchanged.
 
 ### Error-class series (`traffic.error_class.*`)
 
@@ -106,7 +125,34 @@ The default is `Sum`, so the registry is additive — only the explicitly classi
 
 `rollup-correction` (`rollup_correction.go`) handles late-arriving events. Events can land in `traffic_event` after their bucket has already been rolled up; once per day the correction job recomputes every five-minute bucket of the **trailing correction window** (default 7 days, sized to cover an agent that buffered offline for several days), re-merges those days' `1h` and `1d` layers, and re-merges the `1mo` layer for any fully-sealed month the window reached into. The window must be at least as wide as the longest offline-buffer horizon: an event written more than that many days after its timestamp would otherwise land in a sealed bucket outside the window and appear in raw `traffic_event` but in no rollup.
 
+**The window is clamped to stay inside 5m retention.** `clampToRetention` caps the effective lookback at `Rollup5mDays - 1`, so at the shipped defaults a requested 7-day window walks 6 days. Without it the two jobs overlap: `rollup-retention` purges `metric_rollup_5m` rows older than `now - Rollup5mDays` — a wall-clock instant partway through that UTC day — while a 7-day correction window starts at that same day's *midnight*. The buckets in between belong to both jobs on the same tick, and both write them: retention with one wide range `DELETE`, correction with a per-bucket `DELETE` followed by per-row `INSERT`s. Scanning the same rows in different orders deadlocks, which is what killed the 2026-08-07 run on `5m bucket 2026-07-31T01:00:00Z: … deadlock detected (SQLSTATE 40P01)` and, by leaving the cursor unadvanced, starved `vendor-bill-reconcile` behind it. Losing that race silently is the worse outcome: a pass that rebuilds a half-purged 5m tier then merges `1h` and `1d` from it publishes an understated day *as corrected*. Rebuilding buckets that are about to be deleted has no value anyway, so the window is held a whole day clear of the horizon rather than merely up to it.
+
 The correction job calls the same per-bucket aggregation as `rollup-5m` and the merge jobs (so the logic lives in exactly one place) but with the watermark write **suppressed** (`writeWatermark = false`): re-aggregating historical buckets must not rewind the live `rollup-5m` / `merge-*` watermarks, which would force the next live tick to re-scan the whole intervening window. The DELETE+INSERT still commits per bucket, so the backfill is durable and idempotent. The "now" the date arithmetic derives from is an injectable seam, so the month-boundary branch is covered deterministically in tests rather than only on the 1st of a month.
+
+**The correction cursor.** After a run has committed every layer of its window,
+the fleet correction job upserts one `rollup_watermark` row named
+`rollup-correction` (`rollup.WatermarkCorrection`) holding the newest UTC day it
+rebuilt — always *yesterday*, since today is still accumulating events. This is
+the one watermark here that is not a resume cursor: the correction window is the
+trailing `lookbackDays` regardless of it. It is a published fact — "the 1d tier
+has been re-aggregated from `traffic_event` through this day" — and it exists
+because a reader of a rollup series otherwise cannot tell an absent series apart
+from one that has simply not been rebuilt yet. A run that failed mid-window
+leaves the previous value standing, and a failure to write it fails the run, so
+the cursor never claims a day the pass did not finish.
+
+Its consumer today is `vendor-bill-reconcile`, which compares a vendor bill
+against `vendor_spend_usd` and must not read a day whose tier rows are still
+being written: both jobs are 24h jobs that fire on the same scheduler tick, and
+the reconcile pass finishes in ~3s while the correction pass takes ~100s on a
+week of buckets. Because the cursor is published only at the very end of a run,
+a single read from the reconcile job always observes the *previous* day's value,
+which at steady state lands exactly on its window end with zero margin — so the
+consumer waits (bounded) for the cursor to reach its window rather than racing
+it. The scheduler has no ordering primitive: `Job` exposes only `Interval()`, so
+a dependency between two jobs can only be expressed by the dependent job waiting
+on the fact it needs. See the `vendor-bill-reconcile` row in
+`jobs-architecture.md`.
 
 `thing-rollup-correction` (`thing_rollup_correction.go`) is the per-Thing twin: the per-Thing pipeline seals buckets behind its own watermark exactly like the fleet pipeline, so without a correction sibling a late event whose per-Thing 5m bucket had already sealed would never be re-aggregated and per-Thing dashboards would permanently under-count. It shares the same `runCorrection` logic via the `correctionRollup` / `correctionMerge` seams and likewise suppresses the watermark write.
 

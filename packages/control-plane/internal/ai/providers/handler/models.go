@@ -73,6 +73,12 @@ func (h *Handler) GetModel(c echo.Context) error {
 	return c.JSON(http.StatusOK, m)
 }
 
+// "audio" remains valid input. Model discovery no longer mints it and the UI
+// no longer offers it when creating a model, so no new row acquires it — but
+// an admin-created row predating that is not in any fixture, so refusing the
+// value here would make such a row uneditable and, with the endpoint map
+// refusing it too, permanently unroutable. Back-compat first; the value comes
+// out when a migration has retyped the remaining rows.
 var validModelTypes = map[string]bool{
 	"chat": true, "embedding": true, "image": true, "audio": true,
 	"tts": true, "stt": true,
@@ -104,15 +110,22 @@ func (h *Handler) UpdateModel(c echo.Context) error {
 		AudioOutputPricePerMillion          *float64 `json:"audioOutputPricePerMillion"`
 		CachedAudioInputReadPricePerMillion *float64 `json:"cachedAudioInputReadPricePerMillion"`
 
-		MaxContextTokens *int             `json:"maxContextTokens"`
-		MaxOutputTokens  *int             `json:"maxOutputTokens"`
-		Status           *string          `json:"status"`
-		DeprecationDate  *time.Time       `json:"deprecationDate"`
-		ReplacedBy       *string          `json:"replacedBy"`
-		Aliases          []string         `json:"aliases"`
-		Enabled          *bool            `json:"enabled"`
-		Features         []string         `json:"features"`
-		CapabilityJson   *json.RawMessage `json:"capabilityJson"`
+		MaxContextTokens *int       `json:"maxContextTokens"`
+		MaxOutputTokens  *int       `json:"maxOutputTokens"`
+		Status           *string    `json:"status"`
+		DeprecationDate  *time.Time `json:"deprecationDate"`
+		ReplacedBy       *string    `json:"replacedBy"`
+		Aliases          []string   `json:"aliases"`
+		Enabled          *bool      `json:"enabled"`
+		Features         []string   `json:"features"`
+		// Absent means no change, which is why these are pointers to slices:
+		// an explicit [] has to be distinguishable from "the caller did not
+		// mention modalities", and a bare nil slice collapses the two.
+		InputModalities  *[]string `json:"inputModalities"`
+		OutputModalities *[]string `json:"outputModalities"`
+		// The model's floor. Absent = no change; explicit [] clears it.
+		RequiredModalities *[]string        `json:"requiredModalities"`
+		CapabilityJson     *json.RawMessage `json:"capabilityJson"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
@@ -160,7 +173,26 @@ func (h *Handler) UpdateModel(c echo.Context) error {
 		Aliases:                             body.Aliases,
 		Enabled:                             body.Enabled,
 		Features:                            body.Features,
+		InputModalities:                     body.InputModalities,
+		OutputModalities:                    body.OutputModalities,
+		RequiredModalities:                  body.RequiredModalities,
 		CapabilityJson:                      body.CapabilityJson,
+	}
+
+	// A caller may still send the legacy `vision` feature; it means "accepts
+	// images", so move it to the array that owns that fact. The existing row
+	// supplies the base when the caller sent no modalities of its own — a PUT
+	// that mentions only features must not blank the arrays.
+	if params.Features != nil {
+		base := existing.InputModalities
+		if params.InputModalities != nil {
+			base = *params.InputModalities
+		}
+		feats, in := modelstore.FoldVision(params.Features, base)
+		params.Features = feats
+		if len(in) != len(base) || params.InputModalities != nil {
+			params.InputModalities = &in
+		}
 	}
 
 	updated, err := h.models.UpdateModel(c.Request().Context(), id, params)

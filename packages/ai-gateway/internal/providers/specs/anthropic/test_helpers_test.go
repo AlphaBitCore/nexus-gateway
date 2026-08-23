@@ -13,6 +13,7 @@ import (
 	specerrors "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/errors"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/ingress"
 	apstream "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/stream"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/tidwall/gjson"
 )
@@ -29,7 +30,7 @@ func stringifyOpenAIToolResultContent(c gjson.Result) string {
 }
 
 func parseDataURL(dataURL string) (mediaType, b64 string, ok bool) {
-	return apcodec.ParseDataURL(dataURL)
+	return specutil.ParseDataURL(dataURL)
 }
 
 func mapStopReason(r string) string {

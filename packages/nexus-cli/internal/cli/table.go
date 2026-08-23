@@ -13,9 +13,9 @@ import (
 // Cells are pre-formatted strings, so each caller formats its own numbers/flags.
 func (a *App) table(header []string, rows [][]string) error {
 	tw := tabwriter.NewWriter(a.Out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, strings.Join(header, "\t"))
+	_, _ = fmt.Fprintln(tw, strings.Join(header, "\t"))
 	for _, r := range rows {
-		fmt.Fprintln(tw, strings.Join(r, "\t"))
+		_, _ = fmt.Fprintln(tw, strings.Join(r, "\t"))
 	}
 	return tw.Flush()
 }

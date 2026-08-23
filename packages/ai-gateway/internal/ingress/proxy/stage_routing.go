@@ -7,11 +7,9 @@
 package proxy
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/requestcontext"
@@ -56,6 +54,20 @@ func (st routingStage) run() bool {
 		// ever evaluated by the capability filter, so the "no
 		// compatible capability" error message is misleading — try the
 		// passthrough fallback instead.
+		// A model the key may not use is a refusal, not a routing miss.
+		//
+		// It must not reach the requested-model passthrough. Passthrough exists
+		// for "no rule matched, serve what was asked", and what was asked is
+		// exactly the thing this key is denied — falling through would answer
+		// the request from the model the caller named, which is the opposite of
+		// the decision just made.
+		var notAllowed *routingcore.ModelNotAllowedError
+		if errors.As(err, &notAllowed) {
+			h.writeDetailedErr(s.w, s.rec, http.StatusForbidden, "MODEL_NOT_ALLOWED",
+				notAllowed.Error(), "Use an allowed model or request a policy update")
+			return false
+		}
+
 		var ncpErr *routingcore.NoCompatibleProviderError
 		if errors.As(err, &ncpErr) {
 			if len(ncpErr.Available) > 0 {
@@ -71,9 +83,45 @@ func (st routingStage) run() bool {
 			return false
 		}
 	}
-	if routeResult == nil || len(routeResult.Targets) == 0 {
+	if routeResult == nil || len(routeResult.AllTargets()) == 0 {
+		// FIRST statement in this branch: the router-LLM call recorded on THIS
+		// result is already paid for, and every exit from here loses it —
+		// the swap below replaces routeResult wholesale with a fallback result
+		// whose trace carries no router entries, and the error arms return
+		// early after writeDetailedErr has already handed s.rec to the audit
+		// pipeline. Draining up front covers all three exits at once.
+		drainRouterCost(s.rec, routeResult, s.logger)
+
+		// Passthrough answers "no rule applies — serve the model they asked
+		// for". When a rule DID apply and resolved nothing, that answer is the
+		// opposite of the decision the admin configured: a rule that redirects
+		// gpt-4o somewhere else, whose target row is disabled, would deliver
+		// gpt-4o with a 200 — the redirect silently undone and nothing in the
+		// exchange saying so. The rules yielded for reasons already on the
+		// routing trace; the request stops here and the operator reads them.
+		if routeResult != nil && routeResult.RuleMatchedAndResolvedNothing {
+			// The trace goes on the record BEFORE the refusal, because the
+			// refusal's own hint sends the operator to read it. The first
+			// version returned here and left the assignment further down
+			// unreached, so the one request whose message said "each rule
+			// records why it yielded" was the one request whose
+			// traffic_event.routing_trace was NULL.
+			s.rec.RoutingRuleID = routeResult.RuleID
+			s.rec.RoutingRuleName = routeResult.RuleName
+			if t := buildRoutingAuditTrace(routeResult); t != nil {
+				s.rec.RoutingTrace = t
+			}
+			s.logger.Warn("a routing rule applied and resolved nothing; refusing rather than "+
+				"serving the requested model", "model", s.modelID)
+			h.writeDetailedErr(s.w, s.rec, http.StatusServiceUnavailable, "ROUTING_RULES_RESOLVED_NOTHING",
+				"a routing rule applies to this request but none could resolve a target",
+				"Check the routing trace on this request: each rule records why it yielded. "+
+					"Serving the requested model directly would bypass the rule that matched.")
+			return false
+		}
+
 		s.logger.Debug("no routing targets resolved; trying passthrough fallback", "model", s.modelID)
-		fallbackResult, fallbackErr := h.resolveNoMatchPassthrough(s.r.Context(), s.modelID, s.vkMeta, s.resolved, typology.EndpointKind(s.endpointType))
+		fallbackResult, fallbackErr := h.resolveNoMatchPassthrough(s.r.Context(), s.modelID, s.vkMeta, s.resolved, typology.EndpointKind(s.endpointType), deferredRequest{canonical: s.cacheNormalized, rawBody: func() []byte { return s.body }})
 		if fallbackErr != nil {
 			var routingErr *routingFallbackError
 			if errors.As(fallbackErr, &routingErr) {
@@ -89,15 +137,16 @@ func (st routingStage) run() bool {
 	}
 	s.logger.Debug("route resolved",
 		"model", s.modelID,
-		"targets", len(routeResult.Targets),
+		"targets", len(routeResult.AllTargets()),
 		"ruleId", routeResult.RuleID,
-		"provider", routeResult.Targets[0].ProviderName,
+		"provider", routeResult.Primary().ProviderName,
 	)
 	s.rec.RoutingRuleID = routeResult.RuleID
 	s.rec.RoutingRuleName = routeResult.RuleName
 	if t := buildRoutingAuditTrace(routeResult); t != nil {
 		s.rec.RoutingTrace = t
 	}
+	drainRouterCost(s.rec, routeResult, s.logger)
 	// Stamp the REQUESTED-side identity (traffic_event model_id / provider_id
 	// / provider_name). These carry the model the CLIENT asked for, and are
 	// populated only when that model resolved unambiguously to one catalog
@@ -125,8 +174,8 @@ func (st routingStage) run() bool {
 	// Nil-receiver methods (AnyBypassActive, Flags) treat nil as
 	// "no bypass".
 	var primaryTarget routingcore.RoutingTarget
-	if len(routeResult.Targets) > 0 {
-		primaryTarget = routeResult.Targets[0]
+	if len(routeResult.AllTargets()) > 0 {
+		primaryTarget = routeResult.Primary()
 	}
 	var passthroughCfg *passthrough.Config
 	if h.deps.PassthroughCache != nil {
@@ -152,7 +201,7 @@ func (st routingStage) run() bool {
 	// When CanonicalBridge is wired, chat completions use the OpenAI
 	// hub matrix ([canonicalbridge.Bridge.EndpointRoutable]); otherwise
 	// tests fall back to the legacy rule (same format or OpenAI ingress).
-	compat, incompatible := filterCompatibleTargets(s.resolved.BodyFormat, routeResult.Targets, s.resolved.WireShape, h.deps.CanonicalBridge)
+	compat, incompatible := filterCompatibleTargets(s.resolved.BodyFormat, routeResult.AllTargets(), s.resolved.WireShape, h.deps.CanonicalBridge)
 	if h.deps.SchemaMismatchRecorder != nil {
 		for _, rt := range incompatible {
 			h.deps.SchemaMismatchRecorder.RecordSchemaMismatch(string(s.resolved.BodyFormat), string(rt.ProviderFormat))
@@ -166,7 +215,7 @@ func (st routingStage) run() bool {
 		h.writeNoCompatibleProvider(s.w, s.rec, s.resolved.BodyFormat, providerFormat, typology.KindFromWireShape(s.resolved.WireShape))
 		return false
 	}
-	routeResult.Targets = compat
+	routeResult.Narrow(compat)
 
 	// Phase 4.2: Responses-API cross-format guard.
 	// When ingress is /v1/responses and the resolved primary target's
@@ -175,11 +224,11 @@ func (st routingStage) run() bool {
 	// request with a Responses-shape 400 envelope BEFORE the request
 	// hits hooks / quota / executor.
 	if s.resolved.BodyFormat == provcore.FormatOpenAIResponses &&
-		len(routeResult.Targets) > 0 &&
+		len(routeResult.AllTargets()) > 0 &&
 		h.deps.CanonicalBridge != nil {
-		primary := routeResult.Targets[0]
+		primary := routeResult.Primary()
 		targetFormat := provcore.Format(primary.AdapterType)
-		if !h.deps.CanonicalBridge.ServesResponses(targetFormat, primary.ServesResponsesAPI) {
+		if !h.deps.CanonicalBridge.ServesResponses(targetFormat, primary.ServesResponsesAPI, s.body) {
 			if rej := validateResponsesIngressForCrossFormat(s.body); rej != nil {
 				h.writeResponsesFeatureRejection(s.w, s.rec, rej)
 				return false
@@ -195,104 +244,10 @@ func (st routingStage) run() bool {
 	// anything involving Bedrock) must fail fast with a clear 4xx rather
 	// than a messy mid-stream error.
 	if s.isStream && typology.KindFromWireShape(s.resolved.WireShape) == typology.EndpointKindChat &&
-		len(routeResult.Targets) > 0 &&
-		!canonicalbridge.StreamShapeCompatible(s.resolved.BodyFormat, provcore.Format(routeResult.Targets[0].AdapterType)) {
-		h.writeCrossFormatStreamUnsupported(s.w, s.rec, string(s.resolved.BodyFormat), routeResult.Targets[0].AdapterType)
+		len(routeResult.AllTargets()) > 0 &&
+		!canonicalbridge.StreamShapeCompatible(s.resolved.BodyFormat, provcore.Format(routeResult.Primary().AdapterType)) {
+		h.writeCrossFormatStreamUnsupported(s.w, s.rec, string(s.resolved.BodyFormat), routeResult.Primary().AdapterType)
 		return false
 	}
 	return true
-}
-
-func (h *Handler) resolveNoMatchPassthrough(ctx context.Context, requestedModel string, vkMeta *vkauth.VKMeta, in Ingress, endpointKind typology.EndpointKind) (*routingcore.RouteResult, error) {
-	if h.deps == nil || h.deps.Models == nil {
-		return nil, &routingFallbackError{
-			status:  http.StatusInternalServerError,
-			code:    "ROUTING_NO_MATCH",
-			message: "passthrough fallback is unavailable",
-			hint:    "Model lookup dependency is not configured",
-		}
-	}
-
-	// Resolve by code OR alias: a client may address a model by an
-	// admin-configured alias with no routing rule, which must still route to
-	// the model (the model's ProviderModelID then reaches the wire, and the
-	// passthrough body rewrite swaps the alias for it). O(1) from the
-	// in-memory index — no per-request DB read.
-	model, err := h.deps.Models.GetModelByCodeOrAlias(ctx, requestedModel)
-	if err != nil || model == nil {
-		return nil, &routingFallbackError{
-			status:  http.StatusNotFound,
-			code:    "ROUTING_NO_MATCH",
-			message: "no available provider for model " + requestedModel,
-			hint:    "Ensure the model exists and is enabled",
-		}
-	}
-
-	if vkMeta != nil && len(vkMeta.AllowedModels) > 0 &&
-		!routingcore.ModelMatchesAllowedRefs(model.ID, model.ProviderModelID, model.ProviderID, vkMeta.AllowedModels) {
-		return nil, &routingFallbackError{
-			status:  http.StatusForbidden,
-			code:    "MODEL_NOT_ALLOWED",
-			message: "model " + requestedModel + " is not allowed for this virtual key",
-			hint:    "Use an allowed model or request policy update",
-		}
-	}
-
-	// Modality guard for the requested-model passthrough: reject a model whose
-	// modality does not match the endpoint (e.g. an image model addressed on
-	// /v1/chat/completions) with a clean 400 rather than forwarding it upstream
-	// to fail. The rule-based paths get the same guard via the resolver's
-	// filterByModality; this covers the explicit-model path the resolver never
-	// sees.
-	if !typology.EndpointKindAcceptsModelType(endpointKind, model.Type) {
-		return nil, &routingFallbackError{
-			status:  http.StatusBadRequest,
-			code:    "MODEL_MODALITY_MISMATCH",
-			message: "model " + requestedModel + " (" + model.Type + ") cannot serve a " + string(endpointKind) + " request",
-			hint:    "Use a model whose modality matches this endpoint",
-		}
-	}
-
-	providerName := model.ProviderName
-	if providerName == "" {
-		providerName = model.ProviderID
-	}
-	// Use the provider's actual wire adapter type so the normaliser
-	// (L3/L4) and cache-key preparation use the correct format.
-	// Falls back to the ingress format when adapter_type is not
-	// stored (legacy rows or test doubles).
-	adapterType := model.ProviderAdapterType
-	if adapterType == "" {
-		adapterType = string(in.BodyFormat)
-	}
-	maxOut := 0
-	if model.MaxOutputTokens != nil {
-		maxOut = *model.MaxOutputTokens
-	}
-	target := routingcore.RoutingTarget{
-		ProviderID:      model.ProviderID,
-		ProviderName:    providerName,
-		AdapterType:     adapterType,
-		ModelID:         model.ID,
-		ModelCode:       model.Code,
-		ModelName:       model.Name,
-		ModelType:       model.Type,
-		ProviderModelID: model.ProviderModelID,
-		BaseURL:         model.ProviderBaseURL,
-		MaxOutputTokens: maxOut,
-		Source:          "passthrough-fallback",
-	}
-	return &routingcore.RouteResult{
-		Targets:  []routingcore.RoutingTarget{target},
-		RuleID:   "passthrough-fallback",
-		RuleName: "passthrough-fallback",
-		// The client requested this specific model and no routing rule
-		// substituted it — passthrough sends straight to it — so the requested
-		// side IS this model. Without this, the common default deployment
-		// (only smart-auto-routing enabled, so specific-model requests fall to
-		// passthrough) would leave the requested columns NULL.
-		RequestedModelID:      model.ID,
-		RequestedProviderID:   model.ProviderID,
-		RequestedProviderName: providerName,
-	}, nil
 }

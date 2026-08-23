@@ -8,10 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/bodydecompress"
@@ -96,6 +98,17 @@ func (a *specAdapter) ExecuteWithBody(ctx context.Context, req Request, body []b
 // This enables codecs (e.g. Gemini embedding single vs batch) to select
 // the correct URL path without changing the public Adapter interface.
 func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, body []byte, rewrites []string, urlOverride string) (*Response, error) {
+	// The last frame every dispatch path funnels through: Execute, the cache
+	// layer's ExecuteWithBody, attempt 0, and every failover retry. The strip
+	// lives here because a guarantee made anywhere earlier is only a guarantee
+	// for the legs that happen to pass through that point — and one did not.
+	// The cross-format failover leg builds its body in canonicalbridge, which
+	// calls the codec directly and hands the result to ExecuteWithBody, skipping
+	// PrepareBody entirely; it was still sending the namespace upstream after the
+	// namespace was supposedly fixed. Idempotent, so the prepared-body path pays
+	// only the substring pre-check.
+	body = stripInternalCarriers(body)
+
 	url, err := a.spec.Transport.BuildURL(req.Target, req.WireShape, req.Stream)
 	if err != nil {
 		return nil, &ProviderError{
@@ -176,6 +189,17 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 
 	httpResp, err := a.spec.Transport.Do(callCtx, httpReq, req.Target)
 	if err != nil {
+		// The PARENT context is checked first, and the order is the whole
+		// point. callCtx derives from ctx, so a cancelled caller trips both —
+		// and reading callCtx alone turned every client disconnect into
+		// evidence that the provider timed out.
+		if ctx.Err() != nil {
+			return nil, &ProviderError{
+				Status:  499,
+				Code:    CodeClientGone,
+				Message: fmt.Sprintf("client went away: %v", ctx.Err()),
+			}
+		}
 		if callCtx.Err() != nil {
 			return nil, &ProviderError{
 				Status:  http.StatusGatewayTimeout,
@@ -245,9 +269,12 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		session, err := a.spec.StreamDecoder.Open(streamBody, req.WireShape)
 		if err != nil {
 			_ = httpResp.Body.Close()
+			// The upstream accepted the request and began answering; the
+			// failure is ours, on the near side of a response already paid
+			// for. Asking again buys the same generation twice.
 			return nil, &ProviderError{
-				Status:  httpResp.StatusCode,
-				Code:    CodeUpstreamError,
+				Status:  http.StatusBadGateway,
+				Code:    CodeLocalProcessing,
 				Message: fmt.Sprintf("open stream: %v", err),
 			}
 		}
@@ -267,7 +294,7 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 	if err != nil {
 		return nil, &ProviderError{
 			Status:  http.StatusBadGateway,
-			Code:    CodeUpstreamError,
+			Code:    CodeLocalProcessing,
 			Message: fmt.Sprintf("read body: %v", err),
 		}
 	}
@@ -321,7 +348,7 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		}
 		return nil, &ProviderError{
 			Status:  http.StatusBadGateway,
-			Code:    CodeUpstreamError,
+			Code:    CodeLocalProcessing,
 			Message: fmt.Sprintf("decode response: %v", err),
 			Raw:     native,
 		}
@@ -427,6 +454,24 @@ func (a *specAdapter) prepareBodyFull(req Request) (body []byte, rewrites []stri
 	if encErr != nil {
 		return nil, nil, "", encErr
 	}
+	// Strip AFTER the codec, not before it. The codec must still SEE
+	// nexus.ext.<provider>.<key> — that is how a caller reaches a
+	// provider-specific field the OpenAI canonical shape cannot express
+	// (§3a Rule 4), and the capability is the whole point of the namespace — but
+	// nothing internal may leave the box, and that is the dispatcher's guarantee
+	// to make, once, for every adapter. Leaving it to each codec left cohere's
+	// chat codec forwarding the namespace to api.cohere.com (HTTP 422 "unknown
+	// field: parameter 'nexus'"), and a registry-wide check found the same latent
+	// leak in every OpenAI-family adapter — where OpenAI answers 400
+	// "Unrecognized request argument supplied: nexus" and DeepSeek and Moonshot
+	// answer 200, quietly keeping our internal metadata. Both measured 2026-08-05.
+	//
+	// Post-encode is also why this can be UNCONDITIONAL for every carrier. The
+	// pre-encode strip in canonicalbridge has to key on whether the target's
+	// codec consumes nexus_thinking, because at that point it has not consumed it
+	// yet; here it has, so there is nothing left to preserve for anyone. The
+	// registry-wide gate reads both carriers, and both are removed by the same
+	// call.
 	return result.Body, result.Rewrites, result.URLOverride, nil
 }
 
@@ -477,7 +522,7 @@ func (a *specAdapter) prepareNative(req Request) ([]byte, []string, string, erro
 	// differential) and no upstream understands the namespace — most 4xx
 	// the request. The cross-format leg must NOT strip: its codecs CONSUME
 	// nexus.ext.<provider>.<key> (canonicalext) during translation.
-	body := stripNexusNamespace(req.Body)
+	body := req.Body
 
 	// Degenerate target: nothing to stamp and no quirk can key on an empty
 	// model id. Preserved from the legacy passthrough.
@@ -526,22 +571,83 @@ func applyURLOverride(baseURL, override string) string {
 	return override
 }
 
-// stripNexusNamespace drops the top-level `nexus` key from a JSON body
-// using sjson's in-place delete. The `nexus` namespace is gateway-internal
-// (canonicalext: ext.<provider>.<key>, ...) and must not reach any
-// upstream provider — none of them understand it and most 4xx the
-// request. Fast paths: bytes.Contains pre-check skips the sjson call for
-// the common case where the client did not include any nexus extension.
-// On any parse / delete error (malformed JSON, etc.) the original body is
-// returned unchanged — the JSON parser downstream will surface the real
-// error rather than silently dropping bytes.
-func stripNexusNamespace(body []byte) []byte {
-	if len(body) == 0 || !bytes.Contains(body, []byte(`"nexus"`)) {
+// stripInternalCarriers removes the gateway's own carriers from a body that is
+// about to become wire bytes. Called once, at the last frame every dispatch path
+// funnels through.
+//
+// It addresses the two FIXED locations the gateway writes, and walks nothing.
+// The previous version matched the name `nexus`/`nexus_*` at any depth, and an
+// adversarial review reproduced twelve defects from that one decision: it deleted
+// caller-authored JSON-Schema properties on the Anthropic `input_schema` and
+// Bedrock `toolSpec.inputSchema.json` wires and inside `metadata` and
+// `additionalModelRequestFields`; a root array, an empty-string key, a duplicate
+// key or a backslash in any ancestor key each produced a silent no-op, because
+// sjson reports an unresolved delete path as success; and a user message merely
+// beginning with the word "nexus" made every request pay a 21x walk. It replaced
+// a loud, self-limiting failure with a set of silent ones.
+//
+// The lesson generalises and is recorded in provider-adapter-architecture.md: the
+// removal of what must not egress belongs in each wire's DECLARED emit set — a
+// projection — not in a subtraction over a document whose key names belong to the
+// caller.
+func stripInternalCarriers(body []byte) []byte {
+	if len(body) == 0 {
 		return body
 	}
-	out, err := sjson.DeleteBytes(body, "nexus")
-	if err != nil {
+	// The root namespace is removed by the package that writes and reads it, so
+	// the request and response sides share one implementation rather than two
+	// copies that can drift apart.
+	body = canonicalext.Strip(body)
+	// Same escape hazard as the root namespace, and the same guard: gjson
+	// resolves `\u` escapes when it matches a key, so a literal scan alone would
+	// let `{"nexus_thinking":…}` through while the walk below would still
+	// have found it. Only `\uXXXX` can spell an identifier character, so a body
+	// carrying one is handed to the walk.
+	if !bytes.Contains(body, []byte(`"nexus_thinking"`)) &&
+		!bytes.Contains(body, []byte(`"thought_signature"`)) &&
+		!bytes.Contains(body, []byte(`\u`)) {
 		return body
 	}
-	return out
+	msgs := gjson.GetBytes(body, "messages")
+	if !msgs.IsArray() {
+		return body
+	}
+	i := 0
+	msgs.ForEach(func(_, m gjson.Result) bool {
+		if m.Get("nexus_thinking").Exists() {
+			if out, err := sjson.DeleteBytes(body, "messages."+strconv.Itoa(i)+".nexus_thinking"); err == nil {
+				body = out
+			}
+		}
+		i++
+		return true
+	})
+	// thought_signature is a canonical carrier consumed by the Gemini and
+	// Vertex codecs (which translate it to the native Part-level
+	// thoughtSignature). At this final boundary the consuming codecs have
+	// already run, so a passthrough target must not receive the canonical
+	// spelling. The unicode-escape guard above matters because gjson resolves
+	// escaped object keys while a literal byte scan does not.
+	msgs = gjson.GetBytes(body, "messages")
+	if !msgs.IsArray() {
+		return body
+	}
+	msgs.ForEach(func(msgIdx, msg gjson.Result) bool {
+		calls := msg.Get("tool_calls")
+		if !calls.IsArray() {
+			return true
+		}
+		calls.ForEach(func(callIdx, call gjson.Result) bool {
+			if !call.Get("function.thought_signature").Exists() {
+				return true
+			}
+			path := "messages." + msgIdx.String() + ".tool_calls." + callIdx.String() + ".function.thought_signature"
+			if out, err := sjson.DeleteBytes(body, path); err == nil {
+				body = out
+			}
+			return true
+		})
+		return true
+	})
+	return body
 }

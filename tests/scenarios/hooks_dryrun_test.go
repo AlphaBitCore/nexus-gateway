@@ -20,13 +20,13 @@ import (
 //
 // BRAINSTORM (pre): the dry-run flow has two PM-grade invariants:
 //
-//   1. 404 on unknown hook id — operators must not see "success" for
-//      a hook they actually deleted; better to fail loudly.
-//   2. The response envelope MUST carry executionTimeMs + stage; the
-//      authoring UI binds to both. A missing/zero stage means the
-//      author can't tell whether they tested the request-phase or
-//      response-phase config. A missing executionTimeMs hides the
-//      perf budget signal.
+//  1. 404 on unknown hook id — operators must not see "success" for
+//     a hook they actually deleted; better to fail loudly.
+//  2. The response envelope MUST carry executionTimeMs + stage; the
+//     authoring UI binds to both. A missing/zero stage means the
+//     author can't tell whether they tested the request-phase or
+//     response-phase config. A missing executionTimeMs hides the
+//     perf budget signal.
 //
 // Side-effect freedom (no traffic_event, no audit row) is the third
 // invariant; the test asserts AdminAuditLog row count does NOT
@@ -38,11 +38,11 @@ import (
 // the live AI Gateway internal endpoint.
 //
 // Assertions:
-//   1. POST /hooks/totally-not-real/dry-run → 404.
-//   2. POST /hooks/:realId/dry-run with a benign sample body → 200
-//      with envelope {executionTimeMs|output|error, stage}.
-//   3. No new AdminAuditLog row for the hook id within the test
-//      window (side-effect-free contract).
+//  1. POST /hooks/totally-not-real/dry-run → 404.
+//  2. POST /hooks/:realId/dry-run with a benign sample body → 200
+//     with envelope {executionTimeMs|output|error, stage}.
+//  3. No new AdminAuditLog row for the hook id within the test
+//     window (side-effect-free contract).
 func TestS027_HookDryRunContract(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -67,7 +67,7 @@ func TestS027_HookDryRunContract(t *testing.T) {
 	if err := sc.DB.QueryRow(ctx,
 		`SELECT id FROM "HookConfig" WHERE name = 'pii-outbound-scanner' LIMIT 1`,
 	).Scan(&hookID); err != nil || hookID == "" {
-		t.Skipf("no pii-outbound-scanner hook seeded — skipping (err=%v)", err)
+		requireHookSeeded(t, sc.DB, "pii-outbound-scanner", err)
 	}
 
 	// Snapshot audit row count before; the dry-run path is side-effect

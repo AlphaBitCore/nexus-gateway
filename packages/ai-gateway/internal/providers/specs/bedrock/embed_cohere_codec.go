@@ -185,14 +185,6 @@ func decodeCohereEmbedResponse(nativeBody []byte, modelID string) (provcore.Deco
 		return provcore.DecodeResult{}, fmt.Errorf("bedrock-cohere: marshal canonical: %w", err)
 	}
 
-	// Stamp the model in nexus.ext.bedrock.model for audit consumers.
-	if modelID != "" {
-		stamped, stampErr := canonicalext.Set(canonicalBytes, "bedrock", "model", modelID)
-		if stampErr == nil {
-			canonicalBytes = stamped
-		}
-	}
-
 	// No meaningful usage to extract — Cohere on Bedrock omits token counts.
 	return provcore.DecodeResult{CanonicalBody: canonicalBytes}, nil
 }

@@ -18,6 +18,7 @@ import {
   AdminAuditLogTable,
 } from './adminAuditLogShared';
 import styles from './AuditLogPage.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 export function AuditLogPage() {
   const { t } = useTranslation();
@@ -37,10 +38,13 @@ export function AuditLogPage() {
   const [selectedEntry, setSelectedEntry] = useState<AdminAuditEntry | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
 
+  // The drawer clears its row only after the close animation; without
+  // cancellation that timer outlives an unmount and updates a dead tree.
+  const armTimeout = useTimeouts();
   const closeDrawer = useCallback(() => {
     setDrawerVisible(false);
-    window.setTimeout(() => setSelectedEntry(null), DRAWER_MS);
-  }, []);
+    armTimeout(() => setSelectedEntry(null), DRAWER_MS);
+  }, [armTimeout]);
 
   useLayoutEffect(() => {
     if (!selectedEntry) {

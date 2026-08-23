@@ -9,7 +9,7 @@ UI section names match the sidebar labels in `packages/control-plane-ui/src/i18n
 | Capability | Description | Where to use it |
 |---|---|---|
 | **Provider adapter codecs (20)** | 11 first-class bidirectional codecs (`openai`, `anthropic`, `gemini`, `vertex`, `azure`, `bedrock`, `cohere`, `minimax`, `glm`, `replicate`, `voyage`) and 9 OpenAI-compatible passthrough codecs (`deepseek`, `moonshot`, `mistral`, `groq`, `fireworks`, `together`, `perplexity`, `xai`, `huggingface`) | Providers & Models |
-| **Routing strategies (7)** | `single`, `fallback`, `loadbalance`, `conditional`, `absplit`, `policy`, `smart` | Routing Rules |
+| **Routing strategies (7)** | `single`, `fallback`, `loadbalance`, `conditional`, `ab_split`, `latency`, `smart` | Routing Rules |
 | **Virtual Key with model scope** | each Virtual Key restricts which models the caller may invoke | Virtual Keys |
 | **Multi-axis quotas** | per organization, per virtual key, per provider, per model | Quota Policies, Quota Overrides |
 | **Token-based or USD-based budgets** | quota expressed in tokens or dollars | Quota Policies |

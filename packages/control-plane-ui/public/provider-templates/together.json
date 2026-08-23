@@ -12,10 +12,16 @@
       "providerModelId": "moonshotai/Kimi-K2.5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.5,
       "outputPricePerMillion": 2.8,
@@ -32,6 +38,12 @@
         "streaming",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.45,
       "outputPricePerMillion": 2,
       "maxContextTokens": 200000
@@ -46,6 +58,12 @@
         "function_calling",
         "streaming",
         "json_mode"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.6,
       "outputPricePerMillion": 3.6,
@@ -62,6 +80,12 @@
         "streaming",
         "json_mode"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 2,
       "maxContextTokens": 256000
@@ -76,6 +100,12 @@
         "function_calling",
         "streaming",
         "reasoning"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.6,
       "outputPricePerMillion": 1.7,
@@ -93,6 +123,12 @@
         "streaming",
         "json_mode"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.27,
       "outputPricePerMillion": 0.85
     },
@@ -106,6 +142,12 @@
         "function_calling",
         "streaming",
         "json_mode"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.88,
       "outputPricePerMillion": 0.88,

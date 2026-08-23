@@ -53,48 +53,6 @@ func TestStringifyOpenAIToolResultContent_nonString_returnsRaw(t *testing.T) {
 	}
 }
 
-func TestParseDataURL_valid(t *testing.T) {
-	// Standard base64 data URL with image/png media type.
-	mediaType, b64, ok := ParseDataURL("data:image/png;base64,aGVsbG8=")
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if mediaType != "image/png" {
-		t.Errorf("mediaType: got %q, want image/png", mediaType)
-	}
-	if b64 != "aGVsbG8=" {
-		t.Errorf("b64: got %q", b64)
-	}
-}
-
-func TestParseDataURL_missingComma_notOk(t *testing.T) {
-	_, _, ok := ParseDataURL("data:image/png;base64")
-	if ok {
-		t.Error("missing comma: expected ok=false")
-	}
-}
-
-func TestParseDataURL_nonBase64Meta_notOk(t *testing.T) {
-	_, _, ok := ParseDataURL("data:image/png,aGVsbG8=")
-	if ok {
-		t.Error("non-base64 meta: expected ok=false")
-	}
-}
-
-func TestParseDataURL_notDataScheme_notOk(t *testing.T) {
-	_, _, ok := ParseDataURL("https://example.com/image.png")
-	if ok {
-		t.Error("https URL: expected ok=false")
-	}
-}
-
-func TestParseDataURL_commaAtEnd_notOk(t *testing.T) {
-	_, _, ok := ParseDataURL("data:image/png;base64,")
-	if ok {
-		t.Error("empty payload: expected ok=false")
-	}
-}
-
 func TestMapStopReason_allVariants(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -196,9 +154,11 @@ func TestDecodeResponse_chatCompletion_outputShape(t *testing.T) {
 }
 
 func TestDecodeResponse_cacheCreationStamp(t *testing.T) {
-	// Anthropic cache_creation_input_tokens must appear as:
-	//   1. usage.prompt_tokens_details.cache_creation_tokens
-	//   2. nexus.ext.anthropic.cache_creation_input_tokens
+	// Anthropic's cache_creation_input_tokens has exactly ONE canonical home:
+	// usage.prompt_tokens_details.cache_creation_tokens, beside the cached_tokens
+	// OpenAI already defines. It must not also be written into the gateway's
+	// internal nexus namespace — a response body reaches an OpenAI-wire caller
+	// through an identity egress, so a carrier left there is a carrier delivered.
 	var c Codec
 	body := []byte(`{
 		"id":"msg_02",
@@ -214,16 +174,11 @@ func TestDecodeResponse_cacheCreationStamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
-	// Rule 4: canonical extension stamp for round-trip.
-	if !gjson.GetBytes(out, "nexus.ext.anthropic.cache_creation_input_tokens").Exists() {
-		t.Errorf("nexus.ext.anthropic.cache_creation_input_tokens missing: %s", string(out))
-	}
-	if v := gjson.GetBytes(out, "nexus.ext.anthropic.cache_creation_input_tokens").Int(); v != 1000 {
-		t.Errorf("cache_creation_input_tokens: got %d, want 1000", v)
-	}
-	// Prompt-tokens-details cache_creation_tokens.
 	if v := gjson.GetBytes(out, "usage.prompt_tokens_details.cache_creation_tokens").Int(); v != 1000 {
 		t.Errorf("prompt_tokens_details.cache_creation_tokens: got %d, want 1000", v)
+	}
+	if gjson.GetBytes(out, "nexus").Exists() {
+		t.Errorf("decoded canonical carries the internal nexus namespace: %s", string(out))
 	}
 }
 
@@ -877,14 +832,6 @@ func TestEncodeRequest_unknownPartType_passthroughAsObject(t *testing.T) {
 	}
 }
 
-func TestParseDataURL_emptyPayloadAfterComma_notOk(t *testing.T) {
-	// "data:image/png;base64," — payload is empty string → ok=false.
-	_, _, ok := ParseDataURL("data:image/png;base64,")
-	if ok {
-		t.Error("empty payload: expected ok=false")
-	}
-}
-
 // splitMessages gaps
 
 func TestEncodeRequest_messageWithEmptyRole_treatedAsUser(t *testing.T) {
@@ -1031,28 +978,6 @@ func TestEncodeRequest_userArrayContentWithNoValidParts_emptyPlaceholder(t *test
 }
 
 // ParseDataURL additional gaps
-
-func TestParseDataURL_emptyMediaType_usesDefault(t *testing.T) {
-	// "data:;base64,aGVsbG8=" — empty media type → defaults to "application/octet-stream".
-	mediaType, b64, ok := ParseDataURL("data:;base64,aGVsbG8=")
-	if !ok {
-		t.Fatal("expected ok=true for data URL with empty media type")
-	}
-	if mediaType != "application/octet-stream" {
-		t.Errorf("mediaType: got %q, want application/octet-stream", mediaType)
-	}
-	if b64 != "aGVsbG8=" {
-		t.Errorf("b64: got %q, want aGVsbG8=", b64)
-	}
-}
-
-func TestParseDataURL_invalidBase64Payload_notOk(t *testing.T) {
-	// "data:image/png;base64,not-valid-base64!!!" → base64.StdEncoding.DecodeString fails → false.
-	_, _, ok := ParseDataURL("data:image/png;base64,not valid base64!!!")
-	if ok {
-		t.Error("invalid base64 payload: expected ok=false")
-	}
-}
 
 // stringifyContent gap (non-array, non-string, non-existing)
 

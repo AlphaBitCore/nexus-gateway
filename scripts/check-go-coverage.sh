@@ -184,8 +184,19 @@ staged_pkgs_for_module() {
 TMPDIR_COV="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_COV"' EXIT
 
+# Concurrency is BOUNDED, not "every module at once". Each module's own
+# `go test ./...` already parallelises across its packages, so launching all
+# modules together oversubscribes the box by the product of the two. The cost
+# is not slowness: timing-sensitive packages — the CLI's PTY/shell tests, the
+# profiling package's signal handlers — lose their races under that load and
+# the sweep reddens on a DIFFERENT innocent package each run. A gate that
+# reddens at random is one people learn to re-run instead of read.
+COV_JOBS="${COV_JOBS:-$(( $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) / 2 ))}"
+[[ "$COV_JOBS" -lt 2 ]] && COV_JOBS=2
+
 for i in "${!MODULES[@]}"; do
   m="${MODULES[$i]}"
+  while [[ "$(jobs -rp | wc -l)" -ge "$COV_JOBS" ]]; do wait -n; done
   if [[ "$MODE" == "staged" ]]; then
     TARGETS=()
     while IFS= read -r d; do
@@ -238,6 +249,35 @@ for i in "${!MODULES[@]}"; do
   fi
 done
 
+# Packages whose every file sits behind a build tag. Without the tag the
+# package contains no Go files at all, so `go test -cover` cannot build it and
+# reports `[setup failed]` — which the FAIL branch below would otherwise call a
+# test failure. There is nothing to measure and nothing to fix: it is the same
+# fact as `coverage: [no statements]`, phrased differently by the toolchain.
+#
+# Go prints, on the lines preceding the FAIL:
+#   # github.com/org/repo/pkg
+#   package github.com/org/repo/pkg: build constraints exclude all Go files in /abs/path
+#
+# This is a property of the package, not an exemption for one of them, so it
+# belongs in the gate rather than in the allowlist. A package with SOME files
+# excluded still builds and is measured normally — only an entirely tag-gated
+# package lands here.
+#
+# It is a property under the CURRENT GOOS and tag set, though, not an absolute
+# one, and that is the catch: a `//go:build linux` misplaced onto every file of
+# a package would exempt it silently on a macOS run. So each exemption is NAMED
+# in the report rather than folded into the "N packages checked" count, where it
+# would look exactly like a package at 100%. A gate that hides what it skipped
+# is how a package stops being measured without anyone deciding that.
+TAG_ONLY_EXEMPTED=()
+TAG_ONLY_PKGS="$(grep -F 'build constraints exclude all Go files' <<< "$ALL_OUTPUT" \
+  | grep -oE 'github\.com/[^[:space:]:]+' | sort -u)"
+
+is_tag_only() {
+  [[ -n "$TAG_ONLY_PKGS" ]] && grep -qxF "$1" <<< "$TAG_ONLY_PKGS"
+}
+
 # Parse each line. Possible shapes:
 #   ok  	IMPORT	0.123s	coverage: 95.0% of statements
 #   ok  	IMPORT	0.123s	coverage: [no statements]
@@ -252,6 +292,14 @@ while IFS= read -r line; do
   # nested "--- FAIL: TestName" lines must be skipped — they're noise.
   if [[ "$line" =~ ^FAIL[[:space:]]+github\.com/[^[:space:]]+ ]]; then
     pkg="$(echo "$line" | awk '{print $2}')"
+    # Entirely tag-gated package: no untagged Go files exist, so the
+    # `[setup failed]` is the toolchain saying "nothing here", not a broken
+    # test. Run it with its tag to exercise it.
+    if is_tag_only "$pkg"; then
+      OK_PKGS+=("$pkg (all files behind build tags; nothing to measure untagged)")
+      TAG_ONLY_EXEMPTED+=("$pkg")
+      continue
+    fi
     # Test failures in allowlisted packages (typically DB-bound where
     # local schema is stale) are surfaced as warnings, not blockers —
     # the coverage rule is about the 95% threshold, not about whether
@@ -335,6 +383,16 @@ fi
 echo ""
 if [[ ${#FAILED_PKGS[@]} -eq 0 ]]; then
   echo "[check-go-coverage] all packages ≥ ${THRESHOLD}% (or allowlisted) — ${#OK_PKGS[@]} packages checked"
+  if [[ ${#TAG_ONLY_EXEMPTED[@]} -gt 0 ]]; then
+    echo ""
+    echo "Not measured — every Go file is behind a build tag on this GOOS/tag set:"
+    for e in "${TAG_ONLY_EXEMPTED[@]}"; do
+      echo "  - $e"
+    done
+    echo "  Run these with their tag to exercise them. If one is here by accident"
+    echo "  (a build constraint on files that should be portable), the package is"
+    echo "  silently unmeasured and this line is the only sign of it."
+  fi
   if [[ ${#UNNECESSARY_ALLOWLIST[@]} -gt 0 ]]; then
     echo ""
     echo "Allowlist entries that can be removed:"

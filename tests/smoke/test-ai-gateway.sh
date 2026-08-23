@@ -62,13 +62,30 @@ fi
 # Section 2 — chat completion + DB cross-check.
 # ----------------------------------------------------------------------------
 
+# Pick the chat model out of the catalog we just listed. The alternative was
+# NEXUS_JUDGE_MODEL, which only tests/.env.local.example defines — against any
+# other target it is unset, `set -u` kills the script mid-request, and what
+# reaches the gateway is a body with no model at all. Resolving it here needs no
+# variable on any target and exercises the catalog-to-chat path besides.
+chat_model=$(printf '%s' "$models_body" | jq -r '
+  [.data[] | select((.id // "") != "")
+           | select(((.capabilities.modalities.input // ["text"]) | index("text")) != null)
+           | .id] | first // empty')
+if [[ -z "$chat_model" ]]; then
+  chat_model=$(printf '%s' "$models_body" | jq -r '.data[0].id // empty')
+fi
+if [[ -z "$chat_model" ]]; then
+  fail "chat model resolution" "no usable model id in /v1/models"
+  chat_model="moonshot-v1-8k"
+fi
+
 # Bake a unique marker into the prompt so we can find the row later if the
 # trace_id / external_request_id linkage breaks.
 marker="SMOKE_$(date +%s%N)"
 chat_body=$(aigw_curl "$NEXUS_TEST_VK" /v1/chat/completions \
   -X POST \
   -H 'Content-Type: application/json' \
-  -d "$(jq -nc --arg model "$NEXUS_JUDGE_MODEL" --arg marker "$marker" \
+  -d "$(jq -nc --arg model "$chat_model" --arg marker "$marker" \
         '{model: $model,
           messages: [{role: "user", content: ("Reply with exactly: " + $marker)}],
           max_tokens: 32,
@@ -127,7 +144,7 @@ fi
 # Pull the requests_total counter sum before the call so we can assert a
 # strict delta around just this request. Sum across all label series so the
 # assertion survives label-set evolution (model, status, ingress, etc.).
-prom_messages_before=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
+prom_messages_before=$(curl -sS -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN:-${NEXUS_HUB_SERVICE_TOKEN:-}}" "$NEXUS_AI_GW_URL/metrics" \
   | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
 
 messages_marker="SMOKE_MSG_$(date +%s%N)"
@@ -204,7 +221,7 @@ fi
 # increment >= 1. The earlier reads issued two AI Gateway requests
 # (messages_body + messages_status), so the realistic delta is >= 2;
 # we keep the assertion at >= 1 to stay tolerant of label churn / sampling.
-prom_messages_after=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
+prom_messages_after=$(curl -sS -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN:-${NEXUS_HUB_SERVICE_TOKEN:-}}" "$NEXUS_AI_GW_URL/metrics" \
   | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
 prom_messages_delta=$((prom_messages_after - prom_messages_before))
 if [[ "$prom_messages_delta" -ge 1 ]]; then
@@ -231,7 +248,7 @@ fi
 # Pull the requests_total counter sum before the call so we can assert a
 # strict delta around just this request. Sum across all label series so the
 # assertion survives label-set evolution (model, status, ingress, etc.).
-prom_embeddings_before=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
+prom_embeddings_before=$(curl -sS -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN:-${NEXUS_HUB_SERVICE_TOKEN:-}}" "$NEXUS_AI_GW_URL/metrics" \
   | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
 
 # Use set +e around the embeddings calls so a skip-graceful 400/404 doesn't
@@ -306,7 +323,7 @@ else
   # increment >= 1. The earlier reads issued two AI Gateway requests
   # (embeddings_body + embeddings_status), so the realistic delta is >= 2;
   # we keep the assertion at >= 1 to stay tolerant of label churn / sampling.
-  prom_embeddings_after=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
+  prom_embeddings_after=$(curl -sS -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN:-${NEXUS_HUB_SERVICE_TOKEN:-}}" "$NEXUS_AI_GW_URL/metrics" \
     | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
   prom_embeddings_delta=$((prom_embeddings_after - prom_embeddings_before))
   if [[ "$prom_embeddings_delta" -ge 1 ]]; then
@@ -324,7 +341,7 @@ fi
 # Pull the AI Gateway's metrics endpoint twice (before / after the call would
 # require pre-arranging; instead we read once and confirm the counter is
 # present and non-zero, which is what we actually care about for smoke).
-metrics_body=$(curl -sS "$NEXUS_AI_GW_URL/metrics")
+metrics_body=$(curl -sS -H "Authorization: Bearer ${INTERNAL_SERVICE_TOKEN:-${NEXUS_HUB_SERVICE_TOKEN:-}}" "$NEXUS_AI_GW_URL/metrics")
 if printf '%s' "$metrics_body" | grep -qE '^nexus_(ai_gateway|aigw)_'; then
   counter_count=$(printf '%s' "$metrics_body" | grep -cE '^nexus_(ai_gateway|aigw)_')
   pass "ai-gateway exposes $counter_count nexus_* metric series"

@@ -13,7 +13,8 @@
 //   - expandRange: min low=1; high clamped to maxOutput
 //   - ReadReasoningSignal: reasoning_effort, reasoning.effort, thinking.budget_tokens,
 //     nexus.ext paths, gemini paths, absent → empty ReasoningSignal
-//   - bucketBudget: ≤0 → ""; <2000 → "low"; <8000 → "medium"; ≥8000 → "high"
+//   - budget→level bucketing lives in normalize/core (one answer, shared with
+//     canonicalization) and is covered there
 //   - reasoningShareFromEffort: high/medium/low/minimal/unknown
 //   - Estimate: full integration, reasoning model, unknown model fallback
 package estimator_test
@@ -26,6 +27,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/estimator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	anthropicingress "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/ingress"
+	geminiingress "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/ingress"
 )
 
 // Estimate: guard rails
@@ -255,7 +258,7 @@ func TestEstimate_multiPartContent_sumsChars(t *testing.T) {
 
 func TestReadReasoningSignal_reasoningEffort_topLevel(t *testing.T) {
 	body := []byte(`{"reasoning_effort":"high"}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatOpenAI)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "high" || sig.Source != "reasoning_effort" {
 		t.Errorf("got %+v", sig)
 	}
@@ -263,7 +266,7 @@ func TestReadReasoningSignal_reasoningEffort_topLevel(t *testing.T) {
 
 func TestReadReasoningSignal_reasoningDotEffort(t *testing.T) {
 	body := []byte(`{"reasoning":{"effort":"medium"}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatOpenAI)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "medium" || sig.Source != "reasoning.effort" {
 		t.Errorf("got %+v", sig)
 	}
@@ -271,7 +274,7 @@ func TestReadReasoningSignal_reasoningDotEffort(t *testing.T) {
 
 func TestReadReasoningSignal_thinkingBudgetTokens(t *testing.T) {
 	body := []byte(`{"thinking":{"budget_tokens":5000}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatAnthropic)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "medium" {
 		t.Errorf("5000 tokens: got effort %q, want medium", sig.Effort)
 	}
@@ -285,7 +288,7 @@ func TestReadReasoningSignal_thinkingBudgetTokens(t *testing.T) {
 
 func TestReadReasoningSignal_nexusExtAnthropicThinking(t *testing.T) {
 	body := []byte(`{"nexus":{"ext":{"anthropic":{"thinking":{"budget_tokens":1000}}}}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatOpenAI)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "low" {
 		t.Errorf("1000 tokens: got effort %q, want low", sig.Effort)
 	}
@@ -296,7 +299,7 @@ func TestReadReasoningSignal_nexusExtAnthropicThinking(t *testing.T) {
 
 func TestReadReasoningSignal_geminiThinkingConfigBudget(t *testing.T) {
 	body := []byte(`{"thinking_config":{"thinking_budget":10000}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatGemini)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "high" {
 		t.Errorf("10000 tokens: got effort %q, want high", sig.Effort)
 	}
@@ -305,20 +308,48 @@ func TestReadReasoningSignal_geminiThinkingConfigBudget(t *testing.T) {
 	}
 }
 
-func TestReadReasoningSignal_nexusExtGeminiThinkingBudget(t *testing.T) {
-	body := []byte(`{"nexus":{"ext":{"gemini":{"thinking_config":{"thinking_budget":8000}}}}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatGemini)
-	if sig.Effort != "high" {
-		t.Errorf("8000 tokens: got effort %q, want high", sig.Effort)
+// Built by the real canonicalization rather than by hand, because the previous
+// version of this test hand-wrote a key production never emits: the extension
+// holds the caller's own object, so the budget inside it keeps Gemini's
+// camelCase spelling. The lookup read the snake_case name, found nothing on
+// every Gemini-origin body there was, and this test vouched for it.
+func TestReadReasoningSignal_geminiBudgetSurvivesRealCanonicalization(t *testing.T) {
+	canonical, err := geminiingress.GenerateContentRequestToOpenAIChatCompletion(
+		[]byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],`+
+			`"generationConfig":{"thinkingConfig":{"thinkingBudget":8000}}}`), "m")
+	if err != nil {
+		t.Fatalf("canonicalize: %v", err)
 	}
-	if sig.Source != "nexus.ext.gemini.thinking_config.thinking_budget" {
-		t.Errorf("source: got %q", sig.Source)
+	sig := estimator.ReadReasoningSignal(canonical)
+	if sig.Effort != "high" {
+		t.Errorf("8000 tokens: got effort %q, want high (body: %s)", sig.Effort, canonical)
+	}
+	if sig.BudgetTokens != 8000 {
+		t.Errorf("BudgetTokens: got %d, want the caller's own 8000", sig.BudgetTokens)
+	}
+}
+
+// The same pairing for the other budget-shaped ingress, so a rename on either
+// side of the extension is caught by the package that reads it.
+func TestReadReasoningSignal_anthropicBudgetSurvivesRealCanonicalization(t *testing.T) {
+	canonical, err := anthropicingress.MessagesRequestToOpenAIChatCompletion(
+		[]byte(`{"model":"claude-x","max_tokens":4096,"messages":[{"role":"user","content":"hi"}],`+
+			`"thinking":{"type":"enabled","budget_tokens":1000}}`), "m")
+	if err != nil {
+		t.Fatalf("canonicalize: %v", err)
+	}
+	sig := estimator.ReadReasoningSignal(canonical)
+	if sig.Effort != "low" {
+		t.Errorf("1000 tokens: got effort %q, want low (body: %s)", sig.Effort, canonical)
+	}
+	if sig.BudgetTokens != 1000 {
+		t.Errorf("BudgetTokens: got %d, want the caller's own 1000", sig.BudgetTokens)
 	}
 }
 
 func TestReadReasoningSignal_nonePresent_emptySignal(t *testing.T) {
 	body := []byte(`{"model":"gpt-4o","messages":[]}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatOpenAI)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "" || sig.BudgetTokens != 0 || sig.Source != "" {
 		t.Errorf("expected empty signal, got %+v", sig)
 	}
@@ -332,7 +363,7 @@ func TestReadReasoningSignal_nonePresent_emptySignal(t *testing.T) {
 // that would have been empty anyway.
 func TestReadReasoningSignal_markerInContentFallsThrough(t *testing.T) {
 	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"explain your reasoning and thinking"}]}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatOpenAI)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "" || sig.BudgetTokens != 0 || sig.Source != "" {
 		t.Errorf("marker-in-content must yield empty signal, got %+v", sig)
 	}
@@ -343,7 +374,7 @@ func TestReadReasoningSignal_markerInContentFallsThrough(t *testing.T) {
 func TestReadReasoningSignal_budgetZeroOrNeg_emptyEffort(t *testing.T) {
 	// budget_tokens = 0 → bucketBudget returns ""
 	body := []byte(`{"thinking":{"budget_tokens":0}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatAnthropic)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "" {
 		t.Errorf("zero budget: got effort %q, want empty", sig.Effort)
 	}
@@ -351,7 +382,7 @@ func TestReadReasoningSignal_budgetZeroOrNeg_emptyEffort(t *testing.T) {
 
 func TestReadReasoningSignal_budgetLow_lowEffort(t *testing.T) {
 	body := []byte(`{"thinking":{"budget_tokens":1999}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatAnthropic)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "low" {
 		t.Errorf("1999 tokens: got %q, want low", sig.Effort)
 	}
@@ -359,7 +390,7 @@ func TestReadReasoningSignal_budgetLow_lowEffort(t *testing.T) {
 
 func TestReadReasoningSignal_budgetExactly2000_mediumEffort(t *testing.T) {
 	body := []byte(`{"thinking":{"budget_tokens":2000}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatAnthropic)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "medium" {
 		t.Errorf("2000 tokens: got %q, want medium", sig.Effort)
 	}
@@ -367,7 +398,7 @@ func TestReadReasoningSignal_budgetExactly2000_mediumEffort(t *testing.T) {
 
 func TestReadReasoningSignal_budgetExactly8000_highEffort(t *testing.T) {
 	body := []byte(`{"thinking":{"budget_tokens":8000}}`)
-	sig := estimator.ReadReasoningSignal(body, provcore.FormatAnthropic)
+	sig := estimator.ReadReasoningSignal(body)
 	if sig.Effort != "high" {
 		t.Errorf("8000 tokens: got %q, want high", sig.Effort)
 	}

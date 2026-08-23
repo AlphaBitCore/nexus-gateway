@@ -261,6 +261,9 @@ export function useProviderWizard() {
           maxContextTokens: m.maxContextTokens != null ? String(m.maxContextTokens) : '',
           maxOutputTokens: m.maxOutputTokens != null ? String(m.maxOutputTokens) : '',
           features: [...(m.features ?? [])],
+          inputModalities: m.inputModalities ? [...m.inputModalities] : undefined,
+          outputModalities: m.outputModalities ? [...m.outputModalities] : undefined,
+          requiredModalities: m.requiredModalities ? [...m.requiredModalities] : undefined,
           selected: true,
         })),
       );
@@ -354,6 +357,9 @@ export function useProviderWizard() {
         ...(m.maxContextTokens && { maxContextTokens: parseInt(m.maxContextTokens, 10) }),
         ...(m.maxOutputTokens && { maxOutputTokens: parseInt(m.maxOutputTokens, 10) }),
         features: m.features,
+        ...(m.inputModalities?.length && { inputModalities: m.inputModalities }),
+        ...(m.outputModalities?.length && { outputModalities: m.outputModalities }),
+        ...(m.requiredModalities?.length && { requiredModalities: m.requiredModalities }),
       }));
 
       const payloadCredential = !skipCredential && credName && apiKey

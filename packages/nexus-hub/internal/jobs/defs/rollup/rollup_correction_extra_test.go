@@ -122,7 +122,13 @@ func TestRollupCorrection_Run_MultiDayLookback(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 2, 24*time.Hour, testLogger())
+	// A run that reaches the end of the window publishes its watermark.
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
+	j := NewRollupCorrection(mock, r5m, m1h, m1d, m1mo, 2, 0, 24*time.Hour, testLogger())
 	// Mid-month so both lookback days stay inside the unsealed current month
 	// (no 1mo re-merge).
 	j.nowFn = func() time.Time { return time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC) }
@@ -286,7 +292,7 @@ func TestRollupCorrection_Run_MonthlyRemergeError(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	j := NewRollupCorrection(nil, r5m, m1h, m1d, m1mo, 1, 0, 24*time.Hour, testLogger())
 	j.nowFn = func() time.Time { return time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC) }
 
 	if err := j.Run(context.Background()); !errors.Is(err, sentinel) {
@@ -337,7 +343,13 @@ func TestRollupCorrection_Run_CrossMonthRemergesSealedMonth(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 3, 24*time.Hour, testLogger())
+	// A run that reaches the end of the window publishes its watermark.
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
+	j := NewRollupCorrection(mock, r5m, m1h, m1d, m1mo, 3, 0, 24*time.Hour, testLogger())
 	j.nowFn = func() time.Time { return time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC) }
 
 	if err := j.Run(context.Background()); err != nil {

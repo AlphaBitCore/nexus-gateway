@@ -537,7 +537,7 @@ func TestServeSTT_GenCapReleasedOnError(t *testing.T) {
 type sttEmptyRouter struct{}
 
 func (sttEmptyRouter) ResolveTargets(_ context.Context, _ *routingcore.RoutingContext) (*routingcore.RouteResult, error) {
-	return &routingcore.RouteResult{Targets: nil}, nil
+	return &routingcore.RouteResult{Dispatch: nil}, nil
 }
 
 func TestServeSTT_NoRouteTargets(t *testing.T) {
@@ -554,25 +554,42 @@ func TestServeSTT_NoRouteTargets(t *testing.T) {
 	}
 }
 
-func TestServeSTT_ResolverNil(t *testing.T) {
+// Neither of these has reached an upstream, so neither may answer 502. A
+// gateway that reports its own unwired dependency as a provider fault sends
+// the operator to the provider's status page and poisons every dashboard
+// that counts 502s as provider unavailability.
+func TestServeSTT_ResolverNil_IsOursNotTheProviders(t *testing.T) {
 	deps, _ := sttDeps(t, "http://127.0.0.1:0")
 	deps.Resolver = nil
 	h := NewHandler(deps).ServeSTT(sttIngress())
 	body, ct := buildSTTMultipart(t, "whisper-1", "", []byte("AUDIO"))
 	rr := doSTT(h, "/v1/audio/transcriptions", ct, body)
-	if rr.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502 (nil resolver)", rr.Code)
+	if rr.Code == http.StatusBadGateway {
+		t.Fatalf("502 blames a provider that was never contacted: %s", rr.Body.String())
+	}
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rr.Code)
+	}
+	// The old code claimed nothing was compatible, when nothing was asked.
+	if strings.Contains(rr.Body.String(), "NO_COMPATIBLE_PROVIDER") {
+		t.Errorf("an unwired resolver is not a compatibility problem: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "STT_RESOLVER_UNAVAILABLE") {
+		t.Errorf("want STT_RESOLVER_UNAVAILABLE, got %s", rr.Body.String())
 	}
 }
 
-func TestServeSTT_ResolveError(t *testing.T) {
+func TestServeSTT_ResolveError_IsOursNotTheProviders(t *testing.T) {
 	deps, _ := sttDeps(t, "http://127.0.0.1:0")
 	deps.Resolver = sttStubResolver{err: errors.New("credential decrypt failed")}
 	h := NewHandler(deps).ServeSTT(sttIngress())
 	body, ct := buildSTTMultipart(t, "whisper-1", "", []byte("AUDIO"))
 	rr := doSTT(h, "/v1/audio/transcriptions", ct, body)
-	if rr.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502 (resolve error)", rr.Code)
+	if rr.Code == http.StatusBadGateway {
+		t.Fatalf("502 blames a provider for our own credential lookup: %s", rr.Body.String())
+	}
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rr.Code)
 	}
 	if !strings.Contains(rr.Body.String(), "PROVIDER_RESOLVE_FAILED") {
 		t.Errorf("want PROVIDER_RESOLVE_FAILED, got %s", rr.Body.String())

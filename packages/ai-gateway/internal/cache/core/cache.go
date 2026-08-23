@@ -93,13 +93,14 @@ type StreamEntry struct {
 // omitempty everywhere keeps stream entries compact when individual chunks
 // carry only deltas (the common case).
 type ChunkRecord struct {
-	Delta          string                   `json:"d,omitempty"`
-	ReasoningDelta string                   `json:"r,omitempty"`
-	ToolCallDeltas []provcore.ToolCallDelta `json:"t,omitempty"`
-	Usage          *provcore.Usage          `json:"u,omitempty"`
-	Done           bool                     `json:"done,omitempty"`
-	NativeEvent    string                   `json:"e,omitempty"`
-	RawBytes       []byte                   `json:"raw,omitempty"`
+	Delta          string                        `json:"d,omitempty"`
+	ReasoningDelta string                        `json:"r,omitempty"`
+	ToolCallDeltas []provcore.ToolCallDelta      `json:"t,omitempty"`
+	NexusThinking  []provcore.NexusThinkingBlock `json:"nt,omitempty"`
+	Usage          *provcore.Usage               `json:"u,omitempty"`
+	Done           bool                          `json:"done,omitempty"`
+	NativeEvent    string                        `json:"e,omitempty"`
+	RawBytes       []byte                        `json:"raw,omitempty"`
 }
 
 // ResponseEntry is the cache value for non-streaming responses.

@@ -370,7 +370,7 @@ func TestCreateProvider_HappyWithModelsAndCredential(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	// 1 model insert — 23 params ($1..$23 incl. capability + cached + audio price cols).
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(anyArgs(23)...).
+		WithArgs(anyArgs(24)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	// 1 inline credential insert — note the 14-column Scan target.
 	mock.ExpectQuery(`INSERT INTO "Credential"`).
@@ -427,7 +427,7 @@ func TestCreateProvider_HappyModelMissingCodeAndAliases(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(anyArgs(23)...).
+		WithArgs(anyArgs(24)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	mock.ExpectCommit()
 	mock.ExpectQuery(`SELECT value FROM system_metadata`).
@@ -481,7 +481,7 @@ func TestCreateProvider_ModelCollision409(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(anyArgs(23)...).
+		WithArgs(anyArgs(24)...).
 		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "Model_providerId_providerModelId_key"})
 	mock.ExpectRollback()
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
@@ -953,7 +953,7 @@ func TestAddProviderModel_Happy_DefaultsCodeAndProviderModelID(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(anyArgs(23)...).
+		WithArgs(anyArgs(24)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	mock.ExpectQuery(`SELECT value FROM system_metadata`).
 		WillReturnRows(pgxmock.NewRows([]string{"value"}))
@@ -989,7 +989,7 @@ func TestAddProviderModel_DuplicateCollision409(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(anyArgs(23)...).
+		WithArgs(anyArgs(24)...).
 		WillReturnError(&pgconn.PgError{Code: "23505"})
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	body := `{"name":"gpt-4o","type":"chat"}`
@@ -1011,7 +1011,7 @@ func TestAddProviderModel_GenericError500(t *testing.T) {
 	mock.ExpectQuery(`FROM "Provider"\s+WHERE id`).WithArgs("prov-1").
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
-		WithArgs(anyArgs(23)...).
+		WithArgs(anyArgs(24)...).
 		WillReturnError(errors.New("disk full"))
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	body := `{"name":"gpt-4o","type":"chat"}`

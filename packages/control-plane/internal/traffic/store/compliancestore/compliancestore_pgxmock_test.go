@@ -128,11 +128,12 @@ func TestListMatrixAuditEvents(t *testing.T) {
 func TestGetMatrixAuditEvent(t *testing.T) {
 	m := newMock(t)
 	s := New(m, nil)
-	cols := make([]string, 24)
+	const nCols = 28
+	cols := make([]string, nCols)
 	rmReq := json.RawMessage(`{"req":1}`)
 	rmResp := json.RawMessage(`{"resp":1}`)
 	mk := func(body bool) []any {
-		v := make([]any, 24)
+		v := make([]any, nCols)
 		for i := range v {
 			v[i] = nil
 		}
@@ -141,6 +142,10 @@ func TestGetMatrixAuditEvent(t *testing.T) {
 		// scanned into plain string via COALESCE(...,''); empty = "text".
 		v[22] = ""
 		v[23] = ""
+		// request_truncated / response_truncated (idx 24/25) are COALESCE'd to
+		// false; request_size_bytes / response_size_bytes (idx 26/27) stay NULL.
+		v[24] = false
+		v[25] = false
 		if body {
 			// request/response body are *json.RawMessage scanned via & → feed *json.RawMessage.
 			v[20] = &rmReq
@@ -169,6 +174,93 @@ func TestGetMatrixAuditEvent(t *testing.T) {
 	m3.ExpectQuery(`LEFT JOIN traffic_event_payload`).WillReturnError(errors.New("boom"))
 	if _, err := New(m3, nil).GetMatrixAuditEvent(context.Background(), "x"); err == nil {
 		t.Fatal("error must surface")
+	}
+}
+
+// This endpoint has no UI surface (nothing in cp-ui calls getAuditEvent), but it
+// is a published admin API contract carried in the OpenAPI catalog and in the
+// agent-core resource catalog. A consumer reading requestBody/responseBody has
+// no other way to tell a stored PREFIX from a whole body — a truncated SSE
+// capture ends mid-frame and reads like a response that was never finished. The
+// truncation flags and the TRUE captured size must therefore ride along.
+func TestGetMatrixAuditEventReportsBodyTruncation(t *testing.T) {
+	m := newMock(t)
+	cols := make([]string, 28)
+	for i := range cols {
+		cols[i] = "c"
+	}
+	rmReq := json.RawMessage(`{"req":1}`)
+	rmResp := json.RawMessage(`{"resp":1}`)
+	v := make([]any, 28)
+	for i := range v {
+		v[i] = nil
+	}
+	v[0] = "e-trunc"
+	v[20], v[21] = &rmReq, &rmResp
+	v[22], v[23] = "", ""
+	reqSize, respSize := int64(561168), int64(254432)
+	v[24], v[25] = false, true
+	v[26], v[27] = &reqSize, &respSize
+
+	// Pinned on the SQL text as well: pgxmock replays columns positionally and
+	// never runs the query, so asserting the returned map alone cannot detect a
+	// column being dropped from the SELECT.
+	m.ExpectQuery(`(?s)p\.request_truncated.*p\.response_truncated.*p\.request_size_bytes.*p\.response_size_bytes`).
+		WithArgs("e-trunc").WillReturnRows(pgxmock.NewRows(cols).AddRow(v...))
+
+	res, err := New(m, nil).GetMatrixAuditEvent(context.Background(), "e-trunc")
+	if err != nil {
+		t.Fatalf("GetMatrixAuditEvent: %v", err)
+	}
+	if res["requestBodyTruncated"] != false {
+		t.Errorf("requestBodyTruncated = %v, want false (the request body was stored whole)", res["requestBodyTruncated"])
+	}
+	if res["responseBodyTruncated"] != true {
+		t.Errorf("responseBodyTruncated = %v, want true", res["responseBodyTruncated"])
+	}
+	if res["responseBodySizeBytes"] != respSize {
+		t.Errorf("responseBodySizeBytes = %v, want %d (the TRUE captured size, not the stored prefix)", res["responseBodySizeBytes"], respSize)
+	}
+	if res["requestBodySizeBytes"] != reqSize {
+		t.Errorf("requestBodySizeBytes = %v, want %d", res["requestBodySizeBytes"], reqSize)
+	}
+}
+
+// An untruncated row must still carry both flags, as false. A consumer branching
+// on the key must not have to distinguish "not truncated" from "this build does
+// not report truncation at all".
+func TestGetMatrixAuditEventAlwaysEmitsTruncationFlags(t *testing.T) {
+	m := newMock(t)
+	cols := make([]string, 28)
+	for i := range cols {
+		cols[i] = "c"
+	}
+	v := make([]any, 28)
+	for i := range v {
+		v[i] = nil
+	}
+	v[0], v[22], v[23], v[24], v[25] = "e-whole", "", "", false, false
+
+	m.ExpectQuery(`LEFT JOIN traffic_event_payload`).WithArgs("e-whole").
+		WillReturnRows(pgxmock.NewRows(cols).AddRow(v...))
+
+	res, err := New(m, nil).GetMatrixAuditEvent(context.Background(), "e-whole")
+	if err != nil {
+		t.Fatalf("GetMatrixAuditEvent: %v", err)
+	}
+	for _, k := range []string{"requestBodyTruncated", "responseBodyTruncated"} {
+		val, ok := res[k]
+		if !ok {
+			t.Errorf("%s missing from the response; it must always be present", k)
+			continue
+		}
+		if val != false {
+			t.Errorf("%s = %v, want false", k, val)
+		}
+	}
+	// Sizes are genuinely absent here (NULL columns) and must not be invented.
+	if _, ok := res["responseBodySizeBytes"]; ok {
+		t.Error("responseBodySizeBytes must be absent when the column is NULL, not zero")
 	}
 }
 

@@ -2,7 +2,6 @@ package strategies
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
@@ -11,19 +10,19 @@ import (
 // testStrategy is a simple Strategy implementation for testing.
 type testStrategy struct {
 	name string
-	fn   func(context.Context, core.StrategyNode, *core.RoutingContext, *[]core.TraceEntry, int, RecurseFunc) ([]core.RoutingTarget, error)
+	fn   func(context.Context, core.StrategyNode, *core.RoutingContext, *[]core.TraceEntry) ([]core.RoutingTarget, error)
 }
 
 func (s *testStrategy) Type() string { return s.name }
-func (s *testStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry, depth int, recurse RecurseFunc) ([]core.RoutingTarget, error) {
-	return s.fn(ctx, node, rctx, trace, depth, recurse)
+func (s *testStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
+	return s.fn(ctx, node, rctx, trace)
 }
 
 func TestRegistry_RegisterAndEvaluate(t *testing.T) {
 	reg := NewStrategyRegistry()
 	reg.Register(&testStrategy{
 		name: "test",
-		fn: func(_ context.Context, node core.StrategyNode, _ *core.RoutingContext, _ *[]core.TraceEntry, _ int, _ RecurseFunc) ([]core.RoutingTarget, error) {
+		fn: func(_ context.Context, node core.StrategyNode, _ *core.RoutingContext, _ *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 			return []core.RoutingTarget{{ProviderID: node.ProviderID, ModelID: node.ModelID}}, nil
 		},
 	})
@@ -33,7 +32,6 @@ func TestRegistry_RegisterAndEvaluate(t *testing.T) {
 		core.StrategyNode{Type: "test", ProviderID: "openai", ModelID: "gpt-4"},
 		&core.RoutingContext{},
 		&[]core.TraceEntry{},
-		0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -50,39 +48,28 @@ func TestRegistry_UnknownStrategy(t *testing.T) {
 		core.StrategyNode{Type: "nonexistent"},
 		&core.RoutingContext{},
 		&[]core.TraceEntry{},
-		0,
 	)
 	if err == nil {
 		t.Fatal("expected error for unknown strategy")
 	}
 }
 
-func TestRegistry_MaxDepth(t *testing.T) {
-	reg := NewStrategyRegistry()
-	reg.Register(&testStrategy{
-		name: "infinite",
-		fn: func(ctx context.Context, _ core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry, depth int, recurse RecurseFunc) ([]core.RoutingTarget, error) {
-			return recurse(ctx, core.StrategyNode{Type: "infinite"}, rctx, trace, depth)
-		},
-	})
-
-	_, err := reg.Evaluate(
-		context.Background(),
-		core.StrategyNode{Type: "infinite"},
-		&core.RoutingContext{},
-		&[]core.TraceEntry{},
-		0,
-	)
-	if !errors.Is(err, ErrMaxDepth) {
-		t.Errorf("expected ErrMaxDepth, got %v", err)
-	}
-}
+// The depth limit had its own test until strategies could no longer recurse.
+//
+// It guarded against a strategy evaluating another strategy without bound. The
+// Strategy interface no longer offers the means: children are provider+model
+// leaves, resolved directly, so unbounded nesting is not a thing the type
+// system permits rather than a thing a counter catches. A test asserting the
+// counter still fires would need a strategy that cannot be written.
+//
+// Recorded rather than silently dropped, because "the test disappeared" and
+// "the hazard became unrepresentable" look identical in a diff.
 
 func TestRegistry_DuplicatePanics(t *testing.T) {
 	reg := NewStrategyRegistry()
 	noop := &testStrategy{
 		name: "dup",
-		fn: func(context.Context, core.StrategyNode, *core.RoutingContext, *[]core.TraceEntry, int, RecurseFunc) ([]core.RoutingTarget, error) {
+		fn: func(context.Context, core.StrategyNode, *core.RoutingContext, *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 			return nil, nil
 		},
 	}
@@ -105,7 +92,7 @@ func TestRegistry_FreezeBlocksRegister(t *testing.T) {
 	}()
 	reg.Register(&testStrategy{
 		name: "late",
-		fn: func(context.Context, core.StrategyNode, *core.RoutingContext, *[]core.TraceEntry, int, RecurseFunc) ([]core.RoutingTarget, error) {
+		fn: func(context.Context, core.StrategyNode, *core.RoutingContext, *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 			return nil, nil
 		},
 	})

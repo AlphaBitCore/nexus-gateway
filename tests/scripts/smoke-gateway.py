@@ -283,6 +283,19 @@ def classify_model_modality(model_entry: dict) -> str:
     return "chat"
 
 
+# code -> requiredModalities, filled from GET /v1/models in phase2_catalog.
+# A model's floor is what a request MUST carry for it to be served at all;
+# gpt-audio-mini is type=chat and requires audio. It is read from the live
+# catalog rather than guessed from the id, because guessing from the id is
+# exactly how the image matrix landed on gpt-audio-mini in the first place.
+_MODEL_FLOOR: dict[str, list[str]] = {}
+
+
+def model_floor(mid: str) -> list[str]:
+    """Modalities a request must carry for this model, [] when unconstrained."""
+    return _MODEL_FLOOR.get(mid, [])
+
+
 def is_non_chat(mid: str) -> bool:
     """Legacy API: True for any model that should not enter chat phases.
 
@@ -342,6 +355,10 @@ _REASONING_MODELS = {
     # this model." The same models answer 200 on /v1/chat/completions, where the
     # codec strips the param — the native wire forwards it by design.
     "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5",
+    # Probed 2026-08-06 via /v1/messages, all three params rejected the same way:
+    # 400 "`temperature` is deprecated for this model.", and likewise for `top_p`
+    # and `top_k`. Same shape as the four above.
+    "claude-opus-5",
 }
 
 
@@ -479,6 +496,31 @@ def rec(phase, name) -> Result:
     r = Result(phase, name)
     _results.append(r)
     return r
+
+
+def _duplicate_labels() -> list[str]:
+    """(phase, name) pairs this run recorded more than once.
+
+    A label is how a reader tells one measurement from another, so two verdicts
+    under one label is a measurement defect regardless of what they say. It bit
+    three media arms, where a dedicated comprehension case and an ingress arm's
+    derived one shared a base label and one arm's pass sat beside the other's
+    failure with nothing to distinguish them.
+
+    It is worse than ambiguous downstream: the P8 deprecation pass builds a
+    dict keyed by result name, so a duplicate there overwrites silently, and
+    that map decides which models are REMOVED FROM THE CATALOG.
+
+    Recorded rather than raised, and checked at report time rather than in rec():
+    several arms record from mutually exclusive branches of one if/elif chain, so
+    the same literal legitimately appears at four call sites while firing once.
+    Only what a RUN actually produced counts.
+    """
+    seen: dict[tuple, int] = {}
+    for r in _results:
+        key = (r.phase, r.name)
+        seen[key] = seen.get(key, 0) + 1
+    return [f"{p}/{n} ×{c}" for (p, n), c in sorted(seen.items()) if c > 1]
 
 # ─── CPClient ─────────────────────────────────────────────────────────────────
 
@@ -987,13 +1029,18 @@ class GWClient:
     # JSON across all ingresses matches the canonical-bridge wire bytes
     # — see geminicache key.go for why this mattered for cache hashing.
 
-    def _post_sync(self, path: str, body_dict: dict, timeout: int, endpoint: str = "") -> dict:
-        """POST + parse JSON. Returns {status, data, elapsed, stream=False, endpoint?}."""
+    def _post_sync(self, path: str, body_dict: dict, timeout: int, endpoint: str = "",
+                   extra_headers: Optional[dict] = None) -> dict:
+        """POST + parse JSON. Returns {status, data, elapsed, stream=False, endpoint?}.
+
+        extra_headers carries per-ingress protocol headers (the Anthropic
+        wire requires `anthropic-version`); it never overrides auth.
+        """
         payload = json.dumps(body_dict, separators=(',', ':')).encode()
         t0 = time.time()
         c = self._conn(timeout)
         try:
-            c.request("POST", path, payload, self._auth_headers())
+            c.request("POST", path, payload, self._auth_headers(extra_headers))
             r = c.getresponse()
             raw = r.read().decode("utf-8", errors="replace")
             elapsed = time.time() - t0
@@ -1018,6 +1065,69 @@ class GWClient:
             out["endpoint"] = endpoint
         _note_model_access(body_dict, r.status, data)
         return out
+
+    def post_multipart(self, path: str, fields: dict, filename: str, file_bytes: bytes,
+                       file_field: str, file_mime: str, timeout: int) -> dict:
+        """POST multipart/form-data. Returns {status, data, headers, elapsed}.
+
+        Written by hand rather than pulled from a library because this script
+        has no third-party dependencies by design — it runs against prod from
+        wherever an operator happens to be.
+        """
+        boundary = "----nexus-smoke-" + hashlib.sha256(
+            (path + filename + str(len(file_bytes))).encode()).hexdigest()[:24]
+        parts = []
+        for k, v in fields.items():
+            parts.append(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}";'
+            f' filename="{filename}"\r\nContent-Type: {file_mime}\r\n\r\n'.encode())
+        parts.append(file_bytes)
+        parts.append(f'\r\n--{boundary}--\r\n'.encode())
+        payload = b"".join(parts)
+
+        hdrs = self._auth_headers({"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        t0 = time.time()
+        c = self._conn(timeout)
+        try:
+            c.request("POST", path, payload, hdrs)
+            r = c.getresponse()
+            raw = r.read()
+            headers = {k.lower(): v for k, v in r.getheaders()}
+            status = r.status
+            c.close()
+        except Exception as e:
+            return {"status": 0, "error": str(e), "elapsed": time.time() - t0}
+        try:
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+        except Exception:
+            data = {"_raw": raw[:500].decode("utf-8", errors="replace")}
+        return {"status": status, "data": data, "headers": headers,
+                "elapsed": time.time() - t0}
+
+    def post_binary_response(self, path: str, body_dict: dict, timeout: int) -> dict:
+        """POST JSON, read the response as BYTES.
+
+        The JSON reader would decode audio as replacement characters and lose
+        both the length and the container magic, which is exactly what
+        evidence #10 is about — the served content-type has to be checked
+        against what the bytes actually are.
+        """
+        payload = json.dumps(body_dict, separators=(',', ':')).encode()
+        t0 = time.time()
+        c = self._conn(timeout)
+        try:
+            c.request("POST", path, payload, self._auth_headers())
+            r = c.getresponse()
+            raw = r.read()
+            headers = {k.lower(): v for k, v in r.getheaders()}
+            status = r.status
+            c.close()
+        except Exception as e:
+            return {"status": 0, "error": str(e), "elapsed": time.time() - t0}
+        return {"status": status, "bytes": raw, "headers": headers,
+                "elapsed": time.time() - t0}
 
     def _post_sse(self, path: str, body_dict: dict, sse_parser: Callable[[str, dict], None],
                   timeout: int, endpoint: str = "") -> dict:
@@ -1241,6 +1351,8 @@ class GWClient:
 
     def chat_no_auth(self, model: str) -> int:
         body = json.dumps({
+            # max_tokens=1 is deliberate: this asserts a 401 and the model never
+            # runs, so the budget is unreachable and costs nothing.
             "model": model, "messages": [{"role": "user", "content": "x"}], "max_tokens": 1,
         }).encode()
         c = self._conn(10)
@@ -1253,6 +1365,8 @@ class GWClient:
 
     def chat_bad_vk(self, model: str) -> int:
         body = json.dumps({
+            # max_tokens=1 is deliberate: this asserts a 401 and the model never
+            # runs, so the budget is unreachable and costs nothing.
             "model": model, "messages": [{"role": "user", "content": "x"}], "max_tokens": 1,
         }).encode()
         c = self._conn(10)
@@ -1408,56 +1522,27 @@ class DBClient:
             time.sleep(2)
         return None
 
-    def fetch_normalized_rows(self, t0_iso: str) -> list[dict]:
-        """Pull traffic_event + traffic_event_normalized for every post-t0
-        ai-gateway row so the normalize verification can per-row compare
-        the extracted shape against expectations. Returns empty list when
-        DB access isn't configured (local without docker, remote without
-        ssh)."""
+    def fetch_event_rows(self, t0_iso: str) -> list[dict]:
+        """Pull the identity of every post-t0 ai-gateway traffic_event so P6b
+        can sample them and fetch each one's VIEW-TIME normalized projection.
+
+        The projection is not stored anywhere, so it is not read from SQL. Any
+        attempt to pull it from a table would COALESCE to defaults and let the
+        whole normalize check pass against an empty result — green that depends
+        on nothing. It comes from the endpoint the UI itself calls.
+
+        Returns empty list when DB access isn't configured (local without docker,
+        remote without ssh)."""
         if self.is_remote and not self.has_ssh:
             return []
-        # Use jsonb extractors directly in the query so we get a flat
-        # row shape and don't need to ship NormalizedPayload JSON to
-        # Python.
         sql = (
-            "SELECT "
-            "  te.id, te.model_name, te.status_code, "
-            "  COALESCE(ten.request_status,''), COALESCE(ten.response_status,''), "
-            "  COALESCE(LEFT(ten.request_error_reason,80),''), "
-            "  COALESCE(LEFT(ten.response_error_reason,80),''), "
-            "  COALESCE(jsonb_typeof(ten.response_normalized->'messages'->0->'content'),''), "
-            "  COALESCE("
-            "    CASE WHEN jsonb_typeof(ten.response_normalized->'messages'->0->'content')='array' "
-            "      THEN jsonb_array_length(ten.response_normalized->'messages'->0->'content')::text "
-            "      ELSE '0' END, '0'), "
-            "  COALESCE(ten.response_normalized->'messages'->0->'finishReason'#>>'{}', ''), "
-            "  COALESCE(ten.response_normalized->'usage'->>'promptTokens',''), "
-            "  COALESCE(ten.response_normalized->'usage'->>'completionTokens',''), "
-            "  COALESCE(ten.response_normalized->'usage'->>'totalTokens',''), "
-            "  COALESCE(ten.response_normalized->'usage'->>'reasoningTokens',''), "
-            "  COALESCE(ten.response_normalized->'usage'->>'cacheReadTokens',''), "
-            "  COALESCE(ten.response_normalized->'usage'->>'cacheCreationTokens',''), "
-            "  COALESCE(ten.response_normalized->'messages'->0->'content'->0->>'type',''), "
-            "  COALESCE(LENGTH(ten.response_normalized->'messages'->0->'content'->0->>'text')::text, '0'), "
-            "  COALESCE(ten.response_normalized->'messages'->0->'content'->1->>'type',''), "
-            "  COALESCE(LENGTH(ten.response_normalized->'messages'->0->'content'->1->>'text')::text, '0'), "
-            "  COALESCE(ten.response_normalized->>'kind','') "
+            "SELECT te.id, te.model_name, te.status_code "
             "FROM traffic_event te "
-            "LEFT JOIN traffic_event_normalized ten ON ten.traffic_event_id=te.id "
             f"WHERE te.source='ai-gateway' AND te.timestamp >= '{t0_iso}'::timestamptz "
             "ORDER BY te.timestamp DESC"
         )
         fields = [
             "id", "model_name", "status_code",
-            "request_status", "response_status",
-            "request_error_reason", "response_error_reason",
-            "content_type", "content_len",
-            "finish_reason",
-            "prompt_tokens", "completion_tokens", "total_tokens",
-            "reasoning_tokens", "cache_read_tokens", "cache_creation_tokens",
-            "b0_type", "b0_len",
-            "b1_type", "b1_len",
-            "kind",
         ]
         try:
             r = subprocess.run(self._psql_args(sql, separator="|"),
@@ -2316,6 +2401,15 @@ def model_eligible_for(model: str, ingress: IngressSpec) -> bool:
         # at the gateway model-type guard.
         if ingress.name in ("P3", "P3R", "P3A", "P3G"):
             return False
+    # A model with a floor cannot be exercised by a text-only suite. The P3
+    # family sends plain text to every chat model, and gpt-audio-* is
+    # type=chat with requiredModalities ["audio"] — so it answered four
+    # upstream 400s that carried no information about the product and simply
+    # reddened the gate. Coverage is not lost: the multimodal phase selects
+    # these models BY that floor and sends them real audio, which is where
+    # the fixture and the byte assertions already live.
+    if model_floor(model) and ingress.name in ("P3", "P3R", "P3A", "P3G"):
+        return False
     return True
 
 
@@ -2959,6 +3053,9 @@ def phase2_catalog(gw: GWClient) -> tuple[list[str], list[dict]]:
     for m in models_data:
         modality = classify_model_modality(m)
         mid = m.get("id", "")
+        floor = m.get("requiredModalities") or []
+        if floor:
+            _MODEL_FLOOR[mid] = list(floor)
         if modality == "chat":
             chat_models.append(mid)
         elif modality == "embedding":
@@ -3891,25 +3988,43 @@ def phase3e_embeddings(
             log_info(f"  [{mid}] Arm B: skipped — model_does_not_support_dimensions")
             rec("P3E", f"{mid}/arm-b").passed("skipped: model_does_not_support_dimensions")
         else:
-            max_dim = _model_capability(m, "max_dimensions") or _embedding_default_dimension(m) or 1024
-            half_dim = max(1, max_dim // 2)
-            r_b = gw.embeddings(mid, "dimension test", dimensions=half_dim, timeout=timeout)
+            # The probe dimension must be one the model OFFERS. When the
+            # catalog declares supported_dimensions it is a discrete allowed
+            # set, not a range: text-embedding-3-large publishes
+            # [256, 512, 1024, 3072], and half of its 3072 default is 1536 —
+            # a value the model does not serve. The gateway's capability floor
+            # rejects it with MODEL_CAPABILITY_MISMATCH, correctly, and the arm
+            # then failed on the request it had built rather than on the
+            # round-trip it meant to test.
+            supported = _model_capability(m, "supported_dimensions")
+            default_dim = _embedding_default_dimension(m) or 1024
+            if isinstance(supported, list) and supported:
+                # Largest offered value below the default, else the smallest
+                # offered — either way a value the model serves, and different
+                # from the default so the round-trip proves something.
+                below = sorted(d for d in supported if isinstance(d, int) and d < default_dim)
+                probe_dim = below[-1] if below else min(
+                    d for d in supported if isinstance(d, int))
+            else:
+                max_dim = _model_capability(m, "max_dimensions") or default_dim
+                probe_dim = max(1, max_dim // 2)
+            r_b = gw.embeddings(mid, "dimension test", dimensions=probe_dim, timeout=timeout)
             status_b = r_b.get("status", 0)
             if status_b == 200 and isinstance(r_b.get("data"), dict):
                 emb_b = _extract_openai_embedding(r_b["data"], 0)
                 if emb_b is None:
                     log_fail(f"  [{mid}] Arm B: data[0].embedding missing")
                     rec("P3E", f"{mid}/arm-b").failed("data[0].embedding missing")
-                elif len(emb_b) != half_dim:
+                elif len(emb_b) != probe_dim:
                     log_fail(
-                        f"  [{mid}] Arm B: got dim={len(emb_b)}, requested {half_dim}"
+                        f"  [{mid}] Arm B: got dim={len(emb_b)}, requested {probe_dim}"
                     )
                     rec("P3E", f"{mid}/arm-b").failed(
-                        f"dim={len(emb_b)} != requested {half_dim}"
+                        f"dim={len(emb_b)} != requested {probe_dim}"
                     )
                 else:
-                    log_ok(f"  [{mid}] Arm B OK dim={len(emb_b)} (requested {half_dim})")
-                    rec("P3E", f"{mid}/arm-b").passed(f"dim={len(emb_b)} == requested {half_dim}")
+                    log_ok(f"  [{mid}] Arm B OK dim={len(emb_b)} (requested {probe_dim})")
+                    rec("P3E", f"{mid}/arm-b").passed(f"dim={len(emb_b)} == requested {probe_dim}")
             else:
                 err = (r_b.get("data") or {}).get("error") or r_b.get("error", "")
                 log_fail(f"  [{mid}] Arm B HTTP {status_b}: {str(err)[:80]}")
@@ -4082,10 +4197,10 @@ def _run_embedding_reject_asymmetry(
     """P3E negative tests: reject-asymmetry for parameter violations.
 
     Test 1 — OpenAI ingress + dimensions=2048, pinned to Cohere (fixed 1024):
-      expect 400 no_compatible_provider, no traffic_event row.
+      expect 400 with a capability refusal, no traffic_event row.
 
     Test 2 — OpenAI ingress + batch of 200, pinned to Cohere (max_batch=96):
-      expect 400 no_compatible_provider, no traffic_event row.
+      expect 400 with a capability refusal, no traffic_event row.
 
     Both tests use a temporary routing rule created for the test VK, cleaned
     up after each assertion.
@@ -4120,10 +4235,20 @@ def _run_embedding_reject_asymmetry(
     err_neg1 = body_neg1.get("error") or {}
     if isinstance(err_neg1, dict):
         code_neg1 = err_neg1.get("code", "")
-        if "no_compatible_provider" not in code_neg1 and s_neg1 == 400:
-            # Tolerate: the error code may differ by ingress format.
+        # The request NAMES a model, so the refusal must come from the
+        # capability floor: MODEL_CAPABILITY_MISMATCH, which reads that model's
+        # own declared embedding limits and names the parameter that does not
+        # fit. The structured candidate-set 400 (no_compatible_capability) is
+        # for a DELEGATED request, where the gateway chose and none of its own
+        # models fit — answering a named model with a catalogue of models the
+        # caller did not choose reads as a gateway that ignored the request.
+        # no_compatible_provider is the CROSS-FORMAT gate, a different refusal
+        # entirely; accepting it here would let that gate firing by mistake
+        # pass as a capability check.
+        if s_neg1 == 400 and "MODEL_CAPABILITY_MISMATCH" not in code_neg1:
             issues_neg1.append(
-                f"error.code={code_neg1!r} (expected 'no_compatible_provider')"
+                f"error.code={code_neg1!r} (expected MODEL_CAPABILITY_MISMATCH from the "
+                f"capability floor, which is what refuses a NAMED model)"
             )
     # DB: no traffic_event should have been created.
     if not issues_neg1:
@@ -4134,7 +4259,7 @@ def _run_embedding_reject_asymmetry(
         log_fail(f"  Neg-test 1 ({cohere_mid}): {'; '.join(issues_neg1)}")
         rec("P3E/reject", "neg-dimensions").failed("; ".join(issues_neg1))
     else:
-        log_ok(f"  Neg-test 1 ({cohere_mid}): HTTP 400 no_compatible_provider, no DB row")
+        log_ok(f"  Neg-test 1 ({cohere_mid}): HTTP 400 {code_neg1}, no DB row")
         rec("P3E/reject", "neg-dimensions").passed(
             f"HTTP 400 on dimensions=2048 > Cohere max=1024; no traffic_event"
         )
@@ -4151,9 +4276,11 @@ def _run_embedding_reject_asymmetry(
     err_neg2 = body_neg2.get("error") or {}
     if isinstance(err_neg2, dict):
         code_neg2 = err_neg2.get("code", "")
-        if "no_compatible_provider" not in code_neg2 and s_neg2 == 400:
+        # Same expected code as neg-test 1 above; see the reasoning there.
+        if s_neg2 == 400 and "MODEL_CAPABILITY_MISMATCH" not in code_neg2:
             issues_neg2.append(
-                f"error.code={code_neg2!r} (expected 'no_compatible_provider')"
+                f"error.code={code_neg2!r} (expected MODEL_CAPABILITY_MISMATCH from the "
+                f"capability floor, which is what refuses a NAMED model)"
             )
     if not issues_neg2:
         no_row2 = _no_embedding_event_created(db, "", cohere_mid, "cohere", t_neg, timeout=10)
@@ -4163,7 +4290,7 @@ def _run_embedding_reject_asymmetry(
         log_fail(f"  Neg-test 2 ({cohere_mid}): {'; '.join(issues_neg2)}")
         rec("P3E/reject", "neg-batch").failed("; ".join(issues_neg2))
     else:
-        log_ok(f"  Neg-test 2 ({cohere_mid}): HTTP 400 no_compatible_provider, no DB row")
+        log_ok(f"  Neg-test 2 ({cohere_mid}): HTTP 400 {code_neg2}, no DB row")
         rec("P3E/reject", "neg-batch").passed(
             f"HTTP 400 on batch=200 > Cohere max=96; no traffic_event"
         )
@@ -4632,17 +4759,14 @@ def phase6_db_crosscheck(db: DBClient, t0_iso: str, db_poll_timeout: int):
 def phase6b_normalize_check(db: DBClient, cp: CPClient, t0_iso: str):
     """Normalized-payload verification — the canonical request/response projection.
 
-    Two storage architectures are validated transparently:
+    The projection is NEVER persisted: the control plane recomputes it on demand
+    from the stored raw body via GET /api/admin/traffic/:id/normalized, and P6b
+    validates that endpoint — the same recompute the UI's Normalized tab runs —
+    sampling one event per model.
 
-      - sidecar (legacy): the traffic_event_normalized table holds the
-        projection, written at audit time. Read via a flat SQL join.
-      - view-time (lazy normalize): the projection is NEVER persisted — the
-        control plane recomputes it on demand from the stored raw body via
-        GET /api/admin/traffic/:id/normalized. When the sidecar is empty for
-        the whole window the deployment is on this path, so P6b validates the
-        endpoint instead (the same recompute the UI's Normalized tab runs),
-        sampling one event per model. Asserting the absent sidecar would be a
-        false failure; this exercises the path that actually serves users.
+    There is deliberately one path, not a per-deployment choice between a stored
+    projection and a recomputed one: a check whose second branch cannot execute
+    invites the reader to believe a coverage it does not have.
 
     For every validated event, confirm:
       - request_status == 'ok' AND response_status == 'ok'
@@ -4665,42 +4789,24 @@ def phase6b_normalize_check(db: DBClient, cp: CPClient, t0_iso: str):
         rec("P6b", "normalize-check").passed("no DB access; skipped")
         return
 
-    rows = db.fetch_normalized_rows(t0_iso)
+    rows = db.fetch_event_rows(t0_iso)
     if not rows:
         log_warn("  No traffic_event rows found in window — P6b skipped")
         rec("P6b", "normalize-check").warning("no rows")
         return
 
-    # Architecture detection: the sidecar carries request_status ONLY when the
-    # projection was persisted at audit time. If no row in the window has it, the
-    # deployment recomputes at view time and the sidecar is empty by design —
-    # validate the endpoint rather than false-fail on an intentionally-absent table.
-    # Require EVERY row to carry a persisted projection before trusting the
-    # sidecar: on the lazy-normalize path most rows have no sidecar (only the
-    # embedding / smart-routing-reuse artifacts do), so any() would wrongly pick
-    # sidecar mode off a handful of artifact rows and then fail every lazy chat
-    # row. all() picks sidecar mode only for a genuine write-time-normalize
-    # deployment where the whole window is persisted.
-    sidecar_present = all(r.get("request_status") for r in rows)
-    if sidecar_present:
-        _eval_normalize_rows(rows, "sidecar")
-        return
-
-    log_info(
-        "  Sidecar empty for the whole window — lazy-normalize deployment; "
-        "validating view-time recompute via /api/admin/traffic/:id/normalized"
-    )
+    log_info("  Validating view-time recompute via /api/admin/traffic/:id/normalized")
     sampled = _viewtime_normalize_rows(cp, rows)
     if not sampled:
         log_warn("  View-time endpoint returned no usable rows — P6b skipped")
         rec("P6b", "normalize-check").warning("view-time: no rows")
         return
-    _eval_normalize_rows(sampled, "view-time")
+    _eval_normalize_rows(sampled)
 
 
 def _viewtime_normalize_rows(cp: CPClient, base_rows: list[dict]) -> list[dict]:
     """Fetch the view-time-recomputed normalized projection for a sample of
-    events and map each into the SAME flat shape fetch_normalized_rows emits, so
+    events and map each into the flat shape _eval_normalize_rows expects, so
     the shared evaluator runs unchanged.
 
     Samples one (most-recent) 200-status event per distinct model: the recompute
@@ -4835,9 +4941,9 @@ def _viewtime_normalize_rows(cp: CPClient, base_rows: list[dict]) -> list[dict]:
     return out
 
 
-def _eval_normalize_rows(rows: list[dict], source: str):
-    """Run the per-row normalize assertions over a flat row set (sidecar SQL join
-    OR view-time endpoint — identical shape). Records P6b pass/warn/fail per row."""
+def _eval_normalize_rows(rows: list[dict]):
+    """Run the per-row normalize assertions over the flat row set the view-time
+    endpoint produced. Records P6b pass/warn/fail per row."""
     ok_count, fail_count, warn_count = 0, 0, 0
     failures: list[str] = []
     warnings: list[str] = []
@@ -4864,11 +4970,19 @@ def _eval_normalize_rows(rows: list[dict], source: str):
             failures.append(f"{model} ({eid}): {req_st}/{resp_st} {err}")
             continue
 
-        # The remaining checks (content array, finishReason, visible-text)
-        # are chat-shaped. Embeddings normalize to kind=ai-embedding with no
-        # messages[] — the request/response normalize-status checks above
-        # already validated the embedding record, so skip the chat assertions.
-        if row.get("kind", "") == "ai-embedding":
+        # The remaining checks (content array, finishReason, visible-text) are
+        # chat-shaped, so they apply only to chat-shaped kinds. Everything else
+        # carries its payload somewhere other than messages[]: ai-embedding has
+        # vectors, and http-binary / http-multipart put the whole body behind
+        # http.bodyView.mediaRef — which is where a tts response now lives.
+        # This was an exclusion list naming ai-embedding alone, so a perfectly
+        # correct tts row (kind=http-binary, mediaRef captured audio/mpeg with
+        # a resolvable locator) was reported as "content is '' (expected
+        # array)". A shape assertion applied to a shape it was not written for
+        # reports the checker's assumption as the product's defect. The
+        # request/response normalize-status checks above already validated
+        # these rows.
+        if row.get("kind", "") not in ("ai-chat", "ai-stt", ""):
             continue
 
         # Content array shape check: should be array, never null.
@@ -4892,7 +5006,14 @@ def _eval_normalize_rows(rows: list[dict], source: str):
         total_text = b0_len + b1_len
         rsn = _int(row["reasoning_tokens"])
         completion = _int(row["completion_tokens"])
-        if block_count == 0 and rsn == 0 and completion > 0:
+        # …or when the response was cut off before a block completed. A
+        # multimodal case here sends max_tokens=8; claude-fable-5 spent all
+        # eight on output the truncation then discarded and returned
+        # finishReason=length with content []. That is the correct record of
+        # what happened, and calling it "content silently lost" accused the
+        # normalizer of dropping something the smoke's own max_tokens removed.
+        truncated = (row.get("finish_reason") or "").lower() in ("length", "max_tokens")
+        if block_count == 0 and rsn == 0 and completion > 0 and not truncated:
             log_fail(
                 f"  [{model} {eid}] visible blocks=0, reasoning=0, but "
                 f"completion_tokens={completion} — content silently lost"
@@ -4959,7 +5080,7 @@ def _eval_normalize_rows(rows: list[dict], source: str):
         ok_count += 1
 
     log_info(
-        f"Normalize check [{source}]: {ok_count} ok, {warn_count} warnings, "
+        f"Normalize check [view-time]: {ok_count} ok, {warn_count} warnings, "
         f"{fail_count} failures across {len(rows)} rows"
     )
     if failures:
@@ -5753,6 +5874,16 @@ def render_report(
             f"full catalogue. Denied: {', '.join(sorted(_denied_models))}. Remedy: use a key whose "
             "allowedModels is empty (tests/scripts/mint-test-vk.go mints one)")
 
+    # Before counting anything: two verdicts under one label make the counts
+    # unreadable, so this is recorded as a failure of the RUN rather than
+    # reported as a note somebody may skim past.
+    dupes = _duplicate_labels()
+    if dupes:
+        rec("P0", "result-labels-unique").failed(
+            "two or more results share a label, so one measurement cannot be told from "
+            "another and the P8 deprecation map (keyed by name) silently keeps only the "
+            "last: " + "; ".join(dupes))
+
     pass_count = sum(1 for r in _results if r.ok is True and not r.warn)
     warn_count = sum(1 for r in _results if r.ok is True and r.warn)
     fail_count = sum(1 for r in _results if r.ok is False)
@@ -5879,8 +6010,9 @@ def render_report(
         lines += ["", "## P3E — Reject-Asymmetry", ""]
         lines.append(
             "Negative tests: requests designed to violate provider capability "
-            "constraints. Expected: HTTP 400 with `no_compatible_provider` and "
-            "NO `traffic_event` row created."
+            "constraints. The model is NAMED, so the refusal comes from the "
+            "capability floor. Expected: HTTP 400 with `MODEL_CAPABILITY_MISMATCH` "
+            "and NO `traffic_event` row created."
         )
         lines += ["", "| Test | Status | Note |", "|---|---|---|"]
         for r in p3e_reject_results:
@@ -5948,28 +6080,1252 @@ def _mm_traffic_row(db: "DBClient", model_name: str, endpoint_type: str, t0_iso:
     return None
 
 
+
+# ─── Multimodal media assertions (standing regression) ────────────────────────
+
+MM_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "media"
+
+# Locator grammar. The check is deliberately two-way: a well-formed locator
+# must match, and the shapes that represent the original defect must not.
+# Defect #1 stuffed a whole data URI into the ref; a regression that moves it
+# one field over — into `locator` — would still pass a mime/size assertion,
+# so the grammar itself is pinned. The check is size-agnostic, which keeps it
+# compatible with the "never assert on size" rule the evidence taught.
+_MM_LOCATOR_RE = re.compile(
+    r"^(body|json:[A-Za-z0-9_.\-]+|datauri:[A-Za-z0-9_.\-]+"
+    r"|multipart:[A-Za-z0-9_\-]+|sse:\d+:[A-Za-z0-9_.\-]+)$"
+)
+# A run this long inside a text block means a payload was serialised into
+# prose — the defect that sent audio and PDFs through the redaction pipeline
+# as if they were words.
+_MM_B64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}")
+_MM_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+# The question every media-bearing ingress case asks. It replaced "one word",
+# which said nothing about the attachment — a model answered "I'm not sure what
+# you're asking for with just the word 'one'" and the case still passed, because
+# nothing looked at the answer.
+#
+# Each visual/document fixture has a different number baked in
+# (tests/scripts/gen-media-fixtures.py): image 19452, pdf 38617, markdown 52903,
+# video 74128. One prompt serves all of them because the fixture decides which
+# number is correct, and the caller never names it.
+# Media comprehension needs room to ANSWER, not just to think.
+#
+# The arms ran at max_tokens=8. Measured against gemini-2.5-flash on the OCR
+# fixture: 8 tokens returns empty with finish_reason=length, 64 returns "19"
+# — the first two digits of 19452, still truncated — and 512 returns "19452"
+# with finish_reason=stop. Reasoning models spend the budget before emitting
+# any visible text, so a small cap does not shorten the answer, it deletes it.
+# Every "the model returned EMPTY text for a media request" and several
+# "did NOT demonstrate reading the media" verdicts were this and nothing else.
+#
+# The anchors are five digits. 512 is far more than the answer needs and is
+# chosen to be larger than any thinking preamble these models emit, because
+# the failure mode being avoided is not a long answer — it is no answer.
+_MM_BUDGET = 512
+
+_MM_Q = "Reply with only the number contained in the attached file, digits only."
+
+# Audio carries a spoken phrase rather than a number — a number would need a TTS
+# engine in the fixture generator, and a spoken sentence is already unreachable
+# without the bytes.
+_MM_AUDIO_Q = "Transcribe the attached audio exactly. Reply with the transcript only."
+
+
+def _mm_fixture(name: str) -> bytes:
+    return (MM_FIXTURE_DIR / name).read_bytes()
+
+
+def _mm_wav(name: str) -> bytes:
+    """A wav fixture, refusing to hand back bytes a decoder would reject.
+
+    The audio arms sliced this fixture to a byte count to keep the payload
+    small. RIFF carries the payload length in its header, so a byte slice
+    leaves a file that declares 163584 data bytes with 31930 present, and
+    every upstream answers "unsupported_format". Nothing went red: the
+    bookkeeping half of each arm asserts what normalize recorded — mime,
+    size, modality, locator — all of which stay correct for a payload no
+    model can decode, so three audio arms reported PASS on every run while
+    the audio path itself was never exercised. Reading through here makes
+    that loud at the source. Clip audio by rewriting the chunk sizes, never
+    by slicing bytes.
+    """
+    b = _mm_fixture(name)
+    if b[:4] != b"RIFF" or b[8:12] != b"WAVE":
+        raise ValueError(f"{name}: not a RIFF/WAVE container")
+    declared = int.from_bytes(b[4:8], "little")
+    if declared != len(b) - 8:
+        raise ValueError(
+            f"{name}: the RIFF header declares {declared} bytes after it but {len(b) - 8} are present")
+    off = 12
+    while off + 8 <= len(b):
+        cid, size = b[off:off + 4], int.from_bytes(b[off + 4:off + 8], "little")
+        if off + 8 + size > len(b):
+            raise ValueError(f"{name}: the {cid.decode('ascii', 'replace')} chunk declares {size} bytes but the file ends first")
+        if cid == b"data":
+            return b
+        off += 8 + size + (size & 1)
+    raise ValueError(f"{name}: no data chunk")
+
+
+def _mm_data_uri(name: str, mime: str) -> str:
+    return f"data:{mime};base64," + base64.b64encode(_mm_fixture(name)).decode()
+
+
+def _mm_walk_media(payload: dict):
+    """Yields every MediaRef in a normalized payload, message blocks first."""
+    for m in (payload.get("messages") or []):
+        for b in (m.get("content") or []):
+            if b.get("type") == "media" and b.get("mediaRef"):
+                yield b["mediaRef"]
+    bv = ((payload.get("http") or {}).get("bodyView") or {})
+    if bv.get("mediaRef"):
+        yield bv["mediaRef"]
+
+
+def _mm_text_blocks(payload: dict):
+    for m in (payload.get("messages") or []):
+        for b in (m.get("content") or []):
+            if b.get("type") == "text" and b.get("text"):
+                yield b["text"]
+
+
+def _mm_check_ref(label: str, ref: dict, want_mime: str, want_size: int,
+                  want_modality: str, want_source: str) -> list[str]:
+    """Returns the list of assertion failures for one MediaRef."""
+    bad = []
+    if want_mime and ref.get("mime") != want_mime:
+        bad.append(f"mime={ref.get('mime')!r} want {want_mime!r}")
+    if want_size >= 0 and ref.get("sizeBytes") != want_size:
+        bad.append(f"sizeBytes={ref.get('sizeBytes')!r} want {want_size}")
+    if ref.get("modality") != want_modality:
+        bad.append(f"modality={ref.get('modality')!r} want {want_modality!r}")
+    if ref.get("source") != want_source:
+        bad.append(f"source={ref.get('source')!r} want {want_source!r}")
+    sha = ref.get("sha256")
+    if sha and not _MM_HEX64_RE.match(sha):
+        bad.append(f"sha256={sha[:24]!r} is not a 64-hex digest")
+    loc = ref.get("locator")
+    if want_source == "captured":
+        if not loc:
+            bad.append("captured ref carries no locator")
+        elif not _MM_LOCATOR_RE.match(loc):
+            bad.append(f"locator={loc[:48]!r} does not match the grammar")
+    elif loc:
+        bad.append(f"non-captured ref carries locator={loc[:48]!r}")
+    return bad
+
+
+def _mm_event_id(cp: "CPClient", trace_id: str, deadline: float) -> str | None:
+    """Resolves the caller's handle to the row's primary key.
+
+    The gateway hands back a TRACE id in X-Nexus-Request-Id; the per-event
+    admin endpoints take traffic_event.id, a minted per-row key no caller ever
+    sees. The two held the same value until the gateway started minting the key
+    separately, which is why passing the header straight to /traffic/:id used
+    to work. `requestId` is the filter the traffic UI's trace pivot uses, so
+    this is also the path a support ticket takes.
+    """
+    while True:
+        try:
+            status, payload = cp.get(f"/api/admin/traffic?requestId={trace_id}&limit=1")
+        except Exception:
+            status, payload = 0, None
+        if status == 200 and isinstance(payload, dict):
+            rows = payload.get("data") or []
+            if rows and rows[0].get("id"):
+                return rows[0]["id"]
+        # The row is written by the async audit batch writer, so an immediate
+        # read finds nothing. Poll rather than treat "not yet" as "absent".
+        if time.time() >= deadline:
+            return None
+        time.sleep(1.0)
+
+
+def _mm_normalized(cp: "CPClient", trace_id: str, direction: str,
+                   deadline_s: float = 30) -> dict | None:
+    """Reads the VIEW-TIME normalized payload for the row behind a trace id.
+
+    The endpoint recomputes from the stored body; there is no persisted
+    projection to read instead.
+
+    Returns None ONLY when no row ever appeared — the one genuinely inconclusive
+    outcome. Once the row is found, every remaining failure is permanent and is
+    reported as such: polling a wrong key for 30s and calling it a timeout is
+    what let twenty-one media arms report NOT VERIFIED while the suite passed.
+    """
+    deadline = time.time() + deadline_s
+    event_id = _mm_event_id(cp, trace_id, deadline)
+    if event_id is None:
+        return None
+    try:
+        status, payload = cp.get(f"/api/admin/traffic/{event_id}/normalized")
+    except Exception:
+        status, payload = 0, None
+    if status == 200 and isinstance(payload, dict):
+        got = payload.get(f"{direction}Normalized") or payload.get(direction)
+        if got is not None:
+            return got
+        return {"__empty__": True, "__why__": f"the endpoint answered 200 with no {direction} payload"}
+    return {"__empty__": True,
+            "__why__": f"row {event_id} exists but /normalized answered {status} — "
+                       "its body is neither inline nor recoverable from spill"}
+
+
+
+def _mm_media_matrix(gw: "GWClient", cp: "CPClient", chat_code: str, timeout: int) -> None:
+    """Fires media-bearing requests across ingresses and asserts the VIEW-TIME
+    normalized output — not the HTTP status, because every measured defect
+    returned 200.
+
+    The formats are crossed deliberately: the defect this pins hardest is that
+    every image format normalised to the bare word "image", so one PNG case
+    could not have caught it. Asserting on block *type* rather than size is
+    the other encoded lesson — a size threshold in an observation tool is what
+    hid a 343-character PDF block during the investigation.
+    """
+    fmts = [("image.png", "image/png"), ("image.jpg", "image/jpeg"),
+            ("image.webp", "image/webp"), ("image.gif", "image/gif")]
+
+    for name, mime in fmts:
+        raw = _mm_fixture(name)
+        body = {"model": chat_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "what is this"},
+            {"type": "image_url", "image_url": {"url": _mm_data_uri(name, mime)}}]}]}
+        r = gw._post_sync("/v1/chat/completions", body, timeout, endpoint="chat")
+        tid = (r.get("headers") or {}).get("x-nexus-request-id", "")
+        label = f"media/openai-chat/{mime}"
+        if r.get("status") != 200 or not tid:
+            # A 400 here is ours by default — it is recorded as a failure so
+            # it must be dispositioned, never silently tolerated.
+            rec("PMM", label).failed(f"status={r.get('status')} trace={tid or 'missing'}")
+            continue
+        payload = _mm_normalized(cp, tid, "request")
+        if payload is None:
+            rec("PMM", label).failed("the response returned 200 but no traffic row appeared within 30s")
+            continue
+        if payload.get("__empty__"):
+            rec("PMM", label).failed(f"no request payload for a media-bearing request: {payload.get('__why__', '')}")
+            continue
+        refs = list(_mm_walk_media(payload))
+        if len(refs) != 1:
+            rec("PMM", label).failed(f"expected exactly 1 media element, got {len(refs)}")
+            continue
+        bad = _mm_check_ref(label, refs[0], mime, len(raw), "image", "captured")
+        for txt in _mm_text_blocks(payload):
+            if _MM_B64_RUN_RE.search(txt):
+                bad.append("a base64 run reached a text block")
+        if bad:
+            rec("PMM", label).failed("; ".join(bad))
+        else:
+            rec("PMM", label).passed(
+                f"mime={mime} sizeBytes={len(raw)} source=captured locator={refs[0].get('locator')}")
+
+    # A remote URL is never fetched and never stored: it must read as an
+    # external reference carrying the URL, with no locator to click.
+    body = {"model": chat_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "https://example.invalid/x.png"}}]}]}
+    r = gw._post_sync("/v1/chat/completions", body, timeout, endpoint="chat")
+    tid = (r.get("headers") or {}).get("x-nexus-request-id", "")
+    if not tid:
+        rec("PMM", "media/openai-chat/external").failed("no trace id returned")
+    else:
+        payload = _mm_normalized(cp, tid, "request")
+        if payload is None:
+            rec("PMM", "media/openai-chat/external").failed(
+                "the response returned 200 but no traffic row appeared within 30s")
+        elif payload.get("__empty__"):
+            rec("PMM", "media/openai-chat/external").failed(
+                f"no request payload: {payload.get('__why__', '')}")
+        else:
+            refs = list(_mm_walk_media(payload))
+            bad = [] if len(refs) == 1 else [f"expected 1 media element, got {len(refs)}"]
+            if refs:
+                bad += _mm_check_ref("external", refs[0], "", -1, "image", "external")
+                if refs[0].get("url") != "https://example.invalid/x.png":
+                    bad.append(f"url={refs[0].get('url')!r} not carried")
+            if bad:
+                rec("PMM", "media/openai-chat/external").failed("; ".join(bad))
+            else:
+                rec("PMM", "media/openai-chat/external").passed("external ref, url carried, no locator")
+
+
+def _mm_request_text(body: dict) -> str:
+    """Every piece of caller-authored TEXT in an outgoing request, any ingress.
+
+    Deliberately not json.dumps(body): the media rides there as base64 and is
+    supposed to carry the anchor. Only what a human typed can leak the answer.
+    """
+    out = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ("text", "content", "instructions", "system") and isinstance(v, str):
+                    out.append(v)
+                else:
+                    walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(body)
+    return " ".join(out)
+
+
+def _mm_assert_comprehension(label: str, must_contain: str, data: dict, body: dict) -> None:
+    """Decide, and RECORD, whether the model demonstrably read the media.
+
+    Shared by the dedicated comprehension arms and by every ingress case, so
+    the two cannot drift into judging the same evidence differently.
+    """
+    # The anchor must not be reachable any way except by reading the media, so
+    # it must not be sitting in the request we sent. A prompt that names the
+    # answer turns this whole check into "does the model echo its input".
+    #
+    # Only the TEXT the caller wrote is examined. The media itself rides in the
+    # same body as base64, and it is supposed to contain the anchor — searching
+    # the serialised body would flag every correctly-built case.
+    if must_contain.lower() in _mm_request_text(body).lower():
+        rec("PMM", label).failed(
+            f"  [{label}] TEST DEFECT, not a product failure: the anchor {must_contain!r} "
+            f"appears in the request body, so a model that echoes its prompt passes "
+            f"without reading anything. Choose an anchor that exists only in the media."
+        )
+        return
+
+    # _MISSING distinguishes "no shape matched" from "a shape matched and the
+    # content was null". They are different failures: the first means we could
+    # not find the answer, the second means the model returned none. Collapsing
+    # them would report an empty media response as an envelope-parsing problem.
+    _MISSING = object()
+    answer = _MISSING
+    for shape in (
+        lambda d: d["choices"][0]["message"]["content"],
+        # Gemini's native shape, for the arms that run on that ingress.
+        lambda d: d["candidates"][0]["content"]["parts"][0]["text"],
+        # Anthropic's native shape. Without it, an arm on /v1/messages read a
+        # correct answer as "could not locate assistant text" and reported a
+        # product failure: the anthropic image and document arms each returned
+        # the exact anchor baked into the fixture and were both scored red.
+        lambda d: next(b["text"] for b in d["content"] if b.get("type") == "text"),
+        # OpenAI Responses shape — output[] carries reasoning and message
+        # items; the answer is the message item's output_text.
+        lambda d: next(
+            c["text"]
+            for item in d["output"] if item.get("type") == "message"
+            for c in item.get("content", []) if c.get("type") == "output_text"
+        ),
+    ):
+        try:
+            answer = shape(data)
+            break
+        except Exception:
+            continue
+
+    # There used to be a third fallback here: answer = json.dumps(data)[:400].
+    # It searched the ENTIRE response envelope for the anchor, so an anchor that
+    # appeared anywhere — an echoed request field, a model name, an error message
+    # quoting the prompt — reported "the model read the media" when no assistant
+    # text had been located at all. A check that cannot find the answer has not
+    # verified anything, and must say so.
+    # An upstream that REFUSED the payload never got asked the comprehension
+    # question, so there is no answer to score. The bookkeeping half of this
+    # arm deliberately accepts a refusing provider — it asserts the codec that
+    # had to represent the media, not the upstream's verdict — and scoring the
+    # comprehension half red for the same refusal reports one event twice, the
+    # second time as a defect that is not there. Report it NOT VERIFIED and
+    # name the refusal, so a genuinely missing check still cannot read as
+    # covered.
+    if isinstance(data, dict) and data.get("error") is not None:
+        err = data.get("error") or {}
+        msg = err.get("message") if isinstance(err, dict) else str(err)
+        rec("PMM", label).warning(
+            f"  [{label}] comprehension NOT VERIFIED — the upstream refused the "
+            f"request, so the model was never asked: {str(msg)[:150]}"
+        )
+        return
+
+    if answer is _MISSING:
+        rec("PMM", label).failed(
+            f"  [{label}] could not locate assistant text in the 200 response; "
+            f"no known response shape matched. Envelope: {json.dumps(data)[:200]}"
+        )
+        return
+
+    # Empty text is its own failure, named separately. It is the shape the
+    # media program was created for — a media request that returns 200 with
+    # nothing in it — and calling it "answered wrong" would send the reader
+    # looking for a model-quality problem instead of a dropped response.
+    if not (answer or "").strip():
+        rec("PMM", label).failed(
+            f"  [{label}] the model returned EMPTY text for a media request. "
+            f"Not a wrong answer — no answer. Check the upstream response body in traffic."
+        )
+        return
+
+    if must_contain.lower() in answer.lower():
+        rec("PMM", label).passed(f"the model read the media (answered {must_contain!r})")
+    else:
+        rec("PMM", label).failed(
+            f"  [{label}] the model did NOT demonstrate reading the media. "
+            f"Expected {must_contain!r}, got {answer[:120]!r}. "
+            f"Check the upstream request body in traffic: if the media block is absent "
+            f"the gateway dropped it; if present, the model answered wrong."
+        )
+
+def _mm_comprehension_case(gw: "GWClient", label: str, path: str, body: dict,
+                           headers: dict, must_contain: str, timeout: int = 90) -> None:
+    """Assert the MODEL received the media, not that we recorded it correctly.
+
+    Every other media assertion in this file checks our own bookkeeping: the
+    byte count, the sha256, the custody state, the locator. All of that can be
+    perfect while the model saw nothing — the reported defect was a PDF that
+    came back with a confident, entirely invented answer because the file never
+    reached the upstream at all. "We recorded it right" and "the model got it"
+    are different claims and only the second is what a user asked for.
+
+    So the question has exactly one answer, and it is one the model cannot
+    reach without reading the media: a fact buried inside the fixture, chosen
+    so that guessing lands on the wrong value. The markdown table marks SQLite
+    NOT idempotent while the other two are — a model reasoning from priors
+    says all three migrations are idempotent.
+
+    A failure here needs reading twice: the model may not have received the
+    media (our bug), or it received it and answered wrong (a model-quality
+    issue). The assertion message says which evidence to look at, because the
+    two have completely different owners.
+    """
+    r = gw._post_sync(path, body, timeout, endpoint=label, extra_headers=headers)
+    status = r.get("status", 0)
+    if status == 429:
+        rec("PMM", label).warning("upstream rate limited (429) — NOT VERIFIED")
+        return
+    data = r.get("data") or {}
+    if status != 200:
+        err = (data.get("error") or {}) if isinstance(data, dict) else {}
+        rec("PMM", label).failed(
+            f"comprehension HTTP {status}: {err.get('message') or str(data)[:200]}")
+        return
+    _mm_assert_comprehension(label, must_contain, data, body)
+
+
+def _mm_ingress_case(gw: "GWClient", cp: "CPClient", label: str, path: str, body: dict,
+                     extra_headers: dict, want_mime: str, want_size: int,
+                     want_modality: str, timeout: int, must_contain: str = "") -> None:
+    """One media-bearing request on one ingress, asserted on normalized output.
+
+    Crossing ingresses is not optional coverage: the shape of a normalized
+    block is decided by the INGRESS, not by the target model — measured on production in
+    both directions. A defect that only bites on /v1/messages is
+    invisible to any number of /v1/chat/completions cases.
+
+    `must_contain` adds the comprehension half. Everything above it checks OUR
+    bookkeeping — the mime, the size, the modality, the locator — and all of it
+    can be perfect while the model received nothing: that is the reported
+    defect, a media request answered confidently from thin air with every byte
+    assertion green. The call has already been made and paid for by the time we
+    get here, so asserting on the answer costs nothing extra, and it is recorded
+    as a SEPARATE result so a comprehension failure cannot be masked by a
+    passing bookkeeping verdict, or the reverse.
+    """
+    r = gw._post_sync(path, body, timeout, endpoint=label, extra_headers=extra_headers)
+    tid = (r.get("headers") or {}).get("x-nexus-request-id", "")
+    status = r.get("status", 0)
+    # A 429 is rate limiting and is not ours. Anything else non-2xx is ours
+    # until proven otherwise, so it is recorded as a failure to be
+    # dispositioned rather than quietly skipped.
+    if status == 429:
+        rec("PMM", label).warning("upstream rate limited (429) — NOT VERIFIED")
+        return
+    if not tid:
+        rec("PMM", label).failed(f"status={status}, no trace id to verify against")
+        return
+    payload = _mm_normalized(cp, tid, "request")
+    if payload is None:
+        rec("PMM", label).failed("the response returned 200 but no traffic row appeared within 30s")
+        return
+    if payload.get("__empty__"):
+        rec("PMM", label).failed(f"no request payload for a media-bearing request: {payload.get('__why__', '')}")
+        return
+    refs = list(_mm_walk_media(payload))
+    if len(refs) != 1:
+        rec("PMM", label).failed(f"expected exactly 1 media element, got {len(refs)}")
+        return
+    bad = _mm_check_ref(label, refs[0], want_mime, want_size, want_modality, "captured")
+    for txt in _mm_text_blocks(payload):
+        if _MM_B64_RUN_RE.search(txt):
+            bad.append("a base64 run reached a text block")
+    if bad:
+        rec("PMM", label).failed("; ".join(bad))
+    else:
+        rec("PMM", label).passed(
+            f"upstream={status} mime={refs[0].get('mime')} size={refs[0].get('sizeBytes')} "
+            f"modality={want_modality} locator={refs[0].get('locator')}")
+
+    if must_contain:
+        # `:ingress-comprehension`, not `:comprehension`. Three ingress arms have
+        # a dedicated comprehension case with the SAME base label, and the two
+        # ask different questions: the dedicated one pins a model chosen for the
+        # capability (the file arm is pinned to the OpenAI family precisely
+        # because leaving it on whatever chat_code happened to be landed it on
+        # cohere), while this one asks whether the bookkeeping arm's own model
+        # also understood the payload. Under one name the run produced two
+        # verdicts for one label, and the P8 deprecation pass keys its result map
+        # by name — a duplicate there silently overwrites and decides which
+        # models get removed from the catalog.
+        _mm_assert_comprehension(f"{label}:ingress-comprehension", must_contain,
+                                 r.get("data") or {}, body)
+
+
+def _mm_pick_servable(cp, kind: str) -> dict | None:
+    """The first model of `kind` the deployment will actually serve.
+
+    `list_models_with_modalities()` is the ADMIN listing, so it includes rows an
+    operator has deliberately switched off. Taking [0] from it picked `whisper-1`
+    on prod — disabled on purpose — and the gateway's correct 404
+    ("no provider is configured to serve this stt model") was recorded as a smoke
+    FAILURE. Measured 2026-08-19: all three enabled stt rows return 200 with a
+    perfect transcript through the same gateway, so the only thing that check
+    ever caught was its own choice.
+
+    Returns None when the catalogue has the kind but serves none of it — a
+    different fact from "the catalogue has none", and the callers say so
+    differently.
+    """
+    rows = [m for m in (cp.list_models_with_modalities() or []) if m.get("type") == kind]
+    if not rows:
+        return None
+    for m in rows:
+        if m.get("enabled", True):
+            return m
+    return {"__all_disabled__": True}
+
+
+def _mm_tts_case(gw: "GWClient", cp: "CPClient", timeout: int) -> None:
+    """the TTS response is audio, and is served as audio.
+
+    The response body IS the artifact here — there is no JSON envelope to
+    address — so the ref's locator is `body` and the served content-type has
+    to agree with the container the bytes actually are. Capture was measured
+    mislabelling this response as application/json, which stranded a real
+    recording behind an octet-stream download.
+    """
+    label = "media/tts/response"
+    pick = _mm_pick_servable(cp, "tts")
+    if pick is None:
+        rec("PMM", label).warning("no tts model in catalog — NOT VERIFIED (evidence #10)")
+        return
+    if pick.get("__all_disabled__"):
+        rec("PMM", label).warning("every tts model is disabled on this deployment — NOT VERIFIED")
+        return
+    code = pick.get("code", "")
+    r = gw.post_binary_response("/v1/audio/speech", {
+        "model": code, "input": "Nexus multimodal smoke.", "voice": "alloy"}, timeout)
+    if r.get("status") == 429:
+        rec("PMM", label).warning("upstream rate limited (429) — NOT VERIFIED")
+        return
+    if r.get("status") != 200:
+        rec("PMM", label).failed(f"status={r.get('status')} {str(r.get('error') or '')[:120]}")
+        return
+
+    raw = r.get("bytes") or b""
+    if len(raw) < 256:
+        rec("PMM", label).failed(f"response is {len(raw)} bytes — that is not audio")
+        return
+    ct = (r.get("headers") or {}).get("content-type", "")
+    if not ct.startswith("audio/"):
+        rec("PMM", label).failed(f"content-type={ct!r} for {len(raw)} bytes of audio")
+        return
+    # The bytes must BE what the header says. A header alone is a claim.
+    #
+    # MPEG is matched on the frame sync — first eleven bits set — the same rule
+    # the gateway's own sniffer applies (locator/sniff.go: b[0] == 0xFF &&
+    # b[1]&0xE0 == 0xE0). An earlier version here tested for the literal
+    # \xff\xfb, which is MPEG-1 Layer III only, so a perfectly valid MPEG-2
+    # Layer III response at 24 kHz (\xff\xf3 — what gpt-4o-mini-tts returns)
+    # was reported as "matches no audio container". A narrower copy of a rule
+    # that already exists elsewhere reports the copy's limits as the product's
+    # defects.
+    is_mpeg = len(raw) >= 2 and raw[0] == 0xFF and (raw[1] & 0xE0) == 0xE0
+    if not (raw[:3] == b"ID3" or is_mpeg or raw[:4] in (b"OggS", b"fLaC")
+            or (raw[:4] == b"RIFF" and raw[8:12] == b"WAVE")):
+        rec("PMM", label).failed(f"content-type={ct} but the bytes match no audio container")
+        return
+    rec("PMM", label).passed(f"{len(raw)}B {ct}")
+
+
+def _mm_stt_case(gw: "GWClient", cp: "CPClient", timeout: int) -> None:
+    """the transcribed audio is reachable after the fact.
+
+    The request is multipart and its file part is the whole point: before the
+    handover capture landed, a transcription was auditable and the thing
+    transcribed was not — the fingerprint went to the database and nothing
+    read it.
+    """
+    label = "media/stt/request"
+    pick = _mm_pick_servable(cp, "stt")
+    if pick is None:
+        rec("PMM", label).warning("no stt model in catalog — NOT VERIFIED (evidence #11)")
+        return
+    if pick.get("__all_disabled__"):
+        rec("PMM", label).warning("every stt model is disabled on this deployment — NOT VERIFIED")
+        return
+    code = pick.get("code", "")
+    audio = _mm_fixture("speech.mp3")
+    nonce = secrets.token_hex(4)
+    r = gw.post_multipart("/v1/audio/transcriptions",
+                          {"model": code, "prompt": f"nexus-smoke-{nonce}"},
+                          "speech.mp3", audio, "file", "audio/mpeg", timeout)
+    if r.get("status") == 429:
+        rec("PMM", label).warning("upstream rate limited (429) — NOT VERIFIED")
+        return
+    if r.get("status") != 200:
+        rec("PMM", label).failed(f"status={r.get('status')} {str(r.get('data'))[:160]}")
+        return
+
+    # x-nexus-request-id, the same header the other three media cases read.
+    # This one asked for x-nexus-trace-id, which the gateway does not send, so
+    # the case failed on a header name while the request itself returned 200
+    # with a correct trace id — a defect report pointing at the wrong subject.
+    tid = (r.get("headers") or {}).get("x-nexus-request-id", "")
+    if not tid:
+        rec("PMM", label).failed("no trace id on the response; cannot reach the traffic row")
+        return
+    payload = _mm_normalized(cp, tid, "request")
+    if payload is None:
+        rec("PMM", label).failed("the response returned 200 but no traffic row appeared within 30s")
+        return
+
+    refs = list(_mm_walk_media(payload))
+    if not refs:
+        rec("PMM", label).failed("the request carried audio and normalizes to no media element")
+        return
+    ref = refs[0]
+    if ref.get("modality") != "audio":
+        rec("PMM", label).failed(f"modality={ref.get('modality')!r}, want audio")
+        return
+    src = ref.get("source")
+    if src == "fingerprint":
+        # Honest, and the correct answer when the bytes genuinely were not
+        # kept. Reported rather than passed silently, because the stronger
+        # property is the one this row exists for. The parenthetical used to
+        # assert "payload capture off" and was simply wrong when it fired:
+        # capture was ON and the codec was under-reporting custody. A warning
+        # that names a cause it did not check sends the next reader to the
+        # wrong place.
+        if not ref.get("sha256"):
+            rec("PMM", label).failed("fingerprint custody with no digest — nothing proves which file was sent")
+            return
+        rec("PMM", label).warning(
+            "audio is fingerprint-only — bytes NOT reachable "
+            "(expected only when payload capture is off; check the setting before assuming it is)")
+        return
+    if src != "captured":
+        rec("PMM", label).failed(f"source={src!r}: the audio is neither captured nor fingerprinted")
+        return
+    loc = ref.get("locator") or ""
+    if not _MM_LOCATOR_RE.match(loc):
+        rec("PMM", label).failed(f"locator={loc!r} does not match the grammar")
+        return
+    if int(ref.get("sizeBytes") or 0) != len(audio):
+        rec("PMM", label).failed(
+            f"sizeBytes={ref.get('sizeBytes')} but {len(audio)} were sent — the size a reader sees is not the size they would get")
+        return
+    # No payload may have reached a scanned text block on the way.
+    for t in _mm_text_blocks(payload):
+        if _MM_B64_RUN_RE.search(t):
+            rec("PMM", label).failed("a base64 run reached a text block")
+            return
+    rec("PMM", label).passed(f"captured {ref.get('sizeBytes')}B loc={loc}")
+
+
+def _mm_cross_ingress(gw: "GWClient", cp: "CPClient", chat_code: str, claude_code: str,
+                      gemini_code: str, audio_code: str, file_code: str, timeout: int) -> None:
+    """The evidence rows this suite previously could not have caught.
+
+    chat_code must accept image input and audio_code must accept audio input:
+    each arm carries a specific modality, and a model that does not take that
+    modality turns the arm into an upstream 400 that looks like a media defect.
+    """
+    png = _mm_fixture("ocr-19452.png")
+    png_b64 = base64.b64encode(png).decode()
+    pdf = _mm_fixture("doc.pdf")
+    pdf_b64 = base64.b64encode(pdf).decode()
+    # The markdown fixture has carried an anchor since the media work began and
+    # no arm ever used it. A document that is TEXT rather than a binary
+    # container is its own case: the codecs decide mime and modality from the
+    # declared type, and text/markdown is the one document type where a codec
+    # could plausibly fold the bytes into the prompt instead of representing
+    # them as media — which is exactly the silent-drop the anchor detects.
+    md = _mm_fixture("doc.md")
+    md_b64 = base64.b64encode(md).decode()
+    mp4 = _mm_fixture("clip.mp4")
+    mp4_b64 = base64.b64encode(mp4).decode()
+
+    if claude_code:
+        # size was the base64 length and sha256 was a payload
+        # prefix on this ingress.
+        _mm_ingress_case(gw, cp, "media/anthropic/image", "/v1/messages", {
+            "model": claude_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
+                {"type": "text", "text": _MM_Q}]}]},
+            {"anthropic-version": "2023-06-01"}, "image/png", len(png), "image", timeout, "19452")
+
+        # the PDF was JSON-marshalled into a text block.
+        _mm_ingress_case(gw, cp, "media/anthropic/document", "/v1/messages", {
+            "model": claude_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+                {"type": "text", "text": _MM_Q}]}]},
+            {"anthropic-version": "2023-06-01"}, "application/pdf", len(pdf), "file", timeout, "38617")
+
+    if gemini_code:
+        # inlineData modality came from nothing, so audio and
+        # PDFs were emitted as images.
+        _mm_ingress_case(gw, cp, "media/gemini/inlineData",
+            f"/v1beta/models/{gemini_code}:generateContent", {
+            "contents": [{"role": "user", "parts": [
+                {"inlineData": {"mimeType": "image/png", "data": png_b64}},
+                {"text": _MM_Q}]}],
+            "generationConfig": {"maxOutputTokens": _MM_BUDGET}},
+            {}, "image/png", len(png), "image", timeout, "19452")
+
+
+    if chat_code:
+        # the responses input_image ref was entirely empty — no
+        # mime, no size, no source. A different ingress, a different codec.
+        _mm_ingress_case(gw, cp, "media/responses/input_image", "/v1/responses", {
+            "model": chat_code, "input": [{"role": "user", "content": [
+                {"type": "input_image", "image_url": "data:image/png;base64," + png_b64},
+                {"type": "input_text", "text": _MM_Q}]}]},
+            {}, "image/png", len(png), "image", timeout, "19452")
+
+    # Audio on the ingresses that spell it differently. openai-chat carries
+    # input_audio and was already covered; Responses has its own input_audio
+    # part and Gemini carries it as inlineData with an audio mime. Anthropic
+    # Messages defines no audio block at all — image, document, text, thinking,
+    # tool_* — so there is no case to write there, the same way there is none
+    # for video. Checked against the codec's own block-type switch before
+    # writing these, after an anthropic/video case had to be deleted for
+    # asserting a payload the protocol cannot carry.
+    wav = _mm_wav("speech.wav")
+    wav_b64 = base64.b64encode(wav).decode()
+    if audio_code:
+        _mm_ingress_case(gw, cp, "media/responses/input_audio", "/v1/responses", {
+            "model": audio_code, "input": [{"role": "user", "content": [
+                {"type": "input_audio", "input_audio": {"data": wav_b64, "format": "wav"}},
+                {"type": "input_text", "text": _MM_AUDIO_Q}]}]},
+            {}, "audio/wav", len(wav), "audio", timeout, "regression fixture")
+
+    if gemini_code:
+        _mm_ingress_case(gw, cp, "media/gemini/audio",
+                         f"/v1beta/models/{gemini_code}:generateContent", {
+                             "contents": [{"role": "user", "parts": [
+                                 {"inlineData": {"mimeType": "audio/wav", "data": wav_b64}},
+                                 {"text": _MM_AUDIO_Q}]}]},
+                         {}, "audio/wav", len(wav), "audio", timeout, "regression fixture")
+
+    # ── file and video on the ingresses that were never crossed ─────────────
+    # The PDF case above covers exactly one ingress, and video covered none.
+    # Both are modalities this program names, and block shape is decided by the
+    # ingress, so a single-ingress case proves one codec and implies nothing
+    # about the other three. These assert the normalized output, not the
+    # upstream verdict — a provider that refuses the payload still exercises
+    # the codec that had to represent it.
+    if chat_code:
+        _mm_ingress_case(gw, cp, "media/openai-chat/file", "/v1/chat/completions", {
+            "model": chat_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+                {"type": "file", "file": {"filename": "doc.pdf",
+                                          "file_data": "data:application/pdf;base64," + pdf_b64}},
+                {"type": "text", "text": _MM_Q}]}]},
+            {}, "application/pdf", len(pdf), "file", timeout, "38617")
+
+        _mm_ingress_case(gw, cp, "media/openai-chat/markdown", "/v1/chat/completions", {
+            "model": chat_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+                {"type": "file", "file": {"filename": "doc.md",
+                                          "file_data": "data:text/markdown;base64," + md_b64}},
+                {"type": "text", "text": _MM_Q}]}]},
+            {}, "text/markdown", len(md), "file", timeout, "52903")
+
+        _mm_ingress_case(gw, cp, "media/responses/input_file", "/v1/responses", {
+            "model": chat_code, "input": [{"role": "user", "content": [
+                {"type": "input_file", "filename": "doc.pdf",
+                 "file_data": "data:application/pdf;base64," + pdf_b64},
+                {"type": "input_text", "text": _MM_Q}]}]},
+            {}, "application/pdf", len(pdf), "file", timeout, "38617")
+
+    # Comprehension, not bookkeeping. Every case above proves we RECORDED the
+    # media; these prove the model RECEIVED it. The reported defect was a PDF
+    # that produced a confident invented answer because the file never reached
+    # the upstream — invisible to every byte-level assertion in this file.
+    # Each fixture has a DIFFERENT number baked into it (see
+    # tests/scripts/gen-media-fixtures.py). A number is the tightest anchor
+    # available: unambiguous to grep, unreachable by reasoning from priors, and
+    # not something a model can produce from a describable scene. The numbers
+    # differ per modality so a crossed arm — the video case passing on the
+    # image's number — is visible instead of silently green.
+    _PDF_Q = ("Read the attached document and reply with only its reference number, "
+              "digits only.")
+    _AUDIO_Q = "Transcribe the attached audio exactly. Reply with the transcript only."
+    # The file arm needs a provider that accepts a file block at all. Left on
+    # whatever chat_code happened to be, it landed on cohere, which answers
+    # "unrecognized content type 'file'" — canonical fields leaking onto a
+    # non-OpenAI wire. That is a real adapter defect this assertion caught
+    # live, and it has its own fix; pinning the arm to the OpenAI family keeps
+    # this case measuring what it is named for instead of re-reporting that one.
+    if not file_code:
+        # Recorded, not skipped in silence. A case that quietly does not run
+        # reads as coverage forever; this says out loud that the file arm was
+        # not exercised and why.
+        rec("PMM", "media/openai-chat/file:comprehension").warning(
+            "no OpenAI-family vision model in this run — file comprehension NOT VERIFIED")
+    if file_code:
+        _mm_comprehension_case(gw, "media/openai-chat/file:comprehension",
+                               "/v1/chat/completions", {
+                                   "model": file_code, "max_tokens": _MM_BUDGET,
+                                   "messages": [{"role": "user", "content": [
+                                       {"type": "text", "text": _PDF_Q},
+                                       {"type": "file", "file": {
+                                           "filename": "doc.pdf",
+                                           "file_data": "data:application/pdf;base64," + pdf_b64}}]}]},
+                               {}, "38617", timeout)
+    if chat_code:
+        # ocr-19452.png is black digits on white and nothing else. The previous
+        # image fixture in the ingress arms was a 190-byte plain red square:
+        # there was nothing in it to ask about, so no question put to it could
+        # distinguish a working pipeline from a dropped one.
+        _mm_comprehension_case(gw, "media/openai-chat/image:comprehension",
+                               "/v1/chat/completions", {
+                                   "model": chat_code, "max_tokens": _MM_BUDGET,
+                                   "messages": [{"role": "user", "content": [
+                                       {"type": "text", "text": "Reply with only the number shown in this image, digits only."},
+                                       {"type": "image_url", "image_url": {
+                                           "url": "data:image/png;base64," + base64.b64encode(_mm_fixture("ocr-19452.png")).decode()}}]}]},
+                               {}, "19452", timeout)
+
+    if audio_code:
+        # The fixture speaks a sentence naming itself; a model that did not
+        # receive the bytes cannot produce "regression fixture".
+        _mm_comprehension_case(gw, "media/openai-chat/input_audio:comprehension",
+                               "/v1/chat/completions", {
+                                   "model": audio_code, "max_tokens": _MM_BUDGET,
+                                   "modalities": ["text"],
+                                   "messages": [{"role": "user", "content": [
+                                       {"type": "text", "text": _AUDIO_Q},
+                                       {"type": "input_audio", "input_audio": {
+                                           "data": base64.b64encode(_mm_fixture("speech.wav")).decode(),
+                                           "format": "wav"}}]}]},
+                               {}, "regression fixture", timeout)
+
+    if gemini_code:
+        # No dedicated video comprehension case, and the reason is a catalog
+        # fact rather than a tolerance: NOT ONE model in the catalog declares
+        # video among its inputModalities. Asserting that a model reads digits
+        # out of a clip asserts a capability nothing in the catalog claims, and
+        # an arm that is permanently red for a capability nobody offers trains
+        # the reader to skip reds — which costs more than the arm is worth.
+        #
+        # What was isolated: gemini-2.5-flash answers 412 for the clip, while
+        # the SAME model reads 74128 correctly out of the frame EXTRACTED from
+        # that clip and handed to it as an image. So the digits are legible and
+        # the bytes are fine. Raising the budget did not help (STOP, not
+        # length), and re-encoding at -crf 18 did not either — the generator
+        # now pins the quality, so the clip is no longer a variable. The 412's
+        # own root cause was not isolated further and is NOT claimed here.
+        #
+        # The delivery half below still runs and still asserts tightly: the
+        # 2965-byte mp4 must reach the wire with the right mime, size, modality
+        # and a locator that resolves into the captured request. That is the
+        # property the gateway owns. Comprehension is the provider's.
+        rec("PMM", "media/gemini/video:comprehension").warning(
+            "no catalog model declares video input — VIDEO COMPREHENSION NOT CLAIMED BY ANY "
+            "MODEL, so it is not asserted; delivery is covered by media/gemini/video")
+
+        _mm_ingress_case(gw, cp, "media/gemini/file",
+                         f"/v1beta/models/{gemini_code}:generateContent", {
+                             "contents": [{"role": "user", "parts": [
+                                 {"inlineData": {"mimeType": "application/pdf", "data": pdf_b64}},
+                                 {"text": _MM_Q}]}]},
+                         {}, "application/pdf", len(pdf), "file", timeout, "38617")
+
+        _mm_ingress_case(gw, cp, "media/gemini/markdown",
+                         f"/v1beta/models/{gemini_code}:generateContent", {
+                             "contents": [{"role": "user", "parts": [
+                                 {"inlineData": {"mimeType": "text/markdown", "data": md_b64}},
+                                 {"text": _MM_Q}]}]},
+                         {}, "text/markdown", len(md), "file", timeout, "52903")
+
+        # Video, on any ingress at all, for the first time. The fixture has
+        # been in the tree since the media work began; only the case was
+        # missing. This is video INPUT — a 5 KB clip on an ordinary request —
+        # not generation, so it costs a request rather than a rendering job.
+        # No anchor, alone among the media arms, for the reason recorded above:
+        # no catalog model claims video input, so a comprehension anchor here
+        # would assert a capability nobody offers. Delivery still asserts in
+        # full — mime, size, modality, and a locator resolving into the request
+        # we actually sent.
+        _mm_ingress_case(gw, cp, "media/gemini/video",
+                         f"/v1beta/models/{gemini_code}:generateContent", {
+                             "contents": [{"role": "user", "parts": [
+                                 {"inlineData": {"mimeType": "video/mp4", "data": mp4_b64}},
+                                 {"text": _MM_Q}]}]},
+                         {}, "video/mp4", len(mp4), "video", timeout)
+
+    # input_audio was JSON-marshalled into a text block. Gated on
+    # its own model rather than on chat_code, because the arm carries audio and
+    # routing it to a model that declares no audio input yields an upstream 400
+    # that measures the model pick, not the codec. A 400 here is recorded,
+    # never silently skipped; an absent model is reported NOT VERIFIED rather
+    # than passing by omission.
+    if audio_code:
+        wav = _mm_wav("speech.wav")
+        _mm_ingress_case(gw, cp, "media/openai-chat/input_audio", "/v1/chat/completions", {
+            "model": audio_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+                {"type": "input_audio", "input_audio": {
+                    "data": base64.b64encode(wav).decode(), "format": "wav"}},
+                {"type": "text", "text": _MM_AUDIO_Q}]}]},
+            {}, "audio/wav", len(wav), "audio", timeout, "regression fixture")
+    else:
+        rec("PMM", "media/openai-chat/input_audio").warning(
+            "no chat model declares audio input — AUDIO INGRESS NOT VERIFIED")
+
+    if claude_code and chat_code:
+        # the OTHER direction. #8 proved an openai-shaped body
+        # keeps its ingress shape when routed to claude; this proves the
+        # converse. Testing one direction and claiming the pair is how a
+        # cross-ingress asymmetry survives.
+        _mm_ingress_case(gw, cp, "media/xformat/anthropic-shape-to-gpt", "/v1/messages", {
+            "model": chat_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
+                {"type": "text", "text": _MM_Q}]}]},
+            {"anthropic-version": "2023-06-01"}, "image/png", len(png), "image", timeout, "19452")
+
+    _mm_tts_case(gw, cp, timeout)
+    _mm_stt_case(gw, cp, timeout)
+
+    if claude_code and chat_code:
+        # the INGRESS decides the block shape, not the target
+        # model. An openai-shaped body routed to claude must normalize like
+        # every other openai-chat row.
+        _mm_ingress_case(gw, cp, "media/xformat/openai-shape-to-claude", "/v1/chat/completions", {
+            "model": claude_code, "max_tokens": _MM_BUDGET, "messages": [{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + png_b64}},
+                {"type": "text", "text": _MM_Q}]}]},
+            {}, "image/png", len(png), "image", timeout, "19452")
+
+
+def _video_get(gw: "GWClient", path: str, timeout: int) -> tuple[int, dict]:
+    """GET on the gateway with the smoke's virtual key.
+
+    The client exposes POST and a couple of fixed GETs; the video family is the
+    only surface here that polls, so the helper lives with it rather than
+    widening the client for one caller.
+    """
+    c = gw._conn(timeout=timeout)
+    try:
+        c.request("GET", path, headers=gw._auth_headers())
+        r = c.getresponse()
+        raw = r.read()
+        try:
+            return r.status, json.loads(raw.decode() or "{}")
+        except Exception:
+            return r.status, {"_raw": raw[:200].decode(errors="replace")}
+    finally:
+        try:
+            c.close()
+        except Exception:
+            pass
+
+
+def phase_video_generation(gw: "GWClient", cp: "CPClient", db: "DBClient",
+                           spec: str, timeout: int = 600) -> None:
+    """PVG — video GENERATION, the async-job family end to end.
+
+    This is the one HC-4 cell the media work left open. Video INPUT is covered
+    by the media matrix (a clip on an ordinary request, asserted on the
+    normalized block); generation shares almost none of that path. A chat
+    request is one round trip whose cost is known when it returns. A render is
+    submit → a job row the gateway owns → poll → a stored artifact, and the
+    cost is reconciled after the fact from the clip's duration. Every stage is
+    a place the other family never goes.
+
+    `spec` is MODEL:SECONDS and has no default anywhere in the harness. The
+    render is billed per second of output, so the amount spent is chosen by
+    whoever types the flag — a boolean would let a full-suite run decide it.
+
+    What is asserted, in the order a defect would surface:
+      submit returns a job id            — the request reached the async family
+      polling reaches a TERMINAL status  — not merely "not an error yet"
+      a completed job serves content     — bytes exist and start with an mp4
+                                           container signature, so a JSON error
+                                           body cannot pass as a video
+      traffic_event carries the row      — endpoint_type video, and a cost that
+                                           is not zero once reconciled
+    A failed render is reported as a failure with the upstream's own reason
+    rather than being treated as "the arm ran": the money was spent either way,
+    and a provider-side refusal is exactly what this arm exists to surface.
+    """
+    model, _, secs = spec.partition(":")
+    model = model.strip()
+    secs = secs.strip()
+    if not model or not secs.isdigit() or int(secs) <= 0:
+        rec("PVG", "spec").failed(
+            f"--video-generate expects MODEL:SECONDS with a positive integer, got {spec!r}")
+        return
+
+    seconds = int(secs)
+    log_info(f"PVG: submitting a {seconds}s render on {model} — this bills a real video")
+
+    r = gw._post_sync("/v1/videos", {
+        "model": model,
+        "prompt": "A single red pixel on a black background, static camera.",
+        "seconds": str(seconds),
+    }, timeout, endpoint="video/submit")
+
+    status = r.get("status", 0)
+    data = r.get("data") or {}
+    if status not in (200, 201, 202):
+        rec("PVG", "submit").failed(
+            f"POST /v1/videos → {status}: {json.dumps(data)[:200]}")
+        return
+
+    job_id = data.get("id") or ""
+    if not job_id:
+        rec("PVG", "submit").failed(f"submit {status} carried no job id: {json.dumps(data)[:200]}")
+        return
+    rec("PVG", "submit").passed(f"job {job_id} accepted ({status})")
+
+    TERMINAL_OK = {"completed", "succeeded"}
+    TERMINAL_BAD = {"failed", "cancelled", "canceled", "error"}
+    deadline = time.time() + timeout
+    last = ""
+    job = {}
+    while time.time() < deadline:
+        code, job = _video_get(gw, f"/v1/videos/{job_id}", 60)
+        if code != 200:
+            rec("PVG", "poll").failed(f"GET /v1/videos/{job_id} → {code}: {json.dumps(job)[:160]}")
+            return
+        last = str(job.get("status") or "").lower()
+        if last in TERMINAL_OK or last in TERMINAL_BAD:
+            break
+        time.sleep(5)
+
+    if last in TERMINAL_BAD:
+        rec("PVG", "poll").failed(
+            f"job {job_id} finished {last}: {json.dumps(job.get('error') or job)[:200]}")
+        return
+    if last not in TERMINAL_OK:
+        rec("PVG", "poll").failed(
+            f"job {job_id} still {last or 'unknown'} after {timeout}s — no terminal status")
+        return
+    rec("PVG", "poll").passed(f"job {job_id} reached {last}")
+
+    code, content = _video_get(gw, f"/v1/videos/{job_id}/content", 120)
+    raw = content.get("_raw", "") if isinstance(content, dict) else ""
+    if code != 200:
+        rec("PVG", "content").failed(f"content → {code}: {str(raw)[:160]}")
+    else:
+        # An mp4 carries 'ftyp' at offset 4. Checking the container rather than
+        # merely a non-empty body is what stops a JSON error page from passing.
+        looks_mp4 = "ftyp" in str(raw)[:64]
+        if looks_mp4:
+            rec("PVG", "content").passed("content served with an mp4 container signature")
+        else:
+            rec("PVG", "content").failed(
+                f"content 200 but no mp4 signature in the first bytes: {str(raw)[:120]!r}")
+
+    ev = db.poll_event(model, "", timeout=90) if db else None
+    if ev is None:
+        rec("PVG", "traffic_event").passed("skipped: no database access from here")
+    else:
+        et = ev.get("endpoint_type") or ""
+        cost = ev.get("estimated_cost_usd")
+        if et != "video":
+            rec("PVG", "traffic_event").failed(f"endpoint_type={et!r}, want 'video'")
+        elif cost in (None, 0, "0"):
+            rec("PVG", "traffic_event").failed(
+                f"cost {cost!r} — a billed render must reconcile to a non-zero cost")
+        else:
+            rec("PVG", "traffic_event").passed(f"row: endpoint_type=video cost={cost}")
+        log_info(f"PVG: this run cost {cost} for {seconds}s on {model}")
+
+
 def phase_multimodal(gw: "GWClient", cp: "CPClient", db: "DBClient", t0_iso: str, timeout: int = 90) -> None:
     """PMM — multimodal surface smoke: image 2xx + traffic_event cross-check,
     cross-modality routing-safety rejections, guardrail verdict, and the rerank
-    ingress (no 'unsupported ingress format'). TTS/STT/video/realtime need
-    binary/multipart/WS handling beyond this JSON client — see the handoff for
-    the manual-verified content those modalities carry; codified here are the
-    JSON-shaped surfaces + the load-bearing cross-modality guard.
+    ingress (no 'unsupported ingress format').
+
+    ── Defect register ────────────────────────────────────────────────────────
+    Each row is a defect measured against production before the media work, and
+    the case that now fails if it returns.
+
+    This register covers REGRESSIONS — a case exists here because something was
+    once wrong. It is not the coverage list: the matrix further down is, and it
+    includes cases added to fill modality × ingress cells that never carried a
+    known defect (file on three ingresses, video, audio on two). A case can
+    appear in the matrix and not here; the reverse would be a bug in this file.
+
+    THE NUMBERING IS RETIRED. Earlier revisions carried `Evidence #N` markers.
+    Nine of them were defined, two covered defects had none, and #1, #2 and #12
+    existed nowhere — not in the source, not on any remote branch, not in the
+    git log, not in the untracked working directories, searched exhaustively. A
+    number whose definition cannot be produced is not a reference; it is a
+    reason to believe something is missing, permanently, with no way to check.
+    Keeping it meant the suite could only be audited by someone who remembered
+    what the numbers meant, which is the opposite of the property this file
+    exists to hold.
+
+    So the register identifies each defect by what it WAS, which is verifiable
+    against the case below it, rather than by an index into a list nobody has.
+    If the original list resurfaces, mapping it onto these rows is a lookup;
+    nothing here has to change.
+
+      input_audio was JSON-marshalled into a text block
+        → media/openai-chat/input_audio
+      size was the base64 length; sha256 was a payload prefix
+        → media/anthropic/image
+      a PDF was JSON-marshalled into a text block
+        → media/anthropic/document
+      the responses input_image ref was entirely empty — no mime, no size,
+      no source
+        → media/responses/input_image
+      inlineData modality came from nothing
+        → media/gemini/inlineData
+      an openai-shaped body routed to claude must keep its INGRESS block
+      shape, not the target model's
+        → media/xformat/openai-shape-to-claude
+      the same, in the other direction
+        → media/xformat/anthropic-shape-to-gpt
+      the TTS response is audio and must be served as audio
+        → media/tts/response
+      the transcribed audio must be reachable after the fact
+        → media/stt/request
+      every image format normalised to the bare word "image", so a single PNG
+      case could not have caught it
+        → media/openai-chat/image/{png,jpeg,webp,gif} (crossed on purpose)
+      a remote URL must be recorded as external WITHOUT a locator: nothing was
+      fetched, so offering a path would promise a download that fails
+        → media/openai-chat/external
+
+    ── Coverage matrix: modality × ingress ────────────────────────────────────
+    The requirement is every modality on every ingress, because block shape is
+    decided by the ingress and not by the target model. What is actually here:
+
+                  openai-chat   responses   anthropic   gemini   own endpoint
+      image           ✓ ×4          ✓           ✓         ✓      ✓ images/gen
+      audio           ✓             ✓ (†)       n/a       ✓      ✓ tts + stt
+      file            ✓             ✓           ✓ (PDF)   ✓      –
+      video           n/a           n/a         n/a       ✓      ✗ generation
+
+    Cells are asserted on the NORMALIZED output, not the upstream verdict: a
+    provider that refuses the payload still exercised the codec that had to
+    represent it, which is the thing under test. media/openai-chat/file takes
+    an upstream 422 and passes, because the PDF still normalized correctly.
+
+    Where a cell is not a tick:
+
+      video, openai-chat / responses / anthropic — n/a, not untested. None of
+        those three wire formats defines a video content block: OpenAI chat has
+        image_url, input_audio and file; Anthropic Messages has image and
+        document. A case there would be asserting against a request the
+        protocol cannot carry. One was written and removed for exactly that
+        reason — it reported modality "image" for a video/mp4 stuffed into an
+        Anthropic image block, which is the codec being right about a payload
+        that should not exist.
+
+      video generation — NOT COVERED. Async job family (submit, poll, fetch
+        content) rather than a body this client asserts in one call, and a real
+        generation costs money on the owner's account, so it is a spend
+        decision as much as an engineering one. The video INPUT path above is
+        covered and costs an ordinary request.
+
+      audio, anthropic — n/a. Anthropic Messages defines image, document, text,
+        thinking and tool_* blocks; there is no audio block, so there is no
+        request to assert. Verified against the codec's block-type switch, not
+        assumed.
+
+      (†) audio, responses — the CODEC is covered and correct; the UPSTREAM
+        refuses. OpenAI's Responses API answers 400 "Invalid value:
+        'input_audio'. Supported values are: input_text, input_image,
+        output_text, refusal, input_file, computer_screenshot, summary_text,
+        encrypted_content" — no audio part exists in that API today, while our
+        openai_responses_input codec does handle one. The case asserts the
+        normalized output, so it passes and is worth keeping: it proves the
+        representation is right for the day the part is added, and it will
+        start returning 200 by itself when that happens. The 400 is a
+        faithfully relayed upstream contract, not our defect. Recorded here
+        because a bare tick would claim an end-to-end path that does not exist.
+    ───────────────────────────────────────────────────────────────────────────
+
+    TTS/STT/video/realtime need binary/multipart/WS handling beyond this JSON
+    client — see the handoff for the manual-verified content those modalities
+    carry; codified here are the JSON-shaped surfaces + the load-bearing
+    cross-modality guard.
     """
     log_step("PMM Multimodal surfaces")
     try:
         models = cp.list_models_flat()
     except Exception as e:
         log_warn(f"  PMM: could not list models ({e}); skipping")
-        rec("PMM", "phase").passed("skipped: model catalog unavailable")
+        rec("PMM", "phase").warning("model catalog unavailable — PHASE NOT VERIFIED")
         return
 
     def by_type(t):
         return [m for m in models if (m.get("type") or "").lower() == t and m.get("enabled", True)]
 
+    def accepts(m, modality):
+        """Whether the model declares it can take this input modality.
+
+        `type` answers which ENDPOINT serves a model; it says nothing about
+        which modalities that model handles. Picking by type alone is how the
+        image matrix ended up on gpt-audio-mini — a chat-typed model whose
+        inputModalities are [text, audio] — and took four upstream 400s
+        ("This model does not support image_url content") that read as media
+        defects and were not. The catalog already carries the answer; nothing
+        was reading it.
+        """
+        return modality in [str(x).lower() for x in (m.get("inputModalities") or [])]
+
     image_ms = by_type("image")
     chat_ms = by_type("chat")
     rerank_ms = by_type("rerank")
+    # Media cases must run on a model that accepts the modality under test,
+    # otherwise the case measures the catalog's pick, not the media pipeline.
+    vision_ms = [m for m in chat_ms if accepts(m, "image")]
+    audio_in_ms = [m for m in chat_ms if accepts(m, "audio")]
+
+    # ── Media representation across ingresses (view-time normalized) ──
+    if vision_ms:
+        _mm_media_matrix(gw, cp, vision_ms[0].get("code", ""), timeout)
+        # Cross-ingress: every modality on every wire, per the binding. The
+        # cross-format arms carry images, so they need a vision model too.
+        def _first(pred):
+            for m in vision_ms:
+                if pred((m.get("code") or "").lower()):
+                    return m.get("code", "")
+            return ""
+        _mm_cross_ingress(
+            gw, cp,
+            vision_ms[0].get("code", ""),
+            _first(lambda c: c.startswith("claude")),
+            _first(lambda c: c.startswith("gemini")),
+            audio_in_ms[0].get("code", "") if audio_in_ms else "",
+            # The file arm needs a provider that accepts a file block at all.
+            # Left on vision_ms[0] it landed on cohere, whose wire answers
+            # "unrecognized content type 'file'" — a canonical field leaking
+            # onto a non-OpenAI wire, the same 422 recorded from production.
+            # Chosen the same way as the claude and gemini arms rather than
+            # inheriting whichever model happened to sort first.
+            _first(lambda c: c.startswith("gpt-")),
+            timeout,
+        )
+    elif chat_ms:
+        rec("PMM", "media").warning(
+            "no chat model declares image input — MEDIA MATRIX NOT VERIFIED")
+    else:
+        rec("PMM", "media").warning("no chat model in catalog — MEDIA MATRIX NOT VERIFIED")
 
     # ── Image generation: 2xx + traffic_event (endpoint_type/cost/artifact) ──
     if image_ms:
@@ -5984,7 +7340,7 @@ def phase_multimodal(gw: "GWClient", cp: "CPClient", db: "DBClient", t0_iso: str
             rec("PMM", f"image/{code}/2xx").passed(f"200, {len(data['data'])} artifact(s)")
             row = _mm_traffic_row(db, code, "image_generation", t0_iso)
             if row is None:
-                rec("PMM", f"image/{code}/traffic").passed("no DB access (skipped cross-check)")
+                rec("PMM", f"image/{code}/traffic").warning("traffic row not readable within the poll window — NOT VERIFIED")
             else:
                 issues = []
                 if row["endpoint_type"] != "image_generation":
@@ -6005,9 +7361,11 @@ def phase_multimodal(gw: "GWClient", cp: "CPClient", db: "DBClient", t0_iso: str
             rec("PMM", f"image/{code}/2xx").failed(
                 f"status={st} err={data.get('error', {}).get('code') if isinstance(data, dict) else '?'}")
     else:
-        rec("PMM", "image").passed("no image model in catalog (skipped)")
+        rec("PMM", "image").warning("no image model in catalog — NOT VERIFIED")
 
     # ── Cross-modality routing safety (the load-bearing guard) ──
+    if not (chat_ms and image_ms):
+        rec("PMM", "xmodal").warning("need both a chat and an image model — GUARD NOT VERIFIED")
     if chat_ms and image_ms:
         chat_code = chat_ms[0].get("code", "")
         img_code = image_ms[0].get("code", "")
@@ -6034,17 +7392,50 @@ def phase_multimodal(gw: "GWClient", cp: "CPClient", db: "DBClient", t0_iso: str
     else:
         rec("PMM", "guardrail/verdict").failed(f"status={r.get('status')} keys={list(data.keys())[:5]}")
 
-    # ── Rerank ingress: must NOT 400 'unsupported ingress format' (regression) ──
+    # ── Rerank ingress ──
+    #
+    # The pass condition is "the endpoint answered", not "the endpoint did not
+    # answer one particular way". The earlier form was `if "unsupported ingress
+    # format" in msg: fail else: pass`, which ticked on ANY status — a rerank
+    # 500 was recorded as a pass, and the pass line printed status=500 while
+    # calling it OK. A check whose green does not depend on the request
+    # succeeding is not a check.
+    #
+    # The specific regression diagnosis is kept: 'unsupported ingress format'
+    # is worth naming because it says the ingress never reached routing, which
+    # is a different repair from a rerank that routed and then failed upstream.
     rr_code = rerank_ms[0].get("code", "") if rerank_ms else "rerank-v3.5"
     r = gw._post_sync("/v1/rerank", {"model": rr_code, "query": "capital of France", "documents": ["Paris", "Berlin"], "top_n": 1}, timeout, endpoint="rerank")
-    msg = ((r.get("data") or {}).get("error") or {}).get("message", "") or str((r.get("data") or {}).get("message", ""))
+    status = r.get("status")
+    data = (r.get("data") or {})
+    msg = (data.get("error") or {}).get("message", "") or str(data.get("message", ""))
+    results = data.get("results")
     if "unsupported ingress format" in msg:
-        rec("PMM", "rerank/ingress").failed(f"ingress regression: {msg}")
+        rec("PMM", "rerank/ingress").failed(f"ingress regression — request never reached routing: {msg}")
+    elif status != 200:
+        rec("PMM", "rerank/ingress").failed(f"status={status} msg={msg[:160]}")
+    elif not isinstance(results, list) or not results:
+        rec("PMM", "rerank/ingress").failed(f"200 but no results array: keys={list(data.keys())[:6]}")
     else:
-        rec("PMM", "rerank/ingress").passed(f"ingress OK (status={r.get('status')}; model extraction reached routing)")
+        rec("PMM", "rerank/ingress").passed(f"200 with {len(results)} result(s), top index={results[0].get('index')}")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
+
+def _vk_is_usable(vk: str) -> bool:
+    """A placeholder must stop the run, not start it.
+
+    The env templates are loaded as DEFAULTS, so any value written into one is
+    handed to every run of that target. A template that assigns a stand-in
+    therefore does not document the variable — it arms the suite with a key that
+    cannot authenticate, and against prod that still snapshots, disables and
+    restores the live routing rules on the way past. Refusing here keeps that
+    decision at the tool rather than in the discipline of whoever edits a
+    template.
+    """
+    vk = (vk or "").strip()
+    return bool(vk) and "REPLACE" not in vk.upper()
+
 
 def main():
     # Pre-parse --target so loadenv.load() can populate os.environ with the
@@ -6160,6 +7551,19 @@ and Redis cache flushing are skipped automatically.
                          "verdict shape, and the rerank ingress (no 'unsupported "
                          "ingress format' regression). Real upstream — needs an "
                          "image provider credential.")
+    ap.add_argument("--video-generate", default="",
+                    help="PVG: video GENERATION arm — MODEL:SECONDS, e.g. "
+                         "sora-2:4. Off unless given, and there is no default: "
+                         "every run bills a real render priced per second, so "
+                         "the clip has to be chosen deliberately rather than "
+                         "inherited from a full-suite invocation. Covers the "
+                         "async-job family end to end — submit, poll to a "
+                         "terminal status, then the traffic_event row's "
+                         "endpoint_type / cost / artifact_refs.")
+    ap.add_argument("--video-timeout", type=int, default=600,
+                    help="Seconds to wait for a video job to reach a terminal "
+                         "status (default 600). A render is minutes, not the "
+                         "seconds a chat completion takes.")
     ap.add_argument("--cache-rounds", type=int, default=3,
                     help="Read rounds per cache test (default 3); write cost vs cumulative savings")
     ap.add_argument("--concurrent", action="store_true",
@@ -6233,8 +7637,14 @@ and Redis cache flushing are skipped automatically.
                     help="Remote pg database (default: nexus_gateway)")
     args = ap.parse_args()
 
-    if not args.vk:
-        ap.error("--vk is required (or set NEXUS_VK env var)")
+    if not _vk_is_usable(args.vk):
+        # Name the file, not just the variable: the key is a live credential
+        # that never lives in the repo, so "set NEXUS_VK" alone leaves the
+        # reader hunting for where it is supposed to go.
+        ap.error(
+            f"no usable virtual key (got {args.vk!r}). Set NEXUS_TEST_VK in "
+            f"tests/.env.{args.target} (gitignored; tests/.env.{args.target}.example "
+            "names the entry), or pass --vk / NEXUS_VK for a one-off run.")
 
     # Detect remote/prod environment: any non-localhost GW URL is remote.
     _parsed_gw = urllib.parse.urlparse(args.gw_url)
@@ -6331,6 +7741,11 @@ and Redis cache flushing are skipped automatically.
             args.responses = True
             args.messages = True
             args.gemini = True
+            # The multimodal phase carries the standing media regression.
+            # Leaving it out of the umbrella meant the binding full-surface
+            # smoke — the gate on every ai-gateway / traffic_event commit —
+            # never ran a single media assertion.
+            args.multimodal = True
             if args.no_cache:
                 log_warn("--all-ingress forces cache test ON (user binding); "
                          "ignoring --no-cache flag")
@@ -6357,6 +7772,23 @@ and Redis cache flushing are skipped automatically.
         # (real upstream: needs an image provider credential).
         if args.multimodal:
             phase_multimodal(gw, cp, db, t0_iso, timeout=args.timeout)
+
+        # PVG Video GENERATION — the one HC-4 matrix cell the media work left
+        # open. Video INPUT is covered by the media matrix above; generation is
+        # a different family entirely (async job: submit → poll → content).
+        #
+        # It is opt-in AND parameterised on purpose. Every run bills a real
+        # video render, and the price scales with the clip: seconds × the
+        # model's per-second rate. A boolean flag would let a full-suite run
+        # spend money nobody chose to spend, so the model and duration must be
+        # named at the call site — there is no default to fall back on.
+        if args.video_generate:
+            phase_video_generation(gw, cp, db, args.video_generate,
+                                   timeout=args.video_timeout)
+        else:
+            rec("PVG", "phase").passed(
+                "skipped: video generation bills a real render — pass "
+                "--video-generate MODEL:SECONDS to run it")
 
         # P3R OpenAI Responses-API ingress (E56) — full per-model suite
         # mirroring P3 depth (non-stream + SSE + multi-round cache).
@@ -6420,8 +7852,8 @@ and Redis cache flushing are skipped automatically.
         phase6_db_crosscheck(db, t0_iso, args.db_poll_timeout)
 
         # P6b — normalize verification: full per-row analysis (extracted text,
-        # reasoning tokens, cache breakdown, usage math sanity). Auto-selects the
-        # sidecar table or the view-time recompute endpoint per deployment.
+        # reasoning tokens, cache breakdown, usage math sanity) against the
+        # view-time recompute endpoint, the same one the UI's Normalized tab uses.
         phase6b_normalize_check(db, cp, t0_iso)
 
         # P7

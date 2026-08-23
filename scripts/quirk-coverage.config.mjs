@@ -53,12 +53,12 @@ export const families = [
   // ── openai ────────────────────────────────────────────────────────────────
   {
     provider: 'openai', prefix: 'gpt-5.6', decision: 'strips',
-    goFile: OPENAI_REWRITES, goMatch: '"gpt-5"',
+    goFile: OPENAI_REWRITES, goMatch: 'specutil.GenerationAtLeast(modelID, "gpt-", 5)',
     evidence: 'Probed 2026-07-16 (api.openai.com, gpt-5.6-luna): chat 400 "Unsupported value: \'temperature\' does not support 0 with this model. Only the default (1) value is supported."; /v1/responses 400 "Unsupported parameter: \'temperature\' is not supported with this model." First observed 2026-07 --all-ingress smoke on all three -luna/-sol/-terra.',
   },
   {
     provider: 'openai', prefix: 'gpt-5.5', decision: 'strips',
-    goFile: OPENAI_REWRITES, goMatch: '"gpt-5"',
+    goFile: OPENAI_REWRITES, goMatch: 'specutil.GenerationAtLeast(modelID, "gpt-", 5)',
     evidence: 'Probed 2026-07-16 (api.openai.com): chat 400 "Unsupported value: \'temperature\' does not support 0 with this model. Only the default (1) value is supported."',
   },
   {
@@ -82,6 +82,10 @@ export const families = [
     evidence: 'Probed 2026-07-16 (api.openai.com): o4-mini 400 "Unsupported value: \'temperature\' does not support 0 with this model. Only the default (1) value is supported."',
   },
   {
+    provider: 'openai', prefix: 'gpt-audio', decision: 'accepts',
+    evidence: 'Probed 2026-08-05 (api.openai.com, gpt-audio-1.5 and gpt-audio-mini): temperature=0 and temperature=1.0 both answer 200 on chat completions, with an input_audio part present. Probed WITHOUT audio first and got 400 "This model requires that either input content or output modality contain audio." — identical with and without temperature, so that 400 is the modality requirement and not a sampling rejection; recording a decision from it would have been a guess wearing a probe\'s clothes. These are chat-completions models that accept and emit audio parts, which is why they are typed chat rather than the retired "audio".',
+  },
+  {
     provider: 'openai', prefix: 'gpt-4o', decision: 'accepts',
     evidence: 'Probed 2026-07-16 (api.openai.com): gpt-4o temperature=0 answers 200. Smoke P3 sends temperature=0 on every run.',
   },
@@ -98,7 +102,7 @@ export const families = [
   //    identity codec from the shared openai contract — specs/azure/spec.go) ─
   {
     provider: 'azure-openai', prefix: 'gpt-5', decision: 'strips',
-    goFile: OPENAI_REWRITES, goMatch: '"gpt-5"',
+    goFile: OPENAI_REWRITES, goMatch: 'specutil.GenerationAtLeast(modelID, "gpt-", 5)',
     evidence: 'Same wire contract as the openai rows: Azure serves the same model families and returns the same 400 for sampling params on reasoning models; the azure adapter constructs its identity codec from the shared openai contract (specs/azure/spec.go).',
   },
   {
@@ -150,11 +154,6 @@ export const families = [
     evidence: 'Probed against api.anthropic.com (codec allowlist): accepts temperature or top_p alone; rejects the combination.',
   },
   {
-    provider: 'anthropic', prefix: 'claude-opus-4-1', decision: 'accepts',
-    goFile: ANTHROPIC_CODEC, goMatch: '"claude-opus-4-1"',
-    evidence: 'Probed against api.anthropic.com (codec allowlist): accepts temperature or top_p alone; rejects the combination.',
-  },
-  {
     provider: 'anthropic', prefix: 'claude-sonnet-4-6', decision: 'accepts',
     goFile: ANTHROPIC_CODEC, goMatch: '"claude-sonnet-4-6"',
     evidence: 'Probed against api.anthropic.com (codec allowlist): accepts temperature or top_p alone; rejects the combination.',
@@ -188,6 +187,10 @@ export const families = [
     provider: 'google-gemini', prefix: 'gemini-3.5', decision: 'accepts',
     evidence: 'Probed 2026-07-16 (generativelanguage.googleapis.com): gemini-3.5-flash generationConfig.temperature=0 answers 200.',
   },
+  {
+    provider: 'google-gemini', prefix: 'gemini-3.6', decision: 'accepts',
+    evidence: 'Probed 2026-08-06 (generativelanguage.googleapis.com): gemini-3.6-flash generationConfig.temperature=0 with maxOutputTokens=1 answers 200. Probed when the family was added to the catalog — this lint is what required it.',
+  },
 
   // ── deepseek ──────────────────────────────────────────────────────────────
   {
@@ -196,24 +199,21 @@ export const families = [
   },
 
   // ── moonshot ──────────────────────────────────────────────────────────────
+  // The adapter is an ALLOWLIST (kimiFamiliesAcceptingTemperature): any `kimi-`
+  // family NOT listed there is stripped, so new families fail safe. Same shape
+  // and same reason as the anthropic block above. It was a denylist of the
+  // three k2.x families until 2026-08-06; the k2.7 incident IS the denylist
+  // going stale, and the vendor's /v1/models carried kimi-k3 that day while
+  // this registry and the catalog carried neither.
   {
-    provider: 'moonshot', prefix: 'kimi-k2.5', decision: 'strips',
-    goFile: MOONSHOT_REWRITES, goMatch: '"kimi-k2.5"',
-    evidence: 'Probed 2026-07-16 (api.moonshot.cn): 400 "invalid temperature: only 1 is allowed for this model"; 200 with the param omitted. Fixed-temp family.',
-  },
-  {
-    provider: 'moonshot', prefix: 'kimi-k2.6', decision: 'strips',
-    goFile: MOONSHOT_REWRITES, goMatch: '"kimi-k2.6"',
-    evidence: 'Probed 2026-07-16 (api.moonshot.cn): same 400 as kimi-k2.5. Fixed-temp family.',
-  },
-  {
-    provider: 'moonshot', prefix: 'kimi-k2.7', decision: 'strips',
-    goFile: MOONSHOT_REWRITES, goMatch: '"kimi-k2.7"',
-    evidence: 'Observed on production traffic (the incident this registry exists for) and re-probed 2026-07-16 (api.moonshot.cn): kimi-k2.7-code and -highspeed answer 400 "invalid temperature: only 1 is allowed for this model" to every temperature-sending client; 200 with the param omitted.',
+    provider: 'moonshot', prefix: 'kimi-', decision: 'strips',
+    goFile: MOONSHOT_REWRITES, goMatch: 'kimiFamiliesAcceptingTemperature',
+    evidence: 'Probed 2026-07-16 (api.moonshot.cn): kimi-k2.5 and kimi-k2.6 answer 400 "invalid temperature: only 1 is allowed for this model", 200 with the param omitted. kimi-k2.7-code and -highspeed: observed first on production traffic (the incident this registry exists for), re-probed the same day with the same 400. Allowlist inversion: every kimi family outside kimiFamiliesAcceptingTemperature is stripped, so an unprobed family costs a dropped parameter instead of a 400.',
   },
   {
     provider: 'moonshot', prefix: 'kimi-k2-thinking', decision: 'accepts',
-    evidence: 'Probed historically (api.moonshot.ai — recorded with the fixed-temp rule in specs/compat/moonshot/rewrites.go): accepts arbitrary temperature. Re-probe 2026-07-16 on api.moonshot.cn answered 404 "Not found the model kimi-k2-thinking or Permission denied" on the test key — vendor truth unverifiable there; the historical probe stands.',
+    goFile: MOONSHOT_REWRITES, goMatch: '"kimi-k2-thinking"',
+    evidence: 'Probed historically (api.moonshot.ai — recorded with the fixed-temp rule in specs/compat/moonshot/rewrites.go): accepts arbitrary temperature. Re-probe 2026-07-16 on api.moonshot.cn answered 404 "Not found the model kimi-k2-thinking or Permission denied" on the test key — vendor truth unverifiable there; the historical probe stands. Anchored on its allowlist entry, so dropping it from the codec without a probe re-reddens here.',
   },
   {
     provider: 'moonshot', prefix: 'moonshot-v1-', decision: 'accepts',
@@ -296,3 +296,89 @@ export const goQuirkSites = [
 
 export const CATALOG_PATH = 'tools/db-migrate/model-catalog.json';
 export const SMOKE_PATH = 'tests/scripts/smoke-gateway.py';
+
+// ── Reasoning-parameter decision registry ───────────────────────────────────
+//
+// A SECOND incident class, kept in this file because it obeys the same rules
+// (§3a Rule 3: the quirk lives with the adapter that talks to that wire; Rule 7:
+// no speculative behaviour, a missing decision fails CI) and asks the same
+// question of a different parameter: does this model family take a REASONING
+// request parameter, and in which shape?
+//
+// Scope is narrower than the sampling registry's on purpose. Only the models
+// the catalog tags `reasoning` are in scope, because only they can be sent one.
+//
+// Decision values:
+//   'translates'      — the adapter converts the caller's canonical intent into
+//                       this wire's own shape (a level into a budget, or the
+//                       reverse). goFile/goMatch anchor the translating code,
+//                       and the lint verifies the anchor, so deleting the
+//                       translation reddens here.
+//   'forwards'        — probed: the wire takes the canonical spelling as it
+//                       stands, so nothing is translated.
+//   'forward-unprobed'— nobody has probed whether this wire takes a reasoning
+//                       parameter. It forwards verbatim and NO cross-shape
+//                       translation is invented for it. Recorded so a family is
+//                       a conscious posture rather than an accident.
+//
+// Why so many rows are unprobed: probing costs money on a real vendor account,
+// and the standing rule is that the gateway smoke runs only at the final
+// matrix. A guessed budget range is an upstream 400, so the honest posture is
+// to forward what the caller wrote and translate nothing.
+
+const ANTHROPIC_REASONING = 'packages/ai-gateway/internal/providers/specs/anthropic/codec/codec.go';
+const GEMINI_REASONING = 'packages/ai-gateway/internal/providers/specs/gemini/codec/codec.go';
+
+export const reasoningFamilies = [
+  // ── the three wire families that actually take a reasoning parameter ──────
+  {
+    provider: 'openai', prefix: '', decision: 'forwards',
+    evidence: 'The canonical carries a LEVEL and this wire takes a LEVEL: `reasoning_effort` on chat, `reasoning.effort` on /v1/responses. Nothing is translated for a caller who wrote a level. The gpt-5.6 rule — a non-empty tools[] forces an explicit "none", and the ABSENT field 400s identically — is a SAMPLING-shaped field rule and lives in specs/openai/rewrites with its own observed-400 citation; it is not a reasoning translation.',
+  },
+  {
+    provider: 'azure-openai', prefix: '', decision: 'forwards',
+    evidence: 'Same wire contract as openai: the azure adapter constructs its identity codec from the shared openai contract (specs/azure/spec.go), so the reasoning parameter behaves identically.',
+  },
+  {
+    provider: 'anthropic', prefix: 'claude-', decision: 'translates',
+    goFile: ANTHROPIC_REASONING, goMatch: 'thinking',
+    evidence: 'This wire takes a BUDGET (`thinking{type,budget_tokens}`), so a caller who wrote a level needs converting. The per-model rules are probe-derived and already in this codec: minimum budget 1024, requires max_tokens > budget_tokens, clamps to max_tokens-1, hard 400 when max_tokens <= 1024, skipped on type:"disabled".',
+  },
+  {
+    provider: 'bedrock', prefix: '', decision: 'translates',
+    goFile: ANTHROPIC_REASONING, goMatch: 'thinking',
+    evidence: 'Delegates chat to the anthropic codec (specs/bedrock/codec.go), so it inherits the same budget contract and the same translation.',
+  },
+  {
+    provider: 'google-gemini', prefix: '', decision: 'translates',
+    goFile: GEMINI_REASONING, goMatch: 'thinkingConfig',
+    evidence: 'This wire takes a BUDGET plus a FLAG (`generationConfig.thinkingConfig`), and carries a value neither other family has: -1 means dynamic. IncludeThoughts maps directly.',
+  },
+  {
+    provider: 'vertex', prefix: '', decision: 'translates',
+    goFile: GEMINI_REASONING, goMatch: 'thinkingConfig',
+    evidence: 'Uses the gemini codec verbatim (specs/vertex/spec.go), so it inherits the same shape.',
+  },
+
+  // ── OpenAI-compatible wires: a reasoning-TAGGED model whose wire has no
+  //    reasoning request knob recorded anywhere. The tag describes how the
+  //    model behaves, not a parameter we may send it. ──────────────────────
+  {
+    provider: 'deepseek', prefix: '', decision: 'forward-unprobed',
+    evidence: 'No reasoning request knob found in specs/compat/deepseek. Its IsThinkingModel rules repair a tool-call HISTORY (strip a forced tool_choice, back-fill reasoning_content) — a different parameter class. Whether this wire accepts reasoning_effort is unprobed.',
+  },
+  { provider: 'moonshot', prefix: '', decision: 'forward-unprobed',
+    evidence: 'No reasoning request knob in specs/compat/moonshot; kimi-k2-thinking appears only in a temperature accepts-list. Unprobed.' },
+  { provider: 'glm', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/glm. Unprobed.' },
+  { provider: 'minimax', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/minimax. Unprobed.' },
+  { provider: 'xai', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/xai. Unprobed.' },
+  { provider: 'groq', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/groq. Unprobed.' },
+  { provider: 'together', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/together. Unprobed.' },
+  { provider: 'perplexity', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/perplexity. Unprobed.' },
+  { provider: 'fireworks', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/fireworks. Unprobed.' },
+  { provider: 'mistral', prefix: '', decision: 'forward-unprobed', evidence: 'Identity codec, no reasoning request knob in specs/mistral. Unprobed.' },
+  {
+    provider: 'replicate', prefix: '', decision: 'forward-unprobed',
+    evidence: 'An explicit input{} allowlist (specs/replicate/codec.go) DROPS the parameter rather than forwarding it. Recorded as unprobed because whether the underlying model would have taken one was never established — the drop is our allowlist, not the wire\'s answer.',
+  },
+];

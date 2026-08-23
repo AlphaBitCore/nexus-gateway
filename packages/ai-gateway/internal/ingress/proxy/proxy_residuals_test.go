@@ -190,7 +190,7 @@ func TestRunEstimateOnce_NilMetrics_NoRecordEstimateCall(t *testing.T) {
 		EstimateCompareTarget{ProviderID: "p1", ModelID: "m1"}, nil)
 
 	// Either succeeds or returns an estimator error — either way no panic.
-	if got.Error != nil && got.Error.Code != "estimate_failed" {
+	if got.Error != nil && got.Error.Code != "ESTIMATE_FAILED" {
 		t.Errorf("unexpected error code: %s", got.Error.Code)
 	}
 }
@@ -311,7 +311,7 @@ func TestHandleNonStreamWithSubscription_ImmediateEOF_WritesEmpty(t *testing.T) 
 	r = r.WithContext(ctx)
 
 	h.handleNonStreamWithSubscription(r, w, rec, sub, target, nil, 0, 0, nil,
-		"chat", "req-eof-test", time.Now(), slog.Default(), nil)
+		"chat", "req-eof-test", time.Now(), slog.Default(), l2Canonical{})
 
 	if rec.StatusCode != http.StatusOK {
 		t.Errorf("rec.StatusCode=%d want 200", rec.StatusCode)
@@ -344,7 +344,7 @@ func TestHandleNonStreamWithSubscription_ProviderError_WritesErrorStatus(t *test
 	r = r.WithContext(ctx)
 
 	h.handleNonStreamWithSubscription(r, w, rec, sub, target, nil, 0, 0, nil,
-		"chat", "req-pe-test", time.Now(), slog.Default(), nil)
+		"chat", "req-pe-test", time.Now(), slog.Default(), l2Canonical{})
 
 	if rec.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("rec.StatusCode=%d want 429", rec.StatusCode)
@@ -371,7 +371,7 @@ func TestHandleNonStreamWithSubscription_GenericError_Writes502(t *testing.T) {
 	r = r.WithContext(ctx)
 
 	h.handleNonStreamWithSubscription(r, w, rec, sub, target, nil, 0, 0, nil,
-		"chat", "req-502-test", time.Now(), slog.Default(), nil)
+		"chat", "req-502-test", time.Now(), slog.Default(), l2Canonical{})
 
 	if rec.StatusCode != http.StatusBadGateway {
 		t.Errorf("rec.StatusCode=%d want 502", rec.StatusCode)
@@ -515,7 +515,7 @@ func TestRunEstimateOnce_WithMetrics_RecordEstimateCalledOnError(t *testing.T) {
 	if got.Error == nil {
 		t.Fatal("expected EstimateTargetError on empty body, got nil")
 	}
-	if got.Error.Code != "estimate_failed" {
+	if got.Error.Code != "ESTIMATE_FAILED" {
 		t.Errorf("error code=%q want estimate_failed", got.Error.Code)
 	}
 }

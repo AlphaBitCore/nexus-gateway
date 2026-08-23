@@ -197,7 +197,7 @@ func (l *labView) fireGenerator() tea.Cmd {
 	l.genTotal, l.genOK, l.genFail = generatorBurstSize, 0, 0
 	l.genRunning = true
 	l.genCh = make(chan genResultMsg, generatorBurstSize)
-	for i := 0; i < generatorBurstSize; i++ {
+	for range generatorBurstSize {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), kit.ChatStreamTimeout)
 			defer cancel()
@@ -261,11 +261,12 @@ func (l *labView) View(width, height int) string {
 	} else {
 		b.WriteString(l.editor.View())
 		b.WriteString("\n")
-		if l.labBusy {
+		switch {
+		case l.labBusy:
 			b.WriteString(styles.TileLabel.Render("sending…"))
-		} else if l.labErr != nil {
+		case l.labErr != nil:
 			b.WriteString(lipgloss.NewStyle().Foreground(styles.Red).Render("⚠ " + l.labErr.Error()))
-		} else if l.labResp != "" {
+		case l.labResp != "":
 			b.WriteString(styles.TileLabel.Render("response:"))
 			b.WriteString("\n")
 			b.WriteString(l.labResp)
@@ -297,7 +298,7 @@ func (l *labView) routePanel() string {
 			b.WriteString(styles.TileLabel.Render(l.session.Model + " → no rule substitution\n"))
 		}
 		for _, t := range r.Targets {
-			b.WriteString(fmt.Sprintf("  %s → %s\n", t.ProviderName, t.ModelCode))
+			fmt.Fprintf(&b, "  %s → %s\n", t.ProviderName, t.ModelCode)
 		}
 		for _, w := range r.Warnings {
 			b.WriteString(lipgloss.NewStyle().Foreground(styles.Amber).Render("  ⚠ " + w + "\n"))

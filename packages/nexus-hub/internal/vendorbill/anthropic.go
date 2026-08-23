@@ -72,6 +72,10 @@ func newAnthropicBillSource(adminKey, workspaceID, baseURL string, hc *http.Clie
 
 func (s *anthropicBillSource) ProviderKey() string { return anthropicProviderKey }
 
+// BillingHost is the host cost_report is read from — the identity a Provider
+// row's baseUrl must match to be billed against this source.
+func (s *anthropicBillSource) BillingHost() string { return hostOf(s.baseURL) }
+
 type anthropicCostPage struct {
 	Data []struct {
 		StartingAt string `json:"starting_at"`
@@ -151,6 +155,16 @@ func (s *anthropicBillSource) FetchDailyBill(ctx context.Context, from, to time.
 			day, err := parseAnthropicDay(b.StartingAt)
 			if err != nil {
 				return nil, fmt.Errorf("anthropic cost_report: %w", err)
+			}
+			// The bucket EXISTING is the vendor's statement about the day, so
+			// the key is created before any result is read — and before the
+			// workspace filter below can discard every result in it. On a
+			// pinned workspace that filter is exactly what an idle day looks
+			// like: the org's other workspaces spent money, ours did not, and
+			// the day would otherwise vanish as if the vendor had never
+			// reported it. Days genuinely absent from the response stay absent.
+			if _, seen := perDay[day]; !seen {
+				perDay[day] = 0
 			}
 			for _, r := range b.Results {
 				// Client-side narrowing: the endpoint has no filter parameter,

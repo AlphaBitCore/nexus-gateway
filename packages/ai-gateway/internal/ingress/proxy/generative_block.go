@@ -85,7 +85,8 @@ func (h *Handler) maybeBlockGenerativePrompt(
 	}))
 	w.Header().Set("X-Nexus-Mode", "")
 	traffic.SetExposeHeaders(w.Header())
-	h.writeError(w, rec, http.StatusForbidden, "generative prompt blocked by content policy")
+	h.writeError(w, rec, http.StatusForbidden, reasonGenerativePromptBlocked,
+		"generative prompt blocked by content policy")
 	return true
 }
 

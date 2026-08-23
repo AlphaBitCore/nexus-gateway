@@ -1516,6 +1516,40 @@ func TestProxyRoutingNoMatch_FilteringAndFire(t *testing.T) {
 	}
 }
 
+// TestProxyRoutingNoMatch_CountsARuleThatResolvedNothing.
+//
+// This aggregator's subject is stated on the type: a sustained no-match rate,
+// "almost always a customer config issue (deleted rule, model rename, alias
+// drift)". A rule that MATCHED and then resolved no target — its model deleted,
+// its provider disabled — is squarely that population and is the likelier of
+// the two to be an operator's own doing. Matching only the older literal left
+// the newer, more specific failure firing nothing at all.
+func TestProxyRoutingNoMatch_CountsARuleThatResolvedNothing(t *testing.T) {
+	a := NewProxyRoutingNoMatch()
+	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
+	now := time.Now()
+
+	for range 25 {
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
+			ErrorCode: strPtr("ROUTING_RULES_RESOLVED_NOTHING"),
+		}))
+	}
+	d := fireFromTick(a.Tick(rt, map[string]any{"windowSec": 600, "thresholdCount": 20}, now))
+	if d == nil || d.Action != alerteval.Fire {
+		t.Fatalf("25 requests refused because every matching rule resolved nothing raised no "+
+			"alert: %+v", d)
+	}
+
+	// The filter is still a filter.
+	rt2 := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
+	for range 25 {
+		a.OnEvent(rt2, trafficEvent(now, &consumer.AlertView{ErrorCode: strPtr("PROVIDER_ERROR")}))
+	}
+	if d2 := fireFromTick(a.Tick(rt2, map[string]any{"windowSec": 600, "thresholdCount": 20}, now)); d2 != nil {
+		t.Errorf("an upstream fault fired the routing-config alert: %+v", d2)
+	}
+}
+
 func TestVKLatencyDegradation_Metadata(t *testing.T) {
 	a := NewVKLatencyDegradation()
 	if a.RuleID() != "vk.latency_degradation" {

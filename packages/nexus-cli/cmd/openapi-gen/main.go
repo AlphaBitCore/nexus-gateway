@@ -60,18 +60,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		RootFuncs:  rootFuncs,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "openapi-gen: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "openapi-gen: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "openapi-gen: %d routes across %d kinds -> %s\n", rep.Routes, len(rep.Kinds), *out)
+	_, _ = fmt.Fprintf(stdout, "openapi-gen: %d routes across %d kinds -> %s\n", rep.Routes, len(rep.Kinds), *out)
 	for _, k := range rep.Kinds {
-		fmt.Fprintf(stdout, "  - %s\n", k)
+		_, _ = fmt.Fprintf(stdout, "  - %s\n", k)
 	}
 	if len(rep.Unresolved) > 0 {
-		fmt.Fprintf(stdout, "\n%d unresolved (need openapi-review attention):\n", len(rep.Unresolved))
+		_, _ = fmt.Fprintf(stdout, "\n%d unresolved (need openapi-review attention):\n", len(rep.Unresolved))
 		for _, u := range rep.Unresolved {
-			fmt.Fprintf(stdout, "  ! %s\n", u)
+			_, _ = fmt.Fprintf(stdout, "  ! %s\n", u)
 		}
 	}
 	return 0

@@ -38,7 +38,19 @@ type NormalizeInput struct {
 	// canonical discriminator the artifact endpoint switches on to decide how to
 	// extract a previewable artifact from the captured body.
 	EndpointType string
-	Found        bool // false when the traffic_event row does not exist
+	// ArtifactRefs is traffic_event.artifact_refs: the fingerprints of binary
+	// payloads the gateway hashed but did not keep. When a request body was
+	// never stored, this is the only record that the request carried one.
+	ArtifactRefs string
+	// Request/ResponseTruncated say the stored body for that direction is only a
+	// PREFIX (it reached payload_capture.maxInlineBodyBytes with no spill backend
+	// configured). The view-time recompute still runs — a prefix normalizes to
+	// whatever it contains — but the result describes an incomplete payload, and
+	// silently presenting a partial conversation as a whole one is exactly the
+	// failure the flag exists to prevent.
+	RequestTruncated  bool
+	ResponseTruncated bool
+	Found             bool // false when the traffic_event row does not exist
 }
 
 // GetTrafficEventForNormalize fetches the raw captured request/response bodies
@@ -69,7 +81,9 @@ func (store *Store) GetTrafficEventForNormalize(ctx context.Context, id string) 
 		       p.inline_response_body, COALESCE(p.inline_response_encoding, ''),
 		       COALESCE(p.request_content_type, ''), COALESCE(p.response_content_type, ''),
 		       p.request_spill_ref, p.response_spill_ref,
-		       COALESCE(a.endpoint_type, '')
+		       COALESCE(a.endpoint_type, ''),
+		       COALESCE(a.artifact_refs, ''),
+		       COALESCE(p.request_truncated, false), COALESCE(p.response_truncated, false)
 		FROM   traffic_event a
 		LEFT JOIN traffic_event_payload p ON p.traffic_event_id = a.id
 		WHERE  a.id = $1
@@ -85,6 +99,8 @@ func (store *Store) GetTrafficEventForNormalize(ctx context.Context, id string) 
 		&out.RequestContentType, &out.ResponseContentType,
 		&out.RequestSpillRef, &out.ResponseSpillRef,
 		&out.EndpointType,
+		&out.ArtifactRefs,
+		&out.RequestTruncated, &out.ResponseTruncated,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &NormalizeInput{Found: false}, nil
@@ -112,40 +128,12 @@ type TrafficEventNormalized struct {
 	ResponseRedactionSpans json.RawMessage `json:"responseRedactionSpans,omitempty"`
 	NormalizeVersion       string          `json:"normalizeVersion"`
 	CreatedAt              time.Time       `json:"createdAt"`
-}
-
-// GetTrafficEventNormalized returns the normalized payload sidecar row
-// for the given traffic event id, or nil when no normalize row exists.
-//
-// The parent traffic_event existence is NOT verified here; callers (the
-// admin handler) treat (nil, nil) as 404 regardless of which row is
-// missing — there is no business reason to distinguish "no traffic event"
-// from "traffic event exists but was not normalized".
-func (store *Store) GetTrafficEventNormalized(ctx context.Context, id string) (*TrafficEventNormalized, error) {
-	const q = `
-		SELECT traffic_event_id,
-		       request_normalized, response_normalized,
-		       request_status, response_status,
-		       request_error_reason, response_error_reason,
-		       request_redaction_spans, response_redaction_spans,
-		       normalize_version, created_at
-		FROM traffic_event_normalized
-		WHERE traffic_event_id = $1
-	`
-	var out TrafficEventNormalized
-	err := store.pool.QueryRow(ctx, q, id).Scan(
-		&out.TrafficEventID,
-		&out.RequestNormalized, &out.ResponseNormalized,
-		&out.RequestStatus, &out.ResponseStatus,
-		&out.RequestErrorReason, &out.ResponseErrorReason,
-		&out.RequestRedactionSpans, &out.ResponseRedactionSpans,
-		&out.NormalizeVersion, &out.CreatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get traffic event normalized: %w", err)
-	}
-	return &out, nil
+	// RequestTruncated / ResponseTruncated are NOT columns of
+	// traffic_event_normalized — they are view-time provenance, carried from
+	// traffic_event_payload so the drawer can say that this projection was
+	// computed from a body that is only a prefix. A partial conversation
+	// rendered as a complete one is indistinguishable from a model that stopped
+	// early, which is the whole reason the flag is plumbed this far.
+	RequestTruncated  bool `json:"requestTruncated"`
+	ResponseTruncated bool `json:"responseTruncated"`
 }

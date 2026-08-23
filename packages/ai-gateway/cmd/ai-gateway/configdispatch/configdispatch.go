@@ -194,10 +194,32 @@ func registerAGProviders(l *cfgloader.Loader, d Deps) {
 		if d.CacheLayer == nil {
 			return nil, errActiveKeyDepNil("providers", "CacheLayer")
 		}
-		reloadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if err := d.CacheLayer.ReloadProviders(reloadCtx); err != nil {
+		provCtx, cancelProv := context.WithTimeout(ctx, 10*time.Second)
+		defer cancelProv()
+		if err := d.CacheLayer.ReloadProviders(provCtx); err != nil {
 			return nil, err
+		}
+		// The Model snapshot denormalises provider columns onto every model row
+		// (name, displayName, baseUrl, adapter_type, enabled) and derives the
+		// servable code/alias indexes from them, so a provider edit invalidates
+		// model rows too. The Control Plane pushes only `providers` for a
+		// provider update, so reload models here or the gateway keeps serving a
+		// catalog — and a passthrough route — built on the pre-edit provider
+		// state until an unrelated model edit happens to refresh it.
+		//
+		// Its own deadline, not the remainder of the provider reload's: the
+		// model query is the heavier of the two (full catalog join), so sharing
+		// one budget would make a slow provider reload push this one past the
+		// deadline and fail the whole key.
+		modelCtx, cancelModels := context.WithTimeout(ctx, 10*time.Second)
+		defer cancelModels()
+		if err := d.CacheLayer.ReloadModels(modelCtx); err != nil {
+			return nil, err
+		}
+		// Every model-snapshot reload notifies the capability pre-filter — see
+		// Deps.OnModelsReloaded; this path is not an exception.
+		if d.OnModelsReloaded != nil {
+			d.OnModelsReloaded(d.CacheLayer.AllModels())
 		}
 		// Provider list changed: ManagerSet rebuilds per-provider Gemini managers
 		// using the last cache blob already cached inside the ManagerSet.

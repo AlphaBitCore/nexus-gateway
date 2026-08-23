@@ -213,7 +213,15 @@ The single source of truth for the configKey set is `packages/shared/schemas/con
 
 ### L4 `system_metadata` keys
 
-See §6 for the table — `siem.config`, `payload_capture.config`, `streaming_compliance.config`, `observability.config`, `gateway.settings`, `agent.settings`, `semantic_cache.config`, `gateway.credential_reliability.config`, and the CP-internal `propagation_ledger:<thingType>:<configKey>` family.
+See §6 for the table — `siem.config`, `payload_capture.config`, `streaming_compliance.config`, `observability.config`, `gateway.settings`, `agent.settings`, `semantic_cache.config`, `gateway.credential_reliability.config`, and the CP-internal `propagation_ledger:<thingType>:<configKey>` family. Also `agent.config.version`, `audit_chain.acked_orphans`, `device.auth.mode` and `hub.spill_upload_secret`.
+
+**Who claims a key.** The table has no schema and no owner: a row is a key and a JSON blob written by whichever service reached for it. `packages/shared/schemas/configkey/systemmetadata.go` is the registry of the keys some code path reads or writes, plus the prefix families built at runtime. The Control Plane runs `AuditUnknownKeys` once at boot and logs a WARN naming every key nobody claims.
+
+WARN and not fatal, on purpose: an unclaimed row breaks nothing, and refusing to start over one turns bookkeeping into an outage. What it needs is a person to look. The failure it exists to prevent is a key outliving the code that read it — `audit.payload` did for three months, and it was worse than dead weight, because its value was the OPPOSITE of the setting actually in force and its timestamp kept moving, so an operator asking "is body capture on?" by the obvious name read `false` and stopped investigating.
+
+The registry is checked in both directions. A key present in the database and absent from the registry is what the boot WARN reports. A key registered but mentioned in no non-test Go file is what `TestSystemMetadataKeys_EveryEntryIsClaimedBySomeCode` reports — otherwise the registry itself goes stale and starts vouching for keys nobody uses, which recreates the original problem one level up.
+
+Adding a fixed key means adding it to `SystemMetadataKeys`; a key built at runtime from a thing type or a config key belongs in `systemMetadataKeyFamilies` as a prefix rather than being enumerated, because an enumerated family either goes stale or fires on legitimate rows every boot — and a warning that cries wolf is one nobody reads.
 
 ## §8 — Workflow: adding a new config field
 

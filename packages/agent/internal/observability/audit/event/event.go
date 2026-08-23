@@ -12,22 +12,28 @@ import (
 // Event is the Agent's internal representation of a captured traffic event.
 // Maps to traffic_event columns in the unified schema.
 type Event struct {
-	ID            string    `json:"id"`
-	TraceID       string    `json:"traceId"`
-	Timestamp     time.Time `json:"timestamp"`
-	SourceIP      string    `json:"sourceIp"`
-	TargetHost    string    `json:"targetHost"`
-	DestIP        string    `json:"destIp,omitempty"`
-	DestPort      int       `json:"destPort,omitempty"`
-	Method        string    `json:"method"`
-	Path          string    `json:"path"`
-	StatusCode    int       `json:"statusCode"`
-	LatencyMs     int       `json:"latencyMs"`
-	BytesIn       int64     `json:"bytesIn,omitempty"`
-	BytesOut      int64     `json:"bytesOut,omitempty"`
-	SourceProcess string    `json:"sourceProcess,omitempty"`
-	OSUser        string    `json:"osUser,omitempty"`
-	Action        string    `json:"action"`
+	ID      string `json:"id"`
+	TraceID string `json:"traceId"`
+	// ExternalRequestID is the CALLER's own request id — the x-request-id
+	// they sent — read off the intercepted request by tlsbump and carried
+	// through unchanged. Distinct from TraceID, which is ours and groups a
+	// unit of work. Without a column to land in, the value was captured and
+	// then dropped between tlsbump and upload on the agent path alone.
+	ExternalRequestID string    `json:"externalRequestId,omitempty"`
+	Timestamp         time.Time `json:"timestamp"`
+	SourceIP          string    `json:"sourceIp"`
+	TargetHost        string    `json:"targetHost"`
+	DestIP            string    `json:"destIp,omitempty"`
+	DestPort          int       `json:"destPort,omitempty"`
+	Method            string    `json:"method"`
+	Path              string    `json:"path"`
+	StatusCode        int       `json:"statusCode"`
+	LatencyMs         int       `json:"latencyMs"`
+	BytesIn           int64     `json:"bytesIn,omitempty"`
+	BytesOut          int64     `json:"bytesOut,omitempty"`
+	SourceProcess     string    `json:"sourceProcess,omitempty"`
+	OSUser            string    `json:"osUser,omitempty"`
+	Action            string    `json:"action"`
 
 	HookDecision   string `json:"hookDecision,omitempty"`
 	HookReason     string `json:"hookReason,omitempty"`

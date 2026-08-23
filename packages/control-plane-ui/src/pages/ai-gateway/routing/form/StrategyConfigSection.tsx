@@ -76,19 +76,8 @@ function ProviderModelSelect({
 export { ProviderModelSelect };
 
 export interface StrategyConfigSectionProps {
-  pipelineStage: string;
   strategyType: StrategyType;
   providerGroups: AdminModelsByProvider[];
-
-  // Policy fields
-  policyAllowM: string[];
-  setPolicyAllowM: (v: string[]) => void;
-  policyDenyM: string[];
-  setPolicyDenyM: (v: string[]) => void;
-  policyAllowP: string[];
-  setPolicyAllowP: (v: string[]) => void;
-  policyDenyP: string[];
-  setPolicyDenyP: (v: string[]) => void;
 
   // Single-provider
   singleProvider: string;
@@ -114,118 +103,9 @@ export interface StrategyConfigSectionProps {
   showWeightColumn: boolean;
 }
 
-function PolicyModelSelect({
-  selected,
-  onChange,
-  providerGroups,
-  label,
-}: {
-  selected: string[];
-  onChange: (v: string[]) => void;
-  providerGroups: AdminModelsByProvider[];
-  label: string;
-}) {
-  const { t } = useTranslation();
-  const handleAdd = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    if (val && !selected.includes(val)) {
-      onChange([...selected, val]);
-    }
-    e.target.value = '';
-  };
-
-  const handleRemove = (id: string) => {
-    onChange(selected.filter(m => m !== id));
-  };
-
-  const labelMap = new Map<string, string>();
-  for (const g of providerGroups) {
-    for (const m of g.models) {
-      labelMap.set(m.id, `${g.provider?.displayName?.trim() || g.provider?.name} / ${m.name}`);
-    }
-  }
-
-  return (
-    <div className={styles.fieldGroup}>
-      <label className={styles.fieldLabel}>{label}</label>
-      {selected.length > 0 && (
-        <div className={`${styles.tagContainer} ${styles.tagContainerVisible}`}>
-          {selected.map(id => (
-            <span key={id} className={styles.tag}>
-              {labelMap.get(id) ?? id}
-              <IconButton size="sm" aria-label={t('pages:routing.removeAria')} onClick={() => handleRemove(id)}>×</IconButton>
-            </span>
-          ))}
-        </div>
-      )}
-      <select onChange={handleAdd} value="" className={styles.selectInputFull}>
-        <option value="">{t('pages:routing.addModelToPolicy')}</option>
-        {providerGroups.map(g => {
-          const available = g?.models?.filter(m => !selected.includes(m.id));
-          if (!available || available.length === 0) return null;
-          return (
-            <optgroup key={g.provider?.id} label={g.provider?.displayName?.trim() || g.provider?.name}>
-              {available.map(m => (
-                <option key={m.id} value={m.id}>
-                  {m.name} ({m.providerModelId})
-                </option>
-              ))}
-            </optgroup>
-          );
-        })}
-      </select>
-    </div>
-  );
-}
-
-function PolicyProviderCheckboxes({
-  selected,
-  onChange,
-  providerGroups,
-  label,
-}: {
-  selected: string[];
-  onChange: (v: string[]) => void;
-  providerGroups: AdminModelsByProvider[];
-  label: string;
-}) {
-  const toggle = (id: string) => {
-    if (selected.includes(id)) {
-      onChange(selected.filter(x => x !== id));
-    } else {
-      onChange([...selected, id]);
-    }
-  };
-
-  return (
-    <div className={styles.fieldGroup}>
-      <label className={styles.fieldLabel}>{label}</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--g-space-2) var(--g-space-4)', marginTop: 'var(--g-space-1)' }}>
-        {providerGroups
-          .filter(g => g.provider?.enabled)
-          .map(g => (
-            <label key={g.provider?.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-1)', fontSize: 'var(--g-font-size-sm)' }}>
-              <input
-                type="checkbox"
-                checked={selected.includes(g.provider?.id)}
-                onChange={() => toggle(g.provider?.id)}
-              />
-              {g.provider?.displayName?.trim() || g.provider?.name}
-            </label>
-          ))}
-      </div>
-    </div>
-  );
-}
-
 export function StrategyConfigSection({
-  pipelineStage,
   strategyType,
   providerGroups,
-  policyAllowM, setPolicyAllowM,
-  policyDenyM, setPolicyDenyM,
-  policyAllowP, setPolicyAllowP,
-  policyDenyP, setPolicyDenyP,
   singleProvider, setSingleProvider,
   singleModel, setSingleModel,
   entries, updateEntry, addEntry, removeEntry,
@@ -240,51 +120,22 @@ export function StrategyConfigSection({
     <Card padding="lg">
       <div className={`${styles.labelRow} ${styles.sectionTitleSpacing}`}>
         <div className={styles.sectionTitle}>
-          {pipelineStage === '0' && t('pages:routing.policyNarrowing')}
-          {pipelineStage === '1' && strategyType === 'single' && t('pages:routing.providerConfiguration')}
-          {pipelineStage === '1' && strategyType === 'fallback' && t('pages:routing.fallbackChainTitle')}
-          {pipelineStage === '1' && strategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
-          {pipelineStage === '1' && strategyType === 'conditional' && t('pages:routing.conditionalRouting')}
-          {pipelineStage === '1' && strategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
-          {pipelineStage === '1' && strategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
+          {strategyType === 'single' && t('pages:routing.providerConfiguration')}
+          {strategyType === 'fallback' && t('pages:routing.fallbackChainTitle')}
+          {strategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
+          {strategyType === 'conditional' && t('pages:routing.conditionalRouting')}
+          {strategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
+          {strategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
         </div>
         <Tooltip
-          content={pipelineStage === '0' ? strategyConfigHelpBody.policy : strategyConfigHelpBody[strategyType]}
+          content={strategyConfigHelpBody[strategyType]}
         >
           <HelpIconButton aria-label={t('pages:routing.ariaHelpRoutingConfig')} />
         </Tooltip>
       </div>
 
-      {pipelineStage === '0' && (
-        <Stack gap="md">
-          <PolicyModelSelect
-            selected={policyAllowM}
-            onChange={setPolicyAllowM}
-            providerGroups={providerGroups}
-            label={t('pages:routing.allowModelIds')}
-          />
-          <PolicyModelSelect
-            selected={policyDenyM}
-            onChange={setPolicyDenyM}
-            providerGroups={providerGroups}
-            label={t('pages:routing.denyModelIds')}
-          />
-          <PolicyProviderCheckboxes
-            selected={policyAllowP}
-            onChange={setPolicyAllowP}
-            providerGroups={providerGroups}
-            label={t('pages:routing.allowProviderIds')}
-          />
-          <PolicyProviderCheckboxes
-            selected={policyDenyP}
-            onChange={setPolicyDenyP}
-            providerGroups={providerGroups}
-            label={t('pages:routing.denyProviderIds')}
-          />
-        </Stack>
-      )}
 
-      {pipelineStage === '1' && strategyType === 'single' && (
+      {strategyType === 'single' && (
         <ProviderModelSelect
           providerValue={singleProvider}
           modelValue={singleModel}
@@ -294,7 +145,7 @@ export function StrategyConfigSection({
         />
       )}
 
-      {pipelineStage === '1' && strategyType === 'conditional' && (
+      {strategyType === 'conditional' && (
         <ConditionalRoutingEditor
           value={conditionalUi}
           onChange={setConditionalUi}
@@ -302,7 +153,7 @@ export function StrategyConfigSection({
         />
       )}
 
-      {pipelineStage === '1' && strategyType === 'smart' && (
+      {strategyType === 'smart' && (
         <Stack gap="md">
           <div className={styles.miniLabel}>{t('pages:routing.routerModel')}</div>
           <ProviderModelSelect
@@ -353,8 +204,7 @@ export function StrategyConfigSection({
         </Stack>
       )}
 
-      {pipelineStage === '1' &&
-        (strategyType === 'fallback' || strategyType === 'loadbalance' || strategyType === 'ab_split') && (
+      {(strategyType === 'fallback' || strategyType === 'loadbalance' || strategyType === 'ab_split') && (
         <>
           {/* Column headers */}
           <div className={`${styles.entryRow} ${styles.entryHeaderRow}`}>

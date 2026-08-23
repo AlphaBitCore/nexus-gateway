@@ -11,6 +11,7 @@ import (
 	"hash/fnv"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/matcher"
 )
 
 // contentCacheEntry caches whether a rule Config's StrategyNode tree reads the
@@ -93,8 +94,16 @@ func (r *Resolver) ruleModelCouldMatch(raw json.RawMessage, modelID string) bool
 		return true
 	}
 	if len(conds.RequestedModelLiterals) > 0 {
+		// The SAME predicate the matcher uses, not a second spelling of it.
+		// This gate decides whether the canonical is built at all, and the
+		// matcher then decides whether the rule fires — so a gate that is
+		// stricter than the matcher produces a rule that MATCHES with no
+		// payload to read. `smart` sees a nil request, traces "not
+		// normalizable", and silently serves its default model: the exact
+		// false negative the doc comment above says must never happen. It did,
+		// for every glob literal, the moment the matcher learned to glob.
 		for _, lit := range conds.RequestedModelLiterals {
-			if lit == modelID {
+			if matcher.MatchGlob(lit, modelID) {
 				return true
 			}
 		}

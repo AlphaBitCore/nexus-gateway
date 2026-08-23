@@ -157,12 +157,21 @@ paths:
                                     description: Per-minute request limit for the compare endpoint.
                                 allowedModels:
                                     description: |-
-                                        Allowlist of models this key may call, as an array of
+                                        Allowlist of models this key may be SERVED, as an array of
                                         {providerId, modelId} objects. An empty array (the default when
                                         omitted) allows all models. The AI Gateway matches each request
-                                        against these provider + model ids; a body that is not an array
-                                        of {providerId, modelId} objects (e.g. bare model-code strings)
-                                        is rejected with 400 validation_error.
+                                        against these provider + model ids EXACTLY; a ref may name either
+                                        the catalog model id or the provider's own model id.
+
+                                        `*` is not a wildcard and is rejected with 400 validation_error.
+                                        The admin model picker writes concrete ids and shows selection by
+                                        exact equality, so a pattern would display as "0 model(s)
+                                        selected" while permitting more — an authorisation the UI cannot
+                                        show. To grant several models, list them.
+
+                                        A body that is not an array of {providerId, modelId} objects
+                                        (e.g. bare model-code strings) is also rejected with 400
+                                        validation_error.
                                     type: array
                                     items:
                                         type: object
@@ -305,9 +314,14 @@ paths:
                 expiry rule as create/renew applies to any `expiresAt` change: it must be
                 present (a null `expiresAt` — never-expire — is rejected) and in the
                 future; the distance is not bounded. For **personal** keys `expiresAt` is
-                unrestricted and a null value clears the expiry. Non-super-admin callers
-                may only update keys they own. The data plane cache is invalidated so the
-                change takes effect immediately.
+                unrestricted and a null value clears the expiry. Changing `expiresAt`
+                re-derives `vkStatus`, which merely caches the expiry state: a future or
+                cleared date returns an `expired` key to `active`, and a past date marks
+                it `expired` immediately rather than waiting for the hourly expiry job.
+                Only `active` and `expired` participate — a `revoked`, `rejected` or
+                `pending` key keeps its status through an expiry edit. Non-super-admin
+                callers may only update keys they own. The data plane cache is invalidated
+                so the change takes effect immediately.
             x-nexus-iam-action: iam.ResourceVirtualKey.Action(iam.VerbUpdate)
             x-nexus-tier: confirm
             parameters:
@@ -630,13 +644,18 @@ paths:
     /api/admin/virtual-keys/{id}/renew:
         post:
             operationId: renewVirtualKey
-            summary: Renew an active virtual key
+            summary: Renew an active or expired virtual key
             description: |-
-                Extends the expiry of an active application virtual key. `expiresAt` is
-                required and must be in the future; the distance is not bounded.
+                Extends the expiry of an application virtual key and returns it to
+                `active`. `expiresAt` is required and must be in the future; the distance
+                is not bounded. Both `active` and **`expired`** keys are renewable —
+                rescuing an already-expired key is the endpoint's primary purpose, and the
+                new future date means the key is by definition no longer expired. Revoked
+                and rejected keys are not renewable: those are administrative decisions
+                rather than clock positions, and are reversed by issuing a new key.
                 The data plane cache is invalidated so the new expiry takes effect on the
-                next request. Returns 404 when the key is not found, not active, or not an
-                active application key.
+                next request. Returns 404 when the key is not found, is not an application
+                key, or is in a non-renewable status.
             x-nexus-iam-action: iam.ResourceVirtualKey.Action(iam.VerbRenew)
             x-nexus-tier: confirm
             parameters:
@@ -670,7 +689,7 @@ paths:
                                 type: object
                                 additionalProperties: {}
                 "404":
-                    description: Virtual key not found, not active, or not an active application key.
+                    description: Virtual key not found, not an application key, or in a non-renewable status (revoked, rejected, or pending).
                     content:
                         application/json:
                             schema:

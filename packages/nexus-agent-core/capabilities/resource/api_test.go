@@ -1,6 +1,7 @@
 package resource
 
 import (
+	"net/http"
 	"sort"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func TestResourceOperationsExposesFullSurface(t *testing.T) {
 	}
 	var sawNestedGet, sawTwoParamWrite bool
 	for _, op := range ops {
-		if op.OperationID == "getNodeRuntime" && op.Method == "GET" && len(op.Params) == 1 {
+		if op.OperationID == "getNodeRuntime" && op.Method == http.MethodGet && len(op.Params) == 1 {
 			sawNestedGet = true // nested sub-collection GET, previously discarded
 		}
 		if op.OperationID == "setNodeOverride" && op.Mutating && len(op.Params) == 2 {
@@ -72,7 +73,7 @@ func TestSearchCardsSurfacesKindAndOp(t *testing.T) {
 
 func TestDescribeOperation(t *testing.T) {
 	s, ok := DescribeOperation("virtual-keys", "createVirtualKey")
-	if !ok || s.Method != "POST" {
+	if !ok || s.Method != http.MethodPost {
 		t.Fatalf("DescribeOperation(createVirtualKey) = %+v ok=%v", s, ok)
 	}
 	if len(s.Body) == 0 {

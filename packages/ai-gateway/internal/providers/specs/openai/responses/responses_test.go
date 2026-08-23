@@ -13,18 +13,23 @@
 //   - Function tool flat shape (A) → nested shape (B)
 //   - Responses response → canonical choices[0] shape
 //   - Canonical → Responses output[] shape
-//   - Status mapping: completed/incomplete/failed/unknown
+//   - Status mapping: completed/incomplete decode; failed/errored and
+//     in_progress/queued raise a ProviderError instead of decoding to a
+//     success envelope; an unshipped status still decodes
 //   - finish_reason mapping inverse
 //   - IsResponsesBuiltinTool, IsModelSupportedOnResponses
 package responses_test
 
 import (
-	"github.com/goccy/go-json"
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-json"
 	"github.com/tidwall/gjson"
 
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/responses"
 )
 
@@ -136,11 +141,14 @@ func TestDecodeResponsesRequest_scalarPassthroughs(t *testing.T) {
 	if !gjson.GetBytes(out, "stream").Bool() {
 		t.Errorf("stream not preserved")
 	}
-	if gjson.GetBytes(out, "parallel_tool_calls").Bool() != false {
-		// parallel_tool_calls=false should still be present
-		if !gjson.GetBytes(out, "parallel_tool_calls").Exists() {
-			t.Errorf("parallel_tool_calls not preserved")
-		}
+	// An explicit false is the interesting case and the reason the passthrough
+	// exists: the caller is turning parallel tool calls OFF. It was previously
+	// guarded by `if Bool() != false { ... }` over a fixture where the value IS
+	// false, so the assertion never executed and dropping the field from the
+	// codec was caught by no test anywhere.
+	if v := gjson.GetBytes(out, "parallel_tool_calls"); !v.Exists() || v.Bool() {
+		t.Errorf("parallel_tool_calls = %v; a caller's explicit false must survive the "+
+			"decode, or the upstream runs tool calls in parallel against their instruction", v.Raw)
 	}
 }
 
@@ -535,25 +543,57 @@ func TestDecodeResponsesResponse_statusIncomplete_contentFilter(t *testing.T) {
 	}
 }
 
-func TestDecodeResponsesResponse_statusFailed_stop(t *testing.T) {
+// A failed body with no error detail must still be raised, not decoded:
+// the absence of a message is no reason to report success.
+func TestDecodeResponsesResponse_statusFailed_raisesWithoutDetail(t *testing.T) {
 	raw := []byte(`{"id":"resp_6","status":"failed","model":"gpt-5","output":[]}`)
 	out, _, err := responses.DecodeResponsesResponse(raw)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("status:failed decoded to a success body: %s", out)
 	}
-	if gjson.GetBytes(out, "choices.0.finish_reason").String() != "stop" {
-		t.Errorf("finish_reason: got %q, want stop", gjson.GetBytes(out, "choices.0.finish_reason").String())
+	var pe *provcore.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want *provcore.ProviderError, got %T: %v", err, err)
+	}
+	if pe.Code != provcore.CodeUpstreamError {
+		t.Errorf("Code: got %q, want %q", pe.Code, provcore.CodeUpstreamError)
+	}
+	if pe.Message == "" {
+		t.Error("Message must be populated even when the upstream sent no error detail")
+	}
+	if pe.Status != http.StatusBadGateway {
+		t.Errorf("Status: got %d, want %d", pe.Status, http.StatusBadGateway)
 	}
 }
 
-func TestDecodeResponsesResponse_unknownStatus_stop(t *testing.T) {
+func TestDecodeResponsesResponse_statusInProgress_raises(t *testing.T) {
 	raw := []byte(`{"id":"resp_7","status":"in_progress","model":"gpt-5","output":[]}`)
+	out, _, err := responses.DecodeResponsesResponse(raw)
+	if err == nil {
+		t.Fatalf("status:in_progress decoded to a success body: %s", out)
+	}
+	var pe *provcore.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want *provcore.ProviderError, got %T: %v", err, err)
+	}
+	if !strings.Contains(pe.Message, "in_progress") {
+		t.Errorf("Message %q must name the status the body was still in", pe.Message)
+	}
+}
+
+// The default arm stays permissive so a status OpenAI ships later is
+// decoded rather than turned into an outage.
+func TestDecodeResponsesResponse_unshippedStatus_decodes(t *testing.T) {
+	raw := []byte(`{"id":"resp_7b","status":"settled","model":"gpt-5","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}`)
 	out, _, err := responses.DecodeResponsesResponse(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gjson.GetBytes(out, "choices.0.finish_reason").String() != "stop" {
-		t.Errorf("finish_reason for unknown: got %q, want stop", gjson.GetBytes(out, "choices.0.finish_reason").String())
+	if got := gjson.GetBytes(out, "choices.0.message.content").String(); got != "ok" {
+		t.Errorf("content: got %q, want ok", got)
+	}
+	if got := gjson.GetBytes(out, "choices.0.finish_reason").String(); got != "stop" {
+		t.Errorf("finish_reason: got %q, want stop", got)
 	}
 }
 
@@ -839,19 +879,56 @@ func TestDecodeResponsesRequest_refusalPart_treatedAsText(t *testing.T) {
 	}
 }
 
-func TestDecodeResponsesRequest_inputFile_preservedAsTextMarker(t *testing.T) {
-	raw := []byte(`{"model":"gpt-5","input":[{"role":"user","content":[{"type":"input_file","filename":"report.pdf"}]}]}`)
+// A file the caller uploaded must reach the canonical as a file, with its
+// bytes. This test previously asserted the opposite — that input_file became a
+// text part reading "[nexus: input_file report.pdf preserved]" — which pinned
+// the defect rather than the contract: the bytes were discarded, the model
+// answered about a filename it could not read, and the caller got a 200.
+func TestDecodeResponsesRequest_inputFile_carriesTheFileNotANoteAboutIt(t *testing.T) {
+	raw := []byte(`{"model":"gpt-5","input":[{"role":"user","content":[{"type":"input_file","filename":"report.pdf","file_data":"data:application/pdf;base64,JVBERi0x"}]}]}`)
 	out, err := responses.DecodeResponsesRequest(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	msgs := gjson.GetBytes(out, "messages").Array()
-	content := msgs[0].Get("content").Array()
-	if len(content) != 1 || content[0].Get("type").String() != "text" {
-		t.Errorf("input_file part: %v", content)
+	content := gjson.GetBytes(out, "messages").Array()[0].Get("content").Array()
+	if len(content) != 1 || content[0].Get("type").String() != "file" {
+		t.Fatalf("input_file must canonicalize to a chat file part, got: %v", content)
 	}
-	if !strings.Contains(content[0].Get("text").String(), "report.pdf") {
-		t.Errorf("input_file marker: got %q", content[0].Get("text").String())
+	if got := content[0].Get("file.filename").String(); got != "report.pdf" {
+		t.Errorf("filename = %q, want report.pdf", got)
+	}
+	if got := content[0].Get("file.file_data").String(); got != "data:application/pdf;base64,JVBERi0x" {
+		t.Errorf("file_data = %q; the document bytes must survive canonicalization", got)
+	}
+	if strings.Contains(string(out), "preserved") {
+		t.Errorf("canonical still carries a placeholder note instead of the file: %s", out)
+	}
+}
+
+// The identity lane: a file that canonicalizes must encode back to a shape
+// /v1/responses accepts. Without the reverse mapping the canonical file part
+// falls through to the pass-through branch and reaches the API as a chat-shaped
+// {"type":"file"}, which it rejects — so the file would survive the decode only
+// to die on the way back out.
+func TestResponsesRequestFromCanonical_fileReturnsAsInputFile(t *testing.T) {
+	raw := []byte(`{"model":"gpt-5","input":[{"role":"user","content":[{"type":"input_file","filename":"report.pdf","file_data":"data:application/pdf;base64,JVBERi0x"}]}]}`)
+	canonical, err := responses.DecodeResponsesRequest(raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	back, err := responses.EncodeResponsesRequest(canonical)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	part := gjson.GetBytes(back, "input").Array()[0].Get("content").Array()[0]
+	if part.Get("type").String() != "input_file" {
+		t.Fatalf("canonical file must encode back to input_file, got %s", part.Raw)
+	}
+	if got := part.Get("file_data").String(); got != "data:application/pdf;base64,JVBERi0x" {
+		t.Errorf("file_data = %q, want the original bytes back", got)
+	}
+	if got := part.Get("filename").String(); got != "report.pdf" {
+		t.Errorf("filename = %q, want report.pdf", got)
 	}
 }
 

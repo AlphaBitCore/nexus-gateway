@@ -1,9 +1,13 @@
 package mq
 
 import (
+	"encoding/binary"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 )
 
 // TestBinwireFieldRegistryNoDrift keeps the binary field-id registry in lockstep
@@ -52,6 +56,115 @@ func TestBinwireFieldIDsUniqueAndContiguous(t *testing.T) {
 			t.Fatalf("field id %d missing — ids must fill 1..%d except documented reservations", n, maxID)
 		}
 	}
+}
+
+// TestBinwireRoundTrip_RouterAndEmbeddingProviderFields proves AppendBinary
+// serializes the three vendor-spend attribution fields (router_cost_usd,
+// router_provider_id, embedding_provider_id) correctly at the byte level. The
+// mq package owns only the ENCODE side of the wire codec (decode lives in
+// nexus-hub's consumer package, an internal package this test cannot import),
+// so this uses decodeTrafficEventForTest — a minimal local TLV walker scoped
+// to exactly the field kinds a message built this way emits — rather than the
+// production decoder. The real end-to-end round trip (encode here, decode via
+// the actual Hub decoder) is TestDecodeTrafficEvent_RouterAndEmbeddingProviderFields
+// in packages/nexus-hub/internal/observability/consumer.
+func TestBinwireRoundTrip_RouterAndEmbeddingProviderFields(t *testing.T) {
+	cost := 0.0066
+	in := TrafficEventMessage{
+		ID:                  "evt-1",
+		Source:              "ai-gateway",
+		RouterCostUsd:       &cost,
+		RouterProviderID:    "prov-openai",
+		EmbeddingProviderID: "prov-openai-embed",
+	}
+
+	out := decodeTrafficEventForTest(t, in.AppendBinary(nil))
+	if out.RouterCostUsd == nil || *out.RouterCostUsd != cost {
+		t.Errorf("RouterCostUsd = %v, want %v", out.RouterCostUsd, cost)
+	}
+	if out.RouterProviderID != "prov-openai" {
+		t.Errorf("RouterProviderID = %q, want %q", out.RouterProviderID, "prov-openai")
+	}
+	if out.EmbeddingProviderID != "prov-openai-embed" {
+		t.Errorf("EmbeddingProviderID = %q, want %q", out.EmbeddingProviderID, "prov-openai-embed")
+	}
+}
+
+// decodedTrafficEventForTest holds the subset of decoded fields
+// TestBinwireRoundTrip_RouterAndEmbeddingProviderFields asserts on.
+type decodedTrafficEventForTest struct {
+	RouterCostUsd       *float64
+	RouterProviderID    string
+	EmbeddingProviderID string
+}
+
+// decodeTrafficEventForTest walks one binary TLV record produced by
+// AppendBinary, recognizing only the field-ids a message built like
+// TestBinwireRoundTrip_RouterAndEmbeddingProviderFields's `in` emits
+// (the always-on header, the three new vendor-spend fields, and the two
+// always-on absent bodies). It fails the test on any other id rather than
+// silently skip it, since skipping an unknown TLV value requires knowing its
+// length, which this deliberately-minimal walker does not track for the full
+// field registry — that full decode is the production Hub decoder's job
+// (packages/nexus-hub/internal/observability/consumer/binwire_decode.go).
+func decodeTrafficEventForTest(t *testing.T, data []byte) decodedTrafficEventForTest {
+	t.Helper()
+	var out decodedTrafficEventForTest
+	n := 0
+	for n < len(data) {
+		id, idLen := binary.Uvarint(data[n:])
+		if idLen <= 0 {
+			t.Fatalf("bad field-id uvarint at offset %d", n)
+		}
+		n += idLen
+		switch FieldID(id) {
+		case FldID, FldSource:
+			ln, lnLen := binary.Uvarint(data[n:])
+			if lnLen <= 0 {
+				t.Fatalf("bad length uvarint for field %d at offset %d", id, n)
+			}
+			n += lnLen + int(ln)
+		case FldTimestamp, FldLatencyMs:
+			_, vLen := binary.Varint(data[n:])
+			if vLen <= 0 {
+				t.Fatalf("bad varint for field %d at offset %d", id, n)
+			}
+			n += vLen
+		case FldRouterCostUsd:
+			if n+8 > len(data) {
+				t.Fatalf("short read decoding FldRouterCostUsd")
+			}
+			v := math.Float64frombits(binary.LittleEndian.Uint64(data[n:]))
+			out.RouterCostUsd = &v
+			n += 8
+		case FldRouterProviderID:
+			ln, lnLen := binary.Uvarint(data[n:])
+			if lnLen <= 0 {
+				t.Fatalf("bad length uvarint for FldRouterProviderID at offset %d", n)
+			}
+			n += lnLen
+			out.RouterProviderID = string(data[n : n+int(ln)])
+			n += int(ln)
+		case FldEmbeddingProviderID:
+			ln, lnLen := binary.Uvarint(data[n:])
+			if lnLen <= 0 {
+				t.Fatalf("bad length uvarint for FldEmbeddingProviderID at offset %d", n)
+			}
+			n += lnLen
+			out.EmbeddingProviderID = string(data[n : n+int(ln)])
+			n += int(ln)
+		case FldRequestBody, FldResponseBody:
+			_, consumed, err := audit.ReadBodyBinary(data[n:])
+			if err != nil {
+				t.Fatalf("ReadBodyBinary: %v", err)
+			}
+			n += consumed
+		default:
+			t.Fatalf("unexpected field id %d in minimal test record (decodeTrafficEventForTest "+
+				"only recognizes the fields this test's message construction emits)", id)
+		}
+	}
+	return out
 }
 
 func countJSONTaggedFields(tp reflect.Type) int {

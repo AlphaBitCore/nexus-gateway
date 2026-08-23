@@ -198,6 +198,36 @@ func binwireRoundTripCases() []binwireCase {
 	}
 }
 
+// TestDecodeTrafficEvent_RouterAndEmbeddingProviderFields is the real
+// end-to-end round trip for the three vendor-spend attribution fields: encode
+// via mq.TrafficEventMessage.AppendBinary (the producer side, exercised in
+// packages/shared/transport/mq/binwire_test.go), decode via the Hub's actual
+// production decoder decodeBinaryRecord (this package's binwire_decode.go).
+func TestDecodeTrafficEvent_RouterAndEmbeddingProviderFields(t *testing.T) {
+	cost := 0.0066
+	encoded := (&mq.TrafficEventMessage{
+		ID:                  "evt-2",
+		Source:              "ai-gateway",
+		RouterCostUsd:       &cost,
+		RouterProviderID:    "prov-openai",
+		EmbeddingProviderID: "prov-openai-embed",
+	}).AppendBinary(nil)
+
+	got, err := decodeBinaryRecord(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.RouterCostUsd == nil || *got.RouterCostUsd != cost {
+		t.Errorf("RouterCostUsd = %v, want %v", got.RouterCostUsd, cost)
+	}
+	if got.RouterProviderID != "prov-openai" {
+		t.Errorf("RouterProviderID = %q", got.RouterProviderID)
+	}
+	if got.EmbeddingProviderID != "prov-openai-embed" {
+		t.Errorf("EmbeddingProviderID = %q", got.EmbeddingProviderID)
+	}
+}
+
 func rawPtr(s string) *json.RawMessage {
 	r := json.RawMessage(s)
 	return &r

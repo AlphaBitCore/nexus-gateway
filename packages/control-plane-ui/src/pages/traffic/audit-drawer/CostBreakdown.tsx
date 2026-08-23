@@ -59,8 +59,17 @@ export function CostBreakdown({
   // inside completion at output rate, so we exclude it
   // from this sum to avoid double-count.
   const primary = (uncachedCost ?? 0) + (cachedReadCost ?? 0) + (cachedWriteCost ?? 0) + (outputCost ?? 0);
+  // Modality rows (image / tts / rerank) carry no prompt/completion tokens, so
+  // the per-component recompute above is 0. Rather than hide the whole panel,
+  // surface the gateway's stamped per-unit total (traffic_event.
+  // estimated_cost_usd) as a single upstream line — the authoritative cost the
+  // gateway already computed for the endpoint's own unit (images / characters /
+  // search units). Only used when the token recompute produced nothing, so
+  // token rows never double-count.
+  const stampedTotal = e.estimatedCostUsd ?? 0;
+  const modalityCost = primary === 0 && stampedTotal > 0 ? stampedTotal : 0;
   if (
-    primary === 0 && reasoning === 0 && embedding === 0 &&
+    primary === 0 && modalityCost === 0 && reasoning === 0 && embedding === 0 &&
     aiGuard === 0 && breakdownTotal === 0 && gatewaySavings === 0
   ) {
     return null;
@@ -84,7 +93,7 @@ export function CostBreakdown({
   // section subtotal. That keeps the math identity intact:
   //   Provider total + Internal-ops total = Net total.
   const internalOpsCost = embedding + breakdownTotal + aiGuard;
-  const netSpend = primary + internalOpsCost;
+  const netSpend = primary + modalityCost + internalOpsCost;
   // vsBaseline = net spend with Nexus − naive without Nexus.
   // Positive = paid more (typical when caching adds write
   // surcharge or ai-guard adds security cost). Negative =
@@ -172,6 +181,28 @@ export function CostBreakdown({
               <tr style={{ borderTop: '1px solid var(--g-color-border-subtle)' }}>
                 <td style={{ ...labelCell(), fontWeight: 'var(--g-font-weight-semibold)' }}>{t('pages:traffic.detail.costs.section.upstreamSubtotal')}</td>
                 <td style={monoRightStrong}>{fmtCost(primary)}</td>
+              </tr>
+            </>
+          )}
+
+          {/* ─── 1b. Upstream provider cost — modality (per-unit) ───
+              image / tts / rerank have no token decomposition; the
+              gateway's stamped per-unit total stands in for the
+              component rows so the panel is not hidden. */}
+          {modalityCost > 0 && (
+            <>
+              <tr>
+                <td colSpan={2} style={sectionHeader}>
+                  {t('pages:traffic.detail.costs.section.upstream')}
+                </td>
+              </tr>
+              <tr>
+                <td style={labelCell(true)}>{t('pages:traffic.detail.costs.modality')}</td>
+                <td style={monoRight}>{fmtCost(modalityCost)}</td>
+              </tr>
+              <tr style={{ borderTop: '1px solid var(--g-color-border-subtle)' }}>
+                <td style={{ ...labelCell(), fontWeight: 'var(--g-font-weight-semibold)' }}>{t('pages:traffic.detail.costs.section.upstreamSubtotal')}</td>
+                <td style={monoRightStrong}>{fmtCost(modalityCost)}</td>
               </tr>
             </>
           )}

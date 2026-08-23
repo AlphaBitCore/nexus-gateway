@@ -77,17 +77,19 @@ func (s *smartStoreDB) listEnabled(ctx context.Context, accept func(modelType st
 		}
 
 		row := SmartModelRow{
-			ModelID:          m.ID,
-			ModelCode:        m.Code,
-			ModelName:        m.Name,
-			ProviderID:       m.ProviderID,
-			ProviderName:     p.Name,
-			ProviderModelID:  m.ProviderModelID,
-			InputPricePM:     m.InputPricePM,
-			OutputPricePM:    m.OutputPricePM,
-			Features:         m.Features,
-			MaxContextTokens: m.MaxContextTokens,
-			MaxOutputTokens:  m.MaxOutputTokens,
+			ModelID:            m.ID,
+			ModelCode:          m.Code,
+			ModelName:          m.Name,
+			ProviderID:         m.ProviderID,
+			ProviderName:       p.Name,
+			ProviderModelID:    m.ProviderModelID,
+			InputPricePM:       m.InputPricePM,
+			OutputPricePM:      m.OutputPricePM,
+			Features:           m.Features,
+			InputModalities:    NormalizeModalities(m.InputModalities),
+			RequiredModalities: NormalizeModalities(m.RequiredModalities),
+			MaxContextTokens:   m.MaxContextTokens,
+			MaxOutputTokens:    m.MaxOutputTokens,
 		}
 		rows = append(rows, row)
 	}

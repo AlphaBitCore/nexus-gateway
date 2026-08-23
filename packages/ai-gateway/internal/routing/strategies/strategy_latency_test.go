@@ -41,7 +41,7 @@ func latencyNode(providers ...string) core.StrategyNode {
 func evalLatency(t *testing.T, s *LatencyStrategy, node core.StrategyNode) ([]core.RoutingTarget, []core.TraceEntry) {
 	t.Helper()
 	var trace []core.TraceEntry
-	got, err := s.Evaluate(context.Background(), node, &core.RoutingContext{}, &trace, 0, nil)
+	got, err := s.Evaluate(context.Background(), node, &core.RoutingContext{}, &trace)
 	if err != nil {
 		t.Fatalf("Evaluate returned error: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestLatencyStrategy_RegisteredAndDispatches(t *testing.T) {
 	reg := NewStrategyRegistry()
 	RegisterAllStrategies(reg, mockLookup, nil, nil)
 	var trace []core.TraceEntry
-	got, err := reg.Evaluate(context.Background(), latencyNode("a", "b"), &core.RoutingContext{}, &trace, 0)
+	got, err := reg.Evaluate(context.Background(), latencyNode("a", "b"), &core.RoutingContext{}, &trace)
 	if err != nil {
 		t.Fatalf("registry Evaluate error: %v", err)
 	}

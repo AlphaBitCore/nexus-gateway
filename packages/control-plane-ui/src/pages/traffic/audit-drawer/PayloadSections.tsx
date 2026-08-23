@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { SpillRef } from '@/api/types';
 import { Stack } from '@/components/ui';
 import { CopyJsonButton } from '../../governance/adminAuditLogShared';
@@ -47,7 +48,26 @@ export function JsonSection({ label, value }: { label: string; value: unknown })
 // size, sha256) is also threaded through so the drawer can show a
 // "Stored externally" badge — matters for ops who want to know whether
 // a body sits in a shared bucket vs inline in the database.
-export function PayloadSection({ label, value, spillRef }: { label: string; value: unknown; spillRef?: SpillRef | null }) {
+//
+// `truncated` / `sizeBytes` come from traffic_event_payload. They say the STORED
+// copy is a prefix and how many bytes were actually captured. This is the case
+// spillRef is the absence of: no spill backend configured, so an oversize body
+// was cut at the inline cutoff. Rendering that prefix without saying so is what
+// made a cut-off SSE stream look like a response the model never finished.
+export function PayloadSection({
+  label,
+  value,
+  spillRef,
+  truncated,
+  sizeBytes,
+}: {
+  label: string;
+  value: unknown;
+  spillRef?: SpillRef | null;
+  truncated?: boolean;
+  sizeBytes?: number | null;
+}) {
+  const { t } = useTranslation();
   const hasValue = value != null && value !== '' &&
     !(typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0);
   if (!hasValue && !spillRef) return null;
@@ -69,6 +89,13 @@ export function PayloadSection({ label, value, spillRef }: { label: string; valu
           {spillRef ? (
             <span title={`Backend: ${spillRef.backend}\nKey: ${spillRef.key}${spillRef.sha256 ? `\nsha256: ${spillRef.sha256}` : ''}`} className={css.mono}>
               [externally stored · {formatBytes(spillRef.size)} · {spillRef.backend}]
+            </span>
+          ) : null}
+          {truncated ? (
+            <span className={css.truncatedBadge} title={t('pages:traffic.detail.payload.truncatedHint')}>
+              {sizeBytes != null && sizeBytes > 0
+                ? t('pages:traffic.detail.payload.truncatedBadgeWithSize', { size: formatBytes(sizeBytes) })
+                : t('pages:traffic.detail.payload.truncatedBadge')}
             </span>
           ) : null}
         </Stack>

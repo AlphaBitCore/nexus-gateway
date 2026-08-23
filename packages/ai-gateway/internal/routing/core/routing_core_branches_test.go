@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 func TestFormatTargetFriendly_nilTarget_safeString(t *testing.T) {
@@ -77,63 +78,6 @@ func TestFormatTargetPath_populated(t *testing.T) {
 	}
 }
 
-func TestMatchGlob_wildcardStar_matchesAll(t *testing.T) {
-	if !MatchGlob("*", "anything") {
-		t.Error("* should match anything")
-	}
-	if !MatchGlob("*", "") {
-		t.Error("* should match empty string")
-	}
-}
-
-func TestMatchGlob_exactMatch_noWildcard(t *testing.T) {
-	if !MatchGlob("gpt-5", "gpt-5") {
-		t.Error("exact match should return true")
-	}
-	if MatchGlob("gpt-5", "gpt-4o") {
-		t.Error("exact non-match should return false")
-	}
-}
-
-func TestMatchGlob_suffixWildcard(t *testing.T) {
-	if !MatchGlob("gpt-*", "gpt-5") {
-		t.Error("prefix glob should match")
-	}
-	if !MatchGlob("gpt-*", "gpt-4o-mini") {
-		t.Error("prefix glob should match longer string")
-	}
-	if MatchGlob("gpt-*", "claude-sonnet") {
-		t.Error("prefix glob should not match different prefix")
-	}
-}
-
-func TestMatchGlob_prefixWildcard(t *testing.T) {
-	if !MatchGlob("*-mini", "gpt-4o-mini") {
-		t.Error("suffix glob should match")
-	}
-	if MatchGlob("*-mini", "gpt-4o") {
-		t.Error("suffix glob should not match non-suffix")
-	}
-}
-
-func TestMatchGlob_tooLongPattern_returnsFalse(t *testing.T) {
-	// Pattern longer than maxRegexLen (200) with a wildcard → getCachedGlobRegex returns nil → false.
-	longPattern := strings.Repeat("a*", 110) // 220 chars, exceeds 200
-	if MatchGlob(longPattern, "aaa") {
-		t.Error("too-long pattern should return false")
-	}
-}
-
-func TestMatchGlob_cachedPattern_secondCallUsesCache(t *testing.T) {
-	// Call twice with same pattern to exercise the cache hit path.
-	if !MatchGlob("cached-*", "cached-value") {
-		t.Error("first call: expected true")
-	}
-	if !MatchGlob("cached-*", "cached-other") {
-		t.Error("second call (cached): expected true")
-	}
-}
-
 func TestModelMatchesAllowedRefs_emptyRefs_unrestricted(t *testing.T) {
 	if !ModelMatchesAllowedRefs("model-id", "provider-model", "prov-id", nil) {
 		t.Error("empty refs should return true (unrestricted)")
@@ -167,12 +111,23 @@ func TestModelMatchesAllowedRefs_wrongProvider_noMatch(t *testing.T) {
 	}
 }
 
-func TestModelMatchesAllowedRefs_globPattern_matches(t *testing.T) {
+// A pattern is NOT a wildcard here — it is a literal that matches nothing.
+//
+// This test asserted the opposite. Globbing an allowed-model ref makes the admin
+// picker misreport the key: the picker writes concrete UUIDs and decides a
+// checkbox by exact equality, so a `gpt-*` ref (writable only via the API)
+// matches no box, renders as "0 model(s) selected", and silently permits every
+// gpt model. Showing less access than a key has is the dangerous direction.
+func TestModelMatchesAllowedRefs_patternIsLiteralNotWildcard(t *testing.T) {
 	refs := []store.AllowedModelRef{
 		{ProviderID: "prov-1", ModelID: "gpt-*"},
 	}
-	if !ModelMatchesAllowedRefs("gpt-5", "gpt-5", "prov-1", refs) {
-		t.Error("glob pattern should match")
+	if ModelMatchesAllowedRefs("gpt-5", "gpt-5", "prov-1", refs) {
+		t.Error("a '*' in an allowed-model ref must not act as a wildcard — the picker cannot render one, " +
+			"so the key would permit more than the UI shows")
+	}
+	if !ModelMatchesAllowedRefs("gpt-*", "gpt-*", "prov-1", refs) {
+		t.Error("the ref should still match a model literally named 'gpt-*', however unlikely")
 	}
 }
 
@@ -332,21 +287,73 @@ func TestNoCompatibleProviderError_EmptyAvailable(t *testing.T) {
 	}
 }
 
-// getCachedGlobRegex: invalid regex path
+// TestListEnabledCandidates_TheKindDecidesTheCandidateSet.
+//
+// `model=auto` on an image endpoint must not draw from the chat pool. If it
+// does, the router is handed models that cannot produce an image and picks one
+// on the strength of its description; the request fails at the provider with a
+// wire error about an unsupported field, and the trace shows a deliberate
+// selection — the one shape of failure that reads as correct behaviour.
+//
+// The mirror matters just as much: a chat request must not be offered an
+// image-only model, which is why both directions are asserted against the same
+// catalogue rather than one direction against a convenient one.
+func TestListEnabledCandidates_TheKindDecidesTheCandidateSet(t *testing.T) {
+	catalog := &stubSmartCatalog{
+		models: []store.Model{
+			{ID: "m1", Code: "gpt-5", Name: "GPT-5", Type: "chat", ProviderID: "prov-1"},
+			{ID: "m2", Code: "dall-e-3", Name: "DALL-E 3", Type: "image", ProviderID: "prov-1"},
+		},
+		provider: &store.Provider{ID: "prov-1", Name: "openai", Enabled: true},
+	}
+	ss := NewSmartStoreDB(catalog)
 
-// TestMatchGlob_invalidRegex — a glob pattern that produces an invalid regex
-// (regexp.Compile error) should return false without panicking.
-func TestMatchGlob_invalidRegex(t *testing.T) {
-	// Build a pattern that, after QuoteMeta + replacing \* → .*, produces an
-	// invalid regex. regexp.QuoteMeta escapes all meta chars, so we need a
-	// pattern that contains a valid-looking glob but after transformation yields
-	// bad regex. The easiest approach: force the regex compile to fail via a
-	// pattern whose escaped form exceeds nothing (regexp.Compile never fails on
-	// escaped input), so instead directly call getCachedGlobRegex with a bad
-	// pattern (not via MatchGlob, since MatchGlob only calls it for wildcard patterns).
-	// getCachedGlobRegex is package-internal, so we call it here.
-	result := getCachedGlobRegex("(invalid[") // malformed regex
-	if result != nil {
-		t.Error("expected nil for invalid regex pattern")
+	for _, tc := range []struct {
+		kind typology.EndpointKind
+		want string
+	}{
+		{typology.EndpointKindImageGeneration, "dall-e-3"},
+		{typology.EndpointKindChat, "gpt-5"},
+	} {
+		rows, err := ss.ListEnabledCandidates(context.Background(), tc.kind)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.kind, err)
+		}
+		if len(rows) != 1 || rows[0].ModelCode != tc.want {
+			got := make([]string, len(rows))
+			for i, r := range rows {
+				got[i] = r.ModelCode
+			}
+			t.Errorf("%s candidates = %v, want exactly [%s] — the router would be offered a "+
+				"model that cannot serve this endpoint, choose it on its description, and the "+
+				"failure would arrive from the provider looking like a correct decision",
+				tc.kind, got, tc.want)
+		}
+	}
+}
+
+// TestNormalizeModalities_LowersOnlyWhenARowActuallyNeedsIt.
+//
+// Routing compares modalities exactly, so the catalogue's values are lowered
+// once at load. A row already lower-case must come back as the SAME slice: this
+// runs per catalogue row on every reload, and allocating a copy for rows that
+// need no change was the measured cost the single-pass shape exists to avoid.
+func TestNormalizeModalities_LowersOnlyWhenARowActuallyNeedsIt(t *testing.T) {
+	already := []string{"text", "image"}
+	if got := NormalizeModalities(already); &got[0] != &already[0] {
+		t.Error("an already-lower-case row was copied; the no-change path must return the input")
+	}
+
+	mixed := []string{"text", "Image", "AUDIO"}
+	got := NormalizeModalities(mixed)
+	want := []string{"text", "image", "audio"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("normalized = %v, want %v — a mixed-case row leaves routing comparing "+
+				"%q against %q and finding no match", got, want, mixed[i], want[i])
+		}
+	}
+	if mixed[1] != "Image" {
+		t.Error("the input slice was mutated; /v1/models publishes these values verbatim")
 	}
 }

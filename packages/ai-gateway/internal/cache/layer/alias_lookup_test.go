@@ -7,18 +7,13 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 )
 
-// aliases column index in the loadModels SELECT (see modelCols /
-// makeModelRow in helpers_test.go — 3 audio price columns sit between the
-// cache prices and features).
-const aliasesCol = 21
-
 // TestGetModelByCodeOrAlias_ResolvesCodeAndAlias asserts the O(1) code-or-alias
 // index resolves both a model's code and each of its aliases to the same model,
 // while GetModelByCode stays strict (aliases miss).
 func TestGetModelByCodeOrAlias_ResolvesCodeAndAlias(t *testing.T) {
 	mock, l := newMockLayer(t, Config{})
 	row := makeModelRow("m1", "opus", "p1", true)
-	row[aliasesCol] = []string{"fast", "smart"}
+	row[modelColIdx("aliases")] = []string{"fast", "smart"}
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(row...))
 	if _, err := l.loadModels(context.Background()); err != nil {
@@ -49,7 +44,7 @@ func TestGetModelByCodeOrAlias_CodeWinsOverAliasCollision(t *testing.T) {
 	mock, l := newMockLayer(t, Config{})
 	rowA := makeModelRow("mA", "shared", "p1", true) // real code "shared"
 	rowB := makeModelRow("mB", "other", "p1", true)
-	rowB[aliasesCol] = []string{"shared"} // alias collides with A's code
+	rowB[modelColIdx("aliases")] = []string{"shared"} // alias collides with A's code
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(rowA...).AddRow(rowB...))
 	if _, err := l.loadModels(context.Background()); err != nil {
@@ -69,7 +64,7 @@ func TestGetModelByCodeOrAlias_CodeWinsOverAliasCollision(t *testing.T) {
 func TestGetModelByCodeOrAlias_DisabledExcluded(t *testing.T) {
 	mock, l := newMockLayer(t, Config{})
 	row := makeModelRow("m1", "opus", "p1", false) // disabled
-	row[aliasesCol] = []string{"fast"}
+	row[modelColIdx("aliases")] = []string{"fast"}
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(row...))
 	if _, err := l.loadModels(context.Background()); err != nil {
@@ -80,5 +75,23 @@ func TestGetModelByCodeOrAlias_DisabledExcluded(t *testing.T) {
 	}
 	if _, err := l.GetModelByCodeOrAlias(context.Background(), "opus"); !IsNotFound(err) {
 		t.Errorf("disabled model's code must not resolve; got %v", err)
+	}
+}
+
+// TestGetModelByCodeAlias_NilIndexIsNotAMiss — the alias index carries the
+// same distinction as the code index, and this is the lookup that produced the
+// staging incident: the routing passthrough calls GetModelByCodeOrAlias, and
+// on 2026-08-11 it answered "no available provider for model X / Ensure the
+// model exists and is enabled" for six models that existed and were enabled
+// the entire time, because the index had not loaded.
+func TestGetModelByCodeAlias_NilIndexIsNotAMiss(t *testing.T) {
+	mock, l := newMockLayer(t, Config{})
+	_ = mock
+	_, err := l.GetModelByCodeOrAlias(context.Background(), "claude-sonnet-4-6")
+	if !IsIndexUnavailable(err) {
+		t.Errorf("nil alias index must report index-unavailable; got %v", err)
+	}
+	if IsNotFound(err) {
+		t.Errorf("an unloaded index must not be reported as a missing model; got %v", err)
 	}
 }

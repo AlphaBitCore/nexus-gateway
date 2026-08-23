@@ -7,28 +7,24 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
-// applyModalityGuard drops every target whose catalog model type cannot serve
-// the request's endpoint modality — so no routing strategy (single, loadbalance,
-// conditional, latency, smart, fallback) dispatches a cross-modality model, e.g.
-// an image model for a chat request or a chat model auto-routed onto an image
-// endpoint. A drop is surfaced (WARN + pipeline-trace entry) rather than silent,
-// so an operator debugging a downstream 404 sees the modality guard as the
-// cause. Runs on the routing hot path: one inlined string comparison per target,
-// filtered in place with no allocation.
-func (r *Resolver) applyModalityGuard(targets []core.RoutingTarget, rctx *core.RoutingContext, plan *core.RoutingPlan) []core.RoutingTarget {
-	kept, dropped := filterByModality(targets, rctx.EndpointType)
+// reportModalityDrops records a cross-modality drop once for the whole request.
+//
+// The guard runs over each plan list separately, so the count has to be summed
+// before it is reported: two entries saying "dropped 1" read as two unrelated
+// events, and an operator counting them against the plan finds one target
+// missing and two explanations.
+func (r *Resolver) reportModalityDrops(plan *core.RoutingPlan, rctx *core.RoutingContext, dropped, remaining int) {
 	if dropped > 0 {
 		r.logger.Warn("routing: dropped cross-modality targets",
 			"endpoint", rctx.EndpointType,
 			"model", rctx.RequestedModel.ID,
 			"dropped", dropped,
-			"remaining", len(kept))
+			"remaining", remaining)
 		plan.PipelineTrace = append(plan.PipelineTrace, core.PipelineTraceEntry{
 			Stage:    2,
 			Decision: fmt.Sprintf("modality guard dropped %d target(s) not servable by %s", dropped, rctx.EndpointType),
 		})
 	}
-	return kept
 }
 
 // filterByModality drops every target whose catalog model type cannot serve

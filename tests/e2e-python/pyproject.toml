@@ -20,8 +20,10 @@ dependencies = [
 timeout = 60
 # AI-judge tests are noisy by design (they print verdicts + reasoning).
 addopts = "-ra --tb=short"
-testpaths = ["ai_judge", "protocol"]
+testpaths = ["ai_judge", "protocol", "sdk_compat"]
 markers = [
   "ai_judge: tests that consult Kimi 128k via Nexus VK as an oracle (slow, costs tokens)",
   "protocol: SDK protocol-compatibility tests (drop-in OpenAI / Anthropic)",
+  "sdk_compat: AP-3 OpenAI SDK drop-in compatibility suite (L2)",
+  "slow: uploads a large body or otherwise runs long; deselect with -m 'not slow'",
 ]

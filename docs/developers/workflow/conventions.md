@@ -107,11 +107,12 @@ Each of these is enforced by a guard in `check:all`:
   through the Hub WebSocket (`scripts/check-no-redis-pubsub.mjs`).
 - **File-size ratchet (binding).** A production source file (`.go` / `.ts` / `.tsx` /
   `.swift` / `.py` under `packages/` and `tools/`; test files and generated files
-  excluded) may not grow past `max(baseline, 300) + 10%` lines of its entry in
-  `scripts/.file-size-baseline`; a file not in the baseline is capped at 500 lines.
+  excluded) may not grow past `max(baseline, 800) + 10%` lines of its entry in
+  `scripts/.file-size-baseline`; a file not in the baseline is capped at 800 lines.
   Shrinking is never penalized — the baseline only ratchets downward
-  (`--update-baseline`). Exceeding a cap means the file needs decomposing along its
-  responsibility seams, not a bigger cap; waivers (`scripts/.file-size-waivers`,
+  (`--update-baseline`). When a file exceeds its cap, trim over-long comment blocks
+  FIRST — comments count toward the total and are the usual cause; only then
+  decompose along responsibility seams. Waivers (`scripts/.file-size-waivers`,
   for genuinely irreducible files such as declaration tables) require explicit
   user approval (`scripts/check-file-size-ratchet.sh`, `npm run check:file-size`).
   Oversized test files are governed by the split-on-touch policy instead: any

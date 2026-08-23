@@ -12,11 +12,17 @@
       "providerModelId": "gpt-5.6-sol",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 30,
@@ -31,11 +37,17 @@
       "providerModelId": "gpt-5.6-terra",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2.5,
       "outputPricePerMillion": 15,
@@ -50,11 +62,17 @@
       "providerModelId": "gpt-5.6-luna",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1,
       "outputPricePerMillion": 6,
@@ -69,11 +87,17 @@
       "providerModelId": "gpt-5.5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 30,
@@ -88,11 +112,17 @@
       "providerModelId": "gpt-5.4",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2.5,
       "outputPricePerMillion": 15,
@@ -107,11 +137,17 @@
       "providerModelId": "gpt-5.4-mini",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.75,
       "outputPricePerMillion": 4.5,
@@ -131,6 +167,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 1.25,
       "cachedInputReadPricePerMillion": 0.02,
@@ -144,11 +186,17 @@
       "providerModelId": "gpt-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.25,
       "outputPricePerMillion": 10,
@@ -163,11 +211,17 @@
       "providerModelId": "gpt-5-mini",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.25,
       "outputPricePerMillion": 2,
@@ -182,10 +236,16 @@
       "providerModelId": "gpt-4.1",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 8,
@@ -200,10 +260,16 @@
       "providerModelId": "gpt-4.1-mini",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.4,
       "outputPricePerMillion": 1.6,
@@ -218,10 +284,16 @@
       "providerModelId": "gpt-4.1-nano",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.1,
       "outputPricePerMillion": 0.4,
@@ -240,6 +312,12 @@
         "streaming",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 8,
       "cachedInputReadPricePerMillion": 0.5,
@@ -256,6 +334,12 @@
         "function_calling",
         "streaming",
         "reasoning"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.1,
       "outputPricePerMillion": 4.4,
@@ -274,6 +358,12 @@
         "streaming",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 15,
       "outputPricePerMillion": 60,
       "cachedInputReadPricePerMillion": 7.5,
@@ -287,9 +377,15 @@
       "providerModelId": "gpt-4o",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2.5,
       "outputPricePerMillion": 10,
@@ -304,9 +400,15 @@
       "providerModelId": "gpt-4o-mini",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.165,
       "outputPricePerMillion": 0.66,
@@ -321,6 +423,12 @@
       "providerModelId": "text-embedding-3-small",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.02,
       "outputPricePerMillion": 0,
       "maxContextTokens": 8191
@@ -332,6 +440,12 @@
       "providerModelId": "text-embedding-3-large",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.13,
       "outputPricePerMillion": 0,
       "maxContextTokens": 8191

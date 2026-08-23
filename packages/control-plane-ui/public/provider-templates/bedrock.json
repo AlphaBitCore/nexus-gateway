@@ -12,11 +12,17 @@
       "providerModelId": "anthropic.claude-opus-4-8",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 25,
@@ -32,11 +38,17 @@
       "providerModelId": "anthropic.claude-opus-4-7",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 25,
@@ -52,11 +64,17 @@
       "providerModelId": "anthropic.claude-sonnet-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 10,
@@ -72,11 +90,17 @@
       "providerModelId": "anthropic.claude-sonnet-4-6",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 3,
       "outputPricePerMillion": 15,
@@ -92,11 +116,17 @@
       "providerModelId": "anthropic.claude-fable-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 10,
       "outputPricePerMillion": 50,
@@ -112,10 +142,16 @@
       "providerModelId": "amazon.nova-2-lite-v1:0",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 2.5,
@@ -130,9 +166,15 @@
       "providerModelId": "amazon.nova-pro-v1:0",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.8,
       "outputPricePerMillion": 3.2,
@@ -146,9 +188,15 @@
       "providerModelId": "amazon.nova-lite-v1:0",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.06,
       "outputPricePerMillion": 0.24,
@@ -165,6 +213,12 @@
         "function_calling",
         "streaming"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.035,
       "outputPricePerMillion": 0.14,
       "maxContextTokens": 128000,
@@ -179,6 +233,12 @@
       "features": [
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.72,
       "outputPricePerMillion": 0.72,
@@ -195,6 +255,12 @@
         "function_calling",
         "streaming"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 3,
       "outputPricePerMillion": 15,
       "maxContextTokens": 128000,
@@ -208,6 +274,12 @@
       "type": "chat",
       "features": [
         "streaming"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.5,
       "outputPricePerMillion": 1.5,
@@ -224,6 +296,12 @@
         "function_calling",
         "streaming"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.5,
       "outputPricePerMillion": 1.5,
       "maxContextTokens": 128000,
@@ -236,6 +314,12 @@
       "providerModelId": "amazon.titan-embed-text-v2:0",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.02,
       "outputPricePerMillion": 0,
       "maxContextTokens": 8192

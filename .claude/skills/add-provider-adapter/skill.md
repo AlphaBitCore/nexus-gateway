@@ -1,3 +1,8 @@
+---
+name: add-provider-adapter
+description: "Walk the multi-step procedure for onboarding a new provider adapter — a new vendor, model family, wire format (binary protocol, custom SSE flavour, gRPC variant), or consumer surface — against provider-adapter-architecture.md Section 3a binding rules. Use for NEW adapters; to audit an existing one use adapter-conformance-check instead. Trigger keywords: add provider, new vendor, onboard model family, new wire format, add adapter, /add-provider-adapter."
+---
+
 # add-provider-adapter
 
 Walk the multi-step procedure when adding a new provider adapter (vendor / wire-format / consumer surface).

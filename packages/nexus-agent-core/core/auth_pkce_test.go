@@ -58,11 +58,11 @@ func TestAuthorizeURL_Params(t *testing.T) {
 func headlessServer(t *testing.T, accessTok, refreshTok string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/oauth/authorize":
+		switch r.URL.Path {
+		case "/oauth/authorize":
 			w.Header().Set("Location", "/login?authctx=CTX-123")
 			w.WriteHeader(http.StatusFound)
-		case r.URL.Path == "/authserver/password":
+		case "/authserver/password":
 			var body struct{ Authctx, Email, Password string }
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body.Authctx != "CTX-123" || body.Email == "" || body.Password == "" {
@@ -72,7 +72,7 @@ func headlessServer(t *testing.T, accessTok, refreshTok string) *httptest.Server
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"redirectUri": "http://localhost:3000/auth/callback?code=CODE-456&state=s",
 			})
-		case r.URL.Path == "/oauth/token":
+		case "/oauth/token":
 			_ = r.ParseForm()
 			if r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "CODE-456" {
 				http.Error(w, "bad grant", http.StatusBadRequest)

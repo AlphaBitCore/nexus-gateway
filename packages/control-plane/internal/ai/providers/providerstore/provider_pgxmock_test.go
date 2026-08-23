@@ -31,7 +31,7 @@ var (
 		"inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 		"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		"maxContextTokens", "maxOutputTokens", "status", "deprecationDate", "replacedBy", "aliases",
-		"inputModalities", "outputModalities", "lifecycle", "capabilityJson", "enabled", "createdAt", "updatedAt",
+		"inputModalities", "outputModalities", "requiredModalities", "lifecycle", "capabilityJson", "enabled", "createdAt", "updatedAt",
 	}
 	credCols = []string{
 		"id", "name", "providerId", "enabled", "rotationState", "lastRotatedAt", "lastUsedAt", "lastSuccessAt", "lastFailureAt",
@@ -60,7 +60,7 @@ func modelRow(id, code string) []any {
 	return []any{id, code, "N", strptr("d"), "p1", "pm", "chat", []string(nil), (*float64)(nil), (*float64)(nil),
 		(*float64)(nil), (*float64)(nil), (*float64)(nil), (*float64)(nil), (*float64)(nil),
 		(*int)(nil), (*int)(nil), "active", (*time.Time)(nil), (*string)(nil), []string(nil),
-		[]string{"text"}, []string{"text"}, "ga", (*[]byte)(nil), true, tNow, tNow}
+		[]string{"text"}, []string{"text"}, []string{}, "ga", (*[]byte)(nil), true, tNow, tNow}
 }
 
 // credRow returns the 30 CredMetadataColumns values in scan order with the
@@ -174,7 +174,7 @@ func TestCreateProviderWithChildren_Full(t *testing.T) {
 	m.ExpectBegin()
 	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
-	m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(23)...).
+	m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(24)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRow("m1", "gpt-4o")...))
 	m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(9)...).
 		WillReturnRows(pgxmock.NewRows(credCols).AddRow(credRow("c1")...))
@@ -229,7 +229,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 		m.ExpectBegin()
 		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
-		m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(23)...).WillReturnError(errors.New("bad model"))
+		m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(24)...).WillReturnError(errors.New("bad model"))
 		m.ExpectRollback()
 		if _, _, _, err := s.CreateProviderWithChildren(context.Background(), CreateParams{},
 			[]modelstore.CreateModelParams{{Code: "x"}}, nil); err == nil {
@@ -445,5 +445,65 @@ func TestListProviderHealth(t *testing.T) {
 	m2.ExpectQuery(`FROM "ProviderHealth"`).WillReturnRows(pgxmock.NewRows(cols).AddRow("p1", "o", "h", "bad-float", 1, 1, nil, nil))
 	if _, err := s2.ListProviderHealth(context.Background()); err == nil {
 		t.Fatal("scan error should surface")
+	}
+}
+
+// The bulk provider-create path is what the admin wizard uses, and it used to
+// normalize models by itself: every type defaulted to ["text"]/["text"], so a
+// wizard-created stt model landed declaring it accepts text rather than audio,
+// and the legacy `vision` feature was stored verbatim instead of folded into
+// the modality arrays. Both are the same defect — a second normalizer for one
+// write. It now shares modelstore.NormalizeCreateParams; this pins the values
+// that reach the INSERT ($19 inputModalities, $20 outputModalities, $8
+// features).
+func TestCreateProviderWithChildren_NormalizesModelsLikeTheSingleCreatePath(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		params      modelstore.CreateModelParams
+		wantIn      []string
+		wantOut     []string
+		wantFeature []string
+	}{
+		{
+			name:    "stt derives audio input, not text",
+			params:  modelstore.CreateModelParams{Code: "whisper", ProviderModelID: "pm", Type: "stt"},
+			wantIn:  []string{"audio"},
+			wantOut: []string{"text"},
+			// Features defaults to empty rather than nil so the column is never NULL.
+			wantFeature: []string{},
+		},
+		{
+			name: "legacy vision folds into image input",
+			params: modelstore.CreateModelParams{
+				Code: "gpt-4o", ProviderModelID: "pm", Type: "chat",
+				Features: []string{"streaming", "vision"},
+			},
+			wantIn:      []string{"text", "image"},
+			wantOut:     []string{"text"},
+			wantFeature: []string{"streaming"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, m := newMock(t)
+			args := anyArgs(24)
+			args[7] = tc.wantFeature // $8
+			args[18] = tc.wantIn     // $19
+			args[19] = tc.wantOut    // $20
+			m.ExpectBegin()
+			m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(12)...).
+				WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
+			m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(args...).
+				WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRow("m1", tc.params.Code)...))
+			m.ExpectCommit()
+
+			if _, _, _, err := s.CreateProviderWithChildren(context.Background(),
+				CreateParams{Name: "openai"},
+				[]modelstore.CreateModelParams{tc.params}, nil); err != nil {
+				t.Fatalf("CreateProviderWithChildren: %v", err)
+			}
+			if err := m.ExpectationsWereMet(); err != nil {
+				t.Errorf("the bulk path did not normalize like the single path: %v", err)
+			}
+		})
 	}
 }

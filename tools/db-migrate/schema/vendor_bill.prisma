@@ -1,6 +1,7 @@
 /// Vendor bill reconciliation — one row per provider × UTC day, comparing the
-/// gateway's own estimated spend (metric_rollup_1d.billed_cost_usd, routed_provider
-/// dimension) against the provider's authoritative billing-API total for that day.
+/// spend the gateway caused at that provider (metric_rollup_1d.vendor_spend_usd,
+/// routed_provider dimension) against the provider's authoritative billing-API
+/// total for that day.
 ///
 /// Populated by the Hub daily reconciliation job
 /// (packages/nexus-hub/internal/jobs/defs/reconciliation). Design:
@@ -15,19 +16,41 @@ model VendorBillReconciliation {
   /// UTC calendar day this row reconciles (midnight-anchored).
   day DateTime @map("day") @db.Date
 
-  /// Our side: metric_rollup_1d.billed_cost_usd for routed_provider=<provider_id>
-  /// on `day`. Always present (0 when the rollup recorded no traffic that day).
+  /// Our side, customer-quota basis: metric_rollup_1d.billed_cost_usd for
+  /// routed_provider=<provider_id> on `day`. Always present (0 when the rollup
+  /// recorded no traffic that day). Kept for continuity — it omits internal-ops
+  /// spend, so diff_usd / diff_pct are NOT computed from it.
   our_billed_usd Decimal @map("our_billed_usd") @db.Decimal(20, 10)
+
+  /// Our side, reconciliation basis: metric_rollup_1d.vendor_spend_usd for
+  /// routed_provider=<provider_id> on `day` — every dollar we caused this
+  /// vendor to charge, including internal-ops calls (smart router, ai-guard
+  /// classifier, L2 embedding) attributed to the provider actually charged.
+  /// diff_usd / diff_pct are computed from THIS column, not our_billed_usd.
+  our_vendor_spend_usd Decimal @default(0) @map("our_vendor_spend_usd") @db.Decimal(20, 10)
+
+  /// The internal-ops subset of our_vendor_spend_usd, from
+  /// vendor_spend_internal_usd. Lets the report separate estimator error from
+  /// internal overhead: without it a residual difference cannot be told apart
+  /// from routing overhead. Zero on rows written before this shipped.
+  our_internal_ops_usd Decimal @default(0) @map("our_internal_ops_usd") @db.Decimal(20, 10)
 
   /// Vendor side: authoritative USD from the provider cost API, narrowed to the
   /// gateway's scope. NULL when the vendor fetch failed or the day is not yet
   /// finalized — absence is never written as 0.
   vendor_reported_usd Decimal? @map("vendor_reported_usd") @db.Decimal(20, 10)
 
-  /// vendor_reported_usd - our_billed_usd. NULL whenever the vendor side is NULL.
+  /// round(vendor_reported_usd, 2¢) - round(our_vendor_spend_usd, 2¢). Both
+  /// operands are quantised to cents before subtracting — the vendor's own
+  /// cost APIs are cent-denominated, so a sub-cent disagreement here is the
+  /// vendor's own rounding, not drift. NULL whenever the vendor side is NULL.
+  /// Note the basis: our_billed_usd omits internal-ops spend, so it is NOT
+  /// what this is derived from.
   diff_usd Decimal? @map("diff_usd") @db.Decimal(20, 10)
 
-  /// diff_usd / max(vendor, ours), as a fraction (0.05 = 5%). NULL when vendor NULL.
+  /// diff_usd / round(vendor_reported_usd, 2¢), as a fraction (0.05 = 5%) —
+  /// the estimate's error relative to the vendor's own number, at the
+  /// resolution the vendor reports. NULL when vendor NULL.
   diff_pct Decimal? @map("diff_pct") @db.Decimal(10, 6)
 
   /// How far the vendor query was narrowed: api_key | project | workspace | org.
@@ -36,11 +59,22 @@ model VendorBillReconciliation {
   /// Trust level of this row for alerting:
   ///   scoped                   — narrowed to the gateway's slice; alert-eligible.
   ///   org_only                 — vendor total is org-wide (could not narrow);
-  ///                              display-only, alert suppressed.
-  ///   fetch_failed             — vendor fetch/auth failed; no diff; alert suppressed.
+  ///                              display-only, drift alert suppressed.
+  ///   fetch_failed             — vendor fetch/auth failed; no vendor number, no
+  ///                              diff; drift alert suppressed.
+  ///   no_basis                 — vendor reported a real number but no
+  ///                              vendor_spend_usd rollup rows exist for the day,
+  ///                              so there is nothing to compare it against
+  ///                              (pre-cutover day, or cost stamping produced
+  ///                              nothing). vendor_reported_usd is real; the three
+  ///                              of-ours money columns are placeholder zeros and
+  ///                              the report renders them as em-dashes. Drift
+  ///                              alert suppressed.
   ///   priority_tier_undercount — Anthropic priority tier excluded from cost_report;
   ///                              display-only, alert suppressed.
-  /// Only `scoped` rows ever feed the drift alert.
+  /// Only `scoped` rows ever feed the drift alert. `fetch_failed` and `no_basis`
+  /// both feed vendor.bill_sync_failed once they go unhealed past staleHours, so
+  /// neither is silent.
   coverage String @map("coverage")
 
   /// Diff-handling entry point (the audit's "difference handling" requirement):

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { AdminModelsByProvider } from '@/api/types';
 import {
   mapLegacyStrategy,
+  displayStrategy,
   splitIdsCsv,
   parseSmartConfig,
   buildSmartConfig,
@@ -34,10 +35,25 @@ describe('mapLegacyStrategy', () => {
     expect(mapLegacyStrategy('cost')).toBe('single');
     expect(mapLegacyStrategy('fallback')).toBe('fallback');
     expect(mapLegacyStrategy('smart')).toBe('smart');
-    expect(mapLegacyStrategy('policy')).toBe('policy');
   });
-  it('defaults unknown strategies to single', () => {
-    expect(mapLegacyStrategy('totally-unknown')).toBe('single');
+
+  // A name the gateway cannot dispatch resolves to NOTHING, and that is the
+  // whole point of the null. 'policy' used to map to 'single': opening such a
+  // rule in the editor rewrote it to a different strategy, and saving
+  // destroyed the config the admin had written. The editor now refuses to
+  // load it and says so.
+  it('resolves a strategy the gateway cannot dispatch to null, not to single', () => {
+    expect(mapLegacyStrategy('policy')).toBeNull();
+    expect(mapLegacyStrategy('totally-unknown')).toBeNull();
+  });
+
+  // Display-only callers still need something to render — a list row must not
+  // go blank because a stored value is unroutable — so the fallback lives in
+  // its own function rather than inside the one the editor calls.
+  it('displayStrategy falls back to single so a list row still renders', () => {
+    expect(displayStrategy('policy')).toBe('single');
+    expect(displayStrategy('totally-unknown')).toBe('single');
+    expect(displayStrategy('round-robin')).toBe('loadbalance');
   });
 });
 

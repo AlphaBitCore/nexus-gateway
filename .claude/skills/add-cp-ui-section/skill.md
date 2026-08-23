@@ -1,3 +1,8 @@
+---
+name: add-cp-ui-section
+description: "Walk the multi-step procedure for adding a new Control Plane UI section, sidebar item, or route. Combines IAM impact review, i18n key parity, design-token discipline, useApi queryKey shape, Sidebar mapping, tests, and the feature doc — the single most error-prone CP-UI workflow because it touches 6+ binding rules at once. Trigger keywords: add sidebar item, new CP-UI page, new admin route, rename route, add cp ui section, /add-cp-ui-section."
+---
+
 # add-cp-ui-section
 
 Walk the multi-step procedure when adding a new CP-UI section, item, or route. Combines IAM impact review + i18n + design-token discipline + useApi shape + Sidebar mapping + tests + feature doc.

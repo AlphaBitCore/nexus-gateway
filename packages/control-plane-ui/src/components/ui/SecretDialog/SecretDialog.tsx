@@ -5,6 +5,7 @@ import { Button } from '@nexus-gateway/ui-shared';
 import { Stack } from '../Stack/Stack';
 import { Checkbox } from '../Checkbox/Checkbox';
 import styles from './SecretDialog.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 export interface SecretDialogProps {
   open: boolean;
@@ -38,12 +39,13 @@ export function SecretDialog({
   const [acknowledged, setAcknowledged] = useState(false);
   const ackId = useId();
 
+  const armTimeout = useTimeouts();
   const handleCopy = useCallback(async () => {
     if (!secret) return;
     await navigator.clipboard.writeText(secret);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [secret]);
+    armTimeout(() => setCopied(false), 2000);
+  }, [secret, armTimeout]);
 
   const handleClose = useCallback(() => {
     onClose();

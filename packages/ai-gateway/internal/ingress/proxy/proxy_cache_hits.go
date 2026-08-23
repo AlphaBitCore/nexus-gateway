@@ -17,6 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -248,6 +249,20 @@ func (h *Handler) handleNonStreamHit(
 		// else: same-shape non-canonical body (responses-native → responses
 		// reader) → serve verbatim.
 	}
+	// The cache stores CANONICAL bytes, so a HIT replays whatever the codec wrote
+	// into the gateway's namespace at write time — including to a reader whose
+	// egress is the identity. This is the second and last frame a non-stream
+	// response reaches the client through; the live one is egressReshapeNonStream.
+	// Stripping before the audit capture below keeps the stored copy equal to what
+	// the client actually received.
+	respBody = canonicalext.Strip(respBody)
+	// Enforce the json_object parseability guarantee on the reshaped body (see
+	// json_object_unwrap.go). No embeddings equivalent is needed here: the
+	// response cache is endpoint-scoped and the pre-lookup classifier
+	// short-circuits embeddings with gateway_cache_skip_reason =
+	// embeddings_endpoint, so an embeddings request never reaches a cache-HIT
+	// site.
+	respBody = unwrapJSONObjectFences(respBody, rec.Metadata)
 	// The reshaped wire body is the redacted, client-consistent copy under a
 	// rewrite; persist it as ResponseBodyRedacted (wire-shaped) for the audit copy.
 	if rec.ResponseHookRewritten {

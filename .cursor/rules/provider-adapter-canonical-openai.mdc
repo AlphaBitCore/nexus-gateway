@@ -124,6 +124,6 @@ Use `.claude/skills/add-provider-adapter/` for the full procedure.
 
 ## Audit an existing adapter
 
-Use `.claude/skills/adapter-conformance-check/` to verify an existing codec against Rules 1-8. Catches per-adapter logic that leaked into the generic dispatcher, missing canonicalize-before-dispatch, error envelopes that bypass the helper, prefix-lists without empirical evidence, and missing `PassthroughRewrite` wiring.
+Use `.claude/skills/adapter-conformance-check/` to verify an existing codec against Rules 1-12. Catches per-adapter logic that leaked into the generic dispatcher, missing canonicalize-before-dispatch, error envelopes that bypass the helper, prefix-lists without empirical evidence, and missing `PassthroughRewrite` wiring.
 
 Skipping any of these 8 rules requires **explicit user approval** in chat.

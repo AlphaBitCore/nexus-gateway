@@ -45,6 +45,9 @@ type AuditInfo struct {
 	// Seeded by the agent for intercepted flows; falls back to TransactionID
 	// for traffic that enters the proxy directly without an upstream trace id.
 	TraceID string
+	// ExternalRequestID is the caller's own x-request-id, recorded as given.
+	// Ours to carry, never to rewrite — see audit.AuditEvent.
+	ExternalRequestID string
 	// Headers are the sanitised request headers (auth headers already stripped).
 	// Used to extract User-Agent for the auto-discovery dashboard.
 	Headers map[string][]string
@@ -308,6 +311,7 @@ func (e *AuditEmitter) buildEvent(
 		TransactionID:          info.TransactionID,
 		ConnectionID:           info.ConnectionID,
 		TraceID:                info.TraceID,
+		ExternalRequestID:      info.ExternalRequestID,
 		TrafficSource:          "COMPLIANCE_PROXY",
 		IngressType:            input.IngressType,
 		BumpStatus:             bumpStatus,

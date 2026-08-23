@@ -87,8 +87,6 @@ type Layer struct {
 	// Reload. Surfaced via Stats for ops; not exposed in metrics yet.
 	invalidationCount atomic.Uint64
 
-	// LookupCachePricing reads from modelsByCode (above).
-
 	// Metrics hook slots populated by Metrics.Bind. All are nil-safe;
 	// nil hooks are skipped at call time.
 	vkOnHit          func()

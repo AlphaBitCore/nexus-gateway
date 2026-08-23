@@ -1,3 +1,8 @@
+---
+name: add-shadow-key
+description: "Walk the three-path audit for adding or changing a Thing shadow config key (Category A / B / C) — a new thing_config_template entry, a category change, or a schema change the apply path must understand. Three separate paths create or modify thing_config_template rows and can drift independently, so auditing only one produces false positives. Trigger keywords: add shadow key, thing_config_template, config key category, shadow schema change, /add-shadow-key."
+---
+
 # add-shadow-key
 
 Walk the three-path audit when adding or changing a Thing shadow key (Cat A / B / C).

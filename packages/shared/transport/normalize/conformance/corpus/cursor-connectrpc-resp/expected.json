@@ -1,12 +1,15 @@
 {
   "kind": "http-binary",
-  "normalizeVersion": "2",
+  "normalizeVersion": "3",
   "protocol": "generic-http",
   "http": {
     "bodyView": {
-      "binaryRef": {
-        "size": 96,
-        "contentType": "application/connect+proto",
+      "mediaRef": {
+        "modality": "file",
+        "mime": "application/connect+proto",
+        "sizeBytes": 96,
+        "source": "captured",
+        "locator": "body",
         "sha256": "dea68328f617ea3ca05f6df723065a6ea0c0ae4b0c0e131affa4be8c471b6cec"
       }
     }

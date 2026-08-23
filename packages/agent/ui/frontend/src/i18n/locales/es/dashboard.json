@@ -638,6 +638,18 @@
       "binaryInputNotStored": "Entrada de array de tokens binarios — no almacenada según la política de auditoría.",
       "vectorsNotStored": "Los vectores de embedding no se almacenan según la política de auditoría.",
       "noInputs": "No se capturaron entradas."
+    },
+    "media": {
+      "captured": "Almacenado con esta solicitud: bytes disponibles.",
+      "external": "Contenido remoto: Nexus nunca lo descargó ni lo almacenó.",
+      "providerRef": "Contenido en poder del proveedor.",
+      "fingerprint": "Bytes no conservados: solo huella digital.",
+      "agedOut": "Capturado y luego eliminado por retención.",
+      "absent": "No capturado.",
+      "truncated": "Captura incompleta o ilegible: medio irrecuperable.",
+      "download": "Descargar",
+      "previewFailed": "Vista previa no disponible: no se pudieron leer los bytes almacenados.",
+      "sizeUnknown": "tamaño desconocido"
     }
   },
   "trafficDetail": {

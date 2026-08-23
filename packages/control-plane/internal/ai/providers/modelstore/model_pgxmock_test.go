@@ -39,7 +39,7 @@ var modelCols = []string{
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"maxContextTokens", "maxOutputTokens", "status", "deprecationDate",
-	"replacedBy", "aliases", "inputModalities", "outputModalities",
+	"replacedBy", "aliases", "inputModalities", "outputModalities", "requiredModalities",
 	"lifecycle", "capabilityJson", "enabled", "createdAt", "updatedAt",
 }
 
@@ -54,7 +54,7 @@ func modelRowValues(id, code string) []any {
 		f64ptr(1.25), f64ptr(5),
 		f64ptr(32), f64ptr(64), f64ptr(0.4),
 		intptr(128000), intptr(4096), "active", (*time.Time)(nil),
-		(*string)(nil), []string{"alias1"}, []string{"text"}, []string{"text"},
+		(*string)(nil), []string{"alias1"}, []string{"text"}, []string{"text"}, []string{},
 		"ga", &cap, true, now, now,
 	}
 }
@@ -184,7 +184,13 @@ func TestCreateModel_AppliesDefaults(t *testing.T) {
 			[]string{},       // Aliases defaulted
 			[]string{"text"}, // InputModalities defaulted
 			[]string{"text"}, // OutputModalities defaulted
-			"ga",             // Lifecycle defaulted
+			// RequiredModalities defaulted to EMPTY, not nil. "Empty means no
+			// constraint" is true of the value and false of the wire: a nil
+			// slice is sent as SQL NULL, an explicit NULL beats the column
+			// DEFAULT, and the column is NOT NULL — so nil here is a 500 on
+			// every model added without a modality floor.
+			[]string{},
+			"ga", // Lifecycle defaulted
 			(*json.RawMessage)(nil),
 			false,
 		).
@@ -202,7 +208,7 @@ func TestCreateModel_AppliesDefaults(t *testing.T) {
 
 func TestCreateModel_Error(t *testing.T) {
 	store, mock := newMockStore(t)
-	mock.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(23)...).WillReturnError(errors.New("unique violation"))
+	mock.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(24)...).WillReturnError(errors.New("unique violation"))
 	if _, err := store.CreateModel(context.Background(), CreateModelParams{Code: "x"}); err == nil {
 		t.Fatal("insert error should surface")
 	}
@@ -213,7 +219,7 @@ func TestUpdateModel_WithModalities(t *testing.T) {
 	in := []string{"text", "image"}
 	out := []string{"text"}
 	mock.ExpectQuery(`UPDATE "Model" SET`).
-		WithArgs(anyArgs(25)...).
+		WithArgs(anyArgs(26)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRowValues("m1", "gpt-4o")...))
 	got, err := store.UpdateModel(context.Background(), "m1", UpdateModelParams{
 		Name: strptr("Renamed"), InputModalities: &in, OutputModalities: &out,
@@ -222,7 +228,7 @@ func TestUpdateModel_WithModalities(t *testing.T) {
 		t.Fatalf("UpdateModel: got=%v err=%v", got, err)
 	}
 
-	mock.ExpectQuery(`UPDATE "Model"`).WithArgs(anyArgs(25)...).WillReturnError(errors.New("boom"))
+	mock.ExpectQuery(`UPDATE "Model"`).WithArgs(anyArgs(26)...).WillReturnError(errors.New("boom"))
 	if _, err := store.UpdateModel(context.Background(), "m1", UpdateModelParams{}); err == nil {
 		t.Fatal("update error should surface")
 	}
@@ -235,7 +241,7 @@ func TestUpdateModel_WithModalities(t *testing.T) {
 // so a dropped field here silently zero-prices that audio component.
 func TestUpdateModel_AudioRatesRoundTrip(t *testing.T) {
 	store, mock := newMockStore(t)
-	args := anyArgs(25)
+	args := anyArgs(26)
 	args[10] = f64ptr(32)  // $11 audioInputPricePerMillion
 	args[11] = f64ptr(64)  // $12 audioOutputPricePerMillion
 	args[12] = f64ptr(0.4) // $13 cachedAudioInputReadPricePerMillion

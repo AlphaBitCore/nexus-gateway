@@ -123,7 +123,7 @@
     "cacheGeminiCircuitOpenSecsHint": "熔断器触发后保持开启状态的时长。默认值：300 秒。",
     "cacheGeminiGlobalNote": "此配置对所有 Gemini Provider 全局生效。更改将通过 Hub 在数秒内应用至所有 AI 网关实例。",
     "cacheWindowNote30d": "最近 30 天",
-    "cacheHealthWindowNote": "滚动窗口 — 反映近期流量",
+    "cacheHealthWindowNote": "由近期流量推导得出并定期重算。要对一个供应商下判断，请求数得多到能称为“比率”，所以请一并看旁边的样本数；导致它的那批流量滚出窗口后会自行恢复。",
     "cacheNormalizerNotApplicable": "Anthropic 缓存标记规范化器（cache_control 注入）仅适用于 Anthropic 协议的 Provider，对此 Provider 类型无效。",
     "cacheAutoTitle": "自动提示缓存",
     "cacheAutoInfo": "此 Provider 类型原生且自动处理提示缓存，无需在网关端进行每个 Provider 的缓存配置。",
@@ -473,7 +473,18 @@
       "validationErrors": {
         "dimensionsRange": "维度必须为 1 至 65536 之间的整数。",
         "batchSizeRange": "批处理大小必须为 1 至 65536 之间的整数。"
-      }
+      },
+      "modalitiesSummary": "接受 {{input}} · 返回 {{output}}",
+      "modalitiesNone": "未声明",
+      "modalitiesEdit": "编辑",
+      "modalitiesDone": "完成",
+      "modalitiesInput": "接受",
+      "modalitiesOutput": "返回",
+      "modalitiesRequired": "必需输入模态",
+      "modalitiesHint": "留空时由模型类型推导。仅在模型确实不同时才修改。",
+      "modalitiesRequiredSummary": "必需 {{required}}",
+      "modalitiesRequiredHint": "必需输入模态是下限,不是「此项必填」:要求音频的模型即使属于 chat 类型,也会拒绝纯文本请求。除非模型确实缺了该内容就无法服务,否则留空。",
+      "modalitiesRequiredNeedsAccepts": "请先选择模型接受的模态 —— 它只能要求自己也能接受的内容。"
     },
     "capKeyPlaceholder": "键",
     "capValuePlaceholder": "值"
@@ -539,7 +550,6 @@
     "strategyAbSplit": "A/B 分流",
     "strategySmart": "智能路由（AI路由器）",
     "strategyLatency": "基于延迟",
-    "policyNarrowing": "策略缩小范围（内部ID）",
     "providerConfiguration": "供应商配置",
     "fallbackChainTitle": "回退链",
     "loadBalanceTargets": "负载均衡目标",
@@ -547,10 +557,6 @@
     "abSplitTargets": "A/B 分流目标",
     "latencyTargets": "延迟目标",
     "intelligentRoutingConfig": "智能路由配置",
-    "allowModelIds": "允许的模型ID（逗号分隔的网关模型ID）",
-    "denyModelIds": "拒绝的模型ID",
-    "allowProviderIds": "允许的供应商ID（逗号分隔）",
-    "denyProviderIds": "拒绝的供应商ID",
     "addModelToPolicy": "添加模型到策略...",
     "routerModel": "路由器模型",
     "systemPrompt": "系统提示词",
@@ -587,6 +593,9 @@
     "matchProviders": "供应商（匹配）",
     "matchProjectIds": "项目（匹配）",
     "routingPreview": "路由预览（模拟）",
+    "simWarning": "预览仅按当前配置对「规则引擎」求值。已禁用的规则在此处不参与——要测试一条规则如何路由，请先启用它。直接点名、且未匹配任何规则的模型在此显示为空结果，但真实网关仍会通过「显式模型直通」为其服务（路由规则只重定向已点名的模型，并非服务它的必要条件）。",
+    "conditionalWhen": "当",
+    "conditionalThen": "路由至",
     "simDescription": "对解析后的模型ID进行路由引擎试运行。显示每个管道阶段匹配的规则、有效缩小范围和获胜路由。",
     "simModelIdLabel": "模型 code（网关）",
     "simModelIdHelp": "客户端 `{model: \"...\"}` 中发送的模型 code（如 gpt-4o），或填 `auto` 触发智能路由。输入即可搜索目录。",
@@ -635,7 +644,7 @@
     "customPath": "自定义路径",
     "valueHint": "值提示",
     "thenRouteTo": "路由到",
-    "matchProvidersTooltip": "匹配供应商提示",
+    "matchProvidersTooltip": "将此规则限定到指定供应商的请求。比对的是提供该模型 code 的**每一家**供应商。调用方没有点名模型时此条件**不适用**（而不是判为不匹配），所以限定供应商的规则对 model:auto 请求依然生效。",
     "matchProjectsTooltip": "将此规则限定为来自特定项目的请求。",
     "placeholderProjects": "未选择任何项目",
     "matchRequestedModelLiteralsLabel": "请求模型关键字（可选）",
@@ -643,7 +652,7 @@
     "matchRequestedModelLiteralsPlaceholder": "auto, gpt-4-*, …",
     "helpMatchRequestedModelLiterals": "帮助：请求模型关键字",
     "matchModelTypesLabel": "模型类型（可选）",
-    "matchModelTypesTooltip": "将此规则限定到模型类别（chat / embedding / image / audio）。与解析后的 Model.type 比对。",
+    "matchModelTypesTooltip": "将此规则限定到模型类别（chat / embedding / image / audio）。比对的是请求到达的**端点**，不是调用方点名的那个模型的类别 —— 所以带这个条件的规则同样对该端点上的 model:auto 请求生效。",
     "matchModelTypesPlaceholder": "任意模型类型",
     "helpMatchModelTypes": "帮助：模型类型",
     "matchVirtualKeysLabel": "虚拟密钥 glob（可选）",
@@ -674,22 +683,20 @@
     "allStrategies": "全部策略",
     "allStatuses": "全部状态",
     "help": {
-      "primaryWinnerCallout": "在所有匹配条件符合请求的 stage-1 规则中，只有一条赢得主路由：即 Priority 数值最高的已启用规则（数字越大优先级越高）。其他匹配的规则不会合并到主路径中。策略类型为 Fallback 的规则永远不会赢得主路由 — 它们仅在所有主上游尝试失败后提供恢复目标。",
-      "strategyFallbackRecoveryOnly": "策略类型 Fallback 在 stage 1 不会赢得主路由。其目标仅在所有主上游尝试失败后用于恢复。如需在一条规则内建立有序的主链，请使用 Conditional，并在 default 下嵌套 Fallback 树。",
+      "primaryWinnerCallout": "在所有匹配条件命中该请求的 stage-1 规则中，只有一条赢得主路由：优先级数值最高（数字越大越优先）、且确实解析出目标的那条启用规则。匹配但解析不出东西的规则会让位给下一条，并把原因记在流量记录上。其余匹配的规则按优先级顺序成为后备 —— 只有当上一条规则的每个目标都被排除时，网关才会推进到下一条，绝不会仅仅因为尝试次数用完就推进。",
+      "strategyFallbackRecoveryOnly": "Fallback 列出本规则内按顺序尝试的 provider+model 条目。它是一种普通策略，和其他策略一样可以赢得主路由。要让一条规则给另一条兜底，把兜底的那条写成优先级更低的独立规则 —— 没有专门的规则类型做这件事。条目直接指定 provider 和 model；嵌套在另一个策略里的策略会被拒绝。",
       "strategyType": "控制规则匹配时如何选择目标：单一目的地、有序 Fallback、加权负载均衡、条件树或 A/B Split。Configuration 下的 JSON 必须遵循 API 验证的相同策略结构。",
       "priority": "在匹配同一请求的 stage-1 规则中，Priority 最高的规则赢得主路由（数字越大优先级越高）。策略类型为 Fallback 的规则永远不会赢得主路由 — 它们仅在所有主上游尝试失败后贡献恢复目标（Fallback 规则之间仍按 Priority 排序）。对更具体或业务关键的路由使用更大的数字。",
       "enabled": "关闭时，规则将被完全跳过。匹配的流量将使用下一条适用规则或模型默认路由。如果后续可能重新启用，请使用禁用而非删除。",
       "status": "已启用的规则在其匹配条件符合请求时参与路由。已禁用的规则已存储但不会被评估。",
       "configuration": "网关在此规则匹配时加载的策略有效载荷：嵌套的 Provider 和 Model ID、权重以及可选的条件树。这是运行时与匹配条件和 Priority 一起使用的权威数据源。",
       "configurationSingle": "每个匹配的请求都被发送到此处显示的一个 Provider 和 Model 对。ID 引用在 Providers & Models 下配置的记录。",
-      "configurationFallback": "当此规则的策略类型为 stage 1 的 Fallback 时，它不会赢得主路由：其有序目标仅在所有主上游尝试失败后使用（然后代理逐步走过链条）。恢复目标在请求路由时预先计算；代理仅在主目标用尽后才拨号联系它们的 Provider。如需主路由仍使用一条规则内的有序链，请使用 Conditional，将 default 设为嵌套的 Fallback 树（参见 Pipeline stage 帮助）。",
-      "configurationLoadBalance": "请求按相对权重随机分配到各目标。权重越高意味着流量份额越大。粘性亲和性（设置 stickyOn 时）在网关配置了 Redis 时存储在共享 Redis 中，使同一键跨副本固定到同一目标；没有 Redis 时，粘性状态仅限进程内（适用于单实例/开发）。",
+      "configurationFallback": "Fallback 的有序条目在本规则内、首选失败之后依次尝试。每个条目直接指定 provider 和 model —— 嵌套在另一个策略里的策略会被拒绝，因为网关把条目当叶子解析，不会在一个策略里再求值另一个策略。要让别的规则给这条兜底，把那条写成优先级更低的规则。",
+      "configurationLoadBalance": "请求按相对权重随机分配到各目标。权重越高意味着流量份额越大。每个请求都独立计算权重，客户端不会被固定到上次命中的目标。",
       "configurationConditional": "根据实时请求上下文评估带有 \"when\" 表达式的分支，然后运行匹配的 \"then\" 策略或强制的 \"default\"。使用结构化编辑器设置默认路由、有序分支（字段路径、运算符、值、目标路由），以及表单尚无法表达的表达式的可选原始 JSON（$and / $or、嵌套策略）。规则上的匹配条件仍然决定此规则是否被考虑。",
       "configurationAbSplit": "在扁平的 Provider/Model 对之间进行加权随机选择 — 非常适合以固定流量比例比较模型或 Provider 的实验。",
-      "configurationSmart": "使用 AI 模型（路由器）分析用户请求并自动选择最佳模型。优点：对混合流量有更好的模型匹配和成本/延迟权衡。成本/风险：每个 model:auto 请求额外产生一次路由器 LLM 调用（延迟和 token 消耗）；如果路由器失败或超时，网关使用 Default Model；路由完成后，响应仍可在选定的目标模型下缓存，与其他路由一样。",
+      "configurationSmart": "使用 AI 模型（路由器）分析用户请求并自动选择最佳模型。优点：对混合流量有更好的模型匹配和成本/延迟权衡。成本/风险：每个 model:auto 请求额外产生一次路由器 LLM 调用（延迟和 token 消耗）；如果路由器失败或超时，网关使用 Default Model；路由完成后，响应仍可在选定的目标模型下缓存，与其他路由一样。 router 选定之后，同一个已筛选池里的另外两个模型会跟在它后面作为故障转移目标（按价格从低到高取），这样瞬时失败在本规则内部就能重试，不必离开这条规则。接下来实际先试哪一个取决于失败类型：限流或故障会优先换供应商。代价是单个 auto 请求可能发起的上游调用变多；用 retryPolicy.maxUpstreamCalls 限制花费。",
       "configurationLatency": "在所列的 Provider/Model 对中路由到实测最快的 Provider。与负载均衡（固定权重）不同，流量按近期观测的 p95 延迟发往最快档；较慢的健康 Provider 仅作为 failover。约 100ms 内的并列目标会在最快目标间分散以避免单点过载，新增或空闲的 Provider 会获得一小份有界的探索流量以便学习其速度。健康状态始终优先：故障的 Provider 无论延迟如何仍最后尝试。",
-      "configurationPolicy": "仅限 stage-0 规则。在任何 stage-1 路由规则运行之前，合并网关 Model ID 和 Provider ID 的允许/拒绝列表。多个匹配 Policy 规则的允许列表取交集；拒绝列表取并集。Stage-1 目标和智能路由器候选必须满足有效的缩小范围。",
-      "pipelineStage": "选择此行是 stage 0（Policy）还是 stage 1（路由）。0 — Policy：在任何路由之前合并；配置必须是允许/拒绝列表（内部网关 Model 和 Provider ID）。1 — 路由：在 stage 0 之后评估；在匹配的规则中，网关选择策略类型不是 Fallback 的最高 Priority 规则。策略类型为 Fallback 的规则仅提供故障后恢复链（按 Priority 在这些规则中排序）。恢复目标在请求路由时预先计算；代理仅在主目标用尽后才拨号联系。要将内部 Fallback 链用作主路由（例如先 Sonnet 后 Haiku），请使用策略类型 Conditional，条件列表留空，并将 Fallback 树放在 default 下。",
       "matchConditions": "缩小可使用此规则的请求范围。所有已设置的字段通过 AND 组合。Models：已解析的内部网关 Model ID。Providers：内部 Provider.id UUID — 请求已解析的模型必须属于这些 Provider 之一。Organizations：VirtualKey.projectId 值（UUID）。Virtual keys：带可选星号通配符的名称模式。如果所有列表都留空，匹配将回退到网关默认值 — 请谨慎使用。",
       "matchModelsLabel": "网关 Model ID（非供应商 API 名称）。当请求的路由模型等于所选 ID 之一时匹配。"
     },
@@ -699,7 +706,7 @@
       "fallbackTitle": "Fallback 链",
       "fallbackDesc": "当主路由失败（超时、错误、速率限制）时，按顺序尝试的 Provider/Model 目标有序列表。每个目标在移到下一个之前尝试一次。作为 stage-1 策略类型，Fallback 规则永远不会赢得主路由 — 它们仅贡献恢复目标。",
       "loadbalanceTitle": "负载均衡",
-      "loadbalanceDesc": "按相对权重将请求随机分配到各目标。权重越高意味着流量份额越大。可选通过共享 Redis 支持粘性亲和性。",
+      "loadbalanceDesc": "按相对权重将请求随机分配到各目标。权重越高意味着流量份额越大。每个请求独立计算权重，客户端不会被固定到上次命中的目标。",
       "conditionalTitle": "条件路由",
       "conditionalDesc": "根据实时请求上下文评估 \"when\" 表达式，并运行匹配的 \"then\" 策略或强制的 \"default\"。支持嵌套策略和复杂的分支逻辑。",
       "abSplitTitle": "A/B Split",
@@ -707,13 +714,14 @@
       "smartTitle": "智能路由（AI Router）",
       "smartDesc": "使用 AI Router 模型分析用户请求并自动选择最佳目标模型。每个请求增加一次额外的 LLM 调用；如果路由器失败则回退到 Default Model。",
       "latencyTitle": "基于延迟",
-      "latencyDesc": "按近期 p95 延迟路由到实测最快的目标，而非手工设定的权重。约 100ms 内的并列目标会在多个目标间分散；新增或空闲的 Provider 会获得一小份有界的探索流量。健康状态始终优先——故障的 Provider 仍最后尝试。",
-      "policyTitle": "Policy 缩小范围",
-      "policyDesc": "仅限 stage-0。在任何 stage-1 路由规则运行之前，合并网关 Model ID 和 Provider ID 的允许/拒绝列表。允许列表取交集；拒绝列表取并集。"
+      "latencyDesc": "按近期 p95 延迟路由到实测最快的目标，而非手工设定的权重。约 100ms 内的并列目标会在多个目标间分散；新增或空闲的 Provider 会获得一小份有界的探索流量。健康状态始终优先——故障的 Provider 仍最后尝试。"
     },
     "systemPromptTooltip": "路由器 LLM 的指令。使用 {modelCatalog} 作为占位符 — 它将在运行时被替换为可用 Model 及其功能的列表。",
     "weightTooltip": "权重越高，流量越多",
-    "removeAria": "移除"
+    "removeAria": "移除",
+    "unsupportedStrategyNotice": "此规则存储的策略为“{{strategyType}}”，网关已不再执行该策略。它的配置在详情页可见，但不会加载到此表单——继续编辑会用另一种策略覆盖它。请删除该规则，或改用网关可执行的策略新建一条。",
+    "simEndpointLabel": "端点",
+    "simEndpointHelp": "模拟请求落在哪个端点。规则条件、模态筛选、非 chat 的 auto 都以它为准。"
   },
   "hooks": {
     "title": "钩子",
@@ -1448,7 +1456,7 @@
       "sampleCount": "样本数",
       "title": "提供商健康状态"
     },
-    "providerHealthSubtitle": "所有已配置供应商的实时健康状态",
+    "providerHealthSubtitle": "由近期流量推导得出，会定期重算，导致它的那批流量滚出窗口后会自行恢复。没有手动重置。",
     "tabOverview": "概览",
     "tabProviders": "供应商 ({{count}})",
     "uptime": "运行时间",
@@ -2410,6 +2418,7 @@
       "responseHook": "响应 Hook",
       "http": "HTTP",
       "cache": "缓存",
+      "modality": "模态",
       "time": "时间",
       "any": "任意",
       "target": "目标",
@@ -2478,6 +2487,8 @@
     "placeholderStatusCode": "例如 429",
     "labelCache": "缓存",
     "tipCache": "统一缓存结果 —— HIT（任意缓存层节省了成本）或 MISS。每层的详情在审计抽屉中查看。",
+    "labelModality": "模态",
+    "tipModality": "按请求模态过滤列表——文本、图像、音频（TTS/STT）、视频、向量、重排或实时。",
     "cacheStatus": {
       "HIT": "HIT",
       "MISS": "MISS"
@@ -2804,7 +2815,11 @@
         "requested": "原始请求",
         "routedTo": "路由目标",
         "passthrough": "直传",
-        "changedBy": "经规则"
+        "changedBy": "经规则",
+        "walkTitle": "派发走查",
+        "walkDispatched": "已派发",
+        "walkSkipped": "已跳过",
+        "walkCoerced": "已改写"
       },
       "compliance": {
         "title": "管道决策",
@@ -2839,6 +2854,7 @@
         "cacheSavings": "网关缓存命中节省",
         "netTotal": "实付总成本",
         "input": "输入",
+        "modality": "模态计费（按单位）",
         "output": "输出",
         "cacheRead": "缓存读折扣",
         "cacheWrite": "缓存写加价",
@@ -2869,7 +2885,10 @@
         "details": "详情",
         "errorBadge": "错误",
         "errorTitle": "网关 / 上游错误 — HTTP {{status}} · {{code}}",
-        "errorHint": "这是一条错误信封,不是对话内容。"
+        "errorHint": "这是一条错误信封,不是对话内容。",
+        "truncatedBadge": "已截断",
+        "truncatedBadgeWithSize": "已截断 · 实际捕获 {{size}}",
+        "truncatedHint": "此消息体仅存储了开头部分。它超出了内联存储上限，且未配置 spill 后端，因此存储的副本只是前缀。客户端已收到完整响应——配置 spill 后端即可保留完整消息体。"
       },
       "tabs": {
         "overview": "概览",
@@ -2917,7 +2936,9 @@
           "failedHint": "切换到\"原始\"标签查看原始字节。",
           "partialTitle": "部分规范化 — 某些字段可能缺失。",
           "empty": "此方向没有规范化负载。",
-          "unsupported": "不支持的 kind。切换到\"原始\"标签查看。"
+          "unsupported": "不支持的 kind。切换到\"原始\"标签查看。",
+          "truncatedTitle": "基于被截断的消息体计算",
+          "truncatedHint": "此消息体仅存储了开头部分，因此该视图描述的是不完整的载荷——末尾的消息、工具调用或用量可能缺失。客户端已收到完整响应。"
         },
         "dropped": {
           "title": "内容已按存储策略丢弃。",
@@ -2952,6 +2973,18 @@
           "eventFallbackLabel": "message",
           "showAllFrames": "显示全部 {{count}} 帧",
           "truncatedNote": "帧视图已截断 — 完整流已被捕获，可在\"原始\"标签查看。"
+        },
+        "media": {
+          "captured": "已随该请求存储 —— 字节可用。",
+          "external": "远端内容 —— Nexus 从未获取或存储。",
+          "providerRef": "内容由服务商持有。",
+          "fingerprint": "未保留字节 —— 仅有指纹。",
+          "agedOut": "曾捕获,已按保留期清除。",
+          "absent": "未捕获。",
+          "truncated": "捕获不完整或无法读取 —— 媒体不可恢复。",
+          "download": "下载",
+          "previewFailed": "无法预览 —— 存储的字节读取失败。",
+          "sizeUnknown": "大小未知"
         }
       },
       "reasonCodes": {
@@ -2963,23 +2996,20 @@
       },
       "correlation": {
         "title": "关联",
-        "requestId": "请求 ID",
+        "eventId": "事件 ID",
+        "eventIdHint": "本行自己的 ID，由网关生成，每条流量记录唯一。",
         "endUserId": "终端用户 ID",
         "sessionId": "会话 ID",
+        "clientTags": "客户端标签",
         "clientRequestId": "客户端请求 ID",
+        "clientRequestIdHint": "调用方发来的 x-request-id，原样记录，从不改写。",
         "traceId": "追踪 ID",
+        "traceIdHint": "将同一个工作单元的所有行归组——重试、实时会话的多次交互、跨服务的 agent 流程。",
         "copy": "复制",
         "copied": "已复制",
-        "pivotRequest": "只看这条请求",
+        "pivotTrace": "查看共享该追踪的全部记录",
         "pivotEndUser": "查看该终端用户的全部流量",
         "pivotSession": "查看该会话的全部请求"
-      },
-      "artifact": {
-        "title": "工件",
-        "loading": "正在加载预览…",
-        "error": "预览不可用。",
-        "urlMode": "提供方以 URL 形式返回该图像(未存储)——请查看响应正文。",
-        "imageAlt": "生成的图像"
       }
     },
     "filters": {
@@ -6438,7 +6468,7 @@
   },
   "vendorBillReconciliation": {
     "title": "供应商账单对账",
-    "subtitle": "每日将我们的预估花费与各供应商权威计费 API 的金额进行比对。",
+    "subtitle": "每日将我们在各供应商产生的花费与该供应商权威计费 API 的金额进行比对。",
     "empty": "暂无对账记录。每日作业会为已覆盖的供应商生成「供应商 × 天」的比对。",
     "emptyForPeriod": "该时间段内没有对账记录。可以换更长的时间段——每日作业只对账已经结束的日期。",
     "period": {
@@ -6446,10 +6476,14 @@
     },
     "colProvider": "供应商",
     "colDay": "日期",
-    "colOurs": "我方预估",
+    "colOurs": "客户预估",
+    "colInternalOps": "内部运营",
+    "colVendorSpend": "供应商总花费",
     "colVendor": "供应商计费",
     "colDiff": "差异",
     "colDiffPct": "差异百分比",
+    "notComparable": "不可比",
+    "notComparableHint": "该行写入于内部运营花费开始记录之前，因此其差异与较新的行衡量的并非同一口径。也无法重算——路由器成本从未被存储。",
     "colCoverage": "覆盖度",
     "colStatus": "状态",
     "colReview": "复核",
@@ -6461,6 +6495,7 @@
       "scoped": "已收窄",
       "org_only": "整个组织（仅供参考）",
       "fetch_failed": "供应商拉取失败",
+      "no_basis": "无可比数据",
       "priority_tier_undercount": "不含优先级层"
     },
     "notCoveredTitle": "v1 未覆盖的供应商",

@@ -53,7 +53,7 @@ func DoJSON(client *http.Client, ctx context.Context, method, url string, auth s
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read path; a close error is not actionable
 	out, err := readAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, nil, err

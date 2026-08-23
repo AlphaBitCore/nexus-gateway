@@ -38,7 +38,7 @@ func newLoginCmd(a *App) *cobra.Command {
 
 // storeAdminKey reads an admin key from stdin and persists it for the env.
 func (a *App) storeAdminKey(cmd *cobra.Command) error {
-	fmt.Fprint(a.ErrOut, "Paste admin API key (nxk_…): ")
+	_, _ = fmt.Fprint(a.ErrOut, "Paste admin API key (nxk_…): ")
 	sc := bufio.NewScanner(cmd.InOrStdin())
 	if !sc.Scan() {
 		return fmt.Errorf("%w: no admin key on stdin", errUsage)

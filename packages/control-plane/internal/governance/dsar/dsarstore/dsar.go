@@ -524,10 +524,25 @@ type DSARErasureResult struct {
 	// PayloadsScrubbed is the number of traffic_event_payload rows whose inline
 	// request/response bodies and spill references were cleared.
 	PayloadsScrubbed int `json:"payloadsScrubbed"`
-	// NormalizedScrubbed is the number of traffic_event_normalized rows whose
-	// normalized request/response copies, error reasons, and redaction spans were
-	// cleared (the canonical copy of the captured bodies — without this the
-	// prompt/response text survives the erasure).
+	// NormalizedScrubbed is DEPRECATED and always 0.
+	//
+	// It counted rows scrubbed in the traffic_event_normalized sidecar, which
+	// held a second copy of the captured text. That table is being dropped and
+	// the normalized view is computed on demand from the body PayloadsScrubbed
+	// already clears, so there is no second copy left to scrub and zero is the
+	// truthful count — not a silently skipped step.
+	//
+	// Pinned at 0, and retired for callers. It counted rows nulled in the
+	// traffic_event_normalized sidecar, which no longer exists — the normalized
+	// projection is recomputed at view time from the captured body. The field
+	// stays because it ships in the admin API response and removing it outright
+	// would break a consumer reading the erasure receipt; the removal window is
+	// recorded in docs/users/api/openapi/control-plane/dsar.yaml, per the
+	// release policy's deprecate-then-remove rule.
+	//
+	// Stated this way rather than as a `Deprecated:` marker on purpose: the
+	// marker made staticcheck flag the handler that must still populate the
+	// field, which is the one caller that has no choice.
 	NormalizedScrubbed int `json:"normalizedScrubbed"`
 	// SpillRefsOrphaned counts payload rows that still referenced spilled
 	// (S3/localfs) bodies at scrub time. The DB references are cleared here; the
@@ -670,32 +685,17 @@ func (store *Store) FulfillDSARErasure(ctx context.Context, subjectID string) (*
 	}
 	result.PayloadsScrubbed = int(tagP.RowsAffected())
 
-	// 1b. Scrub the NORMALIZED copy of the bodies (traffic_event_normalized). This
-	//     1:1 sidecar holds the canonical normalized request/response text; without
-	//     scrubbing it the subject's prompts/responses survive the erasure. Same
-	//     scoping + same before-nulling ordering as the payload scrub.
-	tagN, err := tx.Exec(ctx, `
-		UPDATE traffic_event_normalized n
-		SET request_normalized = NULL,
-		    response_normalized = NULL,
-		    request_error_reason = NULL,
-		    response_error_reason = NULL
-		FROM traffic_event t
-		WHERE t.id = n.traffic_event_id
-		  AND (
-		    (t.source = 'ai-gateway' AND t.entity_id = $1)
-		    OR (t.source = 'agent' AND EXISTS (
-		      SELECT 1 FROM "DeviceAssignment" da
-		      WHERE da."userId" = $1 AND da."deviceId" = t.thing_id
-		        AND t.timestamp >= da."assignedAt"
-		        AND (da."releasedAt" IS NULL OR t.timestamp < da."releasedAt")
-		    ))
-		  )
-	`, subjectID)
-	if err != nil {
-		return nil, fmt.Errorf("scrub normalized bodies: %w", err)
-	}
-	result.NormalizedScrubbed = int(tagN.RowsAffected())
+	// Step 1b used to scrub a second copy of the same text held in the
+	// traffic_event_normalized sidecar. That table is being dropped: nothing has
+	// written to it since 2026-06-26, its only reader is gone, and the normalized
+	// projection is now computed at view time from the body step 1 just nulled.
+	//
+	// Erasure therefore has ONE surface instead of two, which is the stronger
+	// position — a second copy is a second thing an erasure can miss. Nothing is
+	// left unscrubbed by dropping the step. NormalizedScrubbed stays in the
+	// response, pinned at zero, because it ships in the admin API contract; it is
+	// marked deprecated in dsar.yaml with a removal window. Zero is the honest
+	// value: zero rows is what a dropped table scrubs.
 
 	// 2. Anonymise VK traffic identifying columns (name + identity snapshot too).
 	tag1, err := tx.Exec(ctx, `

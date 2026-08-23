@@ -37,7 +37,7 @@ import (
 //     text values; file parts decay to a single placeholder marker so the
 //     audit row never inlines blobs).
 //   - text/* or empty content-type with parseable UTF-8 → core.KindHTTPText.
-//   - everything else → core.KindHTTPBinary, HTTPBodyView.BinaryRef with
+//   - everything else → core.KindHTTPBinary, HTTPBodyView.MediaRef with
 //     size + sha256 metadata only (no inline bytes).
 //
 // The normalizer is deterministic — the same wire bytes produce the same
@@ -352,10 +352,13 @@ func (n *GenericHTTPNormalizer) binaryRef(raw []byte, mediaType string) core.Nor
 		Protocol:         "generic-http",
 		HTTP: &core.HTTPPayload{
 			BodyView: &core.HTTPBodyView{
-				BinaryRef: &core.BinaryRef{
-					Size:        int64(len(raw)),
-					ContentType: mediaType,
-					SHA256:      hex.EncodeToString(sum[:]),
+				MediaRef: &core.MediaRef{
+					Modality:  modalityFromMime(mediaType),
+					Mime:      mediaType,
+					SizeBytes: int64(len(raw)),
+					SHA256:    hex.EncodeToString(sum[:]),
+					Source:    core.MediaCaptured,
+					Locator:   "body",
 				},
 			},
 		},

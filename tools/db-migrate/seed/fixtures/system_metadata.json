@@ -33,63 +33,10 @@
     "updated_by": "nexus-user-super-admin"
   },
   {
-    "key": "alerting.config",
-    "value": {
-      "checks": {
-        "cost_spike": {
-          "enabled": true,
-          "thresholdUsd": 100,
-          "windowMinutes": 60
-        },
-        "high_error_rate": {
-          "enabled": true,
-          "minSamples": 10,
-          "windowMinutes": 5,
-          "thresholdPercent": 10
-        },
-        "high_rejection_rate": {
-          "enabled": true,
-          "minSamples": 10,
-          "windowMinutes": 5,
-          "thresholdPercent": 20
-        }
-      },
-      "enabled": false,
-      "headers": {
-        "Content-Type": "application/json"
-      },
-      "webhookUrl": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
-      "cooldownSec": 300,
-      "intervalSec": 60
-    },
-    "updated_at": "2026-05-10T16:44:41.691+00:00",
-    "updated_by": "nexus-user-admin"
-  },
-  {
-    "key": "audit.payload",
-    "value": {
-      "storeRequestBody": false,
-      "storeResponseBody": false
-    },
-    "updated_at": "2026-05-10T16:44:40.496+00:00",
-    "updated_by": "nexus-user-admin"
-  },
-  {
     "key": "device.auth.mode",
     "value": "local-login",
     "updated_at": "2026-05-13T07:14:36.807+00:00",
     "updated_by": "nexus-user-super-admin"
-  },
-  {
-    "key": "device.auth.settings",
-    "value": {
-      "scopes": "openid",
-      "enabled": false,
-      "clientId": "",
-      "authorizeUrl": ""
-    },
-    "updated_at": "2026-05-10T16:44:41.18+00:00",
-    "updated_by": "nexus-user-admin"
   },
   {
     "key": "observability.config",
@@ -114,14 +61,6 @@
     },
     "updated_at": "2026-05-08T15:35:56.913+00:00",
     "updated_by": "nexus-user-super-admin"
-  },
-  {
-    "key": "proxy.killswitch",
-    "value": {
-      "enabled": false
-    },
-    "updated_at": "2026-05-10T16:44:41.927+00:00",
-    "updated_by": "nexus-user-admin"
   },
   {
     "key": "siem.config",

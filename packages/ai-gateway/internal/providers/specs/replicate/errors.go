@@ -45,9 +45,12 @@ func (errorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
 		pe.Code = provcore.CodeTimeout
 	case http.StatusPaymentRequired:
-		// Replicate returns 402 for quota / billing issues; map to
-		// auth_failed which closest matches the canonical taxonomy.
-		pe.Code = provcore.CodeAuthFailed
+		// Replicate returns 402 for quota / billing issues. This used to map to
+		// auth_failed as the closest match the taxonomy then offered; the
+		// taxonomy now names the case, and the distinction is worth keeping —
+		// a spent budget and a bad credential need different operator action,
+		// and only one of them is fixed by rotating a key.
+		pe.Code = provcore.CodeProviderQuotaExhausted
 	default:
 		pe.Code = provcore.CodeUpstreamError
 	}

@@ -17,6 +17,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 1.4,
       "outputPricePerMillion": 4.4,
       "cachedInputReadPricePerMillion": 0.26,
@@ -35,6 +41,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1,
       "outputPricePerMillion": 3.2,
@@ -55,6 +67,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 1.2,
       "outputPricePerMillion": 5,
       "cachedInputReadPricePerMillion": 0.3,
@@ -73,6 +91,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.6,
       "outputPricePerMillion": 2.2,
@@ -93,6 +117,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0,
       "outputPricePerMillion": 0,
       "cachedInputReadPricePerMillion": 0,
@@ -112,6 +142,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.6,
       "outputPricePerMillion": 2.2,
       "cachedInputReadPricePerMillion": 0.11,
@@ -126,9 +162,15 @@
       "providerModelId": "glm-4.6v",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 0.9,
@@ -145,6 +187,12 @@
       "features": [
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0,
       "outputPricePerMillion": 0,

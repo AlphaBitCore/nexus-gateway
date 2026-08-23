@@ -12,9 +12,15 @@
       "providerModelId": "meta-llama/llama-4-maverick-17b-128e-instruct",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 0.6,
@@ -28,9 +34,15 @@
       "providerModelId": "meta-llama/llama-4-scout-17b-16e-instruct",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.11,
       "outputPricePerMillion": 0.34,
@@ -48,6 +60,12 @@
         "streaming",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.29,
       "outputPricePerMillion": 0.59,
       "maxContextTokens": 131000
@@ -62,6 +80,12 @@
         "function_calling",
         "streaming",
         "reasoning"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.15,
       "outputPricePerMillion": 0.6,
@@ -80,6 +104,12 @@
         "streaming",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.075,
       "outputPricePerMillion": 0.3,
       "cachedInputReadPricePerMillion": 0.0375,
@@ -96,6 +126,12 @@
         "function_calling",
         "streaming"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.59,
       "outputPricePerMillion": 0.79,
       "maxContextTokens": 128000,
@@ -110,6 +146,12 @@
       "features": [
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.05,
       "outputPricePerMillion": 0.08,

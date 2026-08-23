@@ -16,31 +16,44 @@ import (
 	"strings"
 
 	openaicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/codec"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
 
 // IsThinkingModel reports whether the DeepSeek model id belongs to a
 // thinking/reasoning family that imposes the two thinking-mode wire quirks:
 // it rejects a FORCED tool_choice with HTTP 400 `{"error":{"type":
 // "invalid_request_error","message":"Thinking mode does not support this
-// tool_choice"}}`, and it rejects a history whose assistant tool_calls turns
-// dropped reasoning_content with HTTP 400 "The `reasoning_content` in the
-// thinking mode must be passed back to the API."
+// tool_choice"}}`, and it rejects a history whose assistant turns dropped
+// reasoning_content with HTTP 400 "The `reasoning_content` in the thinking
+// mode must be passed back to the API."
 //
-// Matched: the whole deepseek-v4 family (deepseek-v4-pro AND deepseek-v4-flash
-// both observed on api.taskforce10x.com) and deepseek-reasoner. The match is
-// the family prefix, not per-suffix, because the quirk is a property of the v4
-// thinking architecture, not of the pro/flash tier — a denylist of exact
-// suffixes went stale exactly once already: deepseek-v4-flash 400'd every
+// The trigger for that second rejection is the REQUEST carrying `tools`, not
+// the individual turn carrying `tool_calls`. Probed on 2026-08-19, one
+// variable at a time: plain assistant turns with no tools → 200; the same
+// turns with a tools array → 400; with the empty presence marker restored →
+// 200 again. A tool-calls-only fill therefore covered one shape of the
+// requirement and left staging failing on a 17-tool request whose assistant
+// turns were plain text and had never called anything.
+//
+// Matched: deepseek-reasoner, and generation 4 or later of the deepseek-v
+// line (deepseek-v4-pro AND deepseek-v4-flash both observed on
+// api.taskforce10x.com). Neither half of that is an exact list, and both
+// widenings have the same cause — an exact list goes stale in the direction
+// that hurts. Exact SUFFIXES went stale once: deepseek-v4-flash 400'd every
 // tool-loop client with a dropped reasoning_content because only -pro and
-// -reasoner were listed (§3a Rule 7: both v4 tiers are evidenced; the family
-// match generalizes across the shared architecture rather than re-chasing each
-// new suffix). Both quirk fixes are behavior-preserving where they may not be
-// needed — a stripped forced tool_choice ≡ auto, an empty reasoning_content is
-// accepted as a plain presence marker — so widening the gate cannot regress a
-// v4 model that happened to accept the original body.
+// -reasoner were named. An exact GENERATION would go stale the same way the
+// day a v5 ships, and an unreleased generation is precisely the one nobody
+// has probed.
+//
+// Widening is safe because both fixes are behaviour-preserving on a model
+// that would have accepted the original body: a stripped forced tool_choice
+// ≡ auto, and an empty reasoning_content is accepted as a plain presence
+// marker. §3a Rule 7 is satisfied — both v4 tiers are evidenced, and the
+// generalization follows the shared thinking architecture rather than
+// re-chasing each new suffix.
 func IsThinkingModel(modelID string) bool {
 	return strings.HasPrefix(modelID, "deepseek-reasoner") ||
-		strings.HasPrefix(modelID, "deepseek-v4")
+		specutil.GenerationAtLeast(modelID, "deepseek-v", 4)
 }
 
 // Contract assembles the DeepSeek wire contract: one structural rule
@@ -64,7 +77,7 @@ func applyThinkingRules(payload map[string]any, _ string) []string {
 		rewrites = append(rewrites, r)
 	}
 	if n := fillMissingReasoningContent(payload); n > 0 {
-		rewrites = append(rewrites, fmt.Sprintf("reasoning_content→filled_on_%d_assistant_tool_calls", n))
+		rewrites = append(rewrites, fmt.Sprintf("reasoning_content→filled_on_%d_assistant_turns", n))
 	}
 	return rewrites
 }
@@ -116,6 +129,10 @@ func fillMissingReasoningContent(payload map[string]any) int {
 	if !ok {
 		return 0
 	}
+	// A non-empty tools array puts the whole history under the requirement; an
+	// empty one is the no-tools case and must not widen it.
+	tools, _ := payload["tools"].([]any)
+	toolsPresent := len(tools) > 0
 	filled := 0
 	for _, m := range msgs {
 		msg, ok := m.(map[string]any)
@@ -125,11 +142,23 @@ func fillMissingReasoningContent(payload map[string]any) int {
 		if _, has := msg["reasoning_content"]; has {
 			continue
 		}
-		if calls, ok := msg["tool_calls"].([]any); !ok || len(calls) == 0 {
+		if !toolsPresent && !hasToolCalls(msg) {
+			// No tools on the request and none on this turn: the upstream
+			// accepts the turn as-is, so filling it would rewrite a body it
+			// never objected to.
 			continue
 		}
 		msg["reasoning_content"] = ""
 		filled++
 	}
 	return filled
+}
+
+// hasToolCalls reports whether an assistant message carries a non-empty
+// tool_calls array. Kept separate from the tools-present test above because
+// the two are different facts: one is about this turn, the other about the
+// request the turn is replayed in.
+func hasToolCalls(msg map[string]any) bool {
+	calls, ok := msg["tool_calls"].([]any)
+	return ok && len(calls) > 0
 }

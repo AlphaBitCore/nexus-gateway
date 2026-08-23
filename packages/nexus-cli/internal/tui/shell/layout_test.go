@@ -65,7 +65,7 @@ func TestEaseHeights_MidFrameBetweenStartAndTarget(t *testing.T) {
 	fromTop, _ := splitHeights(total, focusCanvas) // larger top
 	toTop, _ := splitHeights(total, focusChat)     // smaller top
 	midTop, midBot := easeHeights(total, focusChat, easeFrames/2)
-	if !(midTop < fromTop && midTop > toTop) {
+	if midTop >= fromTop || midTop <= toTop {
 		t.Fatalf("a mid-ease top should be between start(%d) and target(%d), got %d", fromTop, toTop, midTop)
 	}
 	if midTop+midBot != total {

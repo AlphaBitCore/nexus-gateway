@@ -9,9 +9,16 @@ import (
 
 func anthropicServer(t *testing.T, handler http.HandlerFunc) *anthropicBillSource {
 	t.Helper()
+	return anthropicServerPinned(t, "", handler)
+}
+
+// anthropicServerPinned is anthropicServer with a workspace pin, for the tests
+// that exercise the client-side workspace narrowing.
+func anthropicServerPinned(t *testing.T, workspaceID string, handler http.HandlerFunc) *anthropicBillSource {
+	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return newAnthropicBillSource("sk-ant-admin01-test", "", srv.URL, srv.Client())
+	return newAnthropicBillSource("sk-ant-admin01-test", workspaceID, srv.URL, srv.Client())
 }
 
 func TestAnthropicBillSource_SumsCostTypes_AndNarrowsToWorkspace(t *testing.T) {
@@ -179,5 +186,66 @@ func TestAnthropicBillSource_DefaultWorkspaceIsOrgNotScoped(t *testing.T) {
 	if bills[0].ScopeKind != "org" || bills[0].ScopeID != "" {
 		t.Fatalf("null workspace_id must resolve to org (not a bogus scoped row): kind=%q id=%q",
 			bills[0].ScopeKind, bills[0].ScopeID)
+	}
+}
+
+// TestAnthropicFetchDailyBill_PinnedWorkspaceIdleDayIsAReportedZero: on a
+// pinned workspace an idle day does not arrive as an empty bucket — it arrives
+// as a bucket FULL of results, all belonging to the organization's other
+// workspaces, which the client-side filter then discards. Without a key created
+// before that filter runs, the day would vanish exactly as if Anthropic had
+// never reported it, and an idle workspace would silently produce no row at
+// all (prod Anthropic 2026-08-16..18).
+func TestAnthropicFetchDailyBill_PinnedWorkspaceIdleDayIsAReportedZero(t *testing.T) {
+	src := anthropicServerPinned(t, "wrkspc_ours", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[
+		  {"starting_at":"2026-08-15T00:00:00Z","results":[
+		     {"amount":"81.2123","currency":"USD","workspace_id":"wrkspc_ours"},
+		     {"amount":"1033.64","currency":"USD","workspace_id":"wrkspc_other"}]},
+		  {"starting_at":"2026-08-16T00:00:00Z","results":[
+		     {"amount":"4320.17","currency":"USD","workspace_id":"wrkspc_other"}]}
+		],"has_more":false,"next_page":null}`))
+	})
+
+	bills, err := src.FetchDailyBill(context.Background(), utcDay(2026, 8, 15), utcDay(2026, 8, 16))
+	if err != nil {
+		t.Fatalf("FetchDailyBill: %v", err)
+	}
+	if len(bills) != 2 {
+		t.Fatalf("bills = %+v, want both reported days, the idle one included", bills)
+	}
+	if bills[0].AmountUSD != 0.812123 {
+		t.Errorf("bills[0] = %+v, want only our workspace's share of 08-15", bills[0])
+	}
+	if !bills[1].Day.Equal(utcDay(2026, 8, 16)) || bills[1].AmountUSD != 0 {
+		t.Errorf("bills[1] = %+v, want 2026-08-16 at $0 — the other workspace's spend is not ours", bills[1])
+	}
+}
+
+// TestAnthropicFetchDailyBill_DayAbsentFromResponseStaysAbsent: a day the
+// vendor left out of the response is still "not finalized", never zero.
+func TestAnthropicFetchDailyBill_DayAbsentFromResponseStaysAbsent(t *testing.T) {
+	src := anthropicServerPinned(t, "wrkspc_ours", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[
+		  {"starting_at":"2026-08-15T00:00:00Z","results":[
+		     {"amount":"81.2123","currency":"USD","workspace_id":"wrkspc_ours"}]}
+		],"has_more":false,"next_page":null}`))
+	})
+
+	bills, err := src.FetchDailyBill(context.Background(), utcDay(2026, 8, 15), utcDay(2026, 8, 16))
+	if err != nil {
+		t.Fatalf("FetchDailyBill: %v", err)
+	}
+	if len(bills) != 1 || !bills[0].Day.Equal(utcDay(2026, 8, 15)) {
+		t.Fatalf("bills = %+v, want only the day the vendor reported a bucket for", bills)
+	}
+}
+
+func TestAnthropicBillingHost(t *testing.T) {
+	if got := newAnthropicBillSource("k", "", "", nil).BillingHost(); got != "api.anthropic.com" {
+		t.Errorf("default BillingHost = %q, want api.anthropic.com", got)
+	}
+	if got := newAnthropicBillSource("k", "", "https://claude.internal:9443", nil).BillingHost(); got != "claude.internal" {
+		t.Errorf("overridden BillingHost = %q, want the override's host without its port", got)
 	}
 }

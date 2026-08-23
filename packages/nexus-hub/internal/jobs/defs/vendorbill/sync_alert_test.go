@@ -88,6 +88,44 @@ func TestSync_FiresWhenStaleFetchFailed(t *testing.T) {
 // A provider with no stale fetch_failed (healthy, or only a FRESH transient
 // fetch_failed that the SQL stale filter excludes → stale_failed=0) resolves,
 // never fires. This is the transient-blip guarantee.
+// The staleness counter must count `no_basis` days alongside `fetch_failed`.
+// no_basis means the vendor billed but our side recorded no vendor spend, i.e.
+// the cost-stamping path is broken — a 100% under-record of real vendor money.
+// Counted only on fetch_failed, such a provider would have stale_failed = 0 and
+// take the Resolve branch, actively asserting the sync is healthy. The scan SQL
+// is asserted directly because the filter lives there, and pgxmock cannot notice
+// a narrowed FILTER clause from the canned result alone.
+func TestSync_NoBasisDaysCountTowardsStaleness(t *testing.T) {
+	var gotSQL string
+	mock, _ := pgxmock.NewPool(pgxmock.QueryMatcherOption(
+		pgxmock.QueryMatcherFunc(func(expectedSQL, actualSQL string) error {
+			if strings.Contains(actualSQL, "FROM vendor_bill_reconciliation") {
+				gotSQL = actualSQL
+			}
+			return pgxmock.QueryMatcherRegexp.Match(expectedSQL, actualSQL)
+		})))
+	defer mock.Close()
+	raiser := &fakeRaiser{}
+	expectSyncScan(mock, syncRow{"prov1", "OpenAI", 2, "2026-07-20"})
+	j := makeSyncJob(mock, raiser, &fakeRuleLoader{rule: enabledSyncRule()}, day(2026, 7, 23))
+
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(raiser.raises) != 1 {
+		t.Fatalf("stale un-comparable days must raise, got %d", len(raiser.raises))
+	}
+	if len(raiser.resolves) != 0 {
+		t.Fatalf("a firing provider must not also resolve, got %v", raiser.resolves)
+	}
+	// Both FILTER clauses — the COUNT that decides raise/resolve and the MIN that
+	// names the oldest day — must cover no_basis. Narrowing either one back to
+	// fetch_failed alone is the regression this asserts against.
+	if n := strings.Count(gotSQL, "r.coverage IN ('fetch_failed', 'no_basis')"); n != 2 {
+		t.Errorf("both the COUNT and the MIN filter must cover no_basis, found %d in:\n%s", n, gotSQL)
+	}
+}
+
 func TestSync_ResolvesWhenNoStaleFailed(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()

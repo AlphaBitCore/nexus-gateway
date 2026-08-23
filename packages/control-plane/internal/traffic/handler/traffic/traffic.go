@@ -53,15 +53,14 @@ func (h *Handler) RegisterTrafficRoutes(g *echo.Group, iamMW func(action string)
 // already redaction-safe (the storage governance pass redacts every persisted
 // copy), so recompute never exposes redacted content.
 //
-// Resolution is a 4-tier ladder, evaluated per direction for (a)+(b):
+// Resolution is a 3-tier ladder, evaluated per direction for (a)+(b):
 //
 //	(a) inline body present       → recompute from the inline bytes
 //	(b) else a spill ref present  → fetch the RAW spilled bytes and recompute
-//	(c) else stored sidecar       → return whatever was historically persisted
-//	(d) else                      → 404 "normalized payload not found" (unavailable)
+//	(c) else                      → 404 "normalized payload not found" (unavailable)
 //
 // A spill fetch that fails (object aged out to retention, integrity mismatch)
-// degrades that direction to empty and the row falls through to (c)/(d); a missing
+// degrades that direction to empty and the row falls through to (c); a missing
 // spill object never errors the endpoint.
 func (h *Handler) GetTrafficEventNormalized(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -87,19 +86,19 @@ func (h *Handler) GetTrafficEventNormalized(c echo.Context) error {
 		}
 	}
 
-	// Tier (c): no recoverable body (capture off, or every spilled body gone to
-	// retention) — fall back to the stored sidecar so historical rows stay
-	// visible in the drawer.
-	row, err := h.traffic.GetTrafficEventNormalized(ctx, id)
-	if err != nil {
-		h.logger.Error("get traffic event normalized (fallback)", "trafficEventId", id, "error", err)
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-	if row == nil {
-		// Tier (d): nothing inline, nothing spilled, no sidecar → unavailable.
-		return c.JSON(http.StatusNotFound, errJSON("Normalized payload not found", "not_found", ""))
-	}
-	return c.JSON(http.StatusOK, row)
+	// Tier (c): nothing inline and nothing recoverable from spill — capture was
+	// off for this row, or every spilled body has gone to retention. There is
+	// nothing left to recompute from and no stored sidecar to fall back on:
+	// traffic_event_normalized is being dropped (e88-multimodal-gateway.md NFR-1
+	// puts it on the GDPR Art.17 erasure trajectory), and nothing has written a
+	// row to it since 2026-06-26.
+	//
+	// The cost is bounded and worth stating: a row whose body aged out but which
+	// still carries a historical sidecar used to render in the drawer and now
+	// answers 404. That is what dropping the table means — the alternative is
+	// keeping an un-erasable copy of request content alive for a handful of
+	// pre-2026-06 rows.
+	return c.JSON(http.StatusNotFound, errJSON("Normalized payload not found", "not_found", ""))
 }
 
 // computeNormalized runs the shared normalize chain over the captured bodies and
@@ -112,6 +111,11 @@ func (h *Handler) computeNormalized(id string, in *trafficstore.NormalizeInput) 
 		TrafficEventID:   id,
 		NormalizeVersion: normcore.SchemaVersion,
 		CreatedAt:        time.Now().UTC(),
+		// Provenance, not content: this projection may have been computed from a
+		// stored PREFIX. Carried through so the drawer's normalized tab can say
+		// so — the raw tab already does, and the two must not disagree.
+		RequestTruncated:  in.RequestTruncated,
+		ResponseTruncated: in.ResponseTruncated,
 	}
 	if len(in.RequestBody) > 0 {
 		raw, status, reason := h.normalize("request", in.RequestContentType, in.AdapterType, in.Model, in.Path, false, in.RequestBody)
@@ -119,6 +123,24 @@ func (h *Handler) computeNormalized(id string, in *trafficstore.NormalizeInput) 
 		out.RequestStatus = strPtr(status)
 		if reason != "" {
 			out.RequestErrorReason = strPtr(reason)
+		}
+	}
+	if len(in.RequestBody) == 0 && in.ArtifactRefs != "" {
+		// The request carried a binary the gateway hashed and forwarded
+		// without keeping a copy — STT audio, a video input reference. The
+		// fingerprint is the only record it existed, so it becomes a media
+		// element in the request payload like any other.
+		//
+		// The discriminator is "we stored no request body yet recorded a
+		// fingerprint", not a list of endpoint kinds. TTS and image
+		// generation also write artifact_refs, but their refs describe the
+		// RESPONSE and their JSON request body IS stored — so this arm does
+		// not fire for them, and their artifacts stay in the one place they
+		// already are rather than appearing a second time with a different
+		// custody state.
+		if raw := fingerprintRequestPayload(in.ArtifactRefs); raw != nil {
+			out.RequestNormalized = raw
+			out.RequestStatus = strPtr("ok")
 		}
 	}
 	if len(in.ResponseBody) > 0 {

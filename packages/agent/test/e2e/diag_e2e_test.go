@@ -339,8 +339,9 @@ func newAgentRig(t *testing.T, ctx context.Context, hub *mockHub, thingID string
 	composed := slog.New(shareddiag.NewMultiHandler(logger.Handler(), sink))
 
 	staticInfo := opsmetricsplat.CaptureStaticInfo(opsmetricsplat.BuildInfo{
-		ServiceVersion: "nexus-agent/test",
-		StartTime:      startTime.Format(time.RFC3339),
+		Service:      "nexus-agent",
+		BuildVersion: "test",
+		StartTime:    startTime.Format(time.RFC3339),
 	})
 
 	// OnConfigChanged echoes desired back as reported. The mock Hub's

@@ -99,7 +99,7 @@ func TestEstimate_NoTargets(t *testing.T) {
 	var resp map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	errMap, _ := resp["error"].(map[string]any)
-	if code, _ := errMap["code"].(string); code != "estimate_no_targets" {
+	if code, _ := errMap["code"].(string); code != "ESTIMATE_NO_TARGETS" {
 		t.Errorf("code=%q want estimate_no_targets", code)
 	}
 }
@@ -243,11 +243,147 @@ func TestEstimate_PerTargetFailure_OneBad(t *testing.T) {
 	}
 	var foundErr bool
 	for _, t2 := range resp.Targets {
-		if t2.ModelCode == "does-not-exist" && t2.Error != nil && t2.Error.Code == "estimate_target_not_found" {
+		if t2.ModelCode == "does-not-exist" && t2.Error != nil && t2.Error.Code == "ESTIMATE_TARGET_NOT_FOUND" {
 			foundErr = true
 		}
 	}
 	if !foundErr {
 		t.Errorf("expected per-target estimate_target_not_found error on missing model; targets=%+v", resp.Targets)
+	}
+}
+
+// TestEstimate_RerankPricesBySearchUnitNotTokens covers the /v1/estimate rerank
+// branch: a rerank target must preview via its per-search-unit rate, not the
+// token estimator. 150 documents = ceil(150/100) = 2 search units × 2000 USD/1M
+// = $0.004 — a figure the token path (thousands of document "tokens" × the same
+// 2000 rate) could never produce.
+func TestEstimate_RerankPricesBySearchUnitNotTokens(t *testing.T) {
+	rr := &store.Model{
+		ID: "m-rr", Code: "rerank-v3.5", Type: "rerank",
+		ProviderID: "cohere", ProviderName: "cohere",
+		InputPricePM: fPtr(2000), // USD per 1M search units
+	}
+	models := &stubModels{
+		byCode: map[string]*store.Model{"rerank-v3.5": rr},
+		byID:   map[string]*store.Model{"m-rr": rr},
+	}
+	h := makeEstimateHandler(t, &stubVKAuth{}, models)
+
+	docs := make([]string, 150)
+	for i := range docs {
+		docs[i] = "d"
+	}
+	request, _ := json.Marshal(map[string]any{"model": "rerank-v3.5", "query": "q", "documents": docs})
+	envelope, _ := json.Marshal(map[string]any{
+		"request":        json.RawMessage(request),
+		"compareTargets": []map[string]string{{"providerId": "cohere", "modelId": "rerank-v3.5"}},
+	})
+	w := doEstimate(t, h, string(envelope))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Targets []struct {
+			Cost *struct {
+				Expected struct {
+					Total float64 `json:"total"`
+				} `json:"expected"`
+			} `json:"cost"`
+			Assumptions []string `json:"assumptions"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v; body=%s", err, w.Body.String())
+	}
+	if len(resp.Targets) != 1 || resp.Targets[0].Cost == nil {
+		t.Fatalf("want 1 target with cost; body=%s", w.Body.String())
+	}
+	if got := resp.Targets[0].Cost.Expected.Total; got < 0.0039 || got > 0.0041 {
+		t.Errorf("rerank /v1/estimate = $%.6f, want ~$0.004 (2 search units × 2000/1M), not a token figure", got)
+	}
+}
+
+// estimateExpectedTotal runs one /v1/estimate call for a single target and
+// returns the expected total cost, failing the test on any transport error.
+func estimateExpectedTotal(t *testing.T, h *Handler, provider, modelID string, request []byte) float64 {
+	t.Helper()
+	envelope, _ := json.Marshal(map[string]any{
+		"request":        json.RawMessage(request),
+		"compareTargets": []map[string]string{{"providerId": provider, "modelId": modelID}},
+	})
+	w := doEstimate(t, h, string(envelope))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Targets []struct {
+			Cost *struct {
+				Expected struct {
+					Total float64 `json:"total"`
+				} `json:"expected"`
+			} `json:"cost"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v; body=%s", err, w.Body.String())
+	}
+	if len(resp.Targets) != 1 || resp.Targets[0].Cost == nil {
+		t.Fatalf("want 1 target with cost; body=%s", w.Body.String())
+	}
+	return resp.Targets[0].Cost.Expected.Total
+}
+
+// TestEstimate_ImagePricesPerImageNotPromptTokens covers the /v1/estimate image
+// path: a per-image model (InputPricePM = USD per 1M images) must price by
+// request.n, not by tokenizing the prompt against the per-image rate — which
+// would overstate the preview by orders of magnitude.
+func TestEstimate_ImagePricesPerImageNotPromptTokens(t *testing.T) {
+	img := &store.Model{
+		ID: "m-img", Code: "dall-e-3", Type: "image",
+		ProviderID: "openai", ProviderName: "openai",
+		InputPricePM: fPtr(40000), // USD per 1M images → $0.04/image
+	}
+	models := &stubModels{
+		byCode: map[string]*store.Model{"dall-e-3": img},
+		byID:   map[string]*store.Model{"m-img": img},
+	}
+	h := makeEstimateHandler(t, &stubVKAuth{}, models)
+
+	request, _ := json.Marshal(map[string]any{
+		"model":  "dall-e-3",
+		"prompt": "a photorealistic red bicycle on a beach at sunset, golden hour, high detail",
+		"n":      2,
+	})
+	got := estimateExpectedTotal(t, h, "openai", "dall-e-3", request)
+	// 2 images × 40000 / 1M = $0.08.
+	if got < 0.0799 || got > 0.0801 {
+		t.Errorf("image /v1/estimate = $%.6f, want ~$0.08 (2 images × 40000/1M), not a token figure", got)
+	}
+}
+
+// TestEstimate_TTSPricesPerInputCharNotBodyTokens covers the /v1/estimate tts
+// path: a per-character model must price by runes of request.input — the same
+// count the post-call stamp bills — not by the whole body's token approximation.
+func TestEstimate_TTSPricesPerInputCharNotBodyTokens(t *testing.T) {
+	tts := &store.Model{
+		ID: "m-tts", Code: "gpt-4o-mini-tts", Type: "tts",
+		ProviderID: "openai", ProviderName: "openai",
+		InputPricePM: fPtr(15000), // USD per 1M characters
+	}
+	models := &stubModels{
+		byCode: map[string]*store.Model{"gpt-4o-mini-tts": tts},
+		byID:   map[string]*store.Model{"m-tts": tts},
+	}
+	h := makeEstimateHandler(t, &stubVKAuth{}, models)
+
+	input := "The quick brown fox jumps over the lazy dog." // 44 runes
+	request, _ := json.Marshal(map[string]any{
+		"model": "gpt-4o-mini-tts", "voice": "alloy", "input": input,
+	})
+	got := estimateExpectedTotal(t, h, "openai", "gpt-4o-mini-tts", request)
+	// 44 chars × 15000 / 1M = $0.00066.
+	want := 44.0 * 15000 / 1e6
+	if got < want-1e-9 || got > want+1e-9 {
+		t.Errorf("tts /v1/estimate = $%.8f, want $%.8f (44 input chars × 15000/1M)", got, want)
 	}
 }

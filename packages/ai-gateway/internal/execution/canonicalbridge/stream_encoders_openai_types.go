@@ -1,5 +1,7 @@
 package canonicalbridge
 
+import provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+
 // stream_encoders_openai_types.go — wire-shape typed structs for the OpenAI
 // chat.completion.chunk stream encoder, split from stream_encoders.go to keep
 // that file under the size ratchet.
@@ -32,10 +34,11 @@ type oaiStreamChoice struct {
 // is OMITTED (tool / reasoning / done frames) while a non-nil empty pointer
 // renders the explicit `"content":""` the role-header frame requires.
 type oaiStreamDelta struct {
-	Content          *string       `json:"content,omitempty"`
-	ReasoningContent string        `json:"reasoning_content,omitempty"`
-	Role             string        `json:"role,omitempty"`
-	ToolCalls        []oaiToolCall `json:"tool_calls,omitempty"`
+	Content          *string                       `json:"content,omitempty"`
+	NexusThinking    []provcore.NexusThinkingBlock `json:"nexus_thinking,omitempty"`
+	ReasoningContent string                        `json:"reasoning_content,omitempty"`
+	Role             string                        `json:"role,omitempty"`
+	ToolCalls        []oaiToolCall                 `json:"tool_calls,omitempty"`
 }
 
 type oaiToolCall struct {
@@ -46,8 +49,9 @@ type oaiToolCall struct {
 }
 
 type oaiToolFunc struct {
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
+	Name             string `json:"name,omitempty"`
+	Arguments        string `json:"arguments,omitempty"`
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 // oaiStreamUsage uses *int per token field so a non-nil zero still renders

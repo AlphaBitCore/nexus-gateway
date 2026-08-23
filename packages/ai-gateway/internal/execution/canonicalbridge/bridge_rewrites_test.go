@@ -77,36 +77,66 @@ func TestIngressChatToWire_StripsNexusThinking_OpenAIWireTarget(t *testing.T) {
 	}
 }
 
-// TestStripInternalCarriersForTarget pins the shared strip both egress legs
-// use. nexus_thinking (Anthropic-private) is dropped for every target whose
-// codec does NOT consume it — the OpenAI identity codec (verbatim forward) AND
-// the Cohere v2 codec (also a verbatim `messages` passthrough, so keying on
-// "wire == OpenAIChat" would leak it) AND the field-mapping Gemini codec — and
-// PRESERVED only for the Anthropic-family codecs that rebuild the signed blocks
-// (Anthropic natively, Bedrock by delegation). reasoning_content (the L2
-// universal text) stays in every case.
+// TestStripInternalCarriersForTarget pins the consumer-based matrix for both
+// provider-private carriers. Gemini/Vertex retain thought_signature,
+// Anthropic/Bedrock retain nexus_thinking, and every other target strips both.
 func TestStripInternalCarriersForTarget(t *testing.T) {
 	b := New(provbuiltins.SchemaCodecs(slog.Default()))
 	canon := []byte(`{"model":"m","messages":[{"role":"assistant","content":"hi",` +
-		`"reasoning_content":"why","nexus_thinking":[{"thinking":"why","signature":"sig-1"}]}]}`)
+		`"reasoning_content":"why","nexus_thinking":[{"thinking":"why","signature":"sig-1"}],` +
+		`"tool_calls":[{"type":"function","function":{"name":"lookup","arguments":"{}","thought_signature":"sig-gem"}}]}]}`)
 
-	// Targets whose codec does not consume the carrier → strip.
-	for _, target := range []provcore.Format{provcore.FormatOpenAI, provcore.FormatCohere, provcore.FormatGemini, provcore.FormatDeepSeek} {
+	for _, target := range []provcore.Format{provcore.FormatOpenAI, provcore.FormatCohere, provcore.FormatDeepSeek, provcore.FormatMistral, provcore.FormatGroq, provcore.Format("unsigned")} {
 		out := b.StripInternalCarriersForTarget(canon, target)
 		if gjson.GetBytes(out, "messages.0.nexus_thinking").Exists() {
-			t.Fatalf("nexus_thinking must be stripped for non-consuming target %q: %s", target, out)
+			t.Fatalf("nexus_thinking leaked to non-consuming target %q: %s", target, out)
+		}
+		if gjson.GetBytes(out, "messages.0.tool_calls.0.function.thought_signature").Exists() {
+			t.Fatalf("thought_signature leaked to non-consuming target %q: %s", target, out)
 		}
 		if gjson.GetBytes(out, "messages.0.reasoning_content").String() != "why" {
 			t.Fatalf("reasoning_content must survive for target %q: %s", target, out)
 		}
 	}
 
-	// Anthropic-family targets reconstruct the signed blocks → preserve.
+	for _, target := range []provcore.Format{provcore.FormatGemini, provcore.FormatVertex} {
+		out := b.StripInternalCarriersForTarget(canon, target)
+		if gjson.GetBytes(out, "messages.0.nexus_thinking").Exists() || !gjson.GetBytes(out, "messages.0.tool_calls.0.function.thought_signature").Exists() {
+			t.Fatalf("Gemini target carrier policy wrong for %q: %s", target, out)
+		}
+	}
+
 	for _, target := range []provcore.Format{provcore.FormatAnthropic, provcore.FormatBedrock} {
 		out := b.StripInternalCarriersForTarget(canon, target)
-		if !gjson.GetBytes(out, "messages.0.nexus_thinking").Exists() {
-			t.Fatalf("nexus_thinking must be PRESERVED for consuming target %q (codec rebuilds signed blocks): %s", target, out)
+		if !gjson.GetBytes(out, "messages.0.nexus_thinking").Exists() || gjson.GetBytes(out, "messages.0.tool_calls.0.function.thought_signature").Exists() {
+			t.Fatalf("Anthropic target carrier policy wrong for %q: %s", target, out)
 		}
+	}
+}
+
+func TestStripInternalCarriersForTargetHandlesEscapedKeys(t *testing.T) {
+	b := New(provbuiltins.SchemaCodecs(slog.Default()))
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"assistant",` +
+		`"nexus_\u0074hinking":[{"thinking":"why","signature":"sig-a"}],` +
+		`"tool_calls":[{"type":"function","function":{"name":"lookup","arguments":"{}",` +
+		`"thought_\u0073ignature":"sig-gem"}}]}]}`)
+	out := b.StripInternalCarriersForTarget(body, provcore.FormatOpenAI)
+	if gjson.GetBytes(out, "messages.0.nexus_thinking").Exists() ||
+		gjson.GetBytes(out, "messages.0.tool_calls.0.function.thought_signature").Exists() {
+		t.Fatalf("escaped provider carriers leaked to non-consuming target: %s", out)
+	}
+}
+
+func TestIngressChatToWire_IdentityStripsWrongCarriers(t *testing.T) {
+	b := New(provbuiltins.SchemaCodecs(slog.Default()))
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"assistant","nexus_thinking":[{"thinking":"why","signature":"sig-a"}],"tool_calls":[{"type":"function","function":{"name":"lookup","arguments":"{}","thought_signature":"sig-gem"}}]}]}`)
+	ct := provcore.CallTarget{Format: provcore.FormatOpenAI, ProviderModelID: "gpt-4o"}
+	wire, _, err := b.IngressChatToWire(provcore.FormatOpenAI, provcore.FormatOpenAI, body, ct, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gjson.GetBytes(wire, "messages.0.nexus_thinking").Exists() || gjson.GetBytes(wire, "messages.0.tool_calls.0.function.thought_signature").Exists() {
+		t.Fatalf("identity OpenAI target leaked private carriers: %s", wire)
 	}
 }
 

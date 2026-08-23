@@ -17,7 +17,7 @@ the binding verification rule.
 | Unit | beside each Go package | `go test -cover` | One package's logic, ≥95% statements |
 | L1 smoke | `tests/smoke/` | bash + curl + psql | A service answers + writes the expected row |
 | L1 Go integration | `tests/integration-go/` | Go `testing` | Hook pipeline decisions against a live gateway |
-| L2 protocol | `tests/e2e-python/protocol/` | pytest + provider SDKs | Each ingress is wire-compatible with the real SDKs |
+| L2 protocol | `tests/e2e-python/protocol/`, `tests/e2e-python/sdk_compat/`, `tests/e2e-node/` | pytest + vitest + provider SDKs | Each ingress is wire-compatible with the real SDKs |
 | L3 AI-judge | `tests/e2e-python/ai_judge/` | pytest + an LLM oracle | Semantic behavior a string match can't capture |
 | L4 UI E2E | `tests/e2e-ui/` | Playwright | The admin UI works end-to-end in a browser |
 | L5 scenarios | `tests/scenarios/` | Go `testing` | Coordinated business outcomes across services |
@@ -49,6 +49,26 @@ an SSN is rejected, a clean prompt is approved, and a bad virtual key is refused
 clients, so the tests fail if the gateway drifts from the wire shape those SDKs
 expect. It covers the OpenAI Chat, Anthropic Messages, embeddings, and Responses
 ingresses. Tests run under `pytest` with a per-test timeout.
+
+Two further arms extend L2 to the full OpenAI SDK contract (AP-3):
+
+- `tests/e2e-python/sdk_compat/` — 60 cases proving an **unmodified** `openai`
+  Python SDK works with only `base_url` + `api_key` changed, across chat,
+  streaming, tools (incl. parallel and streamed argument reassembly), structured
+  output, vision, reasoning tokens, embeddings, and the named error scenarios.
+  A `test_divergence.py` module pins the gateway's *deliberate* departures from
+  api.openai.com, which are the evidence behind §8 of
+  [`ingress-api.md`](../../services/ai-gateway/ingress-api.md) and the
+  reader-facing matrix at `docs/users/api/openai-sdk-compatibility.md`.
+- `tests/e2e-node/` — the Node SDK mirror (22 cases, one spec per scenario
+  category). The exhaustive matrix stays on the Python side.
+
+Both need a deployment with real upstream provider credentials: on
+`target=local` every completion answers `502 PROVIDER_UNAVAILABLE`, so they run
+with `--target stg`. Model selection is capability-gated against `GET /v1/models`
+rather than pinned to model ids, and a missing capability skips with the unmet
+constraint named — except embeddings, which fails, because the acceptance
+criterion names it explicitly.
 
 ### L3 AI-judge
 
@@ -205,6 +225,8 @@ the synthetic Cursor and Gemini-web chat generators that back the adapter skills
 - `tests/smoke/` — L1 bash + curl + psql smoke
 - `tests/integration-go/` — L1 Go integration
 - `tests/e2e-python/protocol/` — L2 protocol-compat (OpenAI / Anthropic SDKs)
+- `tests/e2e-python/sdk_compat/` — L2 OpenAI SDK drop-in matrix (AP-3)
+- `tests/e2e-node/` — L2 OpenAI Node SDK mirror (AP-3)
 - `tests/e2e-python/ai_judge/` — L3 AI-judge
 - `tests/e2e-ui/` — L4 Playwright UI E2E
 - `tests/scenarios/` — L5 cross-service business-flow scenarios + `00-catalog.md`

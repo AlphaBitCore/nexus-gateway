@@ -270,6 +270,28 @@ func TestRunRequestHooks_TTSPrompt_RedactMatch_FailsClosed(t *testing.T) {
 	}
 }
 
+// The structural gate proves `instructions` is in the slot table. This proves
+// the slot actually reaches the pipeline at runtime: the PII lives ONLY in
+// `instructions`, with a benign `input`, so the request is rejected if and
+// only if that field was scanned. Reverting the table entry turns this red;
+// the sibling test above, whose PII sits in `input`, passes either way and
+// therefore could never have caught the gap.
+func TestRunRequestHooks_TTSInstructions_RedactMatch_FailsClosed(t *testing.T) {
+	h := imagesHandler(newPiiRedactHookCache(t))
+	body := []byte(`{"model":"gpt-4o-mini-tts","input":"read the weather forecast","instructions":"speak as if calling alice@example.com","voice":"alloy"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/speech", strings.NewReader(string(body)))
+	w := httptest.NewRecorder()
+	rec := &audit.Record{RequestID: "req-tts-instructions"}
+
+	_, _, rejected := h.runRequestHooks(req, w, rec, "req-tts-instructions", body, routingcore.RoutingTarget{}, ttsIngress, nil, slog.Default())
+	if !rejected {
+		t.Fatalf("PII in `instructions` must be scanned — the field is caller-authored prose the normalize codec already treats as user text; response=%s", w.Body.String())
+	}
+	if rec.HookReasonCode != goHooks.ReasonRedactInflightUnsupported {
+		t.Errorf("HookReasonCode=%q want %q (the TTS wire cannot carry a redacted body, so a redact demand fails closed)", rec.HookReasonCode, goHooks.ReasonRedactInflightUnsupported)
+	}
+}
+
 // TestRunRequestHooks_GenerativePrompt_Benign_Passes pins AC-2: the same
 // hook config with a non-matching prompt forwards normally — no false block.
 func TestRunRequestHooks_GenerativePrompt_Benign_Passes(t *testing.T) {

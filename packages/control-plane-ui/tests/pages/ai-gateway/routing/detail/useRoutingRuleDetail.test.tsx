@@ -105,14 +105,6 @@ describe('useRoutingRuleDetail', () => {
     expect(mutateCalls).toHaveLength(0); // build failed → never calls update
   });
 
-  it('handleSave (stage 0 / policy) sends a policy config built from the allow/deny lines', async () => {
-    rule = { ...rule, pipelineStage: 0, strategyType: 'policy', config: { type: 'policy', allowModelIds: ['m1'] } };
-    const { result } = renderHook(() => useRoutingRuleDetail());
-    act(() => result.current.startEditing());
-    await act(async () => { result.current.handleSave(); });
-    expect(mutateCalls[0]).toMatchObject({ strategyType: 'policy', pipelineStage: 0, config: { type: 'policy' } });
-  });
-
   it('handleSave short-circuits on an invalid retry policy before touching update', () => {
     const { result } = renderHook(() => useRoutingRuleDetail());
     act(() => result.current.startEditing());

@@ -252,3 +252,51 @@ func TestNormalize_PromptTooLong_MapsToContextOverflow(t *testing.T) {
 		t.Errorf("Code = %q, want %q", pe.Code, provcore.CodeContextOverflow)
 	}
 }
+
+// Account quota exhaustion arrives as invalid_request_error — Anthropic
+// returns HTTP 400 for it, the same envelope a malformed body gets. Left
+// there it is the caller's fault by definition: no other target would answer
+// differently, so the executor rightly aborts, and a request that had three
+// healthy alternates on other providers fails anyway.
+//
+// Measured on a live deployment: `model: auto` chose an Anthropic model, the
+// routing trace carried deepseek, openai and google-gemini alternates, and the
+// caller got this 400 with no failover attempted.
+//
+// Same shape as the context-overflow reclassification directly above it: an
+// upstream that files a provider-side condition under the caller's envelope.
+func TestNormalize_UsageLimitIsNotACallerError(t *testing.T) {
+	body := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-09-01 at 00:00 UTC."}}`)
+
+	pe := anterrors.ErrorNormalizer{}.Normalize(http.StatusBadRequest, http.Header{}, body)
+
+	if pe.Code == provcore.CodeInvalidRequest {
+		t.Errorf("code = %q — a spent account budget is the provider's state, not a malformed request; classifying it as the caller's fault is what stops the failover", pe.Code)
+	}
+	if pe.Code != provcore.CodeProviderQuotaExhausted {
+		t.Errorf("code = %q, want %q", pe.Code, provcore.CodeProviderQuotaExhausted)
+	}
+}
+
+// The neighbouring conditions must keep their own classification: a genuinely
+// malformed body is still the caller's fault, and a rate limit is still the
+// transient bucket. A matcher loose enough to swallow either would trade one
+// misclassification for two.
+func TestNormalize_UsageLimitMatcherDoesNotSwallowItsNeighbours(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       string
+	}{
+		{"malformed body", `{"type":"error","error":{"type":"invalid_request_error","message":"messages: at least one message is required"}}`, provcore.CodeInvalidRequest},
+		{"context overflow", `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 300000 tokens > 200000 maximum"}}`, provcore.CodeContextOverflow},
+		{"rate limit", `{"type":"error","error":{"type":"rate_limit_error","message":"Number of requests has exceeded your rate limit"}}`, provcore.CodeRateLimited},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pe := anterrors.ErrorNormalizer{}.Normalize(http.StatusBadRequest, http.Header{}, []byte(tc.body))
+			if pe.Code != tc.want {
+				t.Errorf("code = %q, want %q", pe.Code, tc.want)
+			}
+		})
+	}
+}

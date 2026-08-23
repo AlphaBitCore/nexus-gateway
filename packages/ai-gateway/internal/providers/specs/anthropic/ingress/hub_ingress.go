@@ -3,10 +3,12 @@ package ingress
 import (
 	"fmt"
 	"github.com/goccy/go-json"
-	"strings"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // MessagesRequestToOpenAIChatCompletion converts an Anthropic Messages API
@@ -42,6 +44,42 @@ func MessagesRequestToOpenAIChatCompletion(native []byte, providerModelID string
 	if v := root.Get("stream"); v.Exists() {
 		out["stream"] = v.Bool()
 	}
+	// `output_config.format` is how this wire spells structured output, and the
+	// canonical body is the OpenAI shape (§3a), so it becomes `response_format`.
+	//
+	// Without this the schema stopped here. Measured live on prod: `/v1/messages`
+	// with `model: auto` and a schema routed to gpt-5.6-terra — the routing
+	// dimension had correctly picked a model that honours schemas — and answered
+	// `{"should_respond": true, "probe_id": "..."}`. Valid JSON, wrong keys: the
+	// model was told to produce JSON and never told the shape.
+	//
+	// `output_config.effort` is deliberately not read here: it is reasoning depth,
+	// not a response format, and a body carrying only that asks for no schema.
+	// Inventing one would narrow the routing pool for a constraint the caller
+	// never wrote.
+	if f := root.Get("output_config.format"); f.IsObject() &&
+		f.Get("type").String() == "json_schema" {
+		// The schema rides along only when the caller sent one. An absent schema
+		// is the shape Anthropic itself rejects with "output_config.format.schema:
+		// Field required", and fabricating one here would answer for them.
+		//
+		// The envelope's `name` is filled by specutil because the canonical body
+		// IS an OpenAI body and OpenAI requires it — measured live: without it an
+		// OpenAI target answers 400 "Missing required parameter:
+		// 'response_format.json_schema.name'" while an Anthropic target serves the
+		// same request fine, so the omission only shows up on half the fleet.
+		var m map[string]any
+		if sch := f.Get("schema"); sch.IsObject() {
+			if err := json.Unmarshal([]byte(sch.Raw), &m); err != nil {
+				m = nil
+			}
+		}
+		out["response_format"] = map[string]any{
+			"type":        "json_schema",
+			"json_schema": specutil.CanonicalJSONSchema(m),
+		}
+	}
+
 	if ss := root.Get("stop_sequences"); ss.Exists() {
 		switch {
 		case ss.IsArray():
@@ -165,202 +203,42 @@ func MessagesRequestToOpenAIChatCompletion(native []byte, providerModelID string
 				return nil, err
 			}
 		}
+		// The extension above is only legible to this wire. Every OTHER wire
+		// reads the canonical level, so without it a caller who sized their
+		// reasoning in tokens arrives at an OpenAI or Gemini target having said
+		// nothing at all — and a caller who DISABLED thinking arrives at a
+		// reasoning model that reasons anyway, which they pay for.
+		if effort := canonicalEffortForThinking(thinking); effort != "" {
+			body, err = sjson.SetBytes(body, "reasoning_effort", effort)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return body, nil
 }
 
-func anthropicMessageToOpenAI(msg gjson.Result) []map[string]any {
-	role := msg.Get("role").String()
-	if role == "" {
-		role = "user"
+// canonicalEffortForThinking states an Anthropic `thinking` block in the
+// canonical vocabulary, or "" when the block says nothing a level can carry.
+//
+// The exact budget is not thrown away — it rides in this provider's extension,
+// so an Anthropic target restores the caller's own figure. This is what the
+// request says to everyone else.
+func canonicalEffortForThinking(thinking gjson.Result) string {
+	if thinking.Get("type").String() == "disabled" {
+		return "none"
 	}
-	content := msg.Get("content")
-	if content.Type == gjson.String {
-		return []map[string]any{{"role": role, "content": content.String()}}
+	if b := thinking.Get("budget_tokens"); b.Exists() {
+		return normcore.EffortForBudget(int(b.Int()))
 	}
-	if !content.IsArray() {
-		return []map[string]any{{"role": role, "content": ""}}
+	// Enabled with no budget. Anthropic's own API rejects this, so it is not a
+	// shape we can round-trip — but it is unambiguously an ask to reason, and
+	// dropping it would turn a malformed request into a silently unreasoned
+	// answer instead of the upstream 400 the caller would otherwise see.
+	if thinking.Get("type").String() == "enabled" {
+		return "medium"
 	}
-
-	var textLines []string
-	var images []map[string]any
-	var toolUseBlocks []gjson.Result
-	var toolResults []map[string]any
-	// Assistant thinking history: without collecting it here the blocks
-	// are silently dropped at Anthropic-ingress→canonical, and a
-	// cross-format target that needs the reasoning back (DeepSeek's
-	// thinking mode) gets an empty "" back-fill masking real text. The
-	// text becomes reasoning_content — the L2 universal field the response
-	// side already uses (see OpenAIChatCompletionToMessagesResponse). Each
-	// block keeps its OWN signature (Anthropic validates a signature
-	// against the exact thinking content it signed) under the
-	// nexus_thinking message field, which the bridge drops before a
-	// non-Anthropic upstream sees it (see addReasoning).
-	var reasoningLines []string
-	var thinkingBlocks []map[string]any
-
-	content.ForEach(func(_, part gjson.Result) bool {
-		switch part.Get("type").String() {
-		case "text":
-			textLines = append(textLines, part.Get("text").String())
-		case "thinking":
-			t := part.Get("thinking").String()
-			if t != "" {
-				reasoningLines = append(reasoningLines, t)
-			}
-			block := map[string]any{"thinking": t}
-			if sig := part.Get("signature").String(); sig != "" {
-				block["signature"] = sig
-			}
-			thinkingBlocks = append(thinkingBlocks, block)
-		case "redacted_thinking":
-			// Anthropic emits redacted_thinking for safety-filtered
-			// reasoning; it carries opaque `data`, no plaintext. Preserve
-			// it verbatim as a block so the round-trip re-emits it, but it
-			// contributes no reasoning_content text.
-			thinkingBlocks = append(thinkingBlocks, map[string]any{
-				"redacted_data": part.Get("data").String(),
-			})
-		case "image":
-			src := part.Get("source")
-			switch src.Get("type").String() {
-			case "url":
-				images = append(images, map[string]any{
-					"type": "image_url",
-					"image_url": map[string]any{
-						"url":    src.Get("url").String(),
-						"detail": "auto",
-					},
-				})
-			case "base64":
-				mime := src.Get("media_type").String()
-				data := src.Get("data").String()
-				images = append(images, map[string]any{
-					"type": "image_url",
-					"image_url": map[string]any{
-						"url":    "data:" + mime + ";base64," + data,
-						"detail": "auto",
-					},
-				})
-			}
-		case "tool_use":
-			toolUseBlocks = append(toolUseBlocks, part)
-		case "tool_result":
-			toolResults = append(toolResults, map[string]any{
-				"role":         "tool",
-				"tool_call_id": part.Get("tool_use_id").String(),
-				"content":      StringifyAnthropicToolResult(part.Get("content")),
-			})
-		}
-		return true
-	})
-
-	if len(toolResults) > 0 {
-		out := make([]map[string]any, 0, len(toolResults)+1)
-		if joined := strings.Join(textLines, "\n"); joined != "" {
-			out = append(out, map[string]any{"role": "user", "content": joined})
-		}
-		out = append(out, toolResults...)
-		return out
-	}
-
-	if role == "assistant" && len(toolUseBlocks) > 0 {
-		var tcalls []any
-		for _, part := range toolUseBlocks {
-			input := part.Get("input")
-			args := input.Raw
-			if args == "" {
-				args = "{}"
-			}
-			tcalls = append(tcalls, map[string]any{
-				"id":   part.Get("id").String(),
-				"type": "function",
-				"function": map[string]any{
-					"name":      part.Get("name").String(),
-					"arguments": args,
-				},
-			})
-		}
-		entry := map[string]any{
-			"role":       "assistant",
-			"tool_calls": tcalls,
-		}
-		addReasoning(entry, reasoningLines, thinkingBlocks)
-		if len(textLines) > 0 || len(images) > 0 {
-			var parts []any
-			for _, line := range textLines {
-				if line != "" {
-					parts = append(parts, map[string]any{"type": "text", "text": line})
-				}
-			}
-			for _, im := range images {
-				parts = append(parts, im)
-			}
-			if len(parts) == 1 {
-				if m, ok := parts[0].(map[string]any); ok && m["type"] == "text" {
-					entry["content"] = m["text"]
-				} else {
-					entry["content"] = parts
-				}
-			} else if len(parts) > 0 {
-				entry["content"] = parts
-			}
-		}
-		return []map[string]any{entry}
-	}
-
-	entry := map[string]any{"role": role}
-	// Thinking legitimately appears only on assistant turns (the Gemini
-	// sibling gates the same way); never stamp reasoning onto a user
-	// message even if a malformed part slipped through.
-	if role == "assistant" {
-		addReasoning(entry, reasoningLines, thinkingBlocks)
-	}
-	if len(images) == 0 && len(textLines) == 1 {
-		entry["content"] = textLines[0]
-		return []map[string]any{entry}
-	}
-	var parts []any
-	for _, line := range textLines {
-		if line != "" {
-			parts = append(parts, map[string]any{"type": "text", "text": line})
-		}
-	}
-	for _, im := range images {
-		parts = append(parts, im)
-	}
-	switch {
-	case len(parts) == 0:
-		entry["content"] = ""
-	case len(parts) == 1:
-		if m, ok := parts[0].(map[string]any); ok && m["type"] == "text" {
-			entry["content"] = m["text"]
-		} else {
-			entry["content"] = parts
-		}
-	default:
-		entry["content"] = parts
-	}
-	return []map[string]any{entry}
-}
-
-// StringifyAnthropicToolResult converts an Anthropic tool_result content value
-// to a plain string for the canonical tool message. Exported for test access.
-func StringifyAnthropicToolResult(c gjson.Result) string {
-	if c.Type == gjson.String {
-		return c.String()
-	}
-	if c.IsArray() {
-		var lines []string
-		c.ForEach(func(_, p gjson.Result) bool {
-			if p.Get("type").String() == "text" {
-				lines = append(lines, p.Get("text").String())
-			}
-			return true
-		})
-		return strings.Join(lines, "\n")
-	}
-	return c.Raw
+	return ""
 }
 
 // OpenAIChatCompletionToMessagesResponse converts a canonical OpenAI
@@ -427,20 +305,29 @@ func OpenAIChatCompletionToMessagesResponse(openaiBody []byte) ([]byte, error) {
 
 	usage := map[string]any{}
 	if u := root.Get("usage"); u.Exists() {
-		if v := u.Get("prompt_tokens"); v.Exists() {
-			usage["input_tokens"] = v.Int()
+		// Canonical→Anthropic is a UNIT CONVENTION change, not a copy, and it
+		// lives in ToAnthropicCounters so the streaming encoder applies exactly
+		// the same one. See that function for what the two conventions are and
+		// what the overlap cost in production.
+		prompt := u.Get("prompt_tokens").Int()
+		cacheRead := u.Get("prompt_tokens_details.cached_tokens").Int()
+		cacheCreation := u.Get("prompt_tokens_details.cache_creation_tokens").Int()
+		c := ToAnthropicCounters(prompt, cacheRead, cacheCreation)
+		if c.Contradictory {
+			WarnContradictoryUsage(root.Get("model").String(), prompt, cacheRead, cacheCreation)
+		}
+		if u.Get("prompt_tokens").Exists() {
+			usage["input_tokens"] = c.InputTokens
 		}
 		if v := u.Get("completion_tokens"); v.Exists() {
 			usage["output_tokens"] = v.Int()
 		}
-		// Restore Anthropic-native cache usage fields from canonical extension.
-		if v := u.Get("prompt_tokens_details.cached_tokens"); v.Exists() && v.Int() > 0 {
-			usage["cache_read_input_tokens"] = v.Int()
+		if c.CacheReadTokens > 0 {
+			usage["cache_read_input_tokens"] = c.CacheReadTokens
 		}
-	}
-	// cache_creation_input_tokens is stored in the canonical extension by the codec.
-	if ext := root.Get("nexus.ext.anthropic.cache_creation_input_tokens"); ext.Exists() && ext.Int() > 0 {
-		usage["cache_creation_input_tokens"] = ext.Int()
+		if c.CacheCreationTokens > 0 {
+			usage["cache_creation_input_tokens"] = c.CacheCreationTokens
+		}
 	}
 
 	out := map[string]any{
@@ -491,6 +378,12 @@ func StringifyOpenAIMessageContent(content gjson.Result) string {
 
 // MapOpenAIFinishToStopReason maps an OpenAI finish_reason to an Anthropic stop_reason.
 // Exported for test access.
+//
+// content_filter → "refusal", the documented Anthropic value for "when
+// streaming classifiers intervene to handle potential policy violations".
+// It previously produced "stop_sequence", which claims the caller's OWN
+// custom stop string was generated — a different fact, not a coarser one.
+// Must stay in lockstep with canonicalbridge.canonicalFinishToAnthropicStop.
 func MapOpenAIFinishToStopReason(r string) string {
 	switch r {
 	case "stop":
@@ -500,7 +393,7 @@ func MapOpenAIFinishToStopReason(r string) string {
 	case "tool_calls":
 		return "tool_use"
 	case "content_filter":
-		return "stop_sequence"
+		return "refusal"
 	default:
 		if r == "" {
 			return "end_turn"

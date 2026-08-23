@@ -323,7 +323,7 @@ func (w *wizard) updateKey(msg tea.KeyPressMsg) (*wizard, tea.Cmd) {
 		if msg.Code == tea.KeyEnter {
 			name := strings.TrimSpace(w.input.Value())
 			if name == "" {
-				w.err = fmt.Errorf("environment name is required")
+				w.err = fmt.Errorf("an environment name is required")
 				return w, nil
 			}
 			w.err = nil
@@ -340,7 +340,7 @@ func (w *wizard) updateKey(msg tea.KeyPressMsg) (*wizard, tea.Cmd) {
 		if msg.Code == tea.KeyEnter {
 			cp := strings.TrimSpace(w.input.Value())
 			if cp == "" {
-				w.err = fmt.Errorf("Control Plane URL is required")
+				w.err = fmt.Errorf("a Control Plane URL is required")
 				return w, nil
 			}
 			w.err = nil

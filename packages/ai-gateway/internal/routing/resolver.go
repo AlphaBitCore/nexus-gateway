@@ -7,6 +7,7 @@ import (
 	"github.com/goccy/go-json"
 	"hash/fnv"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -34,16 +35,32 @@ type routingStore interface {
 // Resolver is the main route resolution engine. It orchestrates the
 // stage-0 (policy narrowing) → stage-1 (route decision) pipeline.
 type Resolver struct {
-	db              routingStore
-	registry        *strategies.StrategyRegistry
-	logger          *slog.Logger
-	narrowingEngine *matcher.NarrowingEngine
-	healthRanker    *core.HealthRanker
+	db           routingStore
+	registry     *strategies.StrategyRegistry
+	logger       *slog.Logger
+	vkAccess     matcher.VKAccessFilter
+	healthRanker *core.HealthRanker
 	// capCache is the atomically swappable capability snapshot used by the
 	// embeddings pre-filter. Nil disables the pre-filter so callers
 	// that do not wire a capability cache (tests, degraded paths) are not
 	// affected.
 	capCache *capability.Cache
+	// enforceNamedModelModality decides whether the modality FLOOR is applied
+	// to a target the caller NAMED (callerNamedTheModel — a direct id or a
+	// single-target rule). Default false: a named model's modality verdict is
+	// the upstream's, because the floor is a claim about our catalogue and the
+	// caller owns the model they named. True enforces the floor for named
+	// targets too. It never changes the `auto`/smart path, which filters
+	// unconditionally because the gateway chose the model. See
+	// config.Routing.EnforceNamedModelModality.
+	enforceNamedModelModality bool
+	// modelPool resolves the catalogue a pool-needing strategy reads. Wired
+	// separately from the strategies that consume it, because the pool is a
+	// fact about the REQUEST — assembled where the rest of the request context
+	// is — and not a private resource of whichever strategy happens to run.
+	// Nil leaves the pool unprepared, and every reader treats that as
+	// "unavailable" rather than "no models".
+	modelPool core.SmartStore
 	// condCache memoizes parsed rule MatchConditions, content-addressed by a
 	// hash of the raw JSON. ruleMatches runs per-rule on every request (across
 	// stage-0 narrowing and the stage-1 loop), so without this each request
@@ -96,20 +113,34 @@ func (r *Resolver) parseMatchConditions(raw json.RawMessage) *core.MatchConditio
 // interface for tests and degraded paths.
 //
 // capCache may be nil — the capability pre-filter is skipped when nil.
-func NewResolver(catalog routingStore, registry *strategies.StrategyRegistry, healthRanker *core.HealthRanker, logger *slog.Logger, capCache *capability.Cache) *Resolver {
+//
+// enforceNamedModelModality is the fleet-wide flag governing whether a NAMED
+// model's modality floor is enforced by the gateway (true) or deferred to the
+// upstream (false, the default). It does not affect the `auto`/smart path.
+func NewResolver(catalog routingStore, registry *strategies.StrategyRegistry, healthRanker *core.HealthRanker, logger *slog.Logger, capCache *capability.Cache, enforceNamedModelModality bool) *Resolver {
 	return &Resolver{
-		db:              catalog,
-		registry:        registry,
-		logger:          logger,
-		narrowingEngine: &matcher.NarrowingEngine{},
-		healthRanker:    healthRanker,
-		capCache:        capCache,
+		db:                        catalog,
+		registry:                  registry,
+		logger:                    logger,
+		vkAccess:                  matcher.VKAccessFilter{},
+		healthRanker:              healthRanker,
+		capCache:                  capCache,
+		enforceNamedModelModality: enforceNamedModelModality,
 	}
+}
+
+// WithModelPool wires the catalogue source the routing context is prepared
+// from. Optional: without it the pool stays nil and a strategy that needs one
+// falls back to its own fetch.
+func (r *Resolver) WithModelPool(s core.SmartStore) *Resolver {
+	r.modelPool = s
+	return r
 }
 
 // Resolve runs the full routing pipeline and returns a RoutingPlan.
 func (r *Resolver) Resolve(ctx context.Context, rctx *core.RoutingContext) (*core.RoutingPlan, error) {
 	r.hydrateRequestedModel(ctx, rctx)
+	r.prepareModelPool(ctx, rctx)
 	plan := &core.RoutingPlan{
 		OriginalModelID: rctx.RequestedModel.ID,
 	}
@@ -120,28 +151,17 @@ func (r *Resolver) Resolve(ctx context.Context, rctx *core.RoutingContext) (*cor
 		return nil, fmt.Errorf("router: fetch rules: %w", err)
 	}
 
-	// --- Stage 0: Policy narrowing ---
-	stage0Start := time.Now()
-
-	narrowing, _ := r.narrowingEngine.Apply(ctx, allRules, rctx, r.logger, r.ruleMatches)
-
-	if !matcher.IsNarrowingEmpty(narrowing) {
-		summary := matcher.ToSummary(narrowing)
-		plan.NarrowingSummary = &summary
-	}
-
-	plan.PipelineTrace = append(plan.PipelineTrace, core.PipelineTraceEntry{
-		Stage:      0,
-		Decision:   "policy narrowing applied",
-		DurationMs: int(time.Since(stage0Start).Milliseconds()),
-	})
-
 	// --- Stage 1: Route decision ---
 	stage1Start := time.Now()
 
-	var primaryRule *store.RoutingRule
-	var fallbackRules []store.RoutingRule
-
+	// Every matching rule goes in one ordered list. A rule whose strategyType
+	// was `fallback` used to be a separate species appended to every plan as
+	// recovery whatever it matched — so it backed up rules it had nothing to do
+	// with, and its own match conditions were half-ignored. A rule an admin
+	// wrote at lower priority IS the alternative for when the rule above cannot
+	// serve. The `fallback` STRATEGY is untouched: a chain of leaves inside one
+	// rule is a different thing from a rule that backs up other rules.
+	var matched []*store.RoutingRule
 	for i := range allRules {
 		rule := &allRules[i]
 		if rule.PipelineStage != 1 {
@@ -150,82 +170,79 @@ func (r *Resolver) Resolve(ctx context.Context, rctx *core.RoutingContext) (*cor
 		if !r.ruleMatches(*rule, rctx.RequestedModel.ID, rctx) {
 			continue
 		}
-		if rule.StrategyType == "fallback" {
-			fallbackRules = append(fallbackRules, *rule)
-		} else if primaryRule == nil {
-			primaryRule = rule
+		matched = append(matched, rule)
+	}
+
+	// A model the caller NAMED has to be one this key may use, whether or not a
+	// rule would redirect it elsewhere. Checking only the served target answers
+	// "what may run" and leaves "what the caller was told" unanswered: a key
+	// allowed one model, plus a rule redirecting everything to it, answered a
+	// client pinned to another model with a 200.
+	//
+	// Only for a NAMED model — `auto` never appears on an allow list, and a
+	// code fanning out to several providers has no single reference to match,
+	// so a blanket rule would refuse every routed request from a restricted key.
+	if callerNamedTheModel(rctx.RequestedModel) && rctx.VirtualKey != nil &&
+		len(rctx.VirtualKey.AllowedModels) > 0 {
+		named := rctx.RequestedModel.CandidateIDs[0]
+		if !r.namedModelIsAllowed(ctx, named, rctx.VirtualKey.AllowedModels) {
+			return nil, &core.ModelNotAllowedError{RequestedModel: rctx.RequestedModel.ID}
 		}
 	}
 
-	if primaryRule != nil {
-		plan.RuleID = primaryRule.ID
-		plan.RuleName = primaryRule.Name
-		// Carry the primary rule's per-rule RetryPolicy JSON forward.
-		// The handler field-merges it on top of the YAML default before
-		// invoking the executor. Fallback rules' retry policies are
-		// intentionally ignored — only the primary rule's policy
-		// determines L2/L3 behavior for the routed targets.
-		plan.RuleRetryPolicyJSON = primaryRule.RetryPolicy
+	r.selectRules(ctx, matched, rctx, plan)
 
-		var node core.StrategyNode
-		if err := json.Unmarshal(primaryRule.Config, &node); err != nil {
-			return nil, fmt.Errorf("router: parse strategy config: %w", err)
-		}
+	// Measured HERE, before any filter runs, and the placement IS the field.
+	// Every filter below empties the plan for OUR reasons — a modality the
+	// targets cannot carry, a parameter none of them accept — which is not the
+	// rule refusing anything. Counting after them made a catch-all rule take
+	// down every non-chat endpoint: it matched, resolved a chat target, the
+	// modality filter dropped it, and an image request passthrough serves
+	// correctly got a 503.
+	plan.RuleMatchedAndResolvedNothing =
+		len(matched) > 0 && len(plan.Targets) == 0 && len(plan.RecoveryTargets) == 0
 
-		targets, err := r.registry.Evaluate(ctx, node, rctx, &plan.Trace, 0)
-		if err != nil {
-			r.logger.Warn("strategy evaluation failed", "ruleId", primaryRule.ID, "error", err)
-		} else {
-			// Filter targets by narrowing + VK allowed models.
-			filtered := r.narrowingEngine.Filter(targets, narrowing, rctx)
-			for i := range filtered {
-				filtered[i].Source = "primary"
+	// When WE choose the model, the choice holds for the whole chain. A caller
+	// naming a model owns its limits and gets the upstream's own refusal; a
+	// caller sending `auto` asked us to pick, so every target we hand the
+	// executor is ours, fallbacks included.
+	//
+	// Fallbacks were the gap: FallbackChain entries and fallback RULES are built
+	// outside the strategy that applied the capability filter. Measured — a
+	// trace reading "dropped 44/51 candidates" and "selected gpt-audio-mini"
+	// ended with routed_model_name = moonshot-v1-128k on an audio request.
+	//
+	// plan.Targets gets the FLOOR only. The ceiling is a claim about the
+	// catalogue and an explicit pick is honoured rather than second-guessed;
+	// the floor is a claim about the model, so a target that requires what this
+	// request does not carry cannot serve it whoever chose it, and dispatching
+	// anyway buys a round trip and an upstream error we could have named.
+	//
+	// WHO owns that verdict depends on who chose the model. When the gateway
+	// chose it (`auto`, an empty model, a code fanning out to several rows) the
+	// choice is ours and we must hand the executor a target that can serve, so
+	// the floor is enforced unconditionally. When the CALLER named the model,
+	// the floor is still a real property of that model — but it reads from our
+	// catalogue, which has been wrong (mislabelled video, reasoning), and the
+	// caller owns the model they named. So by default a named target is
+	// forwarded and the upstream gives its own verdict; enforceNamedModelModality
+	// flips that to enforce the floor for named targets too. The recovery list
+	// followed this rule already (it skipped named callers); the primary
+	// targets now follow the same predicate, so both agree.
+	//
+	// Nil cache or snapshot means no opinion, and no opinion keeps every target.
+	if r.capCache != nil {
+		if snap := r.capCache.Load(); snap != nil {
+			carried := capability.CarriedModalities(rctx.Request)
+			enforceFloor := !callerNamedTheModel(rctx.RequestedModel) || r.enforceNamedModelModality
+			if len(plan.Targets) > 0 && enforceFloor {
+				plan.Targets = filterByFloor(snap, plan.Targets, carried, &plan.Trace)
 			}
-			plan.Targets = filtered
-		}
-
-		// Recovery targets from inline fallback chain.
-		if len(primaryRule.FallbackChain) > 0 {
-			var chain []core.FallbackChainEntry
-			// best-effort: a malformed fallback chain just yields no recovery
-			// targets; the primary plan still routes normally.
-			_ = json.Unmarshal(primaryRule.FallbackChain, &chain)
-			var fbTargets []core.RoutingTarget
-			for _, entry := range chain {
-				target, err := r.lookupTarget(ctx, entry.ProviderID, entry.ModelID)
-				if err == nil {
-					fbTargets = append(fbTargets, *target)
-				}
+			if len(plan.RecoveryTargets) > 0 && enforceFloor {
+				plan.RecoveryTargets = filterRecoveryByCapability(
+					snap, plan.RecoveryTargets, carried, &plan.Trace)
 			}
-			// Inline fallback-chain recovery targets MUST satisfy the
-			// VK's allowedModels allowlist, exactly like the primary (above) and
-			// fallbackRules (below) paths. Without this Filter a FallbackChain
-			// entry pointing at a provider/model outside the VK's allowlist would
-			// be dispatched — and its upstream credential consumed — on primary
-			// failure, silently escaping the per-VK model-scope boundary.
-			filtered := r.narrowingEngine.Filter(fbTargets, narrowing, rctx)
-			for i := range filtered {
-				filtered[i].Source = "fallback"
-			}
-			plan.RecoveryTargets = append(plan.RecoveryTargets, filtered...)
 		}
-	}
-
-	// Recovery from fallback rules.
-	for _, rule := range fallbackRules {
-		var node core.StrategyNode
-		if err := json.Unmarshal(rule.Config, &node); err != nil {
-			continue
-		}
-		targets, err := r.registry.Evaluate(ctx, node, rctx, &plan.Trace, 0)
-		if err != nil {
-			continue
-		}
-		recoveryTargets := r.narrowingEngine.Filter(targets, narrowing, rctx)
-		for i := range recoveryTargets {
-			recoveryTargets[i].Source = "recovery"
-		}
-		plan.RecoveryTargets = append(plan.RecoveryTargets, recoveryTargets...)
 	}
 
 	// --- Stage 1.5: Capability pre-filter (embeddings endpoint only) ---
@@ -332,6 +349,10 @@ func (r *Resolver) lookupTarget(ctx context.Context, providerID, modelID string)
 	if m.MaxOutputTokens != nil {
 		maxOut = *m.MaxOutputTokens
 	}
+	maxCtx := 0
+	if m.MaxContextTokens != nil {
+		maxCtx = *m.MaxContextTokens
+	}
 	return &core.RoutingTarget{
 		ProviderID:         p.ID,
 		ProviderName:       p.Name,
@@ -344,7 +365,9 @@ func (r *Resolver) lookupTarget(ctx context.Context, providerID, modelID string)
 		BaseURL:            p.BaseURL,
 		Region:             region,
 		ServesResponsesAPI: p.ServesResponsesAPI,
+		Reasons:            slices.Contains(m.Features, core.FeatureReasoning),
 		MaxOutputTokens:    maxOut,
+		MaxContextTokens:   maxCtx,
 	}, nil
 }
 
@@ -389,109 +412,16 @@ func (r *Resolver) Explain(ctx context.Context, rctx *core.RoutingContext) (*cor
 	return plan, nil
 }
 
-// ResolveTargets is a higher-level entry point that takes a fully-built
-// RoutingContext, runs the routing pipeline via Resolve, then flattens
-// the primary + recovery targets into one health-ranked slice for the
-// handler's executor.
-//
-// Callers are expected to populate rctx.Request with the canonical
-// normalized payload so smart routing (and future content-aware
-// strategies) can inspect the user prompt directly.
-//
-// When the embeddings capability pre-filter rejected every candidate, this
-// returns *core.NoCompatibleProviderError so the proxy handler can emit a
-// rich 400 error with available_capabilities.
-func (r *Resolver) ResolveTargets(ctx context.Context, rctx *core.RoutingContext) (*core.RouteResult, error) {
-	plan, err := r.Resolve(ctx, rctx)
+// would take down the strategies that never wanted a pool.
+func (r *Resolver) prepareModelPool(ctx context.Context, rctx *core.RoutingContext) {
+	if r.modelPool == nil || rctx == nil {
+		return
+	}
+	pool, err := r.modelPool.ListEnabledCandidates(ctx, rctx.EndpointType)
 	if err != nil {
-		return nil, err
+		r.logger.Debug("routing: model pool unavailable; strategies that need one will say so",
+			"error", err)
+		return
 	}
-
-	// Flatten: primary targets + recovery targets.
-	allTargets := make([]core.RoutingTarget, 0, len(plan.Targets)+len(plan.RecoveryTargets))
-	allTargets = append(allTargets, plan.Targets...)
-	allTargets = append(allTargets, plan.RecoveryTargets...)
-
-	// Modality guard (all strategies): drop any target whose catalog model type
-	// cannot serve this endpoint's modality, so no strategy dispatches a
-	// cross-modality model. See applyModalityGuard (resolver_modality.go).
-	allTargets = r.applyModalityGuard(allTargets, rctx, plan)
-
-	// When the embeddings capability pre-filter has rejected every target,
-	// return a structured error so the handler can surface available_capabilities.
-	if rctx.EndpointType == typology.EndpointKindEmbeddings && r.capCache != nil && rctx.EmbeddingRequest != nil && len(allTargets) == 0 {
-		return nil, r.buildNoCompatibleProviderError(ctx, plan, rctx)
-	}
-
-	// Health-aware reorder.
-	if r.healthRanker != nil {
-		allTargets = r.healthRanker.Reorder(allTargets)
-	}
-
-	reqModelID, reqProviderID, reqProviderName := requestedIdentity(rctx.RequestedModel)
-
-	return &core.RouteResult{
-		Targets:               allTargets,
-		Trace:                 plan.Trace,
-		PipelineTrace:         plan.PipelineTrace,
-		RuleID:                plan.RuleID,
-		RuleName:              plan.RuleName,
-		Substituted:           plan.Substituted,
-		OriginalModelID:       plan.OriginalModelID,
-		RequestedModelID:      reqModelID,
-		RequestedProviderID:   reqProviderID,
-		RequestedProviderName: reqProviderName,
-		RuleRetryPolicyJSON:   plan.RuleRetryPolicyJSON,
-	}, nil
-}
-
-// buildNoCompatibleProviderError constructs a *core.NoCompatibleProviderError
-// by re-running the capability filter on all targets from the plan (including
-// recovery targets that were filtered in Resolve) to collect rejected candidate
-// capability projections for the 400 error body.
-func (r *Resolver) buildNoCompatibleProviderError(ctx context.Context, plan *core.RoutingPlan, rctx *core.RoutingContext) *core.NoCompatibleProviderError {
-	snap := r.capCache.Load()
-	embReq := &capability.EmbeddingRequest{
-		Dimensions:     rctx.EmbeddingRequest.Dimensions,
-		BatchSize:      rctx.EmbeddingRequest.BatchSize,
-		EncodingFormat: rctx.EmbeddingRequest.EncodingFormat,
-		InputType:      rctx.EmbeddingRequest.InputType,
-		TaskType:       rctx.EmbeddingRequest.TaskType,
-	}
-
-	// Re-fetch routing rules to find all candidates before filtering.
-	// We need the pre-filter candidates; since plan.Targets is already
-	// filtered to zero, we use the plan's trace to identify which models
-	// were evaluated. Simpler: run the rejection pass against any targets
-	// that appear in plan (they were already rejected; we just need their
-	// capability projections). Use plan.Targets + plan.RecoveryTargets as
-	// the source (these are the narrowed+filtered-to-zero set).
-	//
-	// If both are empty (e.g. no rule matched), return the error with empty
-	// Available so the handler still writes a well-formed 400.
-	// Concatenate into a fresh slice so we don't accidentally extend plan.Targets'
-	// backing array (appendAssign).
-	allCandidates := make([]core.RoutingTarget, 0, len(plan.Targets)+len(plan.RecoveryTargets))
-	allCandidates = append(allCandidates, plan.Targets...)
-	allCandidates = append(allCandidates, plan.RecoveryTargets...)
-
-	// Also rebuild from Trace entries when the plan has no targets (rule
-	// matched but all targets were narrowed away before our filter ran).
-	// The Trace captures each strategy evaluation but not the model IDs
-	// in a parseable form — skip the re-fetch and return empty Available.
-
-	available := make([]core.CandidateCapability, 0, len(allCandidates))
-	for _, t := range allCandidates {
-		capMC := snap.Get(t.ModelID)
-		_, _, proj := capability.Compatible(embReq, capMC)
-		available = append(available, core.CandidateCapability{
-			Provider:                 t.ProviderName,
-			Model:                    t.ModelCode,
-			SupportedDimensions:      proj.SupportedDimensions,
-			MaxBatchSize:             proj.MaxBatchSize,
-			SupportedEncodingFormats: proj.SupportedEncodingFormats,
-			RequiredExtensions:       proj.RequiredExtensions,
-		})
-	}
-	return &core.NoCompatibleProviderError{Available: available}
+	rctx.ModelPool = pool
 }

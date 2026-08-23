@@ -37,13 +37,13 @@ func (l *Layer) loadProviders(ctx context.Context) (map[string]store.Provider, e
 func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) {
 	rows, err := l.pool.Query(ctx, `
 		SELECT m.id, m.code, m.name, m."providerId", p.name, p.adapter_type, p."displayName", p."baseUrl",
-		       m."providerModelId", m.type, m.enabled,
+		       m."providerModelId", m.type, m.enabled, COALESCE(p.enabled, false), COALESCE(m.status, 'active'),
 		       m."inputPricePerMillion", m."outputPricePerMillion",
 		       m."cachedInputReadPricePerMillion", m."cachedInputWritePricePerMillion",
 		       m."audioInputPricePerMillion", m."audioOutputPricePerMillion", m."cachedAudioInputReadPricePerMillion",
 		       COALESCE(m.features, '{}'), m."maxContextTokens", m."maxOutputTokens",
 		       COALESCE(m.aliases, '{}'),
-		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
+		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'), COALESCE(m."requiredModalities", '{}'),
 		       COALESCE(m.lifecycle, 'ga'), m."capabilityJson"
 		FROM "Model" m
 		LEFT JOIN "Provider" p ON p.id = m."providerId"
@@ -55,18 +55,18 @@ func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) 
 
 	byID := map[string]store.Model{}
 	byCode := map[string]store.Model{}
-	enabled := make([]store.Model, 0)
+	servable := make([]store.Model, 0)
 	for rows.Next() {
 		var m store.Model
 		var inPrice, outPrice, cachedReadPrice, cachedWritePrice *string
 		var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 		var maxCtx, maxOut pgtype.Int4
 		if err := rows.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName,
-			&m.ProviderBaseURL, &m.ProviderModelID, &m.Type, &m.Enabled,
+			&m.ProviderBaseURL, &m.ProviderModelID, &m.Type, &m.Enabled, &m.ProviderEnabled, &m.Status,
 			&inPrice, &outPrice, &cachedReadPrice, &cachedWritePrice,
 			&audioInPrice, &audioOutPrice, &cachedAudioReadPrice,
 			&m.Features, &maxCtx, &maxOut, &m.Aliases,
-			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson); err != nil {
+			&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson); err != nil {
 			return nil, fmt.Errorf("cachelayer: scan model: %w", err)
 		}
 		if f, ok := store.ParseDecimal(inPrice); ok {
@@ -99,30 +99,31 @@ func (l *Layer) loadModels(ctx context.Context) (map[string]store.Model, error) 
 			m.MaxOutputTokens = &v
 		}
 		byID[m.ID] = m
-		// Only enabled models are routable by code (matches GetModelByCode
-		// historical filter). Disabled rows still live in byID for admin
-		// lookups and quota pricing.
-		if m.Enabled && m.Code != "" {
+		// Only servable models are routable by code — an enabled model on a
+		// disabled provider is not (matches GetModelByCode). Non-servable rows
+		// still live in byID for admin lookups and quota pricing, which must
+		// keep pricing a model whose provider was turned off mid-flight.
+		if m.Servable() && m.Code != "" {
 			byCode[m.Code] = m
 		}
-		if m.Enabled {
-			enabled = append(enabled, m)
+		if m.Servable() {
+			servable = append(servable, m)
 		}
 	}
-	// Build the code-or-alias index. Pass 1 seeds every enabled code so a real
+	// Build the code-or-alias index. Pass 1 seeds every servable code so a real
 	// code always wins over any alias — this is order-independent and is the
 	// only load-bearing guarantee. Pass 2 adds aliases only where the key is
 	// still free. Alias uniqueness is NOT enforced by the schema or admin API,
-	// so if two enabled models share the same alias the winner is unspecified
+	// so if two servable models share the same alias the winner is unspecified
 	// (whichever row the catalog query returns first); an ambiguous alias is a
 	// misconfiguration, not a case this index promises to disambiguate.
 	byCodeOrAlias := make(map[string]store.Model, len(byCode))
-	for _, m := range enabled {
+	for _, m := range servable {
 		if m.Code != "" {
 			byCodeOrAlias[m.Code] = m
 		}
 	}
-	for _, m := range enabled {
+	for _, m := range servable {
 		for _, a := range m.Aliases {
 			if a == "" {
 				continue

@@ -18,9 +18,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/costing"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -34,6 +33,59 @@ import (
 // satisfies it; *store.DB also does, for tests.
 type AIGuardModelLookup interface {
 	GetModel(ctx context.Context, id string) (*store.Model, error)
+}
+
+// newModelPriceLookup returns a PriceLookup closure shared by the AI Guard
+// configured_provider backend (see LiveClassifier.buildBackend above) and
+// the smart router's LLM decider (see newRouterDecider in router.go) — both
+// need the same "Nexus Model UUID -> four per-million rates" lookup against
+// the catalog.
+//
+// It returns all four rates, not just input and output, because both callers
+// bill a prompt that is largely cached. Their prompts are near-identical call
+// to call (a fixed system prompt plus the model catalog for the router; a
+// fixed judge template for AI Guard), so their provider-side cache hit rate is
+// high — and on OpenAI and Gemini the reported prompt-token count INCLUDES the
+// cached subset while cached tokens bill at 0.25-0.5x. A two-rate signature
+// could not express that, which is what made both callers bill every cached
+// token at the full input rate and over-estimate internal spend in proportion
+// to their own call volume.
+//
+// Returns ok=false on a failed lookup or an unpriced model, on purpose: the
+// caller must still be able to serve the request with cost left at zero rather
+// than fail it (fail-open). Either way it logs one Warn naming the model id, so
+// a pricing-row gap in the catalog is visible instead of silently reproducing a
+// positive-only vendor-spend under-report — an unpriced router model previously
+// produced $0 with no signal at all, which left the day looking reconciled and
+// kept the branch's own no_basis alert asleep.
+func newModelPriceLookup(ctx context.Context, models AIGuardModelLookup, logger *slog.Logger, caller string) func(modelID string) (costing.Rates, bool) {
+	return func(modelID string) (costing.Rates, bool) {
+		if models == nil {
+			return costing.Rates{}, false
+		}
+		m, err := models.GetModel(ctx, modelID)
+		if err != nil || m == nil {
+			if logger != nil {
+				logger.Warn("price lookup: model not found in catalog, cost will be recorded as zero",
+					"caller", caller, "modelId", modelID, "error", err)
+			}
+			return costing.Rates{}, false
+		}
+		// Same NULL interpretation as the customer request path's
+		// cachelayer.LookupCachePricing — a NULL cache rate means "no discount
+		// configured", falling back to the input rate, and a NULL input price
+		// means the model is unpriced.
+		rates, priced := costing.RatesFromModel(
+			m.InputPricePM, m.OutputPricePM, m.CachedInputReadPricePM, m.CachedInputWritePricePM)
+		if !priced || !rates.Priced() {
+			if logger != nil {
+				logger.Warn("price lookup: model has no catalog price, cost will be recorded as zero",
+					"caller", caller, "modelId", modelID)
+			}
+			return costing.Rates{}, false
+		}
+		return rates, true
+	}
 }
 
 // LiveClassifier implements aiguard.Classifier by composing the
@@ -94,31 +146,15 @@ func (l *LiveClassifier) buildBackend(ctx context.Context, cfg *configstore.AIGu
 		// PriceLookup hits the in-memory cachelayer (DB above is the
 		// AIGuardModelLookup interface, satisfied by *cachelayer.Layer
 		// in prod — snapshot reads, no DB roundtrip). Returns (0, 0)
-		// on lookup failure so AdapterBackend leaves cost zero.
-		priceLookup := func(modelID string) (float64, float64) {
-			if l.DB == nil {
-				return 0, 0
-			}
-			m, err := l.DB.GetModel(ctx, modelID)
-			if err != nil || m == nil {
-				return 0, 0
-			}
-			var in, out float64
-			if m.InputPricePM != nil {
-				in = *m.InputPricePM
-			}
-			if m.OutputPricePM != nil {
-				out = *m.OutputPricePM
-			}
-			return in, out
-		}
+		// on lookup failure so AdapterBackend leaves cost zero. Shared with
+		// the smart router's LLM decider — see newModelPriceLookup below.
 		return &aiguard.AdapterBackend{
 			Resolver:    l.Resolver,
 			Registry:    l.Adapters,
 			ProviderID:  *cfg.ProviderID,
 			ModelID:     *cfg.ModelID,
 			Logger:      l.Logger,
-			PriceLookup: priceLookup,
+			PriceLookup: newModelPriceLookup(ctx, l.DB, l.Logger, "aiguard.configured_provider"),
 		}, nil
 
 	case "external_url":
@@ -187,23 +223,35 @@ func (s *WriterBackedTrafficSink) Emit(ctx context.Context, e aiguard.TrafficEve
 		cacheStatus = audit.CacheStatusHit
 	}
 	rec := &audit.Record{
-		// Generate a RequestID per emit — recordToMessage maps it into
-		// msg.ID, which is the traffic_event PK. The Hub INSERT uses
-		// ON CONFLICT (id) DO NOTHING, so two ai-guard rows sharing an
-		// empty id silently lose all but the first.
-		RequestID: uuid.NewString(),
+		// No RequestID: this row is emitted by the gateway itself, not by a
+		// caller, so there is no caller correlation value to record. Each row
+		// gets its own traffic_event id from the audit writer, and TraceID
+		// below joins it back to the request that triggered the classify.
+		RequestID: "",
 		// TraceID carries the triggering user request's correlation id so
 		// this ai-guard cost row (fresh RequestID, internal_purpose='ai-guard')
 		// is joinable back to the user-traffic row that invoked the hook.
 		// Empty when the classify call carried no request id on its context.
 		TraceID: e.TraceID,
-		// status_code=200 so the rollup's isSuccess check passes and
-		// aiGuardCostUsd folds into MetricBilledCostUSD when the operator
-		// hasn't excluded internal-ops via yaml. Without this, the classify
-		// call's cost is visible on the row but never reaches the
-		// billed_cost_usd metric series. Failed classify (BackendUnavailable)
-		// returns earlier with e.Decision empty and ErrorDetail set, so this
-		// code path only stamps successful classifications.
+		// status_code=200: this row genuinely is a successful classify call
+		// (failed classify returns earlier with e.Decision empty and
+		// ErrorDetail set, so this code path only stamps successful
+		// classifications). This is NOT about folding ai_guard_cost_usd into
+		// MetricBilledCostUSD — the Hub's rollup, in rollup_5m.go's
+		// (*Rollup5mJob).emitEventMetrics (see the comment directly above its
+		// `add(metrics.MetricBilledCostUSD, cost)` call), never folds
+		// internal-ops cost into the billed series regardless of status code;
+		// excludeInternalOpsFromBilled is vestigial there. MetricAIGuardCostUSD
+		// itself is NOT status-gated either — it's accumulated unconditionally
+		// on aiGuardCostUsd != 0, under emitEventMetrics's "Internal-ops cost:
+		// embedding (L2 lookup) + AI-Guard classifier. Gross metrics — every
+		// contributing row counted." comment, entirely outside the isSuccess
+		// block. What StatusCode=200 actually gates on this row is the
+		// status-count series, and — because this row also carries token
+		// counts with a MISS cache status — the isSuccess && !cacheHitVal
+		// block's `add(metrics.MetricBilledTokens, ...)` accumulation. Setting
+		// 200 is still correct regardless: the row represents a classify that
+		// genuinely succeeded.
 		StatusCode:       http.StatusOK,
 		Timestamp:        time.Now().UTC(),
 		HookDecision:     e.Decision,
@@ -213,8 +261,28 @@ func (s *WriterBackedTrafficSink) Emit(ctx context.Context, e aiguard.TrafficEve
 		PromptTokens:     int64(e.PromptTokens),
 		CompletionTokens: int64(e.CompletionTokens),
 		TotalTokens:      int64(e.PromptTokens + e.CompletionTokens),
+		// The cached share of PromptTokens, which is the total input — NOT an
+		// addition to it, so TotalTokens above deliberately does not include
+		// them again. These reuse the columns the customer path already fills,
+		// so the classifier's charge is auditable from its own row: prompt,
+		// how much of it was cached, and the resulting cost. Without them a
+		// reader could not tell a correct cache-discounted charge from the
+		// full-rate over-charge this row used to carry.
+		CacheReadTokens:     int64(e.CacheReadTokens),
+		CacheCreationTokens: int64(e.CacheCreationTokens),
+		// RoutedProviderID/-Name identify the provider that actually served
+		// this classify call, carried from the resolved call target via
+		// TrafficEvent.ProviderID/-Name (empty when the backend has no
+		// provider concept, e.g. ExternalBackend). Without a non-empty
+		// routed provider the Hub's rollup emits no routed_provider
+		// dimension for the row (see rollup_5m.go's dims append below
+		// `if routedProviderID != ""`), so the classifier's cost could
+		// never reach any provider's slice of vendor_spend_usd no matter
+		// what the downstream aggregation does.
+		RoutedProviderID:   e.ProviderID,
+		RoutedProviderName: e.ProviderName,
 		// AIGuardCostUsd lands on the classify-call's own row (the row
-		// where internal_purpose='ai-guard', with a fresh uuid id). The
+		// where internal_purpose='ai-guard', with its own minted id). The
 		// user-traffic row that triggered the hook keeps NULL. The ai-guard
 		// row carries the triggering request's trace_id (set above), so the
 		// two ARE per-request joinable on trace_id — ai-guard cost can be

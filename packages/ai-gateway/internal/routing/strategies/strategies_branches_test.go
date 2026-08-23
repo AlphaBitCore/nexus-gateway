@@ -12,6 +12,7 @@ package strategies
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
@@ -37,12 +38,16 @@ func TestRegisterAllStrategies_withSmartDeps_registersSmartStrategy(t *testing.T
 		core.StrategyNode{Type: "smart", ProviderID: "", ModelID: "auto"},
 		&core.RoutingContext{RequestedModel: core.RequestedModel{ID: "auto"}},
 		&[]core.TraceEntry{},
-		0,
 	)
-	// Smart strategy requires a non-empty model list; it may return error or
-	// nil targets but must NOT return "unknown strategy type".
-	if err != nil && errors.Is(err, ErrMaxDepth) {
-		t.Errorf("smart strategy appears not registered: got ErrMaxDepth")
+	// Smart requires a non-empty model list, so it may return an error or no
+	// targets — but never "unknown strategy type", which would mean it was not
+	// registered at all.
+	//
+	// The check used to look for ErrMaxDepth, which an unregistered type never
+	// produced; it asserted the wrong thing and passed for the wrong reason.
+	// The comment beside it always said what was meant.
+	if err != nil && strings.Contains(err.Error(), "unknown strategy type") {
+		t.Errorf("smart strategy is not registered: %v", err)
 	}
 }
 
@@ -59,8 +64,6 @@ func TestSingleStrategy_lookupError_returnsNilTargets(t *testing.T) {
 		core.StrategyNode{Type: "single", ProviderID: "p", ModelID: "m"},
 		&core.RoutingContext{},
 		&trace,
-		0,
-		nil, // recurse unused in single
 	)
 	if err != nil {
 		t.Errorf("expected nil error (soft failure), got %v", err)
@@ -84,8 +87,6 @@ func TestConditionalStrategy_noBranchNoDefault_returnsNilTargets(t *testing.T) {
 		core.StrategyNode{Type: "conditional", Conditions: nil, Default: nil},
 		&core.RoutingContext{RequestedModel: core.RequestedModel{Type: "chat"}},
 		&trace,
-		0,
-		nil, // recurse unused when no branch matches and no default
 	)
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
@@ -100,12 +101,20 @@ func TestConditionalStrategy_noBranchNoDefault_returnsNilTargets(t *testing.T) {
 
 // FallbackStrategy.Evaluate: recurse error propagates
 
-func TestFallbackStrategy_recurseError_propagates(t *testing.T) {
-	s := &FallbackStrategy{}
-	errRecurse := errors.New("recurse failed")
-	recurse := func(_ context.Context, _ core.StrategyNode, _ *core.RoutingContext, _ *[]core.TraceEntry, _ int) ([]core.RoutingTarget, error) {
-		return nil, errRecurse
-	}
+// TestFallbackStrategy_leafLookupError_propagates: an error resolving one of
+// the chain's entries reaches the caller rather than being folded into a
+// shorter chain.
+//
+// Same property the recursion-error test asserted, on the mechanism that
+// replaced it. A chain entry used to point at a nested strategy and now names a
+// leaf, but either way an unresolvable entry means the chain the admin wrote is
+// not the chain being flown — and silently flying a shorter one is how a
+// fallback stops being one without anybody noticing.
+func TestFallbackStrategy_leafLookupError_propagates(t *testing.T) {
+	errLookup := errors.New("catalog unavailable")
+	s := &FallbackStrategy{lookup: func(_ context.Context, _, _ string) (*core.RoutingTarget, error) {
+		return nil, errLookup
+	}}
 	var trace []core.TraceEntry
 	_, err := s.Evaluate(
 		context.Background(),
@@ -117,22 +126,29 @@ func TestFallbackStrategy_recurseError_propagates(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
-		recurse,
 	)
-	if !errors.Is(err, errRecurse) {
-		t.Errorf("expected errRecurse, got %v", err)
+	if !errors.Is(err, errLookup) {
+		t.Errorf("expected the lookup error to surface, got %v", err)
 	}
 }
 
 // LoadbalanceStrategy.Evaluate: recurse error propagates
 
-func TestLoadbalanceStrategy_recurseError_propagates(t *testing.T) {
-	s := &LoadbalanceStrategy{}
-	errRecurse := errors.New("load balance recurse failed")
-	recurse := func(_ context.Context, _ core.StrategyNode, _ *core.RoutingContext, _ *[]core.TraceEntry, _ int) ([]core.RoutingTarget, error) {
-		return nil, errRecurse
-	}
+// TestLoadbalanceStrategy_leafLookupError_propagates: when the chosen bucket's
+// target cannot be resolved, the error reaches the caller rather than being
+// swallowed into "no targets".
+//
+// The property is the same one the recursion-error test asserted; only the
+// mechanism moved. A weighted entry used to point at a nested strategy the
+// registry evaluated, and now it names a leaf this strategy resolves directly —
+// but either way, an error there means the rule cannot be served, and reporting
+// it as an empty result would make a broken lookup indistinguishable from a
+// deliberately empty rule.
+func TestLoadbalanceStrategy_leafLookupError_propagates(t *testing.T) {
+	errLookup := errors.New("catalog unavailable")
+	s := &LoadbalanceStrategy{lookup: func(_ context.Context, _, _ string) (*core.RoutingTarget, error) {
+		return nil, errLookup
+	}}
 	var trace []core.TraceEntry
 	_, err := s.Evaluate(
 		context.Background(),
@@ -144,11 +160,9 @@ func TestLoadbalanceStrategy_recurseError_propagates(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
-		recurse,
 	)
-	if !errors.Is(err, errRecurse) {
-		t.Errorf("expected errRecurse, got %v", err)
+	if !errors.Is(err, errLookup) {
+		t.Errorf("expected the lookup error to surface, got %v", err)
 	}
 }
 
@@ -167,8 +181,6 @@ func TestABSplitStrategy_zeroWeightSingleTarget_returnsNoTargets(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
-		nil,
 	)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)

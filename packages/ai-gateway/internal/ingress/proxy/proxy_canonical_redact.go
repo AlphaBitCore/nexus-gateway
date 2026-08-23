@@ -60,6 +60,99 @@ type canonicalRedactOutcome struct {
 	appended bool
 }
 
+type signedGeminiToolCall struct {
+	choice, order int
+	index, id     string
+	name, args    string
+	signature     string
+}
+
+func signedGeminiToolCalls(body []byte) []signedGeminiToolCall {
+	choices := gjson.GetBytes(body, "choices")
+	if !choices.IsArray() {
+		return nil
+	}
+	var calls []signedGeminiToolCall
+	choices.ForEach(func(choiceIndex, choice gjson.Result) bool {
+		choice.Get("message.tool_calls").ForEach(func(order, call gjson.Result) bool {
+			sig := call.Get("function.thought_signature")
+			if !sig.Exists() || sig.String() == "" {
+				return true
+			}
+			calls = append(calls, signedGeminiToolCall{
+				choice: int(choiceIndex.Int()), order: int(order.Int()),
+				index: canonicalCallField(call.Get("index")), id: canonicalCallField(call.Get("id")),
+				name: canonicalCallField(call.Get("function.name")), args: canonicalCallField(call.Get("function.arguments")),
+				signature: canonicalCallField(sig),
+			})
+			return true
+		})
+		return true
+	})
+	return calls
+}
+
+func canonicalCallField(value gjson.Result) string {
+	if !value.Exists() {
+		return "<missing>"
+	}
+	return value.Raw
+}
+
+// signedGeminiToolCallsPreserved makes a signed Gemini function call
+// indivisible during compliance redaction. Any tuple or order change fails
+// closed rather than forwarding a stale signature with altered arguments.
+func signedGeminiToolCallsPreserved(before, after []byte) bool {
+	a, b := signedGeminiToolCalls(before), signedGeminiToolCalls(after)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func signedGeminiRequestToolCalls(body []byte) []signedGeminiToolCall {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.IsArray() {
+		return nil
+	}
+	var calls []signedGeminiToolCall
+	messages.ForEach(func(messageIndex, message gjson.Result) bool {
+		message.Get("tool_calls").ForEach(func(order, call gjson.Result) bool {
+			sig := call.Get("function.thought_signature")
+			if !sig.Exists() || sig.String() == "" {
+				return true
+			}
+			calls = append(calls, signedGeminiToolCall{
+				choice: int(messageIndex.Int()), order: int(order.Int()),
+				index: canonicalCallField(call.Get("index")), id: canonicalCallField(call.Get("id")),
+				name: canonicalCallField(call.Get("function.name")), args: canonicalCallField(call.Get("function.arguments")),
+				signature: canonicalCallField(sig),
+			})
+			return true
+		})
+		return true
+	})
+	return calls
+}
+
+func signedGeminiRequestToolCallsPreserved(before, after []byte) bool {
+	a, b := signedGeminiRequestToolCalls(before), signedGeminiRequestToolCalls(after)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // redactCanonicalBuffer runs the response-stage compliance pipeline on the
 // CANONICAL (OpenAI-shape) body and returns the (possibly redacted) body plus
 // the decision, WITHOUT writing to any client. It is the locked-design S-canon
@@ -197,6 +290,13 @@ func (h *Handler) redactCanonicalBuffer(
 			out.errMsg = "response rewrite failed"
 			return out
 		}
+		if !signedGeminiToolCallsPreserved(canonicalBody, redacted) {
+			logger.Error("canonical response redaction modified signed Gemini tool call — failing closed")
+			out.failClosed = true
+			out.errStatus = http.StatusInternalServerError
+			out.errMsg = "response rewrite failed"
+			return out
+		}
 		if n == 0 {
 			// The rewrite produced NO applied change: empty ModifiedContent and no
 			// applicable tool-arg spans. Mirror the rewrite-error arm — fail
@@ -243,7 +343,7 @@ func (h *Handler) runResponseHooksOnCanonical(
 ) (out []byte, rewritten, blocked bool) {
 	oc := h.redactCanonicalBuffer(r, rec, ingress, target, canonicalBody, tokenTotal, requestID, logger)
 	if oc.failClosed {
-		h.writeError(w, rec, oc.errStatus, oc.errMsg)
+		h.writeError(w, rec, oc.errStatus, "REDACT_FAIL_CLOSED", oc.errMsg)
 		return oc.body, false, true
 	}
 	return oc.body, oc.rewritten, false

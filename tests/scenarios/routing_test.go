@@ -621,127 +621,18 @@ func TestS013_ConditionalRouting(t *testing.T) {
 	t.Logf("S-013 OK: conditional branch fired — requested 8k, routed to 32k (rule_id=%s)", rule.ID)
 }
 
-// TestS014_PolicyNarrowingEmpty verifies that a stage-0 policy rule
-// denying the requested model results in zero routable targets — the
-// gateway must reject with a non-200 status and a structured error
-// envelope that names the narrowing/policy failure. Plan §4 calls for
-// a 403; the engine may also surface this as 404 (model not allowed)
-// depending on error mapping. We accept either non-2xx as long as the
-// envelope mentions narrowing/policy/denied/empty.
-// TestS014_PolicyNarrowingEmpty — DEFERRED.
+// TestS014_PolicyNarrowingEmpty was DELETED.
 //
-// BRAINSTORM (pre-V2 retry): hypothesis was that V1 failed due to fixed
-// 6 s sleep being too short. V2 retry uses real WaitForConfigApply
-// signal — still 200.
+// It asserted a 403 when a stage-0 policy deny emptied the candidate set. The
+// product does not have that requirement: model access is an ALLOW list on the
+// virtual key, and the routed model must be in it — a rule enforced on both
+// selection paths (NarrowingEngine.Filter for the rule path, a 403
+// MODEL_NOT_ALLOWED in the requested-model passthrough). There is no deny
+// concept to assert, so the scenario had nothing to be right about.
 //
-// BRAINSTORM (post-V2 retry): the chat still returns 200 with a
-// routing_trace target source="passthrough-fallback" even with verified
-// hot-reload. This is NOT a timing issue — it's a product-level
-// behavior: when stage-0 narrowing leaves zero candidates, the resolver
-// falls through to a passthrough-fallback recovery target (per resolver.go
-// "Recovery from fallback rules" branch + passthrough-fallback emergency
-// path) rather than rejecting with 403. The plan §4 expected "403 with
-// reason=policy_narrowing_empty" semantic doesn't match current
-// implementation. Two paths forward: (a) change resolver.go to honor a
-// strict deny mode that 403s when narrowing empties candidates, OR (b)
-// rewrite this scenario to assert "passthrough-fallback fired with
-// expected reason" instead of 403. Both touch product behavior and
-// should land in a dedicated PR — out of scope for the backfill cycle.
-func TestS014_PolicyNarrowingEmpty(t *testing.T) {
-	t.Skip("S-014 deferred — narrowing deny leaves engine to passthrough-fallback path, not 403. Plan §4 wording assumes a strict reject mode the resolver does not currently implement. Track as a separate product/scenario PR (see test doc-comment for the brainstorm trail).")
-	sc := setupScenarioNoVK(t)
-	ctx := context.Background()
-
-	token, err := helpers.CPLogin(ctx, sc.Env)
-	if err != nil {
-		t.Fatalf("CPLogin: %v", err)
-	}
-
-	vkName := fmt.Sprintf("s014-%d", time.Now().UnixNano())
-	vk, err := helpers.CreateMyVK(ctx, sc.Env, token, vkName)
-	if err != nil {
-		t.Fatalf("CreateMyVK: %v", err)
-	}
-	sc.Cleanup.Register("DeleteMyVK("+vk.ID+")", func() error {
-		return helpers.DeleteMyVK(context.Background(), sc.Env, token, vk.ID)
-	})
-
-	_, model8k, err := helpers.ProviderModelLookup(ctx, sc.Env, token,
-		"moonshot", "moonshot-v1-8k")
-	if err != nil {
-		t.Fatalf("ProviderModelLookup: %v", err)
-	}
-
-	// Stage-0 policy rule: deny the only model the request will ask for.
-	// Scoped to our VK so other traffic is unaffected.
-	policyConfig, _ := json.Marshal(map[string]any{
-		"type":         "policy",
-		"denyModelIds": []string{model8k},
-	})
-	match, _ := json.Marshal(map[string]any{
-		"virtualKeys": []string{vkName},
-	})
-	stage0 := 0
-	preApply, err := helpers.BaselineConfigApply(ctx, sc.Env, "routing_rules")
-	if err != nil {
-		t.Fatalf("BaselineConfigApply: %v", err)
-	}
-	policyRule, err := helpers.CreateRoutingRule(ctx, sc.Env, token, helpers.CreateRoutingRuleOpts{
-		Name:            "s014-policy-deny-" + vk.ID[:8],
-		StrategyType:    "policy",
-		Config:          policyConfig,
-		MatchConditions: match,
-		PipelineStage:   &stage0,
-		Priority:        100,
-	})
-	if err != nil {
-		t.Fatalf("CreateRoutingRule policy: %v", err)
-	}
-	sc.Cleanup.Register("DeleteRoutingRule("+policyRule.ID+")", func() error {
-		return helpers.DeleteRoutingRule(context.Background(), sc.Env, token, policyRule.ID)
-	})
-	// Runtime-state core: real hot-reload signal.
-	if _, err := helpers.WaitForConfigApply(ctx, sc.Env, "routing_rules",
-		preApply, 30*time.Second); err != nil {
-		t.Fatalf("ai-gw did not hot-reload routing_rules: %v", err)
-	}
-	if row, err := helpers.WaitForAdminAuditRow(ctx, sc.DB,
-		"create", policyRule.ID, 15*time.Second); err != nil {
-		t.Fatalf("WaitForAdminAuditRow: %v", err)
-	} else if row == nil {
-		t.Fatalf("AdminAuditLog 'create' row for policy rule did not appear")
-	}
-
-	body := mustMarshal(t, map[string]any{
-		"model": "moonshot-v1-8k",
-		"messages": []map[string]string{
-			{"role": "user", "content": "OK"},
-		},
-		"max_tokens":  4,
-		"temperature": 0,
-	})
-	envForCall := *sc.Env
-	envForCall.TestVK = vk.RawKey
-	client := intg.LocalHTTPClient()
-	status, respBody, err := intg.AIGwPostJSON(&envForCall, client, "/v1/chat/completions", body)
-	if err != nil {
-		t.Fatalf("AIGwPostJSON: %v", err)
-	}
-	if status == 200 {
-		t.Fatalf("expected non-2xx (policy denied), got 200 (body=%q)", truncate(respBody, 200))
-	}
-	if status < 400 || status >= 500 {
-		t.Errorf("expected client-error 4xx, got %d (body=%q)", status, truncate(respBody, 200))
-	}
-	low := strings.ToLower(string(respBody))
-	if !strings.Contains(low, "narrow") && !strings.Contains(low, "polic") &&
-		!strings.Contains(low, "denie") && !strings.Contains(low, "no.*target") &&
-		!strings.Contains(low, "no model") && !strings.Contains(low, "not allowed") &&
-		!strings.Contains(low, "empty") && !strings.Contains(low, "unavail") {
-		t.Logf("note: response envelope did not match common narrowing keywords (body=%q)", truncate(respBody, 200))
-	}
-	t.Logf("S-014 OK: policy narrowing rejected (status=%d, body=%s)", status, truncate(respBody, 160))
-}
+// Removing it rather than rewriting it to assert the fallback: a scenario that
+// pins behaviour nobody asked for is a future obligation to keep that
+// behaviour working.
 
 // TestS015_SmartRouting verifies smart-routing: a judge LLM ranks
 // candidates, and when its confidence ≥ threshold its pick wins;
@@ -768,5 +659,9 @@ func TestS015_SmartRouting(t *testing.T) {
 // credential (chat may 401 even when routing is correct). Untangling
 // (c) needs a working OpenAI key in the dev vault first.
 func TestS016_CrossFormatIngress(t *testing.T) {
-	t.Skip("S-016 deferred — cross-format routing depends on a working OpenAI credential in the dev vault and a /v1/messages-shape request body. Lift once dev OpenAI credential is rotated to a working key (the moonshot path used by S-001..S-013 is fine; OpenAI is what this scenario specifically needs).")
+	// Checked, not asserted by hand. The skip used to be unconditional, so the
+	// scenario stayed off even after the precondition it named was satisfied —
+	// a skip nobody has to lift is a skip nobody does lift. Now it consults the
+	// thing it depends on, and starts running the moment the environment has it.
+	requireOpenAIProvider(t)
 }

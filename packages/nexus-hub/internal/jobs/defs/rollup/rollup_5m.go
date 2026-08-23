@@ -46,12 +46,16 @@ type Rollup5mJob struct {
 	pool     defs.PgxPool
 	interval time.Duration
 	logger   *slog.Logger
-	// excludeInternalOpsFromBilled controls whether L2 embedding +
-	// ai-guard classifier costs are EXCLUDED from MetricBilledCostUSD.
-	// Default false (zero-value): include — internal-ops costs are real
-	// money and roll into the quota-bearing billed total by default.
-	// Flip true via yaml when the operator absorbs those costs and
-	// doesn't want them tightening customer quotas.
+	// excludeInternalOpsFromBilled is accepted from yaml but is vestigial and
+	// ignored: L2 embedding, ai-guard classifier, and smart-router costs are
+	// NEVER folded into MetricBilledCostUSD, regardless of this flag's value
+	// — see the isSuccess block below (currently lines 614-635), where the
+	// billed accumulation passes through only estimated cost unchanged. It could
+	// never have worked: it lives in the Hub's config while the gateway that
+	// charges the live quota counter is never told it exists, so only one of
+	// the two sides could ever honour it. Removing the knob end-to-end
+	// (including its mirrored copy in the Control Plane's yaml, which
+	// captions the UI) is deliberately left as separate work.
 	excludeInternalOpsFromBilled bool
 }
 
@@ -215,6 +219,10 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 			upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 			-- Internal-ops cost rollup fields.
 			embedding_cost_usd, ai_guard_cost_usd,
+			-- Vendor-spend attribution fields: the smart-router call's own cost
+			-- plus the provider ids of the two internal calls, which differ from
+			-- routed_provider_id (the provider that served the REQUEST).
+			router_cost_usd, router_provider_id, embedding_provider_id,
 			-- Error-class rollup fields: the class key uses the STAMPED names
 			-- (routed falling back to requested), not catalog UUIDs, because
 			-- early rejections carry no resolved IDs and the key must be
@@ -291,6 +299,14 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 			// customer-billable.
 			embeddingCostUsd *float64
 			aiGuardCostUsd   *float64
+			// Vendor-spend attribution: the smart-router call's cost plus the
+			// provider ids of the two internal calls. Both differ from
+			// routedProviderID, which is the provider that served the REQUEST —
+			// keeping them apart is what lets vendor_spend_usd be reconciled
+			// against each vendor's own bill.
+			routerCostUsd       *float64
+			routerProviderID    *string
+			embeddingProviderID *string
 			// Error-class rollup fields.
 			providerName       *string
 			routedProviderName *string
@@ -316,6 +332,7 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 			&normStripCount, &normStripBytes, &cacheMarkersInj,
 			&upstreamTtfbMs, &upstreamTotalMs, &requestHooksMs, &responseHooksMs,
 			&embeddingCostUsd, &aiGuardCostUsd,
+			&routerCostUsd, &routerProviderID, &embeddingProviderID,
 			&providerName, &routedProviderName, &modelName, &routedModelName,
 			&internalPurpose,
 		); err != nil {
@@ -374,6 +391,17 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 				embeddingCostUsd, aiGuardCostUsd,
 			)
 		}
+
+		// Vendor spend is emitted ONCE PER ROW but not per dimension: each cost
+		// component carries the dimension of the provider that was actually
+		// charged, so this row may land on several routed_provider dimensions at
+		// once (see rollup_5m_vendor_spend.go).
+		emitVendorSpend(accValues, subDim, rowVendorSpendComponents(
+			cacheHit, totalTokens, estimatedCost, routedProviderID,
+			routerCostUsd, routerProviderID,
+			embeddingCostUsd, embeddingProviderID,
+			aiGuardCostUsd,
+		))
 
 		errClasses.observe(statusCode, internalPurpose, errorCode,
 			routedProviderName, providerName, routedModelName, modelName,

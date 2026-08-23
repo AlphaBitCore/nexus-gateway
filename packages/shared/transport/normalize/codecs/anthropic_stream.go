@@ -242,8 +242,34 @@ func foldAnthropicSSE(raw []byte, meta core.Meta) (core.NormalizedPayload, error
 			}
 			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentToolUse, ToolUse: tu})
 		default:
+			// The no-silent-drop rule: a block type this fold does not model
+			// must still leave a trace. Emitting nothing is how content
+			// vanished without any record that it had been there.
+			//
+			// text and thinking are excluded: they ARE modelled, and an
+			// empty one is a normal shape (a text block preceding a tool
+			// call, or a capture cut right after content_block_start).
+			// Marking those "unrecognised" would fabricate assistant prose
+			// and feed it to compliance scanning.
 			if t := st.text.String(); t != "" {
 				msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentText, Text: t})
+			} else if js := st.toolJSON.String(); js != "" {
+				// Server-side tool blocks (server_tool_use and its results)
+				// carry their payload over input_json_delta, exactly like a
+				// client tool call. Those frames were counted as recognised
+				// — raising the confidence score — and then discarded here
+				// because the block type did not match, which is content
+				// loss wearing the appearance of coverage. Keep the payload
+				// and name the block it came from.
+				msg.Content = append(msg.Content, core.ContentBlock{
+					Type: core.ContentText,
+					Text: payloadSafeText(st.blockType+": ", js),
+				})
+			} else if st.blockType != "" && st.blockType != "text" && st.blockType != "thinking" {
+				msg.Content = append(msg.Content, core.ContentBlock{
+					Type: core.ContentText,
+					Text: payloadSafeText("[unrecognised anthropic block: ", st.blockType+"]"),
+				})
 			}
 		}
 	}

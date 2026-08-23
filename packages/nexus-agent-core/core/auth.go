@@ -129,7 +129,7 @@ func (s *jwtTokenSource) refresh(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("refresh request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("refresh returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

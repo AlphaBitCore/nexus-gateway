@@ -154,14 +154,36 @@ func TestStreamDecoder_contentBlockDelta_thinkingDelta(t *testing.T) {
 }
 
 func TestStreamDecoder_contentBlockDelta_signatureDelta(t *testing.T) {
+	start := `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"step one"}}`
 	data := `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"abc123"}}`
-	sess := openSession(t, sseFrame("content_block_delta", data))
+	sess := openSession(t, sseFrame("content_block_start", start)+sseFrame("content_block_delta", data))
+	if _, err := sess.Next(context.Background()); err != nil {
+		t.Fatalf("Next(start): %v", err)
+	}
 	chunk, err := sess.Next(context.Background())
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if chunk.ReasoningDelta != "abc123" {
-		t.Errorf("ReasoningDelta: got %q, want abc123", chunk.ReasoningDelta)
+	if chunk.ReasoningDelta != "" {
+		t.Errorf("ReasoningDelta must not contain signature bytes: %q", chunk.ReasoningDelta)
+	}
+	if len(chunk.NexusThinking) != 1 || chunk.NexusThinking[0].Thinking != "step one" || chunk.NexusThinking[0].Signature != "abc123" {
+		t.Errorf("NexusThinking: got %+v, want signed exact block", chunk.NexusThinking)
+	}
+}
+
+func TestStreamDecoder_redactedThinkingEmitsOpaqueCarrier(t *testing.T) {
+	start := `{"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"opaque-data"}}`
+	sess := openSession(t, sseFrame("content_block_start", start))
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.NexusThinking) != 1 || chunk.NexusThinking[0].Index != 2 || chunk.NexusThinking[0].RedactedData != "opaque-data" {
+		t.Fatalf("NexusThinking=%+v, want exact redacted block", chunk.NexusThinking)
+	}
+	if chunk.ReasoningDelta != "" {
+		t.Fatalf("redacted data leaked into reasoning text: %q", chunk.ReasoningDelta)
 	}
 }
 
@@ -561,7 +583,16 @@ func TestStreamDecoder_finishReason_fromStopReason(t *testing.T) {
 		"tool_use":      "tool_calls",
 		"end_turn":      "stop",
 		"stop_sequence": "stop",
-		"refusal":       "refusal", // unmapped value passes through (forward-compat)
+		// Documented Anthropic values that now carry canonical meaning
+		// rather than passing through as unrecognised strings.
+		"refusal":                       "content_filter",
+		"model_context_window_exceeded": "length",
+		// pause_turn stays raw on purpose: it means the turn is resumable,
+		// and no OpenAI finish_reason can say that. Folding it into "stop"
+		// would tell the caller the answer is finished.
+		"pause_turn": "pause_turn",
+		// A value Anthropic has not shipped yet still passes through.
+		"some_future_reason": "some_future_reason",
 	}
 	for wire, want := range cases {
 		sess := openSession(t, sseFrame("message_delta", `{"type":"message_delta","delta":{"stop_reason":"`+wire+`"},"usage":{"output_tokens":3}}`))
@@ -572,5 +603,43 @@ func TestStreamDecoder_finishReason_fromStopReason(t *testing.T) {
 		if chunk.FinishReason != want {
 			t.Errorf("stop_reason %q → FinishReason %q, want %q", wire, chunk.FinishReason, want)
 		}
+	}
+}
+
+// MapAnthropicStreamError exists so the streaming path and the unary
+// normaliser can never diverge on the same upstream error class — and the
+// class that matters is the CANONICAL CODE the executor acts on, not just the
+// type mapping. Both conditions below arrive as invalid_request_error and both
+// need a different code than that: one to reach a larger-context sibling, the
+// other to reach a different provider. A stream that reported them as the
+// caller's fault would abort a request the unary path would have failed over.
+func TestMapAnthropicStreamError_ReclassifiesLikeTheUnaryNormaliser(t *testing.T) {
+	cases := []struct {
+		name, etype, emsg, want string
+	}{
+		{"quota exhausted", "invalid_request_error",
+			"You have reached your specified API usage limits. You will regain access on 2026-09-01 at 00:00 UTC.",
+			provcore.CodeProviderQuotaExhausted},
+		{"context overflow", "invalid_request_error",
+			"prompt is too long: 300000 tokens > 200000 maximum",
+			provcore.CodeContextOverflow},
+		{"genuinely malformed", "invalid_request_error",
+			"messages: at least one message is required",
+			provcore.CodeInvalidRequest},
+		{"rate limit keeps its own class", "rate_limit_error",
+			"Number of requests has exceeded your rate limit",
+			provcore.CodeRateLimited},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := antstream.MapAnthropicStreamError(tc.etype, tc.emsg)
+			pe := &provcore.ProviderError{}
+			if !errors.As(err, &pe) {
+				t.Fatalf("want *provcore.ProviderError, got %T", err)
+			}
+			if pe.Code != tc.want {
+				t.Errorf("code = %q, want %q — the stream and the unary path must agree", pe.Code, tc.want)
+			}
+		})
 	}
 }

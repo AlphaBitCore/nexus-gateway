@@ -459,15 +459,27 @@ func TestServeVideoPoll_VeoCompletedReconcilesFloor(t *testing.T) {
 }
 
 // A malformed veo_ id (hostile mint) refuses before any resolve or forward.
-func TestServeVideoPoll_VeoMalformedID502(t *testing.T) {
+// A stored id that no longer decodes is OUR fault, not the provider's:
+// submit validates the same round-trip before storing and refuses the job
+// otherwise, so this state can only be reached if the stored copy diverged
+// after that. The 502 it used to answer sent the operator to the provider,
+// and its hint blamed a malformed provider name that submit had already
+// ruled out.
+//
+// The safety property is unchanged and still asserted: a hostile id never
+// reaches the upstream.
+func TestServeVideoPoll_VeoMalformedStoredID_IsOursNotTheProviders(t *testing.T) {
 	up := newVeoUpstream(t, http.StatusOK, `{}`)
 	deps, js, _, _ := videoFollowDeps(t, up.srv.URL)
 	js.owned = veoOwnedJob()
 	js.owned.ID = "veo_!!!not-base64"
 	h := NewHandler(deps).ServeVideoPoll(videoIngress())
 	rr := doVideoFollow(h, http.MethodGet, js.owned.ID)
-	if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "VIDEO_JOB_ID_UNSAFE") {
-		t.Fatalf("resp = %d %q, want 502 VIDEO_JOB_ID_UNSAFE", rr.Code, rr.Body.String())
+	if rr.Code == http.StatusBadGateway {
+		t.Fatalf("502 blames the provider for a reference submit already validated: %s", rr.Body.String())
+	}
+	if rr.Code != http.StatusInternalServerError || !strings.Contains(rr.Body.String(), "VIDEO_JOB_ID_UNSAFE") {
+		t.Fatalf("resp = %d %q, want 500 VIDEO_JOB_ID_UNSAFE", rr.Code, rr.Body.String())
 	}
 	if up.hits != 0 {
 		t.Errorf("upstream hit with a hostile id")

@@ -7,13 +7,16 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
 
-// enumerateDepthLimit guards against malformed cyclic configs when walking
-// the strategy tree. The live Evaluate path uses core.MaxRoutingDepth; mirror it.
-const enumerateDepthLimit = core.MaxRoutingDepth
-
-// EnumerateTerminalTargets walks a strategy node tree and returns every
-// terminal target reachable, each with the cumulative selection probability
-// that the live stochastic router would use.
+// EnumerateTerminalTargets returns every target a rule can reach, each with the
+// selection probability the live router would use.
+//
+// It walks exactly as far as the evaluator does: one level. An entry inside a
+// strategy names a provider and a model, and a stored entry that names another
+// strategy instead is reported as UNREACHABLE rather than descended into.
+// Descending was what this walker did while the evaluator still recursed;
+// keeping it afterwards made simulate publish a distribution over branches a
+// live request can never take — which is worse than publishing nothing, because
+// simulate is what an admin uses to check a rule before trusting it.
 //
 // This is the deterministic counterpart to StrategyRegistry.Evaluate: where
 // Evaluate rolls a weighted die and returns one branch, EnumerateTerminalTargets
@@ -25,7 +28,7 @@ const enumerateDepthLimit = core.MaxRoutingDepth
 // Behavior per strategy:
 //   - single: one target, probability 1.0
 //   - fallback: every listed target, probability 1.0 (all get a chance on retry)
-//   - loadbalance: every weighted child, probability weight/sum (recurses)
+//   - loadbalance: every weighted entry, probability weight/sum
 //   - conditional: every then-branch plus default; Matched reflects whether
 //     the predicate evaluates true against rctx. Only Matched branches plus
 //     the default are assigned a non-zero probability.
@@ -46,8 +49,28 @@ func EnumerateTerminalTargets(ctx context.Context, node core.StrategyNode, rctx 
 }
 
 func enumerate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, lookup core.TargetLookup, path string, prob float64, depth int) []core.BranchedTarget {
-	if depth > enumerateDepthLimit {
-		return nil
+	// A child that is not a leaf is enumerated as UNREACHABLE, not walked.
+	//
+	// This walker used to descend into any node shape, because the evaluator
+	// did too. It no longer does: children are provider+model leaves, and a
+	// nested strategy resolves to nothing. Descending anyway made simulate
+	// report a distribution over branches the live request can never take —
+	// worse than showing nothing, because simulate is what an admin uses to
+	// check a rule before trusting it.
+	//
+	// The write boundary now refuses new nesting, so what reaches here is a row
+	// stored before that. Naming it is the point: the operator sees the branch
+	// they wrote AND that it is inert.
+	if depth > 0 && node.Type != "" && node.Type != "single" {
+		return []core.BranchedTarget{{
+			Target:      core.RoutingTarget{ProviderID: node.ProviderID, ModelID: node.ModelID},
+			Probability: prob,
+			Path:        joinPath(path, fmt.Sprintf("%s(nested)", node.Type)),
+			Matched:     false,
+			Note: "a nested " + node.Type + " is not evaluated: the gateway resolves an " +
+				"entry inside a strategy as a provider+model leaf, so this branch routes " +
+				"nothing. Re-author it as a leaf, or split it into its own rule.",
+		}}
 	}
 
 	switch node.Type {
@@ -98,10 +121,6 @@ func enumerate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingCo
 
 	case "latency":
 		return enumerateLatency(ctx, node.LatencyTargets, lookup, path, prob)
-
-	case "policy":
-		// Stage-0 only; contributes narrowing, not terminal targets.
-		return nil
 
 	case "smart":
 		// Cannot be enumerated without a live smart deps + message corpus;

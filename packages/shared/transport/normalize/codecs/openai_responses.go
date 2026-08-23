@@ -42,6 +42,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 	"github.com/goccy/go-json"
 	"strings"
 )
@@ -101,7 +102,9 @@ func (n *OpenAIResponsesNormalizer) Normalize(_ context.Context, raw []byte, met
 	// SSE the same way — without this the JSON decode trips on the leading
 	// `event:` (`invalid character 'e'`) and the row falls through to the chat
 	// normalizer with empty content + usage.
-	if meta.Direction == core.DirectionResponse && (meta.Stream || looksLikeResponsesEventStream(raw)) {
+	storedWasSSE := meta.Direction == core.DirectionResponse &&
+		(meta.Stream || looksLikeResponsesEventStream(raw))
+	if storedWasSSE {
 		raw = foldResponsesSSE(raw)
 	}
 	var p core.NormalizedPayload
@@ -110,7 +113,7 @@ func (n *OpenAIResponsesNormalizer) Normalize(_ context.Context, raw []byte, met
 	case core.DirectionRequest:
 		p, err = n.normalizeRequest(raw, meta)
 	case core.DirectionResponse:
-		p, err = n.normalizeResponse(raw, meta)
+		p, err = n.normalizeResponse(raw, meta, storedWasSSE)
 	default:
 		return zeroPayloadForKind(meta), fmt.Errorf("openai-responses: direction %q not supported: %w", meta.Direction, core.ErrUnsupported)
 	}
@@ -187,7 +190,21 @@ type openaiResponsesInputContent struct {
 	Type     string `json:"type,omitempty"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
-	// Future: input_audio, input_file, etc.
+	// input_audio is NOT a content type this endpoint accepts. A live probe
+	// returns 400 enumerating the supported values — input_text,
+	// input_image, output_text, refusal, input_file, computer_screenshot,
+	// summary_text, encrypted_content — with no audio member. The field is
+	// modelled anyway, in the nested shape the SDK type declares, so that
+	// if a request carrying it is ever captured the audio is recorded
+	// rather than silently marshalled into prose. Normalizing must
+	// describe what arrived, not only what the endpoint would have allowed.
+	InputAudio *openAIChatAudioIn `json:"input_audio,omitempty"`
+	// input_file / input_image references. FileData is inline base64 (bare
+	// or data-URI); FileID is provider custody; FileURL is remote.
+	FileData string `json:"file_data,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
+	FileURL  string `json:"file_url,omitempty"`
+	Filename string `json:"filename,omitempty"`
 }
 
 type openaiResponsesToolDecl struct {
@@ -222,14 +239,14 @@ func (n *OpenAIResponsesNormalizer) normalizeRequest(raw []byte, meta core.Meta)
 	// field comment): string shorthand → single user message, array → per-
 	// item decode.
 	if items, ok := decodeOpenAIResponsesInput(req.Input); ok {
-		for _, item := range items {
+		for ii, item := range items {
 			role := roleFromString(item.Role)
 			if role == "" {
 				// Default to user when role is omitted (some SDKs send bare
 				// input items as user content).
 				role = core.RoleUser
 			}
-			blocks := openaiResponsesInputContentToBlocks(item.Content)
+			blocks := openaiResponsesInputContentToBlocks(item.Content, locator.JoinPath("input", ii)+".content")
 			if len(blocks) == 0 {
 				// Skip empty input items rather than producing zero-content
 				// messages that downstream hooks then have to filter.
@@ -261,68 +278,6 @@ func (n *OpenAIResponsesNormalizer) normalizeRequest(raw []byte, meta core.Meta)
 	return out, nil
 }
 
-// decodeOpenAIResponsesInput accepts the polymorphic `input` field —
-// either a JSON string ("hello") or a JSON array of input items — and
-// returns a uniform []openaiResponsesInputItem. ok=false means the raw
-// bytes were empty / null / unrecognised shape; callers treat that as
-// "no input items" (an instructions-only request, for example, is
-// legal). String shorthand becomes a single user-role item with one
-// input_text content block, matching how the gateway codec
-// (packages/ai-gateway/internal/providers/specs/openai/responses/codec_responses.go:343)
-// expands it into the canonical message list.
-func decodeOpenAIResponsesInput(raw json.RawMessage) ([]openaiResponsesInputItem, bool) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, false
-	}
-	switch trimmed[0] {
-	case '"':
-		var s string
-		if err := json.Unmarshal(trimmed, &s); err != nil {
-			return nil, false
-		}
-		return []openaiResponsesInputItem{{
-			Role:    "user",
-			Content: []openaiResponsesInputContent{{Type: "input_text", Text: s}},
-		}}, true
-	case '[':
-		var items []openaiResponsesInputItem
-		if err := json.Unmarshal(trimmed, &items); err != nil {
-			return nil, false
-		}
-		return items, true
-	}
-	return nil, false
-}
-
-func openaiResponsesInputContentToBlocks(parts []openaiResponsesInputContent) []core.ContentBlock {
-	if len(parts) == 0 {
-		return nil
-	}
-	out := make([]core.ContentBlock, 0, len(parts))
-	for _, p := range parts {
-		switch p.Type {
-		case "input_text", "":
-			if p.Text != "" {
-				out = append(out, core.ContentBlock{Type: core.ContentText, Text: p.Text})
-			}
-		case "input_image":
-			// We could populate an ImageRef block with a stableHashHint
-			// of the URL, but the Responses-API image input is usually a
-			// pre-uploaded reference rather than inline base64; leave as
-			// a typed text marker for now so downstream code knows an
-			// image was present without us pretending to hash it.
-			out = append(out, core.ContentBlock{Type: core.ContentImageRef, ImageRef: &core.BinaryRef{}})
-		default:
-			// Unknown part type — keep its text payload if any.
-			if p.Text != "" {
-				out = append(out, core.ContentBlock{Type: core.ContentText, Text: p.Text})
-			}
-		}
-	}
-	return out
-}
-
 // Response side
 
 type openaiResponsesResponse struct {
@@ -346,6 +301,9 @@ type openaiResponsesOutputItem struct {
 	CallID    string         `json:"call_id,omitempty"`
 	Arguments string         `json:"arguments,omitempty"`
 	Input     map[string]any `json:"input,omitempty"`
+	// Result carries the generated image for type=image_generation_call —
+	// base64, inline. It is the only image-out path this wire has.
+	Result string `json:"result,omitempty"`
 }
 
 type openaiResponsesSummaryPart struct {
@@ -374,7 +332,10 @@ type openaiResponsesOutputDetails struct {
 	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
-func (n *OpenAIResponsesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
+// storedWasSSE reports that the bytes on disk are the raw event stream. The
+// fold above rebuilds the assembled object in memory only, so a json: path
+// would address something the stored body does not contain.
+func (n *OpenAIResponsesNormalizer) normalizeResponse(raw []byte, meta core.Meta, storedWasSSE bool) (core.NormalizedPayload, error) {
 	var resp openaiResponsesResponse
 	if err := decodeLenient(raw, &resp); err != nil {
 		return zeroPayloadForKind(meta), fmt.Errorf("openai-responses: response unmarshal: %w", err)
@@ -394,7 +355,7 @@ func (n *OpenAIResponsesNormalizer) normalizeResponse(raw []byte, meta core.Meta
 	// consumers see the same canonical shape as Chat Completions
 	// (one assistant message per response with mixed content blocks).
 	var blocks []core.ContentBlock
-	for _, item := range resp.Output {
+	for oi, item := range resp.Output {
 		switch item.Type {
 		case "reasoning":
 			for _, s := range item.Summary {
@@ -412,6 +373,34 @@ func (n *OpenAIResponsesNormalizer) normalizeResponse(raw []byte, meta core.Meta
 						blocks = append(blocks, core.ContentBlock{Type: core.ContentText, Text: c.Text})
 					}
 				}
+			}
+		case "image_generation_call":
+			// Streamed responses are folded into the assembled object
+			// before decode, so a json: locator addresses the folded body
+			// exactly as it does for a non-streamed one.
+			if item.Result != "" {
+				var ref *core.MediaRef
+				if storedWasSSE {
+					// The image is real and was generated, but the stored
+					// bytes are the event stream — a json: locator into the
+					// folded object would resolve to nothing on the server.
+					// Report it present-but-unaddressable rather than offer
+					// a download that 404s.
+					// Not "fingerprint": nothing is hashed here, and the only
+					// other fingerprint in the tree carries a real digest.
+					// The honest statement is that the image was generated
+					// and its bytes are not addressable in the stored body.
+					ref = &core.MediaRef{
+						Modality:  core.ModalityImage,
+						SizeBytes: locator.DecodedSize(item.Result),
+						Source:    core.MediaAbsent,
+						Cause:     "streamed-response-body",
+					}
+				} else {
+					ref = capturedMedia("", item.Result, locator.JSON(locator.JoinPath("output", oi)+".result"))
+					ref.Modality = core.ModalityImage
+				}
+				blocks = append(blocks, mediaBlock(ref))
 			}
 		case "function_call", "tool_call":
 			// Tool-call output items. Project to core.ContentToolUse so the

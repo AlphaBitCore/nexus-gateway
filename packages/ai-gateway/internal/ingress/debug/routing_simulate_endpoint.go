@@ -88,18 +88,17 @@ type branchEntry struct {
 
 // simulateResponse is the full decision trace returned to callers.
 type simulateResponse struct {
-	Request          simulateRequestEcho              `json:"request"`
-	OriginalModelID  string                           `json:"originalModelId"`
-	Substituted      bool                             `json:"substituted"`
-	RuleID           string                           `json:"ruleId,omitempty"`
-	RuleName         string                           `json:"ruleName,omitempty"`
-	Stages           []routingcore.PipelineTraceEntry `json:"stages"`
-	Trace            []routingcore.TraceEntry         `json:"trace"`
-	Targets          []targetEntry                    `json:"targets"`
-	RecoveryTargets  []targetEntry                    `json:"recoveryTargets"`
-	Branches         []branchEntry                    `json:"branches"`
-	NarrowingSummary *routingcore.NarrowingSummary    `json:"narrowingSummary,omitempty"`
-	Warnings         []string                         `json:"warnings,omitempty"`
+	Request         simulateRequestEcho              `json:"request"`
+	OriginalModelID string                           `json:"originalModelId"`
+	Substituted     bool                             `json:"substituted"`
+	RuleID          string                           `json:"ruleId,omitempty"`
+	RuleName        string                           `json:"ruleName,omitempty"`
+	Stages          []routingcore.PipelineTraceEntry `json:"stages"`
+	Trace           []routingcore.TraceEntry         `json:"trace"`
+	Targets         []targetEntry                    `json:"targets"`
+	RecoveryTargets []targetEntry                    `json:"recoveryTargets"`
+	Branches        []branchEntry                    `json:"branches"`
+	Warnings        []string                         `json:"warnings,omitempty"`
 }
 
 // simulateMessagesToNormalizedPayload builds a synthetic
@@ -249,16 +248,15 @@ func RoutingSimulateHandler(resolver routeResolver, bridge canonicalbridge.API, 
 				EndpointType:      endpoint,
 				IngressBodyFormat: string(ingressFormat),
 			},
-			OriginalModelID:  plan.OriginalModelID,
-			Substituted:      plan.Substituted,
-			RuleID:           plan.RuleID,
-			RuleName:         plan.RuleName,
-			Stages:           plan.PipelineTrace,
-			Trace:            plan.Trace,
-			Targets:          projectTargets(plan.Targets, ingressFormat, providerEP, bridge),
-			RecoveryTargets:  projectTargets(plan.RecoveryTargets, ingressFormat, providerEP, bridge),
-			Branches:         projectBranches(plan.Branches),
-			NarrowingSummary: plan.NarrowingSummary,
+			OriginalModelID: plan.OriginalModelID,
+			Substituted:     plan.Substituted,
+			RuleID:          plan.RuleID,
+			RuleName:        plan.RuleName,
+			Stages:          plan.PipelineTrace,
+			Trace:           plan.Trace,
+			Targets:         projectTargets(plan.Targets, ingressFormat, providerEP, bridge),
+			RecoveryTargets: projectTargets(plan.RecoveryTargets, ingressFormat, providerEP, bridge),
+			Branches:        projectBranches(plan.Branches),
 		}
 		if resp.Stages == nil {
 			resp.Stages = []routingcore.PipelineTraceEntry{}
@@ -268,7 +266,17 @@ func RoutingSimulateHandler(resolver routeResolver, bridge canonicalbridge.API, 
 		}
 
 		if plan.RuleID == "" && len(plan.Targets) == 0 {
-			resp.Warnings = append(resp.Warnings, "no stage-1 rule matched — request would be rejected by router")
+			// No rule matched, but that is only a rejection for `auto`. A
+			// caller who NAMES a model needs no rule: the live gateway serves
+			// it through the explicit-model passthrough (the resolver's
+			// Explain does not model that handler stage, so its empty target
+			// list here is NOT what the client would see). Routing rules only
+			// REDIRECT a named model; they are not required to serve one.
+			if strings.EqualFold(strings.TrimSpace(req.ModelID), "auto") || req.ModelID == "" {
+				resp.Warnings = append(resp.Warnings, "no stage-1 rule matched — an `auto` request has nothing to route and would be rejected")
+			} else {
+				resp.Warnings = append(resp.Warnings, "no routing rule matched — if this is a valid, enabled model the live gateway serves it directly through the explicit-model passthrough (routing rules only REDIRECT a named model; they are not required to serve one). This preview evaluates only the rule engine and does not model that passthrough, so an empty target list here is not what the client receives for a valid model.")
+			}
 		}
 		resp.Warnings = append(resp.Warnings, "simulate runs without virtual-key context; project/organization/virtual-key matchConditions are evaluated as empty")
 		if req.ModelID == "auto" && len(req.Messages) == 0 {

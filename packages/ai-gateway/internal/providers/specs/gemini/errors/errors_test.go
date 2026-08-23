@@ -283,3 +283,26 @@ func TestNormalize_InputTokenCountExceeds_MapsToContextOverflow(t *testing.T) {
 		t.Errorf("Code = %q, want %q", pe.Code, provcore.CodeContextOverflow)
 	}
 }
+
+// IsStaleCacheRefError recognises Gemini's stale-cachedContent 403 signature
+// across the several phrasings Gemini uses ("CachedContent not found",
+// "cachedContents/<id> not found", "permission denied on cachedContents/<id>").
+// The proxy invalidates its cached ref on a true result, so a false negative
+// loops on the dead ref and a false positive throws away a live cache — both
+// asserted here.
+func TestIsStaleCacheRefError(t *testing.T) {
+	cases := map[string]bool{
+		``:                                 false,
+		`{"error":"unrelated"}`:            false,
+		`CachedContent not found`:          true,
+		`cached content not found`:         true,
+		`cachedContents/abc-123 not found`: true,
+		`permission denied on cachedContents/xyz`: true,
+		`some random 500 from gemini`:             false,
+	}
+	for body, want := range cases {
+		if got := gemerrors.IsStaleCacheRefError([]byte(body)); got != want {
+			t.Errorf("IsStaleCacheRefError(%q) = %v, want %v", body, got, want)
+		}
+	}
+}

@@ -16,12 +16,11 @@ export type NormalizedKind =
   | 'http-sse'
   | 'unsupported';
 
-export interface BinaryRef {
-  size: number;
-  contentType: string;
-  sha256: string;
-  spillKey?: string;
-}
+// MediaRef and its custody vocabulary are defined once in
+// @nexus-gateway/ui-shared because the Agent Dashboard renders the same
+// normalized payload. Re-exported here so existing imports from this
+// module keep working.
+export type { MediaRef, MediaModality, MediaSource } from '@nexus-gateway/ui-shared';
 
 export interface ToolUse {
   callId?: string;
@@ -34,12 +33,15 @@ export interface ToolResult {
   output?: string;
 }
 
-export type ContentBlockType = 'text' | 'image_ref' | 'tool_use' | 'tool_result' | 'reasoning';
+// 'media' replaces the former 'image_ref': modality is a field on the ref,
+// not a block type, so audio, video and documents stop masquerading as
+// images.
+export type ContentBlockType = 'text' | 'media' | 'tool_use' | 'tool_result' | 'reasoning';
 
 export interface NormalizedContentBlock {
   type: ContentBlockType;
   text?: string;
-  imageRef?: BinaryRef;
+  mediaRef?: import('@nexus-gateway/ui-shared').MediaRef;
   toolUse?: ToolUse;
   toolResult?: ToolResult;
 }
@@ -64,7 +66,8 @@ export interface HTTPBodyView {
   text?: string;
   json?: unknown;
   form?: Record<string, string>;
-  binaryRef?: BinaryRef;
+  /** Whole-body binary. Its locator is `body`. */
+  mediaRef?: import('@nexus-gateway/ui-shared').MediaRef;
   /** kind=http-sse: decoded event frames in stream order. */
   sseFrames?: SSEFrame[];
   /** kind=http-sse: true when the capture limit cut the frame list short. */
@@ -229,4 +232,14 @@ export interface TrafficEventNormalized {
   requestRedactionSpans?: TransformSpan[] | null;
   responseRedactionSpans?: TransformSpan[] | null;
   createdAt: string;
+  /**
+   * True when the body this projection was computed FROM is only a stored
+   * prefix (it reached payload_capture.maxInlineBodyBytes with no spill backend
+   * configured). The projection is faithful to the bytes it saw — but those
+   * bytes are incomplete, and a partial conversation rendered as a whole one is
+   * indistinguishable from a model that stopped early.
+   */
+  requestTruncated?: boolean;
+  /** Response-side truncation — same semantics as requestTruncated. */
+  responseTruncated?: boolean;
 }

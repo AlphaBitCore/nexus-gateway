@@ -35,8 +35,72 @@ func (Codec) RewriteNative(_ typology.WireShape, nativeBody []byte, target provc
 	if err != nil {
 		return provcore.EncodeResult{}, err
 	}
+	capBefore := gjson.GetBytes(out, "max_tokens").Int()
 	out, rewrites := applyNativeSamplingPolicy(out, target.ProviderModelID, target.MaxOutputTokens)
+	// The thinking contract changed under existing SDK clients: a model on the
+	// adaptive contract 400s the enabled+budget shape every older SDK still
+	// sends (the exact message is recorded in thinking_contract.go). Same
+	// coerce-over-400 differential as the sampling strips above — the 400
+	// path has no beneficiary — and same allowlist predicate, so the two
+	// doors cannot drift.
+	out, thinkContractRewrites, err := applyNativeThinkingContract(out, target.ProviderModelID)
+	if err != nil {
+		return provcore.EncodeResult{}, err
+	}
+	rewrites = append(rewrites, thinkContractRewrites...)
+	// OUR clamp can strand the caller's thinking budget above the cap it just
+	// lowered, and Anthropic then answers 400 "max_tokens must be greater than
+	// thinking.budget_tokens" — describing a request the caller never sent. The
+	// cross-format door has reconciled this since the rule was written; this
+	// one clamps with the SAME policy and did not.
+	//
+	// Only when WE lowered it. A pair the caller sent inconsistent is theirs to
+	// see, and this door's contract is that native features ride through
+	// verbatim — repairing an inconsistency we did not cause would be rewriting
+	// a native request beyond the evidence-cited quirks.
+	if capAfter := gjson.GetBytes(out, "max_tokens").Int(); capAfter > 0 && capAfter < capBefore {
+		var thinkRewrites []string
+		var err error
+		out, thinkRewrites, err = reconcileNativeThinkingBudget(out)
+		if err != nil {
+			return provcore.EncodeResult{}, err
+		}
+		rewrites = append(rewrites, thinkRewrites...)
+	}
 	return provcore.EncodeResult{Body: out, ContentType: "application/json", Rewrites: rewrites}, nil
+}
+
+// reconcileNativeThinkingBudget applies fitThinkingBudget to a native body,
+// asking the same function the cross-format door asks so the two cannot drift.
+//
+// A body with no thinking block, no budget, or a disabled block is returned as
+// the same slice — the common case costs two probes and no allocation.
+func reconcileNativeThinkingBudget(body []byte) ([]byte, []string, error) {
+	root := gjson.ParseBytes(body)
+	thinking := root.Get("thinking")
+	if !thinking.Exists() || !thinking.IsObject() {
+		return body, nil, nil
+	}
+	if thinking.Get("type").String() == "disabled" {
+		return body, nil, nil
+	}
+	budget := thinking.Get("budget_tokens")
+	maxTokens := root.Get("max_tokens")
+	if !budget.Exists() || !maxTokens.Exists() || maxTokens.Int() <= 0 {
+		return body, nil, nil
+	}
+	fitted, err := fitThinkingBudget(budget.Int(), maxTokens.Int())
+	if err != nil {
+		return nil, nil, err
+	}
+	if fitted == budget.Int() {
+		return body, nil, nil
+	}
+	out, serr := sjson.SetBytes(body, "thinking.budget_tokens", fitted)
+	if serr != nil {
+		return nil, nil, serr
+	}
+	return out, []string{fmt.Sprintf("thinking.budget_tokens→%d_fits_max_tokens", fitted)}, nil
 }
 
 // applyNativeSamplingPolicy edits a native Anthropic body in place to match the

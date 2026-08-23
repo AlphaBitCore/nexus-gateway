@@ -46,6 +46,11 @@ type detailsWire struct {
 	ComplianceFlags        any    `json:"complianceFlags"`
 	Metadata               any    `json:"metadata"`
 
+	// omitempty, unlike the ten base fields above: a record with no caller
+	// tags must serialize exactly as it did before this field existed, so
+	// existing rows' details JSON stays byte-identical.
+	ClientTags map[string]string `json:"clientTags,omitempty"`
+
 	HookRewritten            *bool `json:"hookRewritten,omitempty"`
 	HookRewriteCount         *int  `json:"hookRewriteCount,omitempty"`
 	ResponseHookRewritten    *bool `json:"responseHookRewritten,omitempty"`
@@ -93,6 +98,7 @@ func buildDetails(rec *Record) detailsWire {
 		QualitySignals:         rec.QualitySignals,
 		ComplianceFlags:        rec.ComplianceFlags,
 		Metadata:               rec.Metadata,
+		ClientTags:             rec.ClientTags,
 	}
 	if rec.HookRewritten {
 		t := true

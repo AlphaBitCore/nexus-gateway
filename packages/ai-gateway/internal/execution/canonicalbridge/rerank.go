@@ -14,6 +14,7 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
+	"net/http"
 )
 
 // rerankMaxDocuments bounds the canonical `documents` array (billing-DoS
@@ -124,6 +125,62 @@ func (b *Bridge) IngressRerankToCanonical(ingress provcore.Format, body []byte, 
 // IngressRerankToCanonical FIRST, so the validation above binds on the
 // executor failover lane too — without this a request rejected on a Cohere
 // primary could reach the Voyage wire unvalidated via failover.
+// ValidateRerankIngressGuards enforces only the bounds that protect THIS
+// gateway, for the leg where the ingress body goes upstream verbatim (a
+// native Cohere target: the rerank canonical is the Cohere wire, so nothing
+// is translated and IngressRerankToCanonical never runs).
+//
+// The documents ceiling is the load-bearing one — rerank bills a search unit
+// per 100 documents, so an unbounded array multiplies upstream spend from a
+// single request — plus the shape checks without which the count is
+// meaningless.
+//
+// Deliberately NOT enforced here: the per-element string rule. That rule
+// exists because the canonical→Voyage codec has to read document text, not
+// because the provider requires it — Cohere serves object-shaped documents
+// (measured: {"text": "..."} entries return 200 with correct scores). On the
+// passthrough leg the provider's opinion is the one that counts, and
+// rejecting a body it would have served is a regression, not a guard.
+func (b *Bridge) ValidateRerankIngressGuards(ingress provcore.Format, body []byte, ct provcore.CallTarget) error {
+	if ingress != provcore.FormatCohere {
+		return fmt.Errorf("canonicalbridge: ingress format %q has no rerank canonical (the rerank ingress is Cohere-shaped only)", ingress)
+	}
+	root := gjson.ParseBytes(body)
+	if !root.IsObject() {
+		return fmt.Errorf("rerank body must be a JSON object")
+	}
+	resolved := fmt.Sprintf("%s (%s)", ct.Format, ct.ProviderModelID)
+	if m := root.Get("model"); m.Type != gjson.String || m.Str == "" {
+		return fmt.Errorf("field %q must be a non-empty string for the resolved rerank provider %s", "model", resolved)
+	}
+	if q := root.Get("query"); q.Type != gjson.String || q.Str == "" {
+		return fmt.Errorf("field %q must be a non-empty string for the resolved rerank provider %s", "query", resolved)
+	}
+	docs := root.Get("documents")
+	if !docs.IsArray() {
+		return fmt.Errorf("field %q must be an array for the resolved rerank provider %s", "documents", resolved)
+	}
+	if n := len(docs.Array()); n < 1 || n > rerankMaxDocuments {
+		// The ceiling is a spend refusal and carries its own code. The shape
+		// checks above stay untyped on purpose: a malformed body IS the
+		// caller's mistake, and filing it in the spend bucket would put their
+		// error in the operator's billing view.
+		return &provcore.ProviderError{
+			Status:  http.StatusBadRequest,
+			Code:    provcore.CodeSpendLimitExceeded,
+			Message: fmt.Sprintf("field %q must have 1..%d entries for the resolved rerank provider %s", "documents", rerankMaxDocuments, resolved),
+		}
+	}
+	if n := root.Get("top_n"); n.Exists() {
+		f := n.Float()
+		v := int(f)
+		if n.Type != gjson.Number || float64(v) != f || v < 1 {
+			return fmt.Errorf("field %q must be a positive integer for the resolved rerank provider %s", "top_n", resolved)
+		}
+	}
+	return nil
+}
+
 func (b *Bridge) IngressRerankToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) (wireBody []byte, rewrites []string, err error) {
 	if ingress == target {
 		return body, nil, nil

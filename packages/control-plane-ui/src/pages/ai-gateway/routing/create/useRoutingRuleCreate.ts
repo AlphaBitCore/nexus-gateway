@@ -9,7 +9,6 @@ import { useSyncFeedback } from '@/hooks/useSyncFeedback';
 import type { AdminModelsByProvider } from '@/api/types';
 import { useToast } from '@/context/ToastContext';
 import {
-  buildPolicyApiConfig,
   buildRoutingApiConfig,
   buildSmartConfig,
   buildFallbackChainApi,
@@ -38,11 +37,6 @@ export function useRoutingRuleCreate() {
   // ── Basic fields ──────────────────────────────────────────────────
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [pipelineStage, setPipelineStage] = useState('1');
-  const [policyAllowM, setPolicyAllowM] = useState<string[]>([]);
-  const [policyDenyM, setPolicyDenyM] = useState<string[]>([]);
-  const [policyAllowP, setPolicyAllowP] = useState<string[]>([]);
-  const [policyDenyP, setPolicyDenyP] = useState<string[]>([]);
   const [strategyType, setStrategyType] = useState<StrategyType>('single');
   const [priority, setPriority] = useState('0');
   const [enabled, setEnabled] = useState(true);
@@ -121,9 +115,6 @@ export function useRoutingRuleCreate() {
   // so what blocks Continue and what the API rejects can never drift. Returns
   // the same {ok,message}|{ok,config} shape the build helpers use.
   const buildConfig = (): { ok: true; config: unknown } | { ok: false; message: string } => {
-    if (pipelineStage === '0') {
-      return buildPolicyApiConfig(policyAllowM, policyDenyM, policyAllowP, policyDenyP);
-    }
     const built =
       strategyType === 'conditional'
         ? resolveConditionalConfigFromEditor(conditionalUi, providerGroups)
@@ -164,19 +155,6 @@ export function useRoutingRuleCreate() {
       projects: matchProjectIds,
       virtualKeys: matchVirtualKeys,
     });
-    if (pipelineStage === '0') {
-      mutate({
-        name,
-        description,
-        strategyType: 'policy',
-        priority: Number(priority),
-        enabled,
-        pipelineStage: 0,
-        config: built.config,
-        matchConditions,
-      });
-      return;
-    }
     const fallbackChainApi = buildFallbackChainApi(fallbackEntries, providerGroups);
     mutate({
       name,
@@ -204,7 +182,7 @@ export function useRoutingRuleCreate() {
 
   const configModelIds = configuredInternalModelIds(
     providerGroups,
-    pipelineStage === '0' ? 'policy' : strategyType,
+    strategyType,
     singleProvider,
     singleModel,
     entries,
@@ -215,16 +193,10 @@ export function useRoutingRuleCreate() {
     // Basic fields
     name, setName,
     description, setDescription,
-    pipelineStage, setPipelineStage,
     strategyType, handleStrategyChange,
     priority, setPriority,
     enabled, setEnabled,
 
-    // Policy fields
-    policyAllowM, setPolicyAllowM,
-    policyDenyM, setPolicyDenyM,
-    policyAllowP, setPolicyAllowP,
-    policyDenyP, setPolicyDenyP,
 
     // Single-provider
     singleProvider, setSingleProvider,

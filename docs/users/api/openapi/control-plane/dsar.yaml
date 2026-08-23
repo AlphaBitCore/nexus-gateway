@@ -263,8 +263,7 @@ paths:
                 For an ERASURE request the response contains the
                 `outcome`. Erasure is a full Art.17 account deletion by default,
                 performed in one atomic transaction: it anonymises the subject's
-                traffic rows, scrubs the captured payload bodies (and nulls any
-                retained `traffic_event_normalized` sidecar), deletes the
+                traffic rows, scrubs the captured payload bodies, deletes the
                 assistant data, scrubs prior-ACCESS exports, and then
                 deletes the account record itself — the subject's owned virtual
                 keys and admin API keys, federated-identity links, refresh tokens,
@@ -273,11 +272,19 @@ paths:
                 (accountability exception). The `outcome` reports the per-stage
                 counts (anonymised rows, scrubbed bodies, deleted assistant rows,
                 scrubbed prior-ACCESS exports, deleted owned keys / identity links
-                / tokens, and whether the account row was deleted). `normalizedScrubbed`
-                counts the `traffic_event_normalized` sidecar rows nulled; for current
-                traffic this is a no-op (rows carry no sidecar — the normalized projection
-                is recomputed at view time from the captured body), so erasure correctness
-                rests on the payload-body scrub (`payloadsScrubbed`). The updated
+                / tokens, and whether the account row was deleted).
+
+                `normalizedScrubbed` is **DEPRECATED and always 0**; it will be
+                removed in the next major version. It counted rows nulled in the
+                `traffic_event_normalized` sidecar, a second stored copy of the
+                captured text. That table is being dropped and the normalized
+                projection is recomputed at view time from the captured body, so
+                there is no second copy to scrub and zero is the truthful count
+                rather than a skipped step. Erasure correctness rests entirely on
+                the payload-body scrub (`payloadsScrubbed`) — one surface instead
+                of two, which is the stronger position: a second copy is a second
+                thing an erasure can miss. Consumers reading the erasure receipt
+                should stop asserting on this field. The updated
                 request record is returned under `request`. Responds 404 when the
                 request ID is unknown.
             x-nexus-iam-action: iam.ResourceDSAR.Action(iam.VerbFulfill)
@@ -333,7 +340,7 @@ paths:
                                     agentAnonymised: 8
                                     totalAnonymised: 50
                                     payloadsScrubbed: 50
-                                    normalizedScrubbed: 50
+                                    normalizedScrubbed: 0   # deprecated, always 0
                                     spillRefsOrphaned: 3
                                     assistantErased: 12
                                     accessOutcomesScrubbed: 1

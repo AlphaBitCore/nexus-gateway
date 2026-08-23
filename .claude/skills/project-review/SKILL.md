@@ -1,6 +1,9 @@
-# Multi-Role Review Prompt Guide
+---
+name: project-review
+description: "Run a full-system multi-role audit of the gateway using review prompts for 9 specialist roles — admin dashboard, client, API, architecture, security, compliance, and more. Findings from every role are remediated through the standard workflow. Trigger keywords: project review, multi-role review, full system audit, specialist review, /project-review."
+---
 
-description: Project review with multiple roles
+# Multi-Role Review Prompt Guide
 
 
 ---

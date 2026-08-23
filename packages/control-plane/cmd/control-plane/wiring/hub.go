@@ -154,12 +154,11 @@ func InitHub(d HubDeps) (HubResult, error) {
 
 	// Push static_info at startup and on every reconnect.
 	staticInfo := metricsplatform.CaptureStaticInfo(metricsplatform.BuildInfo{
-		ServiceVersion: "control-plane/0.1.0",
-		BuildSHA:       "",
-		BuildTime:      "",
-		StartTime:      d.ProcessStartTime.Format(time.RFC3339),
-		PublicURL:      cfg.PublicURL,
-		PrivateURL:     metricsplatform.EffectivePrivateURL(cfg.PrivateURL, cfg.Server.Host, cfg.Server.Port),
+		Service:      "control-plane",
+		BuildVersion: d.BuildVersion,
+		StartTime:    d.ProcessStartTime.Format(time.RFC3339),
+		PublicURL:    cfg.PublicURL,
+		PrivateURL:   metricsplatform.EffectivePrivateURL(cfg.PrivateURL, cfg.Server.Host, cfg.Server.Port),
 	})
 	go func() {
 		time.Sleep(500 * time.Millisecond)

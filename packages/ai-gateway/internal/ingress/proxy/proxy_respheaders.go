@@ -53,6 +53,20 @@ func writeForwardedResponseHeaders(w http.ResponseWriter, allowlist *forwardhead
 	}
 	filtered := provdispatch.FilterResponseHeaders(allowlist, format, src, isCacheHit)
 	for k, vs := range filtered {
+		// A header the gateway has already stamped is not appended to. The
+		// caller's own x-request-id is echoed by the RequestID middleware,
+		// which runs first, and Adding the upstream's after it left the
+		// response carrying two values under one name — where every client
+		// library's Get returns the first. So the caller got their own id back
+		// and the provider's was invisible. The rule is the same one
+		// setResponseHeaders relies on from the other side: whichever id the
+		// caller can already correlate on wins, and the upstream's fills in
+		// when the caller supplied none. No allowlisted response header is
+		// legitimately multi-valued — set-cookie and www-authenticate are on
+		// the hard denylist.
+		if len(w.Header().Values(k)) > 0 {
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}

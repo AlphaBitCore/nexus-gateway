@@ -10,6 +10,8 @@ import (
 
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 )
 
 // ConnectionStage returns an HTTP middleware that evaluates connection-stage
@@ -92,7 +94,8 @@ func ConnectionStage(
 				if reason == "" {
 					reason = "connection blocked by compliance policy"
 				}
-				http.Error(w, reason, http.StatusForbidden)
+				envelope.WriteGatewayError(w, r, http.StatusForbidden,
+					"CONNECTION_BLOCKED", reason, "")
 				return
 			}
 			next.ServeHTTP(w, r)

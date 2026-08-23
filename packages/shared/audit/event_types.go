@@ -60,6 +60,17 @@ type AuditEvent struct {
 	// events for the same request. Empty for passthrough (non-bumped) traffic.
 	TraceID string
 
+	// ExternalRequestID is the caller's OWN request id — the x-request-id they
+	// sent — recorded as given and never rewritten, so an external system can
+	// join Nexus rows to its own logs. Distinct from TraceID, which is ours and
+	// groups a unit of work, and from the row's id, which identifies the row.
+	//
+	// Only the AI Gateway used to record it, so a caller whose traffic reached
+	// Nexus through the compliance proxy or the agent had no way to join at
+	// all — the header was right there in the intercepted request and nothing
+	// read it. Empty when the caller sent none.
+	ExternalRequestID string
+
 	// LLM signal extraction. Populated by the Traffic Adapter when the
 	// intercepted request matches an AI provider. Empty-string fields mean
 	// "unknown" or "not applicable" — serialized as the empty zero-value on

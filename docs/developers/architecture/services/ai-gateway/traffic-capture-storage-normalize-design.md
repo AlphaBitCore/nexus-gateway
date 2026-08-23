@@ -3,11 +3,11 @@
 Scope: AI Gateway audit capture · `traffic_event` storage · Control-Plane view-time normalize (Traffic drawer)
 Related: [normalization-architecture.md](./normalization-architecture.md) · [hook-architecture.md](./hook-architecture.md) · [provider-adapter-architecture.md](./provider-adapter-architecture.md) · [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md)
 
-> **Status: implemented.** The design below is shipped. `ingress_format` is persisted on `traffic_event` (the AI Gateway stamps `rec.IngressFormat` onto the audit message → Hub insert; agent / compliance-proxy rows carry the domain-matched adapter id). The `traffic_event_normalized` sidecar is **not written on the audit write path** (write-frozen — retained for historical rows and older-agent uploads), and the Control Plane recomputes the normalized projection at view time from the stored (already-redacted) body, keyed on `ingress_format` (empty ⇒ path/sniff fallback). See [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2.
+> **Status: implemented.** The design below is shipped. `ingress_format` is persisted on `traffic_event` (the AI Gateway stamps `rec.IngressFormat` onto the audit message → Hub insert; agent / compliance-proxy rows carry the domain-matched adapter id). The normalized projection is **never persisted**; the Control Plane recomputes it at view time from the stored (already-redacted) body, keyed on `ingress_format` (empty ⇒ path/sniff fallback). See [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2.
 
 ## 1. Problem
 
-The Traffic drawer's normalized view is recomputed **at view time** from the captured request/response bodies (the `traffic_event_normalized` sidecar is not written on the write path — see [normalization-architecture.md](./normalization-architecture.md) §5.2 and [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2). The problem this design solved: on a fresh prod data set before the fix, **~294 / 588 (50%) of 200-status events rendered raw JSON with the wrong detected protocol** (`generic-http`) instead of the canonical `ai-chat` projection.
+The Traffic drawer's normalized view is recomputed **at view time** from the captured request/response bodies (there is no stored projection — see [normalization-architecture.md](./normalization-architecture.md) §5.2 and [audit-pipeline-architecture.md](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2). The problem this design solved: on a fresh prod data set before the fix, **~294 / 588 (50%) of 200-status events rendered raw JSON with the wrong detected protocol** (`generic-http`) instead of the canonical `ai-chat` projection.
 
 The break is **exactly** the set of events where the **ingress wire protocol differs from the upstream provider's adapter** — i.e. cross-protocol transcoding (client speaks Anthropic `/v1/messages`, routed to an OpenAI provider; client speaks Gemini `/v1beta`, routed to Anthropic; etc.).
 
@@ -49,7 +49,7 @@ The registry resolves a normalizer by `AdapterType` + `EndpointPath` (Tier-1 key
 This is an invariant in the data plane, not a coincidence:
 
 - **Success response** — stored after upstream→canonical→ingress transcoding = exactly what the client received.
-- **Error response** — `writeIngressError` **explicitly reshapes the error to the ingress wire shape** before storing (anthropic→`{"type":"error"}`, gemini→`{"error":{code}}`, responses→Responses error, openai→proxy_error) using `rec.IngressFormat`.
+- **Error response** — `writeIngressError` **explicitly reshapes the error to the ingress wire shape** before storing (anthropic→`{"type":"error"}`, gemini→`{"error":{code}}`, responses→Responses error, openai→`{"error":{message,type,code,param}}`) using `rec.IngressFormat`.
 - **Redact** — `RewriteRequestBody`/`RewriteResponseBody` rewrite **in place**, masking only matched sensitive spans and **preserving the JSON wire structure** → still valid ingress wire.
 - **Block** — same rewrite path; stores the rewritten ingress body + the block decision.
 - **Request** — captured at admission *before* upstream translation = the ingress request.
@@ -110,7 +110,7 @@ The registry already keys ingress specs by `<format>::<ingress-path>`: `anthropi
 - `packages/ai-gateway/internal/ingress/proxy/proxy.go` (or `stage_context.go`) — early `IngressFormat` stamp.
 - audit record → mq message → hub insert — carry `ingress_format` through to the `traffic_event` column.
 - `tools/db-migrate/schema/traffic.prisma` — new `ingress_format` column (+ `schema-extras` if needed).
-- `packages/control-plane/internal/traffic/store/trafficstore/traffic_event_normalized.go` — read `ingress_format` + `a.path`; drop the provider join.
+- `packages/control-plane/internal/traffic/store/trafficstore/traffic_event_normalized.go` — `GetTrafficEventForNormalize` reads `ingress_format` + `a.path` for the view-time recompute; no provider join.
 - Drawer/handler — status-based branch (may already hold).
 - Docs lockstep: this doc + normalization-architecture.md; smoke note.
 

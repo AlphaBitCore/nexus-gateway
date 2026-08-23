@@ -26,6 +26,34 @@ func makeRoutingRow(id string) []any {
 	}
 }
 
+// TestRoutingRuleOrderingIsTotal pins the rule sort to a TOTAL order.
+//
+// The resolver takes the first matching rule as the primary one, so the sort
+// decides which rule serves a request whenever two of them match. Sorting by
+// (pipelineStage, priority) alone leaves ties to whatever order the database
+// happens to return, and the rule cache holds that order for thirty minutes —
+// so an operator can watch the winner change on a cache refresh they did not
+// cause, with nothing in the trace to explain it.
+//
+// Creation time breaks the tie, with the id as the final total-order guarantee.
+// Ordering by id alone would also be deterministic, but the id is a UUID: an
+// admin could not predict or explain the winner, and a deployment where one
+// rule had won by accident for months would silently switch to the other on
+// upgrade. Creation order is the one answer an operator can reason about.
+//
+// This asserts the SQL because the ordering is the database's to perform; the
+// behaviour it protects is that two rules sharing a priority resolve the same
+// way on every load.
+func TestRoutingRuleOrderingIsTotal(t *testing.T) {
+	mock, db := newMockDB(t)
+	mock.ExpectQuery(`ORDER BY "pipelineStage" ASC, priority DESC, "createdAt" ASC, id ASC`).
+		WillReturnRows(pgxmock.NewRows(routingTestColumns).AddRow(makeRoutingRow("r1")...))
+
+	if _, err := db.GetEnabledRoutingRules(context.Background()); err != nil {
+		t.Fatalf("rule ordering must end in a unique key so equal priorities cannot tie: %v", err)
+	}
+}
+
 func TestGetEnabledRoutingRules(t *testing.T) {
 	t.Run("happy and cached", func(t *testing.T) {
 		mock, db := newMockDB(t)

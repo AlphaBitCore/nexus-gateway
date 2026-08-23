@@ -11,6 +11,7 @@ import {
 import type { IamPolicy } from '../../../api/types';
 import { formatDateTime } from '@/lib/format';
 import styles from '../_shared/Iam.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 type PolicyDetailTab = 'info' | 'statements' | 'attachments';
 
@@ -23,6 +24,7 @@ export function IamPolicyDetail() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<PolicyDetailTab>('info');
   const [copied, setCopied] = useState(false);
+  const armTimeout = useTimeouts();
   const canUpdate = usePermission('iam:update');
 
   const { data: policy, loading, error, refetch } = useApi<IamPolicy>(
@@ -82,7 +84,7 @@ export function IamPolicyDetail() {
   const handleCopy = () => {
     navigator.clipboard.writeText(JSON.stringify(policy.document, null, 2));
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    armTimeout(() => setCopied(false), 2000);
   };
 
   return (

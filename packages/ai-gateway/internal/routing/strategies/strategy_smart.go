@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/llm"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -59,7 +60,7 @@ type SmartStrategy struct {
 
 func (s *SmartStrategy) Type() string { return "smart" }
 
-func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry, _ int, _ RecurseFunc) ([]core.RoutingTarget, error) {
+func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 	start := time.Now()
 
 	// model=auto on a non-chat endpoint: the LLM task-router (token sizing,
@@ -91,12 +92,19 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		DefaultModelID:    node.DefaultModelID,
 	}
 
-	// 1. Get candidate models.
-	candidates, err := s.deps.Store.ListEnabledChatModels(ctx)
-	if err != nil {
-		s.deps.Logger.Warn("smart: list candidates failed", "error", err)
-		return smartFallback(ctx, cfg, s.deps, trace, start)
-	}
+	// 1. Candidate models come from the prepared routing context, which
+	// resolved them once for the whole request.
+	//
+	// This strategy used to fetch its own and then narrow it by the virtual key
+	// itself, so the same snapshot was read twice and the same allowlist
+	// applied in two places — a second answer to a question that already had
+	// one.
+	//
+	// No self-fetch: the wiring hands the SAME store to the resolver's pool
+	// preparation and to this strategy, so a nil pool means the catalogue could
+	// not be read — asking it again returns the same error. The fallback below
+	// is the answer to that, not a second query.
+	candidates := rctx.ModelPool
 
 	// Resolve the router model's own declared context window from the
 	// raw (pre-VK-filter) rows — the router model routes traffic, it is
@@ -130,26 +138,24 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 			Decision:     "no candidate models available",
 			DurationMs:   int(time.Since(start).Milliseconds()),
 		})
-		return smartFallback(ctx, cfg, s.deps, trace, start)
+		return smartFallback(ctx, cfg, s.deps, trace, start, nil)
 	}
 
 	estTokens, estImages := 0, 0
+	var reqMods requestModalities
 	if rctx.Request != nil && rctx.Request.Kind.IsAI() {
-		estTokens, estImages = estimateRequestTokens(rctx.Request)
+		estTokens, estImages, reqMods = estimateRequestTokens(rctx.Request)
 
-		// Capability hard filter FIRST: capability is a definite binary
-		// constraint (a non-vision model genuinely cannot serve images),
-		// whereas the context filter below is a coarse size estimate. A
-		// candidate that declares features but lacks what the request
-		// provably needs (vision for image blocks, function_calling for
-		// tool definitions) is removed before the router sees the
-		// catalog. Undeclared feature lists pass, and a dimension that
-		// would empty the pool is skipped (both fail-open). Running this
-		// before the size filter means a capable-but-maybe-tight model
-		// survives to the context filter's keep-largest fallback (whose
-		// overflow risk the executor's context-overflow failover catches)
-		// rather than being size-dropped while a blind model is kept.
-		capKept, capDropped, skippedDims := filterByCapability(candidates, estImages > 0, len(rctx.Request.Tools) > 0)
+		// Capability first: it is a binary constraint (a non-vision model
+		// genuinely cannot serve images) where the size filter below is a
+		// coarse estimate. Undeclared features pass and a pool-emptying
+		// dimension is skipped, both fail-open. Running it first lets a
+		// capable-but-tight model reach the size filter's keep-largest
+		// fallback instead of being dropped while a blind model is kept.
+		capKept, capDropped, skippedDims := filterByCapability(candidates,
+			len(rctx.Request.Tools) > 0, requestAsksToReason(rctx.Request),
+			rctx.RequiresStructuredOutput,
+			reqMods, capability.CarriedModalities(rctx.Request))
 		candidates = capKept
 		if capDropped > 0 {
 			*trace = append(*trace, core.TraceEntry{
@@ -220,7 +226,7 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 			Decision:     "request payload not normalizable for smart routing; using default",
 			DurationMs:   int(time.Since(start).Milliseconds()),
 		})
-		return smartFallback(ctx, cfg, s.deps, trace, start)
+		return smartFallback(ctx, cfg, s.deps, trace, start, nil)
 	}
 	var convMsgs []normcore.Message
 	hasUser := false
@@ -238,7 +244,7 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 			Decision:     "smart routing: no user content in request; using default",
 			DurationMs:   int(time.Since(start).Milliseconds()),
 		})
-		return smartFallback(ctx, cfg, s.deps, trace, start)
+		return smartFallback(ctx, cfg, s.deps, trace, start, candidates)
 	}
 
 	// Request-shape metadata for the router: it sees only a bounded
@@ -257,7 +263,7 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 			Decision:     "router LLM client not wired",
 			DurationMs:   int(time.Since(start).Milliseconds()),
 		})
-		return smartFallback(ctx, cfg, s.deps, trace, start)
+		return smartFallback(ctx, cfg, s.deps, trace, start, candidates)
 	}
 	decision, err := s.deps.RouterLLM.Decide(ctx, llm.Request{
 		SystemPrompt:       systemPrompt,
@@ -270,12 +276,15 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		RouterModelID:      cfg.RouterModelID,
 	})
 	if err != nil {
+		// No router spend to record here: every error path in the Decider
+		// returns a zero Decision, so the call either never reached the wire or
+		// never produced usage. A failed router call is not billed.
 		*trace = append(*trace, core.TraceEntry{
 			StrategyType: "smart",
 			Decision:     err.Error(),
 			DurationMs:   int(time.Since(start).Milliseconds()),
 		})
-		return smartFallback(ctx, cfg, s.deps, trace, start)
+		return smartFallback(ctx, cfg, s.deps, trace, start, candidates)
 	}
 
 	// 6. Resolve router-selected model token to an internal model ID.
@@ -283,12 +292,12 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 	selectedID, ok := resolveSelectedModelID(modelID, routerProviderID, candidates)
 	if !ok {
 		s.deps.Logger.Warn("smart: router returned unknown model", "modelId", modelID, "providerId", routerProviderID)
-		*trace = append(*trace, core.TraceEntry{
+		*trace = append(*trace, stampRouterSpend(core.TraceEntry{
 			StrategyType: "smart",
 			Decision:     fmt.Sprintf("router returned unknown model %q", modelID),
 			DurationMs:   int(time.Since(start).Milliseconds()),
-		})
-		return smartFallback(ctx, cfg, s.deps, trace, start)
+		}, decision, cfg.RouterModelID))
+		return smartFallback(ctx, cfg, s.deps, trace, start, candidates)
 	}
 
 	// 8. Find the candidate and resolve the target.
@@ -303,35 +312,33 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 	target, err := s.deps.Lookup(ctx, selected.ProviderID, selected.ModelID)
 	if err != nil {
 		s.deps.Logger.Warn("smart: target lookup failed", "modelId", selectedID, "error", err)
-		*trace = append(*trace, core.TraceEntry{
+		*trace = append(*trace, stampRouterSpend(core.TraceEntry{
 			StrategyType: "smart",
 			Decision:     fmt.Sprintf("target lookup failed for %q: %v", selectedID, err),
 			DurationMs:   int(time.Since(start).Milliseconds()),
-		})
-		return smartFallback(ctx, cfg, s.deps, trace, start)
+		}, decision, cfg.RouterModelID))
+		return smartFallback(ctx, cfg, s.deps, trace, start, candidates)
 	}
 
 	durationMs := int(time.Since(start).Milliseconds())
-	*trace = append(*trace, core.TraceEntry{
+	// The router-spend stamp goes on THIS entry only. armContextUpgrade may
+	// append a second "smart" entry below; it must stay unstamped because the
+	// proxy stage sums RouterCostUsd across the whole trace.
+	*trace = append(*trace, stampRouterSpend(core.TraceEntry{
 		StrategyType: "smart",
 		Decision:     fmt.Sprintf("selected %s [%s/%s] — %s", core.FormatTargetFriendly(target), selected.ProviderID, selected.ModelID, reason),
 		DurationMs:   durationMs,
-	})
+	}, decision, cfg.RouterModelID))
 
-	return s.armContextUpgrade(ctx, candidates, selected, target, trace, start), nil
+	targets := s.appendReselectionPool(ctx, candidates, selected, target, trace, start)
+	return s.armContextUpgrade(ctx, candidates, selected, targets, trace, start), nil
 }
 
-// resolveSelectedModelID maps the router-returned token to an internal model
-// UUID. The LLM is shown ModelCode entries in the catalog (short, recognisable
-// strings like "gpt-4o"), and most accurate returns are codes. We also accept
-// a UUID match (in case admin reuses the prompt with the internal id) and a
-// unique providerModelId match (DeepSeek-style "deepseek-chat" coincides with
-// code on the seed-shipped catalog but may diverge later). Returns the UUID
-// suitable for [core.TargetLookup] and FK references.
-//
-// When providerID is non-empty, matching is restricted to that provider's rows
-// so an LLM that returned an ambiguous code under the wrong provider doesn't
-// silently land on a different vendor.
+// resolveSelectedModelID maps the router-returned token to a model UUID. The
+// prompt shows ModelCode, so most returns are codes; a UUID and a unique
+// providerModelId are also accepted. With providerID set, matching is
+// restricted to that provider's rows so an ambiguous code returned under the
+// wrong provider does not silently land on a different vendor.
 func resolveSelectedModelID(token, providerID string, candidates []core.SmartModelRow) (string, bool) {
 	if providerID != "" {
 		var narrowed []core.SmartModelRow

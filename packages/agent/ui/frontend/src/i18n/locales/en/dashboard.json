@@ -638,6 +638,18 @@
       "binaryInputNotStored": "Binary token-array input — not stored per audit policy.",
       "vectorsNotStored": "Embedding vectors are not stored per audit policy.",
       "noInputs": "No inputs captured."
+    },
+    "media": {
+      "captured": "Stored with this request — bytes available.",
+      "external": "Remote content — never fetched or stored by Nexus.",
+      "providerRef": "Content held by the provider.",
+      "fingerprint": "Bytes not retained — fingerprint only.",
+      "agedOut": "Captured, then expired by retention.",
+      "absent": "Not captured.",
+      "truncated": "Capture incomplete or unreadable — media unrecoverable.",
+      "download": "Download",
+      "previewFailed": "Preview unavailable — the stored bytes could not be read.",
+      "sizeUnknown": "size unknown"
     }
   },
   "trafficDetail": {

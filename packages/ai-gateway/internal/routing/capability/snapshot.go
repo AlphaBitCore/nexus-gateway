@@ -1,6 +1,7 @@
 package capability
 
 import (
+	"strings"
 	"sync/atomic"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
@@ -11,6 +12,9 @@ import (
 // atomically on shadow-pushed config changes.
 type Snapshot struct {
 	byID map[string]*ModelCapability
+	// described is the union of every InputModalities value, lower-cased.
+	// Precomputed because Accepts consults it per recovery target.
+	described map[string]bool
 }
 
 // NewSnapshot builds a Snapshot from a slice of store.Model rows.
@@ -18,13 +22,45 @@ type Snapshot struct {
 // with Embeddings == nil; callers should nil-check Embeddings before use.
 func NewSnapshot(models []store.Model) *Snapshot {
 	m := make(map[string]*ModelCapability, len(models))
+	described := map[string]bool{}
 	for i := range models {
 		cap := ParseModelCapability(&models[i])
 		if cap != nil {
 			m[models[i].ID] = cap
+			for _, mod := range cap.InputModalities {
+				described[strings.ToLower(mod)] = true
+			}
 		}
 	}
-	return &Snapshot{byID: m}
+	return &Snapshot{byID: m, described: described}
+}
+
+// Describes tells two situations apart: a model omitting "audio" while others
+// declare it really is saying it cannot take audio; but NO row declaring "file"
+// or "video" — true of all 163 chat rows — is a fact about the catalog, and
+// refusing on it rejects every such request including the ones that work.
+//
+// Needed by callers whose own candidate list is too small to answer it. The
+// smart strategy's pool IS the catalog, so there an emptied dimension says the
+// same thing; a recovery list of two admin-configured models does not.
+func (s *Snapshot) Describes(modality string) bool {
+	if s == nil {
+		return false
+	}
+	return s.described[strings.ToLower(modality)]
+}
+
+// DescribedInputModalities is the union of every InputModalities value in the
+// snapshot. Returns a copy so a caller cannot mutate the snapshot's own set.
+func (s *Snapshot) DescribedInputModalities() map[string]bool {
+	out := map[string]bool{}
+	if s == nil {
+		return out
+	}
+	for m := range s.described {
+		out[m] = true
+	}
+	return out
 }
 
 // Get returns the ModelCapability for the given model UUID, or nil if

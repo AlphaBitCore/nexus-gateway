@@ -61,7 +61,7 @@ func TestSmart_ContextFilter_DropsModelTooSmallForHistory(t *testing.T) {
 		textMsg(normalize.RoleUser, "continue"),
 	}, nil, nil)
 
-	out, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestSmart_ContextFilter_ConservativeSizing(t *testing.T) {
 		textMsg(normalize.RoleUser, strings.Repeat("a", 10000)),
 	}, intPtr(100), nil)
 
-	out, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestSmart_ContextFilter_UnknownMaxCtxKept(t *testing.T) {
 		textMsg(normalize.RoleUser, "go on"),
 	}, nil, nil)
 
-	out, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSmart_ContextFilter_NothingFits_KeepsLargest(t *testing.T) {
 		textMsg(normalize.RoleUser, strings.Repeat("a", 20000)),
 	}, nil, nil)
 
-	out, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -209,17 +209,20 @@ func TestSmart_ContextFilter_RespectsRequestedMaxTokens(t *testing.T) {
 		strat := &SmartStrategy{deps: fx.deps()}
 		node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
 
-		// 25 + 1024 = 1049 ≤ 2000 → small stays routable. The larger
-		// candidate rides along as the armed context-upgrade escape.
-		out, err := strat.Evaluate(context.Background(), node, ctxRctx(msgs, nil, nil), &trace, 0, nil)
+		// 25 + 1024 = 1049 ≤ 2000 → small stays routable, and the larger
+		// candidate is still in the plan behind it. Which of the two ways it
+		// got there — carried by the re-selection pool or armed as the
+		// context-upgrade escape — is the upgrade tests' subject, not this
+		// one's; what matters here is that the filter did not drop it.
+		out, err := strat.Evaluate(context.Background(), node, fx.pool(ctxRctx(msgs, nil, nil)), &trace)
 		if err != nil {
 			t.Fatalf("Evaluate: %v", err)
 		}
 		if len(out) != 2 || out[0].ModelID != "m-small" || out[0].ContextUpgradeOnly {
 			t.Fatalf("unexpected targets: %+v", out)
 		}
-		if out[1].ModelID != "m-big" || !out[1].ContextUpgradeOnly {
-			t.Fatalf("expected armed upgrade target: %+v", out[1])
+		if out[1].ModelID != "m-big" {
+			t.Fatalf("the larger candidate must stay reachable: %+v", out[1])
 		}
 		if !strings.Contains(decider.lastReq.SystemPrompt, "tiny-ctx") {
 			t.Errorf("small model must stay in catalog under default reserve")
@@ -234,7 +237,7 @@ func TestSmart_ContextFilter_RespectsRequestedMaxTokens(t *testing.T) {
 		node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
 
 		// 25 + 2000 = 2025 > 2000 → small is provably too small.
-		out, err := strat.Evaluate(context.Background(), node, ctxRctx(msgs, intPtr(2000), nil), &trace, 0, nil)
+		out, err := strat.Evaluate(context.Background(), node, fx.pool(ctxRctx(msgs, intPtr(2000), nil)), &trace)
 		if err != nil {
 			t.Fatalf("Evaluate: %v", err)
 		}
@@ -292,7 +295,7 @@ func TestSmart_ContextFilter_CountsAllRequestContent(t *testing.T) {
 			strat := &SmartStrategy{deps: fx.deps()}
 			node := core.StrategyNode{RouterProviderID: "p-router", RouterModelID: "m-router"}
 
-			out, err := strat.Evaluate(context.Background(), node, ctxRctx(tc.msgs, nil, tc.tool), &trace, 0, nil)
+			out, err := strat.Evaluate(context.Background(), node, fx.pool(ctxRctx(tc.msgs, nil, tc.tool)), &trace)
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}

@@ -69,12 +69,19 @@ func Enabled() bool {
 // Start wires the opt-in profiler for service `name` (the dump-file prefix). It
 // is a pure no-op — no goroutine, no handler, no listener — unless
 // NEXUS_PPROF_ENABLED is truthy. Call once at startup.
-func Start(name string) {
+//
+// The returned function disarms the capture signal. A service arms for the
+// process lifetime and can ignore it; a test must call it, because the signal
+// registration is process-global and Go delivers a signal to every registered
+// channel — see startSignalDump for why a leaked handler makes the next signal
+// cost N dumps instead of one.
+func Start(name string) (stop func()) {
 	if !Enabled() {
-		return
+		return func() {}
 	}
-	startSignalDump(name)
+	disarm := startSignalDump(name)
 	startHTTP()
+	return disarm
 }
 
 // startHTTP binds the profiling endpoint BEFORE claiming it, and treats a bind
@@ -151,7 +158,19 @@ func resolveCPUSeconds() int {
 // a Unix test must be able to reach it without cross-compiling.
 var dumpSignalFn = dumpSignal
 
-func startSignalDump(name string) {
+// startSignalDump arms the capture signal and returns a disarm function.
+//
+// The disarm exists because signal.Notify without a matching signal.Stop is a
+// leak, and the leak is not harmless: Go delivers a signal to EVERY registered
+// channel, so each arming that is never torn down adds one more handler that
+// runs a stop-the-world runtime.GC() and three profile writes on the next
+// signal. In a long-lived service Start is called once and this never matters;
+// across a test binary the handlers accumulate, and a signal that should cost
+// one dump ends up costing N — which is why the SIGUSR1 test only ever failed
+// under a loaded parallel run, and never on its own.
+//
+// Production callers arm for the process lifetime and can discard the result.
+func startSignalDump(name string) func() {
 	sig, sigName := dumpSignalFn()
 	if sig == nil {
 		// No capture signal on this platform. Said once, at the level an operator
@@ -159,12 +178,12 @@ func startSignalDump(name string) {
 		// endpoint (if configured) still works, and only the signal path is absent.
 		slog.Info("pprof file dumps unavailable on this platform; use NEXUS_PPROF_ADDR for live profiles",
 			"service", name, "platform", runtime.GOOS)
-		return
+		return func() {}
 	}
 	dir := resolveDumpDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Warn("pprof dir create failed; signal dumps disabled", "dir", dir, "error", err)
-		return
+		return func() {}
 	}
 	cpuSecs := resolveCPUSeconds()
 	ch := make(chan os.Signal, 1)
@@ -175,6 +194,10 @@ func startSignalDump(name string) {
 			dumpProfiles(name, dir, cpuSecs)
 		}
 	}()
+	return func() {
+		signal.Stop(ch)
+		close(ch)
+	}
 }
 
 // dumpProfiles writes the instant snapshots immediately, then runs the CPU

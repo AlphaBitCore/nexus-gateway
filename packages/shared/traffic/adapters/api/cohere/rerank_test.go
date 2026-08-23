@@ -3,6 +3,7 @@ package cohere
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -279,5 +280,50 @@ func TestRerank_RewriteRequestBody_ChatUnsupported(t *testing.T) {
 	}
 	if string(out) != string(body) {
 		t.Errorf("chat body mutated: %q", out)
+	}
+}
+
+// Cohere serves object-shaped documents — {"text": "..."} entries score
+// exactly like plain strings. The extractor used to skip every non-string
+// element, so the text inside one was scanned by nothing and forwarded
+// verbatim: a policy that blocks or redacts PII in a string document silently
+// no-ops on the same PII one nesting level down. A shape the provider accepts
+// and we forward has to be a shape we can read.
+func TestRerank_ExtractRewrite_ObjectDocumentTextIsScannedAndRedactable(t *testing.T) {
+	body := []byte(`{"query":"q","documents":["plain doc",{"text":"contact alice@example.com"}]}`)
+	a := &Adapter{}
+
+	nc, err := a.ExtractRequest(context.Background(), body, "/v2/rerank")
+	if err != nil {
+		t.Fatalf("ExtractRequest: %v", err)
+	}
+	joined := strings.Join(nc.Segments, "|")
+	if !strings.Contains(joined, "contact alice@example.com") {
+		t.Fatalf("object document text was not scanned; segments=%q", nc.Segments)
+	}
+
+	// Redact that segment and write it back: the value must land inside the
+	// object's own text field, leaving the object shape intact.
+	redacted := append([]string(nil), nc.Segments...)
+	for i, s := range redacted {
+		if strings.Contains(s, "alice@example.com") {
+			redacted[i] = "contact [REDACTED]"
+		}
+	}
+	out, written, err := a.RewriteRequestBody(context.Background(), body, "/v2/rerank", traffic.NormalizedContent{Segments: redacted})
+	if err != nil {
+		t.Fatalf("RewriteRequest: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("rewrite reported nothing written")
+	}
+	if got := gjson.GetBytes(out, "documents.1.text").String(); got != "contact [REDACTED]" {
+		t.Errorf("documents.1.text=%q, want the redacted value written into the object", got)
+	}
+	if gjson.GetBytes(out, "documents.1").Type != gjson.JSON {
+		t.Errorf("documents.1 is no longer an object: %s", gjson.GetBytes(out, "documents.1").Raw)
+	}
+	if got := gjson.GetBytes(out, "documents.0").String(); got != "plain doc" {
+		t.Errorf("documents.0=%q, want the untouched plain string", got)
 	}
 }

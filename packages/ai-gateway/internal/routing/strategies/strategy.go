@@ -2,7 +2,6 @@ package strategies
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -11,32 +10,22 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/llm"
 )
 
-// ErrMaxDepth indicates strategy evaluation exceeded the recursion limit.
-var ErrMaxDepth = errors.New("router: max strategy depth exceeded")
-
 // Strategy is the interface all routing strategies implement.
 type Strategy interface {
 	// Type returns the strategy type name (e.g. "single", "fallback").
 	Type() string
-	// Evaluate evaluates the strategy node and returns routing targets.
+	// Evaluate turns the node into an ordered list of targets, and does
+	// nothing else. It does not dispatch, does not retry, and does not
+	// evaluate other strategies: children are provider+model leaves it
+	// resolves directly, which is the only shape the admin surface can
+	// produce or display.
 	Evaluate(
 		ctx context.Context,
 		node core.StrategyNode,
 		rctx *core.RoutingContext,
 		trace *[]core.TraceEntry,
-		depth int,
-		recurse RecurseFunc,
 	) ([]core.RoutingTarget, error)
 }
-
-// RecurseFunc evaluates a child strategy node, incrementing depth.
-type RecurseFunc func(
-	ctx context.Context,
-	node core.StrategyNode,
-	rctx *core.RoutingContext,
-	trace *[]core.TraceEntry,
-	depth int,
-) ([]core.RoutingTarget, error)
 
 // StrategyRegistry maps strategy type names to their implementations.
 // After Freeze is called, no further registrations are allowed.
@@ -78,12 +67,7 @@ func (r *StrategyRegistry) Evaluate(
 	node core.StrategyNode,
 	rctx *core.RoutingContext,
 	trace *[]core.TraceEntry,
-	depth int,
 ) ([]core.RoutingTarget, error) {
-	if depth > core.MaxRoutingDepth {
-		return nil, ErrMaxDepth
-	}
-
 	r.mu.RLock()
 	s, ok := r.strategies[node.Type]
 	r.mu.RUnlock()
@@ -92,18 +76,7 @@ func (r *StrategyRegistry) Evaluate(
 		return nil, fmt.Errorf("router: unknown strategy type %q", node.Type)
 	}
 
-	return s.Evaluate(ctx, node, rctx, trace, depth, r.recurse)
-}
-
-// recurse is the RecurseFunc passed to strategy implementations.
-func (r *StrategyRegistry) recurse(
-	ctx context.Context,
-	node core.StrategyNode,
-	rctx *core.RoutingContext,
-	trace *[]core.TraceEntry,
-	depth int,
-) ([]core.RoutingTarget, error) {
-	return r.Evaluate(ctx, node, rctx, trace, depth+1)
+	return s.Evaluate(ctx, node, rctx, trace)
 }
 
 // SmartDeps groups the dependencies injected into the smart strategy.
@@ -132,11 +105,10 @@ type SmartDeps struct {
 // "smart" strategy (model=auto) is also registered.
 func RegisterAllStrategies(reg *StrategyRegistry, lookup core.TargetLookup, latencyStats core.LatencyStatsFunc, smartDeps *SmartDeps) {
 	reg.Register(&SingleStrategy{lookup: lookup})
-	reg.Register(&FallbackStrategy{})
-	reg.Register(&LoadbalanceStrategy{})
-	reg.Register(&ConditionalStrategy{})
+	reg.Register(&FallbackStrategy{lookup: lookup})
+	reg.Register(&LoadbalanceStrategy{lookup: lookup})
+	reg.Register(&ConditionalStrategy{lookup: lookup})
 	reg.Register(&ABSplitStrategy{lookup: lookup})
-	reg.Register(&PolicyStrategy{})
 	reg.Register(&LatencyStrategy{lookup: lookup, latencyStats: latencyStats})
 	if smartDeps != nil {
 		reg.Register(&SmartStrategy{deps: *smartDeps})

@@ -220,6 +220,19 @@ type UpdateVirtualKeyParams struct {
 
 // UpdateVirtualKey updates a virtual key using COALESCE for most fields and
 // an explicit CASE WHEN toggle for nullable expiresAt so callers can clear it.
+//
+// Writing expiresAt re-projects vkStatus, because expiresAt is the source of
+// truth for expiry and vkStatus merely caches it for cheap list filtering:
+// a key whose expiry moves into the future is no longer expired, and pushing
+// the date out is itself the operator's intent to reactivate. Without this,
+// 'expired' is a dead-end — the hourly expiry job only ever moves
+// active -> expired, so a renewed key would keep reading as expired in the
+// admin list and stay rejected by the ai-gateway admission check.
+//
+// The re-projection is confined to the two time-derived states. 'revoked',
+// 'rejected' and 'pending' are deliberate administrative decisions and MUST
+// survive an expiry edit untouched — a date change must never silently
+// resurrect a revoked key or approve a pending one.
 func (store *Store) UpdateVirtualKey(ctx context.Context, id string, p UpdateVirtualKeyParams) (*VirtualKey, error) {
 	q := fmt.Sprintf(`UPDATE "VirtualKey" SET
 		"projectId" = COALESCE($2, "projectId"),
@@ -229,7 +242,15 @@ func (store *Store) UpdateVirtualKey(ctx context.Context, id string, p UpdateVir
 		"compareEndpointRateLimitRpm" = COALESCE($6, "compareEndpointRateLimitRpm"),
 		"allowedModels" = COALESCE($7, "allowedModels"),
 		"ownerId" = COALESCE($8, "ownerId"),
-		"expiresAt" = CASE WHEN $9::boolean THEN $10 ELSE "expiresAt" END,
+		"expiresAt" = CASE WHEN $9::boolean THEN $10::timestamptz ELSE "expiresAt" END,
+		"vkStatus" = CASE
+			WHEN $9::boolean AND "vkStatus" IN ('active', 'expired')
+				THEN CASE
+					WHEN $10::timestamptz IS NOT NULL AND $10::timestamptz <= NOW() THEN 'expired'
+					ELSE 'active'
+				END
+			ELSE "vkStatus"
+		END,
 		"updatedAt" = NOW()
 	WHERE id = $1 RETURNING %s`, vkColumns)
 

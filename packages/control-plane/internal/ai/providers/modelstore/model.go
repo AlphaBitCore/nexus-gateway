@@ -7,7 +7,6 @@ import (
 	"github.com/goccy/go-json"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -35,19 +34,22 @@ type Model struct {
 	AudioOutputPricePerMillion          *float64 `json:"audioOutputPricePerMillion,omitempty"`
 	CachedAudioInputReadPricePerMillion *float64 `json:"cachedAudioInputReadPricePerMillion,omitempty"`
 
-	MaxContextTokens *int             `json:"maxContextTokens"`
-	MaxOutputTokens  *int             `json:"maxOutputTokens"`
-	Status           string           `json:"status"`
-	DeprecationDate  *time.Time       `json:"deprecationDate"`
-	ReplacedBy       *string          `json:"replacedBy"`
-	Aliases          []string         `json:"aliases"`
-	InputModalities  []string         `json:"inputModalities"`
-	OutputModalities []string         `json:"outputModalities"`
-	Lifecycle        string           `json:"lifecycle"`
-	CapabilityJson   *json.RawMessage `json:"capabilityJson,omitempty"`
-	Enabled          bool             `json:"enabled"`
-	CreatedAt        time.Time        `json:"createdAt"`
-	UpdatedAt        time.Time        `json:"updatedAt"`
+	MaxContextTokens *int       `json:"maxContextTokens"`
+	MaxOutputTokens  *int       `json:"maxOutputTokens"`
+	Status           string     `json:"status"`
+	DeprecationDate  *time.Time `json:"deprecationDate"`
+	ReplacedBy       *string    `json:"replacedBy"`
+	Aliases          []string   `json:"aliases"`
+	InputModalities  []string   `json:"inputModalities"`
+	// RequiredModalities is the model's floor: what a request MUST carry for
+	// it to serve it. InputModalities is the ceiling. Empty = no constraint.
+	RequiredModalities []string         `json:"requiredModalities"`
+	OutputModalities   []string         `json:"outputModalities"`
+	Lifecycle          string           `json:"lifecycle"`
+	CapabilityJson     *json.RawMessage `json:"capabilityJson,omitempty"`
+	Enabled            bool             `json:"enabled"`
+	CreatedAt          time.Time        `json:"createdAt"`
+	UpdatedAt          time.Time        `json:"updatedAt"`
 }
 
 // ModelListParams holds filter/pagination for listing models.
@@ -67,7 +69,7 @@ var ModelColumns = `id, code, name, description, "providerId", "providerModelId"
 	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"maxContextTokens", "maxOutputTokens",
 	status, "deprecationDate", "replacedBy", aliases,
-	"inputModalities", "outputModalities", lifecycle, "capabilityJson",
+	"inputModalities", "outputModalities", "requiredModalities", lifecycle, "capabilityJson",
 	enabled, "createdAt", "updatedAt"`
 
 func scanModel(row pgx.Row) (*Model, error) {
@@ -78,7 +80,7 @@ func scanModel(row pgx.Row) (*Model, error) {
 		&m.CachedInputReadPricePerMillion, &m.CachedInputWritePricePerMillion,
 		&m.AudioInputPricePerMillion, &m.AudioOutputPricePerMillion, &m.CachedAudioInputReadPricePerMillion,
 		&m.MaxContextTokens, &m.MaxOutputTokens, &m.Status, &m.DeprecationDate, &m.ReplacedBy, &m.Aliases,
-		&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson,
+		&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson,
 		&m.Enabled, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -92,6 +94,9 @@ func scanModel(row pgx.Row) (*Model, error) {
 	}
 	if m.Aliases == nil {
 		m.Aliases = []string{}
+	}
+	if m.RequiredModalities == nil {
+		m.RequiredModalities = []string{}
 	}
 	if m.InputModalities == nil {
 		m.InputModalities = []string{}
@@ -112,7 +117,7 @@ func scanModels(rows pgx.Rows) ([]Model, error) {
 			&m.CachedInputReadPricePerMillion, &m.CachedInputWritePricePerMillion,
 			&m.AudioInputPricePerMillion, &m.AudioOutputPricePerMillion, &m.CachedAudioInputReadPricePerMillion,
 			&m.MaxContextTokens, &m.MaxOutputTokens, &m.Status, &m.DeprecationDate, &m.ReplacedBy, &m.Aliases,
-			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson,
+			&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson,
 			&m.Enabled, &m.CreatedAt, &m.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan model: %w", err)
@@ -122,6 +127,9 @@ func scanModels(rows pgx.Rows) ([]Model, error) {
 		}
 		if m.Aliases == nil {
 			m.Aliases = []string{}
+		}
+		if m.RequiredModalities == nil {
+			m.RequiredModalities = []string{}
 		}
 		if m.InputModalities == nil {
 			m.InputModalities = []string{}
@@ -213,172 +221,6 @@ func (store *Store) ListModelsByProvider(ctx context.Context, providerID string)
 	return scanModels(rows)
 }
 
-// CreateModelParams holds fields for creating a model. The DB
-// primary key (id) is auto-generated UUID — callers don't supply it.
-type CreateModelParams struct {
-	Code                            string // customer-facing identifier; unique
-	Name                            string
-	Description                     *string
-	ProviderID                      string
-	ProviderModelID                 string
-	Type                            string
-	Features                        []string
-	InputPricePerMillion            *float64
-	OutputPricePerMillion           *float64
-	CachedInputReadPricePerMillion  *float64
-	CachedInputWritePricePerMillion *float64
-	// Audio-token rates for realtime models; nil for every other type.
-	AudioInputPricePerMillion           *float64
-	AudioOutputPricePerMillion          *float64
-	CachedAudioInputReadPricePerMillion *float64
-
-	MaxContextTokens *int
-	MaxOutputTokens  *int
-	Aliases          []string
-	InputModalities  []string         // defaults to ["text"] when nil
-	OutputModalities []string         // defaults to ["text"] when nil
-	Lifecycle        string           // defaults to "ga" when empty
-	CapabilityJson   *json.RawMessage // nil = no capability data
-	Enabled          bool
-}
-
-// CreateModel inserts a new model. The id column defaults to
-// gen_random_uuid() server-side; callers receive the resolved row.
-func (store *Store) CreateModel(ctx context.Context, p CreateModelParams) (*Model, error) {
-	if p.Features == nil {
-		p.Features = []string{}
-	}
-	if p.Aliases == nil {
-		p.Aliases = []string{}
-	}
-	if p.InputModalities == nil {
-		p.InputModalities = []string{"text"}
-	}
-	if p.OutputModalities == nil {
-		p.OutputModalities = []string{"text"}
-	}
-	if p.Lifecycle == "" {
-		p.Lifecycle = "ga"
-	}
-	q := fmt.Sprintf(`
-		INSERT INTO "Model" (id, code, name, description, "providerId", "providerModelId", type, features,
-			"inputPricePerMillion", "outputPricePerMillion",
-			"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
-			"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
-			"maxContextTokens", "maxOutputTokens",
-			aliases, "inputModalities", "outputModalities", lifecycle, "capabilityJson",
-			enabled, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, NOW(), NOW())
-		RETURNING %s
-	`, ModelColumns)
-	m, err := scanModel(store.pool.QueryRow(ctx, q,
-		uuid.New().String(), p.Code, p.Name, p.Description, p.ProviderID, p.ProviderModelID, p.Type, p.Features,
-		p.InputPricePerMillion, p.OutputPricePerMillion,
-		p.CachedInputReadPricePerMillion, p.CachedInputWritePricePerMillion,
-		p.AudioInputPricePerMillion, p.AudioOutputPricePerMillion, p.CachedAudioInputReadPricePerMillion,
-		p.MaxContextTokens, p.MaxOutputTokens,
-		p.Aliases, p.InputModalities, p.OutputModalities, p.Lifecycle, p.CapabilityJson,
-		p.Enabled,
-	))
-	if err != nil {
-		return nil, fmt.Errorf("create model: %w", err)
-	}
-	return m, nil
-}
-
-// UpdateModelParams holds optional fields for updating a model. nil = no change.
-type UpdateModelParams struct {
-	Code                            *string
-	ProviderModelID                 *string
-	Name                            *string
-	Description                     *string
-	Type                            *string
-	InputPricePerMillion            *float64
-	OutputPricePerMillion           *float64
-	CachedInputReadPricePerMillion  *float64
-	CachedInputWritePricePerMillion *float64
-	// Audio-token rates for realtime models. nil = no change.
-	AudioInputPricePerMillion           *float64
-	AudioOutputPricePerMillion          *float64
-	CachedAudioInputReadPricePerMillion *float64
-
-	MaxContextTokens *int
-	MaxOutputTokens  *int
-	Status           *string
-	DeprecationDate  *time.Time
-	ReplacedBy       *string
-	Aliases          []string // nil = no change; empty = clear
-	Enabled          *bool
-	Features         []string         // nil = no change; empty = clear
-	InputModalities  *[]string        // nil = no change
-	OutputModalities *[]string        // nil = no change
-	Lifecycle        *string          // nil = no change
-	CapabilityJson   *json.RawMessage // nil = no change; explicit null = clear
-}
-
-// UpdateModel updates a model using COALESCE — nil params preserve existing values.
-// Arrays (Aliases, Features, InputModalities, OutputModalities) use CASE WHEN to conditionally update.
-func (store *Store) UpdateModel(ctx context.Context, id string, p UpdateModelParams) (*Model, error) {
-	// For arrays: pgx passes nil Go slice as SQL NULL, so we use
-	// CASE WHEN $N IS NULL THEN col ELSE $N END to preserve the original.
-	// For *[]string capability modalities: nil pointer → NULL → preserve existing.
-	var inputMod, outputMod interface{}
-	if p.InputModalities != nil {
-		inputMod = *p.InputModalities
-	}
-	var outputModVal interface{}
-	if p.OutputModalities != nil {
-		outputModVal = *p.OutputModalities
-	}
-	outputMod = outputModVal
-	q := fmt.Sprintf(`UPDATE "Model" SET
-		code = COALESCE($2, code),
-		"providerModelId" = COALESCE($3, "providerModelId"),
-		name = COALESCE($4, name),
-		description = COALESCE($5, description),
-		type = COALESCE($6, type),
-		"inputPricePerMillion" = COALESCE($7, "inputPricePerMillion"),
-		"outputPricePerMillion" = COALESCE($8, "outputPricePerMillion"),
-		"cachedInputReadPricePerMillion" = COALESCE($9, "cachedInputReadPricePerMillion"),
-		"cachedInputWritePricePerMillion" = COALESCE($10, "cachedInputWritePricePerMillion"),
-		"audioInputPricePerMillion" = COALESCE($11, "audioInputPricePerMillion"),
-		"audioOutputPricePerMillion" = COALESCE($12, "audioOutputPricePerMillion"),
-		"cachedAudioInputReadPricePerMillion" = COALESCE($13, "cachedAudioInputReadPricePerMillion"),
-		"maxContextTokens" = COALESCE($14, "maxContextTokens"),
-		"maxOutputTokens" = COALESCE($15, "maxOutputTokens"),
-		status = COALESCE($16, status),
-		enabled = COALESCE($17, enabled),
-		aliases = CASE WHEN $18::text[] IS NULL THEN aliases ELSE $18 END,
-		features = CASE WHEN $19::text[] IS NULL THEN features ELSE $19 END,
-		"deprecationDate" = COALESCE($20, "deprecationDate"),
-		"replacedBy" = COALESCE($21, "replacedBy"),
-		"inputModalities" = CASE WHEN $22::text[] IS NULL THEN "inputModalities" ELSE $22 END,
-		"outputModalities" = CASE WHEN $23::text[] IS NULL THEN "outputModalities" ELSE $23 END,
-		lifecycle = COALESCE($24, lifecycle),
-		"capabilityJson" = CASE WHEN $25::jsonb IS NULL THEN "capabilityJson" ELSE $25 END,
-		"updatedAt" = NOW()
-	WHERE id = $1 RETURNING %s`, ModelColumns)
-
-	m, err := scanModel(store.pool.QueryRow(ctx, q,
-		id, p.Code, p.ProviderModelID,
-		p.Name, p.Description, p.Type,
-		p.InputPricePerMillion, p.OutputPricePerMillion,
-		p.CachedInputReadPricePerMillion, p.CachedInputWritePricePerMillion,
-		p.AudioInputPricePerMillion, p.AudioOutputPricePerMillion, p.CachedAudioInputReadPricePerMillion,
-		p.MaxContextTokens, p.MaxOutputTokens,
-		p.Status, p.Enabled,
-		p.Aliases, p.Features,
-		p.DeprecationDate, p.ReplacedBy,
-		inputMod, outputMod,
-		p.Lifecycle, p.CapabilityJson,
-	))
-	if err != nil {
-		return nil, fmt.Errorf("update model: %w", err)
-	}
-	return m, nil
-}
-
-// ProviderWithModels groups a provider summary with its models.
 type ProviderWithModels struct {
 	Provider ProviderSummary `json:"provider"`
 	Models   []Model         `json:"models"`

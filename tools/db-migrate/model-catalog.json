@@ -1,5 +1,5 @@
 {
-  "_comment": "SINGLE SOURCE OF TRUTH for the model catalog. Edit ONLY this file. tools/db-migrate/seed/fixtures/Model.json and packages/control-plane-ui/public/provider-templates/*.json + index.json are GENERATED from it by tools/db-migrate/gen-model-catalog.mjs and byte-checked by `npm run check:model-catalog`. Schema: see the generator header.",
+  "_comment": "SINGLE SOURCE OF TRUTH for the model catalog. Edit ONLY this file. tools/db-migrate/seed/fixtures/Model.json and packages/control-plane-ui/public/provider-templates/*.json + index.json are GENERATED from it by tools/db-migrate/gen-model-catalog.mjs and byte-checked by `npm run check:model-catalog`. Schema: see the generator header. CEILINGS (maxOutputTokens / maxContextTokens): when a live probe and the vendor's official docs disagree, take the MINIMUM. A ceiling we publish on /v1/models is one callers echo back, so a number the wire rejects turns our own advertisement into a 400; under-declaring costs only headroom. Example: the o-series live probe answers \"supports at most 100003\" while developers.openai.com documents 100,000 max output tokens — the catalog carries 100000. Do not \"correct\" it back from a probe alone.",
   "providers": [
     {
       "key": "openai",
@@ -19,10 +19,18 @@
           "providerModelId": "gpt-4o",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 2.5,
           "outputPricePerMillion": 10,
@@ -37,17 +45,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:04.678+00:00",
             "updatedAt": "2026-05-10T16:40:49.056+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4o"
         },
         {
           "code": "gpt-4o-mini",
@@ -56,10 +61,18 @@
           "providerModelId": "gpt-4o-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.15,
           "outputPricePerMillion": 0.6,
@@ -74,17 +87,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:04.947+00:00",
             "updatedAt": "2026-05-10T16:40:49.304+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4o-mini"
         },
         {
           "code": "gpt-4-turbo",
@@ -97,6 +107,14 @@
             "streaming",
             "json_mode"
           ],
+          "inputModalities": [
+            "text",
+            "file",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ],
           "inputPricePerMillion": 10,
           "outputPricePerMillion": 30,
           "cachedInputReadPricePerMillion": null,
@@ -105,22 +123,19 @@
           "maxOutputTokens": 4096,
           "inTemplate": true,
           "seed": {
-            "id": "9e180605-9630-404c-9b3a-aac49f4cd767",
+            "id": "46c7e650-ea5c-4726-a9a4-7aa39cf73aa7",
             "status": "deprecated",
             "deprecationDate": "2026-10-23T00:00:00+00:00",
             "replacedBy": "gpt-5.5",
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:05.215+00:00",
             "updatedAt": "2026-05-10T16:40:49.574+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4-turbo"
         },
         {
           "code": "o1",
@@ -130,32 +145,37 @@
           "type": "chat",
           "features": [
             "streaming",
-            "function_calling"
+            "function_calling",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "file",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 15,
           "outputPricePerMillion": 60,
           "cachedInputReadPricePerMillion": 7.5,
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
-          "maxOutputTokens": 100003,
+          "maxOutputTokens": 100000,
           "inTemplate": true,
           "seed": {
-            "id": "eb00781a-9eb5-467c-ada6-535a53eb50c0",
+            "id": "1b45e3ae-0ed9-49bb-876c-d7705212f71c",
             "status": "deprecated",
             "deprecationDate": "2025-07-28T00:00:00+00:00",
             "replacedBy": "o3",
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:05.485+00:00",
             "updatedAt": "2026-05-10T16:40:49.813+00:00"
-          }
+          },
+          "family": "o1"
         },
         {
           "code": "o3-mini",
@@ -164,32 +184,36 @@
           "providerModelId": "o3-mini",
           "type": "chat",
           "features": [
-            "streaming"
+            "streaming",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1.1,
           "outputPricePerMillion": 4.4,
           "cachedInputReadPricePerMillion": 0.55,
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
-          "maxOutputTokens": 100003,
+          "maxOutputTokens": 100000,
           "inTemplate": true,
           "seed": {
-            "id": "af53ba68-7c04-4fa0-84f6-d06f6c15ec9c",
+            "id": "56336206-8f8a-4d45-9472-8e0883717f4e",
             "status": "deprecated",
             "deprecationDate": "2026-10-23T00:00:00+00:00",
             "replacedBy": "gpt-5.5",
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:05.752+00:00",
             "updatedAt": "2026-05-10T16:40:50.098+00:00"
-          }
+          },
+          "family": "o3-mini"
         },
         {
           "code": "o3",
@@ -198,14 +222,24 @@
           "providerModelId": "o3",
           "type": "chat",
           "features": [
-            "streaming"
+            "streaming",
+            "reasoning",
+            "structured_outputs"
           ],
-          "inputPricePerMillion": 2.0,
-          "outputPricePerMillion": 8.0,
+          "inputModalities": [
+            "text",
+            "file",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 8,
           "cachedInputReadPricePerMillion": 0.5,
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
-          "maxOutputTokens": 100003,
+          "maxOutputTokens": 100000,
           "inTemplate": true,
           "seed": {
             "id": "fa8b2162-2a72-48a3-be86-956c29d9f6b1",
@@ -213,17 +247,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:06.019+00:00",
             "updatedAt": "2026-05-10T16:40:50.338+00:00"
-          }
+          },
+          "family": "o3"
         },
         {
           "code": "o4-mini",
@@ -232,32 +261,37 @@
           "providerModelId": "o4-mini",
           "type": "chat",
           "features": [
-            "streaming"
+            "streaming",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "file",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1.1,
           "outputPricePerMillion": 4.4,
           "cachedInputReadPricePerMillion": 0.275,
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
-          "maxOutputTokens": 100003,
+          "maxOutputTokens": 100000,
           "inTemplate": true,
           "seed": {
-            "id": "336c5475-8c81-4e9e-9a29-a1c26517bce0",
+            "id": "dc954ece-7c6e-4aa8-920a-e3b176eaef76",
             "status": "deprecated",
             "deprecationDate": "2026-10-23T00:00:00+00:00",
             "replacedBy": "gpt-5.4-mini",
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:06.724+00:00",
             "updatedAt": "2026-05-10T16:40:50.621+00:00"
-          }
+          },
+          "family": "o4-mini"
         },
         {
           "code": "gpt-5.6-sol",
@@ -266,10 +300,19 @@
           "providerModelId": "gpt-5.6-sol",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 30,
@@ -284,17 +327,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-5.6-sol"
         },
         {
           "code": "gpt-5.6-terra",
@@ -303,10 +343,19 @@
           "providerModelId": "gpt-5.6-terra",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 2.5,
           "outputPricePerMillion": 15,
@@ -321,17 +370,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-5.6-terra"
         },
         {
           "code": "gpt-5.6-luna",
@@ -340,10 +386,19 @@
           "providerModelId": "gpt-5.6-luna",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1,
           "outputPricePerMillion": 6,
@@ -358,17 +413,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-5.6-luna"
         },
         {
           "code": "gpt-5.5",
@@ -377,10 +429,19 @@
           "providerModelId": "gpt-5.5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 30,
@@ -395,17 +456,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:06.99+00:00",
             "updatedAt": "2026-05-10T16:40:50.861+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-5.5"
         },
         {
           "code": "gpt-5.4",
@@ -414,10 +472,19 @@
           "providerModelId": "gpt-5.4",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 2.5,
           "outputPricePerMillion": 15,
@@ -432,17 +499,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:07.255+00:00",
             "updatedAt": "2026-05-10T16:40:51.151+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-5.4"
         },
         {
           "code": "gpt-5.4-mini",
@@ -451,10 +515,19 @@
           "providerModelId": "gpt-5.4-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.75,
           "outputPricePerMillion": 4.5,
@@ -469,17 +542,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:07.519+00:00",
             "updatedAt": "2026-05-10T16:40:51.5+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-5.4-mini"
         },
         {
           "code": "gpt-5.4-nano",
@@ -489,7 +559,17 @@
           "type": "chat",
           "features": [
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "file",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.2,
           "outputPricePerMillion": 1.25,
@@ -504,17 +584,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:08.088+00:00",
             "updatedAt": "2026-05-10T16:40:51.741+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-5.4-nano"
         },
         {
           "code": "gpt-4.1",
@@ -523,13 +600,21 @@
           "providerModelId": "gpt-4.1",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "structured_outputs"
           ],
-          "inputPricePerMillion": 2.0,
-          "outputPricePerMillion": 8.0,
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 8,
           "cachedInputReadPricePerMillion": 0.5,
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 1047576,
@@ -541,17 +626,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:08.355+00:00",
             "updatedAt": "2026-05-10T16:40:51.981+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4.1"
         },
         {
           "code": "gpt-4.1-mini",
@@ -560,10 +642,18 @@
           "providerModelId": "gpt-4.1-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.4,
           "outputPricePerMillion": 1.6,
@@ -578,17 +668,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4.1-mini"
         },
         {
           "code": "gpt-4.1-nano",
@@ -597,10 +684,18 @@
           "providerModelId": "gpt-4.1-nano",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.1,
           "outputPricePerMillion": 0.4,
@@ -615,17 +710,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4.1-nano"
         },
         {
           "code": "text-embedding-3-small",
@@ -634,6 +726,12 @@
           "providerModelId": "text-embedding-3-small",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0.02,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -647,12 +745,6 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "embedding"
-            ],
             "lifecycle": "ga",
             "capabilityJson": {
               "embeddings": {
@@ -660,10 +752,14 @@
                 "max_input_tokens": 8191,
                 "default_dimension": 1536,
                 "supported_dimensions": [
+                  256,
                   512,
+                  768,
                   1024,
                   1536
                 ],
+                "min_dimension": 1,
+                "max_dimension": 1536,
                 "supported_encoding_formats": [
                   "float",
                   "base64"
@@ -672,7 +768,8 @@
             },
             "createdAt": "2026-05-08T14:45:08.62+00:00",
             "updatedAt": "2026-05-10T16:40:52.222+00:00"
-          }
+          },
+          "family": "text-embedding-3-small"
         },
         {
           "code": "text-embedding-3-large",
@@ -681,6 +778,12 @@
           "providerModelId": "text-embedding-3-large",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0.13,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -694,12 +797,6 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "embedding"
-            ],
             "lifecycle": "ga",
             "capabilityJson": {
               "embeddings": {
@@ -709,9 +806,14 @@
                 "supported_dimensions": [
                   256,
                   512,
+                  768,
                   1024,
+                  1536,
+                  2048,
                   3072
                 ],
+                "min_dimension": 1,
+                "max_dimension": 3072,
                 "supported_encoding_formats": [
                   "float",
                   "base64"
@@ -720,7 +822,8 @@
             },
             "createdAt": "2026-05-08T14:45:09.55+00:00",
             "updatedAt": "2026-05-10T16:40:52.523+00:00"
-          }
+          },
+          "family": "text-embedding-3-large"
         },
         {
           "code": "dall-e-3",
@@ -729,8 +832,14 @@
           "providerModelId": "dall-e-3",
           "type": "image",
           "features": [],
-          "inputPricePerMillion": 0,
-          "outputPricePerMillion": 0,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "image"
+          ],
+          "inputPricePerMillion": 40000,
+          "outputPricePerMillion": null,
           "cachedInputReadPricePerMillion": null,
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
@@ -742,17 +851,12 @@
             "deprecationDate": "2026-05-12T00:00:00+00:00",
             "replacedBy": "gpt-image-2",
             "enabled": false,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:09.816+00:00",
             "updatedAt": "2026-05-10T16:40:52.765+00:00"
-          }
+          },
+          "family": "dall-e-3"
         },
         {
           "code": "whisper-1",
@@ -761,6 +865,12 @@
           "providerModelId": "whisper-1",
           "type": "stt",
           "features": [],
+          "inputModalities": [
+            "audio"
+          ],
+          "outputModalities": [
+            "text"
+          ],
           "inputPricePerMillion": 100,
           "outputPricePerMillion": null,
           "cachedInputReadPricePerMillion": null,
@@ -774,17 +884,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "audio"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:10.078+00:00",
             "updatedAt": "2026-05-10T16:40:53.004+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "whisper-1"
         },
         {
           "code": "gpt-image-2",
@@ -792,8 +899,13 @@
           "description": "OpenAI flagship image generation and editing model.",
           "providerModelId": "gpt-image-2",
           "type": "image",
-          "features": [
-            "vision"
+          "features": [],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "image"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 30,
@@ -808,17 +920,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "gpt-image-2"
         },
         {
           "code": "gpt-image-1.5",
@@ -826,8 +933,13 @@
           "description": "Previous-generation flagship image generation and editing model. Text output tokens include model reasoning tokens.",
           "providerModelId": "gpt-image-1.5",
           "type": "image",
-          "features": [
-            "vision"
+          "features": [],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "image"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 32,
@@ -842,17 +954,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "gpt-image-1.5"
         },
         {
           "code": "gpt-image-1-mini",
@@ -860,11 +967,16 @@
           "description": "Cost-efficient image generation and editing model.",
           "providerModelId": "gpt-image-1-mini",
           "type": "image",
-          "features": [
-            "vision"
+          "features": [],
+          "inputModalities": [
+            "text",
+            "image"
           ],
-          "inputPricePerMillion": 2.0,
-          "outputPricePerMillion": 8.0,
+          "outputModalities": [
+            "image"
+          ],
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 8,
           "cachedInputReadPricePerMillion": 0.2,
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": null,
@@ -876,17 +988,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "gpt-image-1-mini"
         },
         {
           "code": "chatgpt-image-latest",
@@ -894,8 +1001,13 @@
           "description": "Floating alias tracking the image model currently used by ChatGPT. Text output tokens include model reasoning tokens.",
           "providerModelId": "chatgpt-image-latest",
           "type": "image",
-          "features": [
-            "vision"
+          "features": [],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "image"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 32,
@@ -910,17 +1022,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "chatgpt-image-latest"
         },
         {
           "code": "gpt-realtime-2.1",
@@ -929,8 +1036,16 @@
           "providerModelId": "gpt-realtime-2.1",
           "type": "realtime",
           "features": [
-            "streaming",
-            "vision"
+            "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "audio",
+            "image"
+          ],
+          "outputModalities": [
+            "text",
+            "audio"
           ],
           "inputPricePerMillion": 32,
           "outputPricePerMillion": 64,
@@ -945,19 +1060,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "audio"
-            ],
-            "outputModalities": [
-              "text",
-              "audio"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-realtime-2.1"
         },
         {
           "code": "gpt-realtime-2.1-mini",
@@ -966,8 +1076,16 @@
           "providerModelId": "gpt-realtime-2.1-mini",
           "type": "realtime",
           "features": [
-            "streaming",
-            "vision"
+            "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "audio",
+            "image"
+          ],
+          "outputModalities": [
+            "text",
+            "audio"
           ],
           "inputPricePerMillion": 10,
           "outputPricePerMillion": 20,
@@ -982,19 +1100,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "audio"
-            ],
-            "outputModalities": [
-              "text",
-              "audio"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-realtime-2.1-mini"
         },
         {
           "code": "gpt-realtime-translate",
@@ -1004,6 +1117,14 @@
           "type": "realtime",
           "features": [
             "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "audio"
+          ],
+          "outputModalities": [
+            "text",
+            "audio"
           ],
           "inputPricePerMillion": null,
           "outputPricePerMillion": null,
@@ -1018,19 +1139,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "audio"
-            ],
-            "outputModalities": [
-              "text",
-              "audio"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-realtime-translate"
         },
         {
           "code": "gpt-realtime-whisper",
@@ -1040,6 +1156,14 @@
           "type": "realtime",
           "features": [
             "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "audio"
+          ],
+          "outputModalities": [
+            "text",
+            "audio"
           ],
           "inputPricePerMillion": null,
           "outputPricePerMillion": null,
@@ -1054,29 +1178,35 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "audio"
-            ],
-            "outputModalities": [
-              "text",
-              "audio"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-realtime-whisper"
         },
         {
           "code": "gpt-audio-1.5",
           "name": "GPT Audio 1.5",
           "description": "Flagship audio-in / audio-out chat model.",
           "providerModelId": "gpt-audio-1.5",
-          "type": "audio",
+          "type": "chat",
           "features": [
             "streaming",
             "function_calling"
+          ],
+          "inputModalities": [
+            "text",
+            "audio"
+          ],
+          "outputModalities": [
+            "text",
+            "audio"
+          ],
+          "requiredModalities": [
+            "audio"
           ],
           "inputPricePerMillion": 32,
           "outputPricePerMillion": 64,
@@ -1091,29 +1221,35 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "audio"
-            ],
-            "outputModalities": [
-              "text",
-              "audio"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-audio-1.5"
         },
         {
           "code": "gpt-audio-mini",
           "name": "GPT Audio Mini",
           "description": "Cost-efficient audio-in / audio-out chat model.",
           "providerModelId": "gpt-audio-mini",
-          "type": "audio",
+          "type": "chat",
           "features": [
             "streaming",
             "function_calling"
+          ],
+          "inputModalities": [
+            "text",
+            "audio"
+          ],
+          "outputModalities": [
+            "text",
+            "audio"
+          ],
+          "requiredModalities": [
+            "audio"
           ],
           "inputPricePerMillion": 10,
           "outputPricePerMillion": 20,
@@ -1128,19 +1264,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "audio"
-            ],
-            "outputModalities": [
-              "text",
-              "audio"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-audio-mini"
         },
         {
           "code": "gpt-4o-transcribe",
@@ -1149,6 +1280,12 @@
           "providerModelId": "gpt-4o-transcribe",
           "type": "stt",
           "features": [],
+          "inputModalities": [
+            "audio"
+          ],
+          "outputModalities": [
+            "text"
+          ],
           "inputPricePerMillion": 2.5,
           "outputPricePerMillion": 10,
           "cachedInputReadPricePerMillion": null,
@@ -1162,17 +1299,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "audio"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4o-transcribe"
         },
         {
           "code": "gpt-4o-mini-transcribe",
@@ -1181,6 +1315,12 @@
           "providerModelId": "gpt-4o-mini-transcribe",
           "type": "stt",
           "features": [],
+          "inputModalities": [
+            "audio"
+          ],
+          "outputModalities": [
+            "text"
+          ],
           "inputPricePerMillion": 1.25,
           "outputPricePerMillion": 5,
           "cachedInputReadPricePerMillion": null,
@@ -1194,17 +1334,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "audio"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4o-mini-transcribe"
         },
         {
           "code": "gpt-4o-transcribe-diarize",
@@ -1213,6 +1350,12 @@
           "providerModelId": "gpt-4o-transcribe-diarize",
           "type": "stt",
           "features": [],
+          "inputModalities": [
+            "audio"
+          ],
+          "outputModalities": [
+            "text"
+          ],
           "inputPricePerMillion": 2.5,
           "outputPricePerMillion": 10,
           "cachedInputReadPricePerMillion": null,
@@ -1226,17 +1369,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "audio"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4o-transcribe-diarize"
         },
         {
           "code": "gpt-4o-mini-tts",
@@ -1245,6 +1385,12 @@
           "providerModelId": "gpt-4o-mini-tts",
           "type": "tts",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "audio"
+          ],
           "inputPricePerMillion": 0.6,
           "outputPricePerMillion": 12,
           "cachedInputReadPricePerMillion": null,
@@ -1258,17 +1404,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "audio"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gpt-4o-mini-tts"
         },
         {
           "code": "sora-2",
@@ -1277,6 +1420,12 @@
           "providerModelId": "sora-2",
           "type": "video",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "video"
+          ],
           "inputPricePerMillion": 100000,
           "outputPricePerMillion": null,
           "cachedInputReadPricePerMillion": null,
@@ -1290,17 +1439,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "video"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "sora-2"
         },
         {
           "code": "sora-2-pro",
@@ -1309,6 +1453,12 @@
           "providerModelId": "sora-2-pro",
           "type": "video",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "video"
+          ],
           "inputPricePerMillion": 100000,
           "outputPricePerMillion": null,
           "cachedInputReadPricePerMillion": null,
@@ -1322,17 +1472,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "video"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "sora-2-pro"
         }
       ]
     },
@@ -1348,16 +1493,62 @@
       "seedProviderId": "dee77e2b-fbe8-4281-9d87-cd8886f90450",
       "models": [
         {
+          "code": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "description": "Most capable Claude 5. Highest-reasoning tier for complex work.",
+          "providerModelId": "claude-opus-5",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "inputPricePerMillion": 5,
+          "outputPricePerMillion": 25,
+          "cachedInputReadPricePerMillion": 0.5,
+          "cachedInputWritePricePerMillion": 6.25,
+          "maxContextTokens": 1000000,
+          "maxOutputTokens": 128000,
+          "inTemplate": true,
+          "seed": {
+            "id": "eec0a940-b01d-4d41-8ad2-83d26850acfb",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-06T00:00:00+00:00",
+            "updatedAt": "2026-08-06T00:00:00+00:00"
+          }
+        },
+        {
           "code": "claude-fable-5",
           "name": "Claude Fable 5",
           "description": "Frontier Claude. Highest capability for the hardest reasoning, agentic, and coding work.",
           "providerModelId": "claude-fable-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 10,
           "outputPricePerMillion": 50,
@@ -1372,17 +1563,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-fable-5"
         },
         {
           "code": "claude-sonnet-5",
@@ -1391,10 +1579,18 @@
           "providerModelId": "claude-sonnet-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 2,
           "outputPricePerMillion": 10,
@@ -1409,17 +1605,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-sonnet-5"
         },
         {
           "code": "claude-opus-4-8",
@@ -1428,10 +1621,18 @@
           "providerModelId": "claude-opus-4-8",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 25,
@@ -1441,22 +1642,19 @@
           "maxOutputTokens": 128000,
           "inTemplate": true,
           "seed": {
-            "id": "ca338705-f3e1-4590-9159-02d74fec6813",
+            "id": "3f4b6047-2c4c-41d4-8f2c-dad0ebf5ac08",
             "status": "active",
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-opus-4-8"
         },
         {
           "code": "claude-opus-4-7",
@@ -1465,10 +1663,17 @@
           "providerModelId": "claude-opus-4-7",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 25,
@@ -1483,17 +1688,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:10.34+00:00",
             "updatedAt": "2026-05-10T16:40:53.243+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-opus-4-7"
         },
         {
           "code": "claude-opus-4-6",
@@ -1502,10 +1704,18 @@
           "providerModelId": "claude-opus-4-6",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 5,
           "outputPricePerMillion": 25,
@@ -1520,17 +1730,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:10.604+00:00",
             "updatedAt": "2026-05-10T16:40:53.484+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-opus-4-6"
         },
         {
           "code": "claude-opus-4-5",
@@ -1539,10 +1746,18 @@
           "providerModelId": "claude-opus-4-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "aliases": [
             "claude-opus-4-5-20251101"
@@ -1560,17 +1775,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-opus-4-5"
         },
         {
           "code": "claude-sonnet-4-6",
@@ -1579,10 +1791,18 @@
           "providerModelId": "claude-sonnet-4-6",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 3,
           "outputPricePerMillion": 15,
@@ -1597,17 +1817,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:10.868+00:00",
             "updatedAt": "2026-05-10T16:40:53.772+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-sonnet-4-6"
         },
         {
           "code": "claude-sonnet-4-5",
@@ -1616,10 +1833,18 @@
           "providerModelId": "claude-sonnet-4-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "aliases": [
             "claude-sonnet-4-5-20250929"
@@ -1637,17 +1862,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:11.131+00:00",
             "updatedAt": "2026-05-10T16:40:54.011+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-sonnet-4-5"
         },
         {
           "code": "claude-haiku-4-5",
@@ -1656,10 +1878,18 @@
           "providerModelId": "claude-haiku-4-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "aliases": [
             "claude-haiku-4-5-20251001"
@@ -1677,57 +1907,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:11.396+00:00",
             "updatedAt": "2026-05-10T16:40:54.291+00:00"
-          }
-        },
-        {
-          "code": "claude-opus-4-1",
-          "name": "Claude Opus 4.1",
-          "description": "Earlier Claude Opus generation. Deprecated by the vendor; migrate to claude-opus-4-8.",
-          "providerModelId": "claude-opus-4-1",
-          "type": "chat",
-          "features": [
-            "vision",
-            "function_calling",
-            "streaming",
-            "thinking"
-          ],
-          "aliases": [
-            "claude-opus-4-1-20250805"
-          ],
-          "inputPricePerMillion": 15,
-          "outputPricePerMillion": 75,
-          "cachedInputReadPricePerMillion": 1.5,
-          "cachedInputWritePricePerMillion": 18.75,
-          "maxContextTokens": 200000,
-          "maxOutputTokens": 32000,
-          "inTemplate": true,
-          "seed": {
-            "id": "e94494db-5076-422c-a30b-5e35e0bea13a",
-            "status": "deprecated",
-            "deprecationDate": "2026-06-05T00:00:00+00:00",
-            "replacedBy": "claude-opus-4-8",
-            "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
-            "lifecycle": "ga",
-            "capabilityJson": null,
-            "createdAt": "2026-05-08T14:45:11.663+00:00",
-            "updatedAt": "2026-05-10T16:40:54.532+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 1,
+          "family": "claude-haiku-4-5"
         }
       ]
     },
@@ -1749,11 +1936,21 @@
           "providerModelId": "gemini-3.5-flash",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "json_mode",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "audio",
+            "file",
+            "video"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1.5,
           "outputPricePerMillion": 9,
@@ -1768,17 +1965,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gemini-3.5-flash"
         },
         {
           "code": "gemini-3.1-flash-lite",
@@ -1787,11 +1981,21 @@
           "providerModelId": "gemini-3.1-flash-lite",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "json_mode",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "audio",
+            "file",
+            "video"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.25,
           "outputPricePerMillion": 1.5,
@@ -1806,17 +2010,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gemini-3.1-flash-lite"
         },
         {
           "code": "gemini-2.5-pro",
@@ -1825,11 +2026,21 @@
           "providerModelId": "gemini-2.5-pro",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "json_mode",
-            "thinking"
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "audio",
+            "file",
+            "video"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1.25,
           "outputPricePerMillion": 10,
@@ -1844,17 +2055,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:12.239+00:00",
             "updatedAt": "2026-05-10T16:40:54.82+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gemini-2.5-pro"
         },
         {
           "code": "gemini-2.5-flash",
@@ -1863,10 +2071,21 @@
           "providerModelId": "gemini-2.5-flash",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "audio",
+            "file",
+            "video"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.3,
           "outputPricePerMillion": 2.5,
@@ -1881,17 +2100,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:12.506+00:00",
             "updatedAt": "2026-05-10T16:40:55.064+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gemini-2.5-flash"
         },
         {
           "code": "gemini-2.5-flash-lite",
@@ -1900,10 +2116,21 @@
           "providerModelId": "gemini-2.5-flash-lite",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "audio",
+            "file",
+            "video"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.1,
           "outputPricePerMillion": 0.4,
@@ -1918,17 +2145,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:12.994+00:00",
             "updatedAt": "2026-05-10T16:40:55.342+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "gemini-2.5-flash-lite"
         },
         {
           "code": "gemini-3-pro-image",
@@ -1937,8 +2161,14 @@
           "providerModelId": "gemini-3-pro-image",
           "type": "image",
           "features": [
-            "vision",
             "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "image"
           ],
           "inputPricePerMillion": 2,
           "outputPricePerMillion": 120,
@@ -1953,18 +2183,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "image"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "gemini-3-pro-image"
         },
         {
           "code": "gemini-3.1-flash-image",
@@ -1973,8 +2197,14 @@
           "providerModelId": "gemini-3.1-flash-image",
           "type": "image",
           "features": [
-            "vision",
             "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "image"
           ],
           "inputPricePerMillion": 0.5,
           "outputPricePerMillion": 60,
@@ -1989,18 +2219,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "image"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "gemini-3.1-flash-image"
         },
         {
           "code": "gemini-3.1-flash-lite-image",
@@ -2009,8 +2233,14 @@
           "providerModelId": "gemini-3.1-flash-lite-image",
           "type": "image",
           "features": [
-            "vision",
             "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "image"
           ],
           "inputPricePerMillion": 0.25,
           "outputPricePerMillion": 30,
@@ -2025,18 +2255,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "image"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "gemini-3.1-flash-lite-image"
         },
         {
           "code": "gemini-2.5-flash-image",
@@ -2045,8 +2269,14 @@
           "providerModelId": "gemini-2.5-flash-image",
           "type": "image",
           "features": [
-            "vision",
             "streaming"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "image"
           ],
           "inputPricePerMillion": 0.3,
           "outputPricePerMillion": 30,
@@ -2061,18 +2291,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "image"
-            ],
-            "outputModalities": [
-              "image"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "family": "gemini-2.5-flash-image"
         },
         {
           "code": "gemini-embedding-001",
@@ -2081,6 +2305,12 @@
           "providerModelId": "gemini-embedding-001",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0.15,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -2094,12 +2324,6 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "embedding"
-            ],
             "lifecycle": "ga",
             "capabilityJson": {
               "embeddings": {
@@ -2111,6 +2335,8 @@
                   1536,
                   3072
                 ],
+                "min_dimension": 1,
+                "max_dimension": 3072,
                 "supported_task_types": [
                   "RETRIEVAL_QUERY",
                   "RETRIEVAL_DOCUMENT",
@@ -2118,7 +2344,8 @@
                   "CLASSIFICATION",
                   "CLUSTERING",
                   "QUESTION_ANSWERING",
-                  "FACT_VERIFICATION"
+                  "FACT_VERIFICATION",
+                  "CODE_RETRIEVAL_QUERY"
                 ],
                 "supported_encoding_formats": [
                   "float"
@@ -2127,7 +2354,8 @@
             },
             "createdAt": "2026-05-08T14:45:14.962+00:00",
             "updatedAt": "2026-05-10T16:40:56.389+00:00"
-          }
+          },
+          "family": "gemini-embedding"
         },
         {
           "code": "text-embedding-004",
@@ -2136,6 +2364,12 @@
           "providerModelId": "text-embedding-004",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0.025,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -2149,12 +2383,6 @@
             "deprecationDate": null,
             "replacedBy": "gemini-embedding-001",
             "enabled": false,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "embedding"
-            ],
             "lifecycle": "ga",
             "capabilityJson": {
               "embeddings": {
@@ -2180,7 +2408,8 @@
             },
             "createdAt": "2026-05-08T14:45:15.443+00:00",
             "updatedAt": "2026-05-10T16:40:56.627+00:00"
-          }
+          },
+          "family": "text-embedding"
         },
         {
           "code": "gemini-embedding-2",
@@ -2189,6 +2418,13 @@
           "providerModelId": "gemini-embedding-2",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0.2,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -2202,17 +2438,114 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text",
-              "image"
-            ],
-            "outputModalities": [
-              "embedding"
-            ],
             "lifecycle": "ga",
-            "capabilityJson": null,
+            "capabilityJson": {
+              "embeddings": {
+                "default_dimension": 3072,
+                "min_dimension": 1,
+                "max_dimension": 3072,
+                "supported_task_types": [
+                  "RETRIEVAL_QUERY",
+                  "RETRIEVAL_DOCUMENT",
+                  "SEMANTIC_SIMILARITY",
+                  "CLASSIFICATION",
+                  "CLUSTERING",
+                  "QUESTION_ANSWERING",
+                  "FACT_VERIFICATION",
+                  "CODE_RETRIEVAL_QUERY"
+                ],
+                "supported_encoding_formats": [
+                  "float"
+                ]
+              }
+            },
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
+          },
+          "family": "gemini-embedding-2"
+        },
+        {
+          "code": "gemini-3.6-flash",
+          "name": "Gemini 3.6 Flash",
+          "description": "Google's current balanced Flash tier. Same input rate as 3.5 Flash with a lower output rate.",
+          "providerModelId": "gemini-3.6-flash",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "audio",
+            "file",
+            "video"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "inputPricePerMillion": 1.5,
+          "outputPricePerMillion": 7.5,
+          "cachedInputReadPricePerMillion": 0.15,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "3295a6f8-b0b2-478d-ad46-6ed2a0879e7b",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-06T00:00:00+00:00",
+            "updatedAt": "2026-08-06T00:00:00+00:00"
+          }
+        },
+        {
+          "code": "gemini-3.5-flash-lite",
+          "name": "Gemini 3.5 Flash-Lite",
+          "description": "Cheapest Gemini tier for high-volume classification, extraction and routing.",
+          "providerModelId": "gemini-3.5-flash-lite",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "json_mode",
+            "reasoning",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image",
+            "audio",
+            "file",
+            "video"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "inputPricePerMillion": 0.3,
+          "outputPricePerMillion": 2.5,
+          "cachedInputReadPricePerMillion": 0.03,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": 65536,
+          "inTemplate": true,
+          "seed": {
+            "id": "633a6266-820f-48aa-b8b3-a119f5d9ddce",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-06T00:00:00+00:00",
+            "updatedAt": "2026-08-06T00:00:00+00:00"
           }
         }
       ]
@@ -2234,7 +2567,6 @@
           "providerModelId": "gpt-5.6-sol",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2246,7 +2578,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 922000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5.6-terra",
@@ -2255,7 +2594,6 @@
           "providerModelId": "gpt-5.6-terra",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2267,7 +2605,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 922000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5.6-luna",
@@ -2276,7 +2621,6 @@
           "providerModelId": "gpt-5.6-luna",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2288,7 +2632,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 922000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5.5",
@@ -2297,7 +2648,6 @@
           "providerModelId": "gpt-5.5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2309,7 +2659,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 922000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5.4",
@@ -2318,7 +2675,6 @@
           "providerModelId": "gpt-5.4",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2330,7 +2686,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 922000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5.4-mini",
@@ -2339,7 +2702,6 @@
           "providerModelId": "gpt-5.4-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2351,7 +2713,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 272000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5.4-nano",
@@ -2371,7 +2740,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 272000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5",
@@ -2380,7 +2755,6 @@
           "providerModelId": "gpt-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2392,7 +2766,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 272000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-5-mini",
@@ -2401,7 +2782,6 @@
           "providerModelId": "gpt-5-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2413,7 +2793,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 272000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-4.1",
@@ -2422,18 +2809,24 @@
           "providerModelId": "gpt-4.1",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "prompt_caching"
           ],
-          "inputPricePerMillion": 2.0,
-          "outputPricePerMillion": 8.0,
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 8,
           "cachedInputReadPricePerMillion": 0.5,
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1047576,
           "maxOutputTokens": 32768,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-4.1-mini",
@@ -2442,7 +2835,6 @@
           "providerModelId": "gpt-4.1-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "prompt_caching"
@@ -2453,7 +2845,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1047576,
           "maxOutputTokens": 32768,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-4.1-nano",
@@ -2462,7 +2861,6 @@
           "providerModelId": "gpt-4.1-nano",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "prompt_caching"
@@ -2473,7 +2871,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1047576,
           "maxOutputTokens": 32768,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-o3",
@@ -2486,13 +2891,19 @@
             "streaming",
             "reasoning"
           ],
-          "inputPricePerMillion": 2.0,
-          "outputPricePerMillion": 8.0,
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 8,
           "cachedInputReadPricePerMillion": 0.5,
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 200000,
           "maxOutputTokens": 100000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-o4-mini",
@@ -2511,7 +2922,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 200000,
           "maxOutputTokens": 100000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-o1",
@@ -2530,7 +2947,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 200000,
           "maxOutputTokens": 100000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-4o",
@@ -2539,7 +2962,6 @@
           "providerModelId": "gpt-4o",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -2549,7 +2971,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 16384,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-gpt-4o-mini",
@@ -2558,7 +2987,6 @@
           "providerModelId": "gpt-4o-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -2568,7 +2996,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 16384,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-text-embedding-3-small",
@@ -2583,7 +3018,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 8191,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         },
         {
           "code": "azure-text-embedding-3-large",
@@ -2598,7 +3039,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 8191,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -2622,7 +3069,14 @@
           "features": [
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning"
+          ],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.14,
           "outputPricePerMillion": 0.28,
@@ -2637,17 +3091,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:15.707+00:00",
             "updatedAt": "2026-05-10T16:40:56.916+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "deepseek-v4-flash"
         },
         {
           "code": "deepseek-v4-pro",
@@ -2658,7 +3109,14 @@
           "features": [
             "function_calling",
             "streaming",
-            "json_mode"
+            "json_mode",
+            "reasoning"
+          ],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.435,
           "outputPricePerMillion": 0.87,
@@ -2673,17 +3131,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:15.972+00:00",
             "updatedAt": "2026-05-10T16:40:57.159+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "deepseek-v4-pro"
         }
       ]
     },
@@ -2704,7 +3159,6 @@
           "providerModelId": "MiniMax-M3",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -2716,7 +3170,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "minimax-m2-7",
@@ -2735,7 +3196,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 204800,
           "maxOutputTokens": 16384,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "minimax-m2-5",
@@ -2755,7 +3222,13 @@
           "cachedInputWritePricePerMillion": 0.375,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 8192,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -2787,7 +3260,13 @@
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "glm-5",
@@ -2807,7 +3286,13 @@
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "glm-5-code",
@@ -2827,7 +3312,13 @@
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "glm-4.7",
@@ -2847,7 +3338,13 @@
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "glm-4.7-flash",
@@ -2867,7 +3364,13 @@
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "glm-4.6",
@@ -2887,7 +3390,13 @@
           "cachedInputWritePricePerMillion": 0,
           "maxContextTokens": 200000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "glm-4.6v",
@@ -2896,7 +3405,6 @@
           "providerModelId": "glm-4.6v",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -2906,7 +3414,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "glm-4.5-flash",
@@ -2924,7 +3439,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 32000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -2948,8 +3469,15 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision",
-            "prompt_caching"
+            "prompt_caching",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.95,
           "outputPricePerMillion": 4,
@@ -2964,17 +3492,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:16.236+00:00",
             "updatedAt": "2026-05-10T16:40:57.439+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "kimi-k2.6"
         },
         {
           "code": "kimi-k2.7-code",
@@ -2985,8 +3510,15 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision",
-            "prompt_caching"
+            "prompt_caching",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.95,
           "outputPricePerMillion": 4,
@@ -3001,17 +3533,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "kimi-k2.7-code"
         },
         {
           "code": "kimi-k2.7-code-highspeed",
@@ -3022,8 +3551,15 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision",
-            "prompt_caching"
+            "prompt_caching",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1.9,
           "outputPricePerMillion": 8,
@@ -3038,17 +3574,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "kimi-k2.7-code-highspeed"
         },
         {
           "code": "kimi-k2.5",
@@ -3059,8 +3592,14 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision",
             "prompt_caching"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.6,
           "outputPricePerMillion": 3,
@@ -3075,17 +3614,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:16.979+00:00",
             "updatedAt": "2026-05-10T16:40:57.68+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "kimi-k2.5"
         },
         {
           "code": "kimi-k2-thinking",
@@ -3096,9 +3632,15 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision",
             "prompt_caching",
             "reasoning"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.95,
           "outputPricePerMillion": 4,
@@ -3113,17 +3655,14 @@
             "deprecationDate": "2026-06-03T00:00:00+00:00",
             "replacedBy": "kimi-k2.6",
             "enabled": false,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:17.244+00:00",
             "updatedAt": "2026-05-10T16:40:57.964+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "kimi-k2-thinking"
         },
         {
           "code": "moonshot-v1-128k",
@@ -3133,7 +3672,14 @@
           "type": "chat",
           "features": [
             "function_calling",
-            "streaming"
+            "streaming",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 2,
           "outputPricePerMillion": 5,
@@ -3148,17 +3694,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:17.509+00:00",
             "updatedAt": "2026-05-10T16:40:58.205+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "moonshot-v1-128k"
         },
         {
           "code": "moonshot-v1-128k-vision-preview",
@@ -3169,7 +3712,14 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision"
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 2,
           "outputPricePerMillion": 5,
@@ -3184,17 +3734,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "moonshot-v1-128k-vision-preview"
         },
         {
           "code": "moonshot-v1-32k",
@@ -3204,7 +3751,14 @@
           "type": "chat",
           "features": [
             "function_calling",
-            "streaming"
+            "streaming",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1,
           "outputPricePerMillion": 3,
@@ -3219,17 +3773,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:17.772+00:00",
             "updatedAt": "2026-05-10T16:40:58.488+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "moonshot-v1-32k"
         },
         {
           "code": "moonshot-v1-32k-vision-preview",
@@ -3240,7 +3791,14 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision"
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 1,
           "outputPricePerMillion": 3,
@@ -3255,17 +3813,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "moonshot-v1-32k-vision-preview"
         },
         {
           "code": "moonshot-v1-8k",
@@ -3275,7 +3830,14 @@
           "type": "chat",
           "features": [
             "function_calling",
-            "streaming"
+            "streaming",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.2,
           "outputPricePerMillion": 2,
@@ -3290,17 +3852,14 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-05-08T14:45:18.639+00:00",
             "updatedAt": "2026-05-10T16:40:58.728+00:00"
-          }
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "moonshot-v1-8k"
         },
         {
           "code": "moonshot-v1-8k-vision-preview",
@@ -3311,7 +3870,14 @@
           "features": [
             "function_calling",
             "streaming",
-            "vision"
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
           ],
           "inputPricePerMillion": 0.2,
           "outputPricePerMillion": 2,
@@ -3326,16 +3892,51 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-07-15T00:00:00+00:00",
             "updatedAt": "2026-07-15T00:00:00+00:00"
+          },
+          "temperatureMin": 0,
+          "temperatureMax": 2,
+          "family": "moonshot-v1-8k-vision-preview"
+        },
+        {
+          "code": "kimi-k3",
+          "name": "Kimi K3",
+          "description": "Moonshot's K3 generation. 1M context with flat pricing across the window and a 10x cheaper cache-hit tier.",
+          "providerModelId": "kimi-k3",
+          "type": "chat",
+          "features": [
+            "function_calling",
+            "streaming",
+            "prompt_caching",
+            "structured_outputs"
+          ],
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "inputPricePerMillion": 3,
+          "outputPricePerMillion": 15,
+          "cachedInputReadPricePerMillion": 0.3,
+          "cachedInputWritePricePerMillion": 0,
+          "maxContextTokens": 1048576,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "seed": {
+            "id": "247a8922-546c-4238-8eef-927b66bd4d7c",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-06T00:00:00+00:00",
+            "updatedAt": "2026-08-06T00:00:00+00:00"
           }
         }
       ]
@@ -3357,7 +3958,6 @@
           "providerModelId": "grok-4.5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -3369,7 +3969,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 500000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "grok-4.3",
@@ -3378,7 +3985,6 @@
           "providerModelId": "grok-4.3",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -3390,7 +3996,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1000000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "grok-4-1-fast-reasoning",
@@ -3399,7 +4012,6 @@
           "providerModelId": "grok-4-1-fast-reasoning",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -3411,7 +4023,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 2000000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "grok-4-1-fast-non-reasoning",
@@ -3420,7 +4039,6 @@
           "providerModelId": "grok-4-1-fast-non-reasoning",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "prompt_caching"
@@ -3431,7 +4049,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 2000000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "grok-code-fast",
@@ -3451,7 +4076,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 256000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -3472,7 +4103,6 @@
           "providerModelId": "meta-llama/llama-4-maverick-17b-128e-instruct",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -3482,7 +4112,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": 8192,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -3491,7 +4128,6 @@
           "providerModelId": "meta-llama/llama-4-scout-17b-16e-instruct",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -3501,7 +4137,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": 8192,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "qwen/qwen3-32b",
@@ -3520,7 +4163,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "openai/gpt-oss-120b",
@@ -3539,7 +4188,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": 32766,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "openai/gpt-oss-20b",
@@ -3558,7 +4213,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": 32768,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "llama-3.3-70b-versatile",
@@ -3576,7 +4237,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 32768,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "llama-3.1-8b-instant",
@@ -3594,7 +4261,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 8192,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -3615,7 +4288,6 @@
           "providerModelId": "moonshotai/Kimi-K2.5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning"
@@ -3626,7 +4298,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 256000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "zai-org/GLM-4.7",
@@ -3645,7 +4324,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 200000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "Qwen/Qwen3.5-397B-A17B",
@@ -3664,7 +4349,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
@@ -3683,7 +4374,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 256000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "deepseek-ai/DeepSeek-V3.1",
@@ -3702,7 +4399,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 16384,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
@@ -3721,7 +4424,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -3740,7 +4449,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -3770,7 +4485,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 200000,
           "maxOutputTokens": 8000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "sonar",
@@ -3788,7 +4509,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "sonar-reasoning-pro",
@@ -3801,13 +4528,19 @@
             "search",
             "reasoning"
           ],
-          "inputPricePerMillion": 2.0,
-          "outputPricePerMillion": 8.0,
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 8,
           "cachedInputReadPricePerMillion": null,
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "sonar-reasoning",
@@ -3826,7 +4559,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "sonar-deep-research",
@@ -3839,13 +4578,19 @@
             "search",
             "reasoning"
           ],
-          "inputPricePerMillion": 2.0,
-          "outputPricePerMillion": 8.0,
+          "inputPricePerMillion": 2,
+          "outputPricePerMillion": 8,
           "cachedInputReadPricePerMillion": null,
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "pplx-embed-v1-4b",
@@ -3860,7 +4605,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 32768,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         },
         {
           "code": "pplx-embed-v1-0.6b",
@@ -3875,7 +4626,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 32768,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -3907,7 +4664,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 384000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/deepseek-v4-flash",
@@ -3927,7 +4690,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 384000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/glm-5p2",
@@ -3947,7 +4716,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 131072,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/glm-5p1",
@@ -3967,7 +4742,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 202800,
           "maxOutputTokens": 131072,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/glm-4p7",
@@ -3987,7 +4768,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 202800,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/kimi-k2p7-code",
@@ -4007,7 +4794,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/kimi-k2p6",
@@ -4027,7 +4820,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/qwen3p7-plus",
@@ -4047,7 +4846,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": 65536,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct",
@@ -4066,7 +4871,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/minimax-m3",
@@ -4086,7 +4897,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 512000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/llama4-maverick-instruct-basic",
@@ -4095,7 +4912,6 @@
           "providerModelId": "accounts/fireworks/models/llama4-maverick-instruct-basic",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4105,7 +4921,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/llama4-scout-instruct-basic",
@@ -4114,7 +4937,6 @@
           "providerModelId": "accounts/fireworks/models/llama4-scout-instruct-basic",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4124,7 +4946,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "accounts/fireworks/models/gpt-oss-120b",
@@ -4144,7 +4973,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": 32768,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -4165,7 +5000,6 @@
           "providerModelId": "mistral-large-latest",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4175,7 +5009,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "mistral-medium-latest",
@@ -4184,7 +5025,6 @@
           "providerModelId": "mistral-medium-latest",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning"
@@ -4195,7 +5035,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "mistral-small-latest",
@@ -4204,7 +5051,6 @@
           "providerModelId": "mistral-small-latest",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4214,7 +5060,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "pixtral-large-latest",
@@ -4223,7 +5076,6 @@
           "providerModelId": "pixtral-large-latest",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4233,7 +5085,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "codestral-latest",
@@ -4251,7 +5110,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 32000,
           "maxOutputTokens": 8191,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "devstral-latest",
@@ -4270,7 +5135,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 256000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "devstral-small-latest",
@@ -4289,7 +5160,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 256000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "magistral-medium-latest",
@@ -4308,7 +5185,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 40000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "magistral-small-latest",
@@ -4327,7 +5210,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 40000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "ministral-8b-latest",
@@ -4336,7 +5225,6 @@
           "providerModelId": "ministral-8b-latest",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4346,7 +5234,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 262144,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "mistral-embed",
@@ -4361,7 +5256,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 8192,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         },
         {
           "code": "codestral-embed",
@@ -4376,7 +5277,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 8192,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -4400,7 +5307,7 @@
           "features": [
             "function_calling",
             "streaming",
-            "tool_use"
+            "structured_outputs"
           ],
           "inputPricePerMillion": 2.5,
           "outputPricePerMillion": 10,
@@ -4408,7 +5315,25 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 256000,
           "maxOutputTokens": 8000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "d1bc1f53-1873-4b63-9900-f1c08c6c5e46",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-04T15:50:15.575+00:00",
+            "updatedAt": "2026-08-08T13:37:18.982+00:00"
+          }
         },
         {
           "code": "command-r7b-12-2024",
@@ -4419,7 +5344,7 @@
           "features": [
             "function_calling",
             "streaming",
-            "tool_use"
+            "structured_outputs"
           ],
           "inputPricePerMillion": 0.0375,
           "outputPricePerMillion": 0.15,
@@ -4427,7 +5352,25 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 4096,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "b5224146-0a1f-4708-b336-86001d5fcfaa",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-04T15:50:15.91+00:00",
+            "updatedAt": "2026-08-08T13:37:19.809+00:00"
+          }
         },
         {
           "code": "command-r-plus-08-2024",
@@ -4438,7 +5381,7 @@
           "features": [
             "function_calling",
             "streaming",
-            "tool_use"
+            "structured_outputs"
           ],
           "inputPricePerMillion": 2.5,
           "outputPricePerMillion": 10,
@@ -4446,7 +5389,25 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 4096,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "f89810ee-edea-4e77-b85d-8b0a7bdd7b56",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-04T15:50:16.168+00:00",
+            "updatedAt": "2026-08-08T13:37:19.546+00:00"
+          }
         },
         {
           "code": "command-r-08-2024",
@@ -4457,7 +5418,7 @@
           "features": [
             "function_calling",
             "streaming",
-            "tool_use"
+            "structured_outputs"
           ],
           "inputPricePerMillion": 0.15,
           "outputPricePerMillion": 0.6,
@@ -4465,7 +5426,25 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 4096,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "cc684c1b-f740-4718-b124-86dcb7770002",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-04T15:50:16.435+00:00",
+            "updatedAt": "2026-08-08T13:37:19.283+00:00"
+          }
         },
         {
           "code": "embed-v4.0",
@@ -4480,7 +5459,45 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "176575f0-3d3d-4dec-abb8-da1da93d00bd",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": {
+              "embeddings": {
+                "max_batch_size": 96,
+                "default_dimension": 1536,
+                "supported_dimensions": [
+                  256,
+                  512,
+                  1024,
+                  1536
+                ],
+                "supported_input_types": [
+                  "search_document",
+                  "search_query",
+                  "classification",
+                  "clustering",
+                  "image"
+                ],
+                "supported_encoding_formats": [
+                  "float"
+                ]
+              }
+            },
+            "createdAt": "2026-08-04T15:50:30.593+00:00",
+            "updatedAt": "2026-08-06T07:02:37+00:00"
+          }
         },
         {
           "code": "embed-english-v3.0",
@@ -4489,6 +5506,12 @@
           "providerModelId": "embed-english-v3.0",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0.1,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -4502,12 +5525,6 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "embedding"
-            ],
             "lifecycle": "ga",
             "capabilityJson": {
               "embeddings": {
@@ -4534,7 +5551,8 @@
             },
             "createdAt": "2026-05-20T00:00:00+00:00",
             "updatedAt": "2026-05-20T00:00:00+00:00"
-          }
+          },
+          "family": "embed-english"
         },
         {
           "code": "embed-multilingual-v3.0",
@@ -4543,6 +5561,12 @@
           "providerModelId": "embed-multilingual-v3.0",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0.1,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -4556,12 +5580,6 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": true,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "embedding"
-            ],
             "lifecycle": "ga",
             "capabilityJson": {
               "embeddings": {
@@ -4588,6 +5606,141 @@
             },
             "createdAt": "2026-05-20T00:00:00+00:00",
             "updatedAt": "2026-05-20T00:00:00+00:00"
+          },
+          "family": "embed-multilingual"
+        },
+        {
+          "code": "command-a-vision-07-2025",
+          "name": "Command A Vision",
+          "description": "Cohere Command A with image understanding — chat v2 with image_url content parts.",
+          "providerModelId": "command-a-vision-07-2025",
+          "type": "chat",
+          "features": [
+            "streaming",
+            "function_calling",
+            "structured_outputs"
+          ],
+          "inputPricePerMillion": 2.5,
+          "outputPricePerMillion": 10,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 128000,
+          "maxOutputTokens": 8192,
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image",
+            "file"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "2461265b-53ac-4dc6-b617-fa0df2b9f665",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-05T04:17:43.211+00:00",
+            "updatedAt": "2026-08-07T03:56:39.972+00:00"
+          }
+        },
+        {
+          "code": "rerank-v3.5",
+          "name": "Rerank v3.5",
+          "description": "Cohere Rerank v3.5 — multilingual relevance reranking. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+          "providerModelId": "rerank-v3.5",
+          "type": "rerank",
+          "features": [],
+          "inputPricePerMillion": 2000,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 4096,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "74a9fe53-58bf-4092-b377-482008a75c9d",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-05T04:17:43.522+00:00",
+            "updatedAt": "2026-08-05T04:17:43.522+00:00"
+          }
+        },
+        {
+          "code": "rerank-english-v3.0",
+          "name": "Rerank English v3.0",
+          "description": "Cohere Rerank v3.0, English. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+          "providerModelId": "rerank-english-v3.0",
+          "type": "rerank",
+          "features": [],
+          "inputPricePerMillion": 2000,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 4096,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "44a06d50-34f6-41c4-aa81-3fbfaa8b8f36",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-05T04:17:43.794+00:00",
+            "updatedAt": "2026-08-05T04:17:43.794+00:00"
+          }
+        },
+        {
+          "code": "rerank-multilingual-v3.0",
+          "name": "Rerank Multilingual v3.0",
+          "description": "Cohere Rerank v3.0, multilingual. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+          "providerModelId": "rerank-multilingual-v3.0",
+          "type": "rerank",
+          "features": [],
+          "inputPricePerMillion": 2000,
+          "outputPricePerMillion": null,
+          "cachedInputReadPricePerMillion": null,
+          "cachedInputWritePricePerMillion": null,
+          "maxContextTokens": 4096,
+          "maxOutputTokens": null,
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "seed": {
+            "id": "647bd951-1839-4104-af92-b62e4794b732",
+            "status": "active",
+            "deprecationDate": null,
+            "replacedBy": null,
+            "enabled": true,
+            "lifecycle": "ga",
+            "capabilityJson": null,
+            "createdAt": "2026-08-05T04:17:44.068+00:00",
+            "updatedAt": "2026-08-05T04:17:44.068+00:00"
           }
         }
       ]
@@ -4618,7 +5771,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -4635,7 +5794,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "Qwen/Qwen2.5-72B-Instruct",
@@ -4653,7 +5818,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "mistralai/Mistral-7B-Instruct-v0.3",
@@ -4670,7 +5841,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 32768,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -4691,7 +5868,6 @@
           "providerModelId": "anthropic/claude-4.5-sonnet",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "prompt_caching"
@@ -4702,7 +5878,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "anthropic/claude-4.5-haiku",
@@ -4711,7 +5894,6 @@
           "providerModelId": "anthropic/claude-4.5-haiku",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "prompt_caching"
@@ -4722,7 +5904,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "openai/gpt-5",
@@ -4731,7 +5920,6 @@
           "providerModelId": "openai/gpt-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4741,7 +5929,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "openai/gpt-5-mini",
@@ -4750,7 +5945,6 @@
           "providerModelId": "openai/gpt-5-mini",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4760,7 +5954,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "google/gemini-3-pro",
@@ -4769,7 +5970,6 @@
           "providerModelId": "google/gemini-3-pro",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4779,7 +5979,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "deepseek-ai/deepseek-v3.1",
@@ -4798,7 +6005,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 163840,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "ibm-granite/granite-3.3-8b-instruct",
@@ -4816,7 +6029,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "xai/grok-4",
@@ -4834,7 +6053,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": null,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -4855,7 +6080,6 @@
           "providerModelId": "anthropic.claude-opus-4-8",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -4867,7 +6091,14 @@
           "cachedInputWritePricePerMillion": 6.25,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "anthropic.claude-opus-4-7",
@@ -4876,7 +6107,6 @@
           "providerModelId": "anthropic.claude-opus-4-7",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -4888,7 +6118,14 @@
           "cachedInputWritePricePerMillion": 6.25,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "anthropic.claude-sonnet-5",
@@ -4897,7 +6134,6 @@
           "providerModelId": "anthropic.claude-sonnet-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -4909,7 +6145,14 @@
           "cachedInputWritePricePerMillion": 2.5,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "anthropic.claude-sonnet-4-6",
@@ -4918,7 +6161,6 @@
           "providerModelId": "anthropic.claude-sonnet-4-6",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -4930,7 +6172,14 @@
           "cachedInputWritePricePerMillion": 3.75,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 64000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "anthropic.claude-fable-5",
@@ -4939,7 +6188,6 @@
           "providerModelId": "anthropic.claude-fable-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -4951,7 +6199,14 @@
           "cachedInputWritePricePerMillion": 12.5,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "amazon.nova-2-lite-v1:0",
@@ -4960,7 +6215,6 @@
           "providerModelId": "amazon.nova-2-lite-v1:0",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "prompt_caching"
@@ -4971,7 +6225,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 64000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "amazon.nova-pro-v1:0",
@@ -4980,7 +6241,6 @@
           "providerModelId": "amazon.nova-pro-v1:0",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -4990,7 +6250,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 300000,
           "maxOutputTokens": 10000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "amazon.nova-lite-v1:0",
@@ -4999,7 +6266,6 @@
           "providerModelId": "amazon.nova-lite-v1:0",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming"
           ],
@@ -5009,7 +6275,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 300000,
           "maxOutputTokens": 10000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "amazon.nova-micro-v1:0",
@@ -5027,7 +6300,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 10000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "meta.llama3-3-70b-instruct-v1:0",
@@ -5045,7 +6324,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 131072,
           "maxOutputTokens": 4096,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "cohere.command-r-plus-v1:0",
@@ -5063,7 +6348,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 4096,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "amazon.titan-text-premier-v1:0",
@@ -5080,7 +6371,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 42000,
           "maxOutputTokens": 32000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "mistral.mistral-large-3-675b-instruct",
@@ -5098,7 +6395,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 128000,
           "maxOutputTokens": 8192,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "amazon.titan-embed-text-v2:0",
@@ -5113,7 +6416,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 8192,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -5134,7 +6443,6 @@
           "providerModelId": "gemini-3-pro-preview",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5146,7 +6454,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 65535,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-gemini-3.5-flash",
@@ -5155,7 +6470,6 @@
           "providerModelId": "gemini-3.5-flash",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5167,7 +6481,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 65535,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-gemini-3-flash-preview",
@@ -5176,7 +6497,6 @@
           "providerModelId": "gemini-3-flash-preview",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5188,7 +6508,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 65535,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-gemini-3.1-flash-lite",
@@ -5197,7 +6524,6 @@
           "providerModelId": "gemini-3.1-flash-lite",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5209,7 +6535,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 65536,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-gemini-2.5-pro",
@@ -5218,7 +6551,6 @@
           "providerModelId": "gemini-2.5-pro",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5230,7 +6562,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 65535,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-gemini-2.5-flash",
@@ -5239,7 +6578,6 @@
           "providerModelId": "gemini-2.5-flash",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5251,7 +6589,14 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 1048576,
           "maxOutputTokens": 65535,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-claude-sonnet-5",
@@ -5260,7 +6605,6 @@
           "providerModelId": "claude-sonnet-5",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5272,7 +6616,14 @@
           "cachedInputWritePricePerMillion": 2.5,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-claude-opus-4-8",
@@ -5281,7 +6632,6 @@
           "providerModelId": "claude-opus-4-8",
           "type": "chat",
           "features": [
-            "vision",
             "function_calling",
             "streaming",
             "reasoning",
@@ -5293,7 +6643,14 @@
           "cachedInputWritePricePerMillion": 6.25,
           "maxContextTokens": 1000000,
           "maxOutputTokens": 128000,
-          "inTemplate": true
+          "inTemplate": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "outputModalities": [
+            "text"
+          ]
         },
         {
           "code": "vertex-gemini-embedding-2",
@@ -5308,7 +6665,13 @@
           "cachedInputWritePricePerMillion": null,
           "maxContextTokens": 8192,
           "maxOutputTokens": null,
-          "inTemplate": true
+          "inTemplate": true,
+          "outputModalities": [
+            "embedding"
+          ],
+          "inputModalities": [
+            "text"
+          ]
         }
       ]
     },
@@ -5323,6 +6686,12 @@
           "providerModelId": "BAAI/bge-small-en-v1.5",
           "type": "embedding",
           "features": [],
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "embedding"
+          ],
           "inputPricePerMillion": 0,
           "outputPricePerMillion": 0,
           "cachedInputReadPricePerMillion": null,
@@ -5336,17 +6705,12 @@
             "deprecationDate": null,
             "replacedBy": null,
             "enabled": false,
-            "inputModalities": [
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
             "lifecycle": "ga",
             "capabilityJson": null,
             "createdAt": "2026-06-13T06:35:32.837+00:00",
             "updatedAt": "2026-06-13T06:35:32.837+00:00"
-          }
+          },
+          "family": "local-bge-small"
         }
       ]
     }

@@ -206,7 +206,7 @@ func (a *App) renderJSON(v any) error {
 }
 
 // printf writes a formatted line to the output.
-func (a *App) printf(format string, args ...any) { fmt.Fprintf(a.Out, format, args...) }
+func (a *App) printf(format string, args ...any) { _, _ = fmt.Fprintf(a.Out, format, args...) }
 
 // isJSON reports whether JSON output was requested.
 func (a *App) isJSON() bool { return a.Format == "json" }

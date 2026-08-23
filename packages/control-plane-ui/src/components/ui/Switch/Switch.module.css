@@ -25,6 +25,18 @@
   background: var(--color-control-gradient);
 }
 
+/* Owns its hover now that the global wash skips `[data-state]`. The checked
+   state deliberately keeps its gradient untouched — it was only ever safe from
+   the wash because background-color cannot overwrite background-image, and that
+   accident should not be what the design depends on. */
+.root:hover:not([data-disabled]) {
+  background: var(--color-bg-hover);
+}
+
+.root[data-state='checked']:hover:not([data-disabled]) {
+  background: var(--color-control-gradient);
+}
+
 .root:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;

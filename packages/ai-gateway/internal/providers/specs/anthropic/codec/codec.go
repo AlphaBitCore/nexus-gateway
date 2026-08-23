@@ -2,7 +2,6 @@ package codec
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"github.com/goccy/go-json"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -269,53 +267,13 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 			out["metadata"] = meta
 		}
 	}
-	if rf := root.Get("response_format"); rf.Exists() {
-		switch rf.Get("type").String() {
-		case "json_object":
-			// The Anthropic Messages API has no native json_object mode.
-			// The widely-used "prefill" trick (append an assistant turn
-			// whose content is a bare "{") forces JSON but is silently
-			// broken across this gateway: Anthropic completes the object
-			// WITHOUT re-emitting the prefilled "{", and neither the
-			// non-streaming DecodeResponse nor the SSE stream path can
-			// re-prepend it — the SchemaCodec/StreamDecoder interfaces are
-			// stateless and never see the originating request, so they
-			// cannot know a "{" was prefilled. The caller therefore
-			// received content beginning mid-object ("k":1}) that fails
-			// JSON.parse 100% of the time.
-			//
-			// Instead we force JSON via a system instruction. Anthropic
-			// emits the complete object (including the opening "{"), so the
-			// decode/stream paths pass it through unchanged and the caller
-			// gets parseable JSON. The instruction is appended to whatever
-			// system content already exists (none / string / text blocks).
-			out["system"] = appendSystemInstruction(out["system"], anthropicJSONObjectInstruction)
-		case "json_schema":
-			return provcore.EncodeResult{}, errUnsupportedField("response_format.json_schema")
-		}
-	}
+	applyResponseFormat(root, out, &rewrites)
 	out["messages"] = messages
 
-	// nexus.ext.anthropic.thinking passthrough: clients targeting an
-	// Anthropic-protocol upstream (native Anthropic or Bedrock Claude)
-	// opt in to extended thinking by placing the Anthropic-native shape
-	// under nexus.ext.anthropic.thinking. We forward it verbatim — the
-	// gateway does not validate the inner shape; if Anthropic rejects
-	// it, the error surfaces to the client unmodified.
-	if ext := canonicalext.Get(canonicalBody, "anthropic", "thinking"); ext.Exists() {
-		if ext.IsObject() {
-			var thinking map[string]any
-			if err := json.Unmarshal([]byte(ext.Raw), &thinking); err == nil && len(thinking) > 0 {
-				out["thinking"] = thinking
-				provdispatch.EmitReasoningPassthrough("anthropic", "injected")
-			} else {
-				canonicalext.WarnOnce("anthropic", "thinking_unmarshal_failed")
-				provdispatch.EmitReasoningPassthrough("anthropic", "skipped_malformed")
-			}
-		} else {
-			canonicalext.WarnOnce("anthropic", "thinking_not_object")
-			provdispatch.EmitReasoningPassthrough("anthropic", "skipped_malformed")
-		}
+	// Reasoning intent, three doors, one contract table — the whole walk
+	// lives beside the allowlist it consults (thinking_contract.go).
+	if err := applyReasoningIntent(canonicalBody, out, model, &rewrites); err != nil {
+		return provcore.EncodeResult{}, err
 	}
 
 	canonicalext.ScanUnsupported("anthropic", canonicalBody, anthropicSupportedRequestFields)
@@ -425,12 +383,9 @@ func splitMessages(messages gjson.Result) ([]string, []map[string]any, error) {
 		if role == "assistant" && msg.Get("tool_calls").Exists() {
 			var parts []map[string]any
 			// Thinking blocks passed back on an assistant turn must lead
-			// the content array and carry their signatures — Anthropic
-			// validates each signature on returned thinking. Per-block
-			// carrier is nexus_thinking (set by the Anthropic-ingress
-			// converter); a cross-format upstream (DeepSeek/OpenAI) yields
-			// one unsigned block from reasoning_content, which Anthropic
-			// accepts on request bodies it did not itself sign.
+			// the content array and carry their signatures. The only accepted
+			// source is the per-block nexus_thinking exact-replay carrier;
+			// ordinary reasoning text is never promoted to native thinking.
 			parts = append(parts, reconstructThinkingBlocks(msg)...)
 			if text := stringifyContent(content); text != "" {
 				parts = append(parts, map[string]any{"type": "text", "text": text})
@@ -499,97 +454,6 @@ func splitMessages(messages gjson.Result) ([]string, []map[string]any, error) {
 		return true
 	})
 	return system, out, splitErr
-}
-
-func openAIPartsToAnthropicContent(content gjson.Result) ([]map[string]any, error) {
-	var parts []map[string]any
-	var err error
-	content.ForEach(func(_, part gjson.Result) bool {
-		if err != nil {
-			return false
-		}
-		switch part.Get("type").String() {
-		case "text":
-			parts = append(parts, map[string]any{"type": "text", "text": part.Get("text").String()})
-		case "image_url":
-			detail := part.Get("image_url.detail").String()
-			if detail == "high" {
-				err = errUnsupportedField("image_url.detail=high")
-				return false
-			}
-			url := part.Get("image_url.url").String()
-			if url == "" {
-				err = errUnsupportedField("image_url.url")
-				return false
-			}
-			if strings.HasPrefix(url, "data:") {
-				media, b64, ok := ParseDataURL(url)
-				if !ok {
-					err = errUnsupportedField("image_url.url(data:invalid)")
-					return false
-				}
-				parts = append(parts, map[string]any{
-					"type": "image",
-					"source": map[string]any{
-						"type":       "base64",
-						"media_type": media,
-						"data":       b64,
-					},
-				})
-			} else {
-				parts = append(parts, map[string]any{
-					"type": "image",
-					"source": map[string]any{
-						"type": "url",
-						"url":  url,
-					},
-				})
-			}
-		case "tool_result":
-			parts = append(parts, map[string]any{
-				"type":        "tool_result",
-				"tool_use_id": part.Get("tool_call_id").String(),
-				"content":     StringifyOpenAIToolResultContent(part.Get("content")),
-			})
-		default:
-			var m map[string]any
-			if uerr := json.Unmarshal([]byte(part.Raw), &m); uerr == nil {
-				parts = append(parts, m)
-			}
-		}
-		return true
-	})
-	return parts, err
-}
-
-func StringifyOpenAIToolResultContent(c gjson.Result) string {
-	if c.Type == gjson.String {
-		return c.String()
-	}
-	return c.Raw
-}
-
-func ParseDataURL(dataURL string) (mediaType, b64 string, ok bool) {
-	if !strings.HasPrefix(dataURL, "data:") {
-		return "", "", false
-	}
-	rest := strings.TrimPrefix(dataURL, "data:")
-	comma := strings.Index(rest, ",")
-	if comma < 0 || comma == len(rest)-1 {
-		return "", "", false
-	}
-	meta, payload := rest[:comma], rest[comma+1:]
-	if !strings.HasSuffix(meta, ";base64") {
-		return "", "", false
-	}
-	mediaType = strings.TrimSuffix(meta, ";base64")
-	if mediaType == "" {
-		mediaType = "application/octet-stream"
-	}
-	if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
-		return "", "", false
-	}
-	return mediaType, payload, true
 }
 
 func stringifyContent(content gjson.Result) string {
@@ -676,24 +540,51 @@ func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 		return provcore.DecodeResult{CanonicalBody: nativeBody, Usage: usage}, err
 	}
 
-	// Step 4: Anthropic-specific wire extras.
+	// Step 4: Preserve provider-owned thinking blocks as an ordered exact-
+	// replay carrier. The shared normalized payload intentionally keeps only
+	// universal reasoning text, so recover signed and redacted native blocks
+	// from the original response here.
+	var nexusThinking []map[string]any
+	root.Get("content").ForEach(func(_, block gjson.Result) bool {
+		switch block.Get("type").String() {
+		case "thinking":
+			if sig := block.Get("signature").String(); sig != "" {
+				nexusThinking = append(nexusThinking, map[string]any{
+					"thinking": block.Get("thinking").String(), "signature": sig,
+				})
+			}
+		case "redacted_thinking":
+			if data := block.Get("data").String(); data != "" {
+				nexusThinking = append(nexusThinking, map[string]any{"redacted_data": data})
+			}
+		}
+		return true
+	})
+	if len(nexusThinking) > 0 {
+		canon, err = sjson.SetBytes(canon, "choices.0.message.nexus_thinking", nexusThinking)
+		if err != nil {
+			return provcore.DecodeResult{CanonicalBody: nativeBody, Usage: usage}, err
+		}
+	}
+
+	// Step 5: Anthropic-specific wire extras.
 	//
-	// 4a) prompt_tokens_details.cache_creation_tokens — Anthropic reports
-	//     cache_creation_input_tokens (write-side, billed at 1.25x premium)
-	//     separately from cache_read_input_tokens. OpenAI only defines the
-	//     read side; we surface the write count in the same details object.
-	// 4b) nexus.ext.anthropic.cache_creation_input_tokens — same value under
-	//     the canonical-extension namespace so the encode path can round-trip
-	//     it back to Anthropic targets (provider-adapter-architecture.md §3a Rule 4).
+	// prompt_tokens_details.cache_creation_tokens — Anthropic reports
+	// cache_creation_input_tokens (write-side, billed at 1.25x premium)
+	// separately from cache_read_input_tokens. OpenAI only defines the read
+	// side; we surface the write count in the same details object, beside
+	// cached_tokens.
+	//
+	// This is the ONLY place the number is written. It used to be written
+	// twice — here, and again into nexus.ext.anthropic.cache_creation_input_tokens
+	// for the Anthropic-wire egress converter to read back. That second copy was
+	// a carrier in a namespace the gateway treats as internal on the request
+	// side, and nothing removed it on the response side, so an OpenAI-wire caller
+	// received `"nexus":{"ext":{"anthropic":{…}}}` in its response body. The
+	// converter reads this canonical field instead; one number has one home.
 	if u := root.Get("usage"); u.Exists() {
 		if v := u.Get("cache_creation_input_tokens"); v.Exists() && v.Int() > 0 {
 			canon, err = sjson.SetBytes(canon, "usage.prompt_tokens_details.cache_creation_tokens", v.Int())
-			if err != nil {
-				return provcore.DecodeResult{CanonicalBody: nativeBody, Usage: usage}, err
-			}
-		}
-		if v := u.Get("cache_creation_input_tokens"); v.Exists() && v.Int() > 0 {
-			canon, err = canonicalext.Set(canon, "anthropic", "cache_creation_input_tokens", v.Int())
 			if err != nil {
 				return provcore.DecodeResult{CanonicalBody: nativeBody, Usage: usage}, err
 			}
@@ -718,14 +609,27 @@ func UsageToNormalize(u provcore.Usage) *normcore.Usage {
 // mapStopReason translates Anthropic stop_reason to the canonical OpenAI
 // finish_reason enum. Unknown values pass through unchanged so operators
 // can spot drift in upstream APIs without losing the raw signal.
+//
+// The documented Anthropic vocabulary is end_turn / max_tokens /
+// stop_sequence / tool_use / pause_turn / refusal /
+// model_context_window_exceeded. end_turn and stop_sequence both collapse to
+// "stop": OpenAI's stop genuinely covers both, so that is a lossy projection
+// onto a smaller vocabulary rather than a wrong value.
+//
+// pause_turn deliberately passes through. It means the turn was suspended
+// and may be resumed by resubmitting the response as-is — no OpenAI
+// finish_reason carries that instruction, and folding it into "stop" would
+// tell the caller the answer is finished when it is resumable.
 func MapStopReason(r string) string {
 	switch r {
 	case "end_turn", "stop_sequence":
 		return "stop"
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		return "length"
 	case "tool_use":
 		return "tool_calls"
+	case "refusal":
+		return "content_filter"
 	}
 	return r
 }
@@ -756,4 +660,153 @@ func clampMaxTokens(requested int64, limit int, rewrites *[]string) int64 {
 	}
 	*rewrites = append(*rewrites, fmt.Sprintf("max_tokens→%d_model_max", limit))
 	return int64(limit)
+}
+
+// Anthropic's extended-thinking constraints, probed against
+// api.anthropic.com on 2026-08-06 with claude-haiku-4-5:
+//
+//	max_tokens 2048, budget 1024  -> 200
+//	max_tokens 1024, budget 1024  -> 400 "`max_tokens` must be greater than `thinking.budget_tokens`"
+//	max_tokens 1024, budget 2048  -> 400 same
+//	max_tokens 1024, budget  512  -> 400 "budget_tokens: Input should be greater than or equal to 1024"
+//
+// So max_tokens is the TOTAL when thinking is on — there would be no reason
+// to require it exceed the thinking budget otherwise — and the budget has a
+// hard floor of its own.
+const (
+	anthropicMinThinkingBudget = 1024
+)
+
+// reconcileThinkingBudget keeps max_tokens and thinking.budget_tokens
+// consistent before the request leaves.
+//
+// The thinking block was forwarded verbatim on the stated grounds that the
+// gateway does not validate it and any rejection is the caller's to see. That
+// holds only while the numbers are the caller's. They are not: max_tokens
+// immediately above is clamped by us to the model's ceiling, or filled by us
+// when the caller omitted it. A caller who sent a consistent pair can have it
+// made inconsistent by our own clamp and then receive a 400 describing a
+// request they never sent.
+//
+// Resolution order matters. Lowering the budget to fit under the cap is the
+// minimal change that preserves what the caller asked for — thinking, within
+// the cap they set. Raising max_tokens instead would push past the model
+// ceiling the clamp exists to respect, trading this 400 for a different one.
+//
+// When the cap cannot house the 1024 floor at all, thinking is impossible
+// within it. That is refused here rather than forwarded, because our error can
+// name the cap and the floor together while Anthropic's can only report
+// whichever bound it checked first.
+func reconcileThinkingBudget(out map[string]any, thinking map[string]any, rewrites *[]string) error {
+	if t, _ := thinking["type"].(string); t == "disabled" {
+		return nil
+	}
+	budget, ok := numericField(thinking["budget_tokens"])
+	if !ok {
+		// No budget to reconcile. An unparseable one stays the caller's
+		// problem, as the passthrough comment says.
+		return nil
+	}
+	maxTokens, ok := numericField(out["max_tokens"])
+	if !ok || maxTokens <= 0 {
+		return nil
+	}
+	fitted, err := fitThinkingBudget(budget, maxTokens)
+	if err != nil {
+		return err
+	}
+	if fitted == budget {
+		return nil
+	}
+	thinking["budget_tokens"] = fitted
+	*rewrites = append(*rewrites, fmt.Sprintf("thinking.budget_tokens→%d_fits_max_tokens", fitted))
+	return nil
+}
+
+// fitThinkingBudget is the DECISION both doors ask, so neither can answer it
+// differently.
+//
+// The cross-format door rebuilds the body from the canonical and the native
+// door edits the caller's own bytes, but the arithmetic is the same and the
+// consequence of disagreeing is the same 400 describing a request nobody sent.
+// It was written on one door only, and the native door — which clamps
+// max_tokens with the very same policy — stranded the budget above the cap it
+// had just lowered.
+//
+// Returns budget unchanged when it already fits.
+func fitThinkingBudget(budget, maxTokens int64) (int64, error) {
+	if budget < maxTokens {
+		return budget, nil
+	}
+	fitted := maxTokens - 1
+	if fitted < anthropicMinThinkingBudget {
+		return 0, errUnsupportedField(fmt.Sprintf(
+			"thinking.budget_tokens: extended thinking needs a budget of at least %d and max_tokens strictly above it, "+
+				"but max_tokens is %d for this model", anthropicMinThinkingBudget, maxTokens))
+	}
+	return fitted, nil
+}
+
+// thinkingFromCanonicalEffort converts the canonical LEVEL into this wire's
+// BUDGET, or nil when the caller expressed nothing.
+//
+// The conversion invents no per-model data. It uses the only two numbers this
+// codec has probe evidence for — the 1024 floor, and the requirement that the
+// budget sit strictly below max_tokens — and derives everything else from the
+// cap the caller (or our own clamp) already set. A guessed per-model range
+// would be an upstream 400 dressed as a feature.
+//
+// "none" produces nothing: the caller asked NOT to think, and this wire spells
+// that by omitting the block rather than by sending a zero budget.
+//
+// A cap that cannot house the floor is left to reconcileThinkingBudget, which
+// refuses with an error naming both numbers — the same answer a caller who
+// spoke Anthropic natively would get.
+func thinkingFromCanonicalEffort(canonicalBody []byte, out map[string]any) map[string]any {
+	effort := gjson.GetBytes(canonicalBody, "reasoning_effort")
+	if !effort.Exists() || effort.Type != gjson.String {
+		return nil
+	}
+	maxTokens, ok := numericField(out["max_tokens"])
+	if !ok || maxTokens <= anthropicMinThinkingBudget {
+		// Nothing fits. Returning nil forwards the request without thinking
+		// rather than refusing it: the caller expressed a preference, not a
+		// requirement, and a refusal here would take away an answer they can
+		// still use. The eligibility filter upstream is what keeps a request
+		// that NEEDS reasoning away from a model that cannot.
+		return nil
+	}
+	ceiling := maxTokens - 1
+
+	var budget int64
+	switch strings.ToLower(effort.String()) {
+	case "none":
+		return nil
+	case "minimal", "low":
+		budget = anthropicMinThinkingBudget
+	case "medium":
+		budget = anthropicMinThinkingBudget + (ceiling-anthropicMinThinkingBudget)/2
+	case "high", "max":
+		budget = ceiling
+	default:
+		// An effort level this wire's vocabulary does not contain. Guessing
+		// which end of the range an unknown word means is how a translation
+		// starts producing answers nobody asked for.
+		return nil
+	}
+	return map[string]any{"type": "enabled", "budget_tokens": budget}
+}
+
+// numericField reads a JSON number that may have decoded as float64 (the
+// json.Unmarshal default) or as an integer type.
+func numericField(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	}
+	return 0, false
 }

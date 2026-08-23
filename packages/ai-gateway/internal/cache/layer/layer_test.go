@@ -122,9 +122,8 @@ func TestStart_HappyPath_PopulatesEverySnapshot(t *testing.T) {
 	if s.ProvidersSize != 1 || s.ModelsSize != 1 || s.CredentialsSize != 1 {
 		t.Errorf("snapshot sizes wrong: %+v", s)
 	}
-	// LookupCachePricing keys on Model.code now, so use "gpt-4o" instead
-	// of "anything" (which wouldn't exist in the Models snapshot).
-	got := l.LookupCachePricing("gpt-4o")
+	// LookupCachePricing keys on Model.id, so use the row's UUID.
+	got := l.LookupCachePricing("m1")
 	if got == nil || got.InputUSDPerM != 3.0 || got.CacheReadUSDPerM != 0.3 || got.CacheWriteUSDPerM != 3.75 {
 		t.Errorf("pricing lookup wrong after Start: %+v", got)
 	}

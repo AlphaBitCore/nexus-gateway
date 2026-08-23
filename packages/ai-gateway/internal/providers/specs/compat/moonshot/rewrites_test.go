@@ -33,10 +33,24 @@ func TestIsFixedTempModel(t *testing.T) {
 		// upstream's own 400 until a smoke run against production caught it.
 		{"kimi-k2.7-code", true},
 		{"kimi-k2.7-code-highspeed", true},
+		// Probed to accept a caller temperature — the one carve-out.
 		{"kimi-k2-thinking", false},
-		{"kimi-k2", false},
+		{"kimi-k2-thinking-2026-01", false},
+
+		// Unprobed ids INSIDE the kimi namespace fail safe: stripped, not
+		// forwarded. kimi-k3 is the live case — the vendor's /v1/models
+		// carried it on 2026-08-06 while our catalog did not, which is the
+		// exact sequence that made k2.7 400 for every caller. Bare kimi-k2
+		// is not offered by the vendor at all and has no probe behind it.
+		{"kimi-k3", true},
+		{"kimi-k3-turbo", true},
+		{"kimi-k2", true},
+		{"kimi-k4.1", true},
+
+		// Outside the namespace: untouched, they accept temperature.
 		{"moonshot-v1-8k", false},
 		{"moonshot-v1-128k", false},
+		{"moonshot-v1-auto", false},
 		{"", false},
 	}
 	for _, tc := range cases {

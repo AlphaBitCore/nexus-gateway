@@ -10,6 +10,7 @@ import (
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
 
 // NewSpec returns the DeepSeek [provcore.AdapterSpec].
@@ -25,7 +26,10 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		// both codec entry points — bodies bridged from /v1/messages get
 		// the same fixes the native chat leg gets. No dispatch-level
 		// rewrite callback.
-		SchemaCodec:     openai.NewIdentityCodec(Contract()),
+		// Gated so the content kinds this wire has no variant for are refused
+		// here, in our words, instead of reaching the caller as DeepSeek's
+		// deserializer naming a Rust enum. See codec_content.go.
+		SchemaCodec:     specutil.GateContent(openai.NewIdentityCodec(Contract()), specutil.UniformPolicy(contentPolicy())),
 		StreamDecoder:   openai.NewStreamDecoder(log),
 		ErrorNormalizer: openai.ErrorNormalizerInstance(),
 	}

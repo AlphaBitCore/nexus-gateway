@@ -231,3 +231,68 @@ func TestOpenAIBillSource_UnpinnedSendsNoKeyFilter(t *testing.T) {
 		t.Fatal("unpinned source must not send api_key_ids at all")
 	}
 }
+
+// TestOpenAIFetchDailyBill_EmptyBucketIsAReportedZero: OpenAI answers a day the
+// gateway sent no traffic on with a bucket whose results array is empty — the
+// vendor stating it charged nothing. That is a fact about the day, not an
+// absence of one, and the two are opposite downstream: a reported zero earns a
+// $0 reconciliation row (and heals a fetch_failed placeholder left on an idle
+// day), while a day the vendor omitted must be left for a later run.
+//
+// Verified against the live endpoint on 2026-08-21 for the prod key: 08-16
+// came back as {"start_time":…,"results":[]} while 08-15/17/18 carried amounts.
+func TestOpenAIFetchDailyBill_EmptyBucketIsAReportedZero(t *testing.T) {
+	src := openaiServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[
+		  {"start_time":` + itoa(utcDay(2026, 8, 15).Unix()) + `,"results":[{"amount":{"value":0.55,"currency":"usd"},"project_id":"proj_gw"}]},
+		  {"start_time":` + itoa(utcDay(2026, 8, 16).Unix()) + `,"results":[]},
+		  {"start_time":` + itoa(utcDay(2026, 8, 17).Unix()) + `,"results":[{"amount":{"value":2.13,"currency":"usd"},"project_id":"proj_gw"}]}
+		],"has_more":false,"next_page":null}`))
+	})
+
+	bills, err := src.FetchDailyBill(context.Background(), utcDay(2026, 8, 15), utcDay(2026, 8, 17))
+	if err != nil {
+		t.Fatalf("FetchDailyBill: %v", err)
+	}
+	if len(bills) != 3 {
+		t.Fatalf("bills = %+v, want all three reported days including the empty one", bills)
+	}
+	if !bills[1].Day.Equal(utcDay(2026, 8, 16)) || bills[1].AmountUSD != 0 {
+		t.Errorf("bills[1] = %+v, want 2026-08-16 at $0", bills[1])
+	}
+	if bills[0].AmountUSD != 0.55 || bills[2].AmountUSD != 2.13 {
+		t.Errorf("the surrounding days must be untouched, got %+v and %+v", bills[0], bills[2])
+	}
+}
+
+// TestOpenAIFetchDailyBill_DayAbsentFromResponseStaysAbsent is the other half of
+// the rule: only a bucket the vendor actually returned becomes a zero. A day
+// missing from the response entirely still means "not finalized", and inventing
+// a $0 for it would write a comparison the vendor never made.
+func TestOpenAIFetchDailyBill_DayAbsentFromResponseStaysAbsent(t *testing.T) {
+	src := openaiServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[
+		  {"start_time":` + itoa(utcDay(2026, 8, 15).Unix()) + `,"results":[{"amount":{"value":0.55,"currency":"usd"},"project_id":"proj_gw"}]}
+		],"has_more":false,"next_page":null}`))
+	})
+
+	bills, err := src.FetchDailyBill(context.Background(), utcDay(2026, 8, 15), utcDay(2026, 8, 17))
+	if err != nil {
+		t.Fatalf("FetchDailyBill: %v", err)
+	}
+	if len(bills) != 1 || !bills[0].Day.Equal(utcDay(2026, 8, 15)) {
+		t.Fatalf("bills = %+v, want only the day the vendor reported a bucket for", bills)
+	}
+}
+
+// TestOpenAIBillingHost: the host the cost API is read from is what a Provider
+// row's baseUrl is matched against, so it must follow the source's configured
+// base URL rather than a constant.
+func TestOpenAIBillingHost(t *testing.T) {
+	if got := newOpenAIBillSource("k", "", "", nil).BillingHost(); got != "api.openai.com" {
+		t.Errorf("default BillingHost = %q, want api.openai.com", got)
+	}
+	if got := newOpenAIBillSource("k", "", "https://gw.internal:8443/v1", nil).BillingHost(); got != "gw.internal" {
+		t.Errorf("overridden BillingHost = %q, want the override's host without its port", got)
+	}
+}

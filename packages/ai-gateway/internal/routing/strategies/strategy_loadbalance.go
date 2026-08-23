@@ -9,11 +9,11 @@ import (
 )
 
 // LoadbalanceStrategy selects a child node via weighted random selection.
-type LoadbalanceStrategy struct{}
+type LoadbalanceStrategy struct{ lookup core.TargetLookup }
 
 func (s *LoadbalanceStrategy) Type() string { return "loadbalance" }
 
-func (s *LoadbalanceStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry, depth int, recurse RecurseFunc) ([]core.RoutingTarget, error) {
+func (s *LoadbalanceStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 	if len(node.Weighted) == 0 {
 		*trace = append(*trace, core.TraceEntry{
 			StrategyType: "loadbalance",
@@ -39,9 +39,13 @@ func (s *LoadbalanceStrategy) Evaluate(ctx context.Context, node core.StrategyNo
 	for _, w := range node.Weighted {
 		cumulative += w.Weight
 		if r < cumulative {
-			targets, err := recurse(ctx, w.Node, rctx, trace, depth)
+			target, err := resolveLeaf(ctx, w.Node, s.lookup, "loadbalance", trace)
 			if err != nil {
 				return nil, err
+			}
+			var targets []core.RoutingTarget
+			if target != nil {
+				targets = []core.RoutingTarget{*target}
 			}
 			*trace = append(*trace, core.TraceEntry{
 				StrategyType: "loadbalance",
@@ -58,5 +62,9 @@ func (s *LoadbalanceStrategy) Evaluate(ctx context.Context, node core.StrategyNo
 		StrategyType: "loadbalance",
 		Decision:     "weighted selection fell through — using first bucket",
 	})
-	return recurse(ctx, node.Weighted[0].Node, rctx, trace, depth)
+	target, err := resolveLeaf(ctx, node.Weighted[0].Node, s.lookup, "loadbalance", trace)
+	if err != nil || target == nil {
+		return nil, err
+	}
+	return []core.RoutingTarget{*target}, nil
 }

@@ -239,6 +239,19 @@ export interface Model {
   providerModelId: string;
   type: string;
   features: string[];
+  /**
+   * What the model accepts and returns. `type` answers which ENDPOINT serves
+   * the model; these answer which modalities it handles, and one scalar
+   * cannot answer both. The server derives them from type and features when a
+   * caller sends none, so a value read back here is already resolved — the UI
+   * renders it and never re-derives, because a second derivation is how
+   * `features.vision` and `inputModalities ∋ image` came to disagree on 34
+   * production rows.
+   */
+  inputModalities?: string[];
+  outputModalities?: string[];
+  /** Modalities a request MUST carry. Empty = no constraint. */
+  requiredModalities?: string[];
   inputPricePerMillion?: number;
   outputPricePerMillion?: number;
   /** Per-million price for cache READ hits. NULL = no discount; cost calc
@@ -302,6 +315,12 @@ export interface CreateModelInput {
 
 /** PUT /api/admin/models/:id */
 export type UpdateModelInput = Partial<{
+  inputModalities: string[];
+  outputModalities: string[];
+  /** The floor a request must meet, independent of the ceiling above. Absent
+   *  leaves it unchanged; an explicit [] clears it — which is the only way an
+   *  admin can remove a floor, so the two must stay distinguishable. */
+  requiredModalities: string[];
   code: string;
   providerModelId: string;
   name: string;
@@ -479,6 +498,7 @@ export interface RoutingRule {
   matchConditions?: unknown;
   priority: number;
   /** 0 = policy narrowing; 1 = route (default). */
+  /** Always 1 (route). The API rejects any other value. */
   pipelineStage?: number;
   /** Inline fallback chain: [{ providerId, modelId }] tried in order when primary targets fail. */
   fallbackChain?: Array<{ providerId: string; modelId: string }>;
@@ -628,6 +648,14 @@ export interface TrafficEvent {
   // Null when the upstream did not report.
   reasoningTokens?: number | null;
   reasoningCostUsd?: number | null;
+  // The gateway's stamped total cost for this request (traffic_event.
+  // estimated_cost_usd). The cost column and CostBreakdown normally
+  // recompute from tokens × the LEFT-JOIN price snapshot so the figure
+  // tracks current catalog prices; that recompute yields nothing for
+  // modality rows (image / tts / rerank) which carry no prompt/completion
+  // tokens, so those fall back to this stamped total — the authoritative
+  // per-unit cost the gateway already computed. NULL for unpriced rows.
+  estimatedCostUsd?: number | null;
   // HTTP method + path the gateway actually sent to upstream
   // provider. May differ from method/path on cross-format routes (e.g.
   // Responses-API upgrade); same as method/path for transparent
@@ -723,14 +751,23 @@ export interface TrafficEvent {
   embeddingCostUsd?: number | null;
   embeddingModelId?: string | null;
   aiGuardCostUsd?: number | null;
-  // Open-ended catch-all for future hook-type model calls — each item
-  // `{type, model, prompt_tokens, completion_tokens, cost_usd, latency_ms}`.
-  // Unknown types render as a key/value list in the drawer breakdown.
+  // Per-call itemisation of internal model calls made on this request's
+  // behalf. `type: 'smart-router'` is written by the AI Gateway; it is also
+  // the catch-all for future hook-type model calls. Carries the token BASIS
+  // behind the internal-ops cost columns, which store an amount alone — the
+  // cache split is what makes a cache-discounted charge auditable rather than
+  // merely small. `promptTokens` is the TOTAL input; the two cache counts are
+  // sub-counts of it. `providerId` is per-entry because one request can make
+  // router calls served by different vendors, which the single
+  // `routerProviderId` column cannot represent.
   internalOpsBreakdown?: Array<{
     type: string;
     model?: string;
+    providerId?: string;
     promptTokens?: number;
     completionTokens?: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
     costUsd?: number;
     latencyMs?: number;
   }> | null;
@@ -817,6 +854,21 @@ export interface TrafficEvent {
   requestSpillRef?: SpillRef | null;
   /** Response body spill reference — same semantics as requestSpillRef. */
   responseSpillRef?: SpillRef | null;
+  /**
+   * True when the STORED copy of the body is only a prefix. Happens when the
+   * captured body reached the inline-vs-spill cutoff
+   * (payload_capture.maxInlineBodyBytes) and no spill backend was configured to
+   * take it out of band. The client still received the complete response — only
+   * this stored copy is short. Without surfacing it, a truncated SSE stream is
+   * indistinguishable from a response the model never finished.
+   */
+  requestBodyTruncated?: boolean;
+  /** Response body truncation flag — same semantics as requestBodyTruncated. */
+  responseBodyTruncated?: boolean;
+  /** True captured size in bytes, reported even when the stored copy is a prefix. */
+  requestBodySizeBytes?: number | null;
+  /** Response body captured size — same semantics as requestBodySizeBytes. */
+  responseBodySizeBytes?: number | null;
   /**
    * Thing (node/service instance) that emitted this traffic_event. Semantic
    * depends on `source`: agent → originating device; ai-gateway → processing
@@ -1280,6 +1332,12 @@ export interface ApiTemplateModel {
   providerModelId: string;
   type: string;
   features: string[];
+  /** Present on catalog template rows so the wizard can carry a model's real
+   * modalities into the create call. Absent means the server derives them. */
+  inputModalities?: string[];
+  outputModalities?: string[];
+  /** Modalities a request MUST carry. Empty = no constraint. */
+  requiredModalities?: string[];
   /** Other names this same model answers to — typically an id the catalog has
    *  since renamed away from ("claude-haiku-4-5-20251001" for
    *  "claude-haiku-4-5"). Part of the model's identity: a provider row found

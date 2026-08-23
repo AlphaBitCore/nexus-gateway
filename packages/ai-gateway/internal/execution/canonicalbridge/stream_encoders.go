@@ -140,6 +140,9 @@ func (e *openAIStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 	if len(chunk.ToolCallDeltas) > 0 {
 		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{ToolCalls: buildOAIToolCalls(chunk.ToolCallDeltas)}}, nil)
 	}
+	if len(chunk.NexusThinking) > 0 {
+		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{NexusThinking: chunk.NexusThinking}}, nil)
+	}
 	if chunk.ReasoningDelta != "" {
 		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{ReasoningContent: chunk.ReasoningDelta}}, nil)
 	}
@@ -180,169 +183,6 @@ func buildOAIStreamUsage(u *provcore.Usage) *oaiStreamUsage {
 	return out
 }
 
-// anthropicStreamEncoder converts canonical chunks to the Anthropic Messages
-// streaming SSE event sequence:
-//
-//	message_start → content_block_start → content_block_delta × N
-//	→ content_block_stop → message_delta → message_stop
-//
-// Stateful: maintains block indices across Write calls so the synthesised
-// sequence is consistent with what a real Anthropic upstream would emit.
-type anthropicStreamEncoder struct {
-	headerSent   bool
-	textBlockIdx int         // -1 when not yet opened
-	toolBlockMap map[int]int // ToolCallDelta.Index → Anthropic content_block index
-	nextBlockIdx int
-}
-
-func newAnthropicStreamEncoder() *anthropicStreamEncoder {
-	return &anthropicStreamEncoder{textBlockIdx: -1}
-}
-
-func (e *anthropicStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]byte, error) {
-	var buf bytes.Buffer
-
-	// Emit message_start before the first content.
-	if !e.headerSent {
-		e.headerSent = true
-		var inputTokens, outputTokens int
-		if chunk.Usage != nil {
-			if chunk.Usage.PromptTokens != nil {
-				inputTokens = *chunk.Usage.PromptTokens
-			}
-			if chunk.Usage.CompletionTokens != nil {
-				outputTokens = *chunk.Usage.CompletionTokens
-			}
-		}
-		writeAnthropicEvent(&buf, "message_start", map[string]any{
-			"type": "message_start",
-			"message": map[string]any{
-				"id":            "msg_transcoded",
-				"type":          "message",
-				"role":          "assistant",
-				"content":       []any{},
-				"model":         "transcoded",
-				"stop_reason":   nil,
-				"stop_sequence": nil,
-				"usage": map[string]any{
-					"input_tokens":  inputTokens,
-					"output_tokens": outputTokens,
-				},
-			},
-		})
-		writeAnthropicEvent(&buf, "ping", map[string]any{"type": "ping"})
-	}
-
-	// Tool call deltas: open a tool_use block on first delta for each tool index.
-	for _, d := range chunk.ToolCallDeltas {
-		if e.toolBlockMap == nil {
-			e.toolBlockMap = make(map[int]int)
-		}
-		blockIdx, started := e.toolBlockMap[d.Index]
-		if !started {
-			blockIdx = e.nextBlockIdx
-			e.nextBlockIdx++
-			e.toolBlockMap[d.Index] = blockIdx
-			writeAnthropicEvent(&buf, "content_block_start", map[string]any{
-				"type":  "content_block_start",
-				"index": blockIdx,
-				"content_block": map[string]any{
-					"type":  "tool_use",
-					"id":    d.ID,
-					"name":  d.Name,
-					"input": map[string]any{},
-				},
-			})
-		}
-		if d.Arguments != "" {
-			writeAnthropicEvent(&buf, "content_block_delta", map[string]any{
-				"type":  "content_block_delta",
-				"index": blockIdx,
-				"delta": map[string]any{
-					"type":         "input_json_delta",
-					"partial_json": d.Arguments,
-				},
-			})
-		}
-	}
-
-	// Text delta: open text content_block on first occurrence.
-	if chunk.Delta != "" {
-		if e.textBlockIdx < 0 {
-			e.textBlockIdx = e.nextBlockIdx
-			e.nextBlockIdx++
-			writeAnthropicEvent(&buf, "content_block_start", map[string]any{
-				"type":  "content_block_start",
-				"index": e.textBlockIdx,
-				"content_block": map[string]any{
-					"type": "text",
-					"text": "",
-				},
-			})
-		}
-		writeAnthropicEvent(&buf, "content_block_delta", map[string]any{
-			"type":  "content_block_delta",
-			"index": e.textBlockIdx,
-			"delta": map[string]any{
-				"type": "text_delta",
-				"text": chunk.Delta,
-			},
-		})
-	}
-
-	// Reasoning delta (extended thinking): surface as thinking_delta.
-	if chunk.ReasoningDelta != "" {
-		if e.textBlockIdx < 0 {
-			e.textBlockIdx = e.nextBlockIdx
-			e.nextBlockIdx++
-			writeAnthropicEvent(&buf, "content_block_start", map[string]any{
-				"type":          "content_block_start",
-				"index":         e.textBlockIdx,
-				"content_block": map[string]any{"type": "thinking", "thinking": ""},
-			})
-		}
-		writeAnthropicEvent(&buf, "content_block_delta", map[string]any{
-			"type":  "content_block_delta",
-			"index": e.textBlockIdx,
-			"delta": map[string]any{
-				"type":     "thinking_delta",
-				"thinking": chunk.ReasoningDelta,
-			},
-		})
-	}
-
-	// Done: close open blocks, emit message_delta + message_stop.
-	if chunk.Done {
-		if e.textBlockIdx >= 0 {
-			writeAnthropicEvent(&buf, "content_block_stop", map[string]any{
-				"type":  "content_block_stop",
-				"index": e.textBlockIdx,
-			})
-		}
-		for _, blockIdx := range e.toolBlockMap {
-			writeAnthropicEvent(&buf, "content_block_stop", map[string]any{
-				"type":  "content_block_stop",
-				"index": blockIdx,
-			})
-		}
-		var outputTokens int
-		if chunk.Usage != nil && chunk.Usage.CompletionTokens != nil {
-			outputTokens = *chunk.Usage.CompletionTokens
-		}
-		writeAnthropicEvent(&buf, "message_delta", map[string]any{
-			"type":  "message_delta",
-			"delta": map[string]any{"stop_reason": canonicalFinishToAnthropicStop(chunk.FinishReason), "stop_sequence": nil},
-			"usage": map[string]any{"output_tokens": outputTokens},
-		})
-		writeAnthropicEvent(&buf, "message_stop", map[string]any{"type": "message_stop"})
-	}
-
-	if buf.Len() == 0 {
-		return nil, nil
-	}
-	return buf.Bytes(), nil
-}
-
 // geminiStreamEncoder converts canonical chunks to Gemini streamGenerateContent
 // SSE format. Vertex ingress uses the same wire shape, so this encoder serves
 // both FormatGemini and FormatVertex.
@@ -352,19 +192,6 @@ func (e *anthropicStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 type geminiStreamEncoder struct{}
 
 func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]byte, error) {
-	if chunk.Done {
-		candidate := map[string]any{
-			"content":      map[string]any{"parts": []any{}, "role": "model"},
-			"finishReason": canonicalFinishToGemini(chunk.FinishReason),
-			"index":        0,
-		}
-		resp := map[string]any{"candidates": []any{candidate}}
-		if u := buildGeminiUsage(chunk.Usage); u != nil {
-			resp["usageMetadata"] = u
-		}
-		return geminiSSEFrame(resp), nil
-	}
-
 	var parts []any
 	if chunk.Delta != "" {
 		parts = append(parts, map[string]any{"text": chunk.Delta})
@@ -387,6 +214,9 @@ func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 					"args": args,
 				},
 			})
+			if tc.ThoughtSignature != "" {
+				parts[len(parts)-1].(map[string]any)["thoughtSignature"] = tc.ThoughtSignature
+			}
 		}
 	}
 	if chunk.ReasoningDelta != "" {
@@ -400,14 +230,22 @@ func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 		// classification.
 		parts = append(parts, map[string]any{"text": chunk.ReasoningDelta, "thought": true})
 	}
-	if len(parts) == 0 {
+	if len(parts) == 0 && !chunk.Done {
 		return nil, nil
 	}
 	candidate := map[string]any{
 		"content": map[string]any{"parts": parts, "role": "model"},
 		"index":   0,
 	}
+	if chunk.Done {
+		candidate["finishReason"] = canonicalFinishToGemini(chunk.FinishReason)
+	}
 	resp := map[string]any{"candidates": []any{candidate}}
+	if chunk.Done {
+		if u := buildGeminiUsage(chunk.Usage); u != nil {
+			resp["usageMetadata"] = u
+		}
+	}
 	return geminiSSEFrame(resp), nil
 }
 
@@ -542,15 +380,6 @@ func (e *replicateStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 
 // --- shared helpers ---
 
-func writeAnthropicEvent(buf *bytes.Buffer, event string, payload map[string]any) {
-	data, _ := json.Marshal(payload)
-	buf.WriteString("event: ")
-	buf.WriteString(event)
-	buf.WriteString("\ndata: ")
-	buf.Write(data)
-	buf.WriteString("\n\n")
-}
-
 func writeCohereEvent(buf *bytes.Buffer, payload map[string]any) {
 	data, _ := json.Marshal(payload)
 	buf.WriteString("data: ")
@@ -611,6 +440,15 @@ func finishReasonOrStop(fr string) string {
 // Anthropic stop_reason for the synthesized terminal message_delta. Empty →
 // "end_turn" (the historical default), keeping the live transcode unchanged.
 // Inverse of anthropic/codec.MapStopReason.
+//
+// content_filter → "refusal", per the documented Anthropic vocabulary
+// (end_turn / max_tokens / stop_sequence / tool_use / pause_turn / refusal /
+// model_context_window_exceeded), where refusal is defined as "when streaming
+// classifiers intervene to handle potential policy violations". It previously
+// mapped to "stop_sequence", which is not a lossy approximation but a
+// different and false claim: stop_sequence means the caller's OWN custom
+// stop string was generated, so a filtered answer was reported as the
+// caller's own stop rule firing.
 func canonicalFinishToAnthropicStop(fr string) string {
 	switch fr {
 	case "length":
@@ -618,7 +456,7 @@ func canonicalFinishToAnthropicStop(fr string) string {
 	case "tool_calls", "function_call":
 		return "tool_use"
 	case "content_filter":
-		return "stop_sequence"
+		return "refusal"
 	case "", "stop":
 		return "end_turn"
 	default:
@@ -661,7 +499,7 @@ func canonicalFinishToCohere(fr string) string {
 func buildOAIToolCalls(deltas []provcore.ToolCallDelta) []oaiToolCall {
 	calls := make([]oaiToolCall, 0, len(deltas))
 	for _, d := range deltas {
-		tc := oaiToolCall{Index: d.Index, Function: oaiToolFunc{Name: d.Name, Arguments: d.Arguments}}
+		tc := oaiToolCall{Index: d.Index, Function: oaiToolFunc{Name: d.Name, Arguments: d.Arguments, ThoughtSignature: d.ThoughtSignature}}
 		if d.ID != "" {
 			tc.ID = d.ID
 			tc.Type = "function"

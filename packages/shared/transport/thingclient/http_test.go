@@ -620,6 +620,86 @@ func TestHTTPFallback_WSRecoveryUsesBackoff(t *testing.T) {
 	}
 }
 
+// TestHTTPFallback_WSRecoverySurvivesHeartbeat pins the interaction the backoff
+// test above deliberately sidesteps by parking the heartbeat 10s out: recovery
+// must keep attempting once its backoff grows PAST the heartbeat interval.
+//
+// The retry deadline shares a select with the heartbeat. Rebuilding that
+// deadline per iteration restarts the countdown whenever the heartbeat fires
+// first, so from the moment the backoff exceeds the heartbeat interval the
+// heartbeat wins every race and the WS attempt never runs again — the Thing
+// stops trying to recover its WebSocket and rides HTTP fallback until the
+// process restarts. With a 30ms heartbeat and a 20ms base, failure 2 onward
+// (40ms, 80ms, …) is already past the heartbeat, so a starving implementation
+// stalls at ~2 attempts while a correct one keeps going for the whole window.
+func TestHTTPFallback_WSRecoverySurvivesHeartbeat(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/internal/things/register", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(registerResponse{ThingID: "test-thing-001", DesiredVer: 0})
+	})
+	mux.HandleFunc("/api/internal/things/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(heartbeatResponse{Ack: true, DesiredVer: 0})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, err := New(Config{
+		HubURL:                  "ws://dummy:9999/ws",
+		HubHTTPURL:              srv.URL,
+		ThingType:               "ai-gateway",
+		ThingID:                 "test-thing-001",
+		ThingVersion:            "1.0.0",
+		Token:                   "test-token",
+		Logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		MetricsRegisterer:       prometheus.NewRegistry(),
+		ReconnectInitialBackoff: 20 * time.Millisecond,
+		ReconnectMaxBackoff:     100 * time.Millisecond,
+		HeartbeatInterval:       30 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var (
+		mu       sync.Mutex
+		attempts []time.Time
+	)
+	c.connectWSFn = func(ctx context.Context) error {
+		mu.Lock()
+		attempts = append(attempts, time.Now())
+		mu.Unlock()
+		return errAlwaysFail
+	}
+
+	const window = 800 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), window)
+	defer cancel()
+
+	start := time.Now()
+	c.runHTTPFallback(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Past the 100ms cap the window fits well over a dozen attempts; require 5
+	// so a slow CI box cannot flake, while still being far out of reach of the
+	// ~2 a heartbeat-starved loop manages.
+	if len(attempts) < 5 {
+		t.Fatalf("WS recovery starved by the heartbeat: only %d attempts in %v "+
+			"(want >= 5; a retry deadline rebuilt per select iteration stalls here)",
+			len(attempts), window)
+	}
+
+	// Attempts must still be happening late in the window, not just before the
+	// backoff first outgrew the heartbeat.
+	last := attempts[len(attempts)-1].Sub(start)
+	if last < window/2 {
+		t.Errorf("WS recovery stopped early: last attempt at %v of a %v window", last, window)
+	}
+}
+
 var errAlwaysFail = errors.New("connect failed")
 
 func TestDeriveHTTPURL(t *testing.T) {

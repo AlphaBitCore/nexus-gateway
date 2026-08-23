@@ -191,7 +191,7 @@ func run() int {
 	var thingClient *thingclient.Client
 	if hubRes.ThingClient != nil {
 		thingClient = hubRes.ThingClient
-		tcRes = wiring.CaptureThingClientResult(thingClient, cfg, opsResult.ProcessStartTime, logger)
+		tcRes = wiring.CaptureThingClientResult(thingClient, cfg, buildVersion, opsResult.ProcessStartTime, logger)
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

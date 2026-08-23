@@ -21,10 +21,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	geminierrors "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/errors"
 	openairesponses "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/responses"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // fetchUpstreamWithPreparedBody dispatches the request to upstream
@@ -34,7 +34,7 @@ import (
 // PrepareBody twice (once for the cache key, once inside Execute).
 //
 // preparedBody MUST be the bytes Adapter.PrepareBody would return for
-// routeResult.Targets[0]; preparedRewrites MUST be the matching
+// routeResult.AllTargets()[0]; preparedRewrites MUST be the matching
 // rewrites slice; preparedURLOverride MUST be the matching codec
 // URLOverride (so a shape-driven action URL reaches the dispatch).
 // Pass nil/nil/"" to fall back to plain Execute behaviour (which
@@ -56,9 +56,9 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 	req.StickyKey = stickyKeyFromCtx(r.Context())
 	var execResult *executor.ExecutionResult
 	if preparedBody != nil {
-		execResult = h.deps.Executor.ExecuteWithPreparedBody(r.Context(), routeResult.Targets, req, policy, preparedBody, preparedRewrites, preparedURLOverride)
+		execResult = h.deps.Executor.ExecuteWithPreparedBody(r.Context(), routeResult.AllTargets(), req, policy, preparedBody, preparedRewrites, preparedURLOverride)
 	} else {
-		execResult = h.deps.Executor.Execute(r.Context(), routeResult.Targets, req, policy)
+		execResult = h.deps.Executor.Execute(r.Context(), routeResult.AllTargets(), req, policy)
 	}
 
 	// Upstream call count for the response header. 1 means first-try success;
@@ -78,6 +78,12 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 	// trying to reach, and there is no credential to report.
 	// rec.ModelName (requested side) was stamped right after readBody with the
 	// literal client model string; only Routed* fields get set here.
+	// The walk itself, alongside the plan the trace already carries. Recorded
+	// whether the request succeeded or failed: a request served by its third
+	// target after two failovers is exactly the one whose chain an operator
+	// later needs, and it is not an error case.
+	recordWalk(rec, execResult.Attempts)
+
 	attributed := execResult.Terminal()
 	if attributed == nil {
 		if n := len(execResult.Attempts); n > 0 {
@@ -120,6 +126,21 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 			// upstream failed and provider-availability alerting must not
 			// count it against the provider.
 			h.writeDetailedErr(w, rec, statusClientClosedRequest, "CLIENT_CLOSED", "client closed request before upstream responded", "")
+			return nil, routingcore.RoutingTarget{}, attempts, execResult.Error
+		}
+
+		// No attempt left the process, so there is no upstream outcome to
+		// report and no provider to hold responsible. Kept ahead of
+		// recordUpstreamFailure and of the 502 below for the same reason the
+		// client-closed branch is: a fault in our own configuration must not
+		// be counted against a provider's availability, and must not reach the
+		// caller wearing a retryable status — an undecryptable credential is
+		// not going to decrypt on the second try, and a client that keeps
+		// retrying turns one broken credential into sustained load.
+		if errors.Is(execResult.Error, executor.ErrNoTargetDispatchable) {
+			logUpstreamFailures(logger, execResult.Attempts)
+			h.writeDetailedErr(w, rec, http.StatusInternalServerError, "PROVIDER_TARGET_UNAVAILABLE",
+				"no provider target could be prepared for this request", "")
 			return nil, routingcore.RoutingTarget{}, attempts, execResult.Error
 		}
 
@@ -206,7 +227,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 		// fully eliminate it — Gemini's eviction is best-effort.
 		if execResult.StatusCode == http.StatusForbidden &&
 			upstreamFormat == provcore.FormatGemini &&
-			geminicacheStaleRefError(execResult.Body) {
+			geminierrors.IsStaleCacheRefError(execResult.Body) {
 			if invalidate := GeminiCacheInvalidateFromContext(r.Context()); invalidate != nil {
 				invalidate()
 				logger.Warn("geminicache: upstream reported stale cachedContent — invalidated Redis entry",
@@ -280,64 +301,6 @@ func upstreamHost(target routingcore.RoutingTarget) string {
 // the broker registry is not wired. The broker MISS path uses
 // handleNonStreamWithSubscription instead, which shares the cache write
 // with the broker leader.
-// egressReshapeNonStream reshapes a CANONICAL (OpenAI) non-stream response body
-// back to the caller's ingress wire shape — the response leg of the round-trip
-// invariant "request: A→canonical→B; response: B→canonical→A"
-// (provider-adapter-architecture.md §3).
-//
-// The body is canonical on BOTH live response paths: the adapter's
-// SchemaCodec.DecodeResponse decodes the upstream B-shape to canonical OpenAI
-// (specAdapter.Execute returns CanonicalBody), so handleNonStream's result.Body
-// is canonical, and the broker collects/serves the same canonical bytes. The
-// reshape is therefore driven SOLELY by the ingress shape A — never by
-// ingress-vs-target. (The prior per-path gates — direct "ingress != target",
-// broker "WireShape==OpenAIChat" — both returned canonical OpenAI for a native
-// non-OpenAI ingress: anthropic /v1/messages + gemini /v1beta got `choices[]`
-// instead of `content[]`/`candidates[]`.)
-//
-// NOT for the cache HIT path: handleNonStreamHit reads the L1 entry which is
-// stored POST-reshape in the writer's ORIGIN wire shape, so it reshapes via the
-// OriginWireShape gate, not this helper.
-//
-// Two skip cases, both correct because the body is already in shape A:
-//   - OpenAI-family chat/embeddings ingress: canonical IS the ingress shape, so
-//     this is the identity — short-circuit (avoids a no-op call + preserves the
-//     same-format passthrough optimisation).
-//   - /v1/responses NATIVE passthrough (target serves responses-api natively):
-//     the body is already Responses-shape; re-encoding via EncodeResponsesResponse
-//     would double-encode and strip output[].content[].text.
-func (h *Handler) egressReshapeNonStream(ingress Ingress, target routingcore.RoutingTarget, body []byte) ([]byte, error) {
-	if h.deps.CanonicalBridge == nil || len(body) == 0 {
-		return body, nil
-	}
-	if ingress.WireShape == typology.WireShapeOpenAIResponses {
-		// Content-authoritative egress: the wire shape follows the ACTUAL
-		// response bytes, never the target Format. A Responses-shape body is
-		// already in the client's shape (verbatim — zero-loss for built-in
-		// tools); a chat.completion body is canonical and re-encodes to the
-		// Responses output[] grammar via EncodeResponsesResponse. An
-		// unclassifiable body must NEVER be forwarded verbatim to a
-		// /v1/responses client — fail closed with a 502 so a chat-shaped or
-		// garbage reply can't leak in the wrong wire shape.
-		switch openairesponses.ClassifyNonStreamBody(body) {
-		case openairesponses.ClassResponses:
-			return body, nil
-		case openairesponses.ClassChat:
-			return h.deps.CanonicalBridge.ResponseCanonicalToIngress(ingress.BodyFormat, body)
-		default:
-			return nil, fmt.Errorf("egress: unclassifiable /v1/responses upstream body; refusing verbatim passthrough")
-		}
-	}
-	if ingress.BodyFormat.IsOpenAIFamily() {
-		// Canonical == OpenAI shape == the caller's shape. Identity.
-		return body, nil
-	}
-	if typology.KindFromWireShape(ingress.WireShape) == typology.EndpointKindEmbeddings {
-		return h.deps.CanonicalBridge.ResponseCanonicalToIngressEmbeddings(ingress.BodyFormat, body)
-	}
-	return h.deps.CanonicalBridge.ResponseCanonicalToIngress(ingress.BodyFormat, body)
-}
-
 func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *audit.Record, result *executor.ExecutionResult, target routingcore.RoutingTarget, forwardedBody []byte, quotaInPrice, quotaOutPrice float64, quotaDecision *quota.Decision, endpointType, requestID string, start time.Time, logger *slog.Logger) {
 	respBody := result.Body
 	ingress, _ := IngressFromContext(r.Context())
@@ -350,9 +313,21 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	if ResponsesUpgradeFromContext(r.Context()) && len(respBody) > 0 {
 		canonicalBody, _, dErr := openairesponses.DecodeResponsesResponse(respBody)
 		if dErr != nil {
+			// A typed ProviderError means the upstream reported a failed or
+			// still-running status INSIDE its 200 body. That is the upstream's
+			// failure, not a decode problem on our side, so it is surfaced with
+			// the upstream's own code and message rather than being relabelled
+			// as ours.
+			var pe *provcore.ProviderError
+			if errors.As(dErr, &pe) {
+				logger.Warn("upstream /v1/responses body carried a non-answer status",
+					"code", pe.Code, "type", pe.Type, "error", pe.Message)
+				h.writeCodecErr(w, rec, dErr, "")
+				return
+			}
 			logger.Error("reverse-decode of /v1/responses body failed",
 				"error", dErr.Error())
-			h.writeError(w, rec, http.StatusBadGateway,
+			h.writeError(w, rec, http.StatusBadGateway, "RESPONSES_REVERSE_DECODE_FAILED",
 				"upgraded /v1/responses body could not be reverse-decoded to chat-completions shape: "+dErr.Error())
 			return
 		}
@@ -373,7 +348,8 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// is keyed on the ingress shape — see egressReshapeNonStream for the contract.
 	if shaped, rerr := h.egressReshapeNonStream(ingress, target, respBody); rerr != nil {
 		logger.Error("response hub reshape failed", "error", rerr)
-		h.writeError(w, rec, http.StatusBadGateway, "upstream response could not be reshaped for ingress format")
+		h.writeError(w, rec, http.StatusBadGateway, "EGRESS_RESHAPE_FAILED",
+			"upstream response could not be reshaped for ingress format")
 		return
 	} else {
 		respBody = shaped
@@ -497,6 +473,13 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// response dimension is available here.
 	if rec.EndpointType == "embeddings" {
 		rec.Metadata = updateEmbeddingDimension(rec.Metadata, respBody)
+		// Honour encoding_format AFTER the dimension stamp so the stamp reads
+		// the cheap float-array form. See embedding_encoding.go: the OpenAI SDKs
+		// request base64 implicitly and corrupt a float array that arrives in
+		// its place.
+		respBody = honorEmbeddingEncodingFormat(respBody, rec.Metadata)
+	} else {
+		respBody = unwrapJSONObjectFences(respBody, rec.Metadata)
 	}
 
 	// Capture after response hooks so payload mirrors bytes returned to the
@@ -508,12 +491,15 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// ResponseBodyRedacted under redact/block and this captured copy otherwise.
 	respBodyForAudit := respBody
 	pcCfgPost := h.payloadCaptureConfig()
+	// What this body actually is. Almost every non-stream response is JSON
+	// after the canonical bridge, but tts relays provider audio verbatim, and
+	// asserting JSON there told the Control Plane reader to decode MPEG frames
+	// as JSON. See relayedContentType.
+	relayCT := relayedContentType(result.Headers.Get("Content-Type"))
 	if len(respBodyForAudit) > 0 && pcCfgPost.StoreResponseBody {
 		rec.ResponseBody = respBodyForAudit
-		// Non-stream AI Gateway responses are always JSON-shaped after
-		// the canonical bridge; this hint drives the Control Plane
-		// reader's inline-vs-string decoding.
-		rec.ResponseContentType = "application/json"
+		// Drives the Control Plane reader's inline-vs-string decoding.
+		rec.ResponseContentType = relayCT
 	}
 
 	rec.StatusCode = http.StatusOK
@@ -554,7 +540,7 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// first or the write is severed and the client loses a completed (and
 	// already billed) inference. Mirrors the Responses-API path.
 	extendWriteDeadlineToUpstreamBudget(w)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", relayCT)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(respBody)
 }

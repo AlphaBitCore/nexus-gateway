@@ -1,0 +1,168 @@
+{
+  "_comment": [
+    "Magic-byte vectors shared by the Go sniffer (transport/normalize/locator)",
+    "and the TypeScript one (packages/ui-shared/src/lib/sniffMime.ts).",
+    "",
+    "They cannot share code across the language boundary, so they share this",
+    "table instead, and both sides assert against it. Two sniffers in one",
+    "program is only safe if they cannot disagree: before this file they did,",
+    "and an iPhone photo submitted as a video input reference was served",
+    "inline as video/mp4 and downloaded as .mp4 by the server while the Agent",
+    "Dashboard called the same bytes image/heic.",
+    "",
+    "prefix is hex. Bytes past the signature do not matter to either sniffer,",
+    "so a vector is only as long as the signature it exercises."
+  ],
+  "vectors": [
+    {
+      "name": "png",
+      "prefix": "89504e470d0a1a0a",
+      "mime": "image/png",
+      "ext": "png"
+    },
+    {
+      "name": "jpeg",
+      "prefix": "ffd8ffe0",
+      "mime": "image/jpeg",
+      "ext": "jpg"
+    },
+    {
+      "name": "gif87a",
+      "prefix": "474946383761",
+      "mime": "image/gif",
+      "ext": "gif"
+    },
+    {
+      "name": "gif89a",
+      "prefix": "474946383961",
+      "mime": "image/gif",
+      "ext": "gif"
+    },
+    {
+      "name": "webp",
+      "prefix": "524946460000000057454250",
+      "mime": "image/webp",
+      "ext": "webp"
+    },
+    {
+      "name": "wav",
+      "prefix": "524946460000000057415645",
+      "mime": "audio/wav",
+      "ext": "wav"
+    },
+    {
+      "name": "heic",
+      "prefix": "0000001c6674797068656963",
+      "mime": "image/heic",
+      "ext": "heic"
+    },
+    {
+      "name": "heix",
+      "prefix": "0000001c6674797068656978",
+      "mime": "image/heic",
+      "ext": "heic"
+    },
+    {
+      "name": "heif mif1",
+      "prefix": "0000001c667479706d696631",
+      "mime": "image/heif",
+      "ext": "heif"
+    },
+    {
+      "name": "heif msf1",
+      "prefix": "0000001c667479706d736631",
+      "mime": "image/heif",
+      "ext": "heif"
+    },
+    {
+      "name": "avif",
+      "prefix": "0000001c6674797061766966",
+      "mime": "image/avif",
+      "ext": "avif"
+    },
+    {
+      "name": "avis",
+      "prefix": "0000001c6674797061766973",
+      "mime": "image/avif",
+      "ext": "avif"
+    },
+    {
+      "name": "mp4 isom",
+      "prefix": "0000001c6674797069736f6d",
+      "mime": "video/mp4",
+      "ext": "mp4"
+    },
+    {
+      "name": "mp4 mp42",
+      "prefix": "0000001c667479706d703432",
+      "mime": "video/mp4",
+      "ext": "mp4"
+    },
+    {
+      "name": "m4a",
+      "prefix": "0000001c667479704d344120",
+      "mime": "audio/mp4",
+      "ext": "m4a"
+    },
+    {
+      "name": "mp3 id3",
+      "prefix": "494433040000",
+      "mime": "audio/mpeg",
+      "ext": "mp3"
+    },
+    {
+      "name": "mp3 adts",
+      "prefix": "fffb9000",
+      "mime": "audio/mpeg",
+      "ext": "mp3"
+    },
+    {
+      "name": "flac",
+      "prefix": "664c614300",
+      "mime": "audio/flac",
+      "ext": "flac"
+    },
+    {
+      "name": "ogg",
+      "prefix": "4f67675300",
+      "mime": "audio/ogg",
+      "ext": "ogg"
+    },
+    {
+      "name": "pdf",
+      "prefix": "255044462d312e34",
+      "mime": "application/pdf",
+      "ext": "pdf"
+    },
+    {
+      "name": "matroska/webm",
+      "prefix": "1a45dfa3",
+      "mime": "video/webm",
+      "ext": "webm"
+    },
+    {
+      "name": "html",
+      "prefix": "3c68746d6c3e",
+      "mime": "application/octet-stream",
+      "ext": "bin"
+    },
+    {
+      "name": "svg",
+      "prefix": "3c7376672078",
+      "mime": "application/octet-stream",
+      "ext": "bin"
+    },
+    {
+      "name": "plain text",
+      "prefix": "68656c6c6f",
+      "mime": "application/octet-stream",
+      "ext": "bin"
+    },
+    {
+      "name": "empty",
+      "prefix": "",
+      "mime": "application/octet-stream",
+      "ext": "bin"
+    }
+  ]
+}

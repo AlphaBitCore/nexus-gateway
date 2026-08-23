@@ -40,7 +40,7 @@ func modifiedNormalizedFixture() *normalize.NormalizedPayload {
 				Role: normalize.RoleUser,
 				Content: []normalize.ContentBlock{
 					{Type: normalize.ContentText, Text: "orig-1"},
-					{Type: normalize.ContentImageRef},
+					{Type: normalize.ContentMedia},
 				},
 			},
 			{
@@ -141,7 +141,7 @@ func TestApplyModifiedContentToNormalized_RewritesInOrderSkippingNonText(t *test
 		t.Errorf("message[0].content[0]: got %q, want new-1", got.Messages[0].Content[0].Text)
 	}
 	// Non-text block at message[0].content[1] must be untouched.
-	if got.Messages[0].Content[1].Type != normalize.ContentImageRef {
+	if got.Messages[0].Content[1].Type != normalize.ContentMedia {
 		t.Errorf("non-text block was rewritten: %+v", got.Messages[0].Content[1])
 	}
 	if got.Messages[1].Content[0].Text != "new-2" {

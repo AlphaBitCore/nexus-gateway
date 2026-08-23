@@ -20,9 +20,13 @@
 #   --nightly     Broad profile, run MANUALLY / on demand. The full scenario
 #                 sweep + the full-surface AI Gateway smoke (--all-ingress) + the
 #                 full daemon-bound suite. Informational; does not gate.
-#   --phase N     Run only the named phase (smoke|go|ui|ai-judge|protocol)
+#   --phase N     Run only the named phase
+#                 (smoke|go|ui|ai-judge|protocol|sdk-compat|sdk-compat-node).
+#                 The filter selects WITHIN the phases a mode enables, so a
+#                 Python phase needs --full as well:
+#                   bash tests/run-all.sh --full --phase sdk-compat --target stg
 #   --no-preflight  Skip the preflight check (use only when debugging)
-#   --target T    Deployment to run against: local (default) | dev | prod.
+#   --target T    Deployment to run against: local (default) | dev | stg | prod.
 #                 Drives which tests/.env.<target> the loader reads and which
 #                 deployment every phase hits. NON-LOCAL targets run against a
 #                 REAL deployment — scenarios must only create their own data,
@@ -56,8 +60,8 @@ done
 # loopback). Config for every phase comes from that env file — no hardcoded
 # hosts in this script.
 case "$target" in
-  local|dev|prod) ;;
-  *) printf 'run-all.sh: invalid --target %q (allowed: local|dev|prod)\n' "$target" >&2; exit 2 ;;
+  local|dev|stg|prod) ;;
+  *) printf 'run-all.sh: invalid --target %q (allowed: local|dev|stg|prod)\n' "$target" >&2; exit 2 ;;
 esac
 export NEXUS_TEST_TARGET="$target"
 
@@ -215,6 +219,20 @@ if [[ "$run_full_layers" -eq 1 ]]; then
   fi
   _run_phase ai-judge "Phase 4: L3 AI-judge" \
     "cd $_dir/e2e-python && uv run pytest ai_judge/" || overall_status=1
+
+  # Phase 5c/5d: AP-3 OpenAI SDK drop-in compatibility. Both suites need a
+  # deployment with real upstream provider credentials — on target=local every
+  # completion answers 502 PROVIDER_UNAVAILABLE — so run these with
+  # --target stg. The `slow` marker (a multi-hundred-KB context-overflow body)
+  # is deselected here and run on demand.
+  if compgen -G "$_dir/e2e-python/sdk_compat/test_*.py" >/dev/null; then
+    _run_phase sdk-compat "Phase 5c: L2 OpenAI SDK compat (Python)" \
+      "cd $_dir/e2e-python && uv run pytest sdk_compat/ -m 'not slow'" || overall_status=1
+  fi
+  if [[ -f "$_dir/e2e-node/package.json" ]]; then
+    _run_phase sdk-compat-node "Phase 5d: L2 OpenAI SDK compat (Node)" \
+      "cd $_dir/e2e-node && npx vitest run" || overall_status=1
+  fi
 fi
 
 # Phase 5b: build the daemon container image so the daemon-bound scenarios

@@ -25,8 +25,6 @@ import styles from './RoutingRuleCreate.module.css';
 import { HelpIconButton } from "@nexus-gateway/ui-shared";
 import { WizardStepBar, WIZARD_TOTAL_STEPS } from './WizardStepBar';
 import { MatchModelSelector } from './MatchModelSelector';
-import { CreatePolicyModelSelect } from './CreatePolicyModelSelect';
-import { CreatePolicyProviderCheckboxes } from './CreatePolicyProviderCheckboxes';
 import { ProviderModelSelect } from './ProviderModelSelect';
 import { useStrategyOptions } from '../_shared/useStrategyOptions';
 
@@ -43,12 +41,12 @@ export function RoutingRuleCreate() {
 
   // Weighted targets (ab_split "Split %" + loadbalance "Weight") must sum to
   // exactly 100 — see validateSplitWeights.
-  const hasWeightTargets = h.pipelineStage === '1' && h.showWeightColumn;
+  const hasWeightTargets = h.showWeightColumn;
   const weightCheck = validateSplitWeights(h.entries);
   const weightSumInvalid = hasWeightTargets && !weightCheck.valid;
 
   // Smart routing must pin matchConditions to the "auto" literal (backend guard).
-  const smartNeedsAutoMatch = h.pipelineStage === '1' && h.strategyType === 'smart' &&
+  const smartNeedsAutoMatch = h.strategyType === 'smart' &&
     !(h.matchRequestedModelLiterals.length > 0 && h.matchRequestedModelLiterals.every((l) => l === 'auto'));
   // Non-smart rule with empty match conditions matches every request (soft note).
   const matchIsEmpty = h.models.length === 0 && h.matchProviders.length === 0 && h.matchProjectIds.length === 0 &&
@@ -96,7 +94,7 @@ export function RoutingRuleCreate() {
 
           {/* ── Step 0: Basic Info ── */}
           <div className={currentStep !== 0 ? styles.wizardStepHidden : undefined}>
-            {h.pipelineStage === '1' && <RoutingPrimaryWinnerCallout />}
+            {<RoutingPrimaryWinnerCallout />}
 
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>
@@ -110,7 +108,7 @@ export function RoutingRuleCreate() {
               <Input className={styles.textInput} value={h.description} onChange={(e) => h.setDescription(e.target.value)} />
             </div>
 
-            {h.pipelineStage === '1' && (
+            {(
               <div>
                 <div className={styles.labelRow}>
                   <label htmlFor="strategyType" className={styles.fieldLabel}>
@@ -160,50 +158,21 @@ export function RoutingRuleCreate() {
             <Card padding="lg">
               <div className={`${styles.labelRow} ${styles.sectionTitleSpacing}`}>
                 <div className={styles.sectionTitle}>
-                  {h.pipelineStage === '0' && t('pages:routing.policyNarrowing')}
-                  {h.pipelineStage === '1' && h.strategyType === 'single' && t('pages:routing.providerConfiguration')}
-                  {h.pipelineStage === '1' && h.strategyType === 'fallback' && t('pages:routing.fallbackChainTitle')}
-                  {h.pipelineStage === '1' && h.strategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
-                  {h.pipelineStage === '1' && h.strategyType === 'conditional' && t('pages:routing.conditionalRouting')}
-                  {h.pipelineStage === '1' && h.strategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
-                  {h.pipelineStage === '1' && h.strategyType === 'latency' && t('pages:routing.latencyTargets')}
-                  {h.pipelineStage === '1' && h.strategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
+                  {h.strategyType === 'single' && t('pages:routing.providerConfiguration')}
+                  {h.strategyType === 'fallback' && t('pages:routing.fallbackChainTitle')}
+                  {h.strategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
+                  {h.strategyType === 'conditional' && t('pages:routing.conditionalRouting')}
+                  {h.strategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
+                  {h.strategyType === 'latency' && t('pages:routing.latencyTargets')}
+                  {h.strategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
                 </div>
-                <Tooltip content={h.pipelineStage === '0' ? strategyConfigHelpBody.policy : strategyConfigHelpBody[h.strategyType]}>
+                <Tooltip content={strategyConfigHelpBody[h.strategyType]}>
                   <HelpIconButton aria-label={t('pages:routing.ariaHelpRoutingConfig')} />
                 </Tooltip>
               </div>
 
-              {h.pipelineStage === '0' && (
-                <Stack gap="md">
-                  <CreatePolicyModelSelect
-                    selected={h.policyAllowM}
-                    onChange={h.setPolicyAllowM}
-                    providerGroups={h.providerGroups}
-                    label={t('pages:routing.allowModelIds')}
-                  />
-                  <CreatePolicyModelSelect
-                    selected={h.policyDenyM}
-                    onChange={h.setPolicyDenyM}
-                    providerGroups={h.providerGroups}
-                    label={t('pages:routing.denyModelIds')}
-                  />
-                  <CreatePolicyProviderCheckboxes
-                    selected={h.policyAllowP}
-                    onChange={h.setPolicyAllowP}
-                    providerGroups={h.providerGroups}
-                    label={t('pages:routing.allowProviderIds')}
-                  />
-                  <CreatePolicyProviderCheckboxes
-                    selected={h.policyDenyP}
-                    onChange={h.setPolicyDenyP}
-                    providerGroups={h.providerGroups}
-                    label={t('pages:routing.denyProviderIds')}
-                  />
-                </Stack>
-              )}
 
-              {h.pipelineStage === '1' && h.strategyType === 'single' && (
+              {h.strategyType === 'single' && (
                 <div data-testid="routing-single-config">
                   <ProviderModelSelect
                     providerValue={h.singleProvider}
@@ -215,7 +184,7 @@ export function RoutingRuleCreate() {
                 </div>
               )}
 
-              {h.pipelineStage === '1' && h.strategyType === 'conditional' && (
+              {h.strategyType === 'conditional' && (
                 <ConditionalRoutingEditor
                   value={h.conditionalUi}
                   onChange={h.setConditionalUi}
@@ -223,7 +192,7 @@ export function RoutingRuleCreate() {
                 />
               )}
 
-              {h.pipelineStage === '1' && h.strategyType === 'smart' && (
+              {h.strategyType === 'smart' && (
                 <Stack gap="md">
                   <div className={styles.miniLabel}>{t('pages:routing.routerModel')}</div>
                   <ProviderModelSelect
@@ -272,7 +241,7 @@ export function RoutingRuleCreate() {
                 </Stack>
               )}
 
-              {h.pipelineStage === '1' && isTargetListStrategy(h.strategyType) && (
+              {isTargetListStrategy(h.strategyType) && (
                 <>
                   <div className={`${styles.entryRow} ${styles.entryHeaderRow}`}>
                     <span className={styles.flexGrow2}>{t('pages:routing.providerModel')}</span>
@@ -306,7 +275,7 @@ export function RoutingRuleCreate() {
 
           {/* ── Step 2: Fallback Chain ── */}
           <div className={currentStep !== 2 ? styles.wizardStepHidden : undefined}>
-            {h.pipelineStage !== '0' && (
+            {(
               <Card padding="lg">
                 <div className={`${styles.labelRow} ${styles.sectionTitleSpacing}`}>
                   <div className={styles.sectionTitle}>{t('pages:routing.fallbackChainTitle')}</div>

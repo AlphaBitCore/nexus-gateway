@@ -25,7 +25,7 @@ type API interface {
 	// ServesResponses reports whether the resolved target serves the
 	// OpenAI /v1/responses wire end-to-end. override is the per-provider
 	// downgrade-only signal (nil = adapter RequestShapes default).
-	ServesResponses(target provcore.Format, override *bool) bool
+	ServesResponses(target provcore.Format, override *bool, body []byte) bool
 	// IngressChatToCanonical converts the client ingress JSON to
 	// canonical OpenAI chat.completions request JSON.
 	IngressChatToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error)
@@ -62,10 +62,10 @@ type API interface {
 	// EmbeddingsWireShapeForTarget is the embeddings-kind counterpart of
 	// ChatWireShapeForTarget.
 	EmbeddingsWireShapeForTarget(target provcore.Format) typology.WireShape
-	// StripInternalCarriersForTarget removes canonical-only carrier fields
-	// (today: nexus_thinking) that must not egress to an OpenAI-wire target's
-	// verbatim identity codec. The cache-prep primary egress leg calls this
-	// after canonicalizing; the failover leg gets it inside IngressChatToWire.
+	// StripInternalCarriersForTarget removes provider-private carriers that the
+	// target does not consume: Anthropic/Bedrock retain nexus_thinking and
+	// Gemini/Vertex retain thought_signature; all other targets strip both.
+	// The cache-prep primary and IngressChatToWire failover/identity legs call it.
 	StripInternalCarriersForTarget(canon []byte, target provcore.Format) []byte
 	// IngressEmbeddingsToCanonical converts a client embeddings ingress body
 	// to canonical OpenAI /v1/embeddings request JSON (embeddings counterpart
@@ -96,6 +96,22 @@ type API interface {
 	// (validation + identity — the rerank canonical IS the Cohere ingress
 	// shape, since OpenAI ships no rerank API). Cross-format lane only.
 	IngressRerankToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error)
+
+	// ValidateRerankIngressGuards enforces the bounds that protect this
+	// gateway on the passthrough leg, where the ingress body IS the wire and
+	// IngressRerankToCanonical never runs. Chiefly the documents ceiling:
+	// rerank bills per search unit, so an unbounded array multiplies upstream
+	// spend from one request. It deliberately omits the per-element string
+	// rule, which serves the Voyage translation rather than the provider —
+	// Cohere itself serves object-shaped documents.
+	ValidateRerankIngressGuards(ingress provcore.Format, body []byte, ct provcore.CallTarget) error
+
+	// ValidateImagesIngressGuards is the same guard on the image lane: `n`
+	// multiplies per-image spend from one request, and the ceiling was
+	// enforced only where a body had to be translated, so a native OpenAI
+	// image request reached the upstream ungated. It omits the canonical shape
+	// rules for the same reason its rerank sibling does.
+	ValidateImagesIngressGuards(ingress provcore.Format, body []byte, ct provcore.CallTarget) error
 	// IngressRerankToWire converts a canonical (Cohere-shaped) rerank body to
 	// the target wire (rerank counterpart of IngressImagesToWire; validates via
 	// IngressRerankToCanonical first).

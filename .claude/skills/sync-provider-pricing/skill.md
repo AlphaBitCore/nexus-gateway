@@ -1,3 +1,8 @@
+---
+name: sync-provider-pricing
+description: "Scrape each provider's official model and pricing page and reconcile the model catalog. The repo source of truth is tools/db-migrate/model-catalog.json; provider-templates/*.json plus index.json and seed/fixtures/Model.json are generated from it, and seed.ts cache multipliers plus the prod Model table are the remaining surfaces. Trigger keywords: sync pricing, update provider pricing, model catalog drift, new model released, price drift, /sync-provider-pricing."
+---
+
 # sync-provider-pricing
 
 Scrape each provider's **official** model + pricing page and reconcile our model

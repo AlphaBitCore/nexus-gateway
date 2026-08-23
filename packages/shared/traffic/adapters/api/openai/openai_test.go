@@ -799,3 +799,41 @@ func TestExtractRequest_AssistantToolOnlyMessage(t *testing.T) {
 		t.Errorf("ToolCallSegments=%v", nc.ToolCallSegments)
 	}
 }
+
+// The normalize codec's fallback serialises ANY unrecognised content part into
+// a text block so an audit reader can see what the caller sent. The scan side
+// did not follow: it read only parts whose `type` is exactly "text", so a part
+// carrying prose under any other type was persisted and forwarded while the
+// compliance pipeline never saw a character of it.
+//
+// The rule is narrow on purpose — a part must carry a STRING `text` of its
+// own. An image, a file and an audio part all keep their payload one level
+// down, so none of them is pulled in by this.
+func TestExtractRequest_PartWithTextIsScannedWhateverItsType(t *testing.T) {
+	body := []byte(`{"model":"gpt-4","messages":[{"role":"user","content":[
+		{"type":"input_text","text":"contact alice@example.com"},
+		{"type":"text","text":"ordinary prose"},
+		{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},
+		{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}},
+		{"type":"file","file":{"filename":"x.pdf","file_data":"data:application/pdf;base64,AAAA"}}
+	]}]}`)
+
+	nc, err := (&Adapter{}).ExtractRequest(context.Background(), body, "/v1/chat/completions")
+	if err != nil {
+		t.Fatalf("ExtractRequest: %v", err)
+	}
+	joined := strings.Join(nc.Segments, "|")
+	if !strings.Contains(joined, "contact alice@example.com") {
+		t.Errorf("prose under a non-\"text\" type was not scanned; segments=%q", nc.Segments)
+	}
+	if !strings.Contains(joined, "ordinary prose") {
+		t.Errorf("the ordinary text part must still be scanned; segments=%q", nc.Segments)
+	}
+	// The media parts carry no top-level `text`, so widening the rule must not
+	// drag their payloads into the scanned segments.
+	for _, leak := range []string{"AAAA", "x.pdf", "image/png"} {
+		if strings.Contains(joined, leak) {
+			t.Errorf("media payload %q leaked into the scanned segments: %q", leak, nc.Segments)
+		}
+	}
+}

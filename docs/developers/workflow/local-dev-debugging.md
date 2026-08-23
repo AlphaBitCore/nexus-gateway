@@ -98,8 +98,9 @@ variables are delivered via a systemd `EnvironmentFile=` or a Kubernetes Secret.
 ## Test / skill env files
 
 Tests and the `prod-*` skills read their configuration from `tests/.env.<target>`,
-where `target` is one of `local`, `dev`, or `prod`, loaded by
-`tests/lib/loadenv.sh`:
+where `target` is one of `local`, `dev`, `stg`, or `prod`, loaded by
+`tests/lib/loadenv.sh` (and its Python twin `tests/lib/loadenv.py`, which mirrors
+the same semantics — change both together or the two halves of the harness drift):
 
 - **Layering.** The loader parses `.env.<target>.example` first, then
   `.env.<target>` on top, with the same non-overload semantics — a value already
@@ -114,6 +115,20 @@ where `target` is one of `local`, `dev`, or `prod`, loaded by
   production fails fast. With `target=prod`, `NEXUS_CP_URL` must not be a loopback
   address, catching a freshly-copied `.env.prod` left with localhost defaults.
   This keeps a state-mutating test or skill from running against the wrong target.
+  `dev` and `stg` carry no URL guard — they are remote by definition and there is
+  no wrong-direction mistake to catch.
+- **When to use `stg`.** Any suite that needs a real completion — notably
+  `tests/e2e-python/sdk_compat/` and `tests/e2e-node/` — needs a target whose
+  provider credentials actually work. Local qualifies once its `Credential` rows
+  decrypt and the keys are valid; `stg` is the fallback when they do not, or when
+  you need a provider local has no key for. A `502 PROVIDER_UNAVAILABLE` is always
+  an environment problem, never a compat one — diagnose it with the Control Plane
+  credential probe (`POST /api/admin/credentials/{id}/probe`) rather than reading it
+  as a test failure. Two failure modes to know apart: `credentials: decryption
+  failed: cipher: message authentication failed` means `CREDENTIAL_ENCRYPTION_KEY`
+  no longer matches the key those rows were written with (restore the old key, add
+  it to `CREDENTIAL_KEY_MAP`, or re-enter the keys in the Control Plane so they are
+  re-encrypted); a provider `401` means the stored key itself is wrong or revoked.
 - **Adding a new variable.** Add it to the committed `.env.<target>.example` with a
   placeholder or safe default — that file is what documents the variable — and put
   the real value in the gitignored `.env.<target>`. The example-then-user layering

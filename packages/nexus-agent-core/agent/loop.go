@@ -318,7 +318,6 @@ func (l *Loop) runToolUses(ctx context.Context, uses []Block, turnToolCalls *int
 	sem := make(chan struct{}, roundCap)
 	var wg sync.WaitGroup
 	for _, idx := range parallel {
-		idx := idx
 		u := uses[idx]
 		tool, _ := l.Registry.Get(u.ToolName)
 		wg.Add(1)

@@ -14,6 +14,7 @@ import (
 	"github.com/goccy/go-json"
 	"log/slog"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/costing"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -31,13 +32,17 @@ type AdapterBackend struct {
 	ModelID    string
 	Logger     *slog.Logger
 
-	// PriceLookup returns (inputPerMillion, outputPerMillion) USD costs
-	// for the classifier model, sourced from the in-memory Models
-	// snapshot (Hub-pushed; no per-call DB lookup). When nil or returns
-	// (0, 0), cost is left zero and Metadata.CostUsd stays unstamped.
-	// Optional — backends without a Models snapshot wire nil and the
-	// classify path degrades to "ran but cost not recorded" gracefully.
-	PriceLookup func(modelID string) (inputPerM, outputPerM float64)
+	// PriceLookup returns the four per-million USD rates for the classifier
+	// model, sourced from the in-memory Models snapshot (Hub-pushed; no
+	// per-call DB lookup). When nil or ok=false, cost is left zero and
+	// Metadata.CostUsd stays unstamped. Optional — backends without a Models
+	// snapshot wire nil and the classify path degrades to "ran but cost not
+	// recorded" gracefully.
+	//
+	// All four rates, not just input and output: the judge template is fixed,
+	// so the classifier's prompt caches heavily and the cached share must bill
+	// at the cache rate rather than the full input rate.
+	PriceLookup func(modelID string) (costing.Rates, bool)
 }
 
 // Call sends prompt to the configured provider via the matching adapter
@@ -88,17 +93,18 @@ func (b *AdapterBackend) Call(ctx context.Context, prompt string) (*Response, er
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("aiguard provider: status=%d body=%s", resp.StatusCode, string(resp.Body))
 	}
+	// Only the judge content is parsed here. Token counts come from resp.Usage
+	// below — the adapter has already decoded them through the provider's own
+	// usage alias chain, so re-reading `usage` from the body would be a second,
+	// poorer decoder. The struct this replaced held exactly three token fields
+	// and no cache buckets, which is how the classifier came to bill its
+	// heavily-cached judge prompt at the full input rate.
 	var chatResp struct {
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
 	}
 	if err := json.Unmarshal(resp.Body, &chatResp); err != nil {
 		return nil, fmt.Errorf("aiguard provider: parse: %w", err)
@@ -115,15 +121,36 @@ func (b *AdapterBackend) Call(ctx context.Context, prompt string) (*Response, er
 	// traffic_event row. Adapters that strip usage from chat completions
 	// will leave these zero — the sink treats zero as "unknown" and
 	// stores SQL NULL, matching the embedding_cost_usd contract.
-	decoded.Metadata.PromptTokens = chatResp.Usage.PromptTokens
-	decoded.Metadata.CompletionTokens = chatResp.Usage.CompletionTokens
+	decoded.Metadata.PromptTokens = derefInt(resp.Usage.PromptTokens)
+	decoded.Metadata.CompletionTokens = derefInt(resp.Usage.CompletionTokens)
+	decoded.Metadata.CacheReadTokens = derefInt(resp.Usage.CacheReadTokens)
+	decoded.Metadata.CacheCreationTokens = derefInt(resp.Usage.CacheCreationTokens)
+	// Stamp the provider that actually served this call, sourced from the
+	// resolved call target (never inferred from ModelID or a string) — this
+	// is what lets the sink attribute the classifier's cost to a real
+	// provider in the traffic_event rollup instead of leaving it un-routed.
+	decoded.Metadata.ProviderID = target.ProviderID
+	decoded.Metadata.ProviderName = target.ProviderName
 	if b.PriceLookup != nil {
-		inputPerM, outputPerM := b.PriceLookup(b.ModelID)
-		if inputPerM > 0 || outputPerM > 0 {
-			decoded.Metadata.CostUsd =
-				float64(chatResp.Usage.PromptTokens)*inputPerM/1_000_000.0 +
-					float64(chatResp.Usage.CompletionTokens)*outputPerM/1_000_000.0
+		if rates, priced := b.PriceLookup(b.ModelID); priced {
+			decoded.Metadata.CostUsd = rates.EstimateUSD(costing.Tokens{
+				Prompt:        int64(decoded.Metadata.PromptTokens),
+				Completion:    int64(decoded.Metadata.CompletionTokens),
+				CacheRead:     int64(decoded.Metadata.CacheReadTokens),
+				CacheCreation: int64(decoded.Metadata.CacheCreationTokens),
+			})
 		}
 	}
 	return decoded, nil
+}
+
+// derefInt reads a normalizer token count, whose fields are pointers so that
+// "the provider reported zero" stays distinguishable from "the provider
+// reported nothing". Both collapse to 0 here: Metadata carries plain ints, and
+// the sink already treats a zero count as unknown and stores SQL NULL.
+func derefInt(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }

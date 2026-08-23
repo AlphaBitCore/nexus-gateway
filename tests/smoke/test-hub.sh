@@ -31,14 +31,24 @@ printf '== test-hub (Hub admin API) ==\n'
 # Tiny wrapper for service-token-authed Hub calls, kept local to this script
 # so http.sh stays focused on the AI Gateway / Hub public surface.
 # Avoid `local path=` — clobbers PATH in zsh (tied-array). See tests/lib/http.sh.
+#
+# /api/hub is guarded by HUB_CONFIG_TOKEN — see the
+# Group("/api/hub", ServiceAuth(cfg.HubConfigToken)) registration in
+# packages/nexus-hub/internal/handler/routes.go. NEXUS_HUB_SERVICE_TOKEN is the
+# local .env spelling and holds the same dev string, which is why the wrong one
+# passes locally and 403s on any real deployment. Under `set -u` the local name
+# being unset is a hard abort, so a correctly-configured prod killed this script
+# on line one.
+hub_admin_token="${HUB_CONFIG_TOKEN:-${NEXUS_HUB_SERVICE_TOKEN:-}}"
+
 hub_admin_curl() {
   local rel_path="$1"; shift
-  curl -sS -H "Authorization: Bearer $NEXUS_HUB_SERVICE_TOKEN" "$@" "$NEXUS_HUB_URL$rel_path"
+  curl -sS -H "Authorization: Bearer $hub_admin_token" "$@" "$NEXUS_HUB_URL$rel_path"
 }
 hub_admin_code() {
   local rel_path="$1"; shift
   curl -sS -o /dev/null -w '%{http_code}' \
-    -H "Authorization: Bearer $NEXUS_HUB_SERVICE_TOKEN" "$@" "$NEXUS_HUB_URL$rel_path"
+    -H "Authorization: Bearer $hub_admin_token" "$@" "$NEXUS_HUB_URL$rel_path"
 }
 
 # ----------------------------------------------------------------------------
@@ -130,18 +140,21 @@ assert_status 200 "$tokens_code" "enrollment/tokens"
 # Section 3 — Hub itself as a Thing (self-registration, e31-s6).
 # ----------------------------------------------------------------------------
 
-# The Hub registers itself under id="hub-dev" in dev. Verify it appears in
-# the things list AND has a shadow.
-hub_self_status=$(printf '%s' "$things_body" | jq -r '.things[] | select(.id=="hub-dev") | .status // empty')
-if [[ "$hub_self_status" == "online" ]]; then
-  pass "Hub self-thing (hub-dev) status=online"
+# The Hub registers itself under an id carrying the deployment's name —
+# "hub-dev" locally, "hub-prod" in production — so match the prefix, not a
+# literal. Hardcoding the dev id made this check fail on every other
+# deployment while looking like a Hub that had gone offline.
+hub_self_id=$(printf '%s' "$things_body" | jq -r '.things[] | select(.id | startswith("hub-")) | .id' | head -1)
+hub_self_status=$(printf '%s' "$things_body" | jq -r --arg id "$hub_self_id" '.things[] | select(.id==$id) | .status // empty')
+if [[ -n "$hub_self_id" && "$hub_self_status" == "online" ]]; then
+  pass "Hub self-thing ($hub_self_id) status=online"
 else
-  fail "Hub self-thing" "hub-dev not online (status=$hub_self_status)"
+  fail "Hub self-thing" "${hub_self_id:-no hub-* thing registered} not online (status=$hub_self_status)"
 fi
 
 # Pick a non-Hub thing and exercise its shadow endpoint — Hub itself has an
 # empty shadow ({}), which is a less interesting check.
-shadow_target=$(printf '%s' "$things_body" | jq -r '.things[] | select(.id!="hub-dev") | .id' | head -1)
+shadow_target=$(printf '%s' "$things_body" | jq -r --arg id "$hub_self_id" '.things[] | select(.id!=$id) | .id' | head -1)
 if [[ -n "$shadow_target" ]]; then
   shadow_code=$(hub_admin_code "/api/hub/things/$shadow_target/shadow")
   assert_status 200 "$shadow_code" "things/$shadow_target/shadow"

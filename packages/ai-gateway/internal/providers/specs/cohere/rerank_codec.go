@@ -32,7 +32,16 @@ func encodeCohereRerank(canonicalBody []byte, target provcore.CallTarget) (provc
 	if !gjson.ValidBytes(canonicalBody) {
 		return provcore.EncodeResult{}, fmt.Errorf("cohere: invalid rerank body")
 	}
-	if !gjson.GetBytes(canonicalBody, "model").Exists() && target.ProviderModelID != "" {
+	// Same rule as the chat leg: routing's resolved model wins, and the
+	// caller's word survives only when routing named nothing.
+	//
+	// Stamped by hand rather than through the shared helper because a rerank
+	// body arrives as the CALLER wrote it — the canonical rerank shape is
+	// Cohere's own — so it may not be an object at all. Unmarshalling is what
+	// names that as a bad request instead of letting a stamp produce something
+	// Cohere cannot read. The chat leg's body is built by the projection above
+	// and is an object by construction.
+	if target.ProviderModelID != "" {
 		var obj map[string]any
 		if err := json.Unmarshal(canonicalBody, &obj); err != nil {
 			return provcore.EncodeResult{}, err

@@ -1,6 +1,7 @@
 package resource
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -88,12 +89,11 @@ func TestMutating(t *testing.T) {
 }
 
 func TestFindOp(t *testing.T) {
-	op, ok := FindOp("virtual-keys", "setNodeOverride")
-	if ok {
+	if _, ok := FindOp("virtual-keys", "setNodeOverride"); ok {
 		t.Fatal("setNodeOverride is a nodes op, not virtual-keys")
 	}
-	op, ok = FindOp("nodes", "setNodeOverride")
-	if !ok || op.Method != "PUT" || op.Path != "/api/admin/nodes/{id}/overrides/{configKey}" {
+	op, ok := FindOp("nodes", "setNodeOverride")
+	if !ok || op.Method != http.MethodPut || op.Path != "/api/admin/nodes/{id}/overrides/{configKey}" {
 		t.Fatalf("FindOp(nodes,setNodeOverride) = %+v, %v", op, ok)
 	}
 	if len(op.Params) != 2 {

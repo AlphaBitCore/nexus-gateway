@@ -2,204 +2,23 @@
 // existing test files.
 //
 // Named failure modes:
-//   - NarrowingEngine.Apply: stage-0 policy rules applied, non-stage-0 skipped,
-//     non-matching rule skipped, invalid JSON config (warn + continue),
-//     non-policy node type skipped
-//   - NarrowingEngine.Filter: VKContext.AllowedModels filter
-//   - RuleMatchesContext: conds.Projects with matching/non-matching VK projectID;
-//     conds.VirtualKeys glob match and no-match
-//   - singleBranch: target == nil with nil error → uses "lookup returned nil target" note
-//   - enumerateWeighted: empty + zero total weight
-//   - enumerateABSplit: empty + zero total weight
-//   - evalOperators: $not with non-matching sub-expression
+//
+//	  non-matching rule skipped, invalid JSON config (warn + continue),
+//	  non-policy node type skipped
+//	- RuleMatchesContext: conds.Projects with matching/non-matching VK projectID;
+//	  conds.VirtualKeys glob match and no-match
+//	- singleBranch: target == nil with nil error → uses "lookup returned nil target" note
+//	- enumerateWeighted: empty + zero total weight
+//	- enumerateABSplit: empty + zero total weight
+//	- evalOperators: $not with non-matching sub-expression
 package matcher
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
-
-// logWarnCapture captures Warn calls for the Apply logger interface.
-type logWarnCapture struct {
-	warns []string
-}
-
-func (l *logWarnCapture) Warn(msg string, args ...any) {
-	l.warns = append(l.warns, msg)
-}
-
-func matchFnAlwaysTrue(_ store.RoutingRule, _ string, _ *core.RoutingContext) bool  { return true }
-func matchFnAlwaysFalse(_ store.RoutingRule, _ string, _ *core.RoutingContext) bool { return false }
-
-func TestNarrowingEngine_Apply_noRules_emptyState(t *testing.T) {
-	eng := &NarrowingEngine{}
-	logger := &logWarnCapture{}
-	rctx := &core.RoutingContext{}
-	state, trace := eng.Apply(context.Background(), nil, rctx, logger, matchFnAlwaysTrue)
-	if !IsNarrowingEmpty(state) {
-		t.Error("expected empty narrowing state for no rules")
-	}
-	if len(trace) != 0 {
-		t.Errorf("expected 0 trace entries, got %d", len(trace))
-	}
-}
-
-func TestNarrowingEngine_Apply_nonStage0Rules_skipped(t *testing.T) {
-	eng := &NarrowingEngine{}
-	logger := &logWarnCapture{}
-	// Rule at stage 1 — should be skipped by Apply (which only processes stage 0).
-	rules := []store.RoutingRule{
-		{
-			ID:            "r1",
-			PipelineStage: 1,
-			Config:        json.RawMessage(`{"type":"policy","denyModelIds":["gpt-4"]}`),
-		},
-	}
-	rctx := &core.RoutingContext{}
-	state, trace := eng.Apply(context.Background(), rules, rctx, logger, matchFnAlwaysTrue)
-	if !IsNarrowingEmpty(state) {
-		t.Error("stage-1 rule should not affect narrowing state")
-	}
-	if len(trace) != 0 {
-		t.Errorf("expected 0 trace entries for stage-1 rules, got %d", len(trace))
-	}
-}
-
-func TestNarrowingEngine_Apply_nonMatchingRule_skipped(t *testing.T) {
-	eng := &NarrowingEngine{}
-	logger := &logWarnCapture{}
-	rules := []store.RoutingRule{
-		{
-			ID:            "r1",
-			PipelineStage: 0,
-			Config:        json.RawMessage(`{"type":"policy","denyModelIds":["gpt-4"]}`),
-		},
-	}
-	rctx := &core.RoutingContext{}
-	// matchFn always returns false → rule is skipped
-	state, trace := eng.Apply(context.Background(), rules, rctx, logger, matchFnAlwaysFalse)
-	if !IsNarrowingEmpty(state) {
-		t.Error("non-matching rule should not affect narrowing state")
-	}
-	if len(trace) != 0 {
-		t.Errorf("expected 0 trace entries, got %d", len(trace))
-	}
-}
-
-func TestNarrowingEngine_Apply_invalidJSON_warnsAndContinues(t *testing.T) {
-	eng := &NarrowingEngine{}
-	logger := &logWarnCapture{}
-	rules := []store.RoutingRule{
-		{
-			ID:            "r-bad",
-			PipelineStage: 0,
-			Config:        json.RawMessage(`{not valid json`),
-		},
-	}
-	rctx := &core.RoutingContext{}
-	state, trace := eng.Apply(context.Background(), rules, rctx, logger, matchFnAlwaysTrue)
-	// State should remain empty (the bad rule was skipped).
-	if !IsNarrowingEmpty(state) {
-		t.Error("invalid config should be skipped, state should stay empty")
-	}
-	if len(trace) != 0 {
-		t.Errorf("expected 0 trace entries for bad config, got %d", len(trace))
-	}
-	if len(logger.warns) == 0 {
-		t.Error("expected at least one Warn call for invalid config")
-	}
-}
-
-func TestNarrowingEngine_Apply_policyRule_appliesNarrowing(t *testing.T) {
-	eng := &NarrowingEngine{}
-	logger := &logWarnCapture{}
-	rules := []store.RoutingRule{
-		{
-			ID:            "r-policy",
-			PipelineStage: 0,
-			Config:        json.RawMessage(`{"type":"policy","denyModelIds":["gpt-3.5-turbo"]}`),
-		},
-	}
-	rctx := &core.RoutingContext{}
-	state, trace := eng.Apply(context.Background(), rules, rctx, logger, matchFnAlwaysTrue)
-	if IsNarrowingEmpty(state) {
-		t.Error("expected non-empty state after policy rule")
-	}
-	if !IsTargetAllowed(state, "gpt-4", "openai") {
-		t.Error("gpt-4 should be allowed")
-	}
-	if IsTargetAllowed(state, "gpt-3.5-turbo", "openai") {
-		t.Error("gpt-3.5-turbo should be denied")
-	}
-	if len(trace) != 1 {
-		t.Errorf("expected 1 trace entry, got %d", len(trace))
-	}
-}
-
-func TestNarrowingEngine_Apply_nonPolicyNode_skipsNarrowing(t *testing.T) {
-	eng := &NarrowingEngine{}
-	logger := &logWarnCapture{}
-	// Stage 0 but non-policy type — should not affect state.
-	rules := []store.RoutingRule{
-		{
-			ID:            "r-single",
-			PipelineStage: 0,
-			Config:        json.RawMessage(`{"type":"single","providerId":"openai","modelId":"gpt-4"}`),
-		},
-	}
-	rctx := &core.RoutingContext{}
-	state, trace := eng.Apply(context.Background(), rules, rctx, logger, matchFnAlwaysTrue)
-	// Non-policy node: trace appended but state unchanged.
-	if !IsNarrowingEmpty(state) {
-		t.Error("non-policy node should not affect narrowing state")
-	}
-	// Trace entry is still appended (any matching stage-0 rule adds a trace).
-	if len(trace) != 1 {
-		t.Errorf("expected 1 trace entry for matching non-policy node, got %d", len(trace))
-	}
-}
-
-// NarrowingEngine.Filter: VirtualKey.AllowedModels
-
-func TestNarrowingEngine_Filter_virtualKeyAllowedModels(t *testing.T) {
-	eng := &NarrowingEngine{}
-	state := EmptyNarrowingState()
-	targets := []core.RoutingTarget{
-		{ModelID: "m-allowed", ProviderModelID: "gpt-4", ProviderID: "openai"},
-		{ModelID: "m-denied", ProviderModelID: "claude-3", ProviderID: "anthropic"},
-	}
-	rctx := &core.RoutingContext{
-		VirtualKey: &core.VKContext{
-			// AllowedModelRef must specify the ProviderID for the match to work
-			// (ModelMatchesAllowedRefs skips refs whose ProviderID doesn't match).
-			AllowedModels: []store.AllowedModelRef{
-				{ModelID: "m-allowed", ProviderID: "openai"},
-			},
-		},
-	}
-	filtered := eng.Filter(targets, state, rctx)
-	if len(filtered) != 1 || filtered[0].ModelID != "m-allowed" {
-		t.Errorf("expected 1 allowed target, got %v", filtered)
-	}
-}
-
-func TestNarrowingEngine_Filter_noVirtualKey_allowsAll(t *testing.T) {
-	eng := &NarrowingEngine{}
-	state := EmptyNarrowingState()
-	targets := []core.RoutingTarget{
-		{ModelID: "m1", ProviderModelID: "gpt-4", ProviderID: "openai"},
-		{ModelID: "m2", ProviderModelID: "claude-3", ProviderID: "anthropic"},
-	}
-	rctx := &core.RoutingContext{VirtualKey: nil}
-	filtered := eng.Filter(targets, state, rctx)
-	if len(filtered) != 2 {
-		t.Errorf("expected 2 targets without VK filter, got %d", len(filtered))
-	}
-}
 
 // RuleMatchesContext: VirtualKeys glob
 

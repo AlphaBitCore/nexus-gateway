@@ -15,7 +15,7 @@ func TestParseAPIError_BodyFallbacks(t *testing.T) {
 	// Empty body → human status text.
 	e := parseAPIError(http.StatusNotFound, nil)
 	if e.Message != http.StatusText(http.StatusNotFound) {
-		t.Fatalf("empty body message = %q, want %q", e.Message, http.StatusText(404))
+		t.Fatalf("empty body message = %q, want %q", e.Message, http.StatusText(http.StatusNotFound))
 	}
 	// Envelope present but message empty → falls back to raw body text.
 	e2 := parseAPIError(http.StatusBadGateway, []byte(`{"error":{"code":"X"}}`))

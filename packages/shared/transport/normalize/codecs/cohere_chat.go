@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 	"github.com/goccy/go-json"
 	"strings"
 )
@@ -121,18 +122,58 @@ func (n *CohereChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (cor
 		Model:            firstNonEmpty(req.Model, meta.Model),
 		Stream:           req.Stream,
 	}
-	for _, m := range req.Messages {
-		// Cohere's content is string-only on request side per v2 docs.
+	for i, m := range req.Messages {
+		// Cohere v2 content is a string OR an array of parts. Treating it
+		// as string-only dumped the whole array as raw JSON in one text
+		// block, which lost image parts entirely and made ordinary
+		// multi-part text requests unreadable.
 		var s string
-		if err := json.Unmarshal(m.Content, &s); err != nil {
-			s = string(m.Content)
+		if err := json.Unmarshal(m.Content, &s); err == nil {
+			out.Messages = append(out.Messages, core.Message{
+				Role:    roleFromString(m.Role),
+				Content: []core.ContentBlock{{Type: core.ContentText, Text: s}},
+			})
+			continue
+		}
+		base := locator.JoinPath("messages", i) + ".content"
+		var parts []map[string]any
+		if err := json.Unmarshal(m.Content, &parts); err != nil {
+			out.Messages = append(out.Messages, core.Message{
+				Role:    roleFromString(m.Role),
+				Content: []core.ContentBlock{{Type: core.ContentText, Text: payloadSafeRaw(m.Content)}},
+			})
+			continue
+		}
+		blocks := make([]core.ContentBlock, 0, len(parts))
+		for pi, p := range parts {
+			blocks = append(blocks, cohereRequestPart(p, locator.JoinPath(base, pi)))
 		}
 		out.Messages = append(out.Messages, core.Message{
 			Role:    roleFromString(m.Role),
-			Content: []core.ContentBlock{{Type: core.ContentText, Text: s}},
+			Content: blocks,
 		})
 	}
 	return out, nil
+}
+
+// cohereRequestPart projects one Cohere v2 request content part. The shape
+// mirrors OpenAI's — `text` and `image_url` — so the same custody rules
+// apply: a data URI is captured, a web URL is an external reference.
+func cohereRequestPart(part map[string]any, path string) core.ContentBlock {
+	switch t, _ := part["type"].(string); t {
+	case "image_url":
+		iu, ok := part["image_url"].(map[string]any)
+		if !ok {
+			return mediaBlock(&core.MediaRef{Modality: core.ModalityImage, Source: core.MediaAbsent})
+		}
+		urlStr, _ := iu["url"].(string)
+		return mediaBlock(inlineOrExternal(urlStr, locator.JoinSuffix(path, "image_url.url"), core.ModalityImage))
+	case "text", "":
+		s, _ := part["text"].(string)
+		return core.ContentBlock{Type: core.ContentText, Text: s}
+	default:
+		return core.ContentBlock{Type: core.ContentText, Text: payloadSafeJSON(part)}
+	}
 }
 
 type cohereResponse struct {
@@ -164,6 +205,12 @@ type cohereUsage struct {
 		InputTokens  int `json:"input_tokens,omitempty"`
 		OutputTokens int `json:"output_tokens,omitempty"`
 	} `json:"tokens,omitempty"`
+	// CachedTokens is Cohere's prompt-cache read count, a sibling of
+	// billed_units and tokens rather than a member of either. It was not
+	// parsed at all, so every Cohere turn reported zero cache reads and the
+	// Traffic drawer showed no cache benefit on a provider that has one —
+	// observed live at 992 cached of 1431 input tokens on a single call.
+	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
 func (n *CohereChatNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
@@ -207,28 +254,54 @@ func (n *CohereChatNormalizer) normalizeResponse(raw []byte, meta core.Meta) (co
 	return out, nil
 }
 
-// cohereUsageToCanonical projects Cohere's usage.tokens block into the
-// canonical Usage struct. billed_units is a secondary path documented
-// by Cohere for billing-side counts; we prefer `tokens` (parser-side
-// counts) when both are present.
+// cohereUsageToCanonical projects Cohere's usage block into the canonical
+// Usage struct, on the BILLED basis.
+//
+// This reverses an earlier decision to prefer `tokens` as the "true counts".
+// Cohere's own documentation settles which basis is the charge:
+//
+//	"the billed input and output tokens are the tokens that you're actually
+//	 billed for. The reason these values can be different from the overall
+//	 `tokens` value is that there are situations in which Cohere adds tokens
+//	 under the hood, and there are others in which a particular model has been
+//	 trained to do so (i.e. when outputting special tokens). Since these are
+//	 tokens you don't have control over, you are not charged for them."
+//
+// The gap is not academic. One observed call reported billed_units.input 31
+// against tokens.input 1431 — a 46x spread — and chatCostFormula prices
+// PromptTokens directly, so charging on `tokens` billed the caller for
+// tokens Cohere charged nobody for.
+//
+// Reporting moves with cost on purpose. A caller shown 1431 and charged for
+// 31 cannot reconcile their own invoice, and a gateway whose usage and cost
+// disagree is worse than one that reports the smaller honest number.
+//
+// `tokens` remains the fallback: a response that omits billed_units still
+// yields counts rather than nothing.
 func cohereUsageToCanonical(u *cohereUsage) *core.Usage {
 	out := &core.Usage{}
 	var inp, outp int
 	switch {
-	case u.Tokens != nil:
-		inp = u.Tokens.InputTokens
-		outp = u.Tokens.OutputTokens
 	case u.BilledUnits != nil:
 		inp = u.BilledUnits.InputTokens
 		outp = u.BilledUnits.OutputTokens
+	case u.Tokens != nil:
+		inp = u.Tokens.InputTokens
+		outp = u.Tokens.OutputTokens
 	default:
 		return nil
 	}
-	if inp == 0 && outp == 0 {
+	if inp == 0 && outp == 0 && u.CachedTokens == 0 {
 		return nil
 	}
 	setIntPtr(&out.PromptTokens, inp)
 	setIntPtr(&out.CompletionTokens, outp)
+	// CacheReadTokens is a SUBSET marker over PromptTokens, not a deduction
+	// from it — the same convention every other adapter follows (OpenAI's
+	// prompt_tokens_details.cached_tokens, DeepSeek's prompt_cache_hit_tokens).
+	// Subtracting here would make Cohere the one provider whose prompt count
+	// means something different from the rest.
+	setIntPtr(&out.CacheReadTokens, u.CachedTokens)
 	if inp != 0 || outp != 0 {
 		tot := inp + outp
 		out.TotalTokens = &tot

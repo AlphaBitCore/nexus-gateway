@@ -484,14 +484,19 @@ func TestCreateRoutingRule_HappyPath(t *testing.T) {
 	}
 }
 
-// TestCreateRoutingRule_PipelineStageZero pins the explicit-0 stage path
-// (handler defaults to 1 when nil, must accept 0 explicitly).
-func TestCreateRoutingRule_PipelineStageZero(t *testing.T) {
-	h, mock, _, _ := newHandlerWithMockDB(t)
-	now := time.Now().UTC().Truncate(time.Second)
-	mock.ExpectQuery(`INSERT INTO "RoutingRule"`).
-		WithArgs(anyN(10)...).
-		WillReturnRows(pgxmock.NewRows(routingRuleCols).AddRow(makeRRRow("rule-x", "n", now)...))
+// Stage 0 is refused, not stored.
+//
+// This test used to assert the opposite — that an explicit 0 was accepted. That
+// pinned a policy-narrowing pipeline of our own invention which no UI control
+// ever offered, no production rule used, and the gateway no longer evaluates.
+// Accepting it would store a rule that renders in the admin UI and does nothing.
+//
+// Refused rather than coerced to 1: silently rewriting the caller's stage stores
+// a rule they did not ask for, and they find out from behaviour instead of from
+// the response. No INSERT is mocked, so a handler that still wrote the row would
+// fail on an unexpected query rather than pass quietly.
+func TestCreateRoutingRule_PipelineStageZeroIsRefused(t *testing.T) {
+	h, _, _, _ := newHandlerWithMockDB(t)
 
 	body := `{
 		"name":"n","strategyType":"single","config":{"providerId":"p","modelId":"m"},
@@ -501,8 +506,11 @@ func TestCreateRoutingRule_PipelineStageZero(t *testing.T) {
 	if err := h.CreateRoutingRule(c); err != nil {
 		t.Fatalf("CreateRoutingRule: %v", err)
 	}
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d; want 201; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "pipeline_stage_invalid") {
+		t.Errorf("the refusal must carry a code a client can branch on: %s", rec.Body.String())
 	}
 }
 
@@ -704,17 +712,15 @@ func TestUpdateRoutingRule_Happy(t *testing.T) {
 	}
 }
 
-// TestUpdateRoutingRule_PipelineStageZero pins the explicit-0 stage path on
-// update (handler defaults to 1 when *int is non-nil but zero; explicit 0
-// must be respected).
-func TestUpdateRoutingRule_PipelineStageZero(t *testing.T) {
+// Stage 0 is refused on update too — an existing rule cannot be moved to it.
+//
+// Only the SELECT is mocked. A handler that still performed the UPDATE would
+// fail on an unexpected query, so this cannot pass by doing the wrong thing.
+func TestUpdateRoutingRule_PipelineStageZeroIsRefused(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	mock.ExpectQuery(`SELECT .* FROM "RoutingRule" WHERE id = \$1`).
 		WithArgs("rule-1").
-		WillReturnRows(pgxmock.NewRows(routingRuleCols).AddRow(makeRRRow("rule-1", "old", now)...))
-	mock.ExpectQuery(`UPDATE "RoutingRule"`).
-		WithArgs(anyN(12)...).
 		WillReturnRows(pgxmock.NewRows(routingRuleCols).AddRow(makeRRRow("rule-1", "old", now)...))
 
 	c, rec := makeJSONReq(t, http.MethodPut, "/api/admin/routing-rules/rule-1", `{"pipelineStage":0}`)
@@ -723,8 +729,8 @@ func TestUpdateRoutingRule_PipelineStageZero(t *testing.T) {
 	if err := h.UpdateRoutingRule(c); err != nil {
 		t.Fatalf("UpdateRoutingRule: %v", err)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d; want 200", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1076,4 +1082,142 @@ func TestDeleteRoutingRule_NoHubAllowed(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d; want 204", rec.Code)
 	}
+}
+
+// makeRRRowWithStrategy is makeRRRow with the stored strategyType replaced, so
+// a test can present a rule the gateway can no longer dispatch.
+func makeRRRowWithStrategy(id, name, strategyType string, now time.Time) []any {
+	row := makeRRRow(id, name, now)
+	row[3] = strategyType
+	return row
+}
+
+// TestUpdateRoutingRule_APartialPatchCannotReviveAnUndispatchableRule.
+//
+// The upgrade migration disables rules carrying a strategy the gateway cannot
+// dispatch. The rules list has a one-click enable switch that sends
+// `{"enabled":true}` and nothing else — and validation used to run only when
+// the request SUPPLIED a strategyType, so that click sailed through: a green
+// "Rule updated" toast and a rule shown Enabled that the resolver yields on
+// every request forever. The migration's whole purpose, undone by a control
+// that never mentions strategies.
+//
+// The rule is still fixable in the same call, which is the point of validating
+// the EFFECTIVE type rather than refusing the row outright.
+func TestUpdateRoutingRule_APartialPatchCannotReviveAnUndispatchableRule(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	t.Run("enabling it without naming a strategy is refused", func(t *testing.T) {
+		h, mock, hub, _ := newHandlerWithMockDB(t)
+		mock.ExpectQuery(`SELECT .* FROM "RoutingRule" WHERE id = \$1`).
+			WithArgs("rule-1").
+			WillReturnRows(pgxmock.NewRows(routingRuleCols).
+				AddRow(makeRRRowWithStrategy("rule-1", "legacy", "policy", now)...))
+
+		c, rec := makeJSONReq(t, http.MethodPut, "/api/admin/routing-rules/rule-1", `{"enabled":true}`)
+		c.SetParamNames("id")
+		c.SetParamValues("rule-1")
+		if err := h.UpdateRoutingRule(c); err != nil {
+			t.Fatalf("UpdateRoutingRule: %v", err)
+		}
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 — the rule is back in service and the resolver "+
+				"yields it on every request; body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "delete the rule") {
+			t.Errorf("the refusal does not say how to get out of it: %s", rec.Body.String())
+		}
+		if len(hub.invalidateCalls) != 0 {
+			t.Error("a refused update still broadcast to the fleet")
+		}
+	})
+
+	t.Run("naming a dispatchable strategy in the same call fixes it", func(t *testing.T) {
+		h, mock, _, _ := newHandlerWithMockDB(t)
+		mock.ExpectQuery(`SELECT .* FROM "RoutingRule" WHERE id = \$1`).
+			WithArgs("rule-1").
+			WillReturnRows(pgxmock.NewRows(routingRuleCols).
+				AddRow(makeRRRowWithStrategy("rule-1", "legacy", "policy", now)...))
+		mock.ExpectQuery(`UPDATE "RoutingRule"`).
+			WithArgs(anyN(12)...).
+			WillReturnRows(pgxmock.NewRows(routingRuleCols).AddRow(makeRRRow("rule-1", "fixed", now)...))
+
+		c, rec := makeJSONReq(t, http.MethodPut, "/api/admin/routing-rules/rule-1",
+			`{"enabled":true,"strategyType":"single","config":{"type":"single","providerId":"p","modelId":"m"}}`)
+		c.SetParamNames("id")
+		c.SetParamValues("rule-1")
+		if err := h.UpdateRoutingRule(c); err != nil {
+			t.Fatalf("UpdateRoutingRule: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 — an admin re-authoring the rule was blocked by "+
+				"the very check that exists to make them re-author it; body=%s",
+				rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// TestUpdateRoutingRule_TheSmartGuardReadsTheStoredStrategy.
+//
+// A smart rule may only match `requestedModelLiterals: ["auto"]`: unrestricted
+// conditions route non-auto traffic into the router and produce decisions
+// nothing grounded. Create enforces it.
+//
+// Update used to enforce it only when the request ALSO supplied strategyType,
+// so an edit that changed matchConditions alone slipped past — and the rule
+// that came out is one the create path would have refused. An admin widening
+// the conditions on an existing smart rule is exactly the request that takes
+// that route.
+func TestUpdateRoutingRule_TheSmartGuardReadsTheStoredStrategy(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	t.Run("conditions widened on a stored smart rule, no strategyType in the body", func(t *testing.T) {
+		h, mock, _, _ := newHandlerWithMockDB(t)
+		mock.ExpectQuery(`SELECT .* FROM "RoutingRule" WHERE id = \$1`).
+			WithArgs("rule-1").
+			WillReturnRows(pgxmock.NewRows(routingRuleCols).
+				AddRow(makeRRRowWithStrategy("rule-1", "n", "smart", now)...))
+
+		body := `{"matchConditions":{"requestedModelLiterals":["gpt-5"]}}`
+		c, rec := makeJSONReq(t, http.MethodPatch, "/api/admin/routing-rules/rule-1", body)
+		c.SetParamNames("id")
+		c.SetParamValues("rule-1")
+		if err := h.UpdateRoutingRule(c); err != nil {
+			t.Fatalf("UpdateRoutingRule: %v", err)
+		}
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 — the stored rule is smart, so this edit saves it "+
+				"into a state the create path refuses (body=%s)", rec.Code, rec.Body.String())
+		}
+		assertErrorEnvelope(t, rec, "", "smart_rule_match_conditions_unsafe")
+	})
+
+	// The guard reads the EFFECTIVE strategy, so a request that turns a smart
+	// rule into something else is judged as that something else. Without this
+	// the fix would just be "refuse every matchConditions edit on a rule that
+	// was ever smart", which is a different and wrong rule.
+	t.Run("a body that changes the strategy away from smart is judged as the new one", func(t *testing.T) {
+		h, mock, _, _ := newHandlerWithMockDB(t)
+		mock.ExpectQuery(`SELECT .* FROM "RoutingRule" WHERE id = \$1`).
+			WithArgs("rule-1").
+			WillReturnRows(pgxmock.NewRows(routingRuleCols).
+				AddRow(makeRRRowWithStrategy("rule-1", "n", "smart", now)...))
+		mock.ExpectQuery(`UPDATE "RoutingRule"`).
+			WithArgs(anyN(12)...).
+			WillReturnRows(pgxmock.NewRows(routingRuleCols).
+				AddRow(makeRRRowWithStrategy("rule-1", "n", "single", now)...))
+
+		body := `{"strategyType":"single","config":{"type":"single","providerId":"p","modelId":"m"},` +
+			`"matchConditions":{"requestedModelLiterals":["gpt-5"]}}`
+		c, rec := makeJSONReq(t, http.MethodPatch, "/api/admin/routing-rules/rule-1", body)
+		c.SetParamNames("id")
+		c.SetParamValues("rule-1")
+		if err := h.UpdateRoutingRule(c); err != nil {
+			t.Fatalf("UpdateRoutingRule: %v", err)
+		}
+		if rec.Code == http.StatusBadRequest {
+			t.Fatalf("status = 400 — the rule is no longer smart after this update, so the "+
+				"smart guard must not refuse it (body=%s)", rec.Body.String())
+		}
+	})
 }

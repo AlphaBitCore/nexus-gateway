@@ -70,7 +70,11 @@ paths:
         get:
             operationId: complianceAuditDetail
             summary: Get a single compliance audit event
-            description: Returns a single compliance traffic event by its ID, or 404 when no matching event exists.
+            description: |-
+                Returns a single compliance traffic event by its ID, or 404 when no matching event exists.
+                The response is a flat object of event fields; `requestBody` / `responseBody` are present
+                only when the payload sidecar captured them, and the accompanying
+                `request/responseBodyTruncated` flags say whether the stored copy is only a prefix.
             x-nexus-iam-action: iam.ResourceComplianceReport.Action(iam.VerbRead)
             x-nexus-tier: auto
             parameters:
@@ -95,6 +99,34 @@ paths:
                             schema:
                                 type: object
                                 additionalProperties: {}
+                                properties:
+                                    requestBodyTruncated:
+                                        type: boolean
+                                        description: |-
+                                            True when the stored request body is only a prefix — it reached
+                                            payload_capture.maxInlineBodyBytes and no spill backend was configured to take
+                                            it out of band. Always present. The upstream provider received the complete
+                                            body; only this stored copy is short.
+                                        example: false
+                                    responseBodyTruncated:
+                                        type: boolean
+                                        description: |-
+                                            True when the stored response body is only a prefix — same semantics as
+                                            requestBodyTruncated. Most visible on streaming captures, whose stored copy
+                                            ends mid-frame and otherwise reads like a response that was never finished.
+                                        example: true
+                                    requestBodySizeBytes:
+                                        type: integer
+                                        format: int64
+                                        description: |-
+                                            True captured size of the request body in bytes, reported even when the stored
+                                            copy is a prefix. Absent when the payload sidecar recorded no size.
+                                        example: 561168
+                                    responseBodySizeBytes:
+                                        type: integer
+                                        format: int64
+                                        description: True captured size of the response body in bytes — same semantics as requestBodySizeBytes.
+                                        example: 254432
     /api/admin/compliance/exemption-grants:
         get:
             operationId: listGrants

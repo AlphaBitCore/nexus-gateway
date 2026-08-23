@@ -28,7 +28,6 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // copyUpstreamHeaders returns a defensive copy of src so the broker
@@ -79,7 +78,7 @@ func (h *Handler) runViaBroker(
 	endpointType, requestID string,
 	start time.Time,
 	logger *slog.Logger,
-	canonicalMsgs []normcore.Message,
+	canon l2Canonical,
 ) {
 	// Captured by leaderFn so the caller can read the resolved target
 	// + attempt count after Subscribe returns. The broker invokes
@@ -128,7 +127,7 @@ func (h *Handler) runViaBroker(
 			// L2-hit. Only the leader (this MISS) sets it, so exactly one L2
 			// write fires per upstream stream.
 			meta.OnStreamCachePersisted = func(responseBody []byte, usage provcore.Usage) {
-				h.scheduleL2Write(rec, target, canonicalMsgs, responseBody, provcoreUsageToMap(&usage), true, in, logger)
+				h.scheduleL2Write(rec, target, canon, responseBody, provcoreUsageToMap(&usage), true, in, logger)
 			}
 			return result.Stream, meta, nil
 		}
@@ -156,7 +155,7 @@ func (h *Handler) runViaBroker(
 	} else {
 		// hit_inflight: joiner. resolvedTarget was not populated by
 		// leaderFn for this caller; fall back to the routed primary.
-		resolvedTarget = routeResult.Targets[0]
+		resolvedTarget = routeResult.Primary()
 		attempts = 1
 		// Overwrite gateway-side status from miss → hit_inflight.
 		// This joiner did not call upstream so provider-cache is "na".
@@ -188,7 +187,7 @@ func (h *Handler) runViaBroker(
 	}
 	h.setResponseHeaders(w, rec, resolvedTarget, routeResult, start, attempts)
 	w.Header().Set("X-Nexus-Hook", traffic.FormatHookOutcome(aigwHookOutcomeFromResult(reqHookResult)))
-	h.handleNonStreamWithSubscription(r, w, rec, sub, resolvedTarget, coerced, quotaInPrice, quotaOutPrice, quotaDecision, endpointType, requestID, start, logger, canonicalMsgs)
+	h.handleNonStreamWithSubscription(r, w, rec, sub, resolvedTarget, coerced, quotaInPrice, quotaOutPrice, quotaDecision, endpointType, requestID, start, logger, canon)
 }
 
 // directStreamSubscription wraps a [provcore.StreamSession] in the

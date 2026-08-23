@@ -15,7 +15,20 @@ import { useSyncFeedback } from '@/hooks/useSyncFeedback';
 import { usePermission } from '@/hooks/usePermission';
 import { useZodForm } from '@/lib/forms';
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
-import { z } from 'zod';
+import {
+  providerEditSchema,
+  newCredentialSchema,
+  editCredentialSchema,
+  newModelSchema,
+  editModelSchema,
+} from './providerDetailSchemas';
+import type {
+  ProviderEditValues,
+  NewCredentialValues,
+  EditCredentialValues,
+  NewModelValues,
+  EditModelValues,
+} from './providerDetailSchemas';
 import type { Provider, Credential, Model, ProviderHealth, ModelCapabilityJson } from '@/api/types';
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
@@ -83,79 +96,20 @@ export interface ProviderAnalytics {
   }>;
 }
 
-/* ── Zod schemas ──────────────────────────────────────────────────────── */
-
-export const providerEditSchema = z.object({
-  name: z.string().min(1),
-  displayName: z.string().optional().default(''),
-  description: z.string().optional().default(''),
-  baseUrl: z.string().min(1),
-  adapterType: z.string().min(1),
-  region: z.string().optional().default(''),
-  apiVersion: z.string().optional().default(''),
-  enabled: z.boolean(),
-});
-export type ProviderEditValues = z.infer<typeof providerEditSchema>;
-
-export const newCredentialSchema = z.object({
-  credName: z.string().min(1),
-  credApiKey: z.string().min(1),
-  newCredEnabled: z.boolean(),
-  credExpiresAt: z.string().optional().default(''),
-});
-export type NewCredentialValues = z.infer<typeof newCredentialSchema>;
-
-export const editCredentialSchema = z.object({
-  editCredName: z.string().min(1),
-  editCredApiKey: z.string().optional().default(''),
-  editCredEnabled: z.boolean(),
-  editCredExpiresAt: z.string().optional().default(''),
-});
-export type EditCredentialValues = z.infer<typeof editCredentialSchema>;
-
-export const newModelSchema = z.object({
-  modelName: z.string().min(1),
-  modelProviderModelId: z.string().min(1),
-  modelCode: z.string().optional().default(''),
-  modelType: z.string().min(1),
-  modelDescription: z.string().optional().default(''),
-  modelInputPrice: z.string().optional().default(''),
-  modelOutputPrice: z.string().optional().default(''),
-  modelCachedInputReadPrice: z.string().optional().default(''),
-  modelCachedInputWritePrice: z.string().optional().default(''),
-  modelAudioInputPrice: z.string().optional().default(''),
-  modelAudioOutputPrice: z.string().optional().default(''),
-  modelCachedAudioReadPrice: z.string().optional().default(''),
-  modelMaxContext: z.string().optional().default(''),
-  modelMaxOutput: z.string().optional().default(''),
-  modelSelectedFeatures: z.array(z.string()),
-  modelAliases: z.string().optional().default(''),
-});
-export type NewModelValues = z.infer<typeof newModelSchema>;
-
-export const editModelSchema = z.object({
-  editModelCode: z.string().min(1),
-  editModelProviderModelId: z.string().min(1),
-  editModelName: z.string().min(1),
-  editModelDescription: z.string().optional().default(''),
-  editModelInputPrice: z.string().optional().default(''),
-  editModelOutputPrice: z.string().optional().default(''),
-  editModelCachedInputReadPrice: z.string().optional().default(''),
-  editModelCachedInputWritePrice: z.string().optional().default(''),
-  editModelAudioInputPrice: z.string().optional().default(''),
-  editModelAudioOutputPrice: z.string().optional().default(''),
-  editModelCachedAudioReadPrice: z.string().optional().default(''),
-  editModelMaxContext: z.string().optional().default(''),
-  editModelMaxOutput: z.string().optional().default(''),
-  editModelFeatures: z.array(z.string()),
-  editModelType: z.string().min(1),
-  editModelStatus: z.string().min(1),
-  editModelAliases: z.string().optional().default(''),
-  editModelEnabled: z.boolean(),
-  editModelDeprecationDate: z.string().optional().default(''),
-  editModelReplacedBy: z.string().optional().default(''),
-});
-export type EditModelValues = z.infer<typeof editModelSchema>;
+export {
+  providerEditSchema,
+  newCredentialSchema,
+  editCredentialSchema,
+  newModelSchema,
+  editModelSchema,
+} from './providerDetailSchemas';
+export type {
+  ProviderEditValues,
+  NewCredentialValues,
+  EditCredentialValues,
+  NewModelValues,
+  EditModelValues,
+} from './providerDetailSchemas';
 
 /* ── Hook ────────────────────────────────────────────────────────────── */
 
@@ -192,7 +146,12 @@ export function useProviderDetail() {
       modelDescription: '', modelInputPrice: '', modelOutputPrice: '',
       modelCachedInputReadPrice: '', modelCachedInputWritePrice: '',
       modelAudioInputPrice: '', modelAudioOutputPrice: '', modelCachedAudioReadPrice: '',
-      modelMaxContext: '', modelMaxOutput: '', modelSelectedFeatures: [], modelAliases: '',
+      modelMaxContext: '', modelMaxOutput: '', modelSelectedFeatures: [],
+      // Empty on a new model: the server derives them from type and features
+      // rather than the form guessing, so an admin who does not open the
+      // editor still gets a coherent row.
+      modelInputModalities: [], modelOutputModalities: [],
+      modelRequiredModalities: [], modelAliases: '',
     },
   });
 
@@ -205,7 +164,9 @@ export function useProviderDetail() {
       editModelCachedInputReadPrice: '', editModelCachedInputWritePrice: '',
       editModelAudioInputPrice: '', editModelAudioOutputPrice: '', editModelCachedAudioReadPrice: '',
       editModelMaxContext: '', editModelMaxOutput: '',
-      editModelFeatures: [], editModelType: 'chat',
+      editModelFeatures: [], editModelInputModalities: [], editModelOutputModalities: [],
+      editModelRequiredModalities: [],
+      editModelType: 'chat',
       editModelStatus: 'active', editModelAliases: '', editModelEnabled: true,
       editModelDeprecationDate: '', editModelReplacedBy: '',
     },
@@ -406,6 +367,19 @@ export function useProviderDetail() {
       editModelMaxContext: m.maxContextTokens != null ? String(m.maxContextTokens) : '',
       editModelMaxOutput: m.maxOutputTokens != null ? String(m.maxOutputTokens) : '',
       editModelFeatures: Array.isArray(m.features) ? [...m.features] : [],
+      // Rendered as-is. The backend derives these from type+features when a
+      // caller sends none, so what the API returned is already the resolved
+      // value; deriving again here would be a second source of truth.
+      editModelInputModalities: Array.isArray(m.inputModalities) ? [...m.inputModalities] : [],
+      editModelOutputModalities: Array.isArray(m.outputModalities) ? [...m.outputModalities] : [],
+      editModelRequiredModalities: Array.isArray(m.requiredModalities)
+        ? [...m.requiredModalities]
+        : [],
+      // 'audio' stays in this list deliberately, even though it is no longer
+      // offered when CREATING a model. This maps an existing row onto the
+      // edit form, and dropping it would silently rewrite a deprecated-but-
+      // working audio row to chat the first time an admin opened it — an edit
+      // nobody asked for, on a row the routing map still honours.
       editModelType: ['chat', 'embedding', 'image', 'audio', 'tts', 'stt', 'rerank', 'video', 'realtime'].includes(m.type) ? m.type : 'chat',
       editModelStatus: m.status ?? 'active',
       editModelAliases: Array.isArray(m.aliases) ? m.aliases.join(', ') : '',
@@ -438,6 +412,11 @@ export function useProviderDetail() {
         maxContextTokens: v.editModelMaxContext ? Number(v.editModelMaxContext) : undefined,
         maxOutputTokens: v.editModelMaxOutput ? Number(v.editModelMaxOutput) : undefined,
         features: v.editModelFeatures,
+        inputModalities: v.editModelInputModalities,
+        outputModalities: v.editModelOutputModalities,
+        // Sent even when empty: an explicit [] is how an admin CLEARS a
+        // floor, and the API distinguishes that from an absent field.
+        requiredModalities: v.editModelRequiredModalities,
         type: v.editModelType,
         status: v.editModelStatus,
         deprecationDate: v.editModelDeprecationDate || undefined,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
@@ -32,12 +33,12 @@ type VKAuthenticator interface {
 // returns ok=false; the caller must return immediately.
 func requireVK(w http.ResponseWriter, r *http.Request, vkAuth VKAuthenticator) (*vkauth.VKMeta, bool) {
 	if vkAuth == nil {
-		writeJSONError(w, http.StatusInternalServerError, "authenticator not configured")
+		writeJSONError(w, r, http.StatusInternalServerError, "AUTH_NOT_CONFIGURED", "authenticator not configured")
 		return nil, false
 	}
 	vkMeta, err := vkAuth.Authenticate(r.Context(), r)
 	if err != nil {
-		writeJSONError(w, http.StatusUnauthorized, "authentication required: provide a valid virtual key")
+		writeJSONError(w, r, http.StatusUnauthorized, "AUTH_KEY_MISSING", "authentication required: provide a valid virtual key")
 		return nil, false
 	}
 	return vkMeta, true
@@ -74,7 +75,7 @@ func requireVK(w http.ResponseWriter, r *http.Request, vkAuth VKAuthenticator) (
 func ModelsHandler(models ModelLookup, vkAuth VKAuthenticator, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if models == nil {
-			writeJSONError(w, http.StatusInternalServerError, "database not available")
+			writeJSONError(w, r, http.StatusInternalServerError, "CATALOG_UNAVAILABLE", "database not available")
 			return
 		}
 		vkMeta, ok := requireVK(w, r, vkAuth)
@@ -85,7 +86,7 @@ func ModelsHandler(models ModelLookup, vkAuth VKAuthenticator, logger *slog.Logg
 		modelList, err := models.ListEnabledModels(r.Context())
 		if err != nil {
 			logger.Error("list models failed", "error", err)
-			writeJSONError(w, http.StatusInternalServerError, "failed to list models")
+			writeJSONError(w, r, http.StatusInternalServerError, "CATALOG_QUERY_FAILED", "failed to list models")
 			return
 		}
 
@@ -149,14 +150,22 @@ type openAIModelEntry struct {
 	// ModelType + InputModalities + OutputModalities are Nexus extension
 	// fields. OpenAI SDKs ignore unknown JSON fields; Nexus consumers
 	// (Simulator UI, smoke harness, capability planners) rely on these
-	// to dispatch chat vs embedding vs image vs audio without a second
-	// catalog round-trip. ModelType is the canonical Model.type
-	// ("chat" | "embedding" | "image" | "audio"); OutputModalities
-	// mirrors Model.outputModalities (["text"] | ["embedding"] | ["image"]
-	// | ["audio"]).
+	// to dispatch chat vs embedding vs image vs speech without a second
+	// catalog round-trip. ModelType is the canonical Model.type — the
+	// ENDPOINT that serves the model ("chat" | "embedding" | "image" |
+	// "tts" | "stt" | "realtime" | "video" | "rerank"), not the modalities
+	// it handles; those are InputModalities / OutputModalities, and one
+	// scalar cannot answer both questions.
+	//
+	// "audio" appears on rows created before it was deprecated. It is still
+	// routed for tts / stt / realtime through the deprecation window.
 	ModelType        string   `json:"type,omitempty"`
 	InputModalities  []string `json:"inputModalities,omitempty"`
 	OutputModalities []string `json:"outputModalities,omitempty"`
+	// RequiredModalities: see the OpenAI-shaped entry. Both shapes carry it,
+	// because a caller must be able to learn a model's floor whichever
+	// dialect they speak.
+	RequiredModalities []string `json:"requiredModalities,omitempty"`
 	// CapabilityJson is the raw Model.capabilityJson blob (embedding
 	// default/max dimensions, max batch size, etc.) surfaced verbatim so
 	// Nexus consumers (smoke harness, simulator, capability planners) read
@@ -165,8 +174,8 @@ type openAIModelEntry struct {
 	CapabilityJson json.RawMessage `json:"capabilityJson,omitempty"`
 	// Client-selection Nexus extension fields. Aliases lists the alternate
 	// request strings that resolve to this model; Features lists the
-	// capability flags (vision, function_calling, streaming, json_mode,
-	// thinking, …); MaxContextTokens / MaxOutputTokens carry the context
+	// capability flags (function_calling, streaming, json_mode, thinking, …)
+	// plus the derived `vision` compatibility alias — see features_compat.go; MaxContextTokens / MaxOutputTokens carry the context
 	// window (the OpenAI shape has no native field for these); Lifecycle is
 	// ga|preview|deprecated; Pricing is the configured per-token price.
 	Aliases          []string      `json:"aliases,omitempty"`
@@ -189,13 +198,18 @@ type anthropicModelEntry struct {
 	// the Nexus model-classification field lives under ModelType. The
 	// context window already rides on the native max_input_tokens /
 	// max_tokens fields above, so it is not duplicated here.
-	ModelType        string        `json:"modelType,omitempty"`
-	InputModalities  []string      `json:"inputModalities,omitempty"`
-	OutputModalities []string      `json:"outputModalities,omitempty"`
-	Aliases          []string      `json:"aliases,omitempty"`
-	Features         []string      `json:"features,omitempty"`
-	Lifecycle        string        `json:"lifecycle,omitempty"`
-	Pricing          *modelPricing `json:"pricing,omitempty"`
+	ModelType        string   `json:"modelType,omitempty"`
+	InputModalities  []string `json:"inputModalities,omitempty"`
+	OutputModalities []string `json:"outputModalities,omitempty"`
+	// RequiredModalities is what a request MUST carry for this model to serve
+	// it — the floor, where inputModalities is the ceiling. Omitted for the
+	// 198-of-200 models that have none. Without it an SDK caller cannot tell
+	// that gpt-audio-mini is type=chat and still refuses a text-only request.
+	RequiredModalities []string      `json:"requiredModalities,omitempty"`
+	Aliases            []string      `json:"aliases,omitempty"`
+	Features           []string      `json:"features,omitempty"`
+	Lifecycle          string        `json:"lifecycle,omitempty"`
+	Pricing            *modelPricing `json:"pricing,omitempty"`
 }
 
 // buildOpenAIModelEntry maps a catalog row to the OpenAI-shaped entry.
@@ -209,22 +223,23 @@ func buildOpenAIModelEntry(m store.Model, created int64) openAIModelEntry {
 	// bucket. `name`, `owner_display_name` are Nexus extension fields
 	// preserved for the simulator UI; OpenAI SDKs ignore unknown JSON keys.
 	return openAIModelEntry{
-		ID:               m.Code,
-		Name:             m.Name,
-		Object:           "model",
-		Created:          created,
-		OwnedBy:          m.ProviderName,
-		OwnerDisplayName: m.ProviderDisplayName,
-		ModelType:        m.Type,
-		InputModalities:  m.InputModalities,
-		OutputModalities: m.OutputModalities,
-		CapabilityJson:   json.RawMessage(m.CapabilityJson),
-		Aliases:          m.Aliases,
-		Features:         m.Features,
-		MaxContextTokens: m.MaxContextTokens,
-		MaxOutputTokens:  m.MaxOutputTokens,
-		Lifecycle:        m.Lifecycle,
-		Pricing:          buildPricing(m),
+		ID:                 m.Code,
+		Name:               m.Name,
+		Object:             "model",
+		Created:            created,
+		OwnedBy:            m.ProviderName,
+		OwnerDisplayName:   m.ProviderDisplayName,
+		ModelType:          m.Type,
+		InputModalities:    m.InputModalities,
+		OutputModalities:   m.OutputModalities,
+		RequiredModalities: m.RequiredModalities,
+		CapabilityJson:     json.RawMessage(m.CapabilityJson),
+		Aliases:            m.Aliases,
+		Features:           withDerivedFeatures(m.Type, m.Features, m.InputModalities),
+		MaxContextTokens:   m.MaxContextTokens,
+		MaxOutputTokens:    m.MaxOutputTokens,
+		Lifecycle:          m.Lifecycle,
+		Pricing:            buildPricing(m),
 	}
 }
 
@@ -232,19 +247,20 @@ func buildOpenAIModelEntry(m store.Model, created int64) openAIModelEntry {
 // entry. Shared by the list and detail handlers.
 func buildAnthropicModelEntry(m store.Model, createdAt string) anthropicModelEntry {
 	return anthropicModelEntry{
-		Type:             "model",
-		ID:               m.Code,
-		DisplayName:      m.Name,
-		CreatedAt:        createdAt,
-		MaxInputTokens:   m.MaxContextTokens,
-		MaxTokens:        m.MaxOutputTokens,
-		ModelType:        m.Type,
-		InputModalities:  m.InputModalities,
-		OutputModalities: m.OutputModalities,
-		Aliases:          m.Aliases,
-		Features:         m.Features,
-		Lifecycle:        m.Lifecycle,
-		Pricing:          buildPricing(m),
+		Type:               "model",
+		ID:                 m.Code,
+		DisplayName:        m.Name,
+		CreatedAt:          createdAt,
+		MaxInputTokens:     m.MaxContextTokens,
+		MaxTokens:          m.MaxOutputTokens,
+		ModelType:          m.Type,
+		InputModalities:    m.InputModalities,
+		OutputModalities:   m.OutputModalities,
+		RequiredModalities: m.RequiredModalities,
+		Aliases:            m.Aliases,
+		Features:           withDerivedFeatures(m.Type, m.Features, m.InputModalities),
+		Lifecycle:          m.Lifecycle,
+		Pricing:            buildPricing(m),
 	}
 }
 
@@ -274,17 +290,12 @@ func buildAnthropicModelsResponse(rows []store.Model) map[string]any {
 	return resp
 }
 
-// writeJSONError writes a JSON error response with the given status code.
-func writeJSONError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write([]byte(`{"error":{"message":` + jsonString(message) + `}}`))
-}
-
-// jsonString produces a JSON-quoted string (no import needed — simple escaping).
-func jsonString(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
+// writeJSONError answers a catalog failure through the single gateway-error
+// envelope. It used to hand-roll `{"error":{"message":...}}` with neither a
+// type nor a code, which left a caller nothing to branch on and disagreed with
+// every other error this gateway emits.
+func writeJSONError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	envelope.WriteGatewayError(w, r, status, code, message, "")
 }
 
 // ModelDetailHandler handles GET /v1/models/{model}, returning a single
@@ -296,7 +307,7 @@ func jsonString(s string) string {
 func ModelDetailHandler(models ModelLookup, vkAuth VKAuthenticator, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if models == nil {
-			writeJSONError(w, http.StatusInternalServerError, "database not available")
+			writeJSONError(w, r, http.StatusInternalServerError, "CATALOG_UNAVAILABLE", "database not available")
 			return
 		}
 		vkMeta, ok := requireVK(w, r, vkAuth)
@@ -306,20 +317,20 @@ func ModelDetailHandler(models ModelLookup, vkAuth VKAuthenticator, logger *slog
 
 		modelID := r.PathValue("model")
 		if modelID == "" {
-			writeJSONError(w, http.StatusBadRequest, "model id is required")
+			writeJSONError(w, r, http.StatusBadRequest, "MODEL_REQUIRED", "model id is required")
 			return
 		}
 
 		model, err := models.GetModelByCode(r.Context(), modelID)
 		if err != nil {
 			logger.Warn("model not found", "modelId", modelID, "error", err)
-			writeJSONError(w, http.StatusNotFound, "model not found: "+modelID)
+			writeJSONError(w, r, http.StatusNotFound, "MODEL_NOT_FOUND", "model not found: "+modelID)
 			return
 		}
 
 		if len(vkMeta.AllowedModels) > 0 &&
 			!routingcore.ModelMatchesAllowedRefs(model.ID, model.ProviderModelID, model.ProviderID, vkMeta.AllowedModels) {
-			writeJSONError(w, http.StatusNotFound, "model not found: "+modelID)
+			writeJSONError(w, r, http.StatusNotFound, "MODEL_NOT_FOUND", "model not found: "+modelID)
 			return
 		}
 

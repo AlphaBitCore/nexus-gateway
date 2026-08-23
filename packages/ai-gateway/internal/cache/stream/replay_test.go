@@ -122,3 +122,19 @@ func TestReplaySubscription_RawBytesRoundTrip(t *testing.T) {
 		t.Fatalf("RawBytes #2: got %q, want %q", c2.RawBytes, rawB)
 	}
 }
+
+func TestReplaySubscription_ProviderCarriersRoundTrip(t *testing.T) {
+	entry := &cache.StreamEntry{Chunks: []cache.ChunkRecord{{
+		ToolCallDeltas: []provcore.ToolCallDelta{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"x"}`, ThoughtSignature: "sig-gem"}},
+		NexusThinking:  []provcore.NexusThinkingBlock{{Index: 2, Thinking: "step", Signature: "sig-anth"}},
+	}}}
+	sub := NewReplaySubscription(entry, nil)
+	defer func() { _ = sub.Close() }()
+	chunk, err := sub.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.ToolCallDeltas) != 1 || chunk.ToolCallDeltas[0].ThoughtSignature != "sig-gem" || len(chunk.NexusThinking) != 1 || chunk.NexusThinking[0].Signature != "sig-anth" {
+		t.Fatalf("provider carriers lost during replay: %+v %+v", chunk.ToolCallDeltas, chunk.NexusThinking)
+	}
+}

@@ -34,9 +34,15 @@ func (st quotaStage) run() bool {
 	// updated in each path when the response arrives (live:
 	// handleNonStream; HIT paths: their response
 	// replay code). crossFormatRouting detects ingress ≠ target.
-	if s.endpointType == "embeddings" && len(s.routeResult.Targets) > 0 {
-		crossFormatRouting := provcore.Format(s.routeResult.Targets[0].AdapterType) != s.resolved.BodyFormat
+	if s.endpointType == "embeddings" && len(s.routeResult.AllTargets()) > 0 {
+		crossFormatRouting := provcore.Format(s.routeResult.Primary().AdapterType) != s.resolved.BodyFormat
 		s.rec.Metadata = preStampEmbeddingRequestMeta(s.rec.Metadata, s.body, crossFormatRouting)
+	}
+	// Same reason, for chat: the response path has to enforce the json_object
+	// parseability guarantee, and the codecs are stateless. See
+	// json_object_unwrap.go.
+	if s.endpointType != "embeddings" {
+		s.rec.Metadata = preStampJSONObjectMeta(s.rec.Metadata, s.body)
 	}
 	return true
 }

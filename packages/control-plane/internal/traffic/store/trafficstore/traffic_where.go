@@ -96,12 +96,32 @@ func buildTrafficEventWhere(p TrafficEventListParams) (string, []any, int) {
 		argIdx++
 	}
 	if p.EndpointType != "" {
-		where += fmt.Sprintf(` AND a.endpoint_type = $%d`, argIdx)
-		args = append(args, p.EndpointType)
-		argIdx++
+		// EndpointType accepts a comma-separated list so a single Modality filter
+		// can cover the several endpoint kinds that share one modality — the
+		// "chat" modality spans both /v1/chat/completions (endpoint_type=chat)
+		// and /v1/responses (endpoint_type=responses). A single value degrades to
+		// ANY(['chat']), which is equivalent to the previous equality, so the
+		// admin-API contract stays backward compatible. The modality→kinds mapping
+		// is owned by the UI (product semantics); the store just filters the kinds
+		// it is given.
+		kinds := make([]string, 0, 2)
+		for _, k := range strings.Split(p.EndpointType, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				kinds = append(kinds, k)
+			}
+		}
+		if len(kinds) > 0 {
+			where += fmt.Sprintf(` AND a.endpoint_type = ANY($%d)`, argIdx)
+			args = append(args, kinds)
+			argIdx++
+		}
 	}
 	if p.RequestID != "" {
-		where += fmt.Sprintf(` AND a.id = $%d`, argIdx)
+		// Matches trace_id, not the primary key. The value an operator has is
+		// the one the gateway returned in the X-Nexus-Request-Id response
+		// header, which lands on trace_id; traffic_event.id is a minted
+		// per-row key the caller never sees.
+		where += fmt.Sprintf(` AND a.trace_id = $%d`, argIdx)
 		args = append(args, p.RequestID)
 		argIdx++
 	}

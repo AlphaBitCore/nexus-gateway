@@ -140,7 +140,7 @@ func TestHandleNonStreamWithSubscription_StampsReasoningCost(t *testing.T) {
 	target := routingcore.RoutingTarget{ProviderName: "openai", ModelCode: "gpt-4o", AdapterType: "openai"}
 
 	h.handleNonStreamWithSubscription(openAIIngressRequest(t), httptest.NewRecorder(), rec, sub,
-		target, nil, 2.0, reasoningOutPricePM, nil, "chat", "req", time.Now(), slog.Default(), nil)
+		target, nil, 2.0, reasoningOutPricePM, nil, "chat", "req", time.Now(), slog.Default(), l2Canonical{})
 
 	if rec.ReasoningTokens != 100 {
 		t.Fatalf("ReasoningTokens=%d want 100", rec.ReasoningTokens)
@@ -170,7 +170,7 @@ func TestHandleNonStreamWithSubscription_HitInflight_ZeroesReasoningCost(t *test
 	target := routingcore.RoutingTarget{ProviderName: "openai", ModelCode: "gpt-4o", AdapterType: "openai"}
 
 	h.handleNonStreamWithSubscription(openAIIngressRequest(t), httptest.NewRecorder(), rec, sub,
-		target, nil, 2.0, reasoningOutPricePM, nil, "chat", "req", time.Now(), slog.Default(), nil)
+		target, nil, 2.0, reasoningOutPricePM, nil, "chat", "req", time.Now(), slog.Default(), l2Canonical{})
 
 	if rec.EstimatedCostUsd != 0 {
 		t.Errorf("HIT_INFLIGHT EstimatedCostUsd=%v want 0", rec.EstimatedCostUsd)

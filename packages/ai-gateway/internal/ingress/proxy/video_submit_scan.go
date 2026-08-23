@@ -17,6 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store/asyncjob"
 	geminicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/codec"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -94,7 +95,7 @@ func (h *Handler) scanVideoPrompt(w http.ResponseWriter, r *http.Request, rec *a
 	// folds both to block; there is no soft-block client response).
 	if hookcore.ActionFromDecision(result.Decision) == hookcore.ActionBlock && !result.CarriesRedaction() {
 		applyHookRejectionHeaders(w, result)
-		h.writeError(w, rec, http.StatusForbidden, result.Reason)
+		h.writeError(w, rec, http.StatusForbidden, "HOOK_BLOCKED", result.Reason)
 		return true
 	}
 
@@ -106,7 +107,8 @@ func (h *Handler) scanVideoPrompt(w http.ResponseWriter, r *http.Request, rec *a
 		rec.RequestAction = hookcore.ActionBlock
 		rec.HookReasonCode = hookcore.ReasonRedactInflightUnsupported
 		applyHookRejectionHeaders(w, result)
-		h.writeError(w, rec, http.StatusForbidden, "redaction required but not supported for video prompts")
+		h.writeError(w, rec, http.StatusForbidden, decision.ReasonRedactInflightUnsupported,
+			"redaction required but not supported for video prompts")
 		return true
 	}
 

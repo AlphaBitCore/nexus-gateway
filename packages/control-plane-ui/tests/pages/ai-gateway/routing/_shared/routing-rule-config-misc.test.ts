@@ -19,7 +19,9 @@ describe('mapLegacyStrategy', () => {
     expect(mapLegacyStrategy('weighted')).toBe('loadbalance');
     expect(mapLegacyStrategy('fallback')).toBe('fallback');
     expect(mapLegacyStrategy('conditional')).toBe('conditional');
-    expect(mapLegacyStrategy('totally-unknown')).toBe('single');
+    // Null, not 'single': a name the gateway cannot dispatch must not be
+    // silently rewritten into one it can, which destroyed the stored config.
+    expect(mapLegacyStrategy('totally-unknown')).toBeNull();
   });
 });
 

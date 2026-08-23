@@ -195,7 +195,7 @@ func TestCockpit_CapsListsAndClampsLayout(t *testing.T) {
 	g := sampleGateway()
 	// 7 providers → the leaderboard keeps only the top leaderRows by volume.
 	var provs []core.ProviderUsageRow
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		provs = append(provs, core.ProviderUsageRow{
 			Provider: fmt.Sprintf("p%d", i), ProviderLabel: fmt.Sprintf("Prov%d", i), RequestCount: (i + 1) * 10,
 		})
@@ -203,7 +203,7 @@ func TestCockpit_CapsListsAndClampsLayout(t *testing.T) {
 	g.byProvider = &core.ByProviderResult{Data: provs}
 	// 12 traffic rows → the waterfall caps at the row budget.
 	var evs []core.TrafficEvent
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		evs = append(evs, core.TrafficEvent{StatusCode: 200, ModelName: fmt.Sprintf("m%d", i), Timestamp: time.Now()})
 	}
 	g.list = &core.TrafficList{Data: evs}

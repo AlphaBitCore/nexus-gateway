@@ -297,3 +297,84 @@ describe('resolveTemplateName', () => {
     expect(resolveTemplateName(p, templates)).toBeNull();
   });
 });
+
+/**
+ * The field set the diff covers.
+ *
+ * These were added after a measurement: 49 of 30 days' production 400s were
+ * `MODEL_MODALITY_MISMATCH`, which is what a stale modality list looks like
+ * from the caller's side, and the sync that exists to correct catalog drift
+ * compared neither those nor the audio prices. The compile-time classification
+ * in catalog-sync.ts stops the list going stale again; these assert it is
+ * wired to actual behaviour rather than merely exhaustive.
+ */
+describe('diffModelAgainstTemplate — every catalog-owned field', () => {
+  it('offers the modality lists the gateway routes on', () => {
+    const model = makeModel({ inputModalities: ['text'], outputModalities: ['text'] });
+    const tm = makeTemplateModel({
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      requiredModalities: ['audio'],
+    });
+    const fields = diffModelAgainstTemplate(model, tm).map((d) => d.field);
+    expect(fields).toContain('inputModalities');
+    expect(fields).toContain('requiredModalities');
+    // outputModalities already agrees — an agreeing field is not a diff.
+    expect(fields).not.toContain('outputModalities');
+  });
+
+  it('offers the audio prices, which no other surface shows', () => {
+    const model = makeModel({ audioInputPricePerMillion: 40 });
+    const tm = makeTemplateModel({
+      audioInputPricePerMillion: 32,
+      audioOutputPricePerMillion: 64,
+      cachedAudioInputReadPricePerMillion: 0.4,
+    });
+    const diffs = diffModelAgainstTemplate(model, tm);
+    expect(diffs.find((d) => d.field === 'audioInputPricePerMillion')).toEqual({
+      field: 'audioInputPricePerMillion',
+      current: 40,
+      catalog: 32,
+    });
+    expect(diffs.map((d) => d.field)).toEqual(
+      expect.arrayContaining(['audioOutputPricePerMillion', 'cachedAudioInputReadPricePerMillion']),
+    );
+  });
+
+  it('compares modality lists as sets, so a reordering is not a change', () => {
+    const model = makeModel({ inputModalities: ['image', 'text'] });
+    const tm = makeTemplateModel({ inputModalities: ['text', 'image'] });
+    const fields = diffModelAgainstTemplate(model, tm).map((d) => d.field);
+    expect(fields).not.toContain('inputModalities');
+  });
+
+  it('never proposes overwriting the identity fields', () => {
+    const model = makeModel({ code: 'my-own-name', aliases: ['local-alias'] });
+    const tm = makeTemplateModel({ code: 'catalog-name', aliases: ['catalog-alias'] });
+    const fields = diffModelAgainstTemplate(model, tm).map((d) => d.field);
+    expect(fields).not.toContain('code');
+    expect(fields).not.toContain('providerModelId');
+    expect(fields).not.toContain('aliases');
+  });
+});
+
+describe('catalogCreateInput — a row created from the catalog is complete', () => {
+  it('carries modalities and audio prices, not just the chat fields', () => {
+    const input = catalogCreateInput(
+      makeTemplateModel({
+        inputModalities: ['text', 'audio'],
+        outputModalities: ['audio'],
+        requiredModalities: ['audio'],
+        audioInputPricePerMillion: 32,
+        audioOutputPricePerMillion: 64,
+        cachedAudioInputReadPricePerMillion: 0.4,
+      }),
+    );
+    expect(input.inputModalities).toEqual(['text', 'audio']);
+    expect(input.outputModalities).toEqual(['audio']);
+    expect(input.requiredModalities).toEqual(['audio']);
+    expect(input.audioInputPricePerMillion).toBe(32);
+    expect(input.audioOutputPricePerMillion).toBe(64);
+    expect(input.cachedAudioInputReadPricePerMillion).toBe(0.4);
+  });
+});

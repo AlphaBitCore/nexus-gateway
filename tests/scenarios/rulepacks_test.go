@@ -114,7 +114,7 @@ func TestS026_RulePackInstallEffectiveMerge(t *testing.T) {
 	if err := sc.DB.QueryRow(ctx,
 		`SELECT id FROM "HookConfig" WHERE name = 'pii-outbound-scanner' LIMIT 1`,
 	).Scan(&hookID); err != nil || hookID == "" {
-		t.Skipf("no pii-outbound-scanner hook in DB — skipping (err=%v)", err)
+		requireHookSeeded(t, sc.DB, "pii-outbound-scanner", err)
 	}
 
 	installReq, _ := json.Marshal(map[string]any{

@@ -29,7 +29,7 @@ jobs:
           # Need full clone for `git ls-files` + `git show :path` patterns
           # used by check-no-redis-pubsub.mjs / check-hardcoded-agent-paths.mjs.
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -84,6 +84,25 @@ jobs:
       - name: Quirk evidence citations
         run: npm run check:quirk-evidence
 
+      # Media has one representation, and this is what keeps it one. Before it
+      # existed the Control Plane UI and the Agent Dashboard each carried their
+      # own custody table and the two had already drifted — one still listed a
+      # state deleted for having no producer. pre-commit runs it too, but a
+      # hook can be bypassed and a fresh clone may not have one installed;
+      # convergence that only holds on machines with the hook is convergence
+      # nobody can rely on. 0.4 s.
+      - name: Media has one shape
+        run: npm run check:media-single-shape
+
+      # The served locale files are a second copy of the source ones, and only
+      # the sync script keeps them equal. check:i18n compares languages against
+      # each other and never src against public, so adding keys without
+      # re-running the sync shipped a UI rendering raw i18n keys while every
+      # gate stayed green — which is exactly what happened to the media card
+      # copy. 0.2 s.
+      - name: Served locales match their source
+        run: npm run check:locale-sync
+
       # Timezone-handling correctness.
       - name: Timezone correctness
         run: bash scripts/check-timezone-correctness.sh
@@ -124,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -155,7 +174,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -188,17 +207,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           # Pinned (not `stable`) so the govulncheck gate is reproducible:
           # the toolchain's own stdlib is what govulncheck scans, so a
           # floating `stable` that lags behind a patch release makes the
-          # gate flap. 1.26.5 carries the fixes for all standard-library
-          # advisories currently reachable from our code (GO-2026-4918 →
-          # GO-2026-5856, the crypto/tls advisory fixed in 1.26.5). Bump
-          # this when govulncheck flags a newer one.
-          go-version: '1.26.5'
-      - uses: actions/setup-node@v6
+          # gate flap. 1.26.6 carries the fixes for all standard-library
+          # advisories currently reachable from our code: GO-2026-6218
+          # (net/url), GO-2026-6091 (html/template), GO-2026-6090
+          # (crypto/tls), GO-2026-6089 + GO-2026-5026 (net/http),
+          # GO-2026-6088 (encoding/xml), GO-2026-5972 (encoding/asn1) —
+          # all fixed in go1.26.6. Bump this when govulncheck flags a
+          # newer one, and keep it in lockstep with the `toolchain`
+          # directive in go.work and every packages/*/go.mod.
+          go-version: '1.26.6'
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm

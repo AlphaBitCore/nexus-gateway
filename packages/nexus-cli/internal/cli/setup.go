@@ -27,9 +27,9 @@ func newSetupCmd(a *App) *cobra.Command {
 			r := bufio.NewReader(cmd.InOrStdin())
 			ask := func(label, def string) string {
 				if def != "" {
-					fmt.Fprintf(a.ErrOut, "%s [%s]: ", label, def)
+					_, _ = fmt.Fprintf(a.ErrOut, "%s [%s]: ", label, def)
 				} else {
-					fmt.Fprintf(a.ErrOut, "%s: ", label)
+					_, _ = fmt.Fprintf(a.ErrOut, "%s: ", label)
 				}
 				line, _ := r.ReadString('\n')
 				if line = strings.TrimSpace(line); line == "" {
@@ -66,7 +66,7 @@ func newSetupCmd(a *App) *cobra.Command {
 				return fmt.Errorf("%w: Control Plane base URL is required", errUsage)
 			}
 			if err := local.ValidateBaseURL("Control Plane base URL", env.CPBaseURL); err != nil {
-				return fmt.Errorf("%w: %v", errUsage, err)
+				return fmt.Errorf("%w: %w", errUsage, err)
 			}
 			// An empty AI Gateway URL defaults to the Control Plane URL (the prompt
 			// default could not see the just-entered CP URL for a brand-new env).
@@ -74,7 +74,7 @@ func newSetupCmd(a *App) *cobra.Command {
 				env.AIGatewayBaseURL = env.CPBaseURL
 			}
 			if err := local.ValidateBaseURL("AI Gateway base URL", env.AIGatewayBaseURL); err != nil {
-				return fmt.Errorf("%w: %v", errUsage, err)
+				return fmt.Errorf("%w: %w", errUsage, err)
 			}
 
 			a.Cfg.SetEnv(env)

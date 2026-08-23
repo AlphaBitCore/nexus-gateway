@@ -82,7 +82,7 @@ func TestWriteOverloaded_ResponseShape(t *testing.T) {
 		t.Fatalf("Retry-After header missing")
 	}
 	body := rr.Body.String()
-	for _, want := range []string{`"rate_limit_error"`, `"gateway_overloaded"`} {
+	for _, want := range []string{`"rate_limit_error"`, `"GATEWAY_OVERLOADED"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("429 body missing %s: %s", want, body)
 		}

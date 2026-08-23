@@ -6,6 +6,7 @@ import (
 	"github.com/goccy/go-json"
 	"log/slog"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/costing"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -27,6 +28,16 @@ type AdapterDecider struct {
 	resolver provtarget.Resolver
 	adapters AdapterLookup
 	logger   *slog.Logger
+
+	// PriceLookup returns the four per-million USD rates for the router model.
+	// Nil, or ok=false, leaves CostUsd zero — attribution is still recorded.
+	// Mirrors aiguard.AdapterBackend.PriceLookup.
+	//
+	// All four rates, not just input and output: the router prompt is the same
+	// system prompt plus the same model catalog on nearly every call, so the
+	// provider caches almost all of it. Pricing that prompt off the input rate
+	// alone charged the cached majority at full price.
+	PriceLookup func(modelID string) (costing.Rates, bool)
 }
 
 // NewAdapterDecider constructs the production Decider.
@@ -86,5 +97,48 @@ func (a *AdapterDecider) Decide(ctx context.Context, req Request) (Decision, err
 		a.logger.Warn("smart: failed to parse router response", "error", err)
 		return Decision{}, fmt.Errorf("failed to parse router response")
 	}
+
+	// The router call is real vendor spend on the provider that served it.
+	// Recorded even when unpriced: attribution without an amount still lets
+	// the reconciliation report show which vendor was charged.
+	//
+	// Usage comes from resp.Usage — the counts the adapter already decoded and
+	// ran through the provider's own alias chain — not from a local re-parse of
+	// the body. A hand-rolled struct here read only prompt_tokens and
+	// completion_tokens, so the cache buckets the adapter had already recovered
+	// were dropped on the floor and the whole prompt was then billed at the full
+	// input rate. Since the router's prompt is near-identical call to call and
+	// caches at a high rate, that over-estimated router spend in proportion to
+	// routing volume. Missing counts stay zero rather than failing a routing
+	// decision that already succeeded.
+	d.PromptTokens = derefInt(resp.Usage.PromptTokens)
+	d.CompletionTokens = derefInt(resp.Usage.CompletionTokens)
+	d.CacheReadTokens = derefInt(resp.Usage.CacheReadTokens)
+	d.CacheCreationTokens = derefInt(resp.Usage.CacheCreationTokens)
+	// target.ProviderID is the ONLY source for this field: it is the provider
+	// that served the router call, never the provider of the model the router
+	// picked (d.ProviderID).
+	d.ServedProviderID = target.ProviderID
+	if a.PriceLookup != nil {
+		if rates, priced := a.PriceLookup(req.RouterModelID); priced {
+			d.CostUsd = rates.EstimateUSD(costing.Tokens{
+				Prompt:        int64(d.PromptTokens),
+				Completion:    int64(d.CompletionTokens),
+				CacheRead:     int64(d.CacheReadTokens),
+				CacheCreation: int64(d.CacheCreationTokens),
+			})
+		}
+	}
 	return d, nil
+}
+
+// derefInt reads a normalizer token count, whose fields are pointers so that
+// "the provider reported zero" stays distinguishable from "the provider
+// reported nothing". Both collapse to 0 here: Decision carries plain ints, and
+// a router call with no usage block is billed as no tokens either way.
+func derefInt(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }

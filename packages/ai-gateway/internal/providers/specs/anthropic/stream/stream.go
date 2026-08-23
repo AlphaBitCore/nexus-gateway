@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	specerrors "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/errors"
@@ -48,6 +49,9 @@ type anthropicStreamSession struct {
 	// tools maps Anthropic content-block index → tool header for streaming
 	// tool_use argument deltas (input_json_delta).
 	tools map[int]struct{ id, name string }
+	// thinking accumulates each content-block's exact text until its
+	// signature_delta arrives. Unsigned text is never emitted as native thinking.
+	thinking map[int]*thinkingBlock
 	// usage accumulates the token usage Anthropic reports across the stream:
 	// input_tokens on message_start, the final output_tokens on message_delta.
 	// Anthropic carries usage on message_delta (not the terminal message_stop),
@@ -55,6 +59,12 @@ type anthropicStreamSession struct {
 	// so we stamp the accumulated total onto message_stop — without it the OpenAI /
 	// Responses egress drops the trailing usage frame (include_usage shows nothing).
 	usage *provcore.Usage
+}
+
+type thinkingBlock struct {
+	text         bytes.Buffer
+	signature    string
+	redactedData string
 }
 
 func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, error) {
@@ -85,7 +95,25 @@ func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 	case "content_block_start":
 		idx := int(gjson.GetBytes(ev.Data, "index").Int())
 		cb := gjson.GetBytes(ev.Data, "content_block")
-		if cb.Get("type").String() == "tool_use" {
+		switch cb.Get("type").String() {
+		case "thinking":
+			if s.thinking == nil {
+				s.thinking = make(map[int]*thinkingBlock)
+			}
+			block := &thinkingBlock{}
+			block.text.WriteString(cb.Get("thinking").String())
+			block.signature = cb.Get("signature").String()
+			s.thinking[idx] = block
+		case "redacted_thinking":
+			if s.thinking == nil {
+				s.thinking = make(map[int]*thinkingBlock)
+			}
+			data := cb.Get("data").String()
+			s.thinking[idx] = &thinkingBlock{redactedData: data}
+			if data != "" {
+				chunk.NexusThinking = append(chunk.NexusThinking, provcore.NexusThinkingBlock{Index: idx, RedactedData: data})
+			}
+		case "tool_use":
 			if s.tools == nil {
 				s.tools = make(map[int]struct{ id, name string })
 			}
@@ -110,13 +138,26 @@ func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 			// reasoning channel so it stays separate from assistant
 			// content for audit / hooks; native passthrough still
 			// carries the original frame.
-			chunk.ReasoningDelta = delta.Get("thinking").String()
+			thinking := delta.Get("thinking").String()
+			chunk.ReasoningDelta = thinking
+			if block := s.thinking[idx]; block != nil {
+				block.text.WriteString(thinking)
+			}
 		case "signature_delta":
-			// Cryptographic signature for verifying the thinking
-			// block; opaque to canonical consumers. Carry on the
-			// reasoning channel so it isn't lost on Delta-aggregating
-			// consumers (canonical text aggregation skips it).
-			chunk.ReasoningDelta = delta.Get("signature").String()
+			// Cryptographic signature for the exact thinking block; keep it
+			// in the opaque replay carrier and out of reasoning text.
+			if block := s.thinking[idx]; block != nil {
+				signature := delta.Get("signature").String()
+				if signature == "" {
+					signature = block.signature
+				}
+				if signature == "" {
+					break
+				}
+				chunk.NexusThinking = append(chunk.NexusThinking, provcore.NexusThinkingBlock{
+					Index: idx, Thinking: block.text.String(), Signature: signature, RedactedData: block.redactedData,
+				})
+			}
 		case "input_json_delta":
 			if tc, ok := s.tools[idx]; ok {
 				chunk.ToolCallDeltas = append(chunk.ToolCallDeltas, provcore.ToolCallDelta{
@@ -134,6 +175,7 @@ func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 		// outer message_stop is what actually terminates the stream.
 		idx := int(gjson.GetBytes(ev.Data, "index").Int())
 		delete(s.tools, idx)
+		delete(s.thinking, idx)
 	case "ping":
 		// Keep-alive heartbeat; no canonical signal. Native passthrough
 		// already forwards the frame via chunk.RawBytes.
@@ -186,11 +228,15 @@ func mapStopReasonToFinish(r string) string {
 	switch r {
 	case "end_turn", "stop_sequence":
 		return "stop"
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		return "length"
 	case "tool_use":
 		return "tool_calls"
+	case "refusal":
+		return "content_filter"
 	}
+	// pause_turn passes through: it means the turn was suspended and may be
+	// resumed by resubmitting, which no OpenAI finish_reason can say.
 	return r
 }
 
@@ -213,6 +259,20 @@ func MapAnthropicStreamError(etype, emsg string) error {
 	}
 	if emsg == "" {
 		emsg = "anthropic stream error"
+	}
+	// The same message-based reclassifications the unary normaliser applies,
+	// because the parity this function exists to guarantee is parity of the
+	// CANONICAL CODE, not just of the type mapping. Both conditions arrive as
+	// invalid_request_error, and both need a code the executor can act on: a
+	// larger-context sibling for the overflow, a different provider for a
+	// spent account budget.
+	if code == provcore.CodeInvalidRequest {
+		switch {
+		case strings.Contains(emsg, "prompt is too long"):
+			code = provcore.CodeContextOverflow
+		case specutil.IsQuotaExhaustedMessage(emsg):
+			code = provcore.CodeProviderQuotaExhausted
+		}
 	}
 	return &provcore.ProviderError{
 		Status:  status,

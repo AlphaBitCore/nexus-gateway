@@ -2,11 +2,11 @@
 
 package gap_closure_test
 
-// gap1_raw_socket_test.go — E74-S7 T7.2
-//
-// TestGap1RawSocket verifies FR-7.1: a process making a raw TCP dial to
-// api.openai.com:443 (no HTTPS_PROXY, no NE awareness) is intercepted by
-// the pf rdr rule and produces a traffic_event row with source='agent'.
+// TestGap1RawSocket covers the evasion a process attempts by dialling
+// api.openai.com:443 over a raw TCP socket — no HTTPS_PROXY, no NE awareness.
+// The pf rdr rule must still intercept it and produce a traffic_event row with
+// source='agent'; a process that bypasses the proxy must not thereby bypass the
+// audit record.
 //
 // Integration test — requires live pf + daemon + DB.
 // Listed in .coverage-allowlist under category E.
@@ -62,11 +62,15 @@ func TestGap1RawSocket(t *testing.T) {
 		t.Logf("Gap 1: endpoint_type=%q", row.EndpointType)
 	}
 
-	// 8. Assert request_normalized is not NULL (normalizer produced content).
-	if row.RequestNorm == nil {
-		t.Errorf("Gap 1: traffic_event_normalized.request_normalized is NULL; normalizer should have produced content")
+	// 8. Assert the request body was captured. Together with the endpoint_type
+	//    assertion above — endpoint_type is itself a normalizer output — this is
+	//    the end-to-end claim that used to be made against the
+	//    traffic_event_normalized sidecar, which no longer exists: the projection
+	//    is recomputed at view time from exactly this body.
+	if row.RequestBody == nil {
+		t.Errorf("Gap 1: traffic_event_payload.inline_request_body is NULL; the flow should have been captured")
 	} else {
-		t.Logf("Gap 1: request_normalized present (len=%d bytes)", len(*row.RequestNorm))
+		t.Logf("Gap 1: inline_request_body present (len=%d bytes)", len(*row.RequestBody))
 	}
 
 	// 9. Assert Prometheus counter incremented.

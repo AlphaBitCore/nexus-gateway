@@ -1,3 +1,8 @@
+---
+name: build-agent
+description: "Build, sign, notarize, and package the macOS NexusAgent for production. The single source of truth for codesign, pkgbuild, productbuild, xcrun notarytool, wails build, swift build, launch constraints, and the install/uninstall sequence — never improvise these calls directly. NetworkExtension is the sole intercept path. Trigger keywords: build agent, macOS agent build, sign agent, notarize agent, package agent, build-prod.sh, /build-agent."
+---
+
 # build-agent
 
 Build, sign, notarize, and package the macOS NexusAgent for production.

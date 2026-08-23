@@ -11,6 +11,7 @@ export interface RoutingRuleWritePayload {
   config: unknown;
   matchConditions?: unknown;
   priority: number;
+  /** Always 1 (route). The API rejects any other value. */
   pipelineStage?: number;
   /** Use `null` to clear the chain (gateway accepts JSON null). */
   fallbackChain?: Array<{ providerId: string; modelId: string }> | null;
@@ -81,13 +82,6 @@ export interface RoutingSimulateBranch {
   note?: string;
 }
 
-export interface RoutingNarrowingSummary {
-  allowModelIds: string[];
-  denyModelIds: string[];
-  allowProviderIds: string[];
-  denyProviderIds: string[];
-}
-
 export interface RoutingSimulateResponse {
   request: { modelId: string; endpointType: string };
   originalModelId: string;
@@ -99,7 +93,6 @@ export interface RoutingSimulateResponse {
   targets: RoutingSimulateTarget[];
   recoveryTargets: RoutingSimulateTarget[];
   branches?: RoutingSimulateBranch[];
-  narrowingSummary?: RoutingNarrowingSummary;
   warnings?: string[];
 }
 

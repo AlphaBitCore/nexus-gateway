@@ -3,10 +3,12 @@ package codecs
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"strings"
 
+	"github.com/goccy/go-json"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 )
 
 // GeminiGenerateNormalizer handles Google's native generateContent surface
@@ -21,12 +23,16 @@ import (
 //     system message at position [0] so downstream hooks see a uniform list.
 //   - parts[].thought=true marks a text part as reasoning — preserved as
 //     core.ContentReasoning (do not drop thinking).
-//   - parts[].inlineData (base64 image / audio) becomes core.ContentImageRef.
+//   - parts[].inlineData (base64 image / audio / video / pdf) becomes a
+//     media block whose modality comes from the declared mimeType.
 //   - parts[].functionCall / functionResponse become core.ContentToolUse /
 //     core.ContentToolResult.
-//   - response.candidates[].content.parts[] reuses the same decoder so
-//     stream and non-stream produce byte-identical output for the same
-//     wire content.
+//   - response.candidates[].content.parts[] reuses the same decoder, and the
+//     stream fold accumulates blocks in arrival order, coalescing only
+//     CONSECUTIVE text deltas. So the same wire content yields the same
+//     blocks in the same order whether or not it streamed — including the
+//     case where the model speaks, calls a tool, and speaks again, which
+//     per-kind grouping used to fuse into one utterance.
 //   - usageMetadata.{promptTokenCount, candidatesTokenCount,
 //     totalTokenCount, cachedContentTokenCount} → Usage.{Prompt,
 //     Completion, Total, CacheReadTokens}.
@@ -97,11 +103,17 @@ func geminiGenerateFieldSpec(d core.Direction) core.FieldSpec {
 }
 
 type geminiRequest struct {
-	Model             string            `json:"model,omitempty"`
-	Contents          []geminiContent   `json:"contents"`
-	SystemInstruction *geminiContent    `json:"systemInstruction,omitempty"`
-	Tools             []geminiToolGroup `json:"tools,omitempty"`
-	GenerationConfig  *geminiGenConfig  `json:"generationConfig,omitempty"`
+	Model             string          `json:"model,omitempty"`
+	Contents          []geminiContent `json:"contents"`
+	SystemInstruction *geminiContent  `json:"systemInstruction,omitempty"`
+	// Google's JSON mapping accepts the proto field name too, and the
+	// compliance adapter already reads both spellings. Without this a
+	// snake_case caller's system prompt is scanned but never normalised, so
+	// the audit row shows a conversation missing the instruction that shaped
+	// it. Resolved in favour of the camelCase field when both are present.
+	SystemInstructionSnake *geminiContent    `json:"system_instruction,omitempty"`
+	Tools                  []geminiToolGroup `json:"tools,omitempty"`
+	GenerationConfig       *geminiGenConfig  `json:"generationConfig,omitempty"`
 }
 
 type geminiContent struct {
@@ -112,16 +124,35 @@ type geminiContent struct {
 type geminiPart struct {
 	Text             *string                 `json:"text,omitempty"`
 	InlineData       *geminiInlineData       `json:"inlineData,omitempty"`
+	FileData         *geminiFileData         `json:"fileData,omitempty"`
 	FunctionCall     *geminiFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFunctionResponse `json:"functionResponse,omitempty"`
+	// ThoughtSignature is attached to the exact Part-level functionCall by
+	// Gemini and must remain paired with that canonical tool use.
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 	// Thought marks a text part as the model's reasoning (Gemini 2.x+
 	// extended-thinking surface). When true we project to core.ContentReasoning.
 	Thought bool `json:"thought,omitempty"`
+
+	// unmatched holds the original bytes of a part that decoded to nothing
+	// this struct models — executableCode, codeExecutionResult, a future
+	// variant. It exists so an unrecognised part becomes a visible marker
+	// instead of vanishing, which is how gemini media was silently lost.
+	// Only an unmatched part pays for it (see UnmarshalJSON).
+	unmatched json.RawMessage
 }
 
 type geminiInlineData struct {
 	MimeType string `json:"mimeType,omitempty"`
 	Data     string `json:"data,omitempty"`
+}
+
+// geminiFileData is Google's reference to media held in the Files API, and
+// the mechanism its docs require above 100 MB. Without this field such a
+// part matched no case and produced no audit trace at all.
+type geminiFileData struct {
+	MimeType string `json:"mimeType,omitempty"`
+	FileURI  string `json:"fileUri,omitempty"`
 }
 
 type geminiFunctionCall struct {
@@ -152,6 +183,15 @@ type geminiGenConfig struct {
 	TopK            *int     `json:"topK,omitempty"`
 	MaxOutputTokens *int     `json:"maxOutputTokens,omitempty"`
 	StopSequences   []string `json:"stopSequences,omitempty"`
+	// ThinkingConfig is Gemini's BUDGET-plus-VISIBILITY spelling of the
+	// reasoning request. `thinkingBudget` of -1 means DYNAMIC — let the model
+	// decide — which neither other vendor has a value for.
+	ThinkingConfig *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
+}
+
+type geminiThinkingConfig struct {
+	ThinkingBudget  *int  `json:"thinkingBudget,omitempty"`
+	IncludeThoughts *bool `json:"includeThoughts,omitempty"`
 }
 
 func (n *GeminiGenerateNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
@@ -172,15 +212,19 @@ func (n *GeminiGenerateNormalizer) normalizeRequest(raw []byte, meta core.Meta) 
 		Stream:           meta.Stream,
 	}
 
-	if req.SystemInstruction != nil {
-		blocks := geminiPartsToBlocks(req.SystemInstruction.Parts)
+	sysInstruction, sysPath := req.SystemInstruction, "systemInstruction.parts"
+	if sysInstruction == nil && req.SystemInstructionSnake != nil {
+		sysInstruction, sysPath = req.SystemInstructionSnake, "system_instruction.parts"
+	}
+	if sysInstruction != nil {
+		blocks := geminiPartsToBlocks(sysInstruction.Parts, sysPath)
 		if len(blocks) > 0 {
 			out.Messages = append(out.Messages, core.Message{Role: core.RoleSystem, Content: blocks})
 		}
 	}
 
-	for _, c := range req.Contents {
-		blocks := geminiPartsToBlocks(c.Parts)
+	for i, c := range req.Contents {
+		blocks := geminiPartsToBlocks(c.Parts, locator.JoinPath("contents", i)+".parts")
 		out.Messages = append(out.Messages, core.Message{Role: geminiRoleToCanonical(c.Role), Content: blocks})
 	}
 
@@ -209,8 +253,18 @@ func (n *GeminiGenerateNormalizer) normalizeRequest(raw []byte, meta core.Meta) 
 			MaxTokens:   g.MaxOutputTokens,
 			Stop:        g.StopSequences,
 		}
+		// Recorded as the caller wrote it, -1 included: a budget of -1 is
+		// Gemini saying "you decide", which is a real expression and not an
+		// absent one. Translating it for a wire that has no such value is that
+		// wire's codec's problem, not this decoder's.
+		if tc := g.ThinkingConfig; tc != nil {
+			r := &core.Reasoning{BudgetTokens: tc.ThinkingBudget, IncludeThoughts: tc.IncludeThoughts}
+			if r.Asked() {
+				params.Reasoning = r
+			}
+		}
 		if params.Temperature != nil || params.TopP != nil || params.TopK != nil ||
-			params.MaxTokens != nil || len(params.Stop) > 0 {
+			params.MaxTokens != nil || len(params.Stop) > 0 || params.Reasoning.Asked() {
 			out.Params = params
 		}
 	}
@@ -234,49 +288,6 @@ func geminiRoleToCanonical(r string) core.Role {
 	default:
 		return core.Role(r)
 	}
-}
-
-// geminiPartsToBlocks projects a Gemini parts[] slice into canonical
-// ContentBlocks. Parts may carry text, inlineData (binary), functionCall,
-// or functionResponse — each maps to a distinct ContentType.
-func geminiPartsToBlocks(parts []geminiPart) []core.ContentBlock {
-	out := make([]core.ContentBlock, 0, len(parts))
-	for _, p := range parts {
-		switch {
-		case p.FunctionCall != nil:
-			tu := &core.ToolUse{
-				CallID: p.FunctionCall.ID,
-				Name:   p.FunctionCall.Name,
-				Input:  p.FunctionCall.Args,
-			}
-			out = append(out, core.ContentBlock{Type: core.ContentToolUse, ToolUse: tu})
-		case p.FunctionResponse != nil:
-			tr := &core.ToolResult{CallID: p.FunctionResponse.ID}
-			// Gemini's functionResponse.response is documented as a struct.
-			// We project it to a string by serialising — downstream hooks
-			// see the same text regardless of provider.
-			if len(p.FunctionResponse.Response) > 0 {
-				if b, err := json.Marshal(p.FunctionResponse.Response); err == nil {
-					tr.Output = string(b)
-				}
-			}
-			out = append(out, core.ContentBlock{Type: core.ContentToolResult, ToolResult: tr})
-		case p.InlineData != nil:
-			ref := &core.BinaryRef{
-				ContentType: p.InlineData.MimeType,
-				Size:        int64(len(p.InlineData.Data)),
-				SHA256:      stableHashHint(p.InlineData.Data),
-			}
-			out = append(out, core.ContentBlock{Type: core.ContentImageRef, ImageRef: ref})
-		case p.Text != nil:
-			ct := core.ContentText
-			if p.Thought {
-				ct = core.ContentReasoning
-			}
-			out = append(out, core.ContentBlock{Type: ct, Text: *p.Text})
-		}
-	}
-	return out
 }
 
 // Non-streaming response
@@ -341,7 +352,7 @@ func (n *GeminiGenerateNormalizer) normalizeResponse(raw []byte, meta core.Meta)
 	if !hasContent && resp.UsageMetadata == nil {
 		return zeroGemini(meta), fmt.Errorf("gemini-generate: candidates carry no content and usageMetadata absent: %w", core.ErrUnsupported)
 	}
-	for _, c := range resp.Candidates {
+	for ci, c := range resp.Candidates {
 		if c.Content == nil {
 			continue
 		}
@@ -360,7 +371,7 @@ func (n *GeminiGenerateNormalizer) normalizeResponse(raw []byte, meta core.Meta)
 		}
 		msg := core.Message{
 			Role:         role,
-			Content:      geminiPartsToBlocks(c.Content.Parts),
+			Content:      geminiPartsToBlocks(c.Content.Parts, locator.JoinPath("candidates", ci)+".content.parts"),
 			FinishReason: c.FinishReason,
 		}
 		out.Messages = append(out.Messages, msg)

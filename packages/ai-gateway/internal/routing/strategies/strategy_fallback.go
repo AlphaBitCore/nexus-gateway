@@ -8,18 +8,20 @@ import (
 )
 
 // FallbackStrategy concatenates targets from all child nodes in order.
-type FallbackStrategy struct{}
+type FallbackStrategy struct{ lookup core.TargetLookup }
 
 func (s *FallbackStrategy) Type() string { return "fallback" }
 
-func (s *FallbackStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry, depth int, recurse RecurseFunc) ([]core.RoutingTarget, error) {
+func (s *FallbackStrategy) Evaluate(ctx context.Context, node core.StrategyNode, _ *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 	var all []core.RoutingTarget
 	for _, child := range node.Targets {
-		targets, err := recurse(ctx, child, rctx, trace, depth)
+		target, err := resolveLeaf(ctx, child, s.lookup, "fallback", trace)
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, targets...)
+		if target != nil {
+			all = append(all, *target)
+		}
 	}
 	*trace = append(*trace, core.TraceEntry{
 		StrategyType: "fallback",

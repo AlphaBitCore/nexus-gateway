@@ -12,6 +12,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -19,9 +20,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// errUnsupportedField surfaces hard-rule errors as a structured
-// *provcore.ProviderError so the client receives a 400 with a stable
-// type string instead of a free-form fmt.Errorf message.
+// Surfaces hard-rule errors with a stable type string rather than a free-form
+// fmt.Errorf message.
 func errUnsupportedField(field string) error {
 	return &provcore.ProviderError{
 		Status:  http.StatusBadRequest,
@@ -134,23 +134,20 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 			params := fn.Get("parameters")
 			var paramsObj any
 			if params.Exists() && params.Raw != "" {
-				// A declaration is fixed for the life of a conversation and
-				// arrives again on every turn, so the prepared schema is
-				// reused across turns rather than rebuilt per request. The
-				// result is shared with concurrent encoders and is read-only.
+				// Prepared once and shared read-only with concurrent
+				// encoders: a declaration is fixed for the life of a
+				// conversation and re-arrives every turn.
 				//
-				// Tool parameters take the lenient reference mode: an
-				// un-shipped $ref target degrades to a reported open object
-				// instead of failing the request (rationale + the observed
-				// prod 400 live on inlineSchemaRefs). Dangling `#/$defs/...`
-				// still fails loudly; responseSchema below stays strict —
+				// Tool parameters take the LENIENT reference mode — an
+				// un-shipped $ref degrades to an open object (rationale and
+				// the observed prod 400 live on inlineSchemaRefs).
+				// responseSchema below stays strict:
 				// there the schema is the caller's output contract.
 				prepared, err := prepareGeminiSchema([]byte(params.Raw), true)
 				switch {
 				case isSchemaRefFailure(err):
-					// A reference that cannot be folded in leaves the argument
-					// as an empty schema, and the function silently loses it.
-					// Fail where the caller can see it instead.
+					// An unfoldable reference leaves the argument an empty
+					// schema and the function silently loses it.
 					schemaErr = fmt.Errorf("tool %q parameters: %w", name, err)
 					return false
 				case err == nil && prepared.object:
@@ -170,9 +167,8 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 				}
 			}
 			if paramsObj == nil {
-				// Either the caller sent no parameters, or nothing in them
-				// survived into a shape the proto can express. Gemini still
-				// requires a Schema here, so declare the empty object.
+				// Gemini requires a Schema here even when nothing in the
+				// caller's parameters survived into a proto-expressible shape.
 				paramsObj = map[string]any{"type": "object"}
 			}
 			decls = append(decls, map[string]any{
@@ -242,16 +238,12 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 				if !schemaNode.Exists() {
 					schemaNode = js
 				}
-				// Same pipeline, and the same reuse, as a tool declaration:
-				// the accepted key set is identical on both paths, so a schema
-				// sent to either arrives already prepared if the other has
-				// seen it. The result is read-only.
+				// Same pipeline and cache as a tool declaration; read-only.
 				prepared, err := prepareGeminiSchema([]byte(schemaNode.Raw), false)
 				if isSchemaRefFailure(err) {
-					// An unresolvable reference sanitizes to {}, which fails
-					// the object gate below and leaves responseMimeType asking
-					// for JSON with no schema to hold it to — the caller's
-					// contract gone, with a 200 and no signal.
+					// An unresolvable reference sanitizes to {}, leaving
+					// responseMimeType asking for JSON with no schema to hold
+					// it to — the caller's contract gone, with a 200.
 					return provcore.EncodeResult{}, fmt.Errorf("response_format json_schema: %w", err)
 				}
 				if err == nil && prepared.object {
@@ -262,12 +254,9 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 		}
 	}
 
-	// nexus.ext.gemini.thinking_config passthrough: clients targeting a
-	// Gemini upstream opt in to thinking summary by placing the Gemini-native
-	// shape under nexus.ext.gemini.thinking_config. We forward it verbatim into
-	// generationConfig.thinkingConfig, merging with any existing generationConfig
-	// keys (temperature / responseMimeType / etc.) already populated. Gemini-side
-	// validation of inner subkeys is upstream's job.
+	// nexus.ext.gemini.thinking_config is forwarded verbatim into
+	// generationConfig.thinkingConfig, merged with keys already populated.
+	// Validating the inner subkeys is upstream's job.
 	if ext := canonicalext.Get(canonicalBody, "gemini", "thinking_config"); ext.Exists() {
 		if ext.IsObject() {
 			var thinkingCfg map[string]any
@@ -287,6 +276,24 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 			canonicalext.WarnOnce("gemini", "thinking_config_not_object")
 			provdispatch.EmitReasoningPassthrough("gemini", "skipped_malformed")
 		}
+	} else if cfg := thinkingConfigFromCanonicalEffort(canonicalBody); cfg != nil {
+		// Cross-shape: the caller asked to reason in the CANONICAL spelling —
+		// `reasoning_effort`, a LEVEL — and this wire takes a BUDGET. Without
+		// this, an OpenAI-ingress caller routed to a Gemini model has the
+		// intent dropped and the only sign is an answer arriving without the
+		// reasoning they asked for, which is the same failure the ingress leg
+		// was fixed for.
+		//
+		// Only the native ext path is skipped, never overridden: a caller who
+		// spoke Gemini sent the exact config they wanted.
+		gen, _ := out["generationConfig"].(map[string]any)
+		if gen == nil {
+			gen = map[string]any{}
+		}
+		gen["thinkingConfig"] = cfg
+		out["generationConfig"] = gen
+		rewrites = append(rewrites, "reasoning_effort→thinkingConfig.thinkingBudget=-1")
+		provdispatch.EmitReasoningPassthrough("gemini", "translated")
 	}
 
 	canonicalext.ScanUnsupported("gemini", canonicalBody, geminiSupportedRequestFields)
@@ -359,14 +366,9 @@ func splitMessages(messages gjson.Result) (string, []map[string]any, error) {
 			if fnName == "" {
 				fnName = "unknown"
 			}
-			// Gemini's functionResponse.response is documented as an
-			// object (struct), not a free-form value. Canonical OpenAI
-			// tool messages carry content as a string, so we probe:
-			//   1. JSON object literal → forward as-is (round-trips a
-			//      Gemini ingress request without restructuring).
-			//   2. anything else (plain string, JSON array, scalar) →
-			//      wrap as {"result": <value>} so the upstream schema
-			//      is satisfied.
+			// functionResponse.response must be an object; canonical tool
+			// messages carry a string. A JSON object literal forwards
+			// as-is, anything else is wrapped as {"result": <value>}.
 			raw := msg.Get("content")
 			var resp any = map[string]any{"result": StringifyContent(raw)}
 			switch {
@@ -394,11 +396,9 @@ func splitMessages(messages gjson.Result) (string, []map[string]any, error) {
 				"name":     fnName,
 				"response": resp,
 			}
-			// Gemini 3 multi-tool turns require the call id to be
-			// echoed back on functionResponse so the model can match
-			// the response to its earlier functionCall. Older models
-			// do not emit/accept id; only forward when canonical
-			// supplied one (we never inject a synthesized id here).
+			// Gemini 3 multi-tool turns need the call id echoed back;
+			// older models reject the field, so forward only what
+			// canonical supplied and never synthesize one here.
 			if tid != "" {
 				fr["id"] = tid
 			}
@@ -431,6 +431,15 @@ func splitMessages(messages gjson.Result) (string, []map[string]any, error) {
 	return system, out, splitErr
 }
 
+// The canonical input_audio.format is a bare format name, not a media type.
+// The two admitted values are the two OpenAI defines; anything else is refused
+// rather than guessed, since a wrong mimeType reaches the model as an
+// unreadable attachment and comes back as a confident answer about nothing.
+var geminiAudioMime = map[string]string{
+	"wav": "audio/wav",
+	"mp3": "audio/mp3",
+}
+
 func openAIMessageToGeminiParts(msg gjson.Result) ([]map[string]any, error) {
 	var parts []map[string]any
 	content := msg.Get("content")
@@ -449,19 +458,23 @@ func openAIMessageToGeminiParts(msg gjson.Result) ([]map[string]any, error) {
 				"name": fn.Get("name").String(),
 				"args": argsObj,
 			}
-			// Only Gemini 3+ accepts functionCall.id on the request body.
-			// Older models (1.5 / 2.x) reject the field as unknown, so
-			// forward it only when canonical actually supplied one. The
-			// reverse direction (DecodeResponse / stream) still
-			// synthesizes an id when Gemini 3+ omits it on response, so
-			// OpenAI clients always see a stable tool_call_id.
+			// Only Gemini 3+ accepts functionCall.id on the request body;
+			// 1.5 / 2.x reject it as unknown. DecodeResponse still
+			// synthesizes an id when Gemini omits it, so OpenAI clients
+			// always see a stable tool_call_id.
 			// Doc: https://ai.google.dev/gemini-api/docs/function-calling
 			if id := call.Get("id").String(); id != "" {
 				fc["id"] = id
 			}
-			parts = append(parts, map[string]any{
+			part := map[string]any{
 				"functionCall": fc,
-			})
+			}
+			// Gemini's provider-native signature belongs to the exact Part that
+			// carries this functionCall. Replay only the canonical carrier value.
+			if sig := fn.Get("thought_signature").String(); sig != "" {
+				part["thoughtSignature"] = sig
+			}
+			parts = append(parts, part)
 			return true
 		})
 	}
@@ -491,7 +504,7 @@ func openAIMessageToGeminiParts(msg gjson.Result) ([]map[string]any, error) {
 					return false
 				}
 				if strings.HasPrefix(url, "data:") {
-					media, b64, ok := ParseDataURL(url)
+					media, b64, ok := specutil.ParseDataURL(url)
 					if !ok {
 						partsErr = errUnsupportedField("image_url.url(data:invalid)")
 						return false
@@ -505,11 +518,76 @@ func openAIMessageToGeminiParts(msg gjson.Result) ([]map[string]any, error) {
 				} else {
 					parts = append(parts, map[string]any{
 						"fileData": map[string]any{
-							"mimeType": GuessMimeFromURL(url),
+							"mimeType": GuessMimeFromURL(url, "image/jpeg"),
 							"fileUri":  url,
 						},
 					})
 				}
+			case "video_url":
+				// Video rides the same two part shapes as an image. Lifted into
+				// content.go beside the other attachment helpers.
+				part, perr := videoPart(part.Get("video_url.url").String())
+				if perr != nil {
+					partsErr = perr
+					return false
+				}
+				parts = append(parts, part)
+			case "file":
+				// Gemini carries a document with the same two part shapes it
+				// uses for an image: inlineData for bytes, fileData for a URI.
+				file := part.Get("file")
+				switch {
+				case strings.HasPrefix(file.Get("file_data").String(), "data:"):
+					media, b64, ok := specutil.ParseDataURL(file.Get("file_data").String())
+					if !ok {
+						partsErr = errUnsupportedField("file.file_data(data:invalid)")
+						return false
+					}
+					parts = append(parts, map[string]any{
+						"inlineData": map[string]any{"mimeType": media, "data": b64},
+					})
+				case file.Get("file_url").Exists():
+					uri := file.Get("file_url").String()
+					parts = append(parts, map[string]any{
+						"fileData": map[string]any{"mimeType": GuessMimeFromURL(uri, "application/octet-stream"), "fileUri": uri},
+					})
+				default:
+					// A bare file_id is an OpenAI-side handle Gemini cannot
+					// resolve; an empty part would ask the model about a
+					// document it never got.
+					partsErr = errUnsupportedField("file(file_id is not resolvable on the Gemini wire)")
+					return false
+				}
+			case "input_audio":
+				// Audio rides the same inlineData part as images and
+				// documents. Measured against
+				// generativelanguage.googleapis.com: every Gemini chat model
+				// in the catalog transcribed the fixture WAV. The canonical
+				// part carries raw base64 plus a format name, not a data:
+				// URL, so the media type is assembled from the format.
+				audio := part.Get("input_audio")
+				data := audio.Get("data").String()
+				if data == "" {
+					partsErr = errUnsupportedField("input_audio.data")
+					return false
+				}
+				mime, ok := geminiAudioMime[strings.ToLower(audio.Get("format").String())]
+				if !ok {
+					partsErr = errUnsupportedField("input_audio.format=" +
+						audio.Get("format").String())
+					return false
+				}
+				parts = append(parts, map[string]any{
+					"inlineData": map[string]any{"mimeType": mime, "data": data},
+				})
+			default:
+				// A part kind with no case above is REFUSED, never dropped:
+				// this branch fires only when the content policy's admitted
+				// set and this switch have drifted apart, and a dropped part
+				// is indistinguishable from a model ignoring the attachment.
+				partsErr = errUnsupportedField("content part '" +
+					part.Get("type").String() + "' has no Gemini equivalent")
+				return false
 			}
 			return true
 		})
@@ -523,21 +601,14 @@ func openAIMessageToGeminiParts(msg gjson.Result) ([]map[string]any, error) {
 	return parts, nil
 }
 
-// DecodeResponse converts a Gemini generateContent response to canonical
-// OpenAI chat-completion shape. Delegates the block-walk to
-// GeminiGenerateNormalizer + ProjectToOpenAIChatCompletion — the same
-// parser the audit / compliance / agent pipeline uses. The codec retains
-// Gemini-specific wire-metadata stamping:
-//   - id ← responseId, model ← modelVersion (Gemini-specific field names)
-//   - finish_reason mapping via MapFinishReason (Gemini vocabulary)
-//   - usageMetadata extras: cachedContentTokenCount surfaces as
-//     prompt_tokens_details.cached_tokens; thoughtsTokenCount as
-//     completion_tokens_details.reasoning_tokens.
-//
-// Multi-candidate (candidates[] with candidateCount>1) is preserved:
-// the Tier-1 normalizer emits one assistant message per candidate, and
-// the shared projector turns each assistant message into a choices[]
-// entry with its own finish_reason.
+// The block-walk is delegated to GeminiGenerateNormalizer +
+// ProjectToOpenAIChatCompletion — the same parser the audit / compliance /
+// agent pipeline uses. The codec retains only the Gemini-specific stamping:
+// id ← responseId, model ← modelVersion, finish_reason via MapFinishReason,
+// and the usageMetadata extras (cachedContentTokenCount →
+// prompt_tokens_details.cached_tokens, thoughtsTokenCount →
+// completion_tokens_details.reasoning_tokens). Multi-candidate responses
+// become one choices[] entry each, with per-candidate finish_reason.
 func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint == typology.WireShapeGeminiEmbedContent || endpoint == typology.WireShapeVertexEmbedContent {
 		return decodeGeminiEmbeddingResponse(nativeBody, reqCtx.RequestBody)
@@ -563,9 +634,8 @@ func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 		// Defensive: malformed body → projector handles empty payload.
 		payload = normcore.NormalizedPayload{Kind: normcore.KindAIChat}
 	}
-	// Map Gemini per-candidate finish reasons to OpenAI vocabulary
-	// before projection so each choices[].finish_reason is correct
-	// without an extra post-process pass.
+	// Mapped before projection so each choices[].finish_reason is correct
+	// without a post-process pass.
 	for i := range payload.Messages {
 		payload.Messages[i].FinishReason = MapFinishReason(payload.Messages[i].FinishReason)
 	}
@@ -578,23 +648,16 @@ func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 		ID:      root.Get("responseId").String(),
 		Model:   root.Get("modelVersion").String(),
 		Created: time.Now().Unix(),
-		// FinishReason left empty so the projector picks each
-		// candidate's per-message reason (the per-message values we
-		// mapped above). The first-choice-meta-wins behaviour does
-		// NOT apply here because Gemini multi-candidate responses
-		// genuinely want per-candidate reasons.
+		// Left empty so the projector picks each candidate's per-message
+		// reason; first-choice-meta-wins would flatten multi-candidate.
 		Usage: UsageToNormalize(usage),
 	})
 	if err != nil {
 		return provcore.DecodeResult{CanonicalBody: nativeBody, Usage: usage}, err
 	}
 
-	// Step 4: Gemini-specific extras the generic projector doesn't know about.
-	// cachedContentTokenCount feeds prompt_tokens_details.cached_tokens;
-	// thoughtsTokenCount feeds completion_tokens_details.reasoning_tokens.
-	// The projector already emits these when Usage carries them; this step
-	// stamps them only when Usage was missing those fields (defensive against
-	// future normalizer regressions).
+	// Stamped only when Usage was missing the fields — the projector already
+	// emits them when Usage carries them.
 	if meta := root.Get("usageMetadata"); meta.Exists() {
 		if v := meta.Get("cachedContentTokenCount"); v.Exists() && v.Int() > 0 &&
 			!gjson.GetBytes(canon, "usage.prompt_tokens_details.cached_tokens").Exists() {
@@ -614,9 +677,7 @@ func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 	return provcore.DecodeResult{CanonicalBody: canon, Usage: usage}, nil
 }
 
-// UsageToNormalize converts a provcore.Usage to the *normcore.Usage
-// pointer the projector expects. Returns nil for an empty Usage so the
-// projector omits the "usage" key entirely. Exported for tests.
+// Returns nil for an empty Usage so the projector omits the "usage" key.
 func UsageToNormalize(u provcore.Usage) *normcore.Usage {
 	if u.PromptTokens == nil && u.CompletionTokens == nil && u.TotalTokens == nil &&
 		u.CacheReadTokens == nil && u.CacheCreationTokens == nil && u.ReasoningTokens == nil {
@@ -626,12 +687,8 @@ func UsageToNormalize(u provcore.Usage) *normcore.Usage {
 	return &v
 }
 
-// MapFinishReason translates Gemini's documented FinishReason enum into
-// the canonical OpenAI finish_reason set. Newer Gemini values
-// (MODEL_ARMOR for safety-classifier blocks, UNEXPECTED_TOOL_CALL for
-// model-side tool-call validation failures) are folded into the closest
-// canonical bucket. Unknown values pass through so operators can spot
-// upstream API changes via raw signal rather than silent loss.
+// Newer values (MODEL_ARMOR, UNEXPECTED_TOOL_CALL) fold into the closest
+// canonical bucket. Unknown values pass through rather than being lost.
 // Doc: https://ai.google.dev/api/generate-content#FinishReason
 func MapFinishReason(r string) string {
 	switch r {
@@ -642,10 +699,13 @@ func MapFinishReason(r string) string {
 	case "SAFETY", "RECITATION", "LANGUAGE", "PROHIBITED_CONTENT",
 		"SPII", "BLOCKLIST", "IMAGE_SAFETY", "MODEL_ARMOR":
 		return "content_filter"
-	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
-		return "tool_calls"
 	case "OTHER", "":
 		return "stop"
 	}
+	// MALFORMED_FUNCTION_CALL and UNEXPECTED_TOOL_CALL fall through to the
+	// raw pass-through arm on purpose: both mean the turn produced NO usable
+	// tool call. Mapping them to "tool_calls" sends an agent loop looking for
+	// a tool_calls[] that is empty, where it stalls or loops. The canonical
+	// enum has no value for "the model failed to produce a call".
 	return r
 }

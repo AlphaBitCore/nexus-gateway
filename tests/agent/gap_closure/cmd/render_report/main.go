@@ -92,12 +92,12 @@ func main() {
 
 	// ─── Render report ───────────────────────────────────────────────────────
 	renderReport(outputWriter, renderParams{
-		Timestamp:    ts,
-		ListenerAddr: *listenerAddr,
-		DBDSNRedacted: redactDSN(*dbDSN),
+		Timestamp:      ts,
+		ListenerAddr:   *listenerAddr,
+		DBDSNRedacted:  redactDSN(*dbDSN),
 		PrometheusAddr: *prometheusAddr,
-		MacOSVersion: *macosVersion,
-		Results:      results,
+		MacOSVersion:   *macosVersion,
+		Results:        results,
 	})
 
 	fmt.Fprintf(os.Stderr, "render_report: report written to %s\n", *outputPath)

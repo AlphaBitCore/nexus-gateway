@@ -403,10 +403,39 @@ func normalizeInputContentPart(part gjson.Result) map[string]any {
 	case "input_audio":
 		return map[string]any{"type": "input_audio", "input_audio": part.Get("input_audio").Value()}
 	case "input_file":
-		// No canonical chat-completions equivalent today; surface as a
-		// text part with a marker so hooks see something parseable.
-		canonicalext.WarnOnce(extProvider, "responses.input_file")
-		return map[string]any{"type": "text", "text": fmt.Sprintf("[nexus: input_file %s preserved]", part.Get("filename").String())}
+		// Chat-completions DOES have a file part — {"type":"file","file":{…}}
+		// with file_id / filename / file_data — so the bytes have somewhere to
+		// go and there is no reason to discard them.
+		//
+		// This used to emit `[nexus: input_file <name> preserved]` as a text
+		// part. The word "preserved" was the opposite of what happened: the
+		// file's bytes were dropped and replaced by a note about their former
+		// existence, the model answered about a filename it could not read, and
+		// the caller got a 200. Discarding the caller's data and reporting
+		// success is the failure mode §3a Rule 10 exists to prevent.
+		//
+		// Keys beyond the three chat models (a file_url, say) are carried
+		// through verbatim rather than dropped: on the identity lane the
+		// encode side below hands them straight back to /v1/responses, and
+		// losing them is the same defect one level down. A target wire that
+		// cannot carry a file at all is a routing question, answered by the
+		// capability check, not by silently emptying the part here.
+		file := map[string]any{}
+		if v, ok := part.Get("input_file").Value().(map[string]any); ok {
+			for k, val := range v {
+				file[k] = val
+			}
+		}
+		for _, k := range []string{"file_id", "filename", "file_data", "file_url"} {
+			if v := part.Get(k); v.Exists() {
+				file[k] = v.Value()
+			}
+		}
+		if len(file) == 0 {
+			canonicalext.WarnOnce(extProvider, "responses.input_file_empty")
+			return map[string]any{"type": "text", "text": ""}
+		}
+		return map[string]any{"type": "file", "file": file}
 	default:
 		canonicalext.WarnOnce(extProvider, "responses.unknown_content_part_"+t)
 		var raw any
@@ -487,6 +516,18 @@ func responsesContentPartFromCanonical(part gjson.Result) map[string]any {
 			url = part.Get("image_url").String()
 		}
 		return map[string]any{"type": "input_image", "image_url": url}
+	case "file":
+		// The inverse of the input_file decode above. Without this the default
+		// branch below would hand /v1/responses a chat-shaped {"type":"file"}
+		// part, which it rejects — so a file would survive canonicalization
+		// only to die on the way back out.
+		out := map[string]any{"type": "input_file"}
+		if v, ok := part.Get("file").Value().(map[string]any); ok {
+			for k, val := range v {
+				out[k] = val
+			}
+		}
+		return out
 	default:
 		var raw any
 		_ = json.Unmarshal([]byte(part.Raw), &raw)

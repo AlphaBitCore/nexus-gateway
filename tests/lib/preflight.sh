@@ -16,6 +16,8 @@ source "$_dir/db.sh"
 source "$_dir/http.sh"
 # shellcheck disable=SC1091
 source "$_dir/auth.sh"
+# shellcheck disable=SC1091
+source "$_dir/preflight_checks.sh"
 
 printf '== Preflight ==\n'
 
@@ -50,28 +52,50 @@ else
   fail "control-plane:bearer token" "GET /api/admin/providers did not return 200 with the issued token"
 fi
 
-# 4. Hub admin API with service token.
-hub_admin_status=$(curl -sS -o /dev/null -w '%{http_code}' \
-  -H "Authorization: Bearer $NEXUS_HUB_SERVICE_TOKEN" "$NEXUS_HUB_URL/api/hub/things")
-assert_status 200 "$hub_admin_status" "hub:/api/hub/things (service token)"
+# 4. Hub admin API. /api/hub is guarded by HUB_CONFIG_TOKEN — see the
+# Group("/api/hub", ServiceAuth(cfg.HubConfigToken)) registration in
+# packages/nexus-hub/internal/handler/routes.go — NOT by the internal service
+# token, which guards /api/internal/*. A local .env sets both to the same dev
+# string, so sending the wrong one passes locally and can only fail against a
+# real deployment: precisely the release gate this preflight stands in front of.
+#
+# NEXUS_HUB_SERVICE_TOKEN is the local spelling; accept it too, the way
+# smoke-gateway.py accepts either name. Under `set -u` an unset name is a hard
+# abort, so a deployment that simply spells it differently took the whole
+# preflight down after four checks had already passed.
+hub_token="${HUB_CONFIG_TOKEN:-${NEXUS_HUB_SERVICE_TOKEN:-}}"
+if [[ -n "$hub_token" ]]; then
+  hub_admin_status=$(curl -sS -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $hub_token" "$NEXUS_HUB_URL/api/hub/things")
+  assert_status 200 "$hub_admin_status" "hub:/api/hub/things (service token)"
+else
+  printf '  (skipping hub service-token check: neither NEXUS_HUB_SERVICE_TOKEN nor INTERNAL_SERVICE_TOKEN is set)\n'
+fi
 
 # 4. AI Gateway /v1/models with a real VK (only if NEXUS_TEST_VK is set —
 #    Phase 1 doesn't need it, Phase 4/5 do).
-if [[ -n "${NEXUS_TEST_VK:-}" && "$NEXUS_TEST_VK" != "nvk_REPLACE_ME" ]]; then
+if [[ -n "${NEXUS_TEST_VK:-}" && "$(printf %s "${NEXUS_TEST_VK:-}" | tr a-z A-Z)" != *REPLACE* ]]; then
   aigw_status=$(aigw_curl_code "$NEXUS_TEST_VK" /v1/models)
   assert_status 200 "$aigw_status" "ai-gateway:/v1/models (VK auth)"
 else
-  printf '  (skipping ai-gateway VK check: NEXUS_TEST_VK not set)\n'
+  printf '  (skipping ai-gateway VK check: NEXUS_TEST_VK unset or still a placeholder)\n'
 fi
 
-# 5. Compliance Proxy listening.
-proxy_code=$(curl -sS -o /dev/null -w '%{http_code}' "$NEXUS_PROXY_URL/" || echo "000")
-# Compliance proxy returns 400/404/etc. on root — anything other than 000
-# (connection refused) means it's listening.
-if [[ "$proxy_code" != "000" ]]; then
-  pass "compliance-proxy:listening (HTTP $proxy_code)"
-else
+# 5. Compliance Proxy listening. It answers 400/404/etc. on root, so any HTTP
+# code means it is up; only a failed connection means it is not.
+#
+# Unreachable is a FAIL locally and a SKIP anywhere else, and that asymmetry is
+# deliberate: the proxy is a TLS CONNECT intercept point reached directly by
+# org-managed devices, never published through nginx. A correct remote
+# deployment is therefore unreachable from wherever this runs, and hard-failing
+# on it would block every remote run — including the release gate.
+proxy_state=$(proxy_verdict)
+if [[ "$proxy_state" != "unreachable" ]]; then
+  pass "compliance-proxy:listening (HTTP ${proxy_state#listening:})"
+elif [[ "$NEXUS_TEST_TARGET" == "local" ]]; then
   fail "compliance-proxy:listening" "no TCP connection to $NEXUS_PROXY_URL"
+else
+  printf '  (skipping compliance-proxy check: target=%s, the proxy is not published through nginx)\n' "$NEXUS_TEST_TARGET"
 fi
 
 summary

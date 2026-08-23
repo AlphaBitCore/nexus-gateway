@@ -140,7 +140,7 @@ jobs:
       # does the same npm ci before its own tsc/vite build). Node/Go toolchain
       # otherwise stay off the host: the four service binaries build inside
       # `docker run "$BUILDBASE_TAG" ...` in the script itself.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: matrix.config == 'baseline'
         with:
           node-version: 20

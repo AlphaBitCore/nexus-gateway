@@ -2,9 +2,11 @@ package aiguard
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/costing"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -16,6 +18,11 @@ type fakeAdapter struct {
 	stubBody   []byte
 	stubStatus int
 	stubErr    error
+	// stubUsage is the decoded token envelope the real adapter attaches after
+	// running the provider's usage block through its alias chain. AdapterBackend
+	// reads token counts from here, not from stubBody — scripting them in the
+	// body alone would exercise a decoder the backend no longer owns.
+	stubUsage provcore.Usage
 }
 
 func (f *fakeAdapter) Format() provcore.Format { return provcore.FormatOpenAI }
@@ -29,7 +36,7 @@ func (f *fakeAdapter) Execute(_ context.Context, req provcore.Request) (*provcor
 	if f.stubErr != nil {
 		return nil, f.stubErr
 	}
-	return &provcore.Response{StatusCode: f.stubStatus, Body: f.stubBody}, nil
+	return &provcore.Response{StatusCode: f.stubStatus, Body: f.stubBody, Usage: f.stubUsage}, nil
 }
 
 func (f *fakeAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore.ProbeResult, error) {
@@ -74,6 +81,25 @@ func mustRegistry(t *testing.T, a provcore.Adapter) *provcore.Registry {
 	}
 	r.Freeze()
 	return r
+}
+
+// newTestBackend builds an AdapterBackend wired to a fakeAdapter that returns
+// respBody, resolved via a fakeResolver pinned to target. Used by tests that
+// only care about the parsed Response, not the adapter/resolver plumbing.
+func newTestBackend(t *testing.T, target provcore.CallTarget, respBody string) *AdapterBackend {
+	t.Helper()
+	if target.Format == "" {
+		target.Format = provcore.FormatOpenAI
+	}
+	a := &fakeAdapter{stubStatus: 200, stubBody: []byte(respBody)}
+	reg := mustRegistry(t, a)
+	res := &fakeResolver{target: target}
+	return &AdapterBackend{
+		Resolver:   res,
+		Registry:   reg,
+		ProviderID: "p",
+		ModelID:    "m",
+	}
 }
 
 func TestAdapterBackend_CallsAdapterDirectly(t *testing.T) {
@@ -126,23 +152,21 @@ func TestAdapterBackend_CallsAdapterDirectly(t *testing.T) {
 //     classifier call). This is the safe-default case for fresh deploys
 //     before the Models snapshot has loaded.
 //   - With PriceLookup returning real prices AND upstream returning usage
-//     → Metadata.CostUsd MUST equal the per-token math
-//     (PromptTokens × inputPM + CompletionTokens × outputPM) / 1e6.
+//     → Metadata.CostUsd MUST equal the per-bucket math, each token bucket
+//     at its own rate.
 //
 // Together with TestExternalBackend_NoCostStamping_EvenWithUsageInResponse,
 // these two lock the rule "ai-guard charges only when calling our internal
 // provider AND we have its pricing".
 func TestAdapterBackend_StampsCost_OnlyWithPriceLookup(t *testing.T) {
-	// Adapter returns usage on the chat-completion response.
-	respBody := []byte(`{
-		"choices":[{"message":{"content":"{\"decision\":\"approve\"}"}}],
-		"usage":{"prompt_tokens":200,"completion_tokens":50,"total_tokens":250}
-	}`)
+	respBody := []byte(`{"choices":[{"message":{"content":"{\"decision\":\"approve\"}"}}]}`)
+	pt, ct := 200, 50
+	usage := provcore.Usage{PromptTokens: &pt, CompletionTokens: &ct}
 
 	// Case 1 — no PriceLookup wired (fresh deploy / external_url misroute):
 	// cost must remain zero even though upstream returned usage.
 	{
-		a := &fakeAdapter{stubStatus: 200, stubBody: respBody}
+		a := &fakeAdapter{stubStatus: 200, stubBody: respBody, stubUsage: usage}
 		reg := mustRegistry(t, a)
 		res := &fakeResolver{target: provcore.CallTarget{
 			ProviderName: "openai", Format: provcore.FormatOpenAI,
@@ -164,7 +188,7 @@ func TestAdapterBackend_StampsCost_OnlyWithPriceLookup(t *testing.T) {
 
 	// Case 2 — PriceLookup wired with gpt-4o-mini prices: cost stamped.
 	{
-		a := &fakeAdapter{stubStatus: 200, stubBody: respBody}
+		a := &fakeAdapter{stubStatus: 200, stubBody: respBody, stubUsage: usage}
 		reg := mustRegistry(t, a)
 		res := &fakeResolver{target: provcore.CallTarget{
 			ProviderName: "openai", Format: provcore.FormatOpenAI,
@@ -172,17 +196,70 @@ func TestAdapterBackend_StampsCost_OnlyWithPriceLookup(t *testing.T) {
 		}}
 		b := &AdapterBackend{
 			Resolver: res, Registry: reg, ProviderID: "p", ModelID: "m",
-			PriceLookup: func(_ string) (float64, float64) { return 0.15, 0.60 },
+			PriceLookup: func(_ string) (costing.Rates, bool) {
+				return costing.Rates{
+					InputUSDPerM: 0.15, OutputUSDPerM: 0.60,
+					CacheReadUSDPerM: 0.075, CacheWriteUSDPerM: 0.15,
+				}, true
+			},
 		}
 		resp, err := b.Call(context.Background(), "x")
 		if err != nil {
 			t.Fatalf("Case 2 Call: %v", err)
 		}
+		// No cached tokens reported, so all 200 input bill at the input rate:
 		// 200 × 0.15/M + 50 × 0.60/M = 0.00003 + 0.00003 = 0.00006
 		want := (200*0.15 + 50*0.60) / 1_000_000.0
 		if resp.Metadata.CostUsd != want {
 			t.Errorf("Case 2: CostUsd = %v, want %v", resp.Metadata.CostUsd, want)
 		}
+	}
+}
+
+// TestAdapterBackend_CachedJudgePromptBilledAtCacheRate is the regression test
+// for the classifier's share of the internal-ops over-estimate. The judge
+// template is fixed, so a warm provider cache serves most of the prompt and the
+// provider reports prompt_tokens INCLUDING that cached share. The backend used
+// to bill every one of those tokens at the full input rate.
+func TestAdapterBackend_CachedJudgePromptBilledAtCacheRate(t *testing.T) {
+	pt, ct, cr := 4000, 20, 3600
+	a := &fakeAdapter{
+		stubStatus: 200,
+		stubBody:   []byte(`{"choices":[{"message":{"content":"{\"decision\":\"approve\"}"}}]}`),
+		stubUsage: provcore.Usage{
+			PromptTokens: &pt, CompletionTokens: &ct, CacheReadTokens: &cr,
+		},
+	}
+	reg := mustRegistry(t, a)
+	res := &fakeResolver{target: provcore.CallTarget{
+		ProviderName: "openai", Format: provcore.FormatOpenAI, ProviderModelID: "gpt-4o-mini",
+	}}
+	b := &AdapterBackend{
+		Resolver: res, Registry: reg, ProviderID: "p", ModelID: "m",
+		PriceLookup: func(_ string) (costing.Rates, bool) {
+			return costing.Rates{
+				InputUSDPerM: 0.15, OutputUSDPerM: 0.60,
+				CacheReadUSDPerM: 0.075, CacheWriteUSDPerM: 0.15,
+			}, true
+		},
+	}
+	resp, err := b.Call(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if resp.Metadata.CacheReadTokens != 3600 {
+		t.Errorf("CacheReadTokens = %d, want 3600 — the adapter's decoded cache bucket must reach the sink",
+			resp.Metadata.CacheReadTokens)
+	}
+	// 400 uncached × 0.15 + 3600 cached × 0.075 + 20 out × 0.60, per 1M.
+	want := (400*0.15 + 3600*0.075 + 20*0.60) / 1_000_000.0
+	if math.Abs(resp.Metadata.CostUsd-want) > 1e-15 {
+		t.Errorf("CostUsd = %v, want %v", resp.Metadata.CostUsd, want)
+	}
+	overEstimate := (4000*0.15 + 20*0.60) / 1_000_000.0
+	if resp.Metadata.CostUsd >= overEstimate {
+		t.Errorf("CostUsd = %v is not below the full-input-rate figure %v; the cached share is being billed at the input rate again",
+			resp.Metadata.CostUsd, overEstimate)
 	}
 }
 
@@ -225,3 +302,26 @@ func TestAdapterBackend_ResolverError(t *testing.T) {
 type errFakeTest string
 
 func (e errFakeTest) Error() string { return string(e) }
+
+// TestAdapterBackend_Call_StampsServingProviderOnMetadata pins the fix for
+// the ai-guard attribution gap: AdapterBackend.Call must stamp the resolved
+// call target's ProviderID/-Name onto Response.Metadata, sourced from
+// target (the Resolver's output), never from AdapterBackend.ProviderID
+// (the Nexus-side provider selector, which can legitimately differ from the
+// serving provider's identity — e.g. failover) or from the model id.
+func TestAdapterBackend_Call_StampsServingProviderOnMetadata(t *testing.T) {
+	b := newTestBackend(t, provcore.CallTarget{ProviderID: "prov-openai", ProviderName: "openai"},
+		`{"choices":[{"message":{"content":"{\"decision\":\"approve\"}"}}],`+
+			`"usage":{"prompt_tokens":100,"completion_tokens":10}}`)
+
+	got, err := b.Call(context.Background(), "check this")
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if got.Metadata.ProviderID != "prov-openai" {
+		t.Errorf("Metadata.ProviderID = %q, want prov-openai", got.Metadata.ProviderID)
+	}
+	if got.Metadata.ProviderName != "openai" {
+		t.Errorf("Metadata.ProviderName = %q, want openai", got.Metadata.ProviderName)
+	}
+}

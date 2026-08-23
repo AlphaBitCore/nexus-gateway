@@ -19,6 +19,11 @@ func TestClassifyTrafficErrorAttribution(t *testing.T) {
 	}{
 		// ours: routing / translation / provider-config failures.
 		{"ROUTING_NO_MATCH", "4xx", "ours"},
+		// The 5xx here is the point: without naming this code the default arm
+		// books a rule an admin misconfigured against the provider that was
+		// never called, and the error-governance view sends them to the wrong
+		// system.
+		{"ROUTING_RULES_RESOLVED_NOTHING", "5xx", "ours"},
 		{"USAGE_QUERY_FAILED", "5xx", "ours"},
 		{"no_compatible_provider", "4xx", "ours"},
 		{"not_implemented", "4xx", "ours"},

@@ -162,7 +162,7 @@ func TestBuildRequestBody_NoUserText_FallsBackToSystemOnly(t *testing.T) {
 		SystemPrompt: "route it",
 		Messages: []normcore.Message{
 			{Role: normcore.RoleUser, Content: []normcore.ContentBlock{
-				{Type: normcore.ContentImageRef, ImageRef: &normcore.BinaryRef{Size: 1, ContentType: "image/png", SHA256: "a"}},
+				{Type: normcore.ContentMedia, MediaRef: &normcore.MediaRef{SizeBytes: 1, Mime: "image/png", SHA256: "a"}},
 			}},
 			textMsgLLM(normcore.RoleAssistant, "I see a cat in the image"),
 		},
@@ -183,7 +183,7 @@ func TestBuildRequestBody_LeadingAssistantTrimmed(t *testing.T) {
 		SystemPrompt: "route it",
 		Messages: []normcore.Message{
 			{Role: normcore.RoleUser, Content: []normcore.ContentBlock{
-				{Type: normcore.ContentImageRef, ImageRef: &normcore.BinaryRef{Size: 1, ContentType: "image/png", SHA256: "a"}},
+				{Type: normcore.ContentMedia, MediaRef: &normcore.MediaRef{SizeBytes: 1, Mime: "image/png", SHA256: "a"}},
 			}}, // projects empty — its assistant reply becomes unpaired
 			textMsgLLM(normcore.RoleAssistant, "it is a cat"),
 			textMsgLLM(normcore.RoleUser, "what breed?"),

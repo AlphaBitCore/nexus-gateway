@@ -22,23 +22,58 @@ const norm = (s: string | null | undefined): string => (s ?? '').trim().toLowerC
 const normBaseUrl = (s: string | null | undefined): string => norm(s).replace(/\/+$/, '');
 
 /**
- * Catalog-owned fields the diff compares. `code` is excluded on purpose: it is
- * a local name the admin may rename freely. `providerModelId` is excluded
- * because it is the identity the match is keyed on, not a value to overwrite.
+ * Every field of the catalog template, classified. A field is compared as a
+ * scalar, compared as an unordered set, or excluded with a stated reason.
+ *
+ * The type is `Record<keyof ApiTemplateModel, …>`, so adding a field to the
+ * template and NOT classifying it here fails the build. The previous shape was
+ * a hand-written list of nine names, and a template that had grown to sixteen
+ * simply under-synced in silence: the three modality lists never reached a
+ * provider row, which is what a `MODEL_MODALITY_MISMATCH` 400 looks like from
+ * the caller's side, and the three audio prices never did either, which is a
+ * cost figure that is quietly wrong with no surface that shows it.
  */
-const SCALAR_FIELDS = [
-  'name',
-  'description',
-  'type',
-  'inputPricePerMillion',
-  'outputPricePerMillion',
-  'cachedInputReadPricePerMillion',
-  'cachedInputWritePricePerMillion',
-  'maxContextTokens',
-  'maxOutputTokens',
-] as const;
+const FIELD_KINDS: Record<keyof ApiTemplateModel, 'scalar' | 'set' | 'excluded'> = {
+  name: 'scalar',
+  description: 'scalar',
+  type: 'scalar',
+  inputPricePerMillion: 'scalar',
+  outputPricePerMillion: 'scalar',
+  cachedInputReadPricePerMillion: 'scalar',
+  cachedInputWritePricePerMillion: 'scalar',
+  audioInputPricePerMillion: 'scalar',
+  audioOutputPricePerMillion: 'scalar',
+  cachedAudioInputReadPricePerMillion: 'scalar',
+  maxContextTokens: 'scalar',
+  maxOutputTokens: 'scalar',
 
-export type CatalogField = (typeof SCALAR_FIELDS)[number] | 'features';
+  features: 'set',
+  inputModalities: 'set',
+  outputModalities: 'set',
+  requiredModalities: 'set',
+
+  /** A local name the admin may rename freely. */
+  code: 'excluded',
+  /** The identity the match is keyed on, not a value to overwrite. */
+  providerModelId: 'excluded',
+  /**
+   * Also identity. Two provider rows may legitimately match one template
+   * entry — an admin holding both the pinned and the floating id — and
+   * pushing the catalog's alias list onto both would put the same alias on
+   * two rows.
+   */
+  aliases: 'excluded',
+};
+
+const SCALAR_FIELDS = (Object.keys(FIELD_KINDS) as (keyof ApiTemplateModel)[]).filter(
+  (f) => FIELD_KINDS[f] === 'scalar',
+);
+
+const SET_FIELDS = (Object.keys(FIELD_KINDS) as (keyof ApiTemplateModel)[]).filter(
+  (f) => FIELD_KINDS[f] === 'set',
+);
+
+export type CatalogField = keyof ApiTemplateModel;
 
 export type CatalogValue = string | number | string[];
 
@@ -102,19 +137,21 @@ const sameFeatureSet = (a: string[], b: string[]): boolean => {
  */
 export function diffModelAgainstTemplate(model: Model, tm: ApiTemplateModel): CatalogFieldDiff[] {
   const diffs: CatalogFieldDiff[] = [];
+  const row = model as unknown as Record<string, CatalogValue | null | undefined>;
 
   for (const field of SCALAR_FIELDS) {
-    const catalog = tm[field];
+    const catalog = tm[field] as CatalogValue | undefined;
     if (catalog === undefined || catalog === null || catalog === '') continue;
-    const current = model[field] ?? undefined;
+    const current = row[field] ?? undefined;
     if (current !== catalog) diffs.push({ field, current, catalog });
   }
 
-  const catalogFeatures = tm.features ?? [];
-  if (catalogFeatures.length > 0) {
-    const currentFeatures = model.features ?? [];
-    if (!sameFeatureSet(currentFeatures, catalogFeatures)) {
-      diffs.push({ field: 'features', current: [...currentFeatures], catalog: [...catalogFeatures] });
+  for (const field of SET_FIELDS) {
+    const catalog = (tm[field] ?? []) as string[];
+    if (catalog.length === 0) continue;
+    const current = (row[field] ?? []) as string[];
+    if (!sameFeatureSet(current, catalog)) {
+      diffs.push({ field, current: [...current], catalog: [...catalog] });
     }
   }
 
@@ -178,6 +215,18 @@ export function catalogCreateInput(tm: ApiTemplateModel): CreateModelInput {
     ...(tm.description ? { description: tm.description } : {}),
     ...(tm.features?.length ? { features: [...tm.features] } : {}),
     ...(tm.aliases?.length ? { aliases: [...tm.aliases] } : {}),
+    ...(tm.inputModalities?.length ? { inputModalities: [...tm.inputModalities] } : {}),
+    ...(tm.outputModalities?.length ? { outputModalities: [...tm.outputModalities] } : {}),
+    ...(tm.requiredModalities?.length ? { requiredModalities: [...tm.requiredModalities] } : {}),
+    ...(tm.audioInputPricePerMillion != null
+      ? { audioInputPricePerMillion: tm.audioInputPricePerMillion }
+      : {}),
+    ...(tm.audioOutputPricePerMillion != null
+      ? { audioOutputPricePerMillion: tm.audioOutputPricePerMillion }
+      : {}),
+    ...(tm.cachedAudioInputReadPricePerMillion != null
+      ? { cachedAudioInputReadPricePerMillion: tm.cachedAudioInputReadPricePerMillion }
+      : {}),
     ...(tm.inputPricePerMillion != null ? { inputPricePerMillion: tm.inputPricePerMillion } : {}),
     ...(tm.outputPricePerMillion != null ? { outputPricePerMillion: tm.outputPricePerMillion } : {}),
     ...(tm.cachedInputReadPricePerMillion != null

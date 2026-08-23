@@ -93,7 +93,7 @@ func (h *Handler) scanSTTPrompt(w http.ResponseWriter, r *http.Request, rec *aud
 	// BLOCK arm.
 	if hookcore.ActionFromDecision(result.Decision) == hookcore.ActionBlock && !result.CarriesRedaction() {
 		applyHookRejectionHeaders(w, result)
-		h.writeError(w, rec, http.StatusForbidden, result.Reason)
+		h.writeError(w, rec, http.StatusForbidden, "HOOK_BLOCKED", result.Reason)
 		return true
 	}
 

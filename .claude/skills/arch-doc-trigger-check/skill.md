@@ -1,3 +1,8 @@
+---
+name: arch-doc-trigger-check
+description: "Verify the architecture doc trigger map lockstep in docs/developers/architecture/README.md, and help add a row when shipping a new arch doc. Every architecture doc must have a trigger row and every row must point to a real doc; CI enforces it via check:arch-doc-triggers. Trigger keywords: arch doc trigger, trigger map, check:arch-doc-triggers failing, new architecture doc row, /arch-doc-trigger-check."
+---
+
 # arch-doc-trigger-check
 
 Verify the architecture doc trigger map lockstep, optionally help add a new row when shipping a new arch doc.

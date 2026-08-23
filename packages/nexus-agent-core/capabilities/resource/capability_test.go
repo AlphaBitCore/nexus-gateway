@@ -25,8 +25,13 @@ func TestCapabilitiesDesignDocExamples(t *testing.T) {
 	cases := map[string][]string{
 		// GET+PUT /ai-guard/config pair + POST /ai-guard/dry-run RPC
 		"ai-guard": {"config", "action:dry-run"},
-		// 14 GET endpoints, none CRUD-shaped
-		"analytics": {"report"},
+		// 15 GET endpoints, none CRUD-shaped, all fold to report; the
+		// reconciliation-review POST
+		// (/vendor-bill-reconciliation/{providerId}/{day}/review), added
+		// alongside the vendor-bill-reconciliation report endpoint, marks one
+		// row reviewed — an RPC action, not a CRUD verb — so it renders
+		// action:review.
+		"analytics": {"report", "action:review"},
 		// full CRUD (incl. PATCH dup that used to render "update update") + simulate RPC
 		"routing-rules": {"crud", "action:simulate"},
 		// root GET+PUT pair absorbs `list`; sub-pairs config; event-types GET report; siem/test RPC

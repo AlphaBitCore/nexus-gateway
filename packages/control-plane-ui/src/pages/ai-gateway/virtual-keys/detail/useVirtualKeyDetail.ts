@@ -7,6 +7,7 @@ import type { VirtualKey, VirtualKeyAllowedModelRef, TrafficEvent, AdminModelsBy
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '@/constants/admin-api';
 import { utcToDateInput } from '@/lib/format';
 import { deriveUpdateExpiry } from '../expiryBounds';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 export function useVirtualKeyDetail() {
   const { id } = useParams<{ id: string }>();
@@ -31,6 +32,7 @@ export function useVirtualKeyDetail() {
   const [regenConfirming, setRegenConfirming] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
+  const armTimeout = useTimeouts();
 
   const { mutate: regenerateKey, loading: regenerating } = useMutation(
     () => virtualKeyApi.regenerate(id!) as Promise<{ key?: string; secretKey?: string }>,
@@ -132,7 +134,7 @@ export function useVirtualKeyDetail() {
     if (!newKey) return;
     navigator.clipboard.writeText(newKey);
     setKeyCopied(true);
-    setTimeout(() => setKeyCopied(false), 2000);
+    armTimeout(() => setKeyCopied(false), 2000);
   };
 
   const dismissNewKey = () => setNewKey(null);

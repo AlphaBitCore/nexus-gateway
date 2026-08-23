@@ -324,6 +324,24 @@ func (c *Client) runHTTPFallback(ctx context.Context) {
 	// to HTTP and the outer counter is not being incremented here.
 	recoveryFailures := 0
 
+	// The retry deadline is a Timer that survives the select, NOT a per-iteration
+	// time.After. A fresh channel per iteration restarts the countdown every time
+	// any other case fires, so once the backoff grows past the heartbeat interval
+	// the heartbeat wins every race and the WS attempt never happens at all: the
+	// Thing stays on HTTP fallback until its process restarts, having silently
+	// stopped trying to recover the WebSocket. Only an actual attempt re-arms it.
+	wsRetryTimer := time.NewTimer(c.calculateBackoffFor(recoveryFailures + 1))
+	defer wsRetryTimer.Stop()
+	armWSRetry := func() {
+		if !wsRetryTimer.Stop() {
+			select {
+			case <-wsRetryTimer.C:
+			default:
+			}
+		}
+		wsRetryTimer.Reset(c.calculateBackoffFor(recoveryFailures + 1))
+	}
+
 	// dial resolves the WS dialer, honoring the connectWSFn test seam.
 	dial := c.connectWS
 	if c.connectWSFn != nil {
@@ -331,7 +349,6 @@ func (c *Client) runHTTPFallback(ctx context.Context) {
 	}
 
 	for {
-		wsRetryDelay := c.calculateBackoffFor(recoveryFailures + 1)
 		kickPtr := c.heartbeatKick.Load()
 		select {
 		case <-ctx.Done():
@@ -388,11 +405,10 @@ func (c *Client) runHTTPFallback(ctx context.Context) {
 				}
 			}
 
-		case <-time.After(wsRetryDelay):
+		case <-wsRetryTimer.C:
 			c.logger.Debug("Attempting WebSocket recovery",
 				slog.String("event", "ws_recovery_attempt"),
 				slog.Int("recovery_failures", recoveryFailures),
-				slog.Duration("backoff", wsRetryDelay),
 			)
 			if err := dial(ctx); err == nil {
 				c.logger.Info("WebSocket recovered, switching back from HTTP fallback",
@@ -415,6 +431,7 @@ func (c *Client) runHTTPFallback(ctx context.Context) {
 				return
 			}
 			recoveryFailures++
+			armWSRetry()
 			// connectWS leaves mode ws_connecting on failure; restore HTTP fallback
 			// so heartbeat-driven applyConfig can send shadow_report via HTTP.
 			c.setMode(ModeHTTPFallback)

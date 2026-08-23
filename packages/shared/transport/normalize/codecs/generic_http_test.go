@@ -90,11 +90,11 @@ func TestGenericHTTP_JSON_Malformed_BinaryFallback(t *testing.T) {
 	if got.Kind != core.KindHTTPBinary {
 		t.Fatalf("Kind: %v want http-binary", got.Kind)
 	}
-	if got.HTTP.BodyView.BinaryRef == nil {
-		t.Fatalf("BinaryRef not populated: %+v", got.HTTP.BodyView)
+	if got.HTTP.BodyView.MediaRef == nil {
+		t.Fatalf("MediaRef not populated: %+v", got.HTTP.BodyView)
 	}
-	if got.HTTP.BodyView.BinaryRef.Size != int64(len(body)) {
-		t.Fatalf("Size: %d want %d", got.HTTP.BodyView.BinaryRef.Size, len(body))
+	if got.HTTP.BodyView.MediaRef.SizeBytes != int64(len(body)) {
+		t.Fatalf("SizeBytes: %d want %d", got.HTTP.BodyView.MediaRef.SizeBytes, len(body))
 	}
 }
 
@@ -196,8 +196,8 @@ func TestGenericHTTP_Multipart_NoBoundary_FallsToBinary(t *testing.T) {
 	if got.Kind != core.KindHTTPMultipart {
 		t.Fatalf("Kind: %v", got.Kind)
 	}
-	if got.HTTP.BodyView.BinaryRef == nil {
-		t.Fatalf("expected core.BinaryRef fallback when boundary missing")
+	if got.HTTP.BodyView.MediaRef == nil {
+		t.Fatalf("expected core.MediaRef fallback when boundary missing")
 	}
 }
 
@@ -214,14 +214,14 @@ func TestGenericHTTP_Binary(t *testing.T) {
 	if got.Kind != core.KindHTTPBinary {
 		t.Fatalf("Kind: %v", got.Kind)
 	}
-	if got.HTTP.BodyView.BinaryRef == nil {
-		t.Fatalf("BinaryRef nil")
+	if got.HTTP.BodyView.MediaRef == nil {
+		t.Fatalf("MediaRef nil")
 	}
-	if got.HTTP.BodyView.BinaryRef.ContentType != "image/png" {
-		t.Fatalf("ContentType: %q", got.HTTP.BodyView.BinaryRef.ContentType)
+	if got.HTTP.BodyView.MediaRef.Mime != "image/png" {
+		t.Fatalf("Mime: %q", got.HTTP.BodyView.MediaRef.Mime)
 	}
 	expectedSum := sha256.Sum256(body)
-	if got.HTTP.BodyView.BinaryRef.SHA256 != hex.EncodeToString(expectedSum[:]) {
+	if got.HTTP.BodyView.MediaRef.SHA256 != hex.EncodeToString(expectedSum[:]) {
 		t.Fatalf("SHA256 mismatch")
 	}
 }
@@ -240,8 +240,8 @@ func TestGenericHTTP_Binary_NoContentType(t *testing.T) {
 	if got.Kind != core.KindHTTPBinary {
 		t.Fatalf("Kind: %v want http-binary", got.Kind)
 	}
-	if got.HTTP.BodyView.BinaryRef.ContentType != "application/octet-stream" {
-		t.Fatalf("default ContentType: %q", got.HTTP.BodyView.BinaryRef.ContentType)
+	if got.HTTP.BodyView.MediaRef.Mime != "application/octet-stream" {
+		t.Fatalf("default Mime: %q", got.HTTP.BodyView.MediaRef.Mime)
 	}
 }
 
@@ -289,7 +289,7 @@ func TestGenericHTTP_EmptyBody(t *testing.T) {
 	if got.Kind != core.KindHTTPText {
 		t.Fatalf("Kind: %v want http-text (zero-body fallback)", got.Kind)
 	}
-	if got.HTTP.BodyView.Text != "" || got.HTTP.BodyView.JSON != nil || got.HTTP.BodyView.BinaryRef != nil {
+	if got.HTTP.BodyView.Text != "" || got.HTTP.BodyView.JSON != nil || got.HTTP.BodyView.MediaRef != nil {
 		t.Fatalf("expected empty BodyView, got %+v", got.HTTP.BodyView)
 	}
 }

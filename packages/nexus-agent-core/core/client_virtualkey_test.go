@@ -40,10 +40,10 @@ func TestClient_VKWrites(t *testing.T) {
 	var method, path string
 	c, done := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method, path = r.Method, r.URL.Path
-		switch {
-		case r.URL.Path == "/api/admin/virtual-keys/vk1/revoke":
+		switch r.URL.Path {
+		case "/api/admin/virtual-keys/vk1/revoke":
 			_, _ = io.WriteString(w, `{"message":"Virtual key revoked"}`)
-		case r.URL.Path == "/api/admin/virtual-keys/vk1/regenerate":
+		case "/api/admin/virtual-keys/vk1/regenerate":
 			_, _ = io.WriteString(w, `{"id":"vk1","keyPrefix":"nvk_abcd","key":"nvk_brand_new_secret","message":"saved once"}`)
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)

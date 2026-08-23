@@ -652,25 +652,29 @@ func TestComputeBackoff_NegativeJitterClampedToZero(t *testing.T) {
 
 // classify.go — explicit unreachable-line defensive coverage.
 
-// TestClassify_NilRespNilErrFallsThroughToNetwork covers classify.go:53 —
-// the final defensive `return classNetwork, ErrorClassNetwork`. This
-// branch fires when err==nil AND (resp==nil OR resp.StatusCode is not
-// 2xx). resp==nil + err==nil is a degenerate adapter contract violation,
-// but the line exists to keep the function total.
-func TestClassify_NilRespNilErrFallsThroughToNetwork(t *testing.T) {
+// TestClassify_NilRespNilErrIsUnclassified covers the final defensive return.
+// The branch fires when err==nil AND (resp==nil OR the status is not 2xx).
+//
+// The reported class is `unclassified`, not `network`. This test previously
+// asserted network while its own comment called the input "a degenerate adapter
+// contract violation" — which is exactly the point: nothing about it says the
+// network failed, and an operator who reads network on a traffic row goes and
+// looks at the network. Recovery treats the two identically, so nothing about
+// failover changes; what changes is that the row stops asserting a cause we
+// never established.
+func TestClassify_NilRespNilErrIsUnclassified(t *testing.T) {
 	cls, errCl := classify(nil, nil)
-	if cls != classNetwork {
-		t.Fatalf("expected classNetwork for (nil,nil); got %v", cls)
+	if cls != classUnclassified {
+		t.Fatalf("expected classUnclassified for (nil,nil); got %v", cls)
 	}
 	if errCl != configtypes.ErrorClassNetwork {
 		t.Fatalf("expected ErrorClassNetwork for (nil,nil); got %q", errCl)
 	}
-	// Also covers the path where resp is non-nil but the status is in
-	// the 1xx / 3xx range — neither success nor a ProviderError. The
-	// classifier must still surface classNetwork rather than crash.
+	// Same for a status in the 1xx / 3xx range — neither success nor a
+	// ProviderError. Nothing here says the network failed either.
 	cls, errCl = classify(&provcore.Response{StatusCode: 100}, nil)
-	if cls != classNetwork || errCl != configtypes.ErrorClassNetwork {
-		t.Fatalf("expected classNetwork for 1xx with no err; got (%v, %q)", cls, errCl)
+	if cls != classUnclassified || errCl != configtypes.ErrorClassNetwork {
+		t.Fatalf("expected classUnclassified for 1xx with no err; got (%v, %q)", cls, errCl)
 	}
 }
 

@@ -875,12 +875,12 @@ func expectModelReload(mock pgxmock.PgxPoolIface) {
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "code", "name", "providerId", "p_name", "p_adapter_type",
-			"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled",
+			"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled", "p_enabled", "m_status",
 			"inputPricePerMillion", "outputPricePerMillion",
 			"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 			"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 			"features", "maxContextTokens", "maxOutputTokens", "aliases",
-			"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
+			"inputModalities", "outputModalities", "requiredModalities", "lifecycle", "capabilityJson",
 		}))
 }
 
@@ -935,14 +935,44 @@ func TestHandler_Credentials_CacheLayerReloadError_Propagates(t *testing.T) {
 
 // providers — non-nil CacheLayer branch
 
+// TestHandler_Providers_WithCacheLayer_ReloadsProviders pins that a providers
+// push refreshes the MODEL snapshot too, and notifies the capability cache.
+// Model rows denormalise provider columns — including enabled, which decides
+// whether a model is servable — and the Control Plane pushes only `providers`
+// when a provider is edited. Reloading providers alone would leave the catalog
+// and the passthrough route serving the pre-edit provider state.
 func TestHandler_Providers_WithCacheLayer_ReloadsProviders(t *testing.T) {
 	d := newTestDeps(t)
 	mock, layer := newMockLayer(t)
 	expectProviderReload(mock)
+	expectModelReload(mock)
+	modelsReloaded := 0
+	d.OnModelsReloaded = func(models []store.Model) { modelsReloaded++ }
 	d.CacheLayer = layer
 	d.GeminiCacheMgrSet = nil
 	if err := applyKey(t, d, "providers", []byte(`{}`)); err != nil {
 		t.Fatalf("providers with non-nil CacheLayer: unexpected error: %v", err)
+	}
+	if modelsReloaded != 1 {
+		t.Fatalf("OnModelsReloaded calls = %d, want 1 (model snapshot must refresh on a provider edit)", modelsReloaded)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("both snapshot queries must run: %v", err)
+	}
+}
+
+// TestHandler_Providers_ModelReloadError_Propagates asserts the providers
+// handler fails loudly when the follow-up model reload fails, rather than
+// reporting success with a half-refreshed snapshot pair.
+func TestHandler_Providers_ModelReloadError_Propagates(t *testing.T) {
+	d := newTestDeps(t)
+	mock, layer := newMockLayer(t)
+	expectProviderReload(mock)
+	mock.ExpectQuery(`FROM "Model" m`).WillReturnError(fmt.Errorf("db error"))
+	d.CacheLayer = layer
+	d.GeminiCacheMgrSet = nil
+	if err := applyKey(t, d, "providers", []byte(`{}`)); err == nil {
+		t.Fatal("providers: expected error when the model snapshot reload fails")
 	}
 }
 

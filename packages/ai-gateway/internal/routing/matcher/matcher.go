@@ -63,7 +63,15 @@ func resolveField(path string, ctx *core.RoutingContext) any {
 	case "requestedModel.type":
 		return ctx.RequestedModel.Type
 	case "requestedModel.providerId":
-		return ctx.RequestedModel.ProviderID
+		// The SET, so this door and matchConditions.providers give one answer.
+		//
+		// They are the same question — "does this request belong to a provider
+		// this rule handles" — and returning the singular field answered it
+		// differently: that field is populated only when exactly one provider
+		// serves the named code, so for a code two hosts both serve, the
+		// structured condition matched while an expression written against
+		// this path did not, and a `$ne` form always did.
+		return ctx.RequestedModel.ProviderIDs()
 	case "requestedModel.providerModelId":
 		return ctx.RequestedModel.ProviderModelID
 	case "endpointType":
@@ -207,7 +215,7 @@ func evalIn(fieldValue, arr any) bool {
 
 func evalRegex(fieldValue, pattern any) bool {
 	patStr, ok := pattern.(string)
-	if !ok || len(patStr) > maxRegexLen {
+	if !ok {
 		return false
 	}
 	fieldStr := fmt.Sprintf("%v", fieldValue)
@@ -219,6 +227,13 @@ func evalRegex(fieldValue, pattern any) bool {
 }
 
 func getCachedRegex(pattern string) *regexp.Regexp {
+	// Bounded here rather than at each call site, because the length that
+	// matters is the COMPILED expression and only this function sees it.
+	// `evalRegex` bounded its raw input; `MatchGlob` bounded nothing, so an
+	// admin-supplied glob of any length reached the compiler and the cache.
+	if len(pattern) > maxRegexLen {
+		return nil
+	}
 	regexMu.RLock()
 	if r, ok := regexCache[pattern]; ok {
 		regexMu.RUnlock()
@@ -240,7 +255,21 @@ func getCachedRegex(pattern string) *regexp.Regexp {
 	return r
 }
 
+// equals compares a resolved field against a condition value.
+//
+// A []string field value means the request has SEVERAL answers for one path —
+// today, the providers serving a model code two hosts both offer. Any of them
+// matching is a match, which makes `$ne` mean "none of them", the correct
+// negation. A field that is a single value is unaffected.
 func equals(a, b any) bool {
+	if set, ok := a.([]string); ok {
+		for _, v := range set {
+			if equals(v, b) {
+				return true
+			}
+		}
+		return false
+	}
 	switch av := a.(type) {
 	case string:
 		if bv, ok := b.(string); ok {
@@ -308,73 +337,4 @@ func MatchGlob(pattern, value string) bool {
 		return false
 	}
 	return re.MatchString(value)
-}
-
-// RuleMatchesContext checks if a routing rule's match conditions apply.
-func RuleMatchesContext(conds *core.MatchConditions, modelID string, ctx *core.RoutingContext) bool {
-	if conds == nil {
-		return true
-	}
-
-	if len(conds.Models) > 0 {
-		if !anyStringSliceContains(conds.Models, ctx.RequestedModel.CandidateIDs) {
-			return false
-		}
-	}
-	if len(conds.RequestedModelLiterals) > 0 {
-		if !stringSliceContains(conds.RequestedModelLiterals, modelID) {
-			return false
-		}
-	}
-	if len(conds.ModelTypes) > 0 && !stringSliceContains(conds.ModelTypes, ctx.RequestedModel.Type) {
-		return false
-	}
-	if len(conds.Providers) > 0 && !stringSliceContains(conds.Providers, ctx.RequestedModel.ProviderID) {
-		return false
-	}
-	if len(conds.Projects) > 0 {
-		if ctx.VirtualKey == nil {
-			return false
-		}
-		projectID := ctx.VirtualKey.ProjectID
-		if !stringSliceContains(conds.Projects, projectID) {
-			return false
-		}
-	}
-	if len(conds.VirtualKeys) > 0 {
-		name := ""
-		if ctx.VirtualKey != nil {
-			name = ctx.VirtualKey.Name
-		}
-		matched := false
-		for _, pattern := range conds.VirtualKeys {
-			if MatchGlob(pattern, name) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
-	}
-
-	return true
-}
-
-func stringSliceContains(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
-}
-
-func anyStringSliceContains(slice []string, candidates []string) bool {
-	for _, c := range candidates {
-		if c != "" && stringSliceContains(slice, c) {
-			return true
-		}
-	}
-	return false
 }

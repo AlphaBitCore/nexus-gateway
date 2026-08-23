@@ -37,11 +37,11 @@ func newEnvAddCmd(a *App) *cobra.Command {
 				return fmt.Errorf("%w: --cp-url is required", errUsage)
 			}
 			if err := local.ValidateBaseURL("--cp-url", cpURL); err != nil {
-				return fmt.Errorf("%w: %v", errUsage, err)
+				return fmt.Errorf("%w: %w", errUsage, err)
 			}
 			if aigwURL != "" {
 				if err := local.ValidateBaseURL("--aigw-url", aigwURL); err != nil {
-					return fmt.Errorf("%w: %v", errUsage, err)
+					return fmt.Errorf("%w: %w", errUsage, err)
 				}
 			}
 			if err := a.ensureConfig(); err != nil {

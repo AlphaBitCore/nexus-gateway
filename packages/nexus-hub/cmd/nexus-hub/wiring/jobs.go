@@ -43,9 +43,9 @@ func InitConsumerManager(
 	mqConsumer mq.Consumer,
 	opsReg *sharedops.Registry,
 	logger *slog.Logger,
-) *consumer.Manager {
+) (*consumer.Manager, func() time.Time) {
 	if !cfg.Consumers.Enabled || mqConsumer == nil {
-		return nil
+		return nil, nil
 	}
 
 	var consumers []consumer.NamedConsumer
@@ -98,7 +98,9 @@ func InitConsumerManager(
 	)
 	consumers = append(consumers, consumer.NamedConsumer{Name: "exemption-consumer", Consumer: ec})
 
-	return consumer.NewManager(consumers, logger, opsReg)
+	// tew.LastReceived is handed to the audit-freshness job (via InitScheduler) so
+	// it can tell an idle deployment from a stalled pipeline.
+	return consumer.NewManager(consumers, logger, opsReg), tew.LastReceived
 }
 
 // InitScheduler creates, registers all jobs, syncs definitions, recovers stale
@@ -118,6 +120,10 @@ func InitScheduler(
 	alertStore *alerting.Store,
 	raiser *alerting.Raiser,
 	siemBridge *siem.Bridge,
+	// lastTrafficReceived reports when the Hub last received a data-plane
+	// traffic-event message (from InitConsumerManager). May be nil (consumers
+	// disabled) — the freshness check then falls back to age-only alarming.
+	lastTrafficReceived func() time.Time,
 	logger *slog.Logger,
 ) (*scheduler.Scheduler, error) {
 	if !cfg.Scheduler.Enabled {
@@ -136,7 +142,8 @@ func InitScheduler(
 
 	// Audit pipeline freshness — defaults: tick every 60s, alarm at 5min stale.
 	// Catches the silent-stall failure class (INSERT fails after consumer pull).
-	sched.Register(defjobs_audit.NewAuditFreshnessCheck(pool, 60*time.Second, 5*time.Minute, opsReg, logger))
+	sched.Register(defjobs_audit.NewAuditFreshnessCheck(pool, 60*time.Second, 5*time.Minute, opsReg, logger).
+		WithLastReceived(lastTrafficReceived))
 
 	sched.Register(defjobs_drift.NewIdentityEnricher(st, cfg.Scheduler.IdentityEnrichInterval, opsReg, logger))
 	sched.Register(defjobs_expiry.NewAuthCleanup(st.AuthStore(), time.Hour, logger))
@@ -183,8 +190,11 @@ func InitScheduler(
 	sched.Register(thingMerge1d)
 	sched.Register(thingMerge1mo)
 	// lookbackDays = 0 → default (correctionLookbackDays) so late events up to
-	// the agent offline-buffer horizon are still folded into the rollups.
-	sched.Register(defjobs_rollup.NewRollupCorrection(rollup5m, merge1h, merge1d, merge1mo, 0, cfg.Scheduler.Intervals.RollupCorrection, logger))
+	// the agent offline-buffer horizon are still folded into the rollups. The
+	// 5m retention setting is passed so the window can be held inside it —
+	// correction and retention otherwise contend for the same buckets on the
+	// same tick and deadlock (see clampToRetention).
+	sched.Register(defjobs_rollup.NewRollupCorrection(pool, rollup5m, merge1h, merge1d, merge1mo, 0, cfg.Scheduler.Retention.Rollup5mDays, cfg.Scheduler.Intervals.RollupCorrection, logger))
 	// Per-Thing correction sibling — without it late events whose per-Thing 5m
 	// bucket already sealed are never re-aggregated.
 	sched.Register(defjobs_rollup.NewThingRollupCorrection(thingRollup5m, thingMerge1h, thingMerge1d, thingMerge1mo, 0, cfg.Scheduler.Intervals.RollupCorrection, logger))

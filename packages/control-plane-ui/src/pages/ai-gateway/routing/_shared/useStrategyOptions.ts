@@ -9,7 +9,7 @@ import { STRATEGY_TYPES, type StrategyType } from './routing-rule-config';
  * label key here at compile time — the picker and the list filter can never drift
  * from the strategy set.
  */
-const STRATEGY_LABEL_KEY: Record<Exclude<StrategyType, 'policy'>, string> = {
+const STRATEGY_LABEL_KEY: Record<StrategyType, string> = {
   single: 'pages:routing.strategySingle',
   fallback: 'pages:routing.strategyFallback',
   loadbalance: 'pages:routing.strategyLoadbalance',
@@ -20,7 +20,7 @@ const STRATEGY_LABEL_KEY: Record<Exclude<StrategyType, 'policy'>, string> = {
 };
 
 export interface StrategyOption {
-  value: Exclude<StrategyType, 'policy'>;
+  value: StrategyType;
   label: string;
 }
 

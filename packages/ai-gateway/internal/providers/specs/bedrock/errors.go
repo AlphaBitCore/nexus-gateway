@@ -32,6 +32,12 @@ func (errorNormalizer) Normalize(status int, _ http.Header, body []byte) *provco
 	switch pe.Type {
 	case "ThrottlingException", "TooManyRequestsException":
 		pe.Code = provcore.CodeRateLimited
+	case "ServiceQuotaExceededException":
+		// AWS names this case itself, and it is not a throttle: backing off
+		// does not raise a service quota. It fell through to the status
+		// default, which read it as a rate limit and kept retrying the one
+		// account that cannot serve the request.
+		pe.Code = provcore.CodeProviderQuotaExhausted
 	case "ValidationException":
 		pe.Code = provcore.CodeInvalidRequest
 	case "AccessDeniedException", "UnrecognizedClientException":

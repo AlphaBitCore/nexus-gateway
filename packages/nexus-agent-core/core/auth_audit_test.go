@@ -33,7 +33,7 @@ func TestJWTTokenSource_ConcurrentNearExpiryRefreshesOnce(t *testing.T) {
 	src := newJWTSource(t, store, srv.URL, now)
 	const n = 20
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for range n {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

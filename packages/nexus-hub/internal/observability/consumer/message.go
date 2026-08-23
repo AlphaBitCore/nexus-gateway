@@ -255,6 +255,16 @@ type TrafficEventMessage struct {
 	// traffic_event.internal_ops_breakdown.
 	AIGuardCostUsd       *float64        `json:"aiGuardCostUsd,omitempty"`
 	InternalOpsBreakdown json.RawMessage `json:"internalOpsBreakdown,omitempty"`
+
+	// Vendor-spend attribution (2026-08-04). RouterCostUsd is the cost of the
+	// smart-router LLM call that chose this request's model; RouterProviderID
+	// is the provider that SERVED that call, which frequently differs from
+	// RoutedProviderID (the provider that served the request itself).
+	// EmbeddingProviderID is the sibling attribution for EmbeddingCostUsd
+	// above. Producer side at packages/shared/transport/mq/messages.go.
+	RouterCostUsd       *float64 `json:"routerCostUsd,omitempty"`
+	RouterProviderID    string   `json:"routerProviderId,omitempty"`
+	EmbeddingProviderID string   `json:"embeddingProviderId,omitempty"`
 }
 
 // nullableJSON returns nil if the raw JSON is empty/null, otherwise returns

@@ -40,7 +40,6 @@ func TestSingleStrategy(t *testing.T) {
 		core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +66,6 @@ func TestFallbackStrategy(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +93,6 @@ func TestLoadbalanceStrategy(t *testing.T) {
 			},
 			&core.RoutingContext{},
 			&trace,
-			0,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +132,7 @@ func TestLoadbalance_JSONRoundTrip(t *testing.T) {
 
 	reg := newTestRegistry()
 	var trace []core.TraceEntry
-	targets, err := reg.Evaluate(context.Background(), node, &core.RoutingContext{}, &trace, 0)
+	targets, err := reg.Evaluate(context.Background(), node, &core.RoutingContext{}, &trace)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -182,7 +179,6 @@ func TestLoadbalance_EmptyWeighted_EmitsTrace(t *testing.T) {
 		core.StrategyNode{Type: "loadbalance"}, // zero Weighted
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -214,7 +210,6 @@ func TestLoadbalance_ZeroTotalWeight_EmitsTrace(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -248,7 +243,6 @@ func TestConditionalStrategy(t *testing.T) {
 		},
 		ctx,
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +274,6 @@ func TestConditionalStrategy_Default(t *testing.T) {
 		},
 		ctx,
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -304,7 +297,6 @@ func TestABSplitStrategy(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +316,6 @@ func TestABSplit_EmptyTargets_EmitsTrace(t *testing.T) {
 		core.StrategyNode{Type: "ab_split"}, // zero ABTargets
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -352,7 +343,6 @@ func TestABSplit_ZeroTotalWeight_EmitsTrace(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -381,7 +371,6 @@ func TestABSplit_LookupFailure_EmitsTrace(t *testing.T) {
 		},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -394,28 +383,11 @@ func TestABSplit_LookupFailure_EmitsTrace(t *testing.T) {
 	}
 }
 
-func TestPolicyStrategy(t *testing.T) {
-	reg := newTestRegistry()
-	var trace []core.TraceEntry
-
-	targets, err := reg.Evaluate(
-		context.Background(),
-		core.StrategyNode{Type: "policy", AllowModelIDs: []string{"gpt-4"}},
-		&core.RoutingContext{},
-		&trace,
-		0,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(targets) != 0 {
-		t.Error("policy should return no targets")
-	}
-}
-
 func TestModelMatchesAllowedRefs(t *testing.T) {
+	// Refs name concrete models — that is all the picker can write, and a '*'
+	// is a literal here rather than a wildcard.
 	refs := []store.AllowedModelRef{
-		{ProviderID: "openai", ModelID: "gpt-*"},
+		{ProviderID: "openai", ModelID: "gpt-4"},
 		{ProviderID: "anthropic", ModelID: "claude-3-sonnet"},
 	}
 
@@ -424,9 +396,16 @@ func TestModelMatchesAllowedRefs(t *testing.T) {
 		want                                 bool
 	}{
 		{"gpt-4", "gpt-4-0613", "openai", true},
-		{"gpt-3.5-turbo", "gpt-3.5-turbo", "openai", true},
+		// The ref may name either identifier: here it names the catalog id, so a
+		// request resolved by provider model id still matches.
+		{"other-id", "gpt-4", "openai", true},
+		// A sibling model the key does not list is refused, where a gpt-* ref
+		// would once have admitted it.
+		{"gpt-3.5-turbo", "gpt-3.5-turbo", "openai", false},
 		{"claude-3-sonnet", "claude-3-sonnet-20240229", "anthropic", true},
 		{"claude-3-haiku", "claude-3-haiku-20240307", "anthropic", false},
+		// Right model id, wrong provider.
+		{"gpt-4", "gpt-4", "meta", false},
 		{"llama-3", "llama-3-70b", "meta", false},
 	}
 
@@ -441,4 +420,74 @@ func TestModelMatchesAllowedRefs(t *testing.T) {
 	if !core.ModelMatchesAllowedRefs("anything", "anything", "any", nil) {
 		t.Error("empty refs should be unrestricted")
 	}
+}
+
+// TestConditionalAndABSplit_ReturnOnlyTheChoiceTheyMade pins a property that a
+// port could break silently, and whose breakage costs money and correctness
+// rather than tidiness.
+//
+// Both strategies exist to PARTITION traffic. A conditional routes free-tier
+// keys to a cheap model and everything else to an expensive one; an A/B split
+// sends a fraction of requests to a variant so the two can be compared. Neither
+// answer is "here are some models, in preference order" — each is "this
+// request belongs on this side of the line".
+//
+// So the losing branch must not come back as a fallback candidate. Returning
+// it would mean a free-tier request reaching the expensive model on any
+// transient failure — precisely what the branch condition existed to prevent —
+// and an A/B experiment quietly serving variant B to requests counted as A.
+// Recovery for these two is the rule's own fallback chain, which an admin wrote
+// down deliberately.
+//
+// Written before the strategies move packages: a port that flattened both
+// branches into the returned slice would look like a reasonable generalisation
+// and pass every other test here.
+func TestConditionalAndABSplit_ReturnOnlyTheChoiceTheyMade(t *testing.T) {
+	reg := newTestRegistry()
+
+	t.Run("conditional yields the matched branch alone", func(t *testing.T) {
+		var trace []core.TraceEntry
+		node := core.StrategyNode{
+			Type: "conditional",
+			Conditions: []core.ConditionalBranch{{
+				When: map[string]any{"virtualKey.name": "free-tier"},
+				Then: core.StrategyNode{Type: "single", ProviderID: "p-cheap", ModelID: "m-cheap"},
+			}},
+			Default: &core.StrategyNode{Type: "single", ProviderID: "p-costly", ModelID: "m-costly"},
+		}
+		rctx := &core.RoutingContext{VirtualKey: &core.VKContext{Name: "free-tier"}}
+
+		targets, err := reg.Evaluate(context.Background(), node, rctx, &trace)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		if len(targets) != 1 || targets[0].ModelID != "m-cheap" {
+			t.Fatalf("returned %+v — the default branch must not ride along; a free-tier "+
+				"request would reach the expensive model on the first transient failure, "+
+				"which is what the condition exists to prevent", targets)
+		}
+	})
+
+	t.Run("ab_split yields the selected variant alone", func(t *testing.T) {
+		var trace []core.TraceEntry
+		node := core.StrategyNode{
+			Type: "ab_split",
+			ABTargets: []core.ABTarget{
+				{ProviderID: "p", ModelID: "variant-a", Weight: 100},
+				{ProviderID: "p", ModelID: "variant-b", Weight: 0},
+			},
+		}
+		targets, err := reg.Evaluate(context.Background(), node, &core.RoutingContext{}, &trace)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		if len(targets) != 1 {
+			t.Fatalf("returned %d targets — the unselected variant must not be a fallback "+
+				"candidate, or requests counted as A are silently served by B and the "+
+				"experiment measures nothing", len(targets))
+		}
+		if targets[0].ModelID != "variant-a" {
+			t.Errorf("selected %q with all weight on variant-a", targets[0].ModelID)
+		}
+	})
 }

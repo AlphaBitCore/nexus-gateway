@@ -333,16 +333,17 @@ func TestShouldUploadFlow_BumpFailed(t *testing.T) {
 func TestAuditEventToMap_BasicFields(t *testing.T) {
 	now := time.Now()
 	e := auditevent.Event{
-		ID:            "flow-1",
-		TraceID:       "trace-1",
-		Timestamp:     now,
-		SourceIP:      "10.0.0.1",
-		SourceProcess: "curl",
-		TargetHost:    "api.openai.com",
-		Method:        "POST",
-		Path:          "/v1/chat/completions",
-		Action:        "inspect",
-		IngressFormat: "anthropic",
+		ID:                "flow-1",
+		TraceID:           "trace-1",
+		ExternalRequestID: "caller-1",
+		Timestamp:         now,
+		SourceIP:          "10.0.0.1",
+		SourceProcess:     "curl",
+		TargetHost:        "api.openai.com",
+		Method:            "POST",
+		Path:              "/v1/chat/completions",
+		Action:            "inspect",
+		IngressFormat:     "anthropic",
 	}
 	m := AuditEventToMap(e)
 
@@ -355,6 +356,9 @@ func TestAuditEventToMap_BasicFields(t *testing.T) {
 	}
 	checkStr("id", "flow-1")
 	checkStr("traceId", "trace-1")
+	// The caller's own id rides the same map. Adjacent to traceId and easily
+	// confused with it, so both are asserted with distinguishable values.
+	checkStr("externalRequestId", "caller-1")
 	checkStr("sourceIp", "10.0.0.1")
 	checkStr("sourceProcess", "curl")
 	checkStr("targetHost", "api.openai.com")
@@ -644,24 +648,25 @@ func TestBuildHTTPAuditEvents_BasicMapping(t *testing.T) {
 	pt := 42
 	now := time.Now()
 	evts := []auditevent.Event{{
-		ID:              "e1",
-		TraceID:         "t1",
-		Timestamp:       now,
-		SourceIP:        "1.2.3.4",
-		SourceProcess:   "proc",
-		TargetHost:      "api.example.com",
-		Method:          "GET",
-		Path:            "/health",
-		StatusCode:      200,
-		LatencyMs:       50,
-		Action:          "inspect",
-		BumpStatus:      "SUCCESS",
-		HookDecision:    "approve",
-		HookReason:      "ok",
-		ComplianceTags:  []string{"cat:llm"},
-		PayloadRequest:  []byte("req"),
-		PayloadResponse: []byte("resp"),
-		PromptTokens:    &pt,
+		ID:                "e1",
+		TraceID:           "t1",
+		ExternalRequestID: "caller-t1",
+		Timestamp:         now,
+		SourceIP:          "1.2.3.4",
+		SourceProcess:     "proc",
+		TargetHost:        "api.example.com",
+		Method:            "GET",
+		Path:              "/health",
+		StatusCode:        200,
+		LatencyMs:         50,
+		Action:            "inspect",
+		BumpStatus:        "SUCCESS",
+		HookDecision:      "approve",
+		HookReason:        "ok",
+		ComplianceTags:    []string{"cat:llm"},
+		PayloadRequest:    []byte("req"),
+		PayloadResponse:   []byte("resp"),
+		PromptTokens:      &pt,
 	}}
 	got := BuildHTTPAuditEvents(evts)
 	if len(got) != 1 {
@@ -673,6 +678,9 @@ func TestBuildHTTPAuditEvents_BasicMapping(t *testing.T) {
 	}
 	if h.TraceID != "t1" {
 		t.Errorf("TraceID: want t1, got %s", h.TraceID)
+	}
+	if h.ExternalRequestID != "caller-t1" {
+		t.Errorf("ExternalRequestID: want caller-t1, got %s", h.ExternalRequestID)
 	}
 	if h.TargetHost != "api.example.com" {
 		t.Errorf("TargetHost: want api.example.com, got %s", h.TargetHost)

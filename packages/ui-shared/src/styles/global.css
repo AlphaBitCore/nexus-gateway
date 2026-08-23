@@ -225,8 +225,21 @@ select:-webkit-autofill {
  * component CSS — the prior absence of these rules caused users to be
  * unable to tell whether a click had registered (notably on the agent
  * Dashboard Diagnostics page's Restart daemon / Copy bundle / Copy log
- * path buttons). Component-level styles still win via specificity, so
- * variants like .primary / .danger keep their colour treatments.
+ * path buttons).
+ *
+ * SCOPE: the hover/active washes below deliberately skip `[data-state]`.
+ * Radix renders its controls (Checkbox, Switch, Tabs, RadioGroup, Accordion…)
+ * as bare <button>s that carry their state in `data-state` and paint their own
+ * background from it. An element selector like `button:hover:not(:disabled)`
+ * scores (0,2,1) and therefore OUTRANKS `.root[data-state='checked']` (0,2,0),
+ * so the wash used to overwrite those fills: a checked Checkbox turned grey
+ * under the cursor and its white tick became invisible against it. Sidebar's
+ * six `!important` background declarations are the fossil of the same fight.
+ *
+ * Excluding `[data-state]` fixes the class rather than each casualty: a control
+ * that expresses state owns its own hover/active treatment, and a plain button
+ * still gets the default wash. (Switch escaped by accident — its checked fill is
+ * a gradient, and background-color cannot overwrite background-image.)
  *
  * Tokens used live in this file and theme files; transitions use the
  * existing --g-transition-fast (150ms) to stay snappy without feeling
@@ -242,12 +255,17 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
-button:hover:not(:disabled) {
+button:hover:not(:disabled):not([data-state]) {
   background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.04));
 }
 
+/* The press transform stays universal — it is motion, not colour, and does not
+   collide with a control's own fill. Only the background wash is scoped out. */
 button:active:not(:disabled) {
   transform: scale(0.97);
+}
+
+button:active:not(:disabled):not([data-state]) {
   background-color: var(--color-bg-pressed, rgba(0, 0, 0, 0.08));
 }
 

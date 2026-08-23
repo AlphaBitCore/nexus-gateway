@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -13,15 +14,24 @@ import (
 )
 
 // BuildInfo carries the static identity that callers (services / agents)
-// inject into CaptureStaticInfo. ServiceVersion / BuildSHA / BuildTime
-// are stamped at build time via -ldflags; StartTime is per-process;
-// PublicURL is the deployment-time public base URL (from yaml config).
-// None of these are derivable from runtime introspection alone.
+// inject into CaptureStaticInfo. StartTime is per-process; PublicURL is the
+// deployment-time public base URL (from yaml config). None of these are
+// derivable from runtime introspection alone.
+//
+// The build identity is given as the two raw inputs a service actually has —
+// its name and its `-ldflags` stamp — and resolved inside CaptureStaticInfo.
+// It used to be three pre-resolved fields, and every caller got them wrong:
+// three of five services reported a hardcoded "0.1.0" and all five reported an
+// empty BuildSHA, so no environment could be tied to a build. Taking the raw
+// inputs removes the opportunity rather than adding a lint that watches for it.
 type BuildInfo struct {
-	ServiceVersion string
-	BuildSHA       string
-	BuildTime      string
-	StartTime      string
+	// Service is the service's own name — "ai-gateway", "nexus-hub".
+	Service string
+	// BuildVersion is the value stamped into `main.buildVersion` at build
+	// time (`-X main.buildVersion=prod-20260819b@caa2934c3`). Empty or "dev"
+	// for an unstamped build, which falls back to the VCS stamp.
+	BuildVersion string
+	StartTime    string
 	// PublicURL is the externally-reachable base URL clients use to
 	// reach this service. Empty for client Things (Agent). Server
 	// Things populate it from their `publicURL` yaml config field so
@@ -41,8 +51,19 @@ type BuildInfo struct {
 // current process. Best-effort: any individual lookup that fails on the host
 // platform contributes a zero value rather than failing the whole call.
 func CaptureStaticInfo(b BuildInfo) registry.StaticInfo {
+	return captureStaticInfoWith(b, debug.ReadBuildInfo)
+}
+
+// captureStaticInfoWith is CaptureStaticInfo with the VCS stamp injectable.
+//
+// The seam exists because buildTime was resolved correctly and then had to be
+// PASSED ON, and nothing could assert the second half: every test could reach
+// the resolver but not the payload. That is the same shape of gap that left
+// buildSha empty on every node in production while the resolver read fine.
+func captureStaticInfoWith(b BuildInfo, read func() (*debug.BuildInfo, bool)) registry.StaticInfo {
 	hostname, _ := os.Hostname()
 	ramBytes := totalRAMBytes()
+	serviceVersion, buildSHA, buildTime := resolveBuildIdentity(b.Service, b.BuildVersion, read)
 	return registry.StaticInfo{
 		Hostname:          hostname,
 		PrimaryIP:         primaryOutboundIP(),
@@ -57,9 +78,9 @@ func CaptureStaticInfo(b BuildInfo) registry.StaticInfo {
 		TotalMemMB:        ramBytes / (1024 * 1024),
 		SerialNumber:      hardwareSerial(),
 		ModelName:         hardwareModel(),
-		ServiceVersion:    b.ServiceVersion,
-		BuildSHA:          b.BuildSHA,
-		BuildTime:         b.BuildTime,
+		ServiceVersion:    serviceVersion,
+		BuildSHA:          buildSHA,
+		BuildTime:         buildTime,
 		StartTime:         b.StartTime,
 		PublicURL:         b.PublicURL,
 		PrivateURL:        b.PrivateURL,

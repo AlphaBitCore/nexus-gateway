@@ -58,10 +58,11 @@ func TestGetProvider(t *testing.T) {
 
 var modelTestColumnsGetModel = []string{
 	"id", "code", "name", "providerId", "providerModelId",
-	"type", "enabled", "inputPricePerMillion", "outputPricePerMillion",
+	"type", "enabled", "p_enabled", "m_status",
+	"inputPricePerMillion", "outputPricePerMillion",
 	"features", "maxContextTokens", "maxOutputTokens", "aliases",
 	// Capability matrix columns appended:
-	"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
+	"inputModalities", "outputModalities", "requiredModalities", "lifecycle", "capabilityJson",
 }
 
 func makeModelRowGetModel(id string) []any {
@@ -69,19 +70,19 @@ func makeModelRowGetModel(id string) []any {
 	outP := "12.0"
 	return []any{
 		id, "gpt-4o", "GPT-4o", "p1", "gpt-4o",
-		"chat", true, &inP, &outP,
+		"chat", true, true, "active", &inP, &outP,
 		[]string{"vision"},
 		pgtype.Int4{Int32: 128000, Valid: true},
 		pgtype.Int4{Int32: 16384, Valid: true},
 		[]string{"gpt-4o-2024-08-06"},
-		[]string{"text"}, []string{"text"}, "ga", []byte(`{}`),
+		[]string{"text"}, []string{"text"}, []string{}, "ga", []byte(`{}`),
 	}
 }
 
 func TestGetModel(t *testing.T) {
 	t.Run("happy", func(t *testing.T) {
 		mock, db := newMockDB(t)
-		mock.ExpectQuery(`FROM "Model"\s+WHERE id = \$1`).
+		mock.ExpectQuery(`FROM "Model" m\s+LEFT JOIN "Provider" p ON p\.id = m\."providerId"\s+WHERE m\.id = \$1`).
 			WithArgs("m1").
 			WillReturnRows(pgxmock.NewRows(modelTestColumnsGetModel).AddRow(makeModelRowGetModel("m1")...))
 		got, err := db.GetModel(context.Background(), "m1")
@@ -96,6 +97,12 @@ func TestGetModel(t *testing.T) {
 		}
 		if got.MaxContextTokens == nil || *got.MaxContextTokens != 128000 {
 			t.Errorf("max ctx: %v", got.MaxContextTokens)
+		}
+		// The provider join is what makes Servable() answer truthfully on a
+		// by-UUID row; without it an in-service model would report itself
+		// unservable to any caller that asks.
+		if !got.ProviderEnabled || !got.Servable() {
+			t.Errorf("by-UUID lookup must hydrate the provider flag: %+v", got)
 		}
 	})
 
@@ -118,10 +125,10 @@ func TestGetModel(t *testing.T) {
 		mock, db := newMockDB(t)
 		row := makeModelRowGetModel("m2")
 		// Replace both prices with nil string pointers
-		row[7] = (*string)(nil)
-		row[8] = (*string)(nil)
-		row[10] = pgtype.Int4{Valid: false} // maxCtx invalid
-		row[11] = pgtype.Int4{Valid: false} // maxOut invalid
+		row[colIdx(modelTestColumnsGetModel, "inputPricePerMillion")] = (*string)(nil)
+		row[colIdx(modelTestColumnsGetModel, "outputPricePerMillion")] = (*string)(nil)
+		row[colIdx(modelTestColumnsGetModel, "maxContextTokens")] = pgtype.Int4{Valid: false}
+		row[colIdx(modelTestColumnsGetModel, "maxOutputTokens")] = pgtype.Int4{Valid: false}
 		mock.ExpectQuery(`FROM "Model"`).
 			WithArgs("m2").
 			WillReturnRows(pgxmock.NewRows(modelTestColumnsGetModel).AddRow(row...))
@@ -191,5 +198,19 @@ func TestIntFromPgInt4(t *testing.T) {
 	got := intFromPgInt4(pgtype.Int4{Int32: 42, Valid: true})
 	if got == nil || *got != 42 {
 		t.Errorf("valid 42 → %v", got)
+	}
+}
+
+// TestFloatFromPgFloat8 pins the AP-2 temperature-range scan helper: a SQL
+// NULL (Valid: false) must surface as a nil pointer — never a silently
+// collapsed 0.0 — so callers can distinguish "no configured floor/ceiling"
+// from "configured to zero".
+func TestFloatFromPgFloat8(t *testing.T) {
+	if got := floatFromPgFloat8(pgtype.Float8{Valid: false}); got != nil {
+		t.Errorf("invalid → nil; got %v", got)
+	}
+	got := floatFromPgFloat8(pgtype.Float8{Float64: 0.7, Valid: true})
+	if got == nil || *got != 0.7 {
+		t.Errorf("valid 0.7 → %v", got)
 	}
 }

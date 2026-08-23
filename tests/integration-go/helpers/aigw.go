@@ -32,7 +32,7 @@ func AIGwPostRSToken(env *Env, client *http.Client, path string, body []byte) (i
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read path; a close error is not actionable
 	out, err := io.ReadAll(resp.Body)
 	return resp.StatusCode, out, err
 }

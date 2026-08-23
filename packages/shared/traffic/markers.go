@@ -85,11 +85,14 @@ var AcceptHeaders = []string{
 	// Correlation. X-Nexus-Request-Id is honoured-or-generated; X-Request-Id
 	// carries the caller's own id to traffic_event.external_request_id;
 	// X-Nexus-End-User-Id carries the caller's end-user tag to
-	// traffic_event.end_user_id (header wins over the protocol-native field).
+	// traffic_event.end_user_id (header wins over the protocol-native field);
+	// X-Nexus-Session-Id carries the caller's session tag; X-Nexus-Client-Tags
+	// carries structured key=value pairs.
 	"X-Nexus-Request-Id",
 	"X-Request-Id",
 	"X-Nexus-End-User-Id",
 	"X-Nexus-Session-Id",
+	"X-Nexus-Client-Tags",
 	// Response-cache opt-out. The Aigw-prefixed name is the deprecated
 	// spelling, kept while the read side dual-reads it; drop both together.
 	"X-Nexus-No-Cache",

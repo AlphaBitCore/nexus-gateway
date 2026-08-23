@@ -11,18 +11,22 @@ import (
 
 // ConditionalStrategy evaluates branches in order and recurses into
 // the first matching branch, or the default if none match.
-type ConditionalStrategy struct{}
+type ConditionalStrategy struct{ lookup core.TargetLookup }
 
 func (s *ConditionalStrategy) Type() string { return "conditional" }
 
-func (s *ConditionalStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry, depth int, recurse RecurseFunc) ([]core.RoutingTarget, error) {
+func (s *ConditionalStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 	for i, branch := range node.Conditions {
 		if matcher.EvaluateExpression(branch.When, rctx) {
 			*trace = append(*trace, core.TraceEntry{
 				StrategyType: "conditional",
 				Decision:     fmt.Sprintf("branch %d matched", i),
 			})
-			return recurse(ctx, branch.Then, rctx, trace, depth)
+			target, err := resolveLeaf(ctx, branch.Then, s.lookup, "conditional", trace)
+			if err != nil || target == nil {
+				return nil, err
+			}
+			return []core.RoutingTarget{*target}, nil
 		}
 	}
 	// No branch matched — evaluate default.
@@ -31,7 +35,11 @@ func (s *ConditionalStrategy) Evaluate(ctx context.Context, node core.StrategyNo
 			StrategyType: "conditional",
 			Decision:     "no branch matched, using default",
 		})
-		return recurse(ctx, *node.Default, rctx, trace, depth)
+		target, err := resolveLeaf(ctx, *node.Default, s.lookup, "conditional default", trace)
+		if err != nil || target == nil {
+			return nil, err
+		}
+		return []core.RoutingTarget{*target}, nil
 	}
 	*trace = append(*trace, core.TraceEntry{
 		StrategyType: "conditional",
