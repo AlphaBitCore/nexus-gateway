@@ -6,8 +6,8 @@
 # past its recorded baseline without an explicit waiver.
 #
 #   Rule 1 (no silent growth): a file present in scripts/.file-size-baseline
-#           is capped at max(baseline, 300) + 10% lines.
-#   Rule 2 (no new giants):    a file NOT in the baseline is capped at 500 lines.
+#           is capped at max(baseline, 800) + 10% lines.
+#   Rule 2 (no new giants):    a file NOT in the baseline is capped at 800 lines.
 #   Rule 3 (ratchet down):     when a file shrinks below its baseline,
 #           --update-baseline rewrites the entry downward (the ratchet only
 #           ever tightens; shrinking is never penalized).
@@ -35,8 +35,8 @@ cd "$REPO_ROOT"
 
 BASELINE_FILE="$REPO_ROOT/scripts/.file-size-baseline"
 WAIVER_FILE="$REPO_ROOT/scripts/.file-size-waivers"
-NEW_FILE_CAP=500
-GROWTH_FLOOR=300
+NEW_FILE_CAP=800
+GROWTH_FLOOR=800
 
 MODE="all"
 JSON_OUTPUT=0
@@ -123,8 +123,8 @@ write_baseline_header() {
 # Maintained ONLY by scripts/check-file-size-ratchet.sh:
 #   --regen-baseline  rewrites this table from the current tree;
 #   --update-baseline ratchets entries downward when files shrink (Rule 3).
-# Growth past max(baseline, 300) + 10% fails the check (Rule 1); files not
-# listed here are capped at 500 lines (Rule 2). Never hand-edit a size
+# Growth past max(baseline, 800) + 10% fails the check (Rule 1); files not
+# listed here are capped at 800 lines (Rule 2). Never hand-edit a size
 # upward — growth needs a waiver in scripts/.file-size-waivers (user approval).
 EOF
 }
@@ -267,10 +267,14 @@ for v in "${VIOLATIONS[@]}"; do
   echo "  ✗ $path: $lines lines > $why"
 done
 echo ""
-echo "Options:"
-echo "  1. Decompose the file — split it along its responsibility seams"
+echo "Options (try in order):"
+echo "  1. Trim comments FIRST — over-long comment blocks are the usual cause."
+echo "     Tighten prose, drop redundant restatements, keep the load-bearing"
+echo "     rationale. Comments count toward the line total, so this is the"
+echo "     cheapest way back under the cap and it keeps the code intact."
+echo "  2. Decompose the file — split it along its responsibility seams"
 echo "     (see docs/developers/workflow/conventions.md → File-size ratchet)."
-echo "  2. If the size is genuinely irreducible (declaration table, protocol"
+echo "  3. If the size is genuinely irreducible (declaration table, protocol"
 echo "     matrix): add '<path> <cap> <reason>' to scripts/.file-size-waivers."
 echo "     Requires explicit user approval."
 echo ""

@@ -39,6 +39,9 @@
  *     inputPricePerMillion, outputPricePerMillion,
  *     cachedInputReadPricePerMillion, cachedInputWritePricePerMillion,
  *     maxContextTokens, maxOutputTokens,
+ *     minOutputTokens?, temperatureMin?, temperatureMax?, family?,
+ *                                  // AP-2 model-detail fields, read from the
+ *                                  // ModelEntry top level (not the seed block)
  *     inTemplate: boolean,         // emit into the provider's wizard template models[]
  *     seed?: {                     // present iff this model is a Model.json seed row
  *       id, status, deprecationDate, replacedBy, enabled,
@@ -76,7 +79,9 @@ const MODEL_ROW_ORDER = [
   'cachedInputReadPricePerMillion', 'cachedInputWritePricePerMillion',
   'maxContextTokens', 'maxOutputTokens',
   'status', 'deprecationDate', 'replacedBy', 'aliases', 'enabled',
-  'inputModalities', 'outputModalities', 'lifecycle', 'capabilityJson',
+  'inputModalities', 'outputModalities', 'requiredModalities', 'lifecycle', 'capabilityJson',
+  // AP-2 trailing columns (see providers.prisma Model block).
+  'minOutputTokens', 'temperatureMin', 'temperatureMax', 'family',
   'createdAt', 'updatedAt',
 ];
 // Optional numeric fields on a template model, emitted (in this order) only when non-null.
@@ -113,6 +118,19 @@ function validateCatalog(catalog) {
         const dup = seenModelId.get(m.seed.id);
         if (dup) throw new Error(`duplicate seed id ${m.seed.id} on ${dup} and ${p.key}/${m.code}`);
         seenModelId.set(m.seed.id, `${p.key}/${m.code}`);
+      }
+      for (const f of ['inputModalities', 'outputModalities']) {
+        if (!Array.isArray(m[f]) || m[f].length === 0) {
+          throw new Error(`${p.key}/${m.code}: missing ${f} — every model states its own modalities, seeded or template-only`);
+        }
+      }
+      for (const r of m.requiredModalities ?? []) {
+        if (!(m.inputModalities ?? []).includes(r)) {
+          throw new Error(`${p.key}/${m.code}: requiredModalities has ${r}, which inputModalities does not accept — a model cannot require what it cannot take`);
+        }
+      }
+      if (m.seed && (m.seed.inputModalities || m.seed.outputModalities)) {
+        throw new Error(`${p.key}/${m.code}: modalities live at the top level, not under "seed" — they are a vendor fact about the model, not per-row instance state`);
       }
       if (m.inTemplate && !p.template) {
         throw new Error(`${p.key}/${m.code}: inTemplate=true but provider has no template block`);
@@ -152,10 +170,18 @@ function buildModelFixture(catalog) {
         replacedBy: m.seed.replacedBy,
         aliases: m.aliases ?? [],
         enabled: m.seed.enabled,
-        inputModalities: m.seed.inputModalities,
-        outputModalities: m.seed.outputModalities,
+        inputModalities: m.inputModalities,
+        outputModalities: m.outputModalities,
+        // Absent is the normal case and means no constraint. Emitted as []
+        // rather than omitted because the fixture is a DB row shape, and a
+        // missing array column reads as NULL where the schema says NOT NULL.
+        requiredModalities: m.requiredModalities ?? [],
         lifecycle: m.seed.lifecycle,
         capabilityJson: m.seed.capabilityJson,
+        minOutputTokens: m.minOutputTokens ?? null,
+        temperatureMin: m.temperatureMin ?? null,
+        temperatureMax: m.temperatureMax ?? null,
+        family: m.family ?? null,
         createdAt: m.seed.createdAt,
         updatedAt: m.seed.updatedAt,
       };
@@ -180,7 +206,21 @@ function templateModel(m) {
     providerModelId: m.providerModelId,
     type: m.type,
     features: m.features,
+    // The wizard creates models from this file, so a modality the catalog knows
+    // has to travel with it. Without these two the wizard posted no modalities
+    // and the server derived a default over the catalog's own answer — a
+    // template gpt-audio came out text-only. They are unconditional, not
+    // omitted-when-default, because "absent" already means "derive something"
+    // to the create API and that is exactly the guess being replaced.
+    inputModalities: m.inputModalities,
+    outputModalities: m.outputModalities,
   };
+  // Only the rows that actually have a floor carry the key: it is empty for
+  // 198 of 200 models, and spelling out "no constraint" on every template row
+  // would be noise in a file the wizard parses per provider.
+  if (Array.isArray(m.requiredModalities) && m.requiredModalities.length > 0) {
+    o.requiredModalities = m.requiredModalities;
+  }
   // Aliases are part of the model's identity, so the wizard needs them to
   // recognise a provider row still carrying a name this catalog has since
   // renamed away from — without them such a row reads as unknown and gets

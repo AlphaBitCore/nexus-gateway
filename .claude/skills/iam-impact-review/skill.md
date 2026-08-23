@@ -1,3 +1,8 @@
+---
+name: iam-impact-review
+description: "Walk the 5-step IAM impact audit whenever an admin API endpoint, sidebar nav item, or admin route path is added, moved, renamed, or removed. Drift between UI allowedActions and handler iamMW(...) produces silent 403s. Covers shellRouteConfig, handler route registration, catalog_data.go, managed.go, the seed policy block, and Sidebar.tsx. Trigger keywords: IAM impact, IAM review, new endpoint permissions, silent 403, allowedActions drift, /iam-impact-review."
+---
+
 # iam-impact-review
 
 Walk the 5-step IAM impact audit when an admin endpoint, sidebar item, or route is added / moved / renamed.

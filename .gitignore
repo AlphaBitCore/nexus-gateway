@@ -1,4 +1,9 @@
 node_modules/
+# ...including a SYMLINKED one. A git worktree has no node_modules of its own,
+# so the documented workaround is to link the main checkout's — and the
+# trailing-slash pattern above matches directories only, leaving the link
+# showing as untracked noise in every worktree.
+node_modules
 dist/
 
 # nexus-ami staging artifacts populated by nexus-ami/build.sh — the binaries,
@@ -179,6 +184,7 @@ packages/control-plane/.nexus/
 # See CLAUDE.md "Test/skill env files live under tests/.env.<target>".
 tests/.env.local
 tests/.env.dev
+tests/.env.stg
 tests/.env.prod
 /tmp/nexus-test/
 

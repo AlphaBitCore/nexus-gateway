@@ -48,7 +48,7 @@ Three independent toggles guarded by an `Enabled` master and `ExpiresAt`:
 |------|----------------|-------|
 | `bypassHooks` | Request-stage hooks pipeline AND response-stage hooks pipeline (including SSE live compliance) | `Record.HookDecision` stamped `"BYPASSED"` so audit consumers can filter |
 | `bypassCache` | Response-cache lookup AND write for matched traffic | Takes precedence over the `X-Nexus-No-Cache` client header so an operator-forced bypass cannot be overridden by an end-user |
-| `bypassNormalize` | Response-side `normalize.Registry.Normalize` + emission to `traffic_event_normalized` | Request-side normalize still runs (it precedes resolution and the canonical payload aids triage). Per admin/UX invariant `bypassNormalize=true` requires `bypassCache=true` because the cache key derives from the canonical normalized payload |
+| `bypassNormalize` | Response-side `normalize.Registry.Normalize` | Request-side normalize still runs (it precedes resolution and the canonical payload aids triage). Per admin/UX invariant `bypassNormalize=true` requires `bypassCache=true` because the cache key derives from the canonical normalized payload |
 
 `AnyBypassActive()` returns true only when `Enabled=true` AND at least one flag is on. A nil `*Config`, a disabled config, and an empty flag set are all "no bypass" — every consumer call site is nil-safe so cold-start sees the empty cache as "no bypass" rather than crashing.
 

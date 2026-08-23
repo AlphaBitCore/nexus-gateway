@@ -1,3 +1,8 @@
+---
+name: pre-edit-reader
+description: "Walk a contributor through the 3-doc pre-edit reading requirement before starting a code change — architecture doc, feature doc, and conventions — and identify which docs apply to a given edit area. Shortcut version of the binding rule in CLAUDE.md. Trigger keywords: what should I read, pre-edit reading, 3-doc rule, which docs apply, first code change, /pre-edit-reader."
+---
+
 # pre-edit-reader
 
 Walk a contributor through the 3-doc pre-edit reading requirement before they start a code change. Shortcut version of the binding rule in CLAUDE.md.

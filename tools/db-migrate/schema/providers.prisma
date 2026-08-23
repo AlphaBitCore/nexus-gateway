@@ -23,10 +23,23 @@ model Provider {
   region                  String?
   enabled                 Boolean  @default(true)
   headers                 Json?
-  /// E33 per-provider StreamingPolicy override columns. NULL on any
-  /// column means "inherit from system_metadata['streaming_compliance.config']
-  /// global default". The shared resolver merges these with the global
-  /// default at request time; see packages/shared/streaming/policy.
+  /// INERT. These seven were intended as per-provider StreamingPolicy
+  /// overrides, and nothing ever read or wrote them: no Go SELECT names
+  /// them, no admin API handler binds them, and the Control Plane UI has
+  /// no field for them. They are NULL on every row.
+  ///
+  /// The live overrides with these same names sit on interception_domain,
+  /// where compliance-proxy's loader selects all seven and
+  /// shared/transport/streaming/policy merges them into the effective
+  /// policy. Do not read this block as evidence that the Provider-side
+  /// ones work — and do not delete the interception_domain ones by
+  /// following a rename from here.
+  ///
+  /// Kept rather than dropped: persisted schema is a shipped contract, and
+  /// `prisma db push` makes the database match this file, so removing them
+  /// issues DROP COLUMN against a GA database. A destructive DDL buys
+  /// nothing when the field is already inert. Scheduled for removal in the
+  /// next major, alongside the Model columns kept on the same reasoning.
   streamingMode           String?  @map("streaming_mode")
   streamingChunkBytes     Int?     @map("streaming_chunk_bytes")
   streamingHookTimeoutMs  Int?     @map("streaming_hook_timeout_ms")
@@ -46,16 +59,16 @@ model Provider {
   createdAt               DateTime @default(now()) @db.Timestamptz(3)
   updatedAt               DateTime @updatedAt @db.Timestamptz(3)
 
-  credentials         Credential[]
-  models              Model[]
-  cacheProviderConfig CacheProviderConfig?
-  passthroughConfig   GatewayPassthroughConfigProvider?
+  credentials               Credential[]
+  models                    Model[]
+  cacheProviderConfig       CacheProviderConfig?
+  passthroughConfig         GatewayPassthroughConfigProvider?
   // E61-S2: this provider may be the fleet-wide embedding provider for the
   // semantic cache singleton. Modeled as a list back-relation (one-to-many on
   // the schema side) because Prisma's one-to-one mode requires the FK column
   // to be @unique. In practice the SemanticCacheConfig table has exactly one
   // row (id='singleton'), so the list always has at most one element.
-  semanticCacheConfig SemanticCacheConfig[]             @relation("EmbeddingProviderOnSemanticCache")
+  semanticCacheConfig       SemanticCacheConfig[]             @relation("EmbeddingProviderOnSemanticCache")
   // Vendor bill reconciliation rows (one per UTC day) comparing our estimated
   // spend against this provider's authoritative billing-API total. Only
   // populated for providers with a VendorBillSource (v1: openai, anthropic).
@@ -123,7 +136,7 @@ model Credential {
 model Model {
   /// UUID primary key; every internal FK reference (traffic_event.model_id,
   /// AIGuardConfig.model_id, VirtualKey.allowedModels[].modelId) holds this.
-  id                              String    @id @default(uuid())
+  id                                  String    @id @default(uuid())
   /// Customer-facing identifier. The string clients send in
   /// `{"model": "..."}` requests resolves to a UUID via this column.
   /// Stable across renames of `name` (the display label). Distinct
@@ -136,54 +149,96 @@ model Model {
   providerId                      String
   provider                        Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
   providerModelId                 String // actual ID sent to provider API
-  type                            String // chat | embedding | image | audio | rerank | video | realtime
-  features                        String[] // vision, function_calling, streaming, json_mode, thinking
+  /// WHICH ENDPOINT serves this model, not which modalities it handles —
+  /// inputModalities / outputModalities answer that, and one scalar cannot
+  /// answer both. chat | embedding | image | tts | stt | realtime | video |
+  /// rerank. "audio" is DEPRECATED: it was minted for any id containing the
+  /// word, and the models that got it are served on chat completions. Rows
+  /// carrying it still route until a migration retypes them.
+  type                            String
+  // Non-modality capabilities only: function_calling, streaming, json_mode, thinking.
+  // What a model accepts and produces lives in inputModalities/outputModalities —
+  // `vision` used to be stored here too and the two vocabularies disagreed on 34
+  // production rows. GET /v1/models still derives `vision` onto this list for SDK
+  // callers; nothing stores it.
+  features                        String[]
   inputPricePerMillion            Decimal?
   outputPricePerMillion           Decimal?
   /// E58-S1: cached input token READ price (Anthropic cache_read_input_tokens
   /// discount ~0.1×; OpenAI prompt_tokens_details.cached_tokens discount 0.5×;
   /// Gemini cachedContentTokenCount discount 0.25×). NULL = no discount; cost
   /// calculation falls back to inputPricePerMillion.
-  cachedInputReadPricePerMillion  Decimal?
+  cachedInputReadPricePerMillion      Decimal?
   /// E58-S1: cached input token WRITE surcharge (Anthropic cache_creation_input_tokens
   /// ~1.25×). NULL = no surcharge; cost calculation falls back to inputPricePerMillion.
-  cachedInputWritePricePerMillion Decimal?
+  cachedInputWritePricePerMillion     Decimal?
   /// E88-S7: audio-token rates for realtime models, which bill text and audio
   /// components of one response simultaneously at different rates. NULL on
   /// every non-realtime model. A realtime model needs BOTH primary audio rates
   /// (and both text rates) non-NULL and > 0 to be realtime-priced — the relay
   /// refuses un-priced realtime models at upgrade under an enforced cost quota.
-  audioInputPricePerMillion       Decimal?
-  audioOutputPricePerMillion      Decimal?
+  audioInputPricePerMillion           Decimal?
+  audioOutputPricePerMillion          Decimal?
   /// E88-S7: cached audio input READ price. NULL = no discount; cost
   /// calculation falls back to audioInputPricePerMillion (mirrors the
   /// cachedInputReadPricePerMillion fallback semantics for text).
   cachedAudioInputReadPricePerMillion Decimal?
   maxContextTokens                Int?
   maxOutputTokens                 Int?
-  status                          String    @default("active") // active | deprecated | disabled
-  deprecationDate                 DateTime? @db.Timestamptz(3)
-  replacedBy                      String?
-  aliases                         String[]
-  enabled                         Boolean   @default(true)
+  /// AP-2: minimum accepted value for the `max_tokens` request parameter,
+  /// surfaced in the public model-detail endpoint's parameter_constraints.
+  /// NULL ⟹ the universal floor of 1. Paired with maxOutputTokens (the max).
+  minOutputTokens                     Int?
+  /// AP-2: accepted temperature range for this model, surfaced in the public
+  /// model-detail endpoint's parameter_constraints.temperature. NULL when the
+  /// range is unknown/unseeded (the field is then omitted from the response).
+  temperatureMin                      Float?
+  temperatureMax                      Float?
+  /// AP-2: model-family label (e.g. "gpt-4o", "claude-3-5"), surfaced as the
+  /// public model-detail endpoint's `family`. NULL when unset.
+  family                              String?
+  status                              String    @default("active") // active | deprecated | disabled
+  deprecationDate                     DateTime? @db.Timestamptz(3)
+  replacedBy                          String?
+  aliases                             String[]
+  enabled                             Boolean   @default(true)
   /// E62: ordered list of input modalities this model accepts.
   /// Default ["text"] covers all chat + embedding models that only accept text input.
   /// Additional values: "image", "audio", "video". Array preserves declaration order.
-  inputModalities                 String[]  @default(["text"])
+  inputModalities                     String[]  @default(["text"])
   /// E62: ordered list of output modalities this model produces.
-  /// Embedding models set ["embedding"]; chat models default to ["text"].
-  /// Additional values: "image", "audio", "video".
+  /// Values: "text", "embedding", "image", "audio", "video". A
+  /// single-purpose endpoint declares exactly the one it produces —
+  /// embeddings ["embedding"], images ["image"], tts ["audio"], video
+  /// ["video"] — while chat and realtime may declare several. The previous
+  /// wording listed the additional values WITHOUT "embedding" one line after
+  /// requiring it, which is how a sweep picked a value the enumeration did
+  /// not contain.
   outputModalities                String[]  @default(["text"])
+  /// Modalities a request MUST carry for this model to serve it.
+  ///
+  /// inputModalities is the model's ceiling — what it can accept.
+  /// requiredModalities is its floor. The two are different facts and neither
+  /// derives the other: gpt-audio-mini accepts ["text","audio"] and REQUIRES
+  /// audio, so a plain text chat request routed to it is refused upstream.
+  /// Sixteen such 400s were measured before this column existed, and nothing
+  /// in the row could have predicted them — `type` says chat, and the input
+  /// list says text is accepted, which is true and beside the point.
+  ///
+  /// Empty is the normal case and means no constraint. Every value must also
+  /// appear in inputModalities; requiring a modality the model cannot accept
+  /// is self-contradictory and the catalog check rejects it.
+  requiredModalities              String[]  @default([])
   /// E62: model lifecycle stage. ga | preview | deprecated.
   /// Complements `status`; status=active + lifecycle=preview means the model is
   /// callable but not yet generally available.
-  lifecycle                       String    @default("ga")
+  lifecycle                           String    @default("ga")
   /// E62: provider-specific capability descriptor for non-chat endpoints.
   /// For embedding models: {"embeddings":{"max_input_tokens":…,"supported_dimensions":…,…}}.
   /// For chat models: null (capability implied by `features` array).
-  capabilityJson                  Json?
-  createdAt                       DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt                       DateTime  @updatedAt @db.Timestamptz(3)
+  capabilityJson                      Json?
+  createdAt                           DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt                           DateTime  @updatedAt @db.Timestamptz(3)
 
   // E61-S2 back-relations: this Model row may be the embedding model for
   // the fleet-wide semantic-cache singleton OR for individual traffic events.

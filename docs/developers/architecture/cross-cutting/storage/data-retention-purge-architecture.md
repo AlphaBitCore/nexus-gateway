@@ -94,12 +94,13 @@ A request is one of two types:
 - **ERASURE** — fulfillment removes the subject's personal data in a single
   transaction while preserving the rows that carry no personal data (so audit
   integrity and aggregate rollups survive). It:
-  - scrubs the subject's captured bodies in BOTH copies — the raw
-    `traffic_event_payload` (`inline_request_body`, `inline_response_body`, and
-    the `request_spill_ref` / `response_spill_ref` pointers) AND the canonical
-    `traffic_event_normalized` sidecar (`request_normalized`,
-    `response_normalized`, the error reasons, and the redaction spans), so the
-    prompt/response content is gone from both the raw and normalized stores;
+  - scrubs the subject's captured bodies — `traffic_event_payload`'s
+    `inline_request_body`, `inline_response_body`, and the `request_spill_ref` /
+    `response_spill_ref` pointers. This is the ONLY copy: the normalized
+    projection is recomputed at view time from exactly these bytes rather than
+    stored beside them, so nulling them erases the prompt/response content
+    outright. One erasure surface is the point — a second stored copy is a
+    second thing an erasure can miss;
   - nulls the identifying columns on the subject's `traffic_event` rows —
     `entity_id`, `entity_name`, the `identity` snapshot, and `source_ip` for
     virtual-key traffic; `source_ip`, `source_process`, `entity_name`, and

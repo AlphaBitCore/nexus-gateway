@@ -161,7 +161,7 @@ The rollup table is fed by the audit pipeline (see [audit-pipeline-architecture.
 
 ## 10. Response surface for clients
 
-429 envelope is the gateway `proxy_error` shape (see [error-taxonomy-architecture.md](./error-taxonomy-architecture.md)): `{"error":{"message":"…","type":"proxy_error","code":"QUOTA_EXCEEDED","hint":"…"}}`. The `message` carries `Decision.Message` (e.g. `virtual_key quota exceeded: vk-… (45.00 / 50.00 USD)`); the `hint` carries a static operator-action string (`Check usage or request a quota increase`).
+429 envelope is the flat gateway shape (see [error-taxonomy-architecture.md](./error-taxonomy-architecture.md)): `{"error":{"message":"…","type":"rate_limit_error","code":"QUOTA_EXCEEDED","hint":"…"}}` — `type` is derived from the HTTP status, `code` stays the Nexus discriminator. The `message` carries `Decision.Message` (e.g. `virtual_key quota exceeded: vk-… (45.00 / 50.00 USD)`); the `hint` carries a static operator-action string (`Check usage or request a quota increase`).
 
 Successful requests carry quota-meta headers when the chain stamped a VK-level limit. The engine populates `CurrentCents` + `LimitCents` + `PeriodKey` on `Decision.Levels[VK-level]` during Check; the proxy reads them after the request is allowed and emits:
 

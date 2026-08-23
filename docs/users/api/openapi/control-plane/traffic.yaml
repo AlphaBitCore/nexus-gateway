@@ -120,7 +120,15 @@ paths:
                     type: string
                     enum: [chat, embeddings, image_generation, tts, stt, video_generation, rerank, guardrail, realtime]
                 - name: requestId
-                  description: "Filter by the gateway request id."
+                  description: >-
+                    Filter by the value the gateway returned in the
+                    X-Nexus-Request-Id response header (exact match on
+                    traffic_event.trace_id). This is a grouping key, not a row
+                    key: a realtime session's exchanges and an agent flow's
+                    cross-service rows share one value, so the filter can return
+                    several rows. It is empty for compliance-proxy passthrough
+                    traffic, which carries no trace. To fetch one row by its own
+                    identifier use GET /traffic/{id}.
                   in: query
                   required: false
                   schema:
@@ -513,20 +521,45 @@ paths:
     /api/admin/traffic/{id}/artifact:
         get:
             operationId: getTrafficEventArtifact
-            summary: Stream the captured multimodal artifact for inline preview
+            summary: Serve the bytes a media locator addresses
             description: |-
-                Streams the captured artifact bytes for a multimodal traffic event so the
-                admin UI can render it inline. For an image_generation event the response
-                data[index].b64_json is decoded and served with the byte-sniffed image
-                mime; for a tts event the whole response body IS the audio and is served
-                with the captured content type. The served Content-Type is restricted to an
-                image/* or audio/* allow-list (off-list bytes serve as
-                application/octet-stream) with X-Content-Type-Options: nosniff so a captured
-                provider body can never render as active content. A url-mode image (the
-                gateway never dereferenced the provider URL) returns 409 with the reference.
-                Returns 404 for events with no inline artifact (chat, embeddings, stt,
-                video, guardrail, realtime) or when no captured body is available. Gated by
-                the same read action as the traffic event itself.
+                Serves the bytes addressed by a MediaRef locator published in the event's
+                normalized payload, resolved by the same grammar that built it. Pass the
+                locator verbatim; `direction` selects which stored body it is resolved
+                against (default response).
+
+                Locator containers: `body` (the whole stored body IS the artifact),
+                `json:<gjson-path>` (plain base64), `datauri:<gjson-path>` (a full data
+                URI), `sse:<frame>:<gjson-path>` (a path inside the Nth data-bearing SSE
+                frame), `multipart:<part>` (a named part of a multipart body). Every one
+                resolves from the stored bytes alone.
+
+                Omitting `locator` keeps the endpoint's original behaviour for the two
+                shapes that predate the grammar: an image_generation event serves
+                data[index].b64_json, and a tts event serves the whole response body.
+                Those derive the locator the caller did not send and take the same path —
+                they are not a second implementation.
+
+                The served Content-Type comes from SNIFFING the bytes, never from what the
+                wire declared, because a declared type is written by whoever sent the
+                payload. A recognised inline-renderable type (png/jpeg/webp/gif, common
+                audio containers, mp4/webm, pdf) is served with `Content-Disposition:
+                inline`; anything else still serves, as application/octet-stream with
+                `attachment`, so nothing becomes unreachable and nothing renders as active
+                content. Every response carries `X-Content-Type-Options: nosniff`,
+                `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors
+                'none'`, `Cross-Origin-Resource-Policy: same-origin`, `Cache-Control:
+                private, no-store`, an `ETag` over the bytes (send `If-None-Match` for a
+                304), and a filename built from the event id and the sniffed type.
+
+                A url-mode image (the gateway never dereferenced the provider URL) returns
+                409 with the reference. 400 means the locator is malformed or names a
+                container this endpoint cannot read; 404 means it addresses nothing in
+                this event, or no body was captured for that direction; 422 means the
+                bytes are there and are not decodable — which is the same fact the media
+                card shows as a truncated ref, so the two never disagree.
+
+                Gated by the same read action as the traffic event itself.
             x-nexus-iam-action: iam.ResourceTrafficLog.Action(iam.VerbRead)
             x-nexus-tier: auto
             parameters:
@@ -536,21 +569,62 @@ paths:
                   required: true
                   schema:
                     type: string
+                - name: locator
+                  in: query
+                  description: |-
+                    A MediaRef locator from the event's normalized payload, verbatim.
+                    Omit to fall back to the pre-grammar behaviour for image_generation
+                    and tts events.
+                  required: false
+                  schema:
+                    type: string
+                    example: datauri:messages.0.content.0.image_url.url
+                - name: direction
+                  in: query
+                  description: Which stored body the locator is resolved against.
+                  required: false
+                  schema:
+                    type: string
+                    enum: [request, response]
+                    default: response
                 - name: index
                   in: query
-                  description: For image events with multiple data[] entries, which artifact to serve (default 0).
+                  description: |-
+                    Pre-grammar form only: for an image_generation event with multiple
+                    data[] entries, which artifact to serve (default 0). Ignored when
+                    `locator` is supplied.
                   required: false
                   schema:
                     type: integer
                     minimum: 0
             responses:
                 "200":
-                    description: The artifact bytes, with an image/* or audio/* Content-Type.
+                    description: |-
+                        The artifact bytes, with a Content-Type sniffed from the bytes
+                        themselves and an ETag over them.
                     content:
                         application/octet-stream:
                             schema:
                                 type: string
                                 format: binary
+                "304":
+                    description: The caller's If-None-Match matches the current bytes.
+                "400":
+                    description: The locator is malformed, or names a container this endpoint cannot read.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "422":
+                    description: |-
+                        The locator addresses bytes that are not decodable. The media card
+                        reports the same fact as a truncated reference.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
                 "409":
                     description: The image was returned as a provider URL (not stored); the body carries the reference.
                     content:
@@ -559,7 +633,9 @@ paths:
                                 type: object
                                 additionalProperties: {}
                 "404":
-                    description: No inline artifact for this event.
+                    description: |-
+                        The locator addresses nothing in this event, no body was captured
+                        for that direction, or the event has no artifact at all.
                     content:
                         application/json:
                             schema:
@@ -1011,10 +1087,48 @@ components:
                     description: arbitrary JSON value
                 responseSpillRef:
                     description: arbitrary JSON value
+                requestBodyTruncated:
+                    type: boolean
+                    description: |-
+                        True when the STORED copy of the request body is only a prefix. Set when the
+                        captured body reached the inline-vs-spill cutoff
+                        (payload_capture.maxInlineBodyBytes) and no spill backend was configured to
+                        take it out of band. The upstream provider still received the complete body —
+                        only this stored copy is short. Always present; false on rows with no payload.
+                    example: false
+                responseBodyTruncated:
+                    type: boolean
+                    description: |-
+                        True when the STORED copy of the response body is only a prefix — same
+                        semantics as requestBodyTruncated. Most visible on streaming responses, where
+                        the stored copy ends mid-SSE-frame and is otherwise indistinguishable from a
+                        response the model never finished.
+                    example: true
+                requestBodySizeBytes:
+                    type:
+                        - integer
+                        - "null"
+                    format: int64
+                    description: |-
+                        True captured size of the request body in bytes, reported even when the stored
+                        copy is a truncated prefix — so a reader can see how much is missing. Null on
+                        rows whose payload sidecar recorded no size.
+                    example: 561168
+                responseBodySizeBytes:
+                    type:
+                        - integer
+                        - "null"
+                    format: int64
+                    description: |-
+                        True captured size of the response body in bytes — same semantics as
+                        requestBodySizeBytes.
+                    example: 254432
             required:
                 - id
                 - source
                 - timestamp
+                - requestBodyTruncated
+                - responseBodyTruncated
                 - complianceTags
                 - requestHooksPipeline
                 - responseHooksPipeline
@@ -1051,7 +1165,24 @@ components:
                 createdAt:
                     type: string
                     format: date-time
+                requestTruncated:
+                    type: boolean
+                    description: |-
+                        True when the stored request body this projection was computed FROM is only a
+                        prefix. Not a column of traffic_event_normalized — view-time provenance carried
+                        from traffic_event_payload. The projection is faithful to the bytes it saw, but
+                        those bytes are incomplete.
+                    example: false
+                responseTruncated:
+                    type: boolean
+                    description: |-
+                        True when the stored response body this projection was computed FROM is only a
+                        prefix — same semantics as requestTruncated. Trailing messages, tool calls and
+                        the usage row may be absent from the projection as a result.
+                    example: true
             required:
                 - trafficEventId
                 - normalizeVersion
                 - createdAt
+                - requestTruncated
+                - responseTruncated

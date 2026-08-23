@@ -32,8 +32,15 @@ info:
         `redact` disposition is DATA in the body (`action`), not an HTTP error.
         Admission reuses the shared cross-cutting subset: virtual-key auth, a
         per-key rate limit, and a per-key concurrency cap (the primary
-        judge-budget bound; v1 has no hard spend ceiling). The raw evaluated
-        text is never persisted to the payload store.
+        judge-budget bound; v1 has no hard spend ceiling).
+
+        Retention of the evaluated text follows the deployment's own
+        payload-capture policy, the same switch that governs every other
+        endpoint — off by default, so out of the box the text is not stored. A
+        deployment that has turned capture on stores the text on an `allow`
+        verdict and only the redacted copy on `redact` / `block`. Callers who
+        need the text never written down should confirm the operator's setting;
+        it is a property of the deployment, not of this endpoint.
 
         Coverage honesty: the `coverage` field distinguishes a fully-scanned
         `allow` (`full`) from one where a hook failed open (`degraded`) or no
@@ -257,14 +264,24 @@ components:
         Error:
             type: object
             description: |-
-                Gateway-generated error envelope (OpenAI proxy_error shape). The
-                message / code / hint are nested under `error`, not top-level.
+                Gateway-generated error envelope (OpenAI error shape). The
+                message / type / code / hint are nested under `error`, not top-level.
             properties:
                 error:
                     type: object
                     properties:
                         message: {type: string}
-                        type: {type: string, example: proxy_error}
+                        type:
+                            type: string
+                            description: >-
+                                OpenAI error-type vocabulary, derived from the HTTP status.
+                            enum: [invalid_request_error, authentication_error, permission_error,
+                                   not_found_error, rate_limit_error, api_error]
+                            example: permission_error
                         code:
-                            description: Machine code string, or the numeric HTTP status when no code is set.
+                            description: Nexus UPPER_SNAKE machine code, or the numeric HTTP status when no code is set.
+                            example: CONTENT_SAFETY_VIOLATION
+                        param:
+                            type: string
+                            description: Offending request field, when the code names one unambiguously.
                         hint: {type: string}

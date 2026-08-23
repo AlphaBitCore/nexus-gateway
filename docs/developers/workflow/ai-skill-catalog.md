@@ -38,6 +38,12 @@ Check a surface against its binding contract before merge.
   provider-adapter rules, catching per-adapter logic that leaked into the generic
   dispatcher, un-canonicalized ingress, bypassed error helpers, prefix-lists with
   no evidence, and missing wiring.
+- **`wire-capability-probe`** — establish what a provider wire can actually carry
+  before a refusal is written into a catalog or a codec. Three probes separate
+  "the wire cannot" from "we send the wrong form" from "the model cannot"; a 422
+  that read as a capability limit turned out to be an unused mapping. Pairs with
+  `adapter-conformance-check`: this one decides what the translation should be,
+  that one checks the translation obeys the rules.
 - **`arch-doc-trigger-check`** — verify the architecture-doc trigger-map lockstep:
   every `*-architecture.md` has a row and every row points at a real doc.
 - **`frontend-arch-review`** — audit the Control Plane UI and Agent Dashboard

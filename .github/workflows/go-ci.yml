@@ -74,17 +74,33 @@ jobs:
           # build+test coverage — all eight modules, with race + GOWORK=off.
           ALL_MODULES='["shared","compliance-proxy","agent","ai-gateway","control-plane","nexus-hub","nexus-cli","nexus-agent-core"]'
 
-          # Lint set: narrow AND limited to modules with a cleared
-          # golangci-lint baseline (#82). nexus-cli / nexus-agent-core /
-          # nexus-hub have no cleared lint baseline yet, so they are
-          # build+test only.
-          LINT_MODULES="[]"
-          for m in compliance-proxy agent ai-gateway control-plane shared; do
-            if echo "$CHANGED" | grep -q "^packages/$m/"; then
-              LINT_MODULES=$(echo "$LINT_MODULES" | jq -c ". + [\"$m\"]")
-            fi
-          done
-          echo "lint-modules=$LINT_MODULES" >> "$GITHUB_OUTPUT"
+          # Lint set: narrow — only modules whose own packages/<m>/** changed.
+          # Every module in ALL_MODULES now has a cleared golangci-lint
+          # baseline, so all of them are linted; the staged rollout that left
+          # nexus-cli / nexus-agent-core / nexus-hub on build+test is finished.
+          # only-new-issues stays off below, so the contract is "no violations
+          # period" for every module in this list.
+          # The config IS the gate. A PR touching only .golangci.yml — dropping a
+          # linter, or corrupting an exclusion regex — would otherwise match no
+          # packages/<m>/ path, run zero lint jobs, and merge green. Same for the
+          # workflow itself and go.work. Widening this list to eight modules
+          # raised the blast radius of exactly that hole.
+          #
+          # This branches rather than returning early: the test / agent-ui /
+          # integration outputs are computed BELOW, so an `exit 0` here would
+          # leave the whole test matrix empty.
+          if echo "$CHANGED" | grep -qE '^(\.golangci\.yml|go\.work|\.github/workflows/go-ci\.yml)$'; then
+            echo "lint-modules=$ALL_MODULES" >> "$GITHUB_OUTPUT"
+            echo "Lint config or workspace changed — linting all modules"
+          else
+            LINT_MODULES="[]"
+            for m in compliance-proxy agent ai-gateway control-plane shared nexus-hub nexus-cli nexus-agent-core; do
+              if echo "$CHANGED" | grep -q "^packages/$m/"; then
+                LINT_MODULES=$(echo "$LINT_MODULES" | jq -c ". + [\"$m\"]")
+              fi
+            done
+            echo "lint-modules=$LINT_MODULES" >> "$GITHUB_OUTPUT"
+          fi
 
           # agent/ui (macOS Wails desktop app — cgo WebKit) builds on a
           # macOS runner in its own job; gate on its own path or a
@@ -118,6 +134,20 @@ jobs:
               TEST_MODULES=$(echo "$TEST_MODULES" | jq -c ". + [\"$m\"]")
             fi
           done
+
+          # nexus-agent-core embeds a copy of the control-plane OpenAPI specs
+          # (capabilities/resource/generate.go) and guards it against the docs
+          # source, so those docs are part of its input set even though they
+          # live outside packages/nexus-agent-core/. Without this the guard only
+          # runs when some unrelated change happens to pull the module in, and a
+          # docs-only spec edit ships a stale embedded catalog undetected.
+          if echo "$CHANGED" | grep -q '^docs/users/api/openapi/control-plane/'; then
+            if ! echo "$TEST_MODULES" | jq -e 'index("nexus-agent-core")' >/dev/null; then
+              TEST_MODULES=$(echo "$TEST_MODULES" | jq -c '. + ["nexus-agent-core"]')
+              echo "Control-plane OpenAPI docs changed — adding nexus-agent-core (embed drift guard)"
+            fi
+          fi
+
           if [ "$TEST_MODULES" = "[]" ]; then
             echo "No Go matrix modules affected"
           fi
@@ -134,9 +164,9 @@ jobs:
         module: ${{ fromJson(needs.detect-modules.outputs.modules) }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           cache-dependency-path: |
             packages/compliance-proxy/go.sum
             packages/agent/go.sum
@@ -184,9 +214,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           cache-dependency-path: |
             packages/agent/go.sum
             packages/ai-gateway/go.sum
@@ -211,15 +241,18 @@ jobs:
         module: ${{ fromJson(needs.detect-modules.outputs.lint-modules) }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           cache-dependency-path: |
             packages/compliance-proxy/go.sum
             packages/agent/go.sum
             packages/ai-gateway/go.sum
             packages/control-plane/go.sum
             packages/shared/go.sum
+            packages/nexus-hub/go.sum
+            packages/nexus-cli/go.sum
+            packages/nexus-agent-core/go.sum
 
       - name: Install SQLCipher (agent only)
         if: matrix.module == 'agent'
@@ -258,13 +291,26 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           cache-dependency-path: packages/agent/ui/go.sum
 
       - name: go vet
         run: cd packages/agent/ui && go vet ./...
+
+      # agent/ui has its own go.mod, so the lint matrix above cannot reach it —
+      # `golangci-lint run ./...` from packages/agent does not descend into a
+      # nested module. It was linted by nothing until this step existed. Same
+      # pinned version as the matrix job, for the same reason: a different
+      # version disagrees with the rest of the fleet.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          skip-cache: true
+          working-directory: packages/agent/ui
+          only-new-issues: false
 
       - name: go build (workspace mode)
         run: cd packages/agent/ui && go build ./...
@@ -279,13 +325,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           cache-dependency-path: tests/integration-go/go.sum
 
       - name: go vet
         run: cd tests/integration-go && go vet ./...
+
+      # The tenth module in go.work. The lint matrix is built from
+      # packages/<m>/ paths, so it can never reach tests/, and this job ran only
+      # vet/build/test — it was linted by nothing.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          skip-cache: true
+          working-directory: tests/integration-go
+          only-new-issues: false
 
       - name: go build
         run: cd tests/integration-go && go build ./...
@@ -302,9 +359,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: gofmt (repo-wide)
         run: |

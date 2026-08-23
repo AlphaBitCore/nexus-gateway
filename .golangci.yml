@@ -6,8 +6,10 @@ issues:
   max-issues-per-linter: 0
   max-same-issues: 0
 
-# Single source of truth for all six Go modules in this workspace
-# (agent, ai-gateway, compliance-proxy, control-plane, nexus-hub, shared).
+# Single source of truth for every Go module in this workspace: the eight in
+# the CI lint matrix (agent, ai-gateway, compliance-proxy, control-plane,
+# nexus-agent-core, nexus-cli, nexus-hub, shared) plus packages/agent/ui and
+# tests/integration-go, which have their own go.mod and their own CI jobs.
 # golangci-lint walks up from the run directory to find this file, so
 # `cd packages/<svc> && golangci-lint run ./...` works unchanged.
 #
@@ -201,6 +203,38 @@ linters:
       # there. http.Client and log.* bans still do.
       - path: (^|/)cmd/
         text: 'fmt\.(Print|Println|Printf)|^(println|print)$|os\.Exit'
+        linters: [forbidigo]
+
+      # An agent tool converts a failure into a Result the MODEL reads, and
+      # returns a nil Go error on purpose. The (agent.Result, error) signature
+      # reserves the error slot for infrastructure failures that should abort
+      # the loop; a tool that could not do its job is data the model can see
+      # and adapt to, not a reason to tear the turn down. Returning a Go error
+      # there would replace a recoverable "I could not recall that fact" with a
+      # dead conversation.
+      #
+      # nilerr cannot distinguish swallowing an error from converting one into
+      # a value the caller consumes, so it is excluded on exactly the return
+      # statements that do the conversion — matched on the source line, not the
+      # file, so an ordinary swallowed error in the same file is still caught.
+      - source: 'IsError:\s*true|dispatchErr\(|errResult\('
+        linters: [nilerr]
+
+      # The agent dashboard's entry point is a cmd package that cannot live
+      # under cmd/. `//go:embed all:frontend/dist` resolves relative to the
+      # source file and `wails build` expects main at the module root, so
+      # moving it would break the embed and the packaging the build-agent
+      # skill owns. The os.Exit ban's own rationale — "acceptable only in
+      # cmd/ entry points" — describes this file exactly; only the path glob
+      # fails to reach it. Scoped to the one file, and the log.* ban still
+      # applies: the startup failure writes to stderr, not log.Fatal.
+      #
+      # The text pattern matches the os.Exit rule's OWN wording, not the bare
+      # string "os.Exit": the log.Fatal ban's message recommends
+      # "fmt.Fprintf(os.Stderr, ...) and os.Exit", so a pattern of 'os\.Exit'
+      # matches that issue too and silently excuses log.Fatal in this file.
+      - path: (^|/)agent/ui/main\.go$
+        text: 'skips deferred cleanup'
         linters: [forbidigo]
 
       # E43 — the audit package itself constructs Entry literals

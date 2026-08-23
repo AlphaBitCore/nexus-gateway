@@ -15,6 +15,10 @@ type Normalizer interface {
 
 `Meta` carries the call context: `AdapterType` (the wire key), `Model`, `ContentType`, `Direction` (`DirectionRequest` / `DirectionResponse`), `EndpointPath`, and `Stream`. `NormalizedPayload` is the canonical output — `Kind` (`ai-chat` / `ai-embedding` / `http-json` / …), `Protocol`, `Model`, `Stream`, `Messages[]`, `Tools[]`, `Params`, `Usage`, `FinishReason`, `Inputs[]` (embeddings), `Confidence`, and `DetectedSpec`. A normalizer that does not recognize the bytes returns `ErrUnsupported`, which the coordinator uses to fall through to the next candidate.
 
+`Params` records what the caller asked for about SAMPLING — temperature, top-p, top-k, max tokens, stop sequences — and about REASONING. The three wires express reasoning three ways and they are not losslessly interconvertible: OpenAI takes a level (`reasoning_effort`), Anthropic a budget (`thinking.budget_tokens`), Gemini a budget plus a visibility flag (`generationConfig.thinkingConfig`). `Params.Reasoning` records whichever the caller used, in their own terms, and never derives the other — converting a level to a budget is a judgement about one wire's model, so it belongs to that wire's codec under the split `provider-adapter-architecture.md` §3a already applies to every cross-vendor difference. Two decoding rules follow from that: Anthropic's `{"type":"disabled"}` carries no budget and a nil budget cannot be told from silence, so it lands as an effort of `none`; Gemini's `thinkingBudget: -1` means "you decide", a value no other wire has, and is preserved rather than normalised away. `Reasoning.Asked()` is the predicate consumers use — an allocated struct with nothing in it is silence, not a request to reason.
+
+The response side settled the same concept earlier: thinking blocks, thought parts and reasoning items all decode to `ContentReasoning`, and the counts unify as `Usage.ReasoningTokens`.
+
 A `TransformSpan` describes one byte-level modification against a `NormalizedPayload` (a hook redaction, AI-Guard suggestion, cache-normaliser strip, or cache_control inject); `ApplySpans` reconstructs the wire body from the payload + its spans. A span's `ContentAddress` indexes the modified content (e.g. `messages.<i>.content.<j>`, `http.bodyView`). The reserved address `AddressAuditOnlySentinel` (`"webhook.flat"`) marks an **audit-only** span: it records *what* a subsystem flagged but addresses a flat projection the gateway never reconstructs, so `ApplySpans` drops it — it lands in the audit record only and never mutates delivered or stored bytes. `IsAuditOnlySentinelAddress` is the single recogniser; compliance consumers use its negation as a denylist to tell an applicable redaction from an advisory audit-only span (see `hook-architecture.md` §5, `CarriesRedaction`).
 
 ## 2. The tiered dispatch model
@@ -51,6 +55,8 @@ PromptTokens · CompletionTokens · TotalTokens · CacheReadTokens · CacheCreat
 The convention is OpenAI's, so cost and analytics never branch on provider:
 
 - **Anthropic** — wire `input_tokens` counts uncached input only, so the normalizer sets `PromptTokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens` and `CompletionTokens = output_tokens` (`codecs/anthropic_messages.go`).
+- **Gemini request system prompt** — the codec reads both `systemInstruction` and `system_instruction`. Google's JSON mapping accepts the proto field name alongside the camelCase one, and the compliance adapter already reads both, so accepting only the camelCase spelling meant a snake_case caller's system prompt was scanned but never normalised: the audit row showed a conversation missing the instruction that shaped it. The camelCase field wins when both are present (`codecs/gemini_generate.go`).
+
 - **Gemini** — `PromptTokens = promptTokenCount`, `CompletionTokens = candidatesTokenCount + thoughtsTokenCount`, `CacheReadTokens = cachedContentTokenCount`, `ReasoningTokens = thoughtsTokenCount` (`codecs/gemini_generate.go`).
 - **OpenAI-compatible family** — `codecs/openai_chat.go` resolves the cached-token alias chain across vendors (DeepSeek `prompt_cache_hit_tokens`, Moonshot `prompt_cache_tokens`); the Responses-API top-level `input_tokens` / `output_tokens` mapping lives in `codecs/openai_responses.go`.
 
@@ -64,7 +70,7 @@ A Tier-1 codec whose surface is captured as a self-contained SSE stream folds th
 
 ### 4.0 Multimodal text surfaces
 
-Three Tier-1 codecs project the multimodal JSON surfaces so the Traffic drawer shows their text the way it shows chat, instead of the generic-http fallback dumping a multi-MB base64 image inline or misdetecting a binary audio body: `codecs/openai_images.go` (`/v1/images/generations` — request `prompt` string/array → user text, response `revised_prompt` → assistant text, each artifact an `image_ref` summary carrying only decoded byte size + sniffed mime, never the base64, with a `url`-mode artifact rendered as an inert text block since `BinaryRef` has no url field), `codecs/openai_audio_speech.go` (`/v1/audio/speech` — request `input` + `instructions` → user text, `kind=ai-tts`), and `codecs/openai_audio_transcriptions.go` (`/v1/audio/{transcriptions,translations}` — response-only, the `json`/`verbose_json`/`text` transcript → assistant text, `kind=ai-stt`). They register under the `<fmt>::<path>` + path-only keys like the embeddings codec, so the path-keyed entry preempts the adapter-only chat codec.
+Three Tier-1 codecs project the multimodal JSON surfaces so the Traffic drawer shows their text the way it shows chat, instead of the generic-http fallback dumping a multi-MB base64 image inline or misdetecting a binary audio body: `codecs/openai_images.go` (`/v1/images/generations` — request `prompt` string/array → user text, response `revised_prompt` → assistant text, each artifact a `MediaRef` — see §4.2), `codecs/openai_audio_speech.go` (`/v1/audio/speech` — request `input` + `instructions` → user text, `kind=ai-tts`), and `codecs/openai_audio_transcriptions.go` (`/v1/audio/{transcriptions,translations}` — response-only, the `json`/`verbose_json`/`text` transcript → assistant text, `kind=ai-stt`). They register under the `<fmt>::<path>` + path-only keys like the embeddings codec, so the path-keyed entry preempts the adapter-only chat codec.
 
 **Terminal-claim contract (load-bearing).** A codec keyed to a binary or non-JSON wire MUST claim its result terminally — return a summary payload with a valid `Kind`, never `core.ErrUnsupported`. A decline hands the walk to the next candidate, the adapter-only chat codec, whose hard unmarshal error on the non-JSON bytes stops the tier walk before Tier-2/3 and mislabels the row `partial`. The TTS response (binary audio) is the concrete case: `openai_audio_speech.go` claims it as an `http-binary` summary (size + content-type), which is exactly the fix for the pre-codec misdetect. There is deliberately **no multipart request codec** — the boundary is stripped from `Meta.ContentType` before any codec runs (`auditbridge.go` cuts at `;`), and the STT/video multipart request bytes are not captured (audio fingerprint-only), so the transcriptions codec is response-only and no images-edits/videos-submit request codec exists.
 
@@ -102,6 +108,133 @@ Traffic no AI tier claims still gets a TYPED structural projection, never a blin
 
 **Hook scannability.** `NormalizedPayload.TextProjection()` (`core/projection.go`) is the contract that keeps every typed projection visible to content-scanning hooks (keyword, PII): `http-sse` projects one entry per frame (verbatim `dataText`, or the re-marshaled `data` tree), and an `http-json` tree projects as its compact re-marshaled document. A new fallback Kind MUST extend `httpTextProjection` in the same change — a Kind the projection cannot read is content a configured `http`/`all` hook silently stops scanning.
 
+### 4.2 Media: one shape, one grammar, one resolver
+
+Every binary a request or response carries is represented by exactly one
+type, `core.MediaRef`, whatever the modality and whatever the provider spells
+it. It never carries content bytes in any encoding. It carries what the bytes
+ARE (modality, mime, size), what proves which bytes they were (`sha256`), and
+— when they are recoverable — a `locator` that says where to find them.
+
+This replaced two `BinaryRef` families, six divergent per-codec behaviours,
+and a parallel `image_ref` summary. Those were not accidents: each was the
+fastest locally-correct move at the time, and the result was a system where
+"is there an image here" had six different answers.
+
+#### The locator grammar
+
+`transport/normalize/locator` owns the grammar, the predicates that decide
+whether bytes are addressable, and the resolver that reads them back. All
+three live together because a locator is a promise, and a promise made in one
+package and kept in another is a promise that drifts. Before this package
+existed the codecs decided a download was available and the admin artifact
+endpoint decided separately whether it was — so they could, and repeatedly
+did, disagree. A card offering a control that then fails is the single
+failure this area exists to prevent.
+
+Five containers, each resolvable from the stored bytes ALONE — no database,
+no session, no provider call:
+
+| container | addresses |
+|---|---|
+| `body` | the whole stored body IS the artifact |
+| `json:<path>` | plain base64 at a gjson path |
+| `datauri:<path>` | a full data URI at a gjson path |
+| `sse:<frame>:<path>` | a gjson path inside the Nth data-bearing SSE frame |
+| `multipart:<part>` | a named part of a multipart body |
+
+Source-independence is what makes a locator portable: the same string means
+the same bytes in the Control Plane, in the Agent Dashboard, and in a
+browser. It is why the Agent needed no new API to render media.
+
+`sse:` frames are counted in arrival order over data-bearing frames only, by
+the same walk the stream folds use, so the index a codec emits and the index
+the resolver counts cannot drift. The container exists because streamed media
+is whole within its frame — Gemini sends a complete `inlineData` part per
+chunk, OpenAI's `partial_image` events each carry a renderable image — and no
+measured producer splits one payload across frames.
+
+#### Custody
+
+Six states, and every one has a producer. A seventh, `redacted`, was defined
+with them and nothing ever emitted it (compliance redacts text, not media);
+a custody value nothing can reach is a distinction the system claims to make
+and does not, so it was removed rather than left as decoration.
+
+| state | meaning | producer |
+|---|---|---|
+| `captured` | bytes are in the stored body at `locator` | the codecs |
+| `external` | a remote URL the gateway never fetched | the codecs |
+| `provider-ref` | the provider holds it under its own id | the codecs |
+| `fingerprint` | read and forwarded, not retained; digest survives | CP view-time, from `artifact_refs` |
+| `aged-out` | captured once, removed by retention | CP sidecar tier |
+| `absent` | never there | the codecs |
+
+The predicate that decides whether a UI offers a control is
+`captured && !truncated` — captured-and-truncated is a real third state
+meaning "the bytes ARE at that locator and are not fully recoverable", which
+the card says out loud with its `cause` instead of pretending nothing was
+there.
+
+`aged-out` is produced where the Control Plane serves a stored sidecar after
+establishing that no body is recoverable. The reference in that sidecar still
+says `captured` because it described the world on the day it was written;
+returning it unchanged puts a Download on the card for bytes that provably no
+longer exist. The digest is kept — it is the last thing that still proves
+which file this was — and the locator is cleared, because anything that
+trusts "has a locator" would otherwise rebuild the same broken control.
+
+#### Serving
+
+`GET /api/admin/traffic/:id/artifact?locator=<locator>&direction=request|response`
+resolves through the same package that built the locator. The served
+Content-Type comes from SNIFFING the bytes, never from what the wire
+declared — a declared type is written by whoever sent the payload. Anything
+not on the frozen inline-renderable list still serves; it downloads instead
+of rendering, which is why that list can stay short without anything becoming
+unreachable. Responses carry `nosniff`, a `default-src 'none'; sandbox` CSP,
+`Cross-Origin-Resource-Policy: same-origin`, `Cache-Control: private,
+no-store`, an ETag over the bytes, and a filename built from OUR id and the
+sniffed type.
+
+Omitting `locator` keeps the endpoint's original behaviour for image
+generations and TTS. Those are not a second implementation: they derive the
+locator the caller did not send and go down the same path.
+
+#### Large binary inputs
+
+STT audio and video input references are captured by HANDING OVER the bytes
+the request already holds, not by copying them. Measured at the 26 MiB STT
+ceiling: the pooled-copy path costs 1.36 ms and 27 MB across 4 allocations
+(and a buffer that large never returns to the pool, whose cap is 2 MiB);
+the handover costs 3.3 ns and zero allocations. That difference is the whole
+reason these can be captured at all without a request-path regression — the
+size lands off-heap on the async audit side, via the same spill the inline
+ceiling already governs.
+
+Ownership passes to the audit record; the caller must not write to the slice
+afterwards. Reading it is fine, which is what lets the same bytes still be
+forwarded upstream: capture must never change what goes on the wire, and both
+the STT and video paths pin that with a test that re-emits the forward AFTER
+capture has taken its reference and asserts the caller's bytes survive
+verbatim.
+
+When capture is off, the fingerprint alone still records which file was sent,
+and the Control Plane synthesises a `fingerprint` media element from it. The
+discriminator is "we stored no request body yet recorded a fingerprint" — not
+a list of endpoint kinds — so TTS and image generation, whose fingerprints
+describe a RESPONSE and whose JSON request body IS stored, are unaffected and
+their artifacts stay in the one place they already are.
+
+#### The compliance boundary
+
+A media element contributes NOTHING to `TextProjection`, the list the
+content hooks scan. The bytes are binary, a regex over base64 matches
+nothing useful, and projecting them would cost every scan the size of every
+payload. The sibling text still projects — the caption next to an image is
+often exactly what a rule needs to match — and both halves are pinned in
+`core/media_never_scanned_test.go`, because this boundary has been broken
+more than once by a codec serialising wire structure into a text block.
 ## 5. Reuse across services
 
 `BuildRegistry` wires every tier — `codecs.RegisterDefaultAIBuiltins` (which also enrolls the Tier-1.5 sniffers), `adapters.RegisterTier1AdapterNormalizers`, `extract.WireTier2` — and freezes the registry. Each service builds it once at startup and calls `Registry.Normalize`:
