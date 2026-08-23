@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { providerHealthSeverity } from './providerHealthSeverity';
 import { useApi } from '../../../hooks/useApi';
 import { systemApi, providerApi } from '@/api/services';
 import {
@@ -9,11 +10,20 @@ import { LatencyMini } from '@/components/charts/LatencyMini';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '../../../constants/admin-api';
 import styles from './ProviderHealthPage.module.css';
 
+// One severity decision, three colour lookups. The three used to repeat the
+// status list, and the list they repeated was not the one the backend emits —
+// see providerHealthSeverity.
 function statusDotColor(status: string): string {
-  if (status === 'healthy' || status === 'enabled') return 'var(--color-success)';
-  if (status === 'degraded') return 'var(--color-warning)';
-  if (status === 'unhealthy' || status === 'down' || status === 'disabled') return 'var(--color-danger)';
-  return 'var(--color-text-muted)';
+  switch (providerHealthSeverity(status)) {
+    case 'ok':
+      return 'var(--color-success)';
+    case 'warn':
+      return 'var(--color-warning)';
+    case 'bad':
+      return 'var(--color-danger)';
+    default:
+      return 'var(--color-text-muted)';
+  }
 }
 
 function statusLabel(status: string): string {
@@ -21,17 +31,29 @@ function statusLabel(status: string): string {
 }
 
 function statusPillBg(status: string): string {
-  if (status === 'healthy' || status === 'enabled') return 'var(--color-success-light)';
-  if (status === 'degraded') return 'var(--color-warning-light)';
-  if (status === 'unhealthy' || status === 'down' || status === 'disabled') return 'var(--color-danger-light)';
-  return 'var(--color-border-light)';
+  switch (providerHealthSeverity(status)) {
+    case 'ok':
+      return 'var(--color-success-light)';
+    case 'warn':
+      return 'var(--color-warning-light)';
+    case 'bad':
+      return 'var(--color-danger-light)';
+    default:
+      return 'var(--color-border-light)';
+  }
 }
 
 function statusPillColor(status: string): string {
-  if (status === 'healthy' || status === 'enabled') return 'var(--color-success-dark)';
-  if (status === 'degraded') return 'var(--color-warning-dark)';
-  if (status === 'unhealthy' || status === 'down' || status === 'disabled') return 'var(--color-danger-dark)';
-  return 'var(--color-text-muted)';
+  switch (providerHealthSeverity(status)) {
+    case 'ok':
+      return 'var(--color-success-dark)';
+    case 'warn':
+      return 'var(--color-warning-dark)';
+    case 'bad':
+      return 'var(--color-danger-dark)';
+    default:
+      return 'var(--color-text-muted)';
+  }
 }
 
 export function ProviderHealthPage() {

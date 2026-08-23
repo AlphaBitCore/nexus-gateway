@@ -190,7 +190,7 @@
     "cacheGeminiCircuitOpenSecsHint": "How long the circuit breaker stays open after tripping. Default: 300 seconds.",
     "cacheGeminiGlobalNote": "This configuration applies globally to all Gemini providers. Changes take effect on all AI Gateway instances within seconds via Hub.",
     "cacheWindowNote30d": "Last 30 days",
-    "cacheHealthWindowNote": "Rolling window — reflects recent traffic",
+    "cacheHealthWindowNote": "Derived from recent traffic and recomputed periodically. A verdict against a provider needs enough requests to be a rate, so check the sample count beside it; it clears on its own once the traffic behind it ages out.",
     "cacheNormalizerNotApplicable": "The Anthropic cache marker normaliser (cache_control injection) applies to Anthropic-wire providers only and has no effect for this provider type.",
     "cacheAutoTitle": "Automatic Prompt Caching",
     "cacheAutoInfo": "This provider type handles prompt caching natively and automatically. No per-provider cache configuration is required from the gateway side.",
@@ -473,7 +473,18 @@
       "validationErrors": {
         "dimensionsRange": "Dimension must be an integer between 1 and 65536.",
         "batchSizeRange": "Batch size must be an integer between 1 and 65536."
-      }
+      },
+      "modalitiesSummary": "Accepts {{input}} · returns {{output}}",
+      "modalitiesNone": "nothing declared",
+      "modalitiesEdit": "Edit",
+      "modalitiesDone": "Done",
+      "modalitiesInput": "Accepts",
+      "modalitiesOutput": "Returns",
+      "modalitiesRequired": "Required input",
+      "modalitiesHint": "Left unset, these follow from the model type. Change them only for a model that differs.",
+      "modalitiesRequiredSummary": "requires {{required}}",
+      "modalitiesRequiredHint": "Required input is the floor, not a mandatory field: a model that requires audio refuses a text-only request even though it is a chat model. Leave it empty unless the model genuinely will not serve without that content.",
+      "modalitiesRequiredNeedsAccepts": "Choose what the model accepts first — it can only require something it can also accept."
     },
     "capKeyPlaceholder": "key",
     "capValuePlaceholder": "value"
@@ -539,7 +550,6 @@
     "strategyAbSplit": "A/B Split",
     "strategySmart": "Intelligent (AI Router)",
     "strategyLatency": "Latency-based",
-    "policyNarrowing": "Policy narrowing (internal IDs)",
     "providerConfiguration": "Provider Configuration",
     "fallbackChainTitle": "Fallback Chain",
     "loadBalanceTargets": "Load Balance Targets",
@@ -547,10 +557,6 @@
     "abSplitTargets": "A/B Split Targets",
     "latencyTargets": "Latency Targets",
     "intelligentRoutingConfig": "Intelligent Routing Configuration",
-    "allowModelIds": "Allow model IDs (comma-separated gateway model IDs)",
-    "denyModelIds": "Deny model IDs",
-    "allowProviderIds": "Allow provider IDs (comma-separated)",
-    "denyProviderIds": "Deny provider IDs",
     "addModelToPolicy": "Add model to policy...",
     "routerModel": "Router Model",
     "systemPrompt": "System Prompt",
@@ -587,6 +593,9 @@
     "matchProviders": "Providers (match)",
     "matchProjectIds": "Projects (match)",
     "routingPreview": "Routing preview (simulate)",
+    "simWarning": "Preview evaluates the RULE ENGINE only, on the rules exactly as configured. A DISABLED rule is inert here — to test how a rule routes, enable it first. A directly-named model that matches no rule shows an empty result here, but the live gateway still serves it through the explicit-model passthrough (routing rules only redirect a named model; they are not required to serve one).",
+    "conditionalWhen": "When",
+    "conditionalThen": "Route to",
     "simDescription": "Dry-run the routing engine for a resolved model ID. Shows which rules matched each pipeline stage, effective narrowing, and the winning route.",
     "simModelIdLabel": "Model code (gateway)",
     "simModelIdHelp": "Model code as sent in `{model: \"...\"}` (e.g. gpt-4o), or `auto` for smart routing. Type to search the catalog.",
@@ -635,7 +644,7 @@
     "customPath": "Custom path",
     "valueHint": "Value",
     "thenRouteTo": "Route to",
-    "matchProvidersTooltip": "Restrict this rule to requests targeting specific providers.",
+    "matchProvidersTooltip": "Restrict this rule to requests targeting specific providers. Compared against every provider that serves the model code the caller named. Inapplicable — not a failed match — when the caller named no model, so a provider-scoped rule still applies to model:auto requests.",
     "matchProjectsTooltip": "Restrict this rule to requests from specific projects.",
     "placeholderProjects": "No projects selected",
     "matchRequestedModelLiteralsLabel": "Request model keywords (optional)",
@@ -643,7 +652,7 @@
     "matchRequestedModelLiteralsPlaceholder": "auto, gpt-4-*, …",
     "helpMatchRequestedModelLiterals": "Help: request model keywords",
     "matchModelTypesLabel": "Model types (optional)",
-    "matchModelTypesTooltip": "Restrict this rule to a model category (chat, embedding, image, audio). Compared against the resolved Model.type.",
+    "matchModelTypesTooltip": "Restrict this rule to a model category (chat, embedding, image, audio). Compared against the ENDPOINT the request arrived on, not against the category of whatever model the caller named — so a rule carrying this condition also applies to model:auto requests on that endpoint.",
     "matchModelTypesPlaceholder": "Any model type",
     "helpMatchModelTypes": "Help: model types",
     "matchVirtualKeysLabel": "Virtual key globs (optional)",
@@ -674,22 +683,20 @@
     "allStrategies": "All strategies",
     "allStatuses": "All statuses",
     "help": {
-      "primaryWinnerCallout": "Among all stage-1 rules whose match conditions fit the request, exactly one wins primary routing: the enabled rule with the highest numeric Priority (larger number wins). Other matching rules are not merged for the primary path. Rules whose strategy type is Fallback never win primary — they only add recovery targets after every primary upstream attempt fails.",
-      "strategyFallbackRecoveryOnly": "Strategy type Fallback does not win primary routing at stage 1. Its targets are used only as recovery after all primary upstream attempts fail. For an ordered primary chain inside one rule, use Conditional with a nested Fallback tree under default.",
+      "primaryWinnerCallout": "Among all stage-1 rules whose match conditions fit the request, exactly one wins primary routing: the enabled rule with the highest numeric Priority (larger number wins) that actually resolves a target. A rule that matches but resolves nothing yields to the next one and records why on the traffic row. Every remaining matching rule becomes recovery, in priority order — the gateway moves on to the next rule only when every target of the one above has been ruled out, never merely because attempts ran short.",
+      "strategyFallbackRecoveryOnly": "Fallback lists provider+model entries tried in order within THIS rule. It is an ordinary strategy and can win primary routing like any other. To back up one rule with another, author the backup as a separate rule at a lower Priority — there is no special rule type for that. Entries name a provider and a model directly; a strategy nested inside another is rejected.",
       "strategyType": "Controls how targets are chosen when the rule matches: single destination, ordered fallback, weighted load balancing, conditional tree, or A/B split. The JSON under Configuration must follow the same strategy shape the API validates.",
       "priority": "Among stage-1 rules that match the same request, the one with the highest Priority wins primary routing (larger number wins). Rules with strategy type Fallback never win primary — they only contribute recovery targets after all primary upstream attempts fail (still ordered by Priority among fallback rules). Use larger numbers for more specific or business-critical routes.",
       "enabled": "When off, the rule is skipped entirely. Matching traffic uses the next applicable rule or the model default route. Use disable instead of delete when you may re-enable later.",
       "status": "Enabled rules participate in routing when their match conditions fit the request. Disabled rules are stored but never evaluated.",
       "configuration": "The strategy payload the gateway loads when this rule matches: nested provider and model IDs, weights, and optional condition trees. This is the source of truth the runtime uses together with match conditions and priority.",
       "configurationSingle": "Every matching request is sent to exactly one provider and model pair shown here. IDs refer to records configured under Providers & Models.",
-      "configurationFallback": "When this rule's strategy type is Fallback at stage 1, it does not win primary routing: its ordered targets are used only after every primary upstream attempt fails (then proxy walks the chain). Recovery targets are precomputed when the request is routed; the proxy only dials providers for them after primary targets are exhausted. For a primary route that still uses an ordered chain inside one rule, use Conditional with default set to a nested Fallback tree (see Pipeline stage help).",
-      "configurationLoadBalance": "Requests are distributed randomly by relative weight across targets. Higher weight means a larger share of traffic. Sticky affinity (when stickyOn is set) is stored in shared Redis when the gateway has Redis configured so the same key sticks to the same target across replicas; without Redis, sticky state is per process only (fine for single instance / dev).",
+      "configurationFallback": "Fallback's ordered entries are tried within this rule, after its own first choice fails. Each entry names a provider and a model directly — a strategy nested inside another is rejected, because the gateway resolves an entry as a leaf and does not evaluate one strategy inside another. To back up this rule with a different one, author that one at a lower Priority.",
+      "configurationLoadBalance": "Requests are distributed randomly by relative weight across targets. Higher weight means a larger share of traffic. Each request is weighed independently, so a client is not pinned to the target it reached last time.",
       "configurationConditional": "Evaluates branches with \"when\" expressions against the live request context, then runs the matching \"then\" strategy or the mandatory \"default\". Use the structured editor for a default route, ordered branches (field path, operator, value, then target), and optional raw JSON for expressions the form cannot represent yet ($and / $or, nested strategies). Match conditions on the rule still decide whether this rule is considered at all.",
       "configurationAbSplit": "Weighted random choice among flat provider/model pairs — ideal for experiments comparing models or providers at a fixed traffic mix.",
-      "configurationSmart": "Uses an AI model (the router) to analyze the user's request and automatically select the best model. Benefits: better model fit and cost/latency tradeoffs for mixed traffic. Costs/risks: extra router LLM call per model:auto request (latency and token spend); if the router fails or times out, the gateway uses Default Model; responses may still be cacheable under the chosen target model like any other route once routing completes.",
+      "configurationSmart": "Uses an AI model (the router) to analyze the user's request and automatically select the best model. Benefits: better model fit and cost/latency tradeoffs for mixed traffic. Costs/risks: extra router LLM call per model:auto request (latency and token spend); if the router fails or times out, the gateway uses Default Model; responses may still be cacheable under the chosen target model like any other route once routing completes. After the router picks, two other models from the same filtered pool ride along behind it as failover targets — the cheapest of that pool first — so a transient failure is retried inside this rule instead of leaving it. Which of them is tried next depends on the failure: a rate limit or an outage reaches for a different provider. That raises the upstream calls one auto-routed request may make; `retryPolicy.maxUpstreamCalls` is the knob that bounds the spend.",
       "configurationLatency": "Routes to the measured-fastest provider among the listed provider/model pairs. Unlike load balancing (fixed weights), traffic goes to the fastest tier by recently observed p95 latency; slower healthy providers serve only as failover. Ties within ~100ms are spread across the fastest targets to avoid overloading one, and new or idle providers get a small bounded share of exploration traffic so their speed can be learned. Health always dominates: a failing provider is still tried last regardless of latency.",
-      "configurationPolicy": "Stage-0 rules only. Merges allow/deny lists for gateway model IDs and provider IDs before any stage-1 route rule runs. Allow-lists from multiple matching policy rules intersect; deny-lists union. Stage-1 targets and smart-router candidates must satisfy the effective narrowing.",
-      "pipelineStage": "Choose whether this row is stage 0 (policy) or stage 1 (route). 0 — Policy: merged before any route; config must be allow/deny lists (internal gateway model and provider IDs). 1 — Route: evaluated after stage 0; among matches, the gateway picks the highest-Priority rule whose strategy type is not Fallback. Rules with strategy type Fallback supply the post-failure recovery chain only (ordered by Priority among those rules). Recovery targets are precomputed when the request is routed; the proxy only dials providers for them after primary targets are exhausted. To use an internal fallback chain as the primary route (e.g. Sonnet then Haiku), use strategy type Conditional with an empty conditions list and put the Fallback tree under default.",
       "matchConditions": "Narrows which requests may use this rule. All set fields are combined with AND. Models: resolved internal gateway model IDs. Providers: internal Provider.id UUIDs — the request's resolved model must belong to one of these providers. Organizations: VirtualKey.projectId values (UUIDs). Virtual keys: name patterns with optional asterisk wildcards. If you leave every list empty, matching falls back to gateway defaults — use with care.",
       "matchModelsLabel": "Gateway model IDs (not vendor API names). A request matches here when its routed model equals one of the selected IDs."
     },
@@ -699,7 +706,7 @@
       "fallbackTitle": "Fallback Chain",
       "fallbackDesc": "An ordered list of provider/model targets tried sequentially when primary routing fails (timeout, error, rate limit). Each target is attempted once before moving to the next. As a stage-1 strategy type, Fallback rules never win primary — they contribute recovery targets only.",
       "loadbalanceTitle": "Load Balance",
-      "loadbalanceDesc": "Distributes requests randomly across targets by relative weight. Higher weight means more traffic share. Optionally supports sticky affinity via shared Redis.",
+      "loadbalanceDesc": "Distributes requests randomly across targets by relative weight. Higher weight means more traffic share. Each request is weighed independently; a client is not pinned to the target it reached last time.",
       "conditionalTitle": "Conditional",
       "conditionalDesc": "Evaluates \"when\" expressions against the live request context and runs the matching \"then\" strategy or the mandatory \"default\". Supports nested strategies and complex branching logic.",
       "abSplitTitle": "A/B Split",
@@ -707,13 +714,14 @@
       "smartTitle": "Intelligent (AI Router)",
       "smartDesc": "Uses an AI router model to analyze the user's request and automatically select the best target model. Adds one extra LLM call per request; falls back to Default Model if the router fails.",
       "latencyTitle": "Latency-based",
-      "latencyDesc": "Routes to the measured-fastest target by recent p95 latency instead of a hand-set weight. Ties within ~100ms are spread across targets; new or idle providers get a small bounded share of exploration traffic. Health always wins — a failing provider is still tried last.",
-      "policyTitle": "Policy Narrowing",
-      "policyDesc": "Stage-0 only. Merges allow/deny lists for gateway model IDs and provider IDs before any stage-1 route rule runs. Allow-lists intersect; deny-lists union."
+      "latencyDesc": "Routes to the measured-fastest target by recent p95 latency instead of a hand-set weight. Ties within ~100ms are spread across targets; new or idle providers get a small bounded share of exploration traffic. Health always wins — a failing provider is still tried last."
     },
     "systemPromptTooltip": "Instructions for the router LLM. Use {modelCatalog} as a placeholder — it will be replaced at runtime with the list of available models and their capabilities.",
     "weightTooltip": "Higher weight = more traffic",
-    "removeAria": "Remove"
+    "removeAria": "Remove",
+    "unsupportedStrategyNotice": "This rule is stored with the strategy \"{{strategyType}}\", which the gateway no longer dispatches. Its configuration is shown on the detail page and is not loaded here: editing would save a different strategy over it. Delete the rule, or create a replacement using a strategy the gateway can serve.",
+    "simEndpointLabel": "Endpoint",
+    "simEndpointHelp": "Which endpoint the simulated request arrives on. Rule conditions, the modality filter and non-chat auto all key off this."
   },
   "hooks": {
     "title": "Hooks",
@@ -1448,7 +1456,7 @@
       "sampleCount": "Sample Count",
       "title": "Provider Health"
     },
-    "providerHealthSubtitle": "Real-time health status of all configured providers",
+    "providerHealthSubtitle": "Derived from recent traffic — recomputed periodically, so it clears on its own once the traffic behind it ages out. There is no manual reset.",
     "tabOverview": "Overview",
     "tabProviders": "Providers ({{count}})",
     "uptime": "Uptime",
@@ -2410,6 +2418,7 @@
       "responseHook": "Response hook",
       "http": "HTTP",
       "cache": "Cache",
+      "modality": "Modality",
       "time": "Time",
       "any": "Any",
       "target": "Target",
@@ -2478,6 +2487,8 @@
     "placeholderStatusCode": "e.g. 429",
     "labelCache": "Cache",
     "tipCache": "Unified cache outcome — HIT (some cache layer saved cost) or MISS. Detail per layer in the audit drawer.",
+    "labelModality": "Modality",
+    "tipModality": "Filter the list by request modality — text, image, audio (TTS/STT), video, embeddings, rerank, or realtime.",
     "cacheStatus": {
       "HIT": "HIT",
       "MISS": "MISS"
@@ -2804,7 +2815,11 @@
         "requested": "Requested",
         "routedTo": "Routed To",
         "passthrough": "Passthrough",
-        "changedBy": "via rule"
+        "changedBy": "via rule",
+        "walkTitle": "Dispatch Walk",
+        "walkDispatched": "dispatched",
+        "walkSkipped": "skipped",
+        "walkCoerced": "rewrote"
       },
       "compliance": {
         "title": "Pipeline Decisions",
@@ -2839,6 +2854,7 @@
         "cacheSavings": "Gateway cache HIT savings",
         "netTotal": "What you actually paid",
         "input": "input",
+        "modality": "Modality cost (per unit)",
         "output": "output",
         "cacheRead": "cache read",
         "cacheWrite": "cache write surcharge",
@@ -2869,7 +2885,10 @@
         "details": "Details",
         "errorBadge": "Error",
         "errorTitle": "Gateway / provider error — HTTP {{status}} · {{code}}",
-        "errorHint": "This row is an error envelope, not chat content."
+        "errorHint": "This row is an error envelope, not chat content.",
+        "truncatedBadge": "truncated",
+        "truncatedBadgeWithSize": "truncated · {{size}} captured",
+        "truncatedHint": "Only the beginning of this body was stored. It exceeded the inline storage cutoff and no spill backend is configured, so the stored copy is a prefix. The client received the complete response — configure a spill backend to retain whole bodies."
       },
       "tabs": {
         "overview": "Overview",
@@ -2917,7 +2936,9 @@
           "failedHint": "Switch to the Raw tab to see the original bytes.",
           "partialTitle": "Partial normalize — some fields may be missing.",
           "empty": "No normalized payload for this direction.",
-          "unsupported": "Unsupported kind. Switch to Raw to inspect."
+          "unsupported": "Unsupported kind. Switch to Raw to inspect.",
+          "truncatedTitle": "Computed from a truncated body",
+          "truncatedHint": "Only the beginning of this body was stored, so this view describes an incomplete payload — trailing messages, tool calls, or usage may be missing. The client received the complete response."
         },
         "dropped": {
           "title": "Content dropped per storage policy.",
@@ -2952,6 +2973,18 @@
           "eventFallbackLabel": "message",
           "showAllFrames": "Show all {{count}} frames",
           "truncatedNote": "Frame view truncated — the full stream was captured and is available in the Raw tab."
+        },
+        "media": {
+          "captured": "Stored with this request — bytes available.",
+          "external": "Remote content — never fetched or stored by Nexus.",
+          "providerRef": "Content held by the provider.",
+          "fingerprint": "Bytes not retained — fingerprint only.",
+          "agedOut": "Captured, then expired by retention.",
+          "absent": "Not captured.",
+          "truncated": "Capture incomplete or unreadable — media unrecoverable.",
+          "download": "Download",
+          "previewFailed": "Preview unavailable — the stored bytes could not be read.",
+          "sizeUnknown": "size unknown"
         }
       },
       "reasonCodes": {
@@ -2963,23 +2996,20 @@
       },
       "correlation": {
         "title": "Correlation",
-        "requestId": "Request ID",
+        "eventId": "Event ID",
+        "eventIdHint": "This row’s own id, minted by the gateway. Unique per traffic event.",
         "endUserId": "End-user ID",
         "sessionId": "Session ID",
+        "clientTags": "Client tags",
         "clientRequestId": "Client request ID",
+        "clientRequestIdHint": "The x-request-id the caller sent, recorded as given. Never rewritten.",
         "traceId": "Trace ID",
+        "traceIdHint": "Groups every row of one unit of work — retries, a realtime session’s exchanges, an agent flow across services.",
         "copy": "Copy",
         "copied": "Copied",
-        "pivotRequest": "Show only this request",
+        "pivotTrace": "Show every row sharing this trace",
         "pivotEndUser": "Show all traffic for this end-user",
         "pivotSession": "Show all requests in this session"
-      },
-      "artifact": {
-        "title": "Artifact",
-        "loading": "Loading preview…",
-        "error": "Preview unavailable.",
-        "urlMode": "The provider returned this image as a URL (not stored) — see the response body.",
-        "imageAlt": "Generated image"
       }
     },
     "filters": {
@@ -6438,7 +6468,7 @@
   },
   "vendorBillReconciliation": {
     "title": "Vendor Bill Reconciliation",
-    "subtitle": "Daily comparison of our estimated spend against each provider's authoritative billing API.",
+    "subtitle": "Daily comparison of the spend we caused each provider against that provider's authoritative billing API.",
     "empty": "No reconciliation rows yet. The daily job populates provider-by-day comparisons for covered providers.",
     "emptyForPeriod": "No reconciliation rows in this period. Try a longer period — the daily job only reconciles days that are already closed.",
     "period": {
@@ -6446,10 +6476,14 @@
     },
     "colProvider": "Provider",
     "colDay": "Day",
-    "colOurs": "Our estimate",
+    "colOurs": "Customer estimate",
+    "colInternalOps": "Internal ops",
+    "colVendorSpend": "Total vendor spend",
     "colVendor": "Vendor billed",
     "colDiff": "Difference",
     "colDiffPct": "Difference %",
+    "notComparable": "Not comparable",
+    "notComparableHint": "Written before internal-ops spend was recorded, so this difference measures a different quantity from newer rows. It cannot be recalculated — the router cost was never stored.",
     "colCoverage": "Coverage",
     "colStatus": "Status",
     "colReview": "Review",
@@ -6461,6 +6495,7 @@
       "scoped": "Scoped",
       "org_only": "Org-wide (reference only)",
       "fetch_failed": "Vendor fetch failed",
+      "no_basis": "No comparable figure",
       "priority_tier_undercount": "Excludes priority tier"
     },
     "notCoveredTitle": "Providers not covered in v1",

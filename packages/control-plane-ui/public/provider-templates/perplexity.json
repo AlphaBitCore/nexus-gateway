@@ -15,6 +15,12 @@
         "streaming",
         "search"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 3,
       "outputPricePerMillion": 15,
       "maxContextTokens": 200000,
@@ -29,6 +35,12 @@
       "features": [
         "streaming",
         "search"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1,
       "outputPricePerMillion": 1,
@@ -45,6 +57,12 @@
         "search",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 8,
       "maxContextTokens": 128000
@@ -59,6 +77,12 @@
         "streaming",
         "search",
         "reasoning"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1,
       "outputPricePerMillion": 5,
@@ -75,6 +99,12 @@
         "search",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 8,
       "maxContextTokens": 128000
@@ -86,6 +116,12 @@
       "providerModelId": "pplx-embed-v1-4b",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.03,
       "outputPricePerMillion": 0,
       "maxContextTokens": 32768
@@ -97,6 +133,12 @@
       "providerModelId": "pplx-embed-v1-0.6b",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.004,
       "outputPricePerMillion": 0,
       "maxContextTokens": 32768

@@ -428,6 +428,20 @@
   border: 1px solid var(--color-danger);
 }
 
+/* Body-truncation badge — the STORED copy of this body is only a prefix. Warning
+   rather than danger on purpose: the client received the complete response, so
+   this is not a request failure; it is our capture that is short. */
+.truncatedBadge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+  border: 1px solid var(--color-warning);
+}
+
 .errorBannerBadge {
   flex-shrink: 0;
   padding: 2px 8px;
@@ -516,4 +530,112 @@
 .corrCopyBtn:hover {
   color: var(--color-text);
   border-color: var(--color-text-muted);
+}
+
+/* ── Routing walk ─────────────────────────────────── */
+
+.walkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-2) var(--g-space-3);
+}
+
+/* A target that was passed over cost nothing, and reads as secondary. */
+.walkRowSkipped {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-2) var(--g-space-3);
+}
+
+.walkSeq {
+  flex-shrink: 0;
+  min-width: var(--g-space-5);
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-mono);
+  color: var(--color-text-muted);
+  line-height: var(--g-line-height-normal);
+}
+
+.walkBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.walkTarget {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+}
+
+.walkProvider {
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-text);
+}
+
+.walkModel {
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-mono);
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+.walkMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  margin-top: var(--g-space-1);
+}
+
+.walkTag {
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-mono);
+  color: var(--color-text-secondary);
+}
+
+.walkTagDispatched {
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-text);
+}
+
+.walkTagSkipped {
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-text-muted);
+}
+
+/* The selection reason is why the walk came HERE, which is the one thing the
+   order alone cannot say once selection stopped being positional. */
+.walkReason {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.walkError {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-secondary);
+  margin-top: var(--g-space-1);
+  word-break: break-word;
+}
+
+/* Fields the adapter rewrote before this dispatch — the thing the response
+   header said once, to a caller who has already discarded it. */
+.walkCoerced {
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-mono);
+  color: var(--color-text-muted);
+  margin-top: var(--g-space-1);
+  word-break: break-word;
 }

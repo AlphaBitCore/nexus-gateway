@@ -3,7 +3,7 @@ import {
   Badge, Card, statusToVariant, Tooltip, Stack,
 } from '@/components/ui';
 import {
-  mapLegacyStrategy,
+  displayStrategy,
   formatModelLabels,
 } from '../_shared/routing-rule-config';
 import {
@@ -13,6 +13,7 @@ import {
 } from '../_shared/routing-rule-field-help';
 import { KvRow, formatProviderMatchLine } from './RoutingRuleHelpers';
 import type { RoutingRuleDetailState } from './useRoutingRuleDetail';
+import type { AdminModelsByProvider } from '@/api/types';
 import { formatDate } from '@/lib/format';
 import styles from './RoutingRuleDetail.module.css';
 import { HelpIconButton } from '@nexus-gateway/ui-shared';
@@ -27,13 +28,14 @@ export function RoutingRuleReadView({ detail }: { detail: RoutingRuleDetailState
   // (p95-ordered) and fallback (order-only) do not, so their read view omits the
   // Weight column rather than showing a misleading placeholder.
   const showViewWeight =
-    mapLegacyStrategy(rule.strategyType) === 'loadbalance' ||
-    mapLegacyStrategy(rule.strategyType) === 'ab_split';
+    displayStrategy(rule.strategyType) === 'loadbalance' ||
+    displayStrategy(rule.strategyType) === 'ab_split';
 
   return (
     <>
       <div className={styles.sectionBlock}>
-        <h2 className={styles.widgetTitle}>{t('pages:routing.routingRuleInfo')}</h2>
+        {/* The section heading is owned by RoutingRuleDetailPage's Card wrapper.
+            Rendering it here too printed "Routing Rule Information" twice. */}
         <Card>
           <div className={styles.kvGrid}>
             <KvRow label={t('pages:routing.name')}>
@@ -74,7 +76,7 @@ export function RoutingRuleReadView({ detail }: { detail: RoutingRuleDetailState
             <>
               <p className={styles.tooltipParagraph}>{ROUTING_RULE_FIELD_HELP.configuration}</p>
               <p className={styles.tooltipParagraphLast}>
-                {strategyConfigHelpBody[mapLegacyStrategy(rule.strategyType)]}
+                {strategyConfigHelpBody[displayStrategy(rule.strategyType)]}
               </p>
             </>
           }>
@@ -82,15 +84,13 @@ export function RoutingRuleReadView({ detail }: { detail: RoutingRuleDetailState
           </Tooltip>
         </Stack>
         <Card>
-          {mapLegacyStrategy(rule.strategyType) === 'single' ? (
+          {displayStrategy(rule.strategyType) === 'single' ? (
             <div className={styles.kvGrid}>
               <div><div className={styles.kvLabel}>{t('pages:routing.provider')}</div><div className={styles.kvValue}>{viewConfig.singleProvider || '--'}</div></div>
               <div><div className={styles.kvLabel}>{t('pages:routing.model')}</div><div className={styles.kvValue}>{viewConfig.singleModel || '--'}</div></div>
             </div>
-          ) : mapLegacyStrategy(rule.strategyType) === 'conditional' ? (
-            <pre className={styles.codeBlock}>
-              {JSON.stringify(rule.config, null, 2)}
-            </pre>
+          ) : displayStrategy(rule.strategyType) === 'conditional' ? (
+            <ConditionalConfigView config={rule.config} providerGroups={providerGroups} />
           ) : viewSmartParsed ? (
             <Stack gap="md">
               <div className={styles.kvGrid}>
@@ -235,5 +235,81 @@ export function RoutingRuleReadView({ detail }: { detail: RoutingRuleDetailState
         </Card>
       </div>
     </>
+  );
+}
+
+// Renders a target leaf ({modelId, providerId}) as "Provider / Model", the
+// same label the other strategy views show, resolved from the provider groups.
+function targetLabel(providerGroups: AdminModelsByProvider[], leaf: unknown): string {
+  const modelId = String((leaf as Record<string, unknown> | null)?.modelId ?? '');
+  if (!modelId) return '—';
+  const label = formatModelLabels(providerGroups, [modelId]);
+  return label || modelId;
+}
+
+// Renders one `when` clause — a map of routing-context field → operator/value —
+// as readable lines rather than raw JSON. Handles the common $eq/$in/$ne shapes
+// and falls back to a compact JSON string for anything else.
+function formatWhenClause(when: unknown): string[] {
+  if (!when || typeof when !== 'object') return [];
+  return Object.entries(when as Record<string, unknown>).map(([field, cond]) => {
+    if (cond && typeof cond === 'object') {
+      const entries = Object.entries(cond as Record<string, unknown>);
+      if (entries.length === 1) {
+        const [op, val] = entries[0];
+        const opLabel = op === '$eq' ? '=' : op === '$ne' ? '≠' : op === '$in' ? 'in' : op;
+        const valLabel = Array.isArray(val) ? val.join(', ') : String(val);
+        return `${field} ${opLabel} ${valLabel}`;
+      }
+    }
+    return `${field}: ${JSON.stringify(cond)}`;
+  });
+}
+
+// Visual read view for a conditional strategy: a default target plus an
+// ordered list of when→then branches. Previously this fell back to raw JSON,
+// the only strategy type without a form-style view.
+function ConditionalConfigView({
+  config, providerGroups,
+}: { config: unknown; providerGroups: AdminModelsByProvider[] }) {
+  const { t } = useTranslation();
+  const cfg = (config ?? {}) as Record<string, unknown>;
+  const conditions = Array.isArray(cfg.conditions) ? cfg.conditions : [];
+
+  return (
+    <Stack gap="md">
+      <div className={styles.kvGrid}>
+        <div>
+          <div className={styles.kvLabel}>{t('pages:routing.defaultFallback')}</div>
+          <div className={styles.kvValue}>{targetLabel(providerGroups, cfg.default)}</div>
+        </div>
+      </div>
+      <div className={styles.overflowX}>
+        <table className={styles.configTable}>
+          <thead>
+            <tr>
+              <th className={styles.configTableHeader}>{t('pages:routing.conditionalWhen')}</th>
+              <th className={styles.configTableHeader}>{t('pages:routing.conditionalThen')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {conditions.length === 0 ? (
+              <tr><td className={styles.configTableCell} colSpan={2}>—</td></tr>
+            ) : conditions.map((c, i) => {
+              const cond = (c ?? {}) as Record<string, unknown>;
+              const lines = formatWhenClause(cond.when);
+              return (
+                <tr key={i}>
+                  <td className={styles.configTableCell}>
+                    {lines.length > 0 ? lines.map((l, j) => <div key={j}>{l}</div>) : '—'}
+                  </td>
+                  <td className={styles.configTableCell}>{targetLabel(providerGroups, cond.then)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Stack>
   );
 }

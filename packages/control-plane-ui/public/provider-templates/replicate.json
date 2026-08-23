@@ -12,10 +12,16 @@
       "providerModelId": "anthropic/claude-4.5-sonnet",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 3,
       "outputPricePerMillion": 15
@@ -27,10 +33,16 @@
       "providerModelId": "anthropic/claude-4.5-haiku",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1,
       "outputPricePerMillion": 5
@@ -42,9 +54,15 @@
       "providerModelId": "openai/gpt-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.25,
       "outputPricePerMillion": 10
@@ -56,9 +74,15 @@
       "providerModelId": "openai/gpt-5-mini",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.25,
       "outputPricePerMillion": 2
@@ -70,9 +94,15 @@
       "providerModelId": "google/gemini-3-pro",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 12
@@ -88,6 +118,12 @@
         "streaming",
         "reasoning"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.672,
       "outputPricePerMillion": 2.016,
       "maxContextTokens": 163840
@@ -102,6 +138,12 @@
         "function_calling",
         "streaming"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.03,
       "outputPricePerMillion": 0.25
     },
@@ -114,6 +156,12 @@
       "features": [
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 7.2,
       "outputPricePerMillion": 36

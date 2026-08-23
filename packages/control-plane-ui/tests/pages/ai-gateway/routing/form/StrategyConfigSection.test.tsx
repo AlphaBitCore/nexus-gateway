@@ -27,11 +27,6 @@ function wrap(over: Partial<StrategyConfigSectionProps>) {
 }
 
 describe('StrategyConfigSection', () => {
-  it('stage-0 renders the policy-narrowing header', () => {
-    wrap({ pipelineStage: '0' });
-    expect(screen.getByText(i18n.t('pages:routing.policyNarrowing'))).toBeInTheDocument();
-  });
-
   it('single strategy renders the provider-configuration section', () => {
     wrap({ pipelineStage: '1', strategyType: 'single' });
     expect(screen.getByText(i18n.t('pages:routing.providerConfiguration'))).toBeInTheDocument();

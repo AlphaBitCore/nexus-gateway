@@ -123,7 +123,7 @@
     "cacheGeminiCircuitOpenSecsHint": "Cuánto tiempo permanece abierto el circuit breaker tras activarse. Predeterminado: 300 segundos.",
     "cacheGeminiGlobalNote": "Esta configuración se aplica globalmente a todos los proveedores de Gemini. Los cambios se aplican en segundos a todas las instancias del AI Gateway a través del Hub.",
     "cacheWindowNote30d": "Últimos 30 días",
-    "cacheHealthWindowNote": "Ventana deslizante — refleja el tráfico reciente",
+    "cacheHealthWindowNote": "Derivado del tráfico reciente y recalculado periódicamente. Para dictaminar sobre un proveedor hacen falta suficientes peticiones como para que sea una tasa, así que revisa el número de muestras junto al dato; se resuelve solo cuando ese tráfico queda fuera de la ventana.",
     "cacheNormalizerNotApplicable": "El normalizador de marcadores de caché de Anthropic (inyección de cache_control) se aplica únicamente a los proveedores con protocolo Anthropic y no tiene efecto para este tipo de proveedor.",
     "cacheAutoTitle": "Caché de Prompts Automático",
     "cacheAutoInfo": "Este tipo de proveedor gestiona el caché de prompts de forma nativa y automática. No se requiere configuración de caché por proveedor desde el lado del gateway.",
@@ -473,7 +473,18 @@
       "validationErrors": {
         "dimensionsRange": "La dimensión debe ser un entero entre 1 y 65536.",
         "batchSizeRange": "El tamaño del lote debe ser un entero entre 1 y 65536."
-      }
+      },
+      "modalitiesSummary": "Acepta {{input}} · devuelve {{output}}",
+      "modalitiesNone": "sin declarar",
+      "modalitiesEdit": "Editar",
+      "modalitiesDone": "Hecho",
+      "modalitiesInput": "Acepta",
+      "modalitiesOutput": "Devuelve",
+      "modalitiesRequired": "Entrada requerida",
+      "modalitiesHint": "Si se dejan vacías, se derivan del tipo de modelo. Cámbialas solo si el modelo difiere.",
+      "modalitiesRequiredSummary": "requiere {{required}}",
+      "modalitiesRequiredHint": "La entrada requerida es el mínimo, no un campo obligatorio: un modelo que requiere audio rechaza una solicitud de solo texto aunque sea un modelo de chat. Déjalo vacío salvo que el modelo realmente no pueda responder sin ese contenido.",
+      "modalitiesRequiredNeedsAccepts": "Elige primero lo que el modelo acepta: solo puede requerir algo que también acepte."
     },
     "capKeyPlaceholder": "clave",
     "capValuePlaceholder": "valor"
@@ -539,7 +550,6 @@
     "strategyAbSplit": "División A/B",
     "strategySmart": "Inteligente (enrutador IA)",
     "strategyLatency": "Basado en latencia",
-    "policyNarrowing": "Restricción de políticas (IDs internos)",
     "providerConfiguration": "Configuración del proveedor",
     "fallbackChainTitle": "Cadena de respaldo",
     "loadBalanceTargets": "Objetivos de balanceo de carga",
@@ -547,10 +557,6 @@
     "abSplitTargets": "Objetivos de división A/B",
     "latencyTargets": "Objetivos por latencia",
     "intelligentRoutingConfig": "Configuración de enrutamiento inteligente",
-    "allowModelIds": "IDs de modelo permitidos (IDs de modelo del gateway separados por coma)",
-    "denyModelIds": "IDs de modelo denegados",
-    "allowProviderIds": "IDs de proveedor permitidos (separados por coma)",
-    "denyProviderIds": "IDs de proveedor denegados",
     "addModelToPolicy": "Agregar modelo a la política...",
     "routerModel": "Modelo del enrutador",
     "systemPrompt": "Prompt del sistema",
@@ -587,6 +593,9 @@
     "matchProviders": "Proveedores (coincidencia)",
     "matchProjectIds": "Proyectos (coincidencia)",
     "routingPreview": "Vista previa de enrutamiento (simular)",
+    "simWarning": "La vista previa evalúa SOLO EL MOTOR DE REGLAS, con las reglas tal como están configuradas. Una regla DESHABILITADA es inerte aquí; para probar cómo enruta una regla, habilítela primero. Un modelo nombrado directamente que no coincide con ninguna regla muestra un resultado vacío aquí, pero la puerta de enlace lo sirve igualmente mediante el passthrough de modelo explícito (las reglas de enrutamiento solo redirigen un modelo nombrado; no son necesarias para servirlo).",
+    "conditionalWhen": "Cuando",
+    "conditionalThen": "Enrutar a",
     "simDescription": "Ejecución de prueba del motor de enrutamiento para un ID de modelo resuelto. Muestra qué reglas coincidieron en cada etapa del pipeline, restricciones efectivas y la ruta ganadora.",
     "simModelIdLabel": "Código de modelo (gateway)",
     "simModelIdHelp": "Código del modelo enviado en `{model: \"...\"}` por el cliente (p. ej. gpt-4o), o `auto` para enrutamiento inteligente. Escribe para buscar en el catálogo.",
@@ -635,7 +644,7 @@
     "customPath": "Ruta personalizada",
     "valueHint": "Indicación de valor",
     "thenRouteTo": "Entonces enrutar a",
-    "matchProvidersTooltip": "Tooltip proveedores coincidentes",
+    "matchProvidersTooltip": "Restringe esta regla a solicitudes dirigidas a proveedores especificos. Se compara con cada proveedor que sirve el codigo de modelo que nombro el llamante. No aplicable — no un fallo de coincidencia — cuando el llamante no nombro modelo, de modo que una regla limitada por proveedor sigue aplicando a solicitudes model:auto.",
     "matchProjectsTooltip": "Restringir esta regla a solicitudes desde proyectos específicos.",
     "placeholderProjects": "Sin proyectos seleccionados",
     "matchRequestedModelLiteralsLabel": "Palabras clave del modelo solicitado (opcional)",
@@ -643,7 +652,7 @@
     "matchRequestedModelLiteralsPlaceholder": "auto, gpt-4-*, …",
     "helpMatchRequestedModelLiterals": "Ayuda: palabras clave del modelo solicitado",
     "matchModelTypesLabel": "Tipos de modelo (opcional)",
-    "matchModelTypesTooltip": "Restringe esta regla a una categoría de modelo (chat, embedding, image, audio). Se compara con el Model.type resuelto.",
+    "matchModelTypesTooltip": "Restringe esta regla a una categoria de modelo (chat, embedding, image, audio). Se compara con el ENDPOINT por el que llego la solicitud, no con la categoria del modelo que nombro el llamante, de modo que una regla con esta condicion tambien aplica a solicitudes model:auto en ese endpoint.",
     "matchModelTypesPlaceholder": "Cualquier tipo de modelo",
     "helpMatchModelTypes": "Ayuda: tipos de modelo",
     "matchVirtualKeysLabel": "Globs de claves virtuales (opcional)",
@@ -674,22 +683,20 @@
     "allStrategies": "Todas las estrategias",
     "allStatuses": "Todos los estados",
     "help": {
-      "primaryWinnerCallout": "Entre todas las reglas stage-1 cuyas condiciones de coincidencia se ajustan a la solicitud, exactamente una gana el enrutamiento primario: la regla habilitada con el mayor valor numérico de Priority (el numero mas grande gana). Las demas reglas coincidentes no se fusionan para la ruta primaria. Las reglas cuyo tipo de estrategia es Fallback nunca ganan el primario — solo agregan objetivos de recuperacion despues de que todos los intentos primarios de upstream fallen.",
-      "strategyFallbackRecoveryOnly": "El tipo de estrategia Fallback no gana el enrutamiento primario en stage 1. Sus objetivos se usan solo como recuperacion despues de que todos los intentos primarios de upstream fallen. Para una cadena primaria ordenada dentro de una regla, use Conditional con un arbol Fallback anidado bajo default.",
+      "primaryWinnerCallout": "Entre todas las reglas de etapa 1 cuyas condiciones encajan con la petición, solo una gana el enrutamiento primario: la regla habilitada con la Prioridad numérica más alta (gana el número mayor) que además resuelva un destino. Una regla que encaja pero no resuelve nada cede el turno a la siguiente y deja constancia del motivo en el registro de tráfico. El resto de reglas coincidentes pasan a ser recuperación, por orden de prioridad: la pasarela avanza a la siguiente solo cuando todos los destinos de la anterior han quedado descartados, nunca por haberse agotado los intentos.",
+      "strategyFallbackRecoveryOnly": "Fallback enumera entradas proveedor+modelo que se prueban en orden dentro de ESTA regla. Es una estrategia corriente y puede ganar el enrutamiento primario como cualquier otra. Para respaldar una regla con otra, crea la de respaldo como una regla independiente con menor Prioridad: no existe un tipo de regla especial para eso. Las entradas nombran un proveedor y un modelo directamente; una estrategia anidada dentro de otra se rechaza.",
       "strategyType": "Controla como se eligen los objetivos cuando la regla coincide: destino unico, Fallback ordenado, balanceo de carga ponderado, arbol condicional o A/B Split. El JSON bajo Configuration debe seguir la misma forma de estrategia que valida la API.",
       "priority": "Entre las reglas stage-1 que coinciden con la misma solicitud, la que tiene el Priority mas alto gana el enrutamiento primario (el numero mas grande gana). Las reglas con tipo de estrategia Fallback nunca ganan el primario — solo contribuyen objetivos de recuperacion despues de que todos los intentos primarios de upstream fallen (aun ordenados por Priority entre las reglas Fallback). Use numeros mas grandes para rutas mas especificas o criticas para el negocio.",
       "enabled": "Cuando esta desactivada, la regla se omite por completo. El trafico coincidente usa la siguiente regla aplicable o la ruta predeterminada del modelo. Use desactivar en lugar de eliminar cuando pueda reactivarla mas adelante.",
       "status": "Las reglas habilitadas participan en el enrutamiento cuando sus condiciones de coincidencia se ajustan a la solicitud. Las reglas deshabilitadas se almacenan pero nunca se evaluan.",
       "configuration": "La carga util de estrategia que el gateway carga cuando esta regla coincide: IDs anidados de Provider y Model, pesos y arboles de condiciones opcionales. Esta es la fuente de verdad que el runtime usa junto con las condiciones de coincidencia y la Priority.",
       "configurationSingle": "Cada solicitud coincidente se envia a exactamente un par de Provider y Model que se muestra aqui. Los IDs se refieren a registros configurados en Providers & Models.",
-      "configurationFallback": "Cuando el tipo de estrategia de esta regla es Fallback en stage 1, no gana el enrutamiento primario: sus objetivos ordenados se usan solo despues de que todos los intentos primarios de upstream fallen (entonces el proxy recorre la cadena). Los objetivos de recuperacion se precalculan cuando se enruta la solicitud; el proxy solo contacta los Providers despues de que los objetivos primarios se agoten. Para una ruta primaria que aun use una cadena ordenada dentro de una regla, use Conditional con default configurado como un arbol Fallback anidado (ver ayuda de Pipeline stage).",
-      "configurationLoadBalance": "Las solicitudes se distribuyen aleatoriamente por peso relativo entre los objetivos. Mayor peso significa mayor proporcion de trafico. La afinidad sticky (cuando se configura stickyOn) se almacena en Redis compartido cuando el gateway tiene Redis configurado, para que la misma clave se adhiera al mismo objetivo entre replicas; sin Redis, el estado sticky es solo por proceso (adecuado para instancia unica / desarrollo).",
+      "configurationFallback": "Las entradas ordenadas de Fallback se prueban dentro de esta regla, después de que falle su primera opción. Cada entrada nombra un proveedor y un modelo directamente: una estrategia anidada dentro de otra se rechaza, porque la pasarela resuelve una entrada como hoja y no evalúa una estrategia dentro de otra. Para respaldar esta regla con otra, crea esa otra con menor Prioridad.",
+      "configurationLoadBalance": "Las solicitudes se distribuyen aleatoriamente por peso relativo entre los objetivos. Mayor peso significa mayor proporcion de trafico. Cada solicitud se pondera de forma independiente, por lo que un cliente no queda fijado al objetivo que alcanzo la ultima vez.",
       "configurationConditional": "Evalua ramas con expresiones \"when\" contra el contexto de solicitud en vivo, luego ejecuta la estrategia \"then\" coincidente o el \"default\" obligatorio. Use el editor estructurado para una ruta predeterminada, ramas ordenadas (ruta de campo, operador, valor, objetivo de ruta) y JSON sin procesar opcional para expresiones que el formulario aun no puede representar ($and / $or, estrategias anidadas). Las condiciones de coincidencia en la regla aun deciden si esta regla se considera en absoluto.",
       "configurationAbSplit": "Eleccion aleatoria ponderada entre pares planos de Provider/Model — ideal para experimentos que comparan modelos o Providers a una mezcla de trafico fija.",
-      "configurationSmart": "Usa un modelo de IA (el router) para analizar la solicitud del usuario y seleccionar automaticamente el mejor modelo. Beneficios: mejor ajuste de modelo y compensaciones de costo/latencia para trafico mixto. Costos/riesgos: llamada extra del LLM router por solicitud model:auto (latencia y gasto de tokens); si el router falla o se agota el tiempo, el gateway usa Default Model; las respuestas aun pueden ser cacheables bajo el modelo objetivo elegido como cualquier otra ruta una vez que se complete el enrutamiento.",
+      "configurationSmart": "Usa un modelo de IA (el router) para analizar la solicitud del usuario y seleccionar automaticamente el mejor modelo. Beneficios: mejor ajuste de modelo y compensaciones de costo/latencia para trafico mixto. Costos/riesgos: llamada extra del LLM router por solicitud model:auto (latencia y gasto de tokens); si el router falla o se agota el tiempo, el gateway usa Default Model; las respuestas aun pueden ser cacheables bajo el modelo objetivo elegido como cualquier otra ruta una vez que se complete el enrutamiento. Despues de que el router elige, otros dos modelos del mismo grupo filtrado lo acompanan como objetivos de conmutacion por error — primero los mas baratos de ese grupo — de modo que un fallo transitorio se reintenta dentro de esta regla en lugar de abandonarla. Cual de ellos se prueba a continuacion depende del fallo: un limite de tasa o una interrupcion busca un proveedor distinto. Eso eleva las llamadas upstream que una solicitud auto puede hacer; retryPolicy.maxUpstreamCalls acota el gasto.",
       "configurationLatency": "Enruta al Provider medido como mas rapido entre los pares Provider/Model listados. A diferencia del balanceo de carga (pesos fijos), el trafico va al nivel mas rapido segun la latencia p95 observada recientemente; los Providers sanos mas lentos solo sirven como failover. Los empates dentro de ~100ms se reparten entre los objetivos mas rapidos para no sobrecargar uno, y los Providers nuevos o inactivos reciben una pequena proporcion acotada de trafico de exploracion para poder aprender su velocidad. La salud siempre domina: un Provider que falla se sigue intentando el ultimo sin importar la latencia.",
-      "configurationPolicy": "Solo reglas stage-0. Fusiona listas de permitir/denegar para IDs de Model y Provider del gateway antes de que se ejecute cualquier regla de ruta stage-1. Las listas de permitir de multiples reglas Policy coincidentes se intersectan; las listas de denegar se unen. Los objetivos stage-1 y los candidatos del smart-router deben satisfacer la restriccion efectiva.",
-      "pipelineStage": "Elija si esta fila es stage 0 (Policy) o stage 1 (ruta). 0 — Policy: fusionada antes de cualquier ruta; la configuracion debe ser listas de permitir/denegar (IDs internos de Model y Provider del gateway). 1 — Ruta: evaluada despues de stage 0; entre las coincidencias, el gateway elige la regla con el Priority mas alto cuyo tipo de estrategia no es Fallback. Las reglas con tipo de estrategia Fallback proporcionan solo la cadena de recuperacion post-fallo (ordenadas por Priority entre esas reglas). Los objetivos de recuperacion se precalculan cuando se enruta la solicitud; el proxy solo contacta los Providers despues de que los objetivos primarios se agoten. Para usar una cadena Fallback interna como ruta primaria (p. ej. Sonnet luego Haiku), use el tipo de estrategia Conditional con una lista de condiciones vacia y coloque el arbol Fallback bajo default.",
       "matchConditions": "Restringe que solicitudes pueden usar esta regla. Todos los campos configurados se combinan con AND. Models: IDs internos de Model del gateway resueltos. Providers: UUIDs internos de Provider.id — el modelo resuelto de la solicitud debe pertenecer a uno de estos Providers. Organizations: valores de VirtualKey.projectId (UUIDs). Virtual keys: patrones de nombre con comodines de asterisco opcionales. Si deja todas las listas vacias, la coincidencia vuelve a los valores predeterminados del gateway — use con precaucion.",
       "matchModelsLabel": "IDs de Model del gateway (no nombres de API del proveedor). Una solicitud coincide aqui cuando su modelo enrutado es igual a uno de los IDs seleccionados."
     },
@@ -699,7 +706,7 @@
       "fallbackTitle": "Cadena de Fallback",
       "fallbackDesc": "Una lista ordenada de objetivos Provider/Model que se prueban secuencialmente cuando el enrutamiento primario falla (timeout, error, limite de tasa). Cada objetivo se intenta una vez antes de pasar al siguiente. Como tipo de estrategia stage-1, las reglas Fallback nunca ganan el primario — solo contribuyen objetivos de recuperacion.",
       "loadbalanceTitle": "Balanceo de carga",
-      "loadbalanceDesc": "Distribuye solicitudes aleatoriamente entre objetivos por peso relativo. Mayor peso significa mayor proporcion de trafico. Opcionalmente soporta afinidad sticky mediante Redis compartido.",
+      "loadbalanceDesc": "Distribuye solicitudes aleatoriamente entre objetivos por peso relativo. Mayor peso significa mayor proporcion de trafico. Cada solicitud se pondera de forma independiente; un cliente no queda fijado al objetivo que alcanzo la ultima vez.",
       "conditionalTitle": "Condicional",
       "conditionalDesc": "Evalua expresiones \"when\" contra el contexto de solicitud en vivo y ejecuta la estrategia \"then\" coincidente o el \"default\" obligatorio. Soporta estrategias anidadas y logica de ramificacion compleja.",
       "abSplitTitle": "Division A/B",
@@ -707,13 +714,14 @@
       "smartTitle": "Inteligente (AI Router)",
       "smartDesc": "Usa un modelo AI Router para analizar la solicitud del usuario y seleccionar automaticamente el mejor modelo objetivo. Agrega una llamada LLM extra por solicitud; vuelve al Default Model si el router falla.",
       "latencyTitle": "Basado en latencia",
-      "latencyDesc": "Enruta al objetivo medido como mas rapido segun la latencia p95 reciente en lugar de un peso fijado a mano. Los empates dentro de ~100ms se reparten entre objetivos; los Providers nuevos o inactivos reciben una pequena proporcion acotada de trafico de exploracion. La salud siempre gana: un Provider que falla se sigue intentando el ultimo.",
-      "policyTitle": "Restriccion de Policy",
-      "policyDesc": "Solo stage-0. Fusiona listas de permitir/denegar para IDs de Model y Provider del gateway antes de que se ejecute cualquier regla de ruta stage-1. Las listas de permitir se intersectan; las listas de denegar se unen."
+      "latencyDesc": "Enruta al objetivo medido como mas rapido segun la latencia p95 reciente en lugar de un peso fijado a mano. Los empates dentro de ~100ms se reparten entre objetivos; los Providers nuevos o inactivos reciben una pequena proporcion acotada de trafico de exploracion. La salud siempre gana: un Provider que falla se sigue intentando el ultimo."
     },
     "systemPromptTooltip": "Instrucciones para el LLM del router. Use {modelCatalog} como marcador de posición — se reemplazará en tiempo de ejecución con la lista de modelos disponibles y sus capacidades.",
     "weightTooltip": "Mayor peso = más tráfico",
-    "removeAria": "Eliminar"
+    "removeAria": "Eliminar",
+    "unsupportedStrategyNotice": "Esta regla está almacenada con la estrategia «{{strategyType}}», que la pasarela ya no ejecuta. Su configuración se muestra en la página de detalle y no se carga aquí: editarla guardaría una estrategia distinta encima. Elimina la regla o crea un reemplazo con una estrategia que la pasarela pueda servir.",
+    "simEndpointLabel": "Endpoint",
+    "simEndpointHelp": "En que endpoint llega la solicitud simulada. Las condiciones de la regla, el filtro de modalidad y el auto no-chat dependen de esto."
   },
   "hooks": {
     "title": "Hooks",
@@ -1448,7 +1456,7 @@
       "sampleCount": "Conteo de muestras",
       "title": "Estado del proveedor"
     },
-    "providerHealthSubtitle": "Estado de salud en tiempo real de todos los proveedores configurados",
+    "providerHealthSubtitle": "Derivado del tráfico reciente: se recalcula periódicamente, así que se resuelve solo cuando el tráfico que lo provocó queda fuera de la ventana. No hay reinicio manual.",
     "tabOverview": "Resumen",
     "tabProviders": "Proveedores ({{count}})",
     "uptime": "Tiempo de actividad",
@@ -2410,6 +2418,7 @@
       "responseHook": "Hook de respuesta",
       "http": "HTTP",
       "cache": "Caché",
+      "modality": "Modalidad",
       "time": "Tiempo",
       "any": "Cualquiera",
       "target": "Destino",
@@ -2478,6 +2487,8 @@
     "placeholderStatusCode": "p. ej. 429",
     "labelCache": "Cache",
     "tipCache": "Resultado unificado del caché — HIT (alguna capa de caché ahorró coste) o MISS. El detalle por capa está en el panel de auditoría.",
+    "labelModality": "Modalidad",
+    "tipModality": "Filtra la lista por modalidad de solicitud: texto, imagen, audio (TTS/STT), vídeo, embeddings, rerank o tiempo real.",
     "cacheStatus": {
       "HIT": "HIT",
       "MISS": "MISS"
@@ -2804,7 +2815,11 @@
         "requested": "Solicitado",
         "routedTo": "Enrutado a",
         "passthrough": "Passthrough",
-        "changedBy": "vía regla"
+        "changedBy": "vía regla",
+        "walkTitle": "Recorrido de envio",
+        "walkDispatched": "enviado",
+        "walkSkipped": "omitido",
+        "walkCoerced": "reescrito"
       },
       "compliance": {
         "title": "Decisiones del pipeline",
@@ -2839,6 +2854,7 @@
         "cacheSavings": "Ahorro por HIT de caché de pasarela",
         "netTotal": "Coste real pagado",
         "input": "entrada",
+        "modality": "Costo por modalidad (por unidad)",
         "output": "salida",
         "cacheRead": "lectura de caché",
         "cacheWrite": "recargo de escritura de caché",
@@ -2869,7 +2885,10 @@
         "details": "Detalles",
         "errorBadge": "Error",
         "errorTitle": "Error de gateway / proveedor — HTTP {{status}} · {{code}}",
-        "errorHint": "Esta fila es un sobre de error, no contenido de chat."
+        "errorHint": "Esta fila es un sobre de error, no contenido de chat.",
+        "truncatedBadge": "truncado",
+        "truncatedBadgeWithSize": "truncado · {{size}} capturados",
+        "truncatedHint": "Solo se almacenó el principio de este cuerpo. Superó el límite de almacenamiento en línea y no hay backend de volcado configurado, por lo que la copia almacenada es un prefijo. El cliente recibió la respuesta completa: configure un backend de volcado para conservar los cuerpos completos."
       },
       "tabs": {
         "overview": "Resumen",
@@ -2917,7 +2936,9 @@
           "failedHint": "Cambia a la pestaña Sin procesar para ver los bytes originales.",
           "partialTitle": "Normalización parcial — algunos campos pueden faltar.",
           "empty": "Sin payload normalizado para esta dirección.",
-          "unsupported": "Tipo no soportado. Cambia a Sin procesar para inspeccionar."
+          "unsupported": "Tipo no soportado. Cambia a Sin procesar para inspeccionar.",
+          "truncatedTitle": "Calculado a partir de un cuerpo truncado",
+          "truncatedHint": "Solo se almacenó el principio de este cuerpo, por lo que esta vista describe una carga incompleta: pueden faltar mensajes finales, llamadas a herramientas o el uso. El cliente recibió la respuesta completa."
         },
         "dropped": {
           "title": "Contenido descartado según la política de almacenamiento.",
@@ -2952,6 +2973,18 @@
           "eventFallbackLabel": "message",
           "showAllFrames": "Mostrar las {{count}} tramas",
           "truncatedNote": "Vista de tramas truncada — el flujo completo se capturó y está disponible en la pestaña Sin procesar."
+        },
+        "media": {
+          "captured": "Almacenado con esta solicitud: bytes disponibles.",
+          "external": "Contenido remoto: Nexus nunca lo descargó ni lo almacenó.",
+          "providerRef": "Contenido en poder del proveedor.",
+          "fingerprint": "Bytes no conservados: solo huella digital.",
+          "agedOut": "Capturado y luego eliminado por retención.",
+          "absent": "No capturado.",
+          "truncated": "Captura incompleta o ilegible: medio irrecuperable.",
+          "download": "Descargar",
+          "previewFailed": "Vista previa no disponible: no se pudieron leer los bytes almacenados.",
+          "sizeUnknown": "tamaño desconocido"
         }
       },
       "reasonCodes": {
@@ -2963,23 +2996,20 @@
       },
       "correlation": {
         "title": "Correlación",
-        "requestId": "ID de solicitud",
+        "eventId": "ID de evento",
+        "eventIdHint": "El id propio de esta fila, generado por la puerta de enlace. Único por evento de tráfico.",
         "endUserId": "ID de usuario final",
         "sessionId": "ID de sesión",
+        "clientTags": "Etiquetas de cliente",
         "clientRequestId": "ID de solicitud del cliente",
+        "clientRequestIdHint": "El x-request-id que envió quien llama, registrado tal cual. Nunca se reescribe.",
         "traceId": "ID de traza",
+        "traceIdHint": "Agrupa todas las filas de una misma unidad de trabajo: reintentos, los intercambios de una sesión en tiempo real, un flujo de agente entre servicios.",
         "copy": "Copiar",
         "copied": "Copiado",
-        "pivotRequest": "Mostrar solo esta solicitud",
+        "pivotTrace": "Mostrar todas las filas que comparten esta traza",
         "pivotEndUser": "Mostrar todo el tráfico de este usuario final",
         "pivotSession": "Mostrar todas las solicitudes de esta sesión"
-      },
-      "artifact": {
-        "title": "Artefacto",
-        "loading": "Cargando vista previa…",
-        "error": "Vista previa no disponible.",
-        "urlMode": "El proveedor devolvió esta imagen como una URL (no almacenada) — consulta el cuerpo de la respuesta.",
-        "imageAlt": "Imagen generada"
       }
     },
     "filters": {
@@ -6438,7 +6468,7 @@
   },
   "vendorBillReconciliation": {
     "title": "Conciliación de facturas de proveedor",
-    "subtitle": "Comparación diaria de nuestro gasto estimado con la API de facturación autoritativa de cada proveedor.",
+    "subtitle": "Comparación diaria del gasto que generamos en cada proveedor con la API de facturación autoritativa de ese proveedor.",
     "empty": "Aún no hay filas de conciliación. El trabajo diario genera comparaciones por proveedor y día para los proveedores cubiertos.",
     "emptyForPeriod": "No hay filas de conciliación en este periodo. Prueba con un periodo más largo: el trabajo diario solo concilia días ya cerrados.",
     "period": {
@@ -6446,10 +6476,14 @@
     },
     "colProvider": "Proveedor",
     "colDay": "Día",
-    "colOurs": "Nuestra estimación",
+    "colOurs": "Estimación de clientes",
+    "colInternalOps": "Operaciones internas",
+    "colVendorSpend": "Gasto total en el proveedor",
     "colVendor": "Facturado por proveedor",
     "colDiff": "Diferencia",
     "colDiffPct": "Diferencia %",
+    "notComparable": "No comparable",
+    "notComparableHint": "Registrada antes de que se contabilizara el gasto de operaciones internas, por lo que esta diferencia mide algo distinto que las filas más recientes. No puede recalcularse: el coste del enrutador nunca se almacenó.",
     "colCoverage": "Cobertura",
     "colStatus": "Estado",
     "colReview": "Revisión",
@@ -6461,6 +6495,7 @@
       "scoped": "Delimitado",
       "org_only": "Toda la organización (solo referencia)",
       "fetch_failed": "Error al obtener del proveedor",
+      "no_basis": "Sin cifra comparable",
       "priority_tier_undercount": "Excluye nivel prioritario"
     },
     "notCoveredTitle": "Proveedores no cubiertos en v1",

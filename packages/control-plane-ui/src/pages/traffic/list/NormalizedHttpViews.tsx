@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import type { useTranslation } from 'react-i18next';
 import type { NormalizedPayload, SSEFrame } from '@/api/types';
+import { MediaBlockCard } from './NormalizedMessageBubble';
 import css from './NormalizedPayloadView.module.css';
 
 export function renderHttpJson(
@@ -52,30 +53,18 @@ export function renderHttpBinary(
   payload: NormalizedPayload,
   t: ReturnType<typeof useTranslation>['t'],
 ) {
-  const ref = payload.http?.bodyView?.binaryRef;
+  const ref = payload.http?.bodyView?.mediaRef;
+  if (ref) {
+    return <MediaBlockCard mediaRef={ref} t={t} />;
+  }
   return (
     <div className={css.binaryCard}>
       <strong>{t('pages:traffic.detail.normalized.binary.title')}</strong>
-      {ref ? (
-        <>
-          <span>
-            {t('pages:traffic.detail.normalized.binary.size')}: <code>{formatBytesShort(ref.size)}</code>
-          </span>
-          <span>
-            {t('pages:traffic.detail.normalized.binary.contentType')}: <code>{ref.contentType || '(unknown)'}</code>
-          </span>
-          {ref.sha256 ? (
-            <span>
-              sha256: <code>{ref.sha256}</code>
-            </span>
-          ) : null}
-        </>
-      ) : (
-        <span>{t('pages:traffic.detail.normalized.binary.metadataOnly')}</span>
-      )}
+      <span>{t('pages:traffic.detail.normalized.binary.metadataOnly')}</span>
     </div>
   );
 }
+
 
 // Frames rendered before the "show all N frames" expander takes over.
 // Keeps a 2000-frame stream from flooding the DOM on first paint.
@@ -156,10 +145,4 @@ function HttpSseView({
       ) : null}
     </div>
   );
-}
-
-export function formatBytesShort(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
 }

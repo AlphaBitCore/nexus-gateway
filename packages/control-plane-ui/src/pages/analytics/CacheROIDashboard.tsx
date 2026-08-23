@@ -22,6 +22,7 @@ import {
 } from 'recharts';
 import styles from './CacheROIDashboard.module.css';
 import { formatTokens } from '@/lib/format';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 type TimeRange = '7d' | '30d' | '90d';
 
@@ -101,6 +102,7 @@ export function CacheROIDashboard() {
   const [range, setRange] = useState<TimeRange>('30d');
   const [triggering, setTriggering] = useState(false);
   const [triggered, setTriggered] = useState(false);
+  const armTimeout = useTimeouts();
 
   const params = buildParams(range);
 
@@ -148,8 +150,10 @@ export function CacheROIDashboard() {
     try {
       await Promise.all(ROLLUP_JOBS.map(id => hubApi.triggerJob(id)));
       setTriggered(true);
-      // Auto-refetch after 90 s to pick up newly computed rollup data.
-      setTimeout(() => {
+      // Auto-refetch after 90 s to pick up newly computed rollup data. The
+      // 90-second window is long enough that the user has usually navigated
+      // away before it fires, so cancellation is not optional here.
+      armTimeout(() => {
         setTriggered(false);
         refetch();
       }, 90_000);

@@ -12,11 +12,21 @@
       "providerModelId": "gemini-3.5-flash",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "json_mode",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.5,
       "outputPricePerMillion": 9,
@@ -32,11 +42,21 @@
       "providerModelId": "gemini-3.1-flash-lite",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "json_mode",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.25,
       "outputPricePerMillion": 1.5,
@@ -52,11 +72,21 @@
       "providerModelId": "gemini-2.5-pro",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "json_mode",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.25,
       "outputPricePerMillion": 10,
@@ -72,10 +102,21 @@
       "providerModelId": "gemini-2.5-flash",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "json_mode"
+        "json_mode",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 2.5,
@@ -91,10 +132,21 @@
       "providerModelId": "gemini-2.5-flash-lite",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "json_mode"
+        "json_mode",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.1,
       "outputPricePerMillion": 0.4,
@@ -110,8 +162,14 @@
       "providerModelId": "gemini-3-pro-image",
       "type": "image",
       "features": [
-        "vision",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 120,
@@ -126,8 +184,14 @@
       "providerModelId": "gemini-3.1-flash-image",
       "type": "image",
       "features": [
-        "vision",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
       ],
       "inputPricePerMillion": 0.5,
       "outputPricePerMillion": 60,
@@ -142,8 +206,14 @@
       "providerModelId": "gemini-3.1-flash-lite-image",
       "type": "image",
       "features": [
-        "vision",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
       ],
       "inputPricePerMillion": 0.25,
       "outputPricePerMillion": 30,
@@ -158,8 +228,14 @@
       "providerModelId": "gemini-2.5-flash-image",
       "type": "image",
       "features": [
-        "vision",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 30,
@@ -174,6 +250,12 @@
       "providerModelId": "gemini-embedding-001",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.15,
       "outputPricePerMillion": 0,
       "maxContextTokens": 2048
@@ -185,9 +267,76 @@
       "providerModelId": "gemini-embedding-2",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 0,
       "maxContextTokens": 8192
+    },
+    {
+      "code": "gemini-3.6-flash",
+      "name": "Gemini 3.6 Flash",
+      "description": "Google's current balanced Flash tier. Same input rate as 3.5 Flash with a lower output rate.",
+      "providerModelId": "gemini-3.6-flash",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "inputPricePerMillion": 1.5,
+      "outputPricePerMillion": 7.5,
+      "cachedInputReadPricePerMillion": 0.15,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 1048576,
+      "maxOutputTokens": 65536
+    },
+    {
+      "code": "gemini-3.5-flash-lite",
+      "name": "Gemini 3.5 Flash-Lite",
+      "description": "Cheapest Gemini tier for high-volume classification, extraction and routing.",
+      "providerModelId": "gemini-3.5-flash-lite",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "inputPricePerMillion": 0.3,
+      "outputPricePerMillion": 2.5,
+      "cachedInputReadPricePerMillion": 0.03,
+      "cachedInputWritePricePerMillion": 0,
+      "maxContextTokens": 1048576,
+      "maxOutputTokens": 65536
     }
   ]
 }

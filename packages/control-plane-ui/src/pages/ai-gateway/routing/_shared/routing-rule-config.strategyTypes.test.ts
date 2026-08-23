@@ -21,9 +21,9 @@ describe('STRATEGY_TYPES', () => {
     ]);
   });
 
-  it('excludes the stage-0 pipeline type "policy" (chosen via the pipeline-stage control, not the strategy picker)', () => {
-    expect(STRATEGY_TYPES).not.toContain('policy');
-  });
+  // 'policy' was the stage-0 pipeline type. Stage 0 is removed and the API now
+  // rejects it, so there is no longer a value to exclude — the union itself no
+  // longer has one, which a type error would catch before a runtime assertion.
 
   it('has no duplicate entries', () => {
     expect(new Set(STRATEGY_TYPES).size).toBe(STRATEGY_TYPES.length);

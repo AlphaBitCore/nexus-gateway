@@ -11,3 +11,4 @@ export * from './device';
 export * from './audit';
 export * from './policy';
 export * from './enrollment';
+export * from './media';

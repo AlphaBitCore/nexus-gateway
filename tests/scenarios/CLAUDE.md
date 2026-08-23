@@ -1,0 +1,3 @@
+# L5 scenarios — binding rules
+
+- **L5 scenario landing rule (binding).** New `tests/scenarios/*_test.go` cannot land with only `go vet` / `go test -c` evidence. PR must include a live `cd tests/scenarios && NEXUS_TEST_TARGET=local GOWORK=off go test -run ^Test<NNN>$ -count=1 -v` output showing `--- PASS` or `--- SKIP` (skip must cite a specific architectural / env precondition, not a "we'll fix later"). Reason: 2026-05-21 session shipped 21 new scenarios with clean `go vet`; live run uncovered 13 shape errors (wrong column names like `virtual_key_id`/`endpoint_type`, fabricated metric `nexus_ai_gateway_requests_total`, wrong table case `iam_group` vs `"IamGroup"`, missing required body fields). Compile-clean ≠ test-effective.

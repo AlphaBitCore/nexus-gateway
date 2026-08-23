@@ -20,6 +20,7 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import styles from '../_shared/ChipInput.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 interface ChipInputProps {
   /** Current value as a newline-delimited string. */
@@ -56,6 +57,7 @@ export function ChipInput({
   const [input, setInput] = useState('');
   const [focused, setFocused] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const armTimeout = useTimeouts();
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const filtered = useMemo(() => {
@@ -148,7 +150,7 @@ export function ChipInput({
           onKeyDown={onKeyDown}
           onFocus={() => setFocused(true)}
           // Delay blur so a click on a suggestion can fire its mousedown handler first.
-          onBlur={() => window.setTimeout(() => setFocused(false), 150)}
+          onBlur={() => armTimeout(() => setFocused(false), 150)}
           placeholder={chips.length === 0 ? placeholder : ''}
           aria-label={ariaLabel}
           spellCheck={false}

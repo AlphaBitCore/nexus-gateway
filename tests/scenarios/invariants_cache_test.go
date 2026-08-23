@@ -104,7 +104,7 @@ func TestS151_CacheMandatoryAcrossIngress(t *testing.T) {
 			if s1 != 200 {
 				rb := string(b1)
 				if a.skipOnNoMatch && (strings.Contains(rb, "ROUTING_NO_MATCH") || strings.Contains(rb, "no available provider")) {
-					t.Skipf("%s: no provider seeded locally for this ingress (ROUTING_NO_MATCH); body=%q", a.name, truncate(b1, 160))
+					requireProviderSeeded(t, a.name, truncate(b1, 160))
 				}
 				t.Fatalf("%s req1 expected 200, got %d (%q)", a.name, s1, truncate(b1, 200))
 			}

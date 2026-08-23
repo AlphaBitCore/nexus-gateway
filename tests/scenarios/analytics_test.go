@@ -27,18 +27,18 @@ import (
 // falls back to a direct traffic_event SUM on rollup-miss. Either
 // path MUST preserve four invariants:
 //
-//   1. Envelope contains the fields the UI binds to:
-//      totalEstimatedCostUsd / totalGatewayCacheSavingsUsd /
-//      totalReasoningCostUsd / byOrg[] / dataSource ∈ {rollup,direct}.
-//   2. All money totals are non-negative finite numbers (a negative
-//      cost in a customer-facing summary is the canonical PM
-//      nightmare).
-//   3. Cache *savings* never exceeds total estimated cost
-//      (you can't save more than you spent; physical invariant).
-//   4. byOrg[].costUsd values sum to ≤ totalEstimatedCostUsd
-//      (each row is a partition of the total + an 'unassigned' bucket;
-//      strict equality is impossible because the breakdown is
-//      provider-only on the rollup path, so we accept ≤).
+//  1. Envelope contains the fields the UI binds to:
+//     totalEstimatedCostUsd / totalGatewayCacheSavingsUsd /
+//     totalReasoningCostUsd / byOrg[] / dataSource ∈ {rollup,direct}.
+//  2. All money totals are non-negative finite numbers (a negative
+//     cost in a customer-facing summary is the canonical PM
+//     nightmare).
+//  3. Cache *savings* never exceeds total estimated cost
+//     (you can't save more than you spent; physical invariant).
+//  4. byOrg[].costUsd values sum to ≤ totalEstimatedCostUsd
+//     (each row is a partition of the total + an 'unassigned' bucket;
+//     strict equality is impossible because the breakdown is
+//     provider-only on the rollup path, so we accept ≤).
 //
 // Cross-service: CP-only (CP queries DB rollup or direct table). The
 // PM-grade reason this matters more than a 200-status smoke: the
@@ -63,7 +63,11 @@ func TestS093_AnalyticsCostSummaryContract(t *testing.T) {
 		t.Fatalf("cost-summary: status %d body=%q", status, truncate(body, 200))
 	}
 	var sum struct {
-		TotalEstimatedCostUsd       float64 `json:"totalEstimatedCostUsd"`
+		// cost-summary returns `totalCostUsd`. `totalEstimatedCostUsd` is the
+		// cache-roi endpoint's field; decoding that name here silently yielded
+		// 0, which made every check below compare against zero and the
+		// partition check fire on a discrepancy that did not exist.
+		TotalCostUsd                float64 `json:"totalCostUsd"`
 		TotalGatewayCacheSavingsUsd float64 `json:"totalGatewayCacheSavingsUsd"`
 		TotalReasoningCostUsd       float64 `json:"totalReasoningCostUsd"`
 		ProviderPromptCacheNetUSD   float64 `json:"providerPromptCacheNetSavingsUsd"`
@@ -79,19 +83,19 @@ func TestS093_AnalyticsCostSummaryContract(t *testing.T) {
 	}
 
 	for label, v := range map[string]float64{
-		"totalEstimatedCostUsd":              sum.TotalEstimatedCostUsd,
-		"totalGatewayCacheSavingsUsd":        sum.TotalGatewayCacheSavingsUsd,
-		"totalReasoningCostUsd":              sum.TotalReasoningCostUsd,
-		"providerPromptCacheNetSavingsUsd":   sum.ProviderPromptCacheNetUSD,
+		"totalCostUsd":                     sum.TotalCostUsd,
+		"totalGatewayCacheSavingsUsd":      sum.TotalGatewayCacheSavingsUsd,
+		"totalReasoningCostUsd":            sum.TotalReasoningCostUsd,
+		"providerPromptCacheNetSavingsUsd": sum.ProviderPromptCacheNetUSD,
 	} {
 		if v < 0 {
 			t.Errorf("invariant: %s must be >= 0, got %v", label, v)
 		}
 	}
 
-	if sum.TotalGatewayCacheSavingsUsd > sum.TotalEstimatedCostUsd+sum.TotalGatewayCacheSavingsUsd+1e-6 {
+	if sum.TotalGatewayCacheSavingsUsd > sum.TotalCostUsd+sum.TotalGatewayCacheSavingsUsd+1e-6 {
 		t.Errorf("savings can't exceed (cost + savings) — savings=%v cost=%v",
-			sum.TotalGatewayCacheSavingsUsd, sum.TotalEstimatedCostUsd)
+			sum.TotalGatewayCacheSavingsUsd, sum.TotalCostUsd)
 	}
 
 	var sumByOrg float64
@@ -101,24 +105,23 @@ func TestS093_AnalyticsCostSummaryContract(t *testing.T) {
 		}
 		sumByOrg += e.CostUsd
 	}
-	// Partition check: byOrg sum should not exceed the total (each row
-	// is a partition of the total + 'unassigned' bucket).
+	// Partition check: byOrg rows partition the total, so their sum cannot
+	// exceed it. This FAILS rather than logging.
 	//
-	// PRODUCT NOTE: the partition holds strictly when both sides read
-	// the same rollup tier with the same metric names — which is the
-	// case here (both use costSummaryMetrics). In local dev we've
-	// observed totalEstimatedCostUsd == 0 while byOrg sum > 0; this
-	// surfaces a rollup-emitter gap where per-org rollup rows are
-	// emitted but the global (dimensionKey="") row is missing. Log
-	// the discrepancy (don't fail) so this scenario stays green
-	// against partial rollup data while still flagging the rollup
-	// pipeline issue for follow-up.
-	if sumByOrg > sum.TotalEstimatedCostUsd+1e-6 {
-		t.Logf("note: byOrg sum=%v > totalEstimatedCostUsd=%v — likely rollup pipeline emits dimensioned rows but skips the global row (follow-up: investigate metric_rollup_5m global-vs-dimensioned emit logic)",
-			sumByOrg, sum.TotalEstimatedCostUsd)
+	// It used to log. The reason given was a rollup-emitter gap — per-org rows
+	// emitted without the global row — and the note named a follow-up
+	// investigation into metric_rollup_5m. That diagnosis was wrong, and the
+	// logging is what let it stand: the struct decoded `totalEstimatedCostUsd`,
+	// which this endpoint does not return, so the total was always 0 and the
+	// comparison always tripped. Against production the byOrg sum matches
+	// totalCostUsd exactly. A check that cannot fail cannot correct a wrong
+	// explanation of why it keeps tripping.
+	if sumByOrg > sum.TotalCostUsd+1e-6 {
+		t.Errorf("byOrg sum=%v exceeds totalCostUsd=%v — the per-org rows are a partition of the total, so one of the two is computed from a different tier or metric set",
+			sumByOrg, sum.TotalCostUsd)
 	}
 	t.Logf("S-093 OK: dataSource=%s periodDays=%d total=%.6f savings=%.6f byOrg=%d sumByOrg=%.6f",
-		sum.DataSource, sum.PeriodDays, sum.TotalEstimatedCostUsd,
+		sum.DataSource, sum.PeriodDays, sum.TotalCostUsd,
 		sum.TotalGatewayCacheSavingsUsd, len(sum.ByOrg), sumByOrg)
 }
 
@@ -247,12 +250,12 @@ func TestS094_AnalyticsCacheROIMonotonicity(t *testing.T) {
 // must return `{"data":[]}` (empty 200), NOT a 500 — admins
 // regularly open the page after a fresh deploy. Asserts:
 //
-//   1. A *future* window (no possible data) returns 200 with an
-//      empty data array — the empty-window contract.
-//   2. A *recent* window returns 200 with the same envelope (data
-//      array is well-formed JSON regardless of population).
-//   3. No 500 / unbounded panics regardless of how absurd the window
-//      bounds are (we throw 60 years in the future at it).
+//  1. A *future* window (no possible data) returns 200 with an
+//     empty data array — the empty-window contract.
+//  2. A *recent* window returns 200 with the same envelope (data
+//     array is well-formed JSON regardless of population).
+//  3. No 500 / unbounded panics regardless of how absurd the window
+//     bounds are (we throw 60 years in the future at it).
 func TestS095_MetricsAggregatesWindow(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()

@@ -6,16 +6,50 @@
   "adapterType": "anthropic",
   "models": [
     {
+      "code": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "description": "Most capable Claude 5. Highest-reasoning tier for complex work.",
+      "providerModelId": "claude-opus-5",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "inputPricePerMillion": 5,
+      "outputPricePerMillion": 25,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 6.25,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 128000
+    },
+    {
       "code": "claude-fable-5",
       "name": "Claude Fable 5",
       "description": "Frontier Claude. Highest capability for the hardest reasoning, agentic, and coding work.",
       "providerModelId": "claude-fable-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 10,
       "outputPricePerMillion": 50,
@@ -31,10 +65,18 @@
       "providerModelId": "claude-sonnet-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 10,
@@ -50,10 +92,18 @@
       "providerModelId": "claude-opus-4-8",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 25,
@@ -69,10 +119,17 @@
       "providerModelId": "claude-opus-4-7",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 25,
@@ -88,10 +145,18 @@
       "providerModelId": "claude-opus-4-6",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 25,
@@ -107,10 +172,18 @@
       "providerModelId": "claude-opus-4-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "aliases": [
         "claude-opus-4-5-20251101"
@@ -129,10 +202,18 @@
       "providerModelId": "claude-sonnet-4-6",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 3,
       "outputPricePerMillion": 15,
@@ -148,10 +229,18 @@
       "providerModelId": "claude-sonnet-4-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "aliases": [
         "claude-sonnet-4-5-20250929"
@@ -170,10 +259,18 @@
       "providerModelId": "claude-haiku-4-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
-        "thinking"
+        "reasoning",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "aliases": [
         "claude-haiku-4-5-20251001"
@@ -184,28 +281,6 @@
       "cachedInputWritePricePerMillion": 1.25,
       "maxContextTokens": 200000,
       "maxOutputTokens": 64000
-    },
-    {
-      "code": "claude-opus-4-1",
-      "name": "Claude Opus 4.1",
-      "description": "Earlier Claude Opus generation. Deprecated by the vendor; migrate to claude-opus-4-8.",
-      "providerModelId": "claude-opus-4-1",
-      "type": "chat",
-      "features": [
-        "vision",
-        "function_calling",
-        "streaming",
-        "thinking"
-      ],
-      "aliases": [
-        "claude-opus-4-1-20250805"
-      ],
-      "inputPricePerMillion": 15,
-      "outputPricePerMillion": 75,
-      "cachedInputReadPricePerMillion": 1.5,
-      "cachedInputWritePricePerMillion": 18.75,
-      "maxContextTokens": 200000,
-      "maxOutputTokens": 32000
     }
   ]
 }

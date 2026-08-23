@@ -20,6 +20,7 @@ import type {
   NormalizedPayload,
   TransformSpan,
 } from '@/api/types';
+import { MediaByteOriginContext } from './MediaByteOriginContext';
 import { MessageBubble } from './NormalizedMessageBubble';
 import { renderHttpJson, renderHttpText, renderHttpForm, renderHttpBinary, renderHttpSse } from './NormalizedHttpViews';
 import css from './NormalizedPayloadView.module.css';
@@ -32,11 +33,36 @@ interface Props {
   errorReason?: string | null;
   /** "request" | "response" — addressed in TransformSpan.contentAddress prefix. */
   direction: 'request' | 'response';
+  /**
+   * The traffic event whose stored body backs this payload. Supplying it is
+   * what lets a media card offer Preview and Download; without it the cards
+   * render metadata only, which is correct for any surface that cannot
+   * reach the bytes.
+   */
+  eventId?: string;
+  /**
+   * The stored body this projection was computed from is only a PREFIX. The
+   * projection is faithful to the bytes it saw, but those bytes are incomplete —
+   * so the view must say so rather than present a partial conversation as a
+   * whole one. Mirrors the Raw tab's truncated badge; the two tabs describe the
+   * same stored body and must not disagree.
+   */
+  truncated?: boolean;
 }
 
 export function NormalizedPayloadView(props: Props) {
-  const { payload, spans, status, errorReason } = props;
+  const { payload, spans, status, errorReason, truncated } = props;
   const { t } = useTranslation();
+
+  // Truncation is orthogonal to normalize status: a prefix can normalize
+  // perfectly well ("ok") and still describe an incomplete payload, so this
+  // banner renders alongside the status banner rather than instead of it.
+  const truncatedBanner = truncated ? (
+    <div className={css.banner}>
+      <strong>{t('pages:traffic.detail.normalized.banner.truncatedTitle')}</strong>
+      <div>{t('pages:traffic.detail.normalized.banner.truncatedHint')}</div>
+    </div>
+  ) : null;
 
   // Failure / partial banner.
   let banner: React.ReactNode = null;
@@ -62,6 +88,7 @@ export function NormalizedPayloadView(props: Props) {
   if (!payload) {
     return (
       <div className={css.wrap}>
+        {truncatedBanner}
         {banner}
         <div className={css.placeholder}>
           {t('pages:traffic.detail.normalized.banner.empty')}
@@ -89,6 +116,7 @@ export function NormalizedPayloadView(props: Props) {
     });
     return (
       <div className={css.wrap}>
+        {truncatedBanner}
         {banner}
         <div className={css.banner}>
           <strong>
@@ -125,9 +153,10 @@ export function NormalizedPayloadView(props: Props) {
     );
   }
 
-  return (
+  const body = (
     <div className={css.wrap}>
-      {banner}
+      {truncatedBanner}
+        {banner}
       {renderTierBadge(payload, t)}
       {payload.kind === 'ai-embedding' ? renderAiEmbedding(payload, t) : null}
       {payload.kind !== 'ai-embedding' && payload.kind.startsWith('ai-') ? renderAi(payload, spans, props.direction, t) : null}
@@ -142,6 +171,16 @@ export function NormalizedPayloadView(props: Props) {
         </div>
       ) : null}
     </div>
+  );
+
+  // The provider carries only what the leaf card needs to fetch bytes. When
+  // eventId is absent the context stays null and every card renders
+  // metadata-only — the same honest state a surface with no endpoint gets.
+  if (!props.eventId) return body;
+  return (
+    <MediaByteOriginContext.Provider value={{ eventId: props.eventId, direction: props.direction }}>
+      {body}
+    </MediaByteOriginContext.Provider>
   );
 }
 

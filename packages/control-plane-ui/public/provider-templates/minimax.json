@@ -12,11 +12,17 @@
       "providerModelId": "MiniMax-M3",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 1.2,
@@ -35,6 +41,12 @@
         "streaming",
         "json_mode"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 1.2,
       "cachedInputReadPricePerMillion": 0.06,
@@ -52,6 +64,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 1.2,

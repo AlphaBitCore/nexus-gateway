@@ -22,8 +22,6 @@ export function useRoutingFieldHelp() {
     configurationAbSplit: t('pages:routing.help.configurationAbSplit'),
     configurationSmart: t('pages:routing.help.configurationSmart'),
     configurationLatency: t('pages:routing.help.configurationLatency'),
-    configurationPolicy: t('pages:routing.help.configurationPolicy'),
-    pipelineStage: t('pages:routing.help.pipelineStage'),
     matchConditions: t('pages:routing.help.matchConditions'),
     matchModelsLabel: t('pages:routing.help.matchModelsLabel'),
   };
@@ -35,7 +33,7 @@ export const ROUTING_RULE_FIELD_HELP = {
   primaryWinnerCallout:
     'Among all stage-1 rules whose match conditions fit the request, exactly one wins primary routing: the enabled rule with the highest numeric Priority (larger number wins). Other matching rules are not merged for the primary path. Rules whose strategy type is Fallback never win primary—they only add recovery targets after every primary upstream attempt fails.',
   strategyFallbackRecoveryOnly:
-    'Strategy type Fallback does not win primary routing at stage 1. Its targets are used only as recovery after all primary upstream attempts fail. For an ordered primary chain inside one rule, use Conditional with a nested Fallback tree under default.',
+    'Fallback lists provider+model entries tried in order within THIS rule. It is an ordinary strategy and can win primary routing like any other. To back up one rule with another, author the backup as a separate rule at a lower Priority — there is no special rule type for that. Entries name a provider and a model directly; a strategy nested inside another is rejected.',
   strategyType:
     'Controls how targets are chosen when the rule matches: single destination, ordered fallback, weighted load balancing, conditional tree, or A/B split. The JSON under Configuration must follow the same strategy shape the API validates.',
   priority:
@@ -49,23 +47,19 @@ export const ROUTING_RULE_FIELD_HELP = {
   configurationSingle:
     'Every matching request is sent to exactly one provider and model pair shown here. IDs refer to records configured under Providers & Models.',
   configurationFallback:
-    'When this rule\'s strategy type is **Fallback** at stage 1, it does not win primary routing: its ordered targets are used only after every primary upstream attempt fails (then proxy walks the chain). Recovery targets are precomputed when the request is routed; the proxy only dials providers for them after primary targets are exhausted. For a primary route that still uses an ordered chain inside one rule, use **Conditional** with **default** set to a nested Fallback tree (see Pipeline stage help).',
+    'Fallback\'s ordered entries are tried within this rule, after its own first choice fails. Each entry names a provider and a model directly — a strategy nested inside another is rejected, because the gateway resolves an entry as a leaf and does not evaluate one strategy inside another. To back up this rule with a different one, author that one at a lower Priority.',
   configurationLoadBalance:
-    'Requests are distributed randomly by relative weight across targets. Higher weight means a larger share of traffic. Sticky affinity (when stickyOn is set) is stored in shared Redis when the gateway has Redis configured so the same key sticks to the same target across replicas; without Redis, sticky state is per process only (fine for single instance / dev).',
+    'Requests are distributed randomly by relative weight across targets. Higher weight means a larger share of traffic. Each request is weighed independently, so a client is not pinned to the target it reached last time.',
   configurationConditional:
-    'Evaluates branches with "when" expressions against the live request context, then runs the matching "then" strategy or the mandatory "default". Use the structured editor for a default route, ordered branches (field path, operator, value, then target), and optional raw JSON for expressions the form cannot represent yet ($and / $or, nested strategies). Match conditions on the rule still decide whether this rule is considered at all.',
+    'Evaluates branches with "when" expressions against the live request context, then runs the matching "then" strategy or the mandatory "default". Use the structured editor for a default route, ordered branches (field path, operator, value, then target), and optional raw JSON for expressions the form cannot represent yet ($and / $or). Match conditions on the rule still decide whether this rule is considered at all.',
   configurationAbSplit:
     'Weighted random choice among flat provider/model pairs — ideal for experiments comparing models or providers at a fixed traffic mix.',
   configurationLatency:
     'Routes to the measured-fastest provider among the listed provider/model pairs. Unlike load balancing (fixed weights), traffic goes to the fastest tier by recently observed p95 latency; slower healthy providers serve only as failover. Ties within ~100ms are spread across the fastest targets to avoid overloading one, and new or idle providers get a small bounded share of exploration traffic so their speed can be learned. Health always dominates: a failing provider is still tried last regardless of latency.',
   configurationSmart:
-    'Uses an AI model (the router) to analyze the user\'s request and automatically select the best model. Benefits: better model fit and cost/latency tradeoffs for mixed traffic. Costs/risks: extra router LLM call per model:auto request (latency and token spend); if the router fails or times out, the gateway uses Default Model; responses may still be cacheable under the chosen target model like any other route once routing completes.',
-  configurationPolicy:
-    'Stage-0 rules only. Merges allow/deny lists for gateway model IDs and provider IDs before any stage-1 route rule runs. Allow-lists from multiple matching policy rules intersect; deny-lists union. Stage-1 targets and smart-router candidates must satisfy the effective narrowing.',
-  pipelineStage:
-    'Choose whether this row is stage 0 (policy) or stage 1 (route). 0 — Policy: merged before any route; config must be allow/deny lists (internal gateway model and provider IDs). 1 — Route: evaluated after stage 0; among matches, the gateway picks the highest-Priority rule whose strategy type is **not** Fallback. Rules with strategy type **Fallback** supply the post-failure recovery chain only (ordered by Priority among those rules). Recovery targets are precomputed when the request is routed; the proxy only dials providers for them after primary targets are exhausted. To use an internal fallback chain as the **primary** route (e.g. Sonnet then Haiku), use strategy type **Conditional** with an empty conditions list and put the Fallback tree under **default**.',
+    'Uses an AI model (the router) to analyze the user\'s request and automatically select the best model. Benefits: better model fit and cost/latency tradeoffs for mixed traffic. Costs/risks: extra router LLM call per model:auto request (latency and token spend); if the router fails or times out, the gateway uses Default Model; responses may still be cacheable under the chosen target model like any other route once routing completes. After the router picks, two other models from the same filtered pool ride along behind it as failover targets (the cheapest of that pool first), so a transient failure is retried inside this rule instead of leaving it — which of them is tried next depends on the failure, since a rate limit or an outage reaches for a different provider — which raises the upstream calls one auto-routed request may make; retryPolicy.maxUpstreamCalls bounds the spend.',
   matchConditions:
-    'Narrows which requests may use this rule. All set fields are combined with AND. Models: resolved internal gateway model IDs. Providers: internal Provider.id UUIDs — the request\'s resolved model must belong to one of these providers. Organizations: VirtualKey.projectId values (UUIDs). Virtual keys: name patterns with optional asterisk wildcards. If you leave every list empty, matching falls back to gateway defaults — use with care.',
+    'Narrows which requests may use this rule. All set fields are combined with AND. Models: resolved internal gateway model IDs. Providers: internal Provider.id UUIDs — compared against every provider that serves the model code the caller named, and INAPPLICABLE rather than failed when the caller named no model, so a provider-scoped rule still applies to model:auto. Request model keywords: matched against the raw model string before it is resolved, with optional asterisk wildcards (gpt-4-*). Model types: compared against the ENDPOINT the request arrived on, not the named model\'s category. Organizations: VirtualKey.projectId values (UUIDs). Virtual keys: name patterns with optional asterisk wildcards. If you leave every list empty, matching falls back to gateway defaults — use with care.',
   matchModelsLabel:
     'Gateway model IDs (not vendor API names). A request matches here when its routed model equals one of the selected IDs.',
 };
@@ -78,7 +72,6 @@ export const strategyConfigHelpBody: Record<StrategyType, string> = {
   ab_split: ROUTING_RULE_FIELD_HELP.configurationAbSplit,
   smart: ROUTING_RULE_FIELD_HELP.configurationSmart,
   latency: ROUTING_RULE_FIELD_HELP.configurationLatency,
-  policy: ROUTING_RULE_FIELD_HELP.configurationPolicy,
 };
 
 /** i18n'd strategy config help — use inside components */
@@ -92,7 +85,6 @@ export function useStrategyConfigHelp(): Record<StrategyType, string> {
     ab_split: help.configurationAbSplit,
     smart: help.configurationSmart,
     latency: help.configurationLatency,
-    policy: help.configurationPolicy,
   };
 }
 
@@ -106,7 +98,6 @@ function useStrategyHelp() {
     ab_split: { title: t('pages:routing.strategy.abSplitTitle'), description: t('pages:routing.strategy.abSplitDesc') },
     smart: { title: t('pages:routing.strategy.smartTitle'), description: t('pages:routing.strategy.smartDesc') },
     latency: { title: t('pages:routing.strategy.latencyTitle'), description: t('pages:routing.strategy.latencyDesc') },
-    policy: { title: t('pages:routing.strategy.policyTitle'), description: t('pages:routing.strategy.policyDesc') },
   };
 }
 

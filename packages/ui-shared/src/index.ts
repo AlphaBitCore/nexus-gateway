@@ -22,6 +22,9 @@
 // fetching layer.
 
 export { cn } from './lib/cn';
+export { resolveLocator, canResolveLocator, LocatorError } from './lib/resolveLocator';
+export type { ResolvedMedia } from './lib/resolveLocator';
+export { sniffMime, extensionForMime } from './lib/sniffMime';
 export * from './shadcn';
 export * from './components/Button';
 export * from './components/Chip';
@@ -29,6 +32,7 @@ export * from './components/ErrorBanner';
 export * from './components/HelpIconButton';
 export * from './components/IconButton';
 export * from './components/LinkButton';
+export * from './components/MediaCard';
 export * from './theme/chartColors';
 export * from './theme/ThemeConfig';
 export * from './theme/ThemeContext';

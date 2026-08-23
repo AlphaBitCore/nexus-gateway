@@ -17,6 +17,7 @@ import type { DataTableColumn } from '@/components/ui';
 import type { Project, VirtualKey } from '../../../api/types';
 import { formatDate } from '@/lib/format';
 import styles from './ProjectDetail.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 /* ── Schema ────────────────────────────────────────────────────────────── */
 
@@ -57,11 +58,12 @@ export function ProjectDetail() {
 
   const canDelete = usePermission('project:delete');
 
+  const armTimeout = useTimeouts();
   const showTip = useCallback((text: string, e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setTip({ text, x: rect.left, y: rect.top - 6 });
-    setTimeout(() => setTip(null), 3000);
-  }, []);
+    armTimeout(() => setTip(null), 3000);
+  }, [armTimeout]);
 
   const { data: project, loading, error, refetch } = useApi<ProjectWithVKs>(
     () => projectApi.get(id!),

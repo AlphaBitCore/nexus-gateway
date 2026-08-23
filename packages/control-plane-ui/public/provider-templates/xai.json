@@ -12,11 +12,17 @@
       "providerModelId": "grok-4.5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 6,
@@ -30,11 +36,17 @@
       "providerModelId": "grok-4.3",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.25,
       "outputPricePerMillion": 2.5,
@@ -48,11 +60,17 @@
       "providerModelId": "grok-4-1-fast-reasoning",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 0.5,
@@ -66,10 +84,16 @@
       "providerModelId": "grok-4-1-fast-non-reasoning",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 0.5,
@@ -87,6 +111,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 1.5,

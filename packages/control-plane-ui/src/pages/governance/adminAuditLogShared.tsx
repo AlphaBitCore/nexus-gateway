@@ -5,6 +5,7 @@ import { DataTable } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import { formatDateTime } from '@/lib/format';
 import styles from './adminAuditLogShared.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 export const DRAWER_MS = 240;
 export const DRAWER_WIDTH = 'min(560px, 100vw)';
@@ -28,11 +29,12 @@ export function relativeTime(dateStr: string): string {
 export function CopyJsonButton({ json }: { json: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const armTimeout = useTimeouts();
   const handleCopy = useCallback(() => {
     void navigator.clipboard.writeText(json);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [json]);
+    armTimeout(() => setCopied(false), 1500);
+  }, [json, armTimeout]);
   return (
     <button
       type="button"

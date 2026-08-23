@@ -10,7 +10,6 @@ import { ComplianceTagChipList } from '../list/ComplianceTagChips';
 import { LatencyWaterfall } from '@/components/charts/LatencyWaterfall';
 import { NormalizedPayloadView } from '../list/NormalizedPayloadView';
 import { modalityOfEndpointKind } from '../list/trafficColumns';
-import { ArtifactViewer } from './ArtifactViewer';
 import { useApi } from '@/hooks/useApi';
 import { systemApi } from '@/api/services';
 import { usePermission } from '@/hooks/usePermission';
@@ -27,6 +26,7 @@ import {
 import { PipelineTimeline, BlockingRuleLine } from './HookTimeline';
 import { JsonSection, PayloadSection } from './PayloadSections';
 import { RoutingFlowCard } from './RoutingFlowCard';
+import { RoutingWalk } from './RoutingWalk';
 import { CostBreakdown } from './CostBreakdown';
 import { CorrelationSection } from './CorrelationSection';
 import type { LiveTrafficFiltersState } from '../filters/liveTrafficFilters';
@@ -584,7 +584,19 @@ export function TrafficEventDrawer({
                   hide entirely for compliance-proxy / agent so we don't
                   render an empty JsonSection header on every drawer open. */}
               {isGatewayTraffic && (
-                <JsonSection label={t('pages:traffic.detail.payload.routingTrace')} value={e.routingTrace} />
+                <>
+                  {/* The walk, rendered; the raw trace below still carries the
+                      PLAN — which targets were considered and the rule that
+                      produced them — so neither replaces the other. */}
+                  <RoutingWalk
+                    trace={e.routingTrace}
+                    tTitle={t('pages:traffic.detail.routing.walkTitle')}
+                    tDispatched={t('pages:traffic.detail.routing.walkDispatched')}
+                    tSkipped={t('pages:traffic.detail.routing.walkSkipped')}
+                    tCoerced={t('pages:traffic.detail.routing.walkCoerced')}
+                  />
+                  <JsonSection label={t('pages:traffic.detail.payload.routingTrace')} value={e.routingTrace} />
+                </>
               )}
             </Stack>
           )}
@@ -736,9 +748,6 @@ export function TrafficEventDrawer({
                   </div>
                 </div>
               ) : null}
-              {/* Inline artifact preview (image / audio) for multimodal rows,
-                  above the Normalized/Raw text views. */}
-              <ArtifactViewer eventId={e.id} endpointType={e.endpointType} />
               {/* Normalized | Raw sub-tabs. */}
               <Stack direction="horizontal" gap="sm">
                 <button
@@ -771,6 +780,8 @@ export function TrafficEventDrawer({
                       status={normalized.data?.requestStatus ?? null}
                       errorReason={normalized.data?.requestErrorReason ?? null}
                       direction="request"
+                      eventId={e.id}
+                      truncated={normalized.data?.requestTruncated}
                     />
                   </section>
                   <section>
@@ -783,6 +794,8 @@ export function TrafficEventDrawer({
                       status={normalized.data?.responseStatus ?? null}
                       errorReason={normalized.data?.responseErrorReason ?? null}
                       direction="response"
+                      eventId={e.id}
+                      truncated={normalized.data?.responseTruncated}
                     />
                   </section>
                 </Stack>
@@ -792,11 +805,15 @@ export function TrafficEventDrawer({
                     label={t('pages:traffic.detail.payload.requestBody')}
                     value={e.requestBody}
                     spillRef={e.requestSpillRef}
+                    truncated={e.requestBodyTruncated}
+                    sizeBytes={e.requestBodySizeBytes}
                   />
                   <PayloadSection
                     label={t('pages:traffic.detail.payload.responseBody')}
                     value={e.responseBody}
                     spillRef={e.responseSpillRef}
+                    truncated={e.responseBodyTruncated}
+                    sizeBytes={e.responseBodySizeBytes}
                   />
                   <JsonSection label={t('pages:traffic.detail.payload.details')} value={e.details} />
                 </>

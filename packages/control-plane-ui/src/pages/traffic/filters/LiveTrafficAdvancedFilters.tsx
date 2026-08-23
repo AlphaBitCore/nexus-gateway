@@ -4,6 +4,7 @@ import type { LiveTrafficFiltersState } from '../filters/liveTrafficFilters';
 import type { TrafficSourceFilter } from '../filters/liveTrafficFilters';
 import { FieldCompact } from '../filters/LiveTrafficFilterPanel';
 import { ComplianceTagChipInput } from '../list/ComplianceTagChips';
+import { TRAFFIC_MODALITY_FILTER_OPTIONS } from '../list/trafficColumns';
 import css from './LiveTrafficFilterPanel.module.css';
 
 const HOOK_OPTIONS = ['APPROVE', 'REJECT_HARD', 'BLOCK_SOFT', 'MODIFY', 'ABSTAIN'] as const;
@@ -64,6 +65,19 @@ export function LiveTrafficAdvancedFilters({
               <option value="">{t('pages:traffic.optionAny')}</option>
               <option value="HIT">{t('pages:traffic.cacheStatus.HIT')}</option>
               <option value="MISS">{t('pages:traffic.cacheStatus.MISS')}</option>
+            </select>
+          </FieldCompact>
+          <FieldCompact label={t('pages:traffic.labelModality')} tip={t('pages:traffic.tipModality')}>
+            <select
+              aria-label={t('pages:traffic.labelModality')}
+              value={v.modality}
+              onChange={(e) => onPatch({ modality: e.target.value })}
+              className={css.nativeSelect}
+            >
+              <option value="">{t('pages:traffic.optionAny')}</option>
+              {TRAFFIC_MODALITY_FILTER_OPTIONS.map((m) => (
+                <option key={m} value={m}>{t(`pages:traffic.modality.${m}`)}</option>
+              ))}
             </select>
           </FieldCompact>
         </div>

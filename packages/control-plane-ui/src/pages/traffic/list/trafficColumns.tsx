@@ -46,6 +46,37 @@ export function modalityOfEndpointKind(kind?: string | null): string | undefined
   return MODALITY_BY_ENDPOINT_KIND[kind];
 }
 
+// The inverse of MODALITY_BY_ENDPOINT_KIND: a modality → the endpoint kinds that
+// share it. The Traffic Modality filter expands one selected modality into the
+// endpoint_type(s) the backend filters on — the "chat" modality covers both
+// chat and responses. Derived from the same table so the two never drift.
+const ENDPOINT_KINDS_BY_MODALITY: Record<string, string[]> = Object.entries(
+  MODALITY_BY_ENDPOINT_KIND,
+).reduce<Record<string, string[]>>((acc, [kind, modality]) => {
+  (acc[modality] ??= []).push(kind);
+  return acc;
+}, {});
+
+export function endpointKindsForModality(modality: string): string[] {
+  return ENDPOINT_KINDS_BY_MODALITY[modality] ?? [];
+}
+
+// The modalities the Traffic filter offers, in reading order. This is the
+// request-traffic subset a reader analyses; the control / meta kinds
+// (batch / job / models / guardrail) are intentionally not filter options even
+// though the column can label them — "filter traffic by the models modality" is
+// not a question operators ask.
+export const TRAFFIC_MODALITY_FILTER_OPTIONS = [
+  'chat',
+  'image_generation',
+  'tts',
+  'stt',
+  'video_generation',
+  'embeddings',
+  'rerank',
+  'realtime',
+] as const;
+
 // Names only — when a row's name field is empty we render an em-dash rather
 // than falling back to a raw UUID/id. Operators triage by name; showing
 // truncated IDs added noise without helping identify the entity.
@@ -234,7 +265,13 @@ export function getColumnsForSource(source: TrafficSourceFilter, t: (key: string
           const cachedWriteCost = (cacheWritePM != null && cacheWriteT > 0) ? (cacheWriteT * cacheWritePM / 1_000_000) : 0;
           const outputCost = (outputPM != null && completionT > 0) ? (completionT * outputPM / 1_000_000) : 0;
           const total = uncachedCost + cachedReadCost + cachedWriteCost + outputCost;
-          return total > 0 ? formatUsdSci(total) : '-';
+          if (total > 0) return formatUsdSci(total);
+          // Modality rows (image / tts / rerank) carry no prompt/completion
+          // tokens, so the token recompute is 0. Fall back to the gateway's
+          // stamped per-unit total so those rows show their real cost instead
+          // of a dash.
+          if (r.estimatedCostUsd != null && r.estimatedCostUsd > 0) return formatUsdSci(r.estimatedCostUsd);
+          return '-';
         } },
       hookCol,
       {

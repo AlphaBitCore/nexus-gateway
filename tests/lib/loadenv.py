@@ -9,7 +9,7 @@ test-runner workflow.
 Public API:
     target = load(target=None, *, allow_default_local=True) -> str
         Loads tests/.env.<target>.example then tests/.env.<target> into
-        os.environ, returns the resolved target ("local"|"dev"|"prod").
+        os.environ, returns the resolved target ("local"|"dev"|"stg"|"prod").
 
     repo_tests_root() -> pathlib.Path
         Find the tests/ directory anchored at the repo root (walks up from
@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-_VALID_TARGETS = ("local", "dev", "prod")
+_VALID_TARGETS = ("local", "dev", "stg", "prod")
 
 _URL_VARS = (
     "NEXUS_HUB_URL", "NEXUS_CP_URL", "NEXUS_AI_GW_URL",

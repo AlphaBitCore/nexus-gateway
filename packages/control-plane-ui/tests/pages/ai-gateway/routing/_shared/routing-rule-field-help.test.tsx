@@ -15,7 +15,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
   <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
 );
 
-const STRATEGIES = ['single', 'fallback', 'loadbalance', 'conditional', 'ab_split', 'smart', 'policy'] as const;
+const STRATEGIES = ['single', 'fallback', 'loadbalance', 'conditional', 'ab_split', 'smart', 'latency'] as const;
 
 describe('routing-rule-field-help', () => {
   it('static ROUTING_RULE_FIELD_HELP + strategyConfigHelpBody cover every strategy', () => {

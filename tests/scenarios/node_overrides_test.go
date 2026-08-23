@@ -5,14 +5,14 @@
 // via the desired-shadow). Two PM-grade invariants every interaction
 // must preserve:
 //
-//   1. Blacklist enforcement: keys in shared/configtypes' non-overridable
-//      set ({credentials, virtual_keys}) MUST be rejected with 400 —
-//      silently accepting them would let an admin diverge per-Node
-//      credentials and break central rotation semantics.
-//   2. Override hierarchy: once a PUT lands, the applied-config view
-//      MUST reflect the override on that key; once DELETE lands, the
-//      override is gone. The admin Configuration tab depends on this
-//      reflection to show operators what is actually applied.
+//  1. Blacklist enforcement: keys in shared/configtypes' non-overridable
+//     set ({credentials, virtual_keys}) MUST be rejected with 400 —
+//     silently accepting them would let an admin diverge per-Node
+//     credentials and break central rotation semantics.
+//  2. Override hierarchy: once a PUT lands, the applied-config view
+//     MUST reflect the override on that key; once DELETE lands, the
+//     override is gone. The admin Configuration tab depends on this
+//     reflection to show operators what is actually applied.
 package scenarios_test
 
 import (
@@ -47,17 +47,17 @@ import (
 // row per write action.
 //
 // Assertions:
-//   1. PUT credentials override returns 400.
-//   2. PUT log_level with non-object state returns 400.
-//   3. PUT log_level with valid object 200/204; ListNodeOverrides
-//      contains our key.
-//   4. GET applied-config has an `override` field on the log_level
-//      entry referring to our reason.
-//   5. DELETE log_level override; ListNodeOverrides no longer
-//      contains it.
-//   6. AdminAuditLog records exactly one write-side row per the two
-//      successful mutations (PUT + DELETE) for our (nodeId, configKey)
-//      pair.
+//  1. PUT credentials override returns 400.
+//  2. PUT log_level with non-object state returns 400.
+//  3. PUT log_level with valid object 200/204; ListNodeOverrides
+//     contains our key.
+//  4. GET applied-config has an `override` field on the log_level
+//     entry referring to our reason.
+//  5. DELETE log_level override; ListNodeOverrides no longer
+//     contains it.
+//  6. AdminAuditLog records exactly one write-side row per the two
+//     successful mutations (PUT + DELETE) for our (nodeId, configKey)
+//     pair.
 func TestS077_NodeOverrideHierarchy(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -75,7 +75,7 @@ func TestS077_NodeOverrideHierarchy(t *testing.T) {
 		WHERE type = 'ai-gateway' AND last_seen_at > NOW() - INTERVAL '10 minutes'
 		ORDER BY last_seen_at DESC LIMIT 1
 	`).Scan(&nodeID); err != nil {
-		t.Skipf("no live ai-gateway Thing — skipping (err=%v)", err)
+		requireLiveGateway(t, sc.DB, fmt.Sprintf("the node-override assertion (lookup: %v)", err))
 	}
 	const configKey = "log_level"
 

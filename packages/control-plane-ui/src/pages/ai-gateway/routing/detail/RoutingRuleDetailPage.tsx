@@ -7,6 +7,7 @@ import { useRoutingRuleDetail } from './useRoutingRuleDetail';
 import { RoutingRuleReadView } from './RoutingRuleReadView';
 import { RoutingRuleEditForm } from './RoutingRuleEditForm';
 import { ModelCodeTypeahead } from './ModelCodeTypeahead';
+import { SIMULATABLE_ENDPOINT_KINDS } from '../_shared/routing-rule-config';
 import styles from './RoutingRuleDetail.module.css';
 
 export function RoutingRuleDetailPage() {
@@ -18,7 +19,8 @@ export function RoutingRuleDetailPage() {
     isEditing, startEditing, setDeleting, deleting,
     canUpdate, canDelete, canSimulate,
     deleteRule,
-    simModelId, setSimModelId, simLoading, simData, runSimulation,
+    simModelId, setSimModelId, simEndpointType, setSimEndpointType,
+    simLoading, simData, runSimulation,
   } = detail;
 
   if (loading) return <Skeleton.DetailPageSkeleton />;
@@ -60,6 +62,9 @@ export function RoutingRuleDetailPage() {
           <p className={styles.simDescription}>
             {t('pages:routing.simDescription')}
           </p>
+          <p className={styles.simWarning} role="note">
+            {t('pages:routing.simWarning')}
+          </p>
           <div className={styles.simInputRow}>
             <FormField label={t('pages:routing.simModelIdLabel')} helpText={t('pages:routing.simModelIdHelp')}>
               <div className={styles.simInputGroup}>
@@ -77,6 +82,22 @@ export function RoutingRuleDetailPage() {
                   {simLoading ? t('pages:routing.running') : t('pages:routing.runSimulation')}
                 </Button>
               </div>
+            </FormField>
+            {/* The endpoint kind is the input a rule's outcome most depends on:
+                modelTypes conditions, the modality filter and non-chat auto all
+                key off it. Locked to chat, an admin checking an image or
+                speech rule was shown what a chat request would do. */}
+            <FormField label={t('pages:routing.simEndpointLabel')} helpText={t('pages:routing.simEndpointHelp')}>
+              <select
+                className={styles.simEndpointSelect}
+                value={simEndpointType}
+                aria-label={t('pages:routing.simEndpointLabel')}
+                onChange={(e) => setSimEndpointType(e.target.value)}
+              >
+                {SIMULATABLE_ENDPOINT_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>{kind}</option>
+                ))}
+              </select>
             </FormField>
           </div>
           {simData && (

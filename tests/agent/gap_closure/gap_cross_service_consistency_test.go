@@ -2,11 +2,11 @@
 
 package gap_closure_test
 
-// gap_cross_service_consistency_test.go — E74-S7 T7.7
-//
-// TestDomainEngineConsistency verifies DEC-012: the same interception_domain
-// row produces identical inspect|passthrough|deny decisions when evaluated
-// by the agent's pf listener path and by the Compliance Proxy.
+// TestDomainEngineConsistency asserts that one interception_domain row produces
+// identical inspect|passthrough|deny decisions on both evaluation paths — the
+// agent's pf listener and the Compliance Proxy. Two engines reading the same
+// policy row must not disagree; a divergence means a domain is inspected on one
+// route and passed through on the other.
 //
 // Agent-side decisions are derived by querying the interception_domain table
 // and applying the same host-matching logic as domain.Engine.MatchHost (a
@@ -149,11 +149,12 @@ func agentSideDecision(t testing.TB, pool *pgxpool.Pool, domain string) domainDe
 // HTTP response code to a domain decision.
 //
 // Mapping (per CODE-DEC-001 — CP does host-level decision at CONNECT time):
-//   200 Connection Established → inspect (CP will MITM)
-//   407 Proxy Auth Required    → inspect (CP wants auth — treated as inspect)
-//   403 Forbidden / 4xx        → deny
-//   connection refused / reset → passthrough (CP passed it through or is down)
-//   timeout                    → unknown (CP did not respond)
+//
+//	200 Connection Established → inspect (CP will MITM)
+//	407 Proxy Auth Required    → inspect (CP wants auth — treated as inspect)
+//	403 Forbidden / 4xx        → deny
+//	connection refused / reset → passthrough (CP passed it through or is down)
+//	timeout                    → unknown (CP did not respond)
 func cpSideDecision(t testing.TB, cpAddr, domain string) domainDecision {
 	t.Helper()
 

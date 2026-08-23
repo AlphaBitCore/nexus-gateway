@@ -63,16 +63,4 @@ describe('useRoutingRuleCreate', () => {
     expect(mutateCalls[0]).toMatchObject({ name: 'my-rule', strategyType: 'single', pipelineStage: 1 });
   });
 
-  it('handleSubmit (policy stage 0) builds a policy payload', () => {
-    const { result } = renderHook(() => useRoutingRuleCreate());
-    act(() => {
-      result.current.setName('pol');
-      result.current.setPipelineStage('0');
-      result.current.setPolicyAllowM(['m1']);
-    });
-    act(() => result.current.handleSubmit());
-    // Either a valid policy payload (strategyType policy) or a toast error — assert no crash + a definite outcome.
-    const submitted = mutateCalls.find((c) => (c as { strategyType?: string }).strategyType === 'policy');
-    expect(submitted || addToast.mock.calls.length > 0).toBeTruthy();
-  });
 });

@@ -28,7 +28,6 @@ import { RetryPolicySection } from '../form/RetryPolicySection';
 import type { RoutingRuleDetailState } from './useRoutingRuleDetail';
 import styles from './RoutingRuleDetail.module.css';
 import { HelpIconButton } from "@nexus-gateway/ui-shared";
-import { EditPolicyModelSelect, EditPolicyProviderCheckboxes } from './RoutingRuleEditForm.PolicyFields';
 
 export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState }) {
   const { t } = useTranslation();
@@ -67,11 +66,6 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
   const editName = editForm.watch('editName');
   const editStrategyType = editForm.watch('editStrategyType') as StrategyType;
   const editEnabled = editForm.watch('editEnabled');
-  const editPipelineStage = editForm.watch('editPipelineStage');
-  const policyAllowM = editForm.watch('policyAllowM');
-  const policyDenyM = editForm.watch('policyDenyM');
-  const policyAllowP = editForm.watch('policyAllowP');
-  const policyDenyP = editForm.watch('policyDenyP');
   const singleProvider = editForm.watch('singleProvider');
   const singleModel = editForm.watch('singleModel');
   const matchProjectIds = editForm.watch('matchProjectIds');
@@ -80,7 +74,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
 
   // Weighted targets (ab_split "Split %" + loadbalance "Weight") must sum to
   // exactly 100 — see validateSplitWeights.
-  const hasWeightTargets = editPipelineStage === '1' && showWeightColumn;
+  const hasWeightTargets = showWeightColumn;
   const weightCheck = validateSplitWeights(entries);
   const weightSumInvalid = hasWeightTargets && !weightCheck.valid;
 
@@ -109,12 +103,11 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
       <h2 className={`${styles.widgetTitle} ${styles.editTopTitle}`}>{t('pages:routing.routingRuleInfo')}</h2>
       <Card>
         <Stack gap="md">
-          {editPipelineStage === '1' && <RoutingPrimaryWinnerCallout />}
+          <RoutingPrimaryWinnerCallout />
           <div className={styles.basicInfoGrid}>
             <FormInput form={editForm} name="editName" label={t('pages:routing.name')} required />
             <FormInput form={editForm} name="editDescription" label={t('pages:routing.description')} />
-            {/* pipelineStage hidden — always stage 1 (route). Stage 0 (policy) is API-only. */}
-            {editPipelineStage === '1' && (
+            {(
               <div>
                 <Stack direction="horizontal" gap="xs" align="center" className={styles.strategyLabelRow}>
                   <label
@@ -166,20 +159,19 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
       >
         <Stack direction="horizontal" gap="sm" align="center">
           <div className={styles.editSectionTitleInline}>
-            {editPipelineStage === '0' && t('pages:routing.policyNarrowing')}
-            {editPipelineStage === '1' && editStrategyType === 'single' && t('pages:routing.providerConfiguration')}
-            {editPipelineStage === '1' && editStrategyType === 'fallback' && t('pages:routing.fallbackChainTitle')}
-            {editPipelineStage === '1' && editStrategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
-            {editPipelineStage === '1' && editStrategyType === 'conditional' && t('pages:routing.conditionalRouting')}
-            {editPipelineStage === '1' && editStrategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
-            {editPipelineStage === '1' && editStrategyType === 'latency' && t('pages:routing.latencyTargets')}
-            {editPipelineStage === '1' && editStrategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
+            {editStrategyType === 'single' && t('pages:routing.providerConfiguration')}
+            {editStrategyType === 'fallback' && t('pages:routing.fallbackChainTitle')}
+            {editStrategyType === 'loadbalance' && t('pages:routing.loadBalanceTargets')}
+            {editStrategyType === 'conditional' && t('pages:routing.conditionalRouting')}
+            {editStrategyType === 'ab_split' && t('pages:routing.abSplitTargets')}
+            {editStrategyType === 'latency' && t('pages:routing.latencyTargets')}
+            {editStrategyType === 'smart' && t('pages:routing.intelligentRoutingConfig')}
           </div>
-          <Tooltip content={editPipelineStage === '0' ? strategyConfigHelpBody.policy : strategyConfigHelpBody[editStrategyType]}>
+          <Tooltip content={strategyConfigHelpBody[editStrategyType]}>
             <HelpIconButton aria-label={t('pages:routing.ariaHelpRoutingConfig')} />
           </Tooltip>
         </Stack>
-        {editPipelineStage === '1' && editStrategyType === 'conditional' && (
+        {editStrategyType === 'conditional' && (
           <button
             type="button"
             onClick={conditionalUi.mode === 'json' ? switchConditionalToForm : switchConditionalToJson}
@@ -190,36 +182,8 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
         )}
       </Stack>
       <div className={clsx(styles.editSection, editStrategyType === 'conditional' && styles.conditionalEditSection)}>
-        {editPipelineStage === '0' && (
-          <Stack gap="md">
-            <EditPolicyModelSelect
-              selected={policyAllowM}
-              onChange={(v) => editForm.setValue('policyAllowM', v)}
-              providerGroups={providerGroups}
-              label={t('pages:routing.allowModelIds')}
-            />
-            <EditPolicyModelSelect
-              selected={policyDenyM}
-              onChange={(v) => editForm.setValue('policyDenyM', v)}
-              providerGroups={providerGroups}
-              label={t('pages:routing.denyModelIds')}
-            />
-            <EditPolicyProviderCheckboxes
-              selected={policyAllowP}
-              onChange={(v) => editForm.setValue('policyAllowP', v)}
-              providerGroups={providerGroups}
-              label={t('pages:routing.allowProviderIds')}
-            />
-            <EditPolicyProviderCheckboxes
-              selected={policyDenyP}
-              onChange={(v) => editForm.setValue('policyDenyP', v)}
-              providerGroups={providerGroups}
-              label={t('pages:routing.denyProviderIds')}
-            />
-          </Stack>
-        )}
 
-        {editPipelineStage === '1' && editStrategyType === 'single' && (
+        {editStrategyType === 'single' && (
           <ProviderModelSelect
             providerValue={singleProvider}
             modelValue={singleModel}
@@ -229,7 +193,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
           />
         )}
 
-        {editPipelineStage === '1' && editStrategyType === 'conditional' && (
+        {editStrategyType === 'conditional' && (
           <ConditionalRoutingEditor
             value={conditionalUi}
             onChange={setConditionalUi}
@@ -238,7 +202,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
           />
         )}
 
-        {editPipelineStage === '1' && editStrategyType === 'smart' && (
+        {editStrategyType === 'smart' && (
           <Stack gap="md">
             <div className={styles.smartFieldTitle}>{t('pages:routing.routerModel')}</div>
             <ProviderModelSelect
@@ -284,7 +248,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
           </Stack>
         )}
 
-        {editPipelineStage === '1' && isTargetListStrategy(editStrategyType) && (
+        {isTargetListStrategy(editStrategyType) && (
           <>
             <div className={styles.entryRowHeader}>
               <span className={styles.flexGrow2}>{t('pages:routing.providerModel')}</span>
@@ -349,7 +313,7 @@ export function RoutingRuleEditForm({ detail }: { detail: RoutingRuleDetailState
       </div>
 
       {/* Retry Policy */}
-      {editPipelineStage === '1' && (
+      {(
         <>
           <Stack direction="horizontal" gap="sm" align="center" className={styles.editSectionTitleOutside}>
             <div className={styles.editSectionTitleInline}>{t('pages:routing.retryPolicy.title')}</div>

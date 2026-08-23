@@ -20,7 +20,6 @@ export type {
   RoutingSimulateStage,
   RoutingSimulateTrace,
   RoutingSimulateTarget,
-  RoutingNarrowingSummary,
 } from './ai-gateway/routing';
 
 export { hookApi } from './compliance/hooks';

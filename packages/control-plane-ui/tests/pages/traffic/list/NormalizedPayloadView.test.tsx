@@ -128,16 +128,22 @@ describe('NormalizedPayloadView', () => {
     expect(pre?.textContent).toContain('"n": 42');
   });
 
-  it('renders http-binary as metadata card', () => {
+  it('renders a whole-body binary through the shared media card', () => {
     const payload: NormalizedPayload = {
       kind: 'http-binary',
       normalizeVersion: '1',
-      http: { bodyView: { binaryRef: { size: 4096, contentType: 'application/pdf', sha256: 'abc123def' } } },
+      http: { bodyView: { mediaRef: { sizeBytes: 4096, mime: 'application/pdf', sha256: 'abc123def' , modality: 'file', source: 'captured', locator: 'body' } } },
     };
-    render(wrap(<NormalizedPayloadView payload={payload} direction="request" />));
-    expect(screen.getByText('Binary')).toBeInTheDocument();
+    const { container } = render(wrap(<NormalizedPayloadView payload={payload} direction="request" />));
+    // The whole-body family renders through the same MediaCard as inline
+    // media — one card for one concept. It reports the real type and the
+    // decoded size, and shows the digest prefix.
     expect(screen.getByText('application/pdf')).toBeInTheDocument();
-    expect(screen.getByText('abc123def')).toBeInTheDocument();
+    expect(container.textContent).toContain('4.0 KB');
+    expect(container.textContent).toContain('abc123def');
+    // The never-inline rule is exercised in the shared card's suite, where a
+    // resolver is present and the absence of a preview is caused by the rule
+    // rather than by the harness.
   });
 
   it('shows empty placeholder when payload is null and no status', () => {

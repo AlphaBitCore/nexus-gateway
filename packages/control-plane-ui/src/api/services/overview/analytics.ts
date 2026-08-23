@@ -137,7 +137,12 @@ export const analyticsApi = {
    * API total. Nullable money fields (vendorReportedUsd/diffUsd/diffPct) stay
    * null when the day is not finalized or the vendor fetch failed.
    */
-  vendorBillReconciliation: (params?: { from?: string; to?: string }) =>
+  vendorBillReconciliation: (params?: {
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+  }) =>
     api.get<VendorBillReconciliationResponse>(
       '/api/admin/analytics/vendor-bill-reconciliation',
       params as Record<string, string>,
@@ -155,13 +160,31 @@ export const analyticsApi = {
 };
 
 /** Coverage of a reconciliation row — drives the UI honesty badge. */
-export type VendorBillCoverage = 'scoped' | 'org_only' | 'fetch_failed' | 'priority_tier_undercount';
+export type VendorBillCoverage =
+  | 'scoped'
+  | 'org_only'
+  | 'fetch_failed'
+  /** The vendor billed the day but no vendor spend was recorded for it, so
+   *  there is nothing to compare against. Display-only, drift-suppressed;
+   *  a persistent run of these raises vendor.bill_sync_failed. */
+  | 'no_basis'
+  | 'priority_tier_undercount';
 
 export interface VendorBillReconciliationRow {
   providerId: string;
   providerName?: string;
   day: string; // YYYY-MM-DD
   ourBilledUsd: number;
+  /**
+   * Reconciliation basis: all spend we caused this vendor to charge, internal
+   * ops included. `diffUsd` / `diffPct` are computed from THIS, not
+   * `ourBilledUsd`, which is the narrower customer-quota figure.
+   * `ourInternalOpsUsd` is its internal-ops subset (smart router, ai-guard
+   * classifier, L2 embedding). Both are 0 on rows written before the
+   * vendor-spend series shipped — those rows are not comparable.
+   */
+  ourVendorSpendUsd: number;
+  ourInternalOpsUsd: number;
   vendorReportedUsd: number | null;
   diffUsd: number | null;
   diffPct: number | null;
@@ -175,6 +198,12 @@ export interface VendorBillReconciliationRow {
 
 export interface VendorBillReconciliationResponse {
   rows: VendorBillReconciliationRow[];
+  /**
+   * Rows in the whole window, independent of the page. The pager sizes itself
+   * from this — deriving the page count from `rows.length` would render a
+   * single page and silently hide every row past it.
+   */
+  total: number;
 }
 
 /**

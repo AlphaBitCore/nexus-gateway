@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -99,7 +100,7 @@ func WaitForRecentAuditEvent(
 				row.ResponseHookDecision = *respDec
 			}
 			return &row, nil
-		case err == pgx.ErrNoRows:
+		case errors.Is(err, pgx.ErrNoRows):
 			// fall through to retry
 		default:
 			return nil, fmt.Errorf("traffic_event poll: %w", err)

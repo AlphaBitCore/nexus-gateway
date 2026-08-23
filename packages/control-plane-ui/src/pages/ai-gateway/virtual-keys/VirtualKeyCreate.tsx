@@ -14,124 +14,13 @@ import {
 } from '@/components/ui';
 import type { AdminModelsByProvider, Project, VirtualKeyAllowedModelRef } from '@/api/types';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '@/constants/admin-api';
+import { GroupedModelSelect } from './GroupedModelSelect';
 import { dateInputFromToday, endOfDayUTC } from '@/lib/format';
 import { expiryBounds } from './expiryBounds';
 import styles from './VirtualKeyCreate.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 /* ── Grouped Model Selector ───────────────────────────────────────────── */
-
-function isRefSelected(selected: VirtualKeyAllowedModelRef[], providerId: string, modelId: string) {
-  return selected.some(s => s.providerId === providerId && s.modelId === modelId);
-}
-
-function GroupedModelSelect({
-  groups,
-  selected,
-  onChange,
-}: {
-  groups: AdminModelsByProvider[];
-  selected: VirtualKeyAllowedModelRef[];
-  onChange: (refs: VirtualKeyAllowedModelRef[]) => void;
-}) {
-  const { t } = useTranslation();
-  const [modelSearch, setModelSearch] = useState('');
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
-    if (groups.length > 5) {
-      const map: Record<string, boolean> = {};
-      for (const g of groups) map[g.provider?.id] = true;
-      return map;
-    }
-    return {};
-  });
-
-  const allRefs = useMemo(
-    () => groups.flatMap(g => g?.models?.map(m => ({ providerId: g.provider?.id, modelId: m.id }))),
-    [groups],
-  );
-  const q = modelSearch.toLowerCase();
-
-  const filteredGroups = useMemo(() => {
-    if (!q) return groups;
-    return groups
-      .map(g => ({
-        ...g,
-        models: g?.models?.filter(m => m.name.toLowerCase().includes(q) || m.code.toLowerCase().includes(q)),
-      }))
-      .filter(g => g?.models?.length > 0);
-  }, [groups, q]);
-
-  const handleSelectAll = () => onChange([...allRefs]);
-  const handleDeselectAll = () => onChange([]);
-  const toggleCollapse = (providerId: string) =>
-    setCollapsed(prev => ({ ...prev, [providerId]: !prev[providerId] }));
-
-  return (
-    <div className={styles.modelAccessWrapper}>
-      <label className={styles.modelAccessLabel}>
-        {t('pages:virtualKeys.modelAccess')}
-        <Tooltip content={t('pages:virtualKeys.modelAccessTooltip')}>
-          <span role="presentation">&#9432;</span>
-        </Tooltip>
-      </label>
-      <Stack direction="horizontal" gap="xs" className={styles.modelSearchRow}>
-        <Input
-          placeholder={t('pages:virtualKeys.searchModels')}
-          value={modelSearch}
-          onChange={e => setModelSearch(e.target.value)}
-          className={styles.modelSearchInput}
-        />
-        <button type="button" onClick={handleSelectAll} className={styles.modelSelectAllBtn}>
-          {t('pages:virtualKeys.selectAll')}
-        </button>
-        <button type="button" onClick={handleDeselectAll} className={styles.modelSelectAllBtn}>
-          {t('pages:virtualKeys.deselectAll')}
-        </button>
-      </Stack>
-      <div className={styles.modelListContainer}>
-        {filteredGroups.length === 0 ? (
-          <div className={styles.emptyModelHint}>
-            {groups.length === 0 ? t('pages:virtualKeys.noModelsAvailable') : t('pages:virtualKeys.noMatchingModels')}
-          </div>
-        ) : (
-          filteredGroups.map(group => {
-            const isCollapsed = collapsed[group.provider?.id] && !q;
-            return (
-              <div key={group.provider?.id} className={styles.providerGroupWrapper}>
-                <div
-                  onClick={() => toggleCollapse(group.provider?.id)}
-                  className={styles.providerHeader}
-                >
-                  <span className={isCollapsed ? styles.collapseArrowClosed : styles.collapseArrowOpen}>&#9660;</span>
-                  {group.provider?.displayName || group.provider?.name}
-                  <span className={styles.providerCounter}>
-                    ({group?.models?.filter(m => isRefSelected(selected, group.provider?.id, m.id)).length}/{group?.models?.length})
-                  </span>
-                </div>
-                {!isCollapsed && group?.models?.map(m => (
-                  <label key={m.id} className={styles.modelLabel}>
-                    <input
-                      type="checkbox"
-                      checked={isRefSelected(selected, group.provider?.id, m.id)}
-                      onChange={e => {
-                        if (e.target.checked) onChange([...selected, { providerId: group.provider?.id, modelId: m.id }]);
-                        else onChange(selected.filter(s => !(s.providerId === group.provider?.id && s.modelId === m.id)));
-                      }}
-                    />
-                    {m.name}
-                    <span className={styles.modelIdHint}>({m.code})</span>
-                  </label>
-                ))}
-              </div>
-            );
-          })
-        )}
-      </div>
-      <div className={styles.modelAccessSummary}>
-        {selected.length === 0 ? t('pages:virtualKeys.allModelsAllowed') : t('pages:virtualKeys.modelsSelected', { count: selected.length })}
-      </div>
-    </div>
-  );
-}
 
 /* ── Schema ─────────────────────────────────────────────────────────────── */
 
@@ -176,6 +65,7 @@ export function VirtualKeyCreate() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
+  const armTimeout = useTimeouts();
 
   const { data: modelsData } = useApi<{ data: AdminModelsByProvider[] }>(
     () => systemApi.listModels(),
@@ -253,7 +143,7 @@ export function VirtualKeyCreate() {
             <div className={styles.secretKeyContainer}>
               <span>{createdKey}</span>
               <button
-                onClick={() => { navigator.clipboard.writeText(createdKey); setKeyCopied(true); setTimeout(() => setKeyCopied(false), 2000); }}
+                onClick={() => { navigator.clipboard.writeText(createdKey); setKeyCopied(true); armTimeout(() => setKeyCopied(false), 2000); }}
                 className={styles.outlineBtn}
               >
                 {keyCopied ? t('pages:virtualKeys.copied') : t('pages:virtualKeys.copy')}

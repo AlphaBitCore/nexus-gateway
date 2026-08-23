@@ -23,11 +23,10 @@ import {
   type RetryPolicyMode,
 } from '../form/RetryPolicySection';
 import {
+  displayStrategy,
   mapLegacyStrategy,
   parseRoutingConfigForForm,
   buildRoutingApiConfig,
-  buildPolicyApiConfig,
-  policyConfigToFormLines,
   buildSmartConfig,
   buildFallbackChainApi,
   parseFallbackChain,
@@ -69,10 +68,6 @@ export const routingEditSchema = z.object({
   editEnabled: z.boolean(),
   editPipelineStage: z.string(),
   editStrategyType: z.string(),
-  policyAllowM: z.array(z.string()).optional().default([]),
-  policyDenyM: z.array(z.string()).optional().default([]),
-  policyAllowP: z.array(z.string()).optional().default([]),
-  policyDenyP: z.array(z.string()).optional().default([]),
   singleProvider: z.string().optional().default(''),
   singleModel: z.string().optional().default(''),
   matchProjectIds: z.array(z.string()).optional().default([]),
@@ -109,11 +104,11 @@ export function useRoutingRuleDetail() {
     if (!rule) {
       return parseRoutingConfigForForm('single', {}, providerGroups);
     }
-    return parseRoutingConfigForForm(mapLegacyStrategy(rule.strategyType), rule.config, providerGroups);
+    return parseRoutingConfigForForm(displayStrategy(rule.strategyType), rule.config, providerGroups);
   }, [rule, providerGroups]);
 
   const viewSmartParsed = useMemo(() => {
-    if (!rule || mapLegacyStrategy(rule.strategyType) !== 'smart') return null;
+    if (!rule || displayStrategy(rule.strategyType) !== 'smart') return null;
     return parseSmartConfig(rule.config, providerGroups);
   }, [rule, providerGroups]);
 
@@ -127,10 +122,6 @@ export function useRoutingRuleDetail() {
       editEnabled: true,
       editPipelineStage: '1',
       editStrategyType: 'single',
-      policyAllowM: [] as string[],
-      policyDenyM: [] as string[],
-      policyAllowP: [] as string[],
-      policyDenyP: [] as string[],
       singleProvider: '',
       singleModel: '',
       matchProjectIds: [] as string[],
@@ -167,6 +158,7 @@ export function useRoutingRuleDetail() {
   const [retryOn, setRetryOn] = useState<ErrorClass[]>(['network', 'timeout', '5xx']);
 
   const [simModelId, setSimModelId] = useState('');
+  const [simEndpointType, setSimEndpointType] = useState<string>('chat');
   const [simLoading, setSimLoading] = useState(false);
   const [simData, setSimData] = useState<RoutingSimulateResponse | { error: string } | null>(null);
 
@@ -179,7 +171,7 @@ export function useRoutingRuleDetail() {
     // Model.code (a stable customer-facing identifier such as "gpt-4o"), or
     // accepts the literal "auto" to trigger smart routing. matchConditions
     // however stores Model.id (UUID) — using it raw here would never match.
-    if (mapLegacyStrategy(rule.strategyType) === 'smart') {
+    if (displayStrategy(rule.strategyType) === 'smart') {
       setSimModelId('auto');
       return;
     }
@@ -218,30 +210,16 @@ export function useRoutingRuleDetail() {
 
   const startEditing = () => {
     if (!rule) return;
+    // A rule stored with a strategy the gateway no longer dispatches is not
+    // loaded into the editor. Mapping it onto the nearest editable type renders
+    // the picker as something else, and saving ANY field — the name, the
+    // priority, the enable switch — then persists that shape over the admin's
+    // configuration. The read view still shows what is stored.
+    if (mapLegacyStrategy(rule.strategyType) === null) return;
     const stage = rule.pipelineStage ?? 1;
     const stageStr = String(stage);
-    if (stage === 0 || rule.strategyType === 'policy') {
-      const lines = policyConfigToFormLines(rule.config);
-      editForm.reset({
-        editName: rule.name,
-        editDescription: rule.description ?? '',
-        editPriority: rule.priority,
-        editEnabled: rule.enabled,
-        editPipelineStage: stageStr,
-        editStrategyType: 'single',
-        policyAllowM: lines.allowM,
-        policyDenyM: lines.denyM,
-        policyAllowP: lines.allowP,
-        policyDenyP: lines.denyP,
-        singleProvider: '',
-        singleModel: '',
-        matchProjectIds: [] as string[],
-      });
-      setConditionalUi({ mode: 'form', form: emptyConditionalFormState() });
-      setEntries([{ provider: '', model: '', weight: '50' }]);
-      setSmartState({ ...EMPTY_SMART_FORM_STATE });
-    } else {
-      const mapped = mapLegacyStrategy(rule.strategyType);
+    {
+      const mapped = displayStrategy(rule.strategyType);
       if (mapped === 'conditional') {
         setConditionalUi(hydrateConditionalEditorState(rule.config, providerGroups));
       } else {
@@ -255,10 +233,6 @@ export function useRoutingRuleDetail() {
         editEnabled: rule.enabled,
         editPipelineStage: stageStr,
         editStrategyType: mapped,
-        policyAllowM: [],
-        policyDenyM: [],
-        policyAllowP: [],
-        policyDenyP: [],
         singleProvider: parsed.singleProvider,
         singleModel: parsed.singleModel,
         matchProjectIds: [] as string[],
@@ -299,7 +273,6 @@ export function useRoutingRuleDetail() {
   const handleSave = () => {
     const v = editForm.getValues();
     const editStrategyType = v.editStrategyType as StrategyType;
-    const stageNum = v.editPipelineStage === '0' ? 0 : 1;
 
     // Resolve retry policy first so we can short-circuit on validation error.
     const rpBuilt = buildRetryPolicyPayload(retryPolicyMode, retryMaxAttempts, retryOn);
@@ -313,34 +286,6 @@ export function useRoutingRuleDetail() {
       rpBuilt.mode === 'default'
         ? { retryPolicy: null }
         : { retryPolicy: rpBuilt.value };
-
-    if (stageNum === 0) {
-      const built = buildPolicyApiConfig(v.policyAllowM, v.policyDenyM, v.policyAllowP, v.policyDenyP);
-      if (!built.ok) {
-        addToast(built.message, 'error');
-        return;
-      }
-      const matchConditions = buildMatchConditionsPayload({
-        models,
-        requestedModelLiterals: matchRequestedModelLiterals,
-        modelTypes: matchModelTypes,
-        providers: matchProviders,
-        projects: v.matchProjectIds ?? [],
-        virtualKeys: matchVirtualKeys,
-      });
-      saveRule({
-        name: v.editName,
-        description: v.editDescription,
-        strategyType: 'policy',
-        priority: Number(v.editPriority),
-        enabled: v.editEnabled,
-        pipelineStage: 0,
-        config: built.config,
-        matchConditions,
-        ...retryPolicyPatch,
-      });
-      return;
-    }
 
     if (editStrategyType === 'ab_split' || editStrategyType === 'loadbalance') {
       const weightCheck = validateSplitWeights(entries);
@@ -402,12 +347,12 @@ export function useRoutingRuleDetail() {
 
   const configModelIds = useMemo(() => configuredInternalModelIds(
     providerGroups,
-    editPipelineStage === '0' ? 'policy' : editStrategyType,
+    editStrategyType,
     singleProvider,
     singleModel,
     entries,
     editStrategyType === 'conditional' && conditionalUi.mode === 'form' ? conditionalUi.form : null,
-  ), [providerGroups, editPipelineStage, editStrategyType, singleProvider, singleModel, entries, conditionalUi]);
+  ), [providerGroups, editStrategyType, singleProvider, singleModel, entries, conditionalUi]);
 
   const viewMc = useMemo(() => {
     if (!rule) return { models: [] as string[], providers: [] as string[], projects: [] as string[] };
@@ -419,21 +364,31 @@ export function useRoutingRuleDetail() {
     try {
       const body: RoutingSimulateRequest = {
         modelId: simModelId.trim(),
-        endpointType: 'chat',
+        endpointType: simEndpointType,
       };
       if (simModelId.trim() === 'auto') {
         body.messages = [{ role: 'user', content: 'Hello' }];
       }
       const payload = await routingApi.simulate(body);
       setSimData(payload);
-    } catch {
-      setSimData({ error: 'Simulation request failed' });
+    } catch (err) {
+      // The server says WHY — an unroutable model, a rule that resolved
+      // nothing, an unreachable gateway. Replacing it with a fixed sentence
+      // leaves the admin with a dead end on the one screen built to explain
+      // routing.
+      const detail = err instanceof Error && err.message ? err.message : '';
+      setSimData({ error: detail || 'Simulation request failed' });
     } finally {
       setSimLoading(false);
     }
   };
 
   return {
+    // Non-null when the stored strategy is one the gateway cannot dispatch, so
+    // the page can say why the editor is empty instead of leaving the admin to
+    // discover it by saving.
+    unsupportedStrategy:
+      rule != null && mapLegacyStrategy(rule.strategyType) === null ? rule.strategyType : null,
     // Route params
     id,
     navigate,
@@ -517,6 +472,8 @@ export function useRoutingRuleDetail() {
     // Simulation
     simModelId,
     setSimModelId,
+    simEndpointType,
+    setSimEndpointType,
     simLoading,
     simData,
     runSimulation,

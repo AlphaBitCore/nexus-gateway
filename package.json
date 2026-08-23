@@ -17,6 +17,7 @@
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces",
     "check:i18n": "node scripts/check-i18n-parity.mjs",
+    "check:locale-sync": "node scripts/sync-locales.mjs --check",
     "check:design-tokens": "node scripts/check-design-tokens.mjs",
     "check:design-tokens:hints": "node scripts/check-design-tokens.mjs --fix-suggest",
     "check:theme-completeness": "node scripts/check-theme-completeness.mjs",
@@ -32,6 +33,8 @@
     "gen:rulepacks": "tsx tools/db-migrate/seed/gen-rulepacks.ts",
     "check:rulepacks": "tsx tools/db-migrate/seed/gen-rulepacks.ts -- --check",
     "check:smoke-harness": "python3 scripts/check-smoke-harness.py",
+    "check:go-lint": "bash scripts/check-go-lint.sh",
+    "check:test-harness": "bash tests/lib/test-db-transport.sh && bash tests/lib/test-preflight-checks.sh && python3 -m unittest discover -s tests/scripts -p 'test_*.py'",
     "check:quirk-coverage": "node scripts/check-quirk-coverage.mjs --self-test && node scripts/check-quirk-coverage.mjs",
     "check:quirk-evidence": "node scripts/check-quirk-evidence.mjs --self-test && node scripts/check-quirk-evidence.mjs",
     "check:arch-doc-triggers": "node scripts/check-arch-doc-triggers.mjs",
@@ -47,6 +50,7 @@
     "check:no-redis-pubsub": "node scripts/check-no-redis-pubsub.mjs",
     "check:no-redis-pubsub:strict": "node scripts/check-no-redis-pubsub.mjs --strict",
     "check:ui-shared-boundary": "node scripts/check-ui-shared-boundary.mjs",
+    "check:media-single-shape": "node scripts/check-media-single-shape.mjs",
     "check:ui-shared-boundary:strict": "node scripts/check-ui-shared-boundary.mjs --strict",
     "check:sidebar-icon-mapping": "node scripts/check-sidebar-icon-mapping.mjs",
     "check:sidebar-icon-mapping:strict": "node scripts/check-sidebar-icon-mapping.mjs --strict",
@@ -66,7 +70,7 @@
     "check:coverage:ui": "bash scripts/check-ui-coverage.sh",
     "check:file-size": "bash scripts/check-file-size-ratchet.sh",
     "check:file-size:staged": "bash scripts/check-file-size-ratchet.sh --staged",
-    "check:all": "npm-run-all -p check:agent-cross-build check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:model-catalog check:rulepacks check:quirk-coverage check:quirk-evidence check:arch-doc-triggers check:e2e-matrix check:iam-routes check:doc-lockstep check:openapi-semantics check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:comment-program-refs check:no-yaml-secrets check:dev-asset-urls check:coverage check:coverage:core check:coverage:ui check:file-size || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
+    "check:all": "node scripts/check-all.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

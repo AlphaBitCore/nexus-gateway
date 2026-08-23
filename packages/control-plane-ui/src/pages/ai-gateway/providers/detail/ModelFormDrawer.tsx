@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next';
 import { Dialog, Button, Input, MultiSelectDropdown, Select, Stack } from '@/components/ui';
 import { systemApi } from '@/api/services';
 import { mergeModelFeatureOptions, MODEL_FEATURE_OPTIONS } from '../_shared/model-feature-options';
+import { ModelCapabilitiesSection } from './ModelCapabilitiesSection';
 import { modelTypeOptions } from '../_shared/model-type-options';
-import { ProviderModelCapabilitiesPanel } from './ProviderModelCapabilitiesPanel';
 import type { ProviderDetailState } from './useProviderDetail';
 import type { ModelCapabilityJson } from '@/api/types';
+import { submitCreate } from './submitCreateModel';
 import styles from './ModelFormDrawer.module.css';
 import { PricingSectionHeader, basePriceLabels } from './ModelPricingSection';
 
@@ -124,28 +125,6 @@ export function ModelFormDrawer({ detail, mode, open, onClose }: ModelFormDrawer
 }
 ModelFormDrawer.displayName = 'ModelFormDrawer';
 
-function submitCreate(detail: ProviderDetailState, capability?: ModelCapabilityJson) {
-  const f = detail.newModelForm;
-  const v = f.getValues();
-  detail.createModel({
-    name: v.modelName, providerModelId: v.modelProviderModelId, type: v.modelType,
-    code: v.modelCode,
-    ...(v.modelDescription && { description: v.modelDescription }),
-    ...(v.modelInputPrice && { inputPricePerMillion: Number(v.modelInputPrice) }),
-    ...(v.modelOutputPrice && { outputPricePerMillion: Number(v.modelOutputPrice) }),
-    ...(v.modelCachedInputReadPrice && { cachedInputReadPricePerMillion: Number(v.modelCachedInputReadPrice) }),
-    ...(v.modelCachedInputWritePrice && { cachedInputWritePricePerMillion: Number(v.modelCachedInputWritePrice) }),
-    ...(v.modelAudioInputPrice && { audioInputPricePerMillion: Number(v.modelAudioInputPrice) }),
-    ...(v.modelAudioOutputPrice && { audioOutputPricePerMillion: Number(v.modelAudioOutputPrice) }),
-    ...(v.modelCachedAudioReadPrice && { cachedAudioInputReadPricePerMillion: Number(v.modelCachedAudioReadPrice) }),
-    ...(v.modelMaxContext && { maxContextTokens: Number(v.modelMaxContext) }),
-    ...(v.modelMaxOutput && { maxOutputTokens: Number(v.modelMaxOutput) }),
-    features: v.modelSelectedFeatures,
-    aliases: v.modelAliases ? v.modelAliases.split(',').map((s) => s.trim()).filter(Boolean) : [],
-    ...(capability && { capabilityJson: capability }),
-  });
-}
-
 function FieldError({ message }: { message: string | null }) {
   if (!message) return null;
   return <span className={styles.fieldError}>{message}</span>;
@@ -171,6 +150,9 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
     cachedAudioRead: f.watch('modelCachedAudioReadPrice'),
     maxContext: f.watch('modelMaxContext'), maxOutput: f.watch('modelMaxOutput'),
     features: f.watch('modelSelectedFeatures'), aliases: f.watch('modelAliases'),
+    inputModalities: f.watch('modelInputModalities'),
+    outputModalities: f.watch('modelOutputModalities'),
+    requiredModalities: f.watch('modelRequiredModalities'),
   };
   const isEmbedding = v.type === 'embedding';
   const isRealtime = v.type === 'realtime';
@@ -246,17 +228,20 @@ function CreateBody({ detail, codeError, typeOptions, capability, onCapabilityCh
         />
       </section>
 
-      {(v.type === 'embedding' || v.type === 'chat') && (
-        <section className={styles.section}>
-          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', 'Capabilities')}</h3>
-          <ProviderModelCapabilitiesPanel
-            modelType={v.type}
-            value={capability}
-            onChange={onCapabilityChange}
-            editable={detail.canCreateModel}
-          />
-        </section>
-      )}
+      <ModelCapabilitiesSection
+        modelType={v.type}
+        inputModalities={v.inputModalities}
+        outputModalities={v.outputModalities}
+        requiredModalities={v.requiredModalities}
+        onModalitiesChange={(next) => {
+          f.setValue('modelInputModalities', next.input);
+          f.setValue('modelOutputModalities', next.output);
+          f.setValue('modelRequiredModalities', next.required);
+        }}
+        capability={capability}
+        onCapabilityChange={onCapabilityChange}
+        editable={detail.canCreateModel}
+      />
     </>
   );
 }
@@ -281,6 +266,9 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
     cachedAudioRead: f.watch('editModelCachedAudioReadPrice'),
     maxContext: f.watch('editModelMaxContext'), maxOutput: f.watch('editModelMaxOutput'),
     features: f.watch('editModelFeatures'), aliases: f.watch('editModelAliases'),
+    inputModalities: f.watch('editModelInputModalities'),
+    outputModalities: f.watch('editModelOutputModalities'),
+    requiredModalities: f.watch('editModelRequiredModalities'),
     enabled: f.watch('editModelEnabled'), deprecationDate: f.watch('editModelDeprecationDate'),
     replacedBy: f.watch('editModelReplacedBy'),
   };
@@ -360,17 +348,20 @@ function EditBody({ detail, codeError, typeOptions, statusOptions }: EditBodyPro
         />
       </section>
 
-      {(v.type === 'embedding' || v.type === 'chat') && (
-        <section className={styles.section}>
-          <h3 className={styles.sectionHeader}>{t('pages:providers.capabilities.sectionTitle', 'Capabilities')}</h3>
-          <ProviderModelCapabilitiesPanel
-            modelType={v.type}
-            value={detail.editingCapabilityJson}
-            onChange={(next) => detail.setEditingCapabilityJson(next)}
-            editable={detail.canUpdateModel}
-          />
-        </section>
-      )}
+      <ModelCapabilitiesSection
+        modelType={v.type}
+        inputModalities={v.inputModalities}
+        outputModalities={v.outputModalities}
+        requiredModalities={v.requiredModalities}
+        onModalitiesChange={(next) => {
+          f.setValue('editModelInputModalities', next.input);
+          f.setValue('editModelOutputModalities', next.output);
+          f.setValue('editModelRequiredModalities', next.required);
+        }}
+        capability={detail.editingCapabilityJson}
+        onCapabilityChange={(next) => detail.setEditingCapabilityJson(next)}
+        editable={detail.canUpdateModel}
+      />
 
       <section className={styles.section}>
         <button

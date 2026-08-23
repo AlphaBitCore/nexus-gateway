@@ -1,9 +1,10 @@
 //go:build darwin
 
 // Package gap_closure_test provides the shared helpers and setup for the
-// E74-S7 gap-class closure test suite. Each individual gap-class test lives
-// in its own _test.go file in this package; they share the helpers defined
-// here.
+// gap-class closure suite: each test drives one way a process can evade
+// interception, and asserts the agent still produces a traffic_event for it.
+// Each gap-class test lives in its own _test.go file in this package; they
+// share the helpers defined here.
 //
 // # Required state
 //
@@ -14,7 +15,7 @@
 //
 // # Coverage
 //
-// The helper functions (waitForTrafficEvent, queryNormalizedContent,
+// The helper functions (waitForTrafficEvent,
 // assertPrometheusCounter) have ≥95% coverage via mock DB + mock Prometheus
 // provided by gap_closure_helpers_test.go. The gap test files themselves
 // (gap1_*, gap2_*, …) are integration-only and listed in .coverage-allowlist
@@ -42,20 +43,20 @@ import (
 // testConfig holds all env-loaded configuration for the gap-closure tests.
 // Populated once by mustLoadConfig() and reused across all test functions.
 type testConfig struct {
-	AgentListenerAddr string // NEXUS_AGENT_LISTENER_ADDR; default 127.0.0.1:13443
-	DBDSN             string // NEXUS_DB_DSN; required
-	PrometheusAddr    string // NEXUS_PROMETHEUS_ADDR; default http://localhost:9100
-	Gap2TargetHost    string // NEXUS_GAP2_TARGET_HOST; default chatgpt.com
-	Gap3Concurrency   int    // NEXUS_GAP3_CONCURRENCY; default 10
-	Gap3DurationS     int    // NEXUS_GAP3_DURATION_S; default 60
-	Gap3TargetHost    string // NEXUS_GAP3_TARGET_HOST; default api.openai.com
-	Gap4TargetHost    string // NEXUS_GAP4_TARGET_HOST; default api.openai.com
-	Gap4NEBaselineMs  int    // NEXUS_GAP4_NE_BASELINE_P95_MS; optional
-	Gap5ChromePath    string // NEXUS_GAP5_CHROME_PATH; optional
+	AgentListenerAddr  string   // NEXUS_AGENT_LISTENER_ADDR; default 127.0.0.1:13443
+	DBDSN              string   // NEXUS_DB_DSN; required
+	PrometheusAddr     string   // NEXUS_PROMETHEUS_ADDR; default http://localhost:9100
+	Gap2TargetHost     string   // NEXUS_GAP2_TARGET_HOST; default chatgpt.com
+	Gap3Concurrency    int      // NEXUS_GAP3_CONCURRENCY; default 10
+	Gap3DurationS      int      // NEXUS_GAP3_DURATION_S; default 60
+	Gap3TargetHost     string   // NEXUS_GAP3_TARGET_HOST; default api.openai.com
+	Gap4TargetHost     string   // NEXUS_GAP4_TARGET_HOST; default api.openai.com
+	Gap4NEBaselineMs   int      // NEXUS_GAP4_NE_BASELINE_P95_MS; optional
+	Gap5ChromePath     string   // NEXUS_GAP5_CHROME_PATH; optional
 	ConsistencyDomains []string // NEXUS_CONSISTENCY_TEST_DOMAINS; optional
-	CPProxyAddr       string // NEXUS_CP_PROXY_ADDR; default localhost:3128
-	Gap1FixtureBin    string // NEXUS_GAP1_FIXTURE_BIN; path to compiled gap1-client
-	T0                string // NEXUS_TEST_T0; RFC3339 start time set by runner.sh
+	CPProxyAddr        string   // NEXUS_CP_PROXY_ADDR; default localhost:3128
+	Gap1FixtureBin     string   // NEXUS_GAP1_FIXTURE_BIN; path to compiled gap1-client
+	T0                 string   // NEXUS_TEST_T0; RFC3339 start time set by runner.sh
 }
 
 // mustLoadConfig reads test configuration from environment variables.
@@ -111,19 +112,21 @@ func mustLoadConfig(t testing.TB) *testConfig {
 
 // TrafficEventRow holds the columns asserted by the gap-closure tests.
 type TrafficEventRow struct {
-	ID            string
-	Source        string
-	EndpointType  string
-	TargetHost    string
-	SourceBundle  string
-	TraceID       string
-	RequestNorm   *json.RawMessage // from traffic_event_normalized
-}
-
-// NormalizedContent holds the content from traffic_event_normalized.
-type NormalizedContent struct {
-	RequestNormalized  *json.RawMessage
-	ResponseNormalized *json.RawMessage
+	ID           string
+	Source       string
+	EndpointType string
+	TargetHost   string
+	SourceBundle string
+	TraceID      string
+	// RequestBody is the CAPTURED request body from traffic_event_payload.
+	//
+	// This used to be request_normalized from the traffic_event_normalized
+	// sidecar. That table is dropped: the normalized projection is now computed
+	// at view time from this body rather than persisted alongside it. The
+	// captured body is the evidence that survives — and it is what the view-time
+	// recompute reads, so a present body plus a stamped endpoint_type is the same
+	// end-to-end claim the sidecar carried, one step earlier in the chain.
+	RequestBody *json.RawMessage
 }
 
 // newDBPool creates a pgxpool connection to the test DB. The caller must
@@ -160,9 +163,9 @@ func waitForTrafficEvent(t testing.TB, pool *pgxpool.Pool, traceID string, timeo
 			COALESCE(te.target_host, ''),
 			COALESCE(te.source_bundle, ''),
 			COALESCE(te.trace_id, ''),
-			ten.request_normalized
+			tep.inline_request_body
 		FROM traffic_event te
-		LEFT JOIN traffic_event_normalized ten ON ten.traffic_event_id = te.id
+		LEFT JOIN traffic_event_payload tep ON tep.traffic_event_id = te.id
 		WHERE te.trace_id = $1
 		LIMIT 1
 	`
@@ -172,7 +175,7 @@ func waitForTrafficEvent(t testing.TB, pool *pgxpool.Pool, traceID string, timeo
 		row := pool.QueryRow(ctx, query, traceID)
 
 		var r TrafficEventRow
-		var reqNorm []byte
+		var reqBody []byte
 		scanErr := row.Scan(
 			&r.ID,
 			&r.Source,
@@ -180,14 +183,14 @@ func waitForTrafficEvent(t testing.TB, pool *pgxpool.Pool, traceID string, timeo
 			&r.TargetHost,
 			&r.SourceBundle,
 			&r.TraceID,
-			&reqNorm,
+			&reqBody,
 		)
 		cancel()
 
 		if scanErr == nil {
-			if reqNorm != nil {
-				j := json.RawMessage(reqNorm)
-				r.RequestNorm = &j
+			if reqBody != nil {
+				j := json.RawMessage(reqBody)
+				r.RequestBody = &j
 			}
 			return r
 		}
@@ -198,38 +201,6 @@ func waitForTrafficEvent(t testing.TB, pool *pgxpool.Pool, traceID string, timeo
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-}
-
-// queryNormalizedContent looks up traffic_event_normalized by traffic_event_id.
-// Returns NormalizedContent; both fields may be nil if the row is absent.
-func queryNormalizedContent(t testing.TB, pool *pgxpool.Pool, trafficEventID string) NormalizedContent {
-	t.Helper()
-
-	const query = `
-		SELECT request_normalized, response_normalized
-		FROM traffic_event_normalized
-		WHERE traffic_event_id = $1
-	`
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	row := pool.QueryRow(ctx, query, trafficEventID)
-
-	var nc NormalizedContent
-	var reqNorm, respNorm []byte
-	if err := row.Scan(&reqNorm, &respNorm); err != nil {
-		// Row absent — not a failure here; callers decide whether nil matters.
-		return nc
-	}
-	if reqNorm != nil {
-		j := json.RawMessage(reqNorm)
-		nc.RequestNormalized = &j
-	}
-	if respNorm != nil {
-		j := json.RawMessage(respNorm)
-		nc.ResponseNormalized = &j
-	}
-	return nc
 }
 
 // countTrafficEventsByTraceIDs returns (total, withContent) counts for the
@@ -243,9 +214,9 @@ func countTrafficEventsByTraceIDs(t testing.TB, pool *pgxpool.Pool, traceIDs []s
 
 	const query = `
 		SELECT COUNT(*) AS total,
-		       COUNT(CASE WHEN ten.request_normalized IS NOT NULL THEN 1 END) AS with_content
+		       COUNT(CASE WHEN tep.inline_request_body IS NOT NULL THEN 1 END) AS with_content
 		FROM traffic_event te
-		LEFT JOIN traffic_event_normalized ten ON ten.traffic_event_id = te.id
+		LEFT JOIN traffic_event_payload tep ON tep.traffic_event_id = te.id
 		WHERE te.trace_id = ANY($1)
 		  AND te.source = 'agent'
 	`

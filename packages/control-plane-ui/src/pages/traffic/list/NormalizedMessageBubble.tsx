@@ -4,13 +4,16 @@
 // spans rendered inline as badges. Shares the parent CSS module so the markup
 // is identical to rendering inline in NormalizedPayloadView.
 
+import { useCallback } from 'react';
 import type { useTranslation } from 'react-i18next';
 import type {
   NormalizedMessage,
   NormalizedContentBlock,
   TransformSpan,
 } from '@/api/types';
-import { formatBytesShort } from './NormalizedHttpViews';
+import { MediaCard, MEDIA_STATE_I18N_KEY, type MediaRef } from '@nexus-gateway/ui-shared';
+import { api } from '@/api/client';
+import { useMediaByteOrigin } from './MediaByteOriginContext';
 import css from './NormalizedPayloadView.module.css';
 
 export function MessageBubble({
@@ -53,6 +56,7 @@ export function MessageBubble({
           block={b}
           address={`messages.${messageIndex}.content.${j}`}
           spans={spans}
+          t={t}
         />
       ))}
     </div>
@@ -63,10 +67,12 @@ function ContentBlockRow({
   block,
   address,
   spans,
+  t,
 }: {
   block: NormalizedContentBlock;
   address: string;
   spans: TransformSpan[] | null | undefined;
+  t: ReturnType<typeof useTranslation>['t'];
 }) {
   if (block.type === 'text') {
     return <div className={css.contentText}>{renderTextWithSpans(block.text ?? '', address, spans)}</div>;
@@ -116,17 +122,77 @@ function ContentBlockRow({
       </div>
     );
   }
-  if (block.type === 'image_ref') {
-    return (
-      <div className={css.binaryCard}>
-        <span>
-          {block.imageRef?.contentType ?? 'image'} · {formatBytesShort(block.imageRef?.size ?? 0)}
-        </span>
-        {block.imageRef?.sha256 ? <code>{block.imageRef.sha256.slice(0, 16)}…</code> : null}
-      </div>
-    );
+  if (block.type === 'media') {
+    if (!block.mediaRef) return null;
+    return <MediaBlockCard mediaRef={block.mediaRef} t={t} />;
   }
   return null;
+}
+
+
+/**
+ * Renders one media element through the shared MediaCard.
+ *
+ * The resolver goes through the artifact endpoint rather than decoding the
+ * stored body in the browser. Two reasons, and the second is the one that
+ * settles it: a 20 MB video would otherwise have to reach the page before
+ * anything could be shown, and the server can read every locator container
+ * while a browser cannot read multipart at all. Resolving where all five
+ * containers are readable is what keeps the card from having to guess which
+ * of its own references it is allowed to offer.
+ *
+ * With no MediaSource in context — any surface that cannot reach an
+ * endpoint — the card falls back to metadata-only rather than offering a
+ * control that would fail.
+ */
+export function MediaBlockCard({
+  mediaRef,
+  t,
+}: {
+  mediaRef: NonNullable<NormalizedContentBlock['mediaRef']>;
+  t: ReturnType<typeof useTranslation>['t'];
+}) {
+  // Truncation outranks custody: bytes that were captured but arrived
+  // incomplete are unrecoverable, and saying "captured" would imply they
+  // are not.
+  const explainKey = mediaRef.truncated === true ? 'truncated' : MEDIA_STATE_I18N_KEY[mediaRef.source];
+  const source = useMediaByteOrigin();
+
+  const resolve = useCallback(
+    async (ref: MediaRef) => {
+      if (!source) throw new Error('no media source in context');
+      // The admin API prefix is part of the path here: getBlob only applies
+      // the deployment sub-path prefix, exactly like api.get, so every caller
+      // writes the full route. Without /api/admin this resolves against the
+      // SPA route table instead and returns index.html with a 200 — the
+      // download saved an HTML file and the image preview failed to decode,
+      // both from one missing segment.
+      const { blob, filename } = await api.getBlob(`/api/admin/traffic/${source.eventId}/artifact`, {
+        locator: ref.locator ?? '',
+        direction: source.direction,
+      });
+      // The endpoint names the download from the type it sniffed; the
+      // fallback only covers a response that carried no disposition.
+      return { blob, filename: filename ?? `nexus-${source.eventId}` };
+    },
+    [source],
+  );
+
+  return (
+    <MediaCard
+      ref_={mediaRef}
+      resolve={source ? resolve : undefined}
+      labels={{
+        explain: t(`pages:traffic.detail.normalized.media.${explainKey}`),
+        download: t('pages:traffic.detail.normalized.media.download'),
+        previewFailed: t('pages:traffic.detail.normalized.media.previewFailed'),
+        sizeUnknown: t('pages:traffic.detail.normalized.media.sizeUnknown'),
+      }}
+      detail={
+        mediaRef.sha256 ? <code className={css.binaryCard}>{mediaRef.sha256.slice(0, 16)}…</code> : null
+      }
+    />
+  );
 }
 
 // renderTextWithSpans inserts redaction badges for spans that address
