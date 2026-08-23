@@ -20,15 +20,15 @@ var providerColsForLayer = []string{
 	"pathPrefix", "apiVersion", "region", "enabled", "serves_responses_api",
 }
 
-// modelColsForLayer mirrors the SELECT list for model queries (26 columns).
+// modelColsForLayer mirrors the SELECT list for model queries.
 var modelColsForLayer = []string{
 	"id", "code", "name", "providerId", "p_name", "p_adapter_type",
-	"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled",
+	"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled", "p_enabled", "m_status",
 	"inputPricePerMillion", "outputPricePerMillion",
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"features", "maxContextTokens", "maxOutputTokens",
-	"aliases", "inputModalities", "outputModalities",
+	"aliases", "inputModalities", "outputModalities", "requiredModalities",
 	"lifecycle", "capabilityJson",
 }
 
@@ -172,15 +172,16 @@ func makeTestModelRow(id, code, providerID string, enabled bool) []any {
 	return []any{
 		id, code, "model-" + id, providerID,
 		"openai", "openai", &displayName, "https://api.openai.com",
-		code, "chat", enabled,
+		code, "chat", enabled, true, "active",
 		&inP, &outP, &crP, &cwP,
 		(*string)(nil), (*string)(nil), (*string)(nil),
-		[]string{"vision"},
+		[]string{"function_calling"},
 		pgtype.Int4{Int32: 128000, Valid: true},
 		pgtype.Int4{Int32: 16384, Valid: true},
 		[]string{},
 		[]string{"text"},
 		[]string{"text"},
+		[]string{},
 		"ga",
 		[]byte(`{}`),
 	}

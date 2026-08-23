@@ -20,6 +20,10 @@ type WriteRequest struct {
 	UpstreamProvider string
 	UpstreamModel    string
 	ResponseKind     string // "response" | "stream"
+	// AnswerKey digests the caller's answer-affecting request parameters.
+	// The reader must supply the identical string or the entry is
+	// unreachable — both come from one computation per request.
+	AnswerKey string
 
 	// Content
 	EmbeddingInput string // exact text fed to the embedding model
@@ -186,6 +190,7 @@ func (w *Writer) Write(ctx context.Context, req WriteRequest) (WriteResult, erro
 		UpstreamModel:    req.UpstreamModel,
 		ResponseKind:     req.ResponseKind,
 		Fingerprint:      snap.Fingerprint,
+		AnswerKey:        req.AnswerKey,
 		EmbeddingInput:   req.EmbeddingInput,
 		Embedding:        resp.Embedding,
 		ResponseBody:     req.ResponseBody,

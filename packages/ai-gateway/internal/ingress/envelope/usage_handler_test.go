@@ -14,7 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 )
 
-// stubUsageStore is a test double for usageStore.
+// stubUsageStore is a test double for UsageStore.
 type stubUsageStore struct {
 	rows []store.DailyModelUsage
 	err  error

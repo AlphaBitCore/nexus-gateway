@@ -206,6 +206,7 @@ func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Reque
 		RequestAction:  hookcore.ActionApprove,
 		ResponseAction: hookcore.ActionApprove,
 	}
+	stampCallerAttribution(rec, r.Header)
 
 	return &proxyState{
 		h:            h,

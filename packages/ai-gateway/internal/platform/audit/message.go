@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/google/uuid"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
@@ -34,6 +36,26 @@ func isBlockingDecision(d string) bool {
 // the identity / entity / details derivation, applies cache-status unification,
 // stamps Thing identity + payload-capture spill choices, and runs any wired
 // normalize closure on the captured request/response bodies.
+// eventID returns this record's traffic_event primary key, minting one on
+// first use and storing it back on the record.
+//
+// Stamped once and reused: recordToMessage runs a second time for the same
+// record whenever marshalRecordPlain takes over from the splice path on a
+// marker collision, and a second id there would insert a duplicate row past
+// the consumer's ON CONFLICT (id) DO NOTHING.
+//
+// Never derived from rec.RequestID. That value is caller-supplied via
+// X-Nexus-Request-Id, so deriving the key from it lets a client that reuses
+// one id across retries collide two distinct events into one row — the
+// second is dropped with no error to anyone. The caller's value keeps its
+// correlation role on TraceID, where repeating is allowed.
+func eventID(rec *Record) string {
+	if rec.EventID == "" {
+		rec.EventID = uuid.NewString()
+	}
+	return rec.EventID
+}
+
 func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 	// identity JSONB is the authoritative "who made this call" object.
 	// Keys:
@@ -76,7 +98,7 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 	details := buildDetails(rec)
 
 	msg := &mq.TrafficEventMessage{
-		ID:     rec.RequestID,
+		ID:     eventID(rec),
 		Source: "ai-gateway",
 		// SourceProcess + Action carry the emitter taxonomy onto
 		// traffic_event.source_process / .action. The consumer reads them
@@ -210,6 +232,28 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		v := rec.AIGuardCostUsd
 		msg.AIGuardCostUsd = &v
 	}
+	// Router-LLM cost + the provider that served the router call.
+	if rec.RouterCostUsd != 0 {
+		v := rec.RouterCostUsd
+		msg.RouterCostUsd = &v
+	}
+	if rec.RouterProviderID != "" {
+		msg.RouterProviderID = rec.RouterProviderID
+	}
+	if rec.EmbeddingProviderID != "" {
+		msg.EmbeddingProviderID = rec.EmbeddingProviderID
+	}
+	// Per-call itemisation of the internal model calls behind the cost columns
+	// above. Marshalled here, at the single Record -> message boundary, so the
+	// routing stage can keep appending typed entries without re-encoding.
+	// A marshal failure leaves the column NULL rather than failing the record:
+	// this is an audit detail on a request that already succeeded, and the
+	// amount columns it explains are written either way.
+	if len(rec.InternalOpsBreakdown) > 0 {
+		if raw, err := json.Marshal(rec.InternalOpsBreakdown); err == nil {
+			msg.InternalOpsBreakdown = raw
+		}
+	}
 	// Persist the strip counts whenever the normaliser actually executed —
 	// including a real 0 when it ran but stripped nothing — so a NULL on
 	// these columns distinctly means "normaliser never ran" rather than
@@ -254,12 +298,20 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 	// the proxy-supplied redacted wire copy, anything else persists nothing.
 	// The normalized projection is never persisted — the control plane
 	// recomputes it at view time from this (already-redacted) raw body.
+	// The blob's storage key is "<date>/<eventID>-<direction>.bin", so this
+	// takes the EVENT id, not the caller's correlation value. Keying on the
+	// caller's value lets two calls that reuse one X-Nexus-Request-Id on the
+	// same UTC day write both bodies to one key: the second Put overwrites
+	// the first and the first row then renders the second call's prompt and
+	// response. The log arguments below stay on rec.RequestID — an operator
+	// grepping a log line wants the correlation value they were given.
+	blobID := eventID(rec)
 	msg.RequestBody = spillstore.EmitBody(ctx, w.spill, threshold,
 		w.gateStorageBody(rec.RequestBody, rec.RequestBodyRedacted, rec.RequestAction, "request", rec.RequestID),
-		rec.RequestContentType, rec.RequestID, "request", rec.RequestTruncated, w.logger)
+		rec.RequestContentType, blobID, "request", rec.RequestTruncated, w.logger)
 	msg.ResponseBody = spillstore.EmitBody(ctx, w.spill, threshold,
 		w.gateStorageBody(rec.ResponseBody, rec.ResponseBodyRedacted, rec.ResponseAction, "response", rec.RequestID),
-		rec.ResponseContentType, rec.RequestID, "response", rec.ResponseTruncated, w.logger)
+		rec.ResponseContentType, blobID, "response", rec.ResponseTruncated, w.logger)
 	if rec.InternalPurpose != "" {
 		p := rec.InternalPurpose
 		msg.InternalPurpose = &p

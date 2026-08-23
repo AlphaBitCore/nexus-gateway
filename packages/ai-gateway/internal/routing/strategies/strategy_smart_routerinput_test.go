@@ -35,7 +35,7 @@ func TestSmart_RouterInput_IncludesAssistantExcludesSystem(t *testing.T) {
 		},
 	}}
 
-	if _, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil); err != nil {
+	if _, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	var roles []string
@@ -69,7 +69,7 @@ func TestSmart_RouterInput_PassesRouterModelContextLimit(t *testing.T) {
 	rctx := aiChatRctx()
 	rctx.VirtualKey = &core.VKContext{AllowedModels: []store.AllowedModelRef{{ProviderID: "p1", ModelID: "m-claude"}}}
 
-	if _, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil); err != nil {
+	if _, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if decider.lastReq.RouterContextLimit != 16384 {
@@ -85,7 +85,7 @@ func TestSmart_RouterInput_UndeclaredRouterWindowStaysZero(t *testing.T) {
 	trace := []core.TraceEntry{}
 	strat := &SmartStrategy{deps: fx.deps()}
 
-	if _, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil); err != nil {
+	if _, err := strat.Evaluate(context.Background(), node, fx.pool(aiChatRctx()), &trace); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if decider.lastReq.RouterContextLimit != 0 {
@@ -106,14 +106,14 @@ func TestSmart_RouterInput_SystemPromptCarriesRequestMetadataLine(t *testing.T) 
 		Messages: []normalize.Message{
 			{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
 				{Type: normalize.ContentText, Text: "describe these"},
-				{Type: normalize.ContentImageRef, ImageRef: &normalize.BinaryRef{Size: 10, ContentType: "image/png", SHA256: "a"}},
-				{Type: normalize.ContentImageRef, ImageRef: &normalize.BinaryRef{Size: 10, ContentType: "image/png", SHA256: "b"}},
+				{Type: normalize.ContentMedia, MediaRef: &normalize.MediaRef{Modality: normalize.ModalityImage, SizeBytes: 10, Mime: "image/png", SHA256: "a"}},
+				{Type: normalize.ContentMedia, MediaRef: &normalize.MediaRef{Modality: normalize.ModalityImage, SizeBytes: 10, Mime: "image/png", SHA256: "b"}},
 			}},
 		},
 		Tools: []normalize.ToolDef{{Name: "search"}, {Name: "calc"}, {Name: "fetch"}},
 	}}
 
-	if _, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil); err != nil {
+	if _, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	sp := decider.lastReq.SystemPrompt

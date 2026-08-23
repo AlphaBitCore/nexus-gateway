@@ -76,7 +76,7 @@ func successNonCacheCostRow(ts time.Time, cost float64) []any {
 		(*int)(nil),     // response_hooks_ms
 		(*float64)(nil), // embedding_cost_usd  (no internal ops)
 		(*float64)(nil), // ai_guard_cost_usd   (no internal ops)
-	}, errorClassNilTail()...)
+	}, fleetOnlyNilTail()...)
 }
 
 // TestRollup5m_BilledCostIsEstimatedCostPassthrough_F0163 asserts that, for a

@@ -66,7 +66,11 @@ func TestOpenAIChat_RequestWithMultimodal(t *testing.T) {
 	if blocks[0].Type != core.ContentText || blocks[0].Text != "describe" {
 		t.Errorf("first block: %+v", blocks[0])
 	}
-	if blocks[1].Type != core.ContentImageRef || blocks[1].ImageRef == nil || blocks[1].ImageRef.SpillKey == "" {
+	// A plain https:// image_url is an external reference the gateway never
+	// fetches — it belongs in MediaRef.URL, not a Locator (which addresses
+	// bytes inside the captured body; there are none here).
+	if blocks[1].Type != core.ContentMedia || blocks[1].MediaRef == nil ||
+		blocks[1].MediaRef.Source != core.MediaExternal || blocks[1].MediaRef.URL != "https://example.com/cat.png" {
 		t.Errorf("image block: %+v", blocks[1])
 	}
 }
@@ -609,5 +613,55 @@ func TestOpenAIChatStream_MultiToolCall_NonZeroBaseIndex(t *testing.T) {
 	}
 	if tu.Input["q"] != "nexus" {
 		t.Errorf("input q = %v, want nexus", tu.Input["q"])
+	}
+}
+
+// A video_url part is media, and specifically video — not prose. Before the
+// video_url case existed the part fell into the default branch and was
+// serialized into a text block: the routing predicates saw no video modality
+// (a video request could be handed to a model that cannot read one), and the
+// base64 payload entered the compliance pipeline as text.
+func TestOpenAIChat_RequestVideoURLIsVideoMedia(t *testing.T) {
+	cases := []struct {
+		name   string
+		url    string
+		source string
+	}{
+		{"inline data URI", "data:video/mp4;base64,QQ==", core.MediaCaptured},
+		{"hosted URL", "https://example.com/clip.mp4", core.MediaExternal},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"model":"gpt-4o","messages":[{"role":"user","content":[` +
+				`{"type":"video_url","video_url":{"url":"` + tc.url + `"}},` +
+				`{"type":"text","text":"what happens"}]}]}`
+			n := NewOpenAIChatNormalizer()
+			got, err := n.Normalize(context.Background(), []byte(body), core.Meta{Direction: core.DirectionRequest})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			b := got.Messages[0].Content[0]
+			if b.Type != core.ContentMedia || b.MediaRef == nil {
+				t.Fatalf("video_url did not become a media block: %+v", b)
+			}
+			if b.MediaRef.Modality != core.ModalityVideo {
+				t.Errorf("modality = %q, want %q", b.MediaRef.Modality, core.ModalityVideo)
+			}
+			if b.MediaRef.Source != tc.source {
+				t.Errorf("source = %q, want %q", b.MediaRef.Source, tc.source)
+			}
+		})
+	}
+	// A part with no usable URL degrades to absent video media — still never text.
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"video_url","video_url":{}}]}]}`
+	n := NewOpenAIChatNormalizer()
+	got, err := n.Normalize(context.Background(), []byte(body), core.Meta{Direction: core.DirectionRequest})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b := got.Messages[0].Content[0]
+	if b.Type != core.ContentMedia || b.MediaRef == nil ||
+		b.MediaRef.Modality != core.ModalityVideo || b.MediaRef.Source != core.MediaAbsent {
+		t.Errorf("empty video_url block: %+v", b)
 	}
 }

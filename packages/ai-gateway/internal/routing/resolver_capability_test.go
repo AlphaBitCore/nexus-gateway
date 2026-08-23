@@ -35,11 +35,11 @@ func newCapFixture() *capFixture {
 	capCache := capability.NewCache()
 	reg := strategies.NewStrategyRegistry()
 	resolver := &Resolver{
-		db:              fs,
-		registry:        reg,
-		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		narrowingEngine: &matcher.NarrowingEngine{},
-		capCache:        capCache,
+		db:       fs,
+		registry: reg,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		vkAccess: matcher.VKAccessFilter{},
+		capCache: capCache,
 	}
 	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 	return &capFixture{store: fs, registry: reg, resolver: resolver, capCache: capCache}
@@ -253,9 +253,27 @@ func TestCapabilityPreFilter_AllRejected(t *testing.T) {
 		EmbeddingRequest: &core.EmbeddingRequestParams{Dimensions: &dims, BatchSize: 1},
 	}
 
-	_, err := f.resolver.ResolveTargets(context.Background(), rctx)
+	// The caller NAMED ada-002, so the structured catalogue error does not
+	// apply: their model's limits are their model's, and the upstream states
+	// them in its own terms. Handing them a list of models they did not choose
+	// reads as a gateway that ignored the request. The plan comes back empty
+	// and the requested-model passthrough serves it, which is where the
+	// upstream's own refusal reaches them.
+	res, err := f.resolver.ResolveTargets(context.Background(), rctx)
+	if err != nil {
+		t.Fatalf("a named model produced the delegated-routing error: %v", err)
+	}
+	if len(res.AllTargets()) != 0 {
+		t.Fatalf("targets = %+v, want none — the filter rejected every one", res.AllTargets())
+	}
+
+	// The same catalogue, asked to CHOOSE, still gets the structured answer:
+	// there the question was ours and the list is the answer to it.
+	rctx.RequestedModel = core.RequestedModel{ID: "auto"}
+	_, err = f.resolver.ResolveTargets(context.Background(), rctx)
 	if err == nil {
-		t.Fatal("expected NoCompatibleProviderError, got nil error")
+		t.Fatal("a delegated embeddings request lost the structured error that tells the " +
+			"caller what each candidate would have accepted")
 	}
 	var ncpErr *core.NoCompatibleProviderError
 	if !errors.As(err, &ncpErr) {
@@ -339,8 +357,8 @@ func TestCapabilityPreFilter_RecoveryTargetsAlsoFiltered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveTargets should succeed (Gemini primary survives), got: %v", err)
 	}
-	if len(res.Targets) != 1 || res.Targets[0].ModelID != "gemini-embed" {
-		t.Fatalf("expected only gemini-embed in targets, got %+v", res.Targets)
+	if len(res.AllTargets()) != 1 || res.AllTargets()[0].ModelID != "gemini-embed" {
+		t.Fatalf("expected only gemini-embed in targets, got %+v", res.AllTargets())
 	}
 }
 
@@ -398,6 +416,16 @@ func TestCapabilityPreFilter_AllPrimaryAndRecoveryRejected(t *testing.T) {
 		t.Fatalf("expected all targets filtered, got primary=%d recovery=%d", len(plan.Targets), len(plan.RecoveryTargets))
 	}
 
+	// Named model: the plan is empty and the passthrough serves it, so the
+	// upstream's own refusal is what the caller reads.
+	if _, err = f.resolver.ResolveTargets(context.Background(), rctx); err != nil {
+		t.Fatalf("a named model produced the delegated-routing error: %v", err)
+	}
+
+	// Delegated: the structured answer still covers BOTH halves of the plan.
+	// A recovery target that escaped the capability check would let an
+	// incompatible request dispatch instead of returning the 400.
+	rctx.RequestedModel = core.RequestedModel{ID: "auto"}
 	_, err = f.resolver.ResolveTargets(context.Background(), rctx)
 	var ncpErr *core.NoCompatibleProviderError
 	if !errors.As(err, &ncpErr) {
@@ -414,11 +442,11 @@ func TestCapabilityPreFilter_DisabledWhenNilCache(t *testing.T) {
 	}
 	reg := strategies.NewStrategyRegistry()
 	resolver := &Resolver{
-		db:              fs,
-		registry:        reg,
-		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		narrowingEngine: &matcher.NarrowingEngine{},
-		capCache:        nil, // disabled
+		db:       fs,
+		registry: reg,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		vkAccess: matcher.VKAccessFilter{},
+		capCache: nil, // disabled
 	}
 	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 

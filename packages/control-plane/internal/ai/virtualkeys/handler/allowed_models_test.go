@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"strings"
+
 	"github.com/goccy/go-json"
 	"github.com/pashagolub/pgxmock/v4"
 )
@@ -103,4 +105,37 @@ func TestUpdateVirtualKey_RejectsBareStringAllowedModels(t *testing.T) {
 		t.Fatalf("status=%d body=%s; want 400", rec.Code, rec.Body.String())
 	}
 	assertErrorEnvelope(t, rec, "", "validation_error")
+}
+
+// A '*' in an allowed-model ref is refused at the write boundary.
+//
+// It is not a wildcard and never was in a way an operator could rely on: the
+// gateway compares these refs exactly, and the model-access picker decides each
+// checkbox by exact equality, so a pattern renders as "0 model(s) selected"
+// while the operator believes they granted access. Accepting it would leave a
+// key whose real permissions no admin screen can show — the dangerous direction
+// for an authorisation boundary, since the UI understates rather than overstates.
+func TestValidateAllowedModels_RefusesAWildcard(t *testing.T) {
+	for _, body := range []string{
+		`[{"providerId":"openai","modelId":"gpt-*"}]`,
+		`[{"providerId":"*","modelId":"gpt-4"}]`,
+		`[{"providerId":"openai","modelId":"gpt-4"},{"providerId":"anthropic","modelId":"claude-*"}]`,
+	} {
+		msg := validateAllowedModels(json.RawMessage(body))
+		if msg == "" {
+			t.Errorf("%s was accepted; a pattern the picker cannot render must not reach the column", body)
+			continue
+		}
+		if !strings.Contains(msg, "concrete") {
+			t.Errorf("the refusal should say what to do instead; got %q", msg)
+		}
+	}
+}
+
+// Concrete refs — the only thing the picker writes — still pass.
+func TestValidateAllowedModels_AcceptsConcreteRefs(t *testing.T) {
+	ok := `[{"providerId":"11111111-1111-1111-1111-111111111111","modelId":"22222222-2222-2222-2222-222222222222"}]`
+	if msg := validateAllowedModels(json.RawMessage(ok)); msg != "" {
+		t.Errorf("a concrete ref must be accepted, got %q", msg)
+	}
 }

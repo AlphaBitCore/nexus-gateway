@@ -73,16 +73,20 @@ func TestBuildProviderRequest_NilRequest(t *testing.T) {
 }
 
 func TestOpenAIProxyErrorBody(t *testing.T) {
-	// Empty code → numeric status as code (legacy writeJSONError shape).
+	// error.type carries OpenAI's vocabulary, derived from the status. It used to
+	// be the constant "proxy_error" for every gateway-generated error, which is
+	// not a value any OpenAI SDK recognises (AP-3). error.code stays the Nexus
+	// code — see proxy_error_envelope_test.go for the full contract.
 	b := openAIProxyErrorBody(400, "", "bad request", "")
 	if gjson.GetBytes(b, "error.message").String() != "bad request" ||
-		gjson.GetBytes(b, "error.type").String() != "proxy_error" ||
-		gjson.GetBytes(b, "error.code").Int() != 400 {
+		gjson.GetBytes(b, "error.type").String() != "invalid_request_error" ||
+		gjson.GetBytes(b, "error.code").Exists() {
 		t.Errorf("openai proxy error body wrong: %s", b)
 	}
-	// String code + hint (legacy writeDetailedError shape).
+	// String code + hint.
 	b = openAIProxyErrorBody(429, "rate_limited", "slow down", "retry later")
 	if gjson.GetBytes(b, "error.code").String() != "rate_limited" ||
+		gjson.GetBytes(b, "error.type").String() != "rate_limit_error" ||
 		gjson.GetBytes(b, "error.hint").String() != "retry later" {
 		t.Errorf("detailed proxy error body wrong: %s", b)
 	}
@@ -110,20 +114,55 @@ func TestWriteIngressError_RecordsBody_AndShapesPerIngress(t *testing.T) {
 		if w.status != http.StatusBadGateway {
 			t.Errorf("status = %d", w.status)
 		}
-		if gjson.GetBytes(rec.ResponseBody, "error.type").String() == "proxy_error" {
-			t.Errorf("anthropic ingress must NOT get the OpenAI proxy_error shape; got %s", rec.ResponseBody)
+		// Anthropic ingress gets the Anthropic envelope: a top-level
+		// {"type":"error", …}, not the OpenAI {"error":{…}} shape.
+		if gjson.GetBytes(rec.ResponseBody, "type").String() != "error" {
+			t.Errorf("anthropic ingress must get the anthropic error envelope; got %s", rec.ResponseBody)
 		}
 	})
 
-	t.Run("openai ingress → proxy_error shape + recorded", func(t *testing.T) {
+	// The two subtests around this one cover the branches that were already
+	// right: anthropic has its own dialect, openai is in the OpenAI family.
+	// Between them sit the formats that are in NEITHER set — and those are the
+	// ones that went wrong in production, because the writer branched on
+	// IsOpenAIFamily and everything outside it fell through to the encoder
+	// built for UPSTREAM bodies. /v1/rerank answered SPEND_LIMIT_EXCEEDED with
+	// "param": null while /v1/images/generations answered the same code with no
+	// param key. Testing the two ends and skipping the middle is how a diff of
+	// two correct branches hides what neither of them covers.
+	t.Run("an ingress with no dialect of its own gets the GATEWAY shape", func(t *testing.T) {
+		for _, f := range []provcore.Format{
+			provcore.FormatCohere, provcore.FormatBedrock,
+			provcore.FormatReplicate, provcore.FormatVoyage,
+		} {
+			rec := &audit.Record{IngressFormat: string(f)}
+			w := &testResponseWriter{}
+			h.writeIngressError(w, rec, http.StatusBadRequest, "SPEND_LIMIT_EXCEEDED",
+				`field "documents" must have 1..1000 entries`, "")
+
+			if gjson.GetBytes(rec.ResponseBody, "error.param").Exists() {
+				t.Errorf("%s ingress took the upstream encoder: SPEND_LIMIT_EXCEEDED maps to "+
+					"no param, so the gateway builder omits the key. Got %s", f, rec.ResponseBody)
+			}
+			if got := gjson.GetBytes(rec.ResponseBody, "error.code").String(); got != "SPEND_LIMIT_EXCEEDED" {
+				t.Errorf("%s ingress lost the code: got %q in %s", f, got, rec.ResponseBody)
+			}
+			if got := gjson.GetBytes(rec.ResponseBody, "error.type").String(); got != "invalid_request_error" {
+				t.Errorf("%s ingress: 400 must map to invalid_request_error; got %q", f, got)
+			}
+		}
+	})
+
+	t.Run("openai ingress → OpenAI error vocabulary + recorded", func(t *testing.T) {
 		rec := &audit.Record{IngressFormat: string(provcore.FormatOpenAI)}
 		w := &testResponseWriter{}
 		h.writeIngressError(w, rec, http.StatusTooManyRequests, "rate_limited", "slow down", "")
 		if len(rec.ResponseBody) == 0 {
 			t.Fatal("error MUST be recorded to rec.ResponseBody; got empty")
 		}
-		if gjson.GetBytes(rec.ResponseBody, "error.type").String() != "proxy_error" {
-			t.Errorf("openai ingress → proxy_error shape; got %s", rec.ResponseBody)
+		// 429 → rate_limit_error, OpenAI's own vocabulary (was "proxy_error").
+		if gjson.GetBytes(rec.ResponseBody, "error.type").String() != "rate_limit_error" {
+			t.Errorf("openai ingress → rate_limit_error; got %s", rec.ResponseBody)
 		}
 		if rec.ErrorCode != "rate_limited" || rec.ErrorReason != "slow down" {
 			t.Errorf("rec error fields not stamped: code=%q reason=%q", rec.ErrorCode, rec.ErrorReason)

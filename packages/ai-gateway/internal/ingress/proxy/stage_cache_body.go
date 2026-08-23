@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
@@ -31,10 +32,10 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 	// The routing stage guarantees ≥1 target before the cache stage runs; if
 	// that invariant ever regresses, degrade to unprepared (the executor
 	// fails the request with its own named error) instead of panicking here.
-	if len(s.routeResult.Targets) == 0 {
+	if len(s.routeResult.AllTargets()) == 0 {
 		return true, false
 	}
-	primary := s.routeResult.Targets[0]
+	primary := s.routeResult.Primary()
 	adapter, ok := h.deps.ProviderReg.Get(provcore.Format(primary.AdapterType))
 	if !ok {
 		return true, false
@@ -118,7 +119,7 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 		case s.resolved.WireShape == typology.WireShapeOpenAIResponses:
 			// Responses is chat-kind but has its own native-passthrough
 			// rule (only targets that natively serve /v1/responses).
-			needsCanonicalization = !h.deps.CanonicalBridge.ServesResponses(targetFmt, primary.ServesResponsesAPI)
+			needsCanonicalization = !h.deps.CanonicalBridge.ServesResponses(targetFmt, primary.ServesResponsesAPI, s.body)
 		case ingressKind == typology.EndpointKindChat, isEmbeddingsIngress, isImagesIngress, isRerankIngress:
 			// Images: this stage always runs (the modality cache-skip lane
 			// still prepares the upstream body), so without this arm a
@@ -127,6 +128,33 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 			// proxy prepare decision, the executor arm, and the egress skip
 			// must all agree (dispatch site 1 of 3).
 			needsCanonicalization = s.resolved.BodyFormat != targetFmt
+		}
+	}
+	// The rerank canonical IS the Cohere ingress shape, so a native Cohere
+	// target needs no canonicalization — and the block below, which is the
+	// only place the rerank contract is checked, is therefore skipped on the
+	// commonest leg. That left the documents ceiling inert exactly where it
+	// matters: it is a billing guard (rerank bills one search unit per 100
+	// documents), so an unbounded array multiplies upstream spend from one
+	// request. Validate here instead, taking only the verdict — the returned
+	// bytes are the input unchanged, and assigning them would drag the body,
+	// BodyFormat and WireShape rewrites below onto a leg that must stay a
+	// verbatim passthrough.
+	if isRerankIngress && !needsCanonicalization && h.deps.CanonicalBridge != nil {
+		if err := h.deps.CanonicalBridge.ValidateRerankIngressGuards(
+			s.resolved.BodyFormat, prepReq.Body, prepReq.Target); err != nil {
+			h.writeCodecErr(s.w, s.rec, err, "canonicalize ingress body: ")
+			return false, false
+		}
+	}
+	// Same gap, same shape, on the image lane: `n` multiplies per-image spend
+	// from one request, and the ceiling was enforced only where a body had to
+	// be translated. A native OpenAI image request went to the upstream ungated.
+	if isImagesIngress && !needsCanonicalization && h.deps.CanonicalBridge != nil {
+		if err := h.deps.CanonicalBridge.ValidateImagesIngressGuards(
+			s.resolved.BodyFormat, prepReq.Body, prepReq.Target); err != nil {
+			h.writeCodecErr(s.w, s.rec, err, "canonicalize ingress body: ")
+			return false, false
 		}
 	}
 	if needsCanonicalization {
@@ -156,15 +184,6 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 			// only; embeddings never stream.
 			if canonErr == nil && s.isStream {
 				canonBody = canonicalbridge.EnsureCanonicalStream(canonBody)
-			}
-			// This is the PRIMARY cross-format egress: attempt-0 sends
-			// cachePreparedBody and never reaches IngressChatToWire, so the
-			// nexus_thinking strip that leg applies must be mirrored here or
-			// the Anthropic-private per-block signature carrier egresses to a
-			// non-Anthropic OpenAI-wire upstream. Same bridge method both legs
-			// share; a no-thinking body pays only a substring check.
-			if canonErr == nil {
-				canonBody = h.deps.CanonicalBridge.StripInternalCarriersForTarget(canonBody, targetFmt)
 			}
 		}
 		if canonErr != nil {
@@ -205,9 +224,21 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 			s.resolved.WireShape = typology.WireShapeOpenAIChat
 		}
 	}
+	// Attempt-0 sends cachePreparedBody and never reaches IngressChatToWire.
+	// Apply the same consumer boundary after either canonicalization or the
+	// native identity path, so identity OpenAI requests cannot leak either
+	// provider-private carrier.
+	if h.deps.CanonicalBridge != nil && ingressKind == typology.EndpointKindChat {
+		prepReq.Body = h.deps.CanonicalBridge.StripInternalCarriersForTarget(prepReq.Body, targetFmt)
+	}
 	prepStart := time.Now()
 	finalBody, finalRewrites, finalURLOverride, err := adapter.PrepareBody(prepReq)
 	if err != nil {
+		// Routing happened, so record which model it chose even though the codec
+		// refused before a byte left the gateway. Measured — an upstream refusal
+		// recorded gpt-4o-mini/openai while our own recorded null/null, leaving
+		// "how often does our codec refuse what auto picked" unanswerable.
+		stampRoutedTarget(s.rec, primary)
 		h.writeCodecErr(s.w, s.rec, err, "prepare body: ")
 		return false, false
 	}
@@ -241,6 +272,20 @@ func bodyPrepCallTarget(t routingcore.RoutingTarget) provcore.CallTarget {
 		ProviderModelID:    t.ProviderModelID,
 		BaseURL:            t.BaseURL,
 		MaxOutputTokens:    t.MaxOutputTokens,
+		Reasons:            t.Reasons,
 		ServesResponsesAPI: t.ServesResponsesAPI,
 	}
+}
+
+// stampRoutedTarget serves every path ending a request after routing resolved
+// a target but before the upstream was reached. The upstream paths stamp the
+// same four fields from the executor's attributed attempt.
+func stampRoutedTarget(rec *audit.Record, t routingcore.RoutingTarget) {
+	if rec == nil || t.ModelID == "" {
+		return
+	}
+	rec.RoutedProviderID = t.ProviderID
+	rec.RoutedProviderName = t.ProviderName
+	rec.RoutedModelID = t.ModelID
+	rec.RoutedModelName = t.ModelCode
 }

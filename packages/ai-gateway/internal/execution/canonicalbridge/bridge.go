@@ -11,6 +11,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/cohere"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai"
+	openairesponses "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/responses"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/sjson"
 )
@@ -113,12 +114,30 @@ func (b *Bridge) ChatRoutable(ingress, target provcore.Format) bool {
 //   - override == true  → the adapter default; a true override cannot grant a
 //     capability the adapter lacks (it is ignored unless RequestShapes already
 //     includes WireShapeOpenAIResponses).
-func (b *Bridge) ServesResponses(target provcore.Format, override *bool) bool {
-	base := formatDefaultServesResponses(target)
+func (b *Bridge) ServesResponses(target provcore.Format, override *bool, body []byte) bool {
 	if override != nil && !*override {
 		return false
 	}
-	return base
+	if !formatDefaultServesResponses(target) {
+		return false
+	}
+	// Content the Responses wire has no part for. The request is well-formed
+	// and the model can serve it — on the other OpenAI line. Reporting "does
+	// not serve" here routes it through canonical(chat), which is the wire that
+	// carries the content, and the response is converted back to the Responses
+	// shape the caller asked for. Without this the caller is handed a rejection
+	// for a request the gateway could have served, and told to go change wires
+	// themselves — which is the work the gateway exists to do.
+	//
+	// body is a PARAMETER rather than something each call site consults on its
+	// own because four sites resolve this predicate and their upstream wire
+	// shape must agree. Their comments used to ask each other to agree
+	// ("all three sites must agree", "dispatch site 1 of 3"), and a site that
+	// forgets a comment still compiles. A site that forgets an argument does not.
+	if _, exceeds := openairesponses.ExceedsInputVocabulary(body); exceeds {
+		return false
+	}
+	return true
 }
 
 // ResponsesRoutable reports whether /v1/responses ingress traffic
@@ -399,7 +418,11 @@ func (b *Bridge) IngressChatToCanonical(ingress provcore.Format, body []byte, ct
 // bridge-translated attempt.
 func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget, stream bool) ([]byte, []string, error) {
 	if ingress == target {
-		return body, nil, nil
+		// Identity still crosses the canonical→wire consumer boundary: a
+		// verbatim OpenAI-family target does not consume provider-private
+		// carriers, so do not bypass stripping just because no translation is
+		// needed.
+		return b.StripInternalCarriersForTarget(body, target), nil, nil
 	}
 	// /v1/responses ingress + a target that serves the Responses wire
 	// (per-provider capability, downgrade-only override on ct): forward the
@@ -407,8 +430,8 @@ func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte,
 	// fall through to canonical(chat). The executor resolves the same
 	// predicate before deciding whether to call this at all, so the two sites
 	// agree on the wire shape sent upstream.
-	if ingress == provcore.FormatOpenAIResponses && b.ServesResponses(target, ct.ServesResponsesAPI) {
-		return body, nil, nil
+	if ingress == provcore.FormatOpenAIResponses && b.ServesResponses(target, ct.ServesResponsesAPI, body) {
+		return b.StripInternalCarriersForTarget(body, target), nil, nil
 	}
 	canon, err := b.IngressChatToCanonical(ingress, body, ct)
 	if err != nil {
@@ -417,9 +440,8 @@ func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte,
 	if stream {
 		canon = EnsureCanonicalStream(canon)
 	}
-	// This is the cross-format failover leg. Strip the Anthropic-private
-	// nexus_thinking carrier before an OpenAI-wire identity codec forwards it
-	// verbatim to a foreign upstream. The PRIMARY leg (cache-prep prepared
+	// This is the cross-format failover leg. Strip provider-private carriers
+	// before a target codec that does not consume them can forward them. The PRIMARY leg (cache-prep prepared
 	// body, whose bytes attempt-0 sends) never reaches this function, so it
 	// calls StripInternalCarriersForTarget directly — both legs share the one
 	// method below.

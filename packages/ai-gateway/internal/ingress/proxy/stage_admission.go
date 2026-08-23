@@ -17,6 +17,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/generativecaps"
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -148,7 +149,15 @@ func (st admissionStage) run() bool {
 				"Reduce the request size or ask an admin to raise payload_capture.maxRequestBytes")
 			return false
 		}
-		h.writeError(s.w, s.rec, http.StatusBadRequest, err.Error())
+		// Preserves a typed *ProviderError's status + named code (errModelRequired
+		// → MODEL_REQUIRED + error.param "model"); untyped admission failures keep
+		// the ADMISSION_REJECTED audit code.
+		var pe *provcore.ProviderError
+		if errors.As(err, &pe) {
+			h.writeCodecErr(s.w, s.rec, err, "")
+		} else {
+			h.writeError(s.w, s.rec, http.StatusBadRequest, "ADMISSION_REJECTED", err.Error())
+		}
 		return false
 	}
 	s.body = body
@@ -164,13 +173,6 @@ func (st admissionStage) run() bool {
 	// resolved RoutingTarget. Metrics + quota + cost math read the
 	// resolved target directly and are not affected by this field.
 	s.rec.ModelName = modelID
-
-	// Caller-declared correlation tags. End-user: header first, then the
-	// ingress protocol's native field; session: header only. Both opaque —
-	// persisted onto traffic_event.{end_user_id,session_id} and read by
-	// nothing else.
-	s.rec.EndUserID = extractEndUserID(s.r.Header)
-	s.rec.SessionID = extractSessionID(s.r.Header)
 
 	// Snapshot the payload-capture config once per request so the
 	// pre-hook request body and later response body decisions stay
@@ -317,7 +319,7 @@ func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle
 
 	if modelID == "" {
 		audit.ReleaseRequestBuffer(bodyHandle)
-		return nil, nil, "", false, fmt.Errorf("model is required")
+		return nil, nil, "", false, errModelRequired
 	}
 
 	if modelID == "auto" && typology.KindFromWireShape(in.WireShape) == typology.EndpointKindEmbeddings {

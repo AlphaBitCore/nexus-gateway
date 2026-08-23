@@ -41,13 +41,30 @@ func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
 // else is SQL NULL (nil) which the pointer / json.RawMessage / []string targets
 // accept. extra appends additional nil columns for GetTrafficEvent's payload
 // JOIN (request/response body + spill refs).
-func trafficEventRow(extra int) *pgxmock.Rows {
+// truncationColumnsPattern pins the four payload columns the detail query must
+// ask for. pgxmock matches on query TEXT and replays result columns positionally,
+// so an assertion on the scanned struct alone cannot detect a column being dropped
+// from the SELECT — the mock would happily feed the same row either way. Matching
+// the SQL is the only thing here that goes red when the query stops selecting them.
+const truncationColumnsPattern = `(?s)p\.request_truncated.*p\.response_truncated.*` +
+	`p\.request_size_bytes.*p\.response_size_bytes`
+
+// ip64 returns a pointer to an int64 literal, for nullable BIGINT mock columns.
+func ip64(v int64) *int64 { return &v }
+
+// tail, when supplied, fills the LAST len(tail) columns with concrete values —
+// the payload-JOIN columns whose semantics a test wants to pin (truncation
+// flags, captured sizes) rather than leave NULL.
+func trafficEventRow(extra int, tail ...any) *pgxmock.Rows {
 	const n = 96
 	cols := make([]string, n+extra)
 	vals := make([]any, n+extra)
 	for i := range cols {
 		cols[i] = fmt.Sprintf("c%d", i)
 		vals[i] = nil
+	}
+	for i, v := range tail {
+		vals[n+extra-len(tail)+i] = v
 	}
 	vals[0] = "evt1"       // ID (string)
 	vals[1] = "ai-gateway" // Source (string)
@@ -63,13 +80,13 @@ func trafficEventRow(extra int) *pgxmock.Rows {
 // routes and renders raw generic-http JSON. This pins that mapping.
 func TestGetTrafficEventForNormalize(t *testing.T) {
 	s, m := newMock(t)
-	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct", "req_spill", "resp_spill", "endpoint_type"}
+	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct", "req_spill", "resp_spill", "endpoint_type", "artifact_refs", "req_truncated", "resp_truncated"}
 	reqSpill := []byte(`{"backend":"localfs","key":"req-k","sha256":"abc"}`)
 	m.ExpectQuery(`COALESCE\(a.ingress_format`).WithArgs("evt1").
 		WillReturnRows(pgxmock.NewRows(cols).AddRow(
 			"anthropic", "claude-opus-4-7", "/v1/messages",
 			[]byte(`{"contents":1}`), "", []byte(`{"content":[]}`), "",
-			"application/json", "application/json", reqSpill, nil, "chat"))
+			"application/json", "application/json", reqSpill, nil, "chat", "", false, false))
 
 	in, err := s.GetTrafficEventForNormalize(context.Background(), "evt1")
 	if err != nil {
@@ -100,6 +117,32 @@ func TestGetTrafficEventForNormalize(t *testing.T) {
 	}
 	if err := m.ExpectationsWereMet(); err != nil {
 		t.Errorf("expectations: %v", err)
+	}
+}
+
+// The view-time normalize recomputes from the stored body, so when that body is
+// only a PREFIX the projection describes an incomplete payload. The input must
+// carry that fact — a partial conversation rendered as a complete one is
+// indistinguishable from a model that stopped early. Pinned on the SQL text too:
+// pgxmock replays columns positionally and cannot otherwise see the SELECT.
+func TestGetTrafficEventForNormalizeCarriesTruncation(t *testing.T) {
+	s, m := newMock(t)
+	cols := []string{"ingress_format", "model", "path", "req_body", "req_enc", "resp_body", "resp_enc", "req_ct", "resp_ct", "req_spill", "resp_spill", "endpoint_type", "artifact_refs", "req_truncated", "resp_truncated"}
+	m.ExpectQuery(`(?s)p\.request_truncated.*p\.response_truncated`).WithArgs("evt-trunc").
+		WillReturnRows(pgxmock.NewRows(cols).AddRow(
+			"openai", "deepseek-v4-pro", "/v1/chat/completions",
+			[]byte(`{"model":"x"}`), "", []byte("data: {\"object\":\"chat.completion.chu"), "",
+			"application/json", "text/event-stream", nil, nil, "chat", "", false, true))
+
+	in, err := s.GetTrafficEventForNormalize(context.Background(), "evt-trunc")
+	if err != nil {
+		t.Fatalf("GetTrafficEventForNormalize: %v", err)
+	}
+	if in.RequestTruncated {
+		t.Error("RequestTruncated=true, want false — the request body was stored whole")
+	}
+	if !in.ResponseTruncated {
+		t.Error("ResponseTruncated=false, want true — the normalized projection is computed from a prefix")
 	}
 }
 
@@ -194,8 +237,9 @@ func TestListTrafficEvents_CorrelationFilters(t *testing.T) {
 }
 
 // TestListTrafficEvents_EndpointTypeFilter pins the modality filter: an
-// EndpointType param must emit an exact-match predicate on endpoint_type and
-// the row's modality must scan back onto the DTO for the list column.
+// EndpointType param must emit an endpoint_type = ANY(...) predicate (a single
+// kind degrades to a one-element array) and the row's modality must scan back
+// onto the DTO for the list column.
 func TestListTrafficEvents_EndpointTypeFilter(t *testing.T) {
 	s, m := newMock(t)
 	const n = 96
@@ -211,11 +255,11 @@ func TestListTrafficEvents_EndpointTypeFilter(t *testing.T) {
 	vals[47] = sp("image_generation")
 	row := pgxmock.NewRows(cols).AddRow(vals...)
 
-	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE .*a\.endpoint_type = \$\d+`).
-		WithArgs(pgxmock.AnyArg(), "image_generation").
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE .*a\.endpoint_type = ANY\(\$\d+\)`).
+		WithArgs(pgxmock.AnyArg(), []string{"image_generation"}).
 		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
-	m.ExpectQuery(`a\.endpoint_type = \$\d+.*ORDER BY a\.timestamp DESC`).
-		WithArgs(pgxmock.AnyArg(), "image_generation", pgxmock.AnyArg(), pgxmock.AnyArg()).
+	m.ExpectQuery(`a\.endpoint_type = ANY\(\$\d+\).*ORDER BY a\.timestamp DESC`).
+		WithArgs(pgxmock.AnyArg(), []string{"image_generation"}, pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(row)
 
 	ev, total, err := s.ListTrafficEvents(context.Background(), TrafficEventListParams{
@@ -226,6 +270,42 @@ func TestListTrafficEvents_EndpointTypeFilter(t *testing.T) {
 	}
 	if ev[0].EndpointType == nil || *ev[0].EndpointType != "image_generation" {
 		t.Errorf("EndpointType = %v, want image_generation (must scan through for the column)", ev[0].EndpointType)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+// TestListTrafficEvents_EndpointTypeFilterMultiKind pins the "chat" modality
+// case: one modality spans two endpoint kinds (chat + responses), so a
+// comma-separated EndpointType must expand to ANY of both, not an equality that
+// would drop /v1/responses rows.
+func TestListTrafficEvents_EndpointTypeFilterMultiKind(t *testing.T) {
+	s, m := newMock(t)
+	const n = 96
+	cols := make([]string, n)
+	vals := make([]any, n)
+	for i := range cols {
+		cols[i] = fmt.Sprintf("c%d", i)
+		vals[i] = nil
+	}
+	vals[0], vals[1], vals[2], vals[73] = "evt1", "ai-gateway", tNow, tNow
+	vals[47] = sp("responses")
+	row := pgxmock.NewRows(cols).AddRow(vals...)
+
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM traffic_event a WHERE .*a\.endpoint_type = ANY\(\$\d+\)`).
+		WithArgs(pgxmock.AnyArg(), []string{"chat", "responses"}).
+		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	m.ExpectQuery(`a\.endpoint_type = ANY\(\$\d+\).*ORDER BY a\.timestamp DESC`).
+		WithArgs(pgxmock.AnyArg(), []string{"chat", "responses"}, pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(row)
+
+	// Whitespace around commas is tolerated so the UI can join kinds readably.
+	ev, total, err := s.ListTrafficEvents(context.Background(), TrafficEventListParams{
+		DBSources: []string{"ai-gateway"}, EndpointType: "chat, responses", Limit: 20,
+	})
+	if err != nil || total != 1 || len(ev) != 1 {
+		t.Fatalf("multi-kind endpoint-type filter: %+v total=%d err=%v", ev, total, err)
 	}
 	if err := m.ExpectationsWereMet(); err != nil {
 		t.Errorf("expectations: %v", err)
@@ -293,7 +373,7 @@ func TestListTrafficEvents_Errors(t *testing.T) {
 
 func TestGetTrafficEvent(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`LEFT JOIN traffic_event_payload p`).WithArgs("evt1").WillReturnRows(trafficEventRow(6))
+	m.ExpectQuery(`LEFT JOIN traffic_event_payload p`).WithArgs("evt1").WillReturnRows(trafficEventRow(10, false, false, nil, nil))
 	got, err := s.GetTrafficEvent(context.Background(), "evt1")
 	if err != nil || got == nil || got.ID != "evt1" {
 		t.Fatalf("GetTrafficEvent: %+v %v", got, err)
@@ -308,29 +388,52 @@ func TestGetTrafficEvent(t *testing.T) {
 	}
 }
 
-func TestGetTrafficEventNormalized(t *testing.T) {
+// A body that hit the inline-vs-spill cutoff with no spill backend configured is
+// stored as a PREFIX, and traffic_event_payload records that fact in
+// response_truncated / response_size_bytes (see spillstore.EmitBody). The detail
+// query must carry BOTH out: without the flag the drawer renders the prefix as a
+// whole body, and a truncated SSE stream then looks exactly like a response the
+// model never finished. The sizes below are a real ABC stg row — 100 KiB kept of
+// a 254432-byte response.
+func TestGetTrafficEventSurfacesBodyTruncation(t *testing.T) {
 	s, m := newMock(t)
-	normCols := []string{"traffic_event_id", "request_normalized", "response_normalized",
-		"request_status", "response_status", "request_error_reason", "response_error_reason",
-		"request_redaction_spans", "response_redaction_spans",
-		"normalize_version", "created_at"}
-	reqSpans := []byte(`[{"contentAddress":"messages.0.content.0","start":0,"end":10}]`)
-	m.ExpectQuery(`FROM traffic_event_normalized`).WithArgs("evt1").
-		WillReturnRows(pgxmock.NewRows(normCols).AddRow("evt1", []byte(`{}`), []byte(`{}`), sp("ok"), sp("ok"), nil, nil, reqSpans, nil, "1", tNow))
-	got, err := s.GetTrafficEventNormalized(context.Background(), "evt1")
-	if err != nil || got == nil || got.TrafficEventID != "evt1" || got.NormalizeVersion != "1" {
-		t.Fatalf("GetTrafficEventNormalized: %+v %v", got, err)
+	realRequestSize, realResponseSize := int64(561168), int64(254432)
+	m.ExpectQuery(truncationColumnsPattern).WithArgs("truncated-evt").
+		WillReturnRows(trafficEventRow(10, true, true, &realRequestSize, &realResponseSize))
+
+	got, err := s.GetTrafficEvent(context.Background(), "truncated-evt")
+	if err != nil || got == nil {
+		t.Fatalf("GetTrafficEvent: %+v %v", got, err)
 	}
-	if string(got.RequestRedactionSpans) != string(reqSpans) || got.ResponseRedactionSpans != nil {
-		t.Fatalf("redaction spans not scanned through: req=%s resp=%v", got.RequestRedactionSpans, got.ResponseRedactionSpans)
+	if !got.RequestBodyTruncated || !got.ResponseBodyTruncated {
+		t.Fatalf("truncation flags lost: request=%v response=%v (both must be true)",
+			got.RequestBodyTruncated, got.ResponseBodyTruncated)
 	}
-	m.ExpectQuery(`traffic_event_normalized`).WithArgs("gone").WillReturnError(pgx.ErrNoRows)
-	if got, err := s.GetTrafficEventNormalized(context.Background(), "gone"); err != nil || got != nil {
-		t.Fatalf("not-found should be (nil,nil): %+v %v", got, err)
+	if got.RequestBodySizeBytes == nil || *got.RequestBodySizeBytes != realRequestSize {
+		t.Fatalf("request size: want %d, got %v", realRequestSize, got.RequestBodySizeBytes)
 	}
-	m.ExpectQuery(`traffic_event_normalized`).WithArgs("x").WillReturnError(errors.New("boom"))
-	if _, err := s.GetTrafficEventNormalized(context.Background(), "x"); err == nil {
-		t.Fatal("db error must surface")
+	if got.ResponseBodySizeBytes == nil || *got.ResponseBodySizeBytes != realResponseSize {
+		t.Fatalf("response size: want %d, got %v", realResponseSize, got.ResponseBodySizeBytes)
+	}
+}
+
+// The common row is NOT truncated and must not claim to be — a false positive
+// would put a "this body is incomplete" banner on every complete body.
+func TestGetTrafficEventReportsNoTruncationForWholeBodies(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectQuery(truncationColumnsPattern).WithArgs("whole-evt").
+		WillReturnRows(trafficEventRow(10, false, false, ip64(1234), ip64(5678)))
+
+	got, err := s.GetTrafficEvent(context.Background(), "whole-evt")
+	if err != nil || got == nil {
+		t.Fatalf("GetTrafficEvent: %+v %v", got, err)
+	}
+	if got.RequestBodyTruncated || got.ResponseBodyTruncated {
+		t.Fatalf("whole bodies must not report truncation: request=%v response=%v",
+			got.RequestBodyTruncated, got.ResponseBodyTruncated)
+	}
+	if got.ResponseBodySizeBytes == nil || *got.ResponseBodySizeBytes != 5678 {
+		t.Fatalf("captured size must be reported even when whole: got %v", got.ResponseBodySizeBytes)
 	}
 }
 

@@ -119,12 +119,17 @@ func (h *Handler) GetProvider(c echo.Context) error {
 type createProviderModelInput struct {
 	// Code is the customer-facing identifier (e.g. "gpt-4o"). Globally unique.
 	// Defaults to providerModelId when empty.
-	Code                  string   `json:"code"`
-	ProviderModelID       string   `json:"providerModelId"`
-	Name                  string   `json:"name"`
-	Description           string   `json:"description"`
-	Type                  string   `json:"type"`
-	Features              []string `json:"features"`
+	Code            string   `json:"code"`
+	ProviderModelID string   `json:"providerModelId"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Type            string   `json:"type"`
+	Features        []string `json:"features"`
+	// nil means "derive from type" — the wizard sends the catalog's answer
+	// when the template states one, and nothing when it does not.
+	InputModalities       []string `json:"inputModalities"`
+	OutputModalities      []string `json:"outputModalities"`
+	RequiredModalities    []string `json:"requiredModalities"`
 	InputPricePerMillion  *float64 `json:"inputPricePerMillion"`
 	OutputPricePerMillion *float64 `json:"outputPricePerMillion"`
 	// Audio-token rates for realtime models (per 1M tokens).
@@ -271,6 +276,9 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 			ProviderModelID:                     m.ProviderModelID,
 			Type:                                m.Type,
 			Features:                            features,
+			InputModalities:                     m.InputModalities,
+			OutputModalities:                    m.OutputModalities,
+			RequiredModalities:                  m.RequiredModalities,
 			InputPricePerMillion:                m.InputPricePerMillion,
 			OutputPricePerMillion:               m.OutputPricePerMillion,
 			AudioInputPricePerMillion:           m.AudioInputPricePerMillion,
@@ -607,10 +615,13 @@ func (h *Handler) AddProviderModel(c echo.Context) error {
 		AudioOutputPricePerMillion          *float64 `json:"audioOutputPricePerMillion"`
 		CachedAudioInputReadPricePerMillion *float64 `json:"cachedAudioInputReadPricePerMillion"`
 
-		MaxContextTokens *int            `json:"maxContextTokens"`
-		MaxOutputTokens  *int            `json:"maxOutputTokens"`
-		Aliases          []string        `json:"aliases"`
-		CapabilityJson   json.RawMessage `json:"capabilityJson"`
+		MaxContextTokens   *int            `json:"maxContextTokens"`
+		MaxOutputTokens    *int            `json:"maxOutputTokens"`
+		Aliases            []string        `json:"aliases"`
+		InputModalities    []string        `json:"inputModalities"`
+		OutputModalities   []string        `json:"outputModalities"`
+		RequiredModalities []string        `json:"requiredModalities"`
+		CapabilityJson     json.RawMessage `json:"capabilityJson"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
@@ -653,7 +664,9 @@ func (h *Handler) AddProviderModel(c echo.Context) error {
 		AudioOutputPricePerMillion:          body.AudioOutputPricePerMillion,
 		CachedAudioInputReadPricePerMillion: body.CachedAudioInputReadPricePerMillion,
 		MaxContextTokens:                    body.MaxContextTokens, MaxOutputTokens: body.MaxOutputTokens,
-		Aliases: body.Aliases, CapabilityJson: capJSON, Enabled: true,
+		InputModalities: body.InputModalities, OutputModalities: body.OutputModalities,
+		RequiredModalities: body.RequiredModalities,
+		Aliases:            body.Aliases, CapabilityJson: capJSON, Enabled: true,
 	})
 	if err != nil {
 		// 23505 = unique_violation: the per-provider model natural key

@@ -256,7 +256,7 @@ func (c *cockpit) leaderboard() string {
 		filled := r.RequestCount * leaderBarWidth / max
 		bar := lipgloss.NewStyle().Foreground(styles.Brand).Render(strings.Repeat("█", filled)) +
 			lipgloss.NewStyle().Foreground(styles.Line).Render(strings.Repeat("░", leaderBarWidth-filled))
-		b.WriteString(fmt.Sprintf("%-14s %s %d\n", kit.Clip(label, 14), bar, r.RequestCount))
+		fmt.Fprintf(&b, "%-14s %s %d\n", kit.Clip(label, 14), bar, r.RequestCount)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

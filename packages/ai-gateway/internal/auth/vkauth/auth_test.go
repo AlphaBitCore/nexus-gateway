@@ -154,21 +154,57 @@ func TestAuthenticate_HashMissFromDB(t *testing.T) {
 	}
 }
 
-func TestAuthenticate_DBErrorWraps(t *testing.T) {
-	// Non-ErrNoRows DB errors must wrap ErrInvalid AND keep the
-	// underlying error chain (verified by errors.Is on both).
+// A lookup that could not run is OUR failure, not the caller's. It used to
+// wrap ErrInvalid, so a Postgres outage answered every request with "your
+// virtual key is invalid" — callers rotate keys, which cannot help, while the
+// real fault stays hidden behind client-side errors.
+func TestAuthenticate_LookupFailure_IsOursNotTheCallers(t *testing.T) {
 	dbErr := errors.New("connection refused")
 	a, _ := newAuthTestRig(t, nil, dbErr)
 	r := reqWithBearer("nvk_anything_aaaaaaaaaaaa")
 	_, err := a.Authenticate(context.Background(), r)
-	if !errors.Is(err, ErrInvalid) {
-		t.Errorf("err must wrap ErrInvalid; got %v", err)
+
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err must wrap ErrUnavailable so the handler can answer 503; got %v", err)
 	}
+	if errors.Is(err, ErrInvalid) {
+		t.Error("err must NOT wrap ErrInvalid — that blames the caller for our outage")
+	}
+	// The underlying cause still has to survive, or the operator loses the
+	// only signal that says which backend failed.
 	if !errors.Is(err, dbErr) {
 		t.Errorf("err must wrap dbErr; got %v", err)
 	}
 	if !strings.Contains(err.Error(), "hash lookup") {
 		t.Errorf("err must mention hash lookup; got %v", err)
+	}
+}
+
+// A token that is not shaped like a key never reaches the database, and that
+// IS the caller's problem — it must stay a 401 rather than being swept into
+// the new unavailable class.
+func TestAuthenticate_MalformedToken_StaysTheCallersProblem(t *testing.T) {
+	a, _ := newAuthTestRig(t, nil, errors.New("connection refused"))
+	_, err := a.Authenticate(context.Background(), reqWithBearer("short"))
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("a malformed token must remain ErrInvalid; got %v", err)
+	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Error("a malformed token must not be reported as a gateway outage")
+	}
+}
+
+// No matching row across every keyring version is also the caller's problem:
+// the key does not resolve. Distinguishing "exists but wrong" from "does not
+// exist" would leak key existence, so both stay ErrInvalid.
+func TestAuthenticate_NoMatchingKey_StaysTheCallersProblem(t *testing.T) {
+	a, _ := newAuthTestRig(t, nil, pgx.ErrNoRows)
+	_, err := a.Authenticate(context.Background(), reqWithBearer("nvk_anything_aaaaaaaaaaaa"))
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("an unmatched key must remain ErrInvalid; got %v", err)
+	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Error("an unmatched key must not be reported as a gateway outage")
 	}
 }
 

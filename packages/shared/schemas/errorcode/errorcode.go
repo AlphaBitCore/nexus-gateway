@@ -44,6 +44,12 @@ const (
 	AuthFailed = "auth_failed"
 	// RateLimited: the upstream throttled us (429).
 	RateLimited = "rate_limited"
+	// ProviderQuotaExhausted: the upstream ACCOUNT's budget is spent. Distinct
+	// from RateLimited, which clears in seconds: this clears when the billing
+	// window resets or the customer raises the limit, and it is account-scoped
+	// rather than per-request, so every model behind that provider is equally
+	// unusable until then.
+	ProviderQuotaExhausted = "provider_quota_exhausted"
 	// Timeout: the upstream did not answer within the request budget.
 	Timeout = "timeout"
 	// UpstreamError: the upstream failed in a way that carries no more specific
@@ -65,14 +71,15 @@ const (
 // actually answered and rejected us. NoCompatibleProvider is excluded on
 // purpose: it means we never reached one.
 var upstreamCodes = map[string]struct{}{
-	InvalidRequest:      {},
-	AuthFailed:          {},
-	RateLimited:         {},
-	Timeout:             {},
-	UpstreamError:       {},
-	EndpointUnsupported: {},
-	ContextOverflow:     {},
-	NotImplemented:      {},
+	InvalidRequest:         {},
+	AuthFailed:             {},
+	RateLimited:            {},
+	ProviderQuotaExhausted: {},
+	Timeout:                {},
+	UpstreamError:          {},
+	EndpointUnsupported:    {},
+	ContextOverflow:        {},
+	NotImplemented:         {},
 }
 
 // IsUpstream reports whether a traffic_event.error_code value means the upstream

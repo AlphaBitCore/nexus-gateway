@@ -1,6 +1,6 @@
 {
   "kind": "ai-chat",
-  "normalizeVersion": "2",
+  "normalizeVersion": "3",
   "protocol": "claude-web",
   "model": "claude-opus-4-7",
   "messages": [

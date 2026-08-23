@@ -160,22 +160,32 @@ func TestMultimodalUserTextCoverage(t *testing.T) {
 		{
 			kind: typology.EndpointKindImageGeneration,
 			// Full OpenAI images/generations request schema.
-			body: `{"model":"dall-e-3","prompt":"USER_TEXT_PROMPT","n":1,"quality":"hd","response_format":"b64_json","size":"1024x1024","style":"vivid","user":"end-user-id"}`,
+			body: `{"model":"gpt-image-1","prompt":"USER_TEXT_PROMPT","n":1,"quality":"hd","response_format":"b64_json","size":"1024x1024","style":"vivid","user":"end-user-id","background":"transparent","moderation":"low","output_format":"png","output_compression":80,"partial_images":2,"stream":false}`,
 			fields: []field{
 				{"prompt", true},
 				{"model", false}, {"n", false}, {"quality", false},
 				{"response_format", false}, {"size", false}, {"style", false},
-				{"user", false},
+				{"user", false}, {"background", false}, {"moderation", false},
+				{"output_format", false}, {"output_compression", false},
+				{"partial_images", false}, {"stream", false},
 			},
 		},
 		{
 			kind: typology.EndpointKindTTS,
-			// Full OpenAI audio/speech request schema.
-			body: `{"model":"tts-1","input":"USER_TEXT_INPUT","voice":"alloy","response_format":"mp3","speed":1.0}`,
+			// Full OpenAI audio/speech request schema. `instructions` steers
+			// delivery in free-form prose the caller writes, so it is user
+			// text exactly as `input` is — the normalize codec already treats
+			// it that way, appending it alongside input and failing
+			// ErrUnsupported only when BOTH are empty. A fixture that omits
+			// the field lets this gate stay green while the slot goes
+			// unscanned, which is the failure it exists to catch.
+			body: `{"model":"gpt-4o-mini-tts","input":"USER_TEXT_INPUT","instructions":"USER_TEXT_INSTRUCTIONS","voice":"alloy","response_format":"mp3","speed":1.0,"stream_format":"audio"}`,
 			fields: []field{
 				{"input", true},
+				{"instructions", true},
 				{"model", false}, {"voice", false},
 				{"response_format", false}, {"speed", false},
+				{"stream_format", false},
 			},
 		},
 	}

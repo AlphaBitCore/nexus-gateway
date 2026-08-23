@@ -52,8 +52,8 @@ func TestMarshalRecord_RoundTrips(t *testing.T) {
 	}
 
 	// Scalar identity fields survive.
-	if msg.ID != "req-roundtrip-1" {
-		t.Errorf("ID = %q, want req-roundtrip-1", msg.ID)
+	if msg.ID == "" || msg.ID == "req-roundtrip-1" {
+		t.Errorf("ID = %q, want a minted id distinct from the request id", msg.ID)
 	}
 	if msg.ModelName != "mock-gpt-4o-mini" {
 		t.Errorf("ModelName = %q, want mock-gpt-4o-mini", msg.ModelName)

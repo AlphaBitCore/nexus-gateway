@@ -116,5 +116,6 @@ func (s *proxyState) finalizeAudit() {
 		snap[string(traffic.PhaseAuditEmit)] = emitMs
 	}
 	s.rec.LatencyBreakdown = snap
+	checkRoutedTargetWasACandidate(s.rec, s.h.deps.Logger)
 	s.h.deps.AuditWriter.Enqueue(s.rec)
 }

@@ -99,6 +99,34 @@ func (s *proxyState) cacheNormalized() *normcore.NormalizedPayload {
 	return s.postHookNormalized
 }
 
+// freshnessMessages projects the canonical messages the time-sensitivity
+// detector needs, and — more importantly — declines to compute them when the
+// detector cannot act on them.
+//
+// Materializing the canonical is the single most expensive thing on the
+// request path. The only consumer of this slice is classifyCachePreLookup's
+// time-sensitive arm, whose own guard is `ApplyFreshnessRules() && detector
+// != nil`. Gating on cacheEnabled alone therefore ran a full Normalize on
+// every chat request in the shipped default posture — cache.enabled is true
+// out of the box, apply_freshness_rules is absent from ai-gateway.config.yaml
+// (so false), and FreshnessDetector stays nil until a pattern config is
+// pushed — to feed a predicate that could not fire. Mirroring the consumer's
+// guard here is what makes the lazy canonical actually lazy.
+//
+// Returning nil is not a behaviour change for the detector: nil canonical or
+// empty messages already yield false (fail-open), which is the same answer
+// the skipped computation would have produced.
+func (s *proxyState) freshnessMessages(cacheEnabled bool) []freshness.ChatMessage {
+	if !cacheEnabled || !s.h.deps.Cache.ApplyFreshnessRules() || s.h.deps.FreshnessDetector == nil {
+		return nil
+	}
+	np := s.cacheNormalized()
+	if np == nil {
+		return nil
+	}
+	return normMessagesToFreshness(np.Messages)
+}
+
 func (st cacheStage) run() bool {
 	s := st.s
 	h := s.h
@@ -134,26 +162,14 @@ func (st cacheStage) run() bool {
 	// time-boxed, audited bypass arrives as Emergency Passthrough bypassCache,
 	// handled above. So the tiers' own flags are the whole gate.
 	cacheEnabled := l1Enabled || l2Enabled
-	// Project canonical NormalizedPayload messages → freshness.ChatMessage
-	// for the time-sensitivity detector. Computed ONLY when a cache tier is
-	// active — pulling rctxFull.Normalized() materializes the lazy canonical,
-	// and the freshness detector is meaningless when all tiers are off. On the
-	// lean (cache-off) path this leaves canonicalMsgs nil and the canonical
-	// uncomputed. Nil canonical / empty messages → nil slice → detector returns
-	// false (fail-open).
-	var canonicalMsgs []freshness.ChatMessage
-	if cacheEnabled {
-		if np := s.cacheNormalized(); np != nil {
-			canonicalMsgs = normMessagesToFreshness(np.Messages)
-		}
-	}
+	canonicalMsgs := s.freshnessMessages(cacheEnabled)
 	// skipTimeSensitivePolicy reads the apply_freshness_rules gate
 	// so freshness-rule matches actually skip cache.
 	preLookupStatus, preLookupSkipReason := classifyCachePreLookup(
 		typology.KindFromWireShape(s.resolved.WireShape),
 		cacheEnabled,
 		noCacheRequestedWithWarn(s.r.Header, s.logger),
-		len(s.routeResult.Targets) > 0,
+		len(s.routeResult.AllTargets()) > 0,
 		passthroughBypassCache,
 		h.deps.FreshnessDetector,
 		canonicalMsgs,
@@ -191,7 +207,7 @@ func (st cacheStage) run() bool {
 			h.deps.CacheMetrics.RecordLookup("disabled")
 			break
 		}
-		primary := s.routeResult.Targets[0]
+		primary := s.routeResult.Primary()
 
 		// Cache stage is active (L1 and/or L2). Default the status to MISS; a HIT
 		// branch below overrides and returns. When L1 is disabled the stage skips
@@ -273,6 +289,10 @@ func (st cacheStage) run() bool {
 				}
 				return nil
 			}(),
+			// Derived from the same memoized canonical the write path
+			// uses, so a lookup and the write-back it will trigger agree
+			// by construction rather than by two matching derivations.
+			answerKey: answerKey(s.cacheNormalized()),
 			hasTools: func() bool {
 				np := s.cacheNormalized()
 				return np != nil && len(np.Tools) > 0

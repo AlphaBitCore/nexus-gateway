@@ -140,6 +140,75 @@ func TestClassifyImpl_CacheHit_SkipsBackend(t *testing.T) {
 	}
 }
 
+// TestClassifyImpl_PropagatesProviderFromBackendResponse pins the producer
+// side of the ai-guard attribution fix: classifyImpl must copy the serving
+// provider from Response.Metadata onto the emitted TrafficEvent on both the
+// miss (fresh backend call) and hit (cached response) paths — the provider
+// identity is real on both, since a cache hit still replays a real earlier
+// call's Metadata; only CostUsd is zeroed on a hit, not the provider.
+func TestClassifyImpl_PropagatesProviderFromBackendResponse(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	cache := NewCache(rdb)
+	sink := &stubTrafficSink{}
+	be := &stubBackend{resp: &Response{
+		Decision: "approve",
+		Metadata: Metadata{ProviderID: "prov-openai", ProviderName: "openai"},
+	}}
+	cfg := &RuntimeConfig{BackendFingerprint: "fp-provider", PromptTemplate: DefaultPrompt, CacheTTLSeconds: 60, TimeoutMs: 2000}
+	req := Request{DetectorType: "prompt_injection", Content: "hi"}
+
+	// Miss path: backend response's provider lands on the emitted event.
+	if _, err := classifyImpl(context.Background(), req, cfg, be, cache, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(sink.events))
+	}
+	if sink.events[0].ProviderID != "prov-openai" {
+		t.Errorf("miss-path ProviderID = %q, want prov-openai", sink.events[0].ProviderID)
+	}
+	if sink.events[0].ProviderName != "openai" {
+		t.Errorf("miss-path ProviderName = %q, want openai", sink.events[0].ProviderName)
+	}
+
+	// Hit path: same content again → cache hit, provider still carried from
+	// the cached Response's Metadata (cost is zeroed on hits, provider is not).
+	if _, err := classifyImpl(context.Background(), req, cfg, be, cache, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.events) != 2 || !sink.events[1].CacheHit {
+		t.Fatalf("want second event to be a cache hit: %+v", sink.events)
+	}
+	if sink.events[1].ProviderID != "prov-openai" {
+		t.Errorf("hit-path ProviderID = %q, want prov-openai", sink.events[1].ProviderID)
+	}
+	if sink.events[1].CostUsd != 0 {
+		t.Errorf("hit-path CostUsd = %v, want 0 (cache hit incurs no new call)", sink.events[1].CostUsd)
+	}
+}
+
+// TestClassifyImpl_BackendError_LeavesProviderEmpty pins the "no call, no
+// charge" contract on the early-return failure paths: a backend call error
+// never resolved a provider — there is nothing to attribute — so the emitted
+// TrafficEvent.ProviderID must stay empty even though the backend was reached.
+func TestClassifyImpl_BackendError_LeavesProviderEmpty(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	cache := NewCache(rdb)
+	sink := &stubTrafficSink{}
+	be := &stubBackend{err: errors.New("network down")}
+	cfg := &RuntimeConfig{BackendFingerprint: "fp-err-provider", PromptTemplate: DefaultPrompt, CacheTTLSeconds: 60, TimeoutMs: 2000}
+	_, err := classifyImpl(context.Background(), Request{DetectorType: "x", Content: "x"}, cfg, be, cache, sink)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(sink.events))
+	}
+	if sink.events[0].ProviderID != "" {
+		t.Errorf("ProviderID = %q, want empty on a failed call that never resolved a provider", sink.events[0].ProviderID)
+	}
+}
+
 func TestClassifyImpl_BackendError_Returns503Shape(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	cache := NewCache(rdb)
@@ -321,5 +390,47 @@ func TestClassifyImpl_WithMessages_AppliesInputStaging(t *testing.T) {
 	// Verify the backend was called (not a cache hit) and exactly one event was emitted.
 	if be.callCount != 1 {
 		t.Errorf("backend calls: want 1, got %d", be.callCount)
+	}
+}
+
+// TestClassifyImpl_CarriesCacheTokenSplitOntoTrafficEvent pins the Metadata ->
+// TrafficEvent hop for the cache buckets. The backend computes the classifier's
+// cost from the four-tier split, but the sink writes the row; if the split does
+// not survive this copy, the row records a cache-discounted charge with no
+// visible reason for it — the same unauditable shape that let the full-rate
+// over-charge sit undetected in stored data.
+func TestClassifyImpl_CarriesCacheTokenSplitOntoTrafficEvent(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	cache := NewCache(rdb)
+	sink := &stubTrafficSink{}
+	be := &stubBackend{resp: &Response{
+		Decision: "approve",
+		Metadata: Metadata{
+			PromptTokens: 4000, CompletionTokens: 20,
+			CacheReadTokens: 3600, CacheCreationTokens: 200,
+			CostUsd: 0.00039, ProviderID: "prov-openai",
+		},
+	}}
+	cfg := &RuntimeConfig{BackendFingerprint: "fp-cache", PromptTemplate: DefaultPrompt, CacheTTLSeconds: 60, TimeoutMs: 2000}
+
+	if _, err := classifyImpl(context.Background(), Request{
+		DetectorType: "prompt_injection", Content: "hi",
+	}, cfg, be, cache, sink); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.CacheReadTokens != 3600 || e.CacheCreationTokens != 200 {
+		t.Errorf("cache split = (read %d, creation %d), want (3600, 200)",
+			e.CacheReadTokens, e.CacheCreationTokens)
+	}
+	if e.PromptTokens != 4000 {
+		t.Errorf("PromptTokens = %d, want 4000 (the TOTAL input, cached share included)", e.PromptTokens)
+	}
+	if e.CostUsd != 0.00039 {
+		t.Errorf("CostUsd = %v, want 0.00039", e.CostUsd)
 	}
 }

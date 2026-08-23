@@ -53,6 +53,13 @@ func (t *Transport) BuildURL(target provcore.CallTarget, endpoint typology.WireS
 		return base + "/v2/chat", nil
 	case typology.WireShapeCohereEmbed:
 		return base + "/v2/embed", nil
+	case typology.WireShapeCohereRerank:
+		// The codec has encoded and decoded rerank since the endpoint was
+		// added; this switch never learned about it, so every rerank request
+		// died here with "unsupported endpoint" before a URL existed — the
+		// provider was never called at all. A codec that can speak a wire the
+		// transport cannot address is two halves of one adapter disagreeing.
+		return base + "/v2/rerank", nil
 	case typology.WireShapeNone:
 		return base + "/v1/models", nil
 	}

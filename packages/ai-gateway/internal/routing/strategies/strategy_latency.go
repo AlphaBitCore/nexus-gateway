@@ -60,7 +60,7 @@ type latencyStat struct {
 	total  int // total in-window samples (success+failure)
 }
 
-func (s *LatencyStrategy) Evaluate(ctx context.Context, node core.StrategyNode, _ *core.RoutingContext, trace *[]core.TraceEntry, _ int, _ RecurseFunc) ([]core.RoutingTarget, error) {
+func (s *LatencyStrategy) Evaluate(ctx context.Context, node core.StrategyNode, _ *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 	if len(node.LatencyTargets) == 0 {
 		*trace = append(*trace, core.TraceEntry{
 			StrategyType: "latency",

@@ -49,7 +49,7 @@ func TestStart_NoopWhenDisabled(t *testing.T) {
 	t.Setenv(EnvEnabled, "") // default off
 	t.Setenv(EnvAddr, addr)  // would serve, but the master switch is off
 	t.Setenv(EnvDir, t.TempDir())
-	Start("svc-noop")
+	t.Cleanup(Start("svc-noop"))
 	time.Sleep(50 * time.Millisecond)
 	if c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond); err == nil {
 		_ = c.Close()
@@ -90,7 +90,7 @@ func TestStart_SignalDumpsFiles(t *testing.T) {
 	t.Setenv(EnvAddr, "")
 	t.Setenv(EnvDir, dir)
 	t.Setenv(EnvCPUSeconds, "1") // keep the CPU window short for the test
-	Start("svc-dump")
+	t.Cleanup(Start("svc-dump"))
 	// Drain any in-flight CPU capture before returning so the process-global CPU
 	// profiler is free for the next test (the signal handler runs the 1s capture
 	// asynchronously).
@@ -135,7 +135,7 @@ func TestStart_BadDirDisablesDumps(t *testing.T) {
 	t.Setenv(EnvEnabled, "true")
 	t.Setenv(EnvAddr, "")
 	t.Setenv(EnvDir, "/proc/nonexistent-cannot-mkdir/sub")
-	Start("svc-baddir") // must not panic; MkdirAll fails → dumps disabled
+	t.Cleanup(Start("svc-baddir")) // must not panic; MkdirAll fails → dumps disabled
 }
 
 func TestResolveDumpDir(t *testing.T) {
@@ -410,7 +410,7 @@ func TestStartSignalDump_NoSignalIsAnnouncedNotArmed(t *testing.T) {
 
 	dir := filepath.Join(t.TempDir(), "never-created")
 	t.Setenv(EnvDir, dir)
-	startSignalDump("svc")
+	t.Cleanup(startSignalDump("svc"))
 
 	out := buf.String()
 	if strings.Contains(out, "dumps armed") {
@@ -461,4 +461,51 @@ func TestStartHTTP_ReportsTheActualExposure(t *testing.T) {
 			t.Errorf("want the off-host warning on a wildcard bind, got:\n%s", out)
 		}
 	})
+}
+
+// A disarmed handler must stop consuming the capture signal.
+//
+// This is the property behind the SIGUSR1 test's intermittence. signal.Notify
+// registrations are process-global and Go delivers a signal to EVERY registered
+// channel, so an arming that is never torn down does not go quiet — it keeps
+// running a stop-the-world runtime.GC() plus three profile writes on every
+// later signal. Across a test binary those handlers accumulate, one signal ends
+// up costing N dumps, and the test with the tightest deadline is the one that
+// fails, only under a loaded parallel run.
+//
+// Asserted by arming twice into two different directories, disarming the first,
+// and sending one signal: the disarmed directory must stay empty while the
+// armed one fills. Without the disarm both fill, which is the leak.
+func TestStartSignalDump_DisarmStopsTheHandler(t *testing.T) {
+	if sig, _ := dumpSignalFn(); sig == nil {
+		t.Skip("no capture signal on this platform")
+	}
+	t.Setenv(EnvEnabled, "true")
+
+	disarmedDir := t.TempDir()
+	t.Setenv(EnvDir, disarmedDir)
+	disarm := startSignalDump("svc-disarmed")
+
+	armedDir := t.TempDir()
+	t.Setenv(EnvDir, armedDir)
+	t.Cleanup(startSignalDump("svc-armed"))
+
+	disarm()
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGUSR1); err != nil {
+		t.Fatalf("send SIGUSR1: %v", err)
+	}
+
+	deadline := time.Now().Add(4 * time.Second)
+	for len(mustReadDir(t, armedDir)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the armed handler never fired; the test cannot say anything about the disarmed one")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// The armed handler has run, so a still-registered disarmed one would have
+	// been delivered the same signal and written by now.
+	if got := mustReadDir(t, disarmedDir); len(got) != 0 {
+		t.Errorf("the disarmed handler still wrote %d file(s); signal.Stop did not take effect", len(got))
+	}
 }

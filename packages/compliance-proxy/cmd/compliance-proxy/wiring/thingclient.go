@@ -119,12 +119,11 @@ func InitThingClient(ctx context.Context, d ThingClientDeps) ThingClientResult {
 
 	// Capture L2 static identity and push it now + on every reconnect.
 	staticInfo := platform.CaptureStaticInfo(platform.BuildInfo{
-		ServiceVersion: "compliance-proxy/0.1.0",
-		BuildSHA:       "",
-		BuildTime:      "",
-		StartTime:      d.ProcessStartTime.Format(time.RFC3339),
-		PublicURL:      cfg.PublicURL,
-		PrivateURL:     effectivePrivateURL(cfg),
+		Service:      "compliance-proxy",
+		BuildVersion: d.BuildVersion,
+		StartTime:    d.ProcessStartTime.Format(time.RFC3339),
+		PublicURL:    cfg.PublicURL,
+		PrivateURL:   effectivePrivateURL(cfg),
 	})
 	go func() {
 		// Give the WS pump a moment to attach before the first push.
@@ -160,6 +159,7 @@ func InitThingClientSimple(
 func CaptureThingClientResult(
 	tc *thingclient.Client,
 	cfg *config.Config,
+	buildVersion string,
 	processStartTime time.Time,
 	logger *slog.Logger,
 ) ThingClientResult {
@@ -167,10 +167,11 @@ func CaptureThingClientResult(
 		return ThingClientResult{}
 	}
 	staticInfo := platform.CaptureStaticInfo(platform.BuildInfo{
-		ServiceVersion: "compliance-proxy/0.1.0",
-		StartTime:      processStartTime.Format(time.RFC3339),
-		PublicURL:      cfg.PublicURL,
-		PrivateURL:     effectivePrivateURL(cfg),
+		Service:      "compliance-proxy",
+		BuildVersion: buildVersion,
+		StartTime:    processStartTime.Format(time.RFC3339),
+		PublicURL:    cfg.PublicURL,
+		PrivateURL:   effectivePrivateURL(cfg),
 	})
 	go func() {
 		time.Sleep(500 * time.Millisecond)

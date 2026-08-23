@@ -768,6 +768,9 @@ func TestReader_Read_Miss(t *testing.T) {
 	if result.EmbeddingCostUSD < 0 {
 		t.Error("embedding cost should be non-negative")
 	}
+	if result.EmbeddingProviderID != "openai" {
+		t.Errorf("EmbeddingProviderID = %q, want openai (from ConfigSnapshot.EmbeddingProviderID)", result.EmbeddingProviderID)
+	}
 }
 
 // TestReader_Read_Hit exercises the happy path where a stored entry is found
@@ -829,6 +832,9 @@ func TestReader_Read_Hit(t *testing.T) {
 	if result.Entry == nil {
 		t.Fatal("expected non-nil entry on hit")
 	}
+	if result.EmbeddingProviderID != "openai" {
+		t.Errorf("EmbeddingProviderID = %q, want openai (from ConfigSnapshot.EmbeddingProviderID)", result.EmbeddingProviderID)
+	}
 }
 
 // TestReader_Read_EmbeddingProviderError exercises the path where the embedding
@@ -863,6 +869,11 @@ func TestReader_Read_EmbeddingProviderError(t *testing.T) {
 	}
 	if result.Outcome == "hit" || result.Outcome == "miss" {
 		t.Errorf("expected skip outcome, got %q", result.Outcome)
+	}
+	// The embedding call itself failed — no cost was incurred, so no
+	// provider should be attributed either.
+	if result.EmbeddingProviderID != "" {
+		t.Errorf("EmbeddingProviderID = %q, want empty when the embedding call itself failed", result.EmbeddingProviderID)
 	}
 }
 
@@ -899,6 +910,12 @@ func TestReader_Read_DimMismatchPath(t *testing.T) {
 	}
 	if result.SkipReason != audit.GatewayCacheSkipReasonEmbeddingDimMismatch {
 		t.Errorf("skip reason = %q", result.SkipReason)
+	}
+	// The embedding call itself succeeded before the dimension check failed,
+	// so the embedding cost was genuinely incurred and the provider that
+	// served it must still be attributed.
+	if result.EmbeddingProviderID != "openai" {
+		t.Errorf("EmbeddingProviderID = %q, want openai (embedding call succeeded before the dim check)", result.EmbeddingProviderID)
 	}
 }
 
@@ -967,6 +984,11 @@ func TestReader_Read_LookupSearchError(t *testing.T) {
 	if result.SkipReason != audit.GatewayCacheSkipReasonSemanticSearchError {
 		t.Errorf("skip reason = %q", result.SkipReason)
 	}
+	// FT.SEARCH failed AFTER the embedding call succeeded, so the embedding
+	// cost was genuinely incurred and must still carry a provider.
+	if result.EmbeddingProviderID != "openai" {
+		t.Errorf("EmbeddingProviderID = %q, want openai", result.EmbeddingProviderID)
+	}
 }
 
 // TestReader_Read_LookupSearchTimeout exercises the path where Client.Lookup
@@ -1020,6 +1042,89 @@ func TestReader_Read_LookupSearchTimeout(t *testing.T) {
 	// Outcome must be a skip variant (not hit/miss).
 	if result.Outcome == "hit" || result.Outcome == "miss" {
 		t.Errorf("expected a skip outcome on cancelled ctx, got %q", result.Outcome)
+	}
+}
+
+// fakeLookuper is a deterministic Lookuper stub that returns a canned Entry
+// without touching Valkey FT.SEARCH. Used to reach the skip_poisoned branch
+// of Reader.Read deterministically — the MiniValkey-backed tests for that
+// branch (reader_e68_test.go) depend on real vector search returning a hit,
+// which MiniValkey does not reliably support, so those tests self-skip.
+// This mocks the resource instead of skipping the path, per the project's
+// binding test-coverage rule.
+type fakeLookuper struct {
+	entry *Entry
+	err   error
+}
+
+func (f *fakeLookuper) Lookup(_ context.Context, _ string, _ *LookupInput) (*Entry, error) {
+	return f.entry, f.err
+}
+
+// alwaysPoisonedList is a PoisonList stub that reports every entry as
+// poisoned, pairing with fakeLookuper to deterministically drive
+// Reader.Read into the skip_poisoned branch.
+type alwaysPoisonedList struct{}
+
+func (alwaysPoisonedList) IsPoisoned(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
+func (alwaysPoisonedList) Add(_ context.Context, _, _ string, _ time.Duration) error {
+	return nil
+}
+
+// TestReader_Read_Poisoned_StampsEmbeddingProviderID exercises the
+// skip_poisoned branch via a mocked Lookuper + PoisonList (no MiniValkey
+// vector search involved) and asserts the observable outcome: the embedding
+// call genuinely ran (a real embedding HTTP call against a real cost), so
+// EmbeddingProviderID must be stamped from ConfigSnapshot.EmbeddingProviderID
+// even though the candidate is discarded as poisoned.
+func TestReader_Read_Poisoned_StampsEmbeddingProviderID(t *testing.T) {
+	const dim = 4
+	srv := buildDimEmbeddingServerForLookup(dim)
+	defer srv.Close()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	httpCl := &http.Client{Timeout: 5 * time.Second}
+	embCl := embeddings.NewClient(httpCl, log, uniqueLookupNS())
+	reg := newNopRegistry()
+	sf := NewEmbeddingSingleflight(embCl, reg, 2*time.Second, log)
+
+	cc := NewConfigCache()
+	cc.Set(ConfigSnapshot{
+		Enabled:             true,
+		EmbeddingProviderID: "prov-openai",
+		EmbeddingModelID:    "text-embedding-3-small",
+		EmbeddingDimension:  dim,
+		Fingerprint:         "fp-poison",
+		RedisIndexName:      "poison-idx",
+	})
+
+	fakeLU := &fakeLookuper{entry: &Entry{EntryKey: "nexus:semantic-cache:v1:poisoned-entry"}}
+	r := NewReaderWithPoison(cc, fakeLU, sf, nil, alwaysPoisonedList{})
+
+	result, err := r.Read(context.Background(), ReadRequest{
+		VKScope:              "vk1",
+		EmbeddingInput:       "hello",
+		ProviderBaseURL:      srv.URL,
+		EmbeddingAPIKey:      "test-key",
+		Threshold:            0.9,
+		CostPerInputTokenUSD: 0.02,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Outcome != "skip_poisoned" {
+		t.Fatalf("outcome = %q, want skip_poisoned", result.Outcome)
+	}
+	if result.SkipReason != audit.GatewayCacheSkipReasonPoisoned {
+		t.Errorf("skip reason = %q, want %q", result.SkipReason, audit.GatewayCacheSkipReasonPoisoned)
+	}
+	if result.EmbeddingProviderID != "prov-openai" {
+		t.Errorf("EmbeddingProviderID = %q, want prov-openai (the embedding call genuinely ran before the poison check discarded the candidate)", result.EmbeddingProviderID)
+	}
+	if result.EmbeddingCostUSD <= 0 {
+		t.Errorf("EmbeddingCostUSD = %v, want > 0 (a real embedding call was made)", result.EmbeddingCostUSD)
 	}
 }
 

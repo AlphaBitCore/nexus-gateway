@@ -121,6 +121,74 @@ func TestWriterBackedTrafficSink_StampsTraceIDAndCost(t *testing.T) {
 	}
 }
 
+// TestWriterBackedTrafficSink_Emit_SetsRoutedProvider pins the fix for the
+// core ai-guard attribution defect: without a non-empty routed provider on
+// the emitted traffic_event row, the Hub's 5-minute rollup never emits a
+// routed_provider dimension for it, so the classifier's cost can never reach
+// any provider's slice of vendor_spend_usd no matter what downstream
+// aggregation does. Also pins that RoutedProviderName rides along when the
+// event carries one.
+func TestWriterBackedTrafficSink_Emit_SetsRoutedProvider(t *testing.T) {
+	prod := &capturingProducer{}
+	opsReg := registry.NewRegistry(prometheus.NewRegistry())
+	w := audit.NewWriter(prod, "test.queue", opsReg, discardLogger())
+
+	sink := &WriterBackedTrafficSink{Writer: w}
+	sink.Emit(context.Background(), aiguard.TrafficEvent{
+		Decision:        "approve",
+		InternalPurpose: "ai-guard",
+		CostUsd:         0.0002,
+		ProviderID:      "prov-openai",
+		ProviderName:    "openai",
+	})
+	w.Close() // synchronous drain → prod.payloads populated
+
+	if len(prod.payloads) != 1 {
+		t.Fatalf("want 1 published message, got %d", len(prod.payloads))
+	}
+	var msg mq.TrafficEventMessage
+	if err := json.Unmarshal(prod.payloads[0], &msg); err != nil {
+		t.Fatalf("unmarshal published message: %v", err)
+	}
+	if msg.RoutedProviderID != "prov-openai" {
+		t.Errorf("routedProviderId = %q, want prov-openai", msg.RoutedProviderID)
+	}
+	if msg.RoutedProviderName != "openai" {
+		t.Errorf("routedProviderName = %q, want openai", msg.RoutedProviderName)
+	}
+	if msg.AIGuardCostUsd == nil || *msg.AIGuardCostUsd != 0.0002 {
+		t.Errorf("ai_guard_cost_usd = %v, want 0.0002", msg.AIGuardCostUsd)
+	}
+}
+
+// TestWriterBackedTrafficSink_Emit_EmptyProviderLeavesRoutedProviderEmpty
+// covers the complementary branch: a TrafficEvent with no ProviderID (e.g.
+// emitted from the aiguard failure paths, which never resolved a provider)
+// must not stamp a routed provider on the row.
+func TestWriterBackedTrafficSink_Emit_EmptyProviderLeavesRoutedProviderEmpty(t *testing.T) {
+	prod := &capturingProducer{}
+	opsReg := registry.NewRegistry(prometheus.NewRegistry())
+	w := audit.NewWriter(prod, "test.queue", opsReg, discardLogger())
+
+	sink := &WriterBackedTrafficSink{Writer: w}
+	sink.Emit(context.Background(), aiguard.TrafficEvent{
+		InternalPurpose: "ai-guard",
+		ErrorDetail:     "backend_unavailable: network down",
+	})
+	w.Close()
+
+	if len(prod.payloads) != 1 {
+		t.Fatalf("want 1 published message, got %d", len(prod.payloads))
+	}
+	var msg mq.TrafficEventMessage
+	if err := json.Unmarshal(prod.payloads[0], &msg); err != nil {
+		t.Fatalf("unmarshal published message: %v", err)
+	}
+	if msg.RoutedProviderID != "" {
+		t.Errorf("routedProviderId = %q, want empty on a failed call with no resolved provider", msg.RoutedProviderID)
+	}
+}
+
 // TestLiveClassifier_buildBackend_unknownMode returns error.
 func TestLiveClassifier_buildBackend_unknownMode(t *testing.T) {
 	lc := &LiveClassifier{Logger: discardLogger()}
@@ -360,5 +428,54 @@ func TestLiveClassifier_buildBackend_externalURL_noProviderCredential(t *testing
 	}
 	if eb.URL != url {
 		t.Errorf("URL: got %q want %q", eb.URL, url)
+	}
+}
+
+// TestWriterBackedTrafficSink_Emit_PersistsCacheTokenSplit pins the audit trail
+// behind the classifier's charge. The judge template is fixed, so most of the
+// prompt is served from the provider's cache and bills at a fraction of the
+// input rate; without the split on the row, a correct cache-discounted charge
+// and the full-rate over-charge this row used to carry are indistinguishable
+// after the fact — which is exactly why the historical over-estimate cannot be
+// recomputed.
+func TestWriterBackedTrafficSink_Emit_PersistsCacheTokenSplit(t *testing.T) {
+	prod := &capturingProducer{}
+	opsReg := registry.NewRegistry(prometheus.NewRegistry())
+	w := audit.NewWriter(prod, "test.queue", opsReg, discardLogger())
+
+	sink := &WriterBackedTrafficSink{Writer: w}
+	sink.Emit(context.Background(), aiguard.TrafficEvent{
+		Decision:            "approve",
+		InternalPurpose:     "ai-guard",
+		PromptTokens:        4000,
+		CompletionTokens:    20,
+		CacheReadTokens:     3600,
+		CacheCreationTokens: 200,
+		CostUsd:             0.00039,
+		ProviderID:          "prov-openai",
+	})
+	w.Close()
+
+	if len(prod.payloads) != 1 {
+		t.Fatalf("want 1 published message, got %d", len(prod.payloads))
+	}
+	var msg mq.TrafficEventMessage
+	if err := json.Unmarshal(prod.payloads[0], &msg); err != nil {
+		t.Fatalf("unmarshal published message: %v", err)
+	}
+	if msg.CacheReadTokens == nil || *msg.CacheReadTokens != 3600 {
+		t.Errorf("cache_read_tokens = %v, want 3600", msg.CacheReadTokens)
+	}
+	if msg.CacheCreationTokens == nil || *msg.CacheCreationTokens != 200 {
+		t.Errorf("cache_creation_tokens = %v, want 200", msg.CacheCreationTokens)
+	}
+	// The cache buckets are a SUB-COUNT of prompt_tokens, not an addition:
+	// total must stay prompt + completion, or the classifier's token totals
+	// double-count the cached share against every consumer of the column.
+	if msg.TotalTokens != 4020 {
+		t.Errorf("total_tokens = %v, want 4020 (prompt + completion only)", msg.TotalTokens)
+	}
+	if msg.PromptTokens != 4000 {
+		t.Errorf("prompt_tokens = %v, want 4000 (the TOTAL input)", msg.PromptTokens)
 	}
 }

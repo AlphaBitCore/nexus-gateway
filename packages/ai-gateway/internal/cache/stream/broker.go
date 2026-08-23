@@ -386,6 +386,7 @@ func (b *Broker) writeCache(collected []provcore.Chunk) {
 				Delta:          c.Delta,
 				ReasoningDelta: c.ReasoningDelta,
 				ToolCallDeltas: c.ToolCallDeltas,
+				NexusThinking:  c.NexusThinking,
 				Usage:          c.Usage,
 				Done:           c.Done,
 				NativeEvent:    c.NativeEvent,

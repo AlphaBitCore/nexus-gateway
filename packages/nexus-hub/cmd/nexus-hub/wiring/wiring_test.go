@@ -886,7 +886,7 @@ func TestInitOTEL_ReturnsInitialCfg(t *testing.T) {
 func TestInitConsumerManager_Disabled(t *testing.T) {
 	cfg := minimalHubConfig()
 	cfg.Consumers.Enabled = false
-	if InitConsumerManager(cfg, nil, nil, nil, testLogger()) != nil {
+	if m, _ := InitConsumerManager(cfg, nil, nil, nil, testLogger()); m != nil {
 		t.Error("expected nil when disabled")
 	}
 }
@@ -894,7 +894,7 @@ func TestInitConsumerManager_Disabled(t *testing.T) {
 func TestInitConsumerManager_NilConsumer(t *testing.T) {
 	cfg := minimalHubConfig()
 	cfg.Consumers.Enabled = true
-	if InitConsumerManager(cfg, nil, nil, nil, testLogger()) != nil {
+	if m, _ := InitConsumerManager(cfg, nil, nil, nil, testLogger()); m != nil {
 		t.Error("expected nil when mqConsumer is nil")
 	}
 }
@@ -906,7 +906,7 @@ func TestInitConsumerManager_WithConsumer_NoSIEM(t *testing.T) {
 	cfg.Consumers.FlushInterval = 100 * time.Millisecond
 	consumer := &fakeMQConsumer{}
 	opsReg := newIsolatedOpsReg()
-	mgr := InitConsumerManager(cfg, nil, consumer, opsReg, testLogger())
+	mgr, _ := InitConsumerManager(cfg, nil, consumer, opsReg, testLogger())
 	if mgr == nil {
 		t.Error("expected non-nil manager when consumer is non-nil")
 	}
@@ -919,7 +919,7 @@ func TestInitScheduler_Disabled_ReturnsNil(t *testing.T) {
 	cfg := minimalHubConfig()
 	cfg.Scheduler.Enabled = false
 	sched, err := InitScheduler(
-		context.Background(), cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, testLogger(),
+		context.Background(), cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, testLogger(),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1110,7 +1110,7 @@ func TestBuildIntrospectReg_ConsumerMgrNonNil(t *testing.T) {
 	cfg.Consumers.Enabled = true
 	consumer := &fakeMQConsumer{}
 	opsReg := newIsolatedOpsReg()
-	mgr := InitConsumerManager(cfg, nil, consumer, opsReg, testLogger())
+	mgr, _ := InitConsumerManager(cfg, nil, consumer, opsReg, testLogger())
 	ec := EchoConfig{
 		Cfg:          cfg,
 		BuildVersion: "v0",

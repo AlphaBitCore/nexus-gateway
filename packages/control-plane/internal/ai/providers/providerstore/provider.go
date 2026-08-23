@@ -210,26 +210,14 @@ func (s *Store) CreateProviderWithChildren(
 
 	insertedModels := make([]modelstore.Model, 0, len(models))
 	for _, p := range models {
-		features := p.Features
-		if features == nil {
-			features = []string{}
-		}
-		aliases := p.Aliases
-		if aliases == nil {
-			aliases = []string{}
-		}
-		inputMod := p.InputModalities
-		if inputMod == nil {
-			inputMod = []string{"text"}
-		}
-		outputMod := p.OutputModalities
-		if outputMod == nil {
-			outputMod = []string{"text"}
-		}
+		// One normalizer, shared with modelstore.CreateModel. This loop used to
+		// have its own, which defaulted every type to ["text"]/["text"] — so a
+		// wizard-created stt model landed declaring it accepts text — and never
+		// folded the legacy `vision` feature into the modality arrays.
+		p = modelstore.NormalizeCreateParams(p)
+		features, aliases := p.Features, p.Aliases
+		inputMod, outputMod := p.InputModalities, p.OutputModalities
 		lifecycle := p.Lifecycle
-		if lifecycle == "" {
-			lifecycle = "ga"
-		}
 		var m modelstore.Model
 		err = tx.QueryRow(ctx, fmt.Sprintf(`
 			INSERT INTO "Model" (id, code, name, description, "providerId", "providerModelId", type, features,
@@ -237,9 +225,9 @@ func (s *Store) CreateProviderWithChildren(
 				"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 				"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 				"maxContextTokens", "maxOutputTokens",
-				aliases, "inputModalities", "outputModalities", lifecycle, "capabilityJson",
+				aliases, "inputModalities", "outputModalities", "requiredModalities", lifecycle, "capabilityJson",
 				enabled, "createdAt", "updatedAt")
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, NOW(), NOW())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW())
 			RETURNING %s
 		`, modelstore.ModelColumns),
 			uuid.New().String(), p.Code, p.Name, p.Description, pr.ID, p.ProviderModelID, p.Type, features,
@@ -247,7 +235,7 @@ func (s *Store) CreateProviderWithChildren(
 			p.CachedInputReadPricePerMillion, p.CachedInputWritePricePerMillion,
 			p.AudioInputPricePerMillion, p.AudioOutputPricePerMillion, p.CachedAudioInputReadPricePerMillion,
 			p.MaxContextTokens, p.MaxOutputTokens,
-			aliases, inputMod, outputMod, lifecycle, p.CapabilityJson,
+			aliases, inputMod, outputMod, p.RequiredModalities, lifecycle, p.CapabilityJson,
 			p.Enabled,
 		).Scan(
 			&m.ID, &m.Code, &m.Name, &m.Description, &m.ProviderID, &m.ProviderModelID,
@@ -255,7 +243,7 @@ func (s *Store) CreateProviderWithChildren(
 			&m.CachedInputReadPricePerMillion, &m.CachedInputWritePricePerMillion,
 			&m.AudioInputPricePerMillion, &m.AudioOutputPricePerMillion, &m.CachedAudioInputReadPricePerMillion,
 			&m.MaxContextTokens, &m.MaxOutputTokens, &m.Status, &m.DeprecationDate, &m.ReplacedBy, &m.Aliases,
-			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson,
+			&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson,
 			&m.Enabled, &m.CreatedAt, &m.UpdatedAt,
 		)
 		if err != nil {

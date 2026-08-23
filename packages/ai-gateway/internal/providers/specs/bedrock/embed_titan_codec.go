@@ -172,14 +172,6 @@ func decodeTitanEmbedResponse(nativeBody []byte, modelID string) (provcore.Decod
 		return provcore.DecodeResult{}, fmt.Errorf("bedrock-titan: marshal canonical: %w", err)
 	}
 
-	// Stamp the model in nexus.ext.bedrock.model for audit consumers.
-	if modelID != "" {
-		stamped, stampErr := canonicalext.Set(canonicalBytes, "bedrock", "model", modelID)
-		if stampErr == nil {
-			canonicalBytes = stamped
-		}
-	}
-
 	usage := provcore.ExtractUsage(canonicalBytes, provcore.FormatOpenAI)
 	return provcore.DecodeResult{CanonicalBody: canonicalBytes, Usage: usage}, nil
 }

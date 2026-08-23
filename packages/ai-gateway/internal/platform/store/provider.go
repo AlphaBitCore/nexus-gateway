@@ -56,6 +56,16 @@ type Model struct {
 	ProviderModelID string // String sent on the upstream wire to the provider.
 	Type            string // chat | embedding | image | audio | rerank | video | realtime
 	Enabled         bool
+	// Status is the operator-set catalog state: active | deprecated | preview |
+	// disabled. Only `disabled` withdraws the model from service — a deprecated
+	// or preview model is still callable, which is what distinguishes this from
+	// [Model.Lifecycle], the maturity label shown to clients.
+	Status string
+	// ProviderEnabled is the owning Provider.enabled flag, denormalised onto
+	// the model row so servability can be decided without a second lookup.
+	// Every query that produces a Model reads it; a false here always means
+	// the provider really is disabled, never "this query did not ask".
+	ProviderEnabled bool
 	InputPricePM    *float64 // per million tokens
 	OutputPricePM   *float64
 	// CachedInputReadPricePM is the cached input token READ price (e.g.
@@ -76,17 +86,50 @@ type Model struct {
 	// discount; falls back to AudioInputPricePM (mirrors the text cache-read
 	// fallback).
 	CachedAudioInputReadPricePM *float64
-	Features                    []string // vision, function_calling, streaming, json_mode, thinking, ...
-	MaxContextTokens            *int
-	MaxOutputTokens             *int
-	Aliases                     []string // Alternate request strings that resolve to this row
+	// Non-modality capabilities only: function_calling, streaming, json_mode,
+	// thinking, … The image question lives in InputModalities; `vision` is
+	// derived back onto the /v1/models response and never stored.
+	Features         []string
+	MaxContextTokens *int
+	MaxOutputTokens  *int
+	Aliases          []string // Alternate request strings that resolve to this row
 	// (e.g. "gpt-4o-2024-08-06" → "gpt-4o"). Read by
 	// ResolveModelCandidates for code-set hydration.
 	InputModalities  []string // e.g. ["text"], ["text","image"]
 	OutputModalities []string // e.g. ["text"], ["embedding"]
-	Lifecycle        string   // ga | preview | deprecated
-	CapabilityJson   []byte   // raw JSONB bytes (nil = no capability data)
+	// RequiredModalities is the model's floor — what a request MUST carry for
+	// it to serve it at all. Empty is the normal case. InputModalities is the
+	// ceiling; neither derives the other.
+	RequiredModalities []string
+	Lifecycle          string // ga | preview | deprecated
+	CapabilityJson     []byte // raw JSONB bytes (nil = no capability data)
+	// AP-2: public model-detail parameter constraints + family. All nullable;
+	// MinOutputTokens nil ⟹ the universal floor of 1 at the response layer.
+	MinOutputTokens *int
+	TemperatureMin  *float64
+	TemperatureMax  *float64
+	Family          *string
 }
+
+// Servable reports whether this model can serve traffic right now. Three
+// independent switches can withdraw a model, and a catalog that reads only
+// one of them advertises models the router will refuse — the client then
+// picks one and the call dies upstream instead of at the catalog:
+//
+//   - the model row's own enabled flag;
+//   - the enabled flag of the provider that fulfils it, since disabling a
+//     provider takes every model it owns out of service;
+//   - status == "disabled", the operator's per-model catalog state. Only that
+//     one value withdraws the model: `deprecated` and `preview` models stay
+//     callable and merely carry a different label to clients.
+func (m Model) Servable() bool {
+	return m.Enabled && m.ProviderEnabled && m.Status != ModelStatusDisabled
+}
+
+// ModelStatusDisabled is the one Model.status value that takes a model out of
+// service. Declared once so the Go predicate and the SQL that mirrors it
+// cannot drift apart.
+const ModelStatusDisabled = "disabled"
 
 // GetProvider fetches a provider by ID.
 func (db *DB) GetProvider(ctx context.Context, id string) (*Provider, error) {
@@ -106,23 +149,33 @@ func (db *DB) GetProvider(ctx context.Context, id string) (*Provider, error) {
 
 // GetModel fetches a model by UUID primary key. Use [GetModelByCode]
 // for resolving a customer-supplied code/name string instead.
+//
+// Unlike the code lookups this returns the row whatever its state — the
+// accounting paths that resolve a model by UUID (cost stamping, quota
+// pricing, metering) must still price a model that has just been taken out
+// of service. The provider join is here only to fill [Model.ProviderEnabled],
+// so [Model.Servable] answers truthfully on this row too rather than
+// reporting a servable model as unservable because nothing asked.
 func (db *DB) GetModel(ctx context.Context, id string) (*Model, error) {
 	row := db.pool.QueryRow(ctx, `
-		SELECT id, code, name, "providerId", "providerModelId", type, enabled,
-		       "inputPricePerMillion", "outputPricePerMillion",
-		       COALESCE(features, '{}'), "maxContextTokens", "maxOutputTokens",
-		       COALESCE(aliases, '{}'),
-		       COALESCE("inputModalities", '{}'), COALESCE("outputModalities", '{}'),
-		       COALESCE(lifecycle, 'ga'), "capabilityJson"
-		FROM "Model"
-		WHERE id = $1
+		SELECT m.id, m.code, m.name, m."providerId", m."providerModelId", m.type, m.enabled,
+		       COALESCE(p.enabled, false), COALESCE(m.status, 'active'),
+		       m."inputPricePerMillion", m."outputPricePerMillion",
+		       COALESCE(m.features, '{}'), m."maxContextTokens", m."maxOutputTokens",
+		       COALESCE(m.aliases, '{}'),
+		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'), COALESCE(m."requiredModalities", '{}'),
+		       COALESCE(m.lifecycle, 'ga'), m."capabilityJson"
+		FROM "Model" m
+		LEFT JOIN "Provider" p ON p.id = m."providerId"
+		WHERE m.id = $1
 	`, id)
 	var m Model
 	var inPrice, outPrice *string
 	var maxCtx, maxOut pgtype.Int4
 	err := row.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderModelID,
-		&m.Type, &m.Enabled, &inPrice, &outPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
-		&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson)
+		&m.Type, &m.Enabled, &m.ProviderEnabled, &m.Status,
+		&inPrice, &outPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
+		&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson)
 	if err != nil {
 		return nil, fmt.Errorf("store: get model: %w", err)
 	}
@@ -143,6 +196,16 @@ func intFromPgInt4(v pgtype.Int4) *int {
 	}
 	i := int(v.Int32)
 	return &i
+}
+
+// floatFromPgFloat8 converts a nullable double-precision column to *float64
+// (nil when SQL NULL). Mirrors intFromPgInt4 for the AP-2 temperature range.
+func floatFromPgFloat8(v pgtype.Float8) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	f := v.Float64
+	return &f
 }
 
 // GetProviderAndModel fetches both a provider and model by their IDs.

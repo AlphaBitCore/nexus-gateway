@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// chatTabIndex / labTabIndex / killTabIndex must track NewModel's tab order.
-const (
-	chatTabIndex = 5
-	labTabIndex  = 6
-	killTabIndex = 7
-)
-
 func TestViews_InitAndHelp(t *testing.T) {
 	gw, s := sampleGateway(), testSession()
 	if newChat(gw, s).Init() == nil {

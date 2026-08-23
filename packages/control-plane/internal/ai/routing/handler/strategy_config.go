@@ -35,8 +35,6 @@ type strategyNodeShape struct {
 	// loadbalance
 	Algorithm       string                `json:"algorithm"`
 	WeightedTargets []weightedTargetShape `json:"weightedTargets"`
-	StickyOn        string                `json:"stickyOn"`
-	StickyTTLMs     int                   `json:"stickyTtlMs"`
 
 	// conditional
 	Conditions []conditionalBranchShape `json:"conditions"`
@@ -140,8 +138,10 @@ func validateStrategyConfig(raw json.RawMessage) (string, bool) {
 }
 
 // validateNodeShape walks the strategy tree enforcing the per-node rules the
-// resolver depends on: a known `type` when present, and bounded depth. Field
-// TYPE correctness is already guaranteed by the typed unmarshal into
+// resolver depends on: a known `type` at the root, and a CHILD that names a
+// provider and model directly.
+//
+// Field TYPE correctness is already guaranteed by the typed unmarshal into
 // strategyNodeShape; this walk covers the semantic checks a decode cannot.
 func validateNodeShape(n *strategyNodeShape, depth int) string {
 	if depth > maxStrategyNodeDepth {
@@ -150,6 +150,19 @@ func validateNodeShape(n *strategyNodeShape, depth int) string {
 	if n.Type != "" {
 		if _, ok := validStrategyTypes[n.Type]; !ok {
 			return fmt.Sprintf("config.type %q is not a recognized strategy node type (allowed: %s)", n.Type, strategyTypeList())
+		}
+		// A CHILD names a provider and a model. The gateway resolves children
+		// as leaves and follows no node into another, so a nested strategy is
+		// accepted, persisted, broadcast — and then resolves to nothing.
+		//
+		// Refused at the boundary rather than at dispatch because this is where
+		// the admin can be told. Depth 0 is the rule's own strategy and is
+		// exempt; anything below it is a leaf.
+		if depth > 0 && n.Type != "single" {
+			return fmt.Sprintf("config.type %q appears inside another strategy; a nested "+
+				"entry names a provider and a model directly (\"type\": \"single\"). "+
+				"The gateway resolves entries as leaves and does not evaluate one strategy "+
+				"inside another, so a nested strategy would route nothing", n.Type)
 		}
 	}
 	for i := range n.Targets {

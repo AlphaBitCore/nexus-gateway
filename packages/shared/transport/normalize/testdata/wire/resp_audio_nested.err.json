@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "Invalid value: 'input_audio'. Supported values are: 'input_text', 'input_image', 'output_text', 'refusal', 'input_file', 'computer_screenshot', 'summary_text', and 'encrypted_content'.",
+    "type": "invalid_request_error",
+    "param": "input[0].content[1].type",
+    "code": "invalid_value"
+  }
+}

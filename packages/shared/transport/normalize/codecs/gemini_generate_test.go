@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/tidwall/gjson"
 )
 
 func TestGeminiGenerate_Request_TextOnly(t *testing.T) {
@@ -127,6 +128,46 @@ func TestGeminiGenerate_Request_FunctionCallAndResponse(t *testing.T) {
 	}
 	if !strings.Contains(got.Messages[1].Content[0].ToolResult.Output, "72") {
 		t.Fatalf("tool result output missing payload: %q", got.Messages[1].Content[0].ToolResult.Output)
+	}
+}
+
+func TestGeminiGenerate_Request_IdenticalCallsGetCoordinateIDsAndProjectSignatures(t *testing.T) {
+	body := []byte(`{"contents":[` +
+		`{"role":"model","parts":[` +
+		`{"functionCall":{"name":"lookup","args":{"q":"same"}},"thoughtSignature":"sig-a"},` +
+		`{"functionCall":{"name":"lookup","args":{"q":"same"}},"thoughtSignature":"sig-b"}]}]}`)
+	n := NewGeminiGenerateNormalizer()
+	payload, err := n.Normalize(context.Background(), body, core.Meta{Direction: core.DirectionRequest})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(payload.Messages) != 1 || len(payload.Messages[0].Content) != 2 {
+		t.Fatalf("messages/content = %+v", payload.Messages)
+	}
+	first := payload.Messages[0].Content[0].ToolUse
+	second := payload.Messages[0].Content[1].ToolUse
+	if first == nil || second == nil || first.CallID == "" || first.CallID == second.CallID {
+		t.Fatalf("coordinate IDs not distinct: %#v %#v", first, second)
+	}
+	if first.ThoughtSignature != "sig-a" || second.ThoughtSignature != "sig-b" {
+		t.Fatalf("Part signatures detached: %#v %#v", first, second)
+	}
+	projected, err := ProjectToOpenAIChatCompletion(payload, ProjectionWireMetadata{Model: "gemini-2.5-pro"})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	if got := gjson.GetBytes(projected, "choices.0.message.tool_calls.0.id").String(); got != first.CallID {
+		t.Fatalf("project changed first ID: %q vs %q", got, first.CallID)
+	}
+	if got := gjson.GetBytes(projected, "choices.0.message.tool_calls.1.function.thought_signature").String(); got != "sig-b" {
+		t.Fatalf("project detached second signature: %q", got)
+	}
+	payload2, err := n.Normalize(context.Background(), body, core.Meta{Direction: core.DirectionRequest})
+	if err != nil {
+		t.Fatalf("normalize replay: %v", err)
+	}
+	if got := payload2.Messages[0].Content[0].ToolUse.CallID; got != first.CallID {
+		t.Fatalf("replay changed first ID: %q vs %q", got, first.CallID)
 	}
 }
 

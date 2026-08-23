@@ -123,8 +123,11 @@ func TestGeminiStreamParity_FunctionCallPart(t *testing.T) {
 }
 
 // TestGeminiStreamParity_ThoughtPartsFoldToReasoningBlock pins the Gemini
-// extended-thinking stream shape: parts with thought:true accumulate into
-// a ContentReasoning block placed before the visible text, and
+// extended-thinking stream shape: consecutive thought:true parts coalesce
+// into one ContentReasoning block, emitted in ARRIVAL ORDER alongside the
+// visible text — not hoisted to the front. Hoisting left the text deltas on
+// either side of a reasoning pass adjacent, so they fused into a single
+// utterance and the record said something the model did not.
 // thoughtsTokenCount feeds both ReasoningTokens and the CompletionTokens
 // sum (candidatesTokenCount + thoughtsTokenCount).
 func TestGeminiStreamParity_ThoughtPartsFoldToReasoningBlock(t *testing.T) {

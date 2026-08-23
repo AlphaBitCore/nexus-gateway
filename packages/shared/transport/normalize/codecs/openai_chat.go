@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 )
 
 // OpenAIChatNormalizer handles OpenAI's /v1/chat/completions surface
@@ -137,15 +138,19 @@ func openAIChatFieldSpec(d core.Direction) core.FieldSpec {
 }
 
 type openAIChatRequest struct {
-	Model       string                     `json:"model"`
-	Messages    []openAIChatMessage        `json:"messages"`
-	Tools       []openAIToolDef            `json:"tools,omitempty"`
-	Stream      bool                       `json:"stream,omitempty"`
-	Temperature *float64                   `json:"temperature,omitempty"`
-	TopP        *float64                   `json:"top_p,omitempty"`
-	MaxTokens   *int                       `json:"max_tokens,omitempty"`
-	Stop        json.RawMessage            `json:"stop,omitempty"`
-	Extra       map[string]json.RawMessage `json:"-"`
+	Model       string              `json:"model"`
+	Messages    []openAIChatMessage `json:"messages"`
+	Tools       []openAIToolDef     `json:"tools,omitempty"`
+	Stream      bool                `json:"stream,omitempty"`
+	Temperature *float64            `json:"temperature,omitempty"`
+	TopP        *float64            `json:"top_p,omitempty"`
+	MaxTokens   *int                `json:"max_tokens,omitempty"`
+	Stop        json.RawMessage     `json:"stop,omitempty"`
+	// ReasoningEffort is OpenAI's LEVEL spelling of the reasoning request.
+	// Recorded verbatim; converting it to another vendor's budget is that
+	// vendor's codec's job.
+	ReasoningEffort string                     `json:"reasoning_effort,omitempty"`
+	Extra           map[string]json.RawMessage `json:"-"`
 }
 
 type openAIChatMessage struct {
@@ -164,6 +169,28 @@ type openAIChatMessage struct {
 	// providers (xAI, OpenRouter) use for the same chain-of-thought
 	// text as reasoning_content. Whichever field is non-empty wins.
 	Reasoning string `json:"reasoning,omitempty"`
+	// Audio carries an audio-capable model's spoken reply on the chat
+	// wire. Without this field the whole modality vanished from the
+	// record and the turn read as an empty assistant message.
+	Audio *openAIChatAudio `json:"audio,omitempty"`
+}
+
+// openAIChatAudio is the response-side audio object. ID and ExpiresAt are
+// provider bookkeeping for referencing the clip in a follow-up turn; they
+// stay in the raw view rather than on MediaRef, which carries custody and
+// identity only.
+// openAIChatAudioIn is the request-side {data, format} object. The Chat
+// and Responses wires carry the identical shape, so one struct serves both.
+type openAIChatAudioIn struct {
+	Data   string `json:"data,omitempty"`
+	Format string `json:"format,omitempty"`
+}
+
+type openAIChatAudio struct {
+	ID         string `json:"id,omitempty"`
+	Data       string `json:"data,omitempty"`
+	Transcript string `json:"transcript,omitempty"`
+	ExpiresAt  int64  `json:"expires_at,omitempty"`
 }
 
 // firstNonEmptyString returns the first non-empty argument; used to
@@ -221,9 +248,11 @@ func (n *OpenAIChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (cor
 	}
 
 	msgs := make([]core.Message, 0, len(req.Messages))
-	for _, raw := range req.Messages {
+	for i, raw := range req.Messages {
 		msg := core.Message{Role: roleFromString(raw.Role)}
-		msg.Content = decodeOpenAIContent(raw.Content, raw.ToolCalls, raw.ToolCallID, firstNonEmptyString(raw.ReasoningContent, raw.Reasoning))
+		msg.Content = decodeOpenAIContent(raw.Content, raw.ToolCalls, raw.ToolCallID,
+			firstNonEmptyString(raw.ReasoningContent, raw.Reasoning),
+			locator.JoinPath("messages", i)+".content")
 		msgs = append(msgs, msg)
 	}
 
@@ -254,7 +283,8 @@ func (n *OpenAIChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (cor
 		out.Tools = tools
 	}
 
-	if req.Temperature != nil || req.TopP != nil || req.MaxTokens != nil || len(req.Stop) > 0 {
+	if req.Temperature != nil || req.TopP != nil || req.MaxTokens != nil ||
+		len(req.Stop) > 0 || req.ReasoningEffort != "" {
 		params := &core.SamplingParam{
 			Temperature: req.Temperature,
 			TopP:        req.TopP,
@@ -272,6 +302,9 @@ func (n *OpenAIChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (cor
 				}
 			}
 		}
+		if req.ReasoningEffort != "" {
+			params.Reasoning = &core.Reasoning{Effort: req.ReasoningEffort}
+		}
 		out.Params = params
 	}
 
@@ -285,7 +318,10 @@ func (n *OpenAIChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (cor
 // prepended as a core.ContentReasoning block so audit readers see the
 // chain-of-thought even when the visible `content` is empty (a common
 // shape on `finish_reason=length` mid-reasoning truncations).
-func decodeOpenAIContent(rawContent json.RawMessage, toolCalls []openAIToolCall, toolCallID, reasoning string) []core.ContentBlock {
+// base is the gjson path of the content array being decoded (e.g.
+// "messages.0.content"), used to build media locators. Empty when the
+// caller has no positional context.
+func decodeOpenAIContent(rawContent json.RawMessage, toolCalls []openAIToolCall, toolCallID, reasoning, base string) []core.ContentBlock {
 	var blocks []core.ContentBlock
 
 	if reasoning != "" {
@@ -314,8 +350,8 @@ func decodeOpenAIContent(rawContent json.RawMessage, toolCalls []openAIToolCall,
 			// Array of content parts.
 			var parts []map[string]any
 			if err := json.Unmarshal(rawContent, &parts); err == nil {
-				for _, part := range parts {
-					blocks = append(blocks, openAIContentPart(part))
+				for i, part := range parts {
+					blocks = append(blocks, openAIContentPart(part, locator.JoinPath(base, i)))
 				}
 			}
 		}
@@ -341,26 +377,93 @@ func decodeOpenAIContent(rawContent json.RawMessage, toolCalls []openAIToolCall,
 	return blocks
 }
 
-func openAIContentPart(part map[string]any) core.ContentBlock {
+// locator is the gjson path of this part inside the captured body; an empty
+// locator means no positional context and media degrades to absent.
+func openAIContentPart(part map[string]any, path string) core.ContentBlock {
 	t, _ := part["type"].(string)
 	switch t {
 	case "text":
 		s, _ := part["text"].(string)
 		return core.ContentBlock{Type: core.ContentText, Text: s}
 	case "image_url":
-		if iu, ok := part["image_url"].(map[string]any); ok {
-			urlStr, _ := iu["url"].(string)
-			return core.ContentBlock{
-				Type:     core.ContentImageRef,
-				ImageRef: &core.BinaryRef{ContentType: "image", SpillKey: urlStr},
-			}
+		iu, ok := part["image_url"].(map[string]any)
+		if !ok {
+			return mediaBlock(&core.MediaRef{Modality: core.ModalityImage, Source: core.MediaAbsent})
 		}
-		return core.ContentBlock{Type: core.ContentImageRef, ImageRef: &core.BinaryRef{ContentType: "image"}}
+		urlStr, _ := iu["url"].(string)
+		// A data URI declares its own mime in the prefix. Reading it is what
+		// makes a WebP report image/webp instead of the bare "image" every
+		// format used to collapse to.
+		return mediaBlock(inlineOrExternal(urlStr, locator.JoinSuffix(path, "image_url.url"), core.ModalityImage))
+	case "video_url":
+		// Same field shape as image_url. Before this case existed, a video
+		// part fell through to the default branch and was serialized into a
+		// text block: the routing predicates saw no video modality (so the
+		// capability floor could hand a video request to a model that cannot
+		// read one), and the base64 payload entered the compliance pipeline
+		// as prose.
+		vu, ok := part["video_url"].(map[string]any)
+		if !ok {
+			return mediaBlock(&core.MediaRef{Modality: core.ModalityVideo, Source: core.MediaAbsent})
+		}
+		urlStr, _ := vu["url"].(string)
+		return mediaBlock(inlineOrExternal(urlStr, locator.JoinSuffix(path, "video_url.url"), core.ModalityVideo))
+	case "input_audio":
+		ia, ok := part["input_audio"].(map[string]any)
+		if !ok {
+			return mediaBlock(&core.MediaRef{Modality: core.ModalityAudio, Source: core.MediaAbsent})
+		}
+		data, _ := ia["data"].(string)
+		format, _ := ia["format"].(string)
+		return mediaBlock(capturedMedia(
+			audioMimeFromFormat(format),
+			data,
+			locator.JSON(locator.JoinSuffix(path, "input_audio.data")),
+		))
+	case "file":
+		f, ok := part["file"].(map[string]any)
+		if !ok {
+			return mediaBlock(&core.MediaRef{Modality: core.ModalityFile, Source: core.MediaAbsent})
+		}
+		// Highest custody wins when a part carries several of these: inline
+		// bytes, then a provider file id. filename is display-only.
+		if data, _ := f["file_data"].(string); data != "" {
+			mime, payload, isData := locator.ParseDataURI(data)
+			if isData {
+				return mediaBlock(capturedMedia(mime, payload, locator.DataURI(locator.JoinSuffix(path, "file.file_data"))))
+			}
+			return mediaBlock(capturedMedia("", data, locator.JSON(locator.JoinSuffix(path, "file.file_data"))))
+		}
+		if id, _ := f["file_id"].(string); id != "" {
+			return mediaBlock(providerRefMedia("", id, core.ModalityFile))
+		}
+		return mediaBlock(&core.MediaRef{Modality: core.ModalityFile, Source: core.MediaAbsent})
 	default:
 		// Preserve as text serialization of the unknown part so audit
-		// readers can see what the upstream sent.
-		b, _ := json.Marshal(part)
-		return core.ContentBlock{Type: core.ContentText, Text: string(b)}
+		// readers can see what the upstream sent. Known media types are
+		// handled above — this branch used to swallow whole audio clips and
+		// PDFs into text blocks, which is how they reached the redaction
+		// pipeline as if they were prose.
+		return core.ContentBlock{Type: core.ContentText, Text: payloadSafeJSON(part)}
+	}
+}
+
+// audioMimeFromFormat maps OpenAI's input_audio.format to a mime type. The
+// wire carries a bare format word rather than a mime.
+func audioMimeFromFormat(format string) string {
+	switch strings.ToLower(format) {
+	case "wav":
+		return "audio/wav"
+	case "mp3":
+		return "audio/mpeg"
+	case "flac":
+		return "audio/flac"
+	case "opus":
+		return "audio/opus"
+	case "":
+		return ""
+	default:
+		return "audio/" + strings.ToLower(format)
 	}
 }
 
@@ -416,6 +519,9 @@ type openAIUsage struct {
 	PromptTokensDetails *struct {
 		CachedTokens        int `json:"cached_tokens,omitempty"`
 		CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
+		// AudioTokens is the audio share of the prompt on audio-capable
+		// chat models. Dropping it makes an audio-in turn undercount.
+		AudioTokens int `json:"audio_tokens,omitempty"`
 	} `json:"prompt_tokens_details,omitempty"`
 	// Nested details — OpenAI Responses API.
 	InputTokensDetails *struct {
@@ -424,9 +530,12 @@ type openAIUsage struct {
 	// Reasoning detail blocks.
 	CompletionTokensDetails *struct {
 		ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+		// AudioTokens is the spoken share of the completion.
+		AudioTokens int `json:"audio_tokens,omitempty"`
 	} `json:"completion_tokens_details,omitempty"`
 	OutputTokensDetails *struct {
 		ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+		AudioTokens     int `json:"audio_tokens,omitempty"`
 	} `json:"output_tokens_details,omitempty"`
 }
 
@@ -483,6 +592,22 @@ func (u openAIUsage) extractCanonicalUsage() *core.Usage {
 	case u.OutputTokensDetails != nil && u.OutputTokensDetails.ReasoningTokens != 0:
 		setIntPtr(&out.ReasoningTokens, u.OutputTokensDetails.ReasoningTokens)
 	}
+	// Audio chain. Both directions are summed because the canonical Usage
+	// carries one audio figure: an audio-in/audio-out turn spends on both
+	// sides, and reporting only one of them understates the turn.
+	audio := 0
+	if u.PromptTokensDetails != nil {
+		audio += u.PromptTokensDetails.AudioTokens
+	}
+	switch {
+	case u.CompletionTokensDetails != nil && u.CompletionTokensDetails.AudioTokens != 0:
+		audio += u.CompletionTokensDetails.AudioTokens
+	case u.OutputTokensDetails != nil && u.OutputTokensDetails.AudioTokens != 0:
+		audio += u.OutputTokensDetails.AudioTokens
+	}
+	if audio != 0 {
+		setIntPtr(&out.AudioTokens, audio)
+	}
 	return out
 }
 
@@ -536,15 +661,36 @@ func (n *OpenAIChatNormalizer) normalizeNonStreamResponse(raw []byte, meta core.
 	}
 	out.Messages = make([]core.Message, 0, len(resp.Choices))
 	reasoningChars := 0
-	for _, ch := range resp.Choices {
+	for ci, ch := range resp.Choices {
 		if ch.Message == nil {
 			continue
 		}
 		reasoningChars += len(firstNonEmptyString(ch.Message.ReasoningContent, ch.Message.Reasoning))
+		base := locator.JoinPath("choices", ci) + ".message.content"
 		msg := core.Message{
-			Role:         roleFromString(ch.Message.Role),
-			Content:      decodeOpenAIContent(ch.Message.Content, ch.Message.ToolCalls, ch.Message.ToolCallID, firstNonEmptyString(ch.Message.ReasoningContent, ch.Message.Reasoning)),
+			Role: roleFromString(ch.Message.Role),
+			Content: decodeOpenAIContent(ch.Message.Content, ch.Message.ToolCalls, ch.Message.ToolCallID,
+				firstNonEmptyString(ch.Message.ReasoningContent, ch.Message.Reasoning), base),
 			FinishReason: ch.FinishReason,
+		}
+		// N1: audio output. The message-level `audio` object is the only
+		// audio modality on the most common chat wire, and it was dropped
+		// entirely — an audio-out turn read as an empty assistant message.
+		if ch.Message.Audio != nil {
+			if ch.Message.Audio.Transcript != "" {
+				msg.Content = append(msg.Content, core.ContentBlock{
+					Type: core.ContentText, Text: ch.Message.Audio.Transcript,
+				})
+			}
+			if ch.Message.Audio.Data != "" {
+				ref := capturedMedia("", ch.Message.Audio.Data,
+					locator.JSON(locator.JoinPath("choices", ci)+".message.audio.data"))
+				// The response object declares no mime; the format was
+				// chosen in the request. Modality is known even when the
+				// mime is not, so state it rather than defaulting to file.
+				ref.Modality = core.ModalityAudio
+				msg.Content = append(msg.Content, mediaBlock(ref))
+			}
 		}
 		out.Messages = append(out.Messages, msg)
 	}

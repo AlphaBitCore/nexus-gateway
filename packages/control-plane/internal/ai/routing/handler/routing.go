@@ -16,11 +16,32 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
-	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterRoutingRoutes registers routing rule CRUD routes.
+// validatePipelineStage accepts only stage 1, the route stage.
+//
+// Stage 0 was a policy-narrowing pipeline of our own invention — allow/deny
+// lists evaluated before routing. It is gone: no UI control ever offered it, no
+// production rule used it, and the gateway no longer evaluates it. The product's
+// model-access rule is the virtual key's ALLOW list, enforced on both selection
+// paths, and there is no deny concept.
+//
+// Rejected rather than coerced to 1. Silently rewriting the caller's stage would
+// store a rule that is not the one they asked for, and they would learn that
+// from behaviour instead of from the response. The admin UI never offered stage
+// 0, and the UI defines the supported surface — the API must not accept more
+// than the UI can express, or an operator ends up with configuration nobody can
+// see or edit.
+func validatePipelineStage(stage *int) (string, bool) {
+	if stage == nil || *stage == 1 {
+		return "", true
+	}
+	return "pipelineStage must be 1 (route). Stage 0 (policy narrowing) has been removed; " +
+		"model access is governed by the virtual key's allowed-models list.", false
+}
+
 func (h *Handler) RegisterRoutingRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
 	g.GET("/routing-rules", h.ListRoutingRules, iamMW(iam.ResourceRoutingRule.Action(iam.VerbRead)))
 	g.POST("/routing-rules", h.CreateRoutingRule, iamMW(iam.ResourceRoutingRule.Action(iam.VerbCreate)))
@@ -29,42 +50,6 @@ func (h *Handler) RegisterRoutingRoutes(g *echo.Group, iamMW func(action string)
 	g.PUT("/routing-rules/:id", h.UpdateRoutingRule, iamMW(iam.ResourceRoutingRule.Action(iam.VerbUpdate)))
 	g.PATCH("/routing-rules/:id", h.UpdateRoutingRule, iamMW(iam.ResourceRoutingRule.Action(iam.VerbUpdate)))
 	g.DELETE("/routing-rules/:id", h.DeleteRoutingRule, iamMW(iam.ResourceRoutingRule.Action(iam.VerbDelete)))
-}
-
-// validRetryOnClasses enumerates the acceptable RetryOn enum values per
-// design spec §6.2. Kept in sync with configtypes.ErrorClass*.
-var validRetryOnClasses = map[cfgpolicy.ErrorClass]struct{}{
-	cfgpolicy.ErrorClassNetwork: {},
-	cfgpolicy.ErrorClassTimeout: {},
-	cfgpolicy.ErrorClassRate429: {},
-	cfgpolicy.ErrorClass5xx:     {},
-}
-
-// validateRetryPolicyJSON enforces the admin-input bounds on a RetryPolicy
-// before it is persisted. raw == nil or `null` is allowed (means "clear /
-// inherit YAML default"). Returns ("", true) when valid; (msg, false)
-// otherwise. Backoff fields are intentionally not validated — the UI does
-// not expose them and the YAML default loader clamps shape errors there.
-func validateRetryPolicyJSON(raw json.RawMessage) (string, bool) {
-	s := string(raw)
-	if len(raw) == 0 || s == "null" {
-		return "", true
-	}
-	var p cfgpolicy.RetryPolicy
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return fmt.Sprintf("retryPolicy is not valid JSON: %v", err), false
-	}
-	if p.MaxAttemptsPerTarget != 0 {
-		if p.MaxAttemptsPerTarget < 1 || p.MaxAttemptsPerTarget > 5 {
-			return fmt.Sprintf("retryPolicy.maxAttemptsPerTarget must be in [1,5]; got %d", p.MaxAttemptsPerTarget), false
-		}
-	}
-	for _, cls := range p.RetryOn {
-		if _, ok := validRetryOnClasses[cls]; !ok {
-			return fmt.Sprintf("retryPolicy.retryOn[]: %q is not a valid error class (allowed: network, timeout, 429, 5xx)", cls), false
-		}
-	}
-	return "", true
 }
 
 // extractJSONFieldForUpdate inspects the raw request body to distinguish three
@@ -109,13 +94,17 @@ func extractRetryPolicyForUpdate(body []byte) (raw json.RawMessage, present bool
 // persisted with any other strategyType would broadcast fleet-wide via
 // InvalidateConfig and then fail to resolve on every gateway, so the admin
 // write path rejects unknown values up front rather than letting them land.
+//
+// `policy` was in this set and has no implementation. A rule carrying it was
+// accepted, broadcast, and then yielded the primary slot on every gateway — the
+// admin saw a rule listed and enabled that never fired. Stored rows are
+// disabled by the upgrade migration; new ones are refused here.
 var validStrategyTypes = map[string]struct{}{
 	"single":      {},
 	"fallback":    {},
 	"loadbalance": {},
 	"conditional": {},
 	"ab_split":    {},
-	"policy":      {},
 	"smart":       {},
 	"latency":     {},
 }
@@ -123,7 +112,7 @@ var validStrategyTypes = map[string]struct{}{
 // strategyTypeList renders validStrategyTypes as a stable, comma-separated
 // string for the 400 error body so an operator sees the accepted set.
 func strategyTypeList() string {
-	ordered := []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "policy", "smart", "latency"}
+	ordered := []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "smart", "latency"}
 	return strings.Join(ordered, ", ")
 }
 
@@ -315,10 +304,20 @@ func (h *Handler) CreateRoutingRule(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "fallback_chain_invalid", ""))
 	}
 
-	stage := 1
-	if body.PipelineStage != nil && *body.PipelineStage == 0 {
-		stage = 0
+	// Stage 0 was a policy-narrowing pipeline of our own invention: allow/deny
+	// lists evaluated before routing. It is gone. The product's model-access
+	// rule is the virtual key's ALLOW list, enforced in the gateway on both
+	// selection paths, and there is no deny concept.
+	//
+	// Rejected rather than coerced to 1. Silently rewriting the caller's stage
+	// would store a rule that is not the one they asked for, and they would find
+	// out from behaviour instead of from the response. The admin UI never
+	// offered stage 0 — it defines the supported surface, so the API must not
+	// accept more than it can express.
+	if msg, ok := validatePipelineStage(body.PipelineStage); !ok {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "pipeline_stage_invalid", ""))
 	}
+	stage := 1
 	enabled := true
 	if body.Enabled != nil {
 		enabled = *body.Enabled
@@ -390,10 +389,27 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
 	}
 
+	// The STORED type is validated too, not only a supplied one.
+	//
+	// A partial patch that omits strategyType used to skip the check entirely,
+	// so the one-click enable toggle on the rules list re-enabled a rule the
+	// upgrade migration had just disabled — a green "Rule updated" and a rule
+	// shown Enabled that the resolver yields on every request forever. The
+	// migration's whole purpose was undone by a control that never mentions
+	// strategies.
+	//
+	// The patch may still FIX such a rule: supplying a valid strategyType
+	// replaces the stored one, and that is exactly the way out.
+	effectiveType := existing.StrategyType
 	if body.StrategyType != nil {
-		if msg, ok := validateStrategyType(*body.StrategyType); !ok {
-			return c.JSON(http.StatusBadRequest, errJSON(msg, "strategy_type_invalid", ""))
+		effectiveType = *body.StrategyType
+	}
+	if msg, ok := validateStrategyType(effectiveType); !ok {
+		if body.StrategyType == nil {
+			msg += ". This rule is stored with a strategy the gateway cannot dispatch; " +
+				"change strategyType in the same request, or delete the rule"
 		}
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "strategy_type_invalid", ""))
 	}
 
 	params := routingstore.UpdateRoutingRuleParams{
@@ -415,15 +431,14 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 		if msg, ok := validateMatchConditions(raw); !ok {
 			return c.JSON(http.StatusUnprocessableEntity, errJSON(msg, "match_conditions_legacy_field", ""))
 		}
-		// Smart-rule guard: when the update supplies both strategyType=smart
-		// and matchConditions, ensure matchConditions pins
-		// requestedModelLiterals=["auto"]. The edge case where the operator
-		// updates only matchConditions on a pre-existing smart rule is covered
-		// by the audit runbook rather than blocked here.
-		if body.StrategyType != nil {
-			if msg, ok := validateSmartRuleMatchConditions(*body.StrategyType, raw); !ok {
-				return c.JSON(http.StatusBadRequest, errJSON(msg, "smart_rule_match_conditions_unsafe", ""))
-			}
+		// Smart-rule guard, against the rule's EFFECTIVE strategy rather than
+		// the body's. An update that supplies matchConditions and no
+		// strategyType is still an update to a smart rule when the stored one
+		// is smart — and gating on the body let exactly that request save a
+		// rule into a state it could not have been created in, with the
+		// create path refusing what the edit path accepted.
+		if msg, ok := validateSmartRuleMatchConditions(effectiveType, raw); !ok {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "smart_rule_match_conditions_unsafe", ""))
 		}
 		params.MatchConditions = raw
 	}
@@ -435,10 +450,10 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 		params.FallbackChain = raw
 	}
 	if body.PipelineStage != nil {
-		stage := 1
-		if *body.PipelineStage == 0 {
-			stage = 0
+		if msg, ok := validatePipelineStage(body.PipelineStage); !ok {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "pipeline_stage_invalid", ""))
 		}
+		stage := 1
 		params.PipelineStage = &stage
 	}
 

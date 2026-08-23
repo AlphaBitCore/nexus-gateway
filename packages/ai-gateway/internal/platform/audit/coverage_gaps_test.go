@@ -221,13 +221,16 @@ func TestAcquireRequestBody_GrowsWhenPooledTooSmall(t *testing.T) {
 func TestRecordToMessage_CarriesEmbeddingAndAIGuardCosts(t *testing.T) {
 	w := NewWriter(nil, "q", nil, slog.Default())
 	rec := &Record{
-		RequestID:        "rec-cost",
-		Timestamp:        time.Unix(1700000000, 0).UTC(),
-		EmbeddingCostUsd: 0.0021,
-		EmbeddingModelID: "text-embedding-3-small",
-		AIGuardCostUsd:   0.0007,
-		HookRewritten:    true,
-		HookRewriteCount: 2,
+		RequestID:           "rec-cost",
+		Timestamp:           time.Unix(1700000000, 0).UTC(),
+		EmbeddingCostUsd:    0.0021,
+		EmbeddingModelID:    "text-embedding-3-small",
+		EmbeddingProviderID: "prov-openai-embed",
+		AIGuardCostUsd:      0.0007,
+		RouterCostUsd:       0.0066,
+		RouterProviderID:    "prov-openai",
+		HookRewritten:       true,
+		HookRewriteCount:    2,
 	}
 	msg := w.recordToMessage(rec)
 
@@ -237,8 +240,17 @@ func TestRecordToMessage_CarriesEmbeddingAndAIGuardCosts(t *testing.T) {
 	if msg.EmbeddingModelID != "text-embedding-3-small" {
 		t.Fatalf("EmbeddingModelID = %q, want text-embedding-3-small", msg.EmbeddingModelID)
 	}
+	if msg.EmbeddingProviderID != "prov-openai-embed" {
+		t.Fatalf("EmbeddingProviderID = %q, want prov-openai-embed", msg.EmbeddingProviderID)
+	}
 	if msg.AIGuardCostUsd == nil || *msg.AIGuardCostUsd != 0.0007 {
 		t.Fatalf("AIGuardCostUsd = %v, want 0.0007", msg.AIGuardCostUsd)
+	}
+	if msg.RouterCostUsd == nil || *msg.RouterCostUsd != 0.0066 {
+		t.Fatalf("RouterCostUsd = %v, want 0.0066", msg.RouterCostUsd)
+	}
+	if msg.RouterProviderID != "prov-openai" {
+		t.Fatalf("RouterProviderID = %q, want prov-openai", msg.RouterProviderID)
 	}
 	details := jsonbMap(t, msg.Details)
 	if got := details["hookRewritten"]; got != true {
@@ -246,6 +258,30 @@ func TestRecordToMessage_CarriesEmbeddingAndAIGuardCosts(t *testing.T) {
 	}
 	if got := details["hookRewriteCount"]; got != float64(2) {
 		t.Fatalf("details.hookRewriteCount = %v, want 2", got)
+	}
+}
+
+// TestRecordToMessage_RouterAndEmbeddingProviderFieldsAbsentWhenZero pins the
+// fail-open contract on record.go: when smart routing did not run (or its
+// call failed) RouterCostUsd/RouterProviderID stay zero-value on the Record,
+// and recordToMessage must leave the wire message's pointer/string fields
+// unset rather than stamping a false $0.00 charge.
+func TestRecordToMessage_RouterAndEmbeddingProviderFieldsAbsentWhenZero(t *testing.T) {
+	w := NewWriter(nil, "q", nil, slog.Default())
+	rec := &Record{
+		RequestID: "rec-no-router",
+		Timestamp: time.Unix(1700000000, 0).UTC(),
+	}
+	msg := w.recordToMessage(rec)
+
+	if msg.RouterCostUsd != nil {
+		t.Fatalf("RouterCostUsd = %v, want nil (smart routing did not run)", msg.RouterCostUsd)
+	}
+	if msg.RouterProviderID != "" {
+		t.Fatalf("RouterProviderID = %q, want empty", msg.RouterProviderID)
+	}
+	if msg.EmbeddingProviderID != "" {
+		t.Fatalf("EmbeddingProviderID = %q, want empty", msg.EmbeddingProviderID)
 	}
 }
 
@@ -802,5 +838,62 @@ func TestRecordToMessage_EmbeddingFieldsRoundTripJSON(t *testing.T) {
 	}
 	if back.EmbeddingCostUsd == nil || *back.EmbeddingCostUsd != 0.5 {
 		t.Fatalf("round-trip EmbeddingCostUsd = %v, want 0.5", back.EmbeddingCostUsd)
+	}
+}
+
+// TestRecordToMessage_MarshalsInternalOpsBreakdown pins the Record -> message
+// boundary for the per-call itemisation: the typed entries the routing stage
+// appends must reach traffic_event.internal_ops_breakdown as the documented
+// snake_case JSON array. The keys are a persisted contract read by the CP
+// traffic drawer, so this asserts the wire shape, not just presence.
+func TestRecordToMessage_MarshalsInternalOpsBreakdown(t *testing.T) {
+	w := NewWriter(nil, "q", nil, slog.Default())
+	rec := &Record{
+		RequestID:     "rec-internal-ops",
+		Timestamp:     time.Unix(1700000000, 0).UTC(),
+		RouterCostUsd: 0.0031,
+		InternalOpsBreakdown: []InternalOpsEntry{{
+			Type: "smart-router", Model: "model-gpt-4o", ProviderID: "prov-openai",
+			PromptTokens: 5120, CompletionTokens: 18, CacheReadTokens: 4864,
+			CostUsd: 0.0031,
+		}},
+	}
+	msg := w.recordToMessage(rec)
+
+	var got []map[string]any
+	if err := json.Unmarshal(msg.InternalOpsBreakdown, &got); err != nil {
+		t.Fatalf("internal_ops_breakdown is not a JSON array: %v (raw=%s)", err, msg.InternalOpsBreakdown)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d entries, want 1", len(got))
+	}
+	// camelCase, matching what the CP traffic drawer indexes off the raw JSONB
+	// (CostBreakdown.tsx reads b.costUsd). No layer rewrites the casing, so a
+	// snake_case key here renders every internal-ops line as $0.00.
+	want := map[string]any{
+		"type": "smart-router", "model": "model-gpt-4o", "providerId": "prov-openai",
+		"promptTokens": float64(5120), "completionTokens": float64(18),
+		"cacheReadTokens": float64(4864), "costUsd": 0.0031,
+	}
+	for k, v := range want {
+		if got[0][k] != v {
+			t.Errorf("entry[%q] = %v, want %v", k, got[0][k], v)
+		}
+	}
+	// cacheCreationTokens was zero and is omitempty — absent, not 0, so a
+	// reader can tell "no cache write" from "field not recorded".
+	if _, present := got[0]["cacheCreationTokens"]; present {
+		t.Errorf("cacheCreationTokens must be omitted when zero, got %v", got[0]["cacheCreationTokens"])
+	}
+}
+
+// TestRecordToMessage_InternalOpsBreakdownAbsentWhenEmpty pins that a request
+// which made no internal model call leaves the column NULL rather than writing
+// an empty array — "[]" and NULL read differently to every consumer.
+func TestRecordToMessage_InternalOpsBreakdownAbsentWhenEmpty(t *testing.T) {
+	w := NewWriter(nil, "q", nil, slog.Default())
+	msg := w.recordToMessage(&Record{RequestID: "rec-no-ops", Timestamp: time.Unix(1700000000, 0).UTC()})
+	if msg.InternalOpsBreakdown != nil {
+		t.Errorf("InternalOpsBreakdown = %s, want nil when no internal call was made", msg.InternalOpsBreakdown)
 	}
 }

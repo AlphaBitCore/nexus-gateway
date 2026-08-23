@@ -42,8 +42,8 @@ type embeddingsFixedRouter struct {
 
 func (e embeddingsFixedRouter) ResolveTargets(ctx context.Context, rctx *routingcore.RoutingContext) (*routingcore.RouteResult, error) {
 	return &routingcore.RouteResult{
-		Targets: e.targets,
-		RuleID:  "rule-test",
+		Dispatch: e.targets,
+		RuleID:   "rule-test",
 	}, nil
 }
 
@@ -138,7 +138,10 @@ func TestProxy_Embeddings_OpenAIIngress_GeminiOnlyTarget_NoCompatibleProvider(t 
 		t.Fatal(err)
 	}
 	errObj, _ := payload["error"].(map[string]any)
-	if errObj["type"] != "no_compatible_provider" {
-		t.Fatalf("error.type = %v, want no_compatible_provider: %s", errObj["type"], rec.Body.String())
+	if errObj["code"] != "NO_COMPATIBLE_PROVIDER" {
+		t.Fatalf("error.code = %v, want NO_COMPATIBLE_PROVIDER: %s", errObj["code"], rec.Body.String())
+	}
+	if errObj["type"] != "invalid_request_error" {
+		t.Errorf("error.type = %v, want the status-derived invalid_request_error: %s", errObj["type"], rec.Body.String())
 	}
 }

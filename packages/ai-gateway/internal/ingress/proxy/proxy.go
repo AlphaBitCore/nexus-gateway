@@ -27,6 +27,7 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
@@ -63,6 +64,15 @@ type Deps struct {
 	CredManager CredentialLookup // was *credentials.Manager — used by models handler
 	Router      RouteResolver    // typically *routingcore.Resolver
 	Executor    executor.API     // upstream dispatch with retry/credential/health; production wires *executor.TargetExecutor
+	// EnforceNamedModelModality governs the explicit-model passthrough's own
+	// modality guards (floorGuard + inputModalityGuard). This path runs only
+	// for a model the caller NAMED, and by default a named model's modality
+	// verdict is the upstream's (our catalogue can be wrong), so those two
+	// guards are skipped unless this is true. The embeddings capability guard
+	// is NOT governed by it — that is parameter compatibility, not modality.
+	// Sourced from config.Routing.EnforceNamedModelModality; see the resolver's
+	// matching field for the `auto`-path counterpart.
+	EnforceNamedModelModality bool
 	// Resolver turns a (providerID, modelID) pair into a fully-resolved
 	// [provcore.CallTarget] (BaseURL + decrypted key + Format + provider
 	// model id). It is the SAME resolver instance the executor holds — the
@@ -196,6 +206,13 @@ type Deps struct {
 	// detector's compiled rule set. Nil disables the check so deployments
 	// that haven't pushed a freshness pattern config still work.
 	FreshnessDetector *freshness.Detector
+	// CapCache is the same atomically-swapped capability snapshot the router
+	// holds. The explicit-model passthrough needs it because two guards the
+	// resolver applies — the RequiredModalities floor and the embeddings
+	// compatibility pre-filter — read from it, and that path had no access to
+	// it at all, so both were silently resolver-only. Nil skips the checks,
+	// matching the resolver's own nil-tolerance.
+	CapCache *capability.Cache
 	// SemanticReader executes the L2 semantic cache lookup on every L1
 	// miss. Nil disables L2 lookup entirely. Shared across all handler
 	// instances. Production wires *semantic.Reader; tests may wire a stub.
@@ -238,6 +255,12 @@ type Handler struct {
 
 // NewHandler creates a Handler with the given dependencies.
 func NewHandler(deps *Deps) *Handler {
+	// A dependency the caller left nil must read as nil through the interface
+	// field, or none of the `deps.X == nil` guards below mean anything.
+	if fixed := unboxNilDeps(deps); len(fixed) > 0 && deps.Logger != nil {
+		deps.Logger.Warn("proxy: dependencies absent; the features behind them are disabled",
+			"fields", fixed)
+	}
 	return &Handler{
 		deps:           deps,
 		lazyCanonical:  os.Getenv("NEXUS_LAZY_CANONICAL") != "0",
@@ -331,6 +354,7 @@ func (h *Handler) finalize(rec *audit.Record, start time.Time) {
 		}
 		rec.LatencyMs = ms
 	}
+	checkRoutedTargetWasACandidate(rec, h.deps.Logger)
 	h.deps.AuditWriter.Enqueue(rec)
 }
 

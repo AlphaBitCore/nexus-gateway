@@ -8,8 +8,10 @@ package capability
 // Rules:
 //   - cap == nil → reject (no capability data means not an embedding model)
 //   - cap.Embeddings == nil → reject (capability JSON exists but has no embeddings block)
-//   - req.Dimensions != nil → must appear in cap.Embeddings.SupportedDimensions
-//     (when SupportedDimensions is empty/nil, the model rejects any dimensions parameter)
+//   - req.Dimensions != nil → when the model declares a range (MaxDimension > 0)
+//     it must fall inside [MinDimension or 1, MaxDimension]; otherwise it must
+//     appear in cap.Embeddings.SupportedDimensions (and when that list is
+//     empty/nil too, the model rejects any dimensions parameter)
 //   - req.BatchSize > cap.Embeddings.MaxBatchSize → reject (when MaxBatchSize > 0)
 //   - req.EncodingFormat != "" → must appear in cap.Embeddings.SupportedEncodingFormats
 //     (defaulting to ["float"] when omitted from the descriptor — base64 must be
@@ -27,6 +29,8 @@ func Compatible(req *EmbeddingRequest, cap *ModelCapability) (ok bool, reason st
 
 	proj := CandidateCapability{
 		SupportedDimensions:      emb.SupportedDimensions,
+		MinDimension:             emb.MinDimension,
+		MaxDimension:             emb.MaxDimension,
 		MaxBatchSize:             emb.MaxBatchSize,
 		SupportedEncodingFormats: effectiveEncodingFormats(emb),
 		// Required extensions advertised by the model descriptor itself
@@ -36,10 +40,25 @@ func Compatible(req *EmbeddingRequest, cap *ModelCapability) (ok bool, reason st
 		RequiredExtensions: emb.RequiredExtensions,
 	}
 
-	// Rule 1: dimensions parameter
+	// Rule 1: dimensions parameter.
+	//
+	// A declared range wins over the enumeration. A Matryoshka model accepts
+	// any dimension up to its maximum, so the honest description is the bound,
+	// and anything inside it is forwarded for the provider to judge. Only when
+	// no range is declared does the fixed list apply — that list is still the
+	// right description for a model that really does emit one size.
 	if req != nil && req.Dimensions != nil {
 		d := *req.Dimensions
-		if !containsInt(emb.SupportedDimensions, d) {
+		switch {
+		case emb.MaxDimension > 0:
+			min := emb.MinDimension
+			if min <= 0 {
+				min = 1
+			}
+			if d < min || d > emb.MaxDimension {
+				return false, "requested dimensions outside the range this model supports", proj
+			}
+		case !containsInt(emb.SupportedDimensions, d):
 			return false, "requested dimensions not supported by this model", proj
 		}
 	}
@@ -78,21 +97,36 @@ func Compatible(req *EmbeddingRequest, cap *ModelCapability) (ok bool, reason st
 	return true, "", proj
 }
 
-// effectiveEncodingFormats returns the model's supported encoding formats.
-// When the descriptor omits SupportedEncodingFormats, the safe default
-// ["float"] applies: "float" is the only encoding every embedding codec
-// emits unconditionally. "base64" must be explicitly declared by the model
-// descriptor because only some provider codecs (OpenAI native, which passes
-// encoding_format through to the wire) actually honor it; voyage/gemini/
-// bedrock codecs always emit float and never read encoding_format, and the
-// Cohere codec rejects encoding_format="base64" with a 400. Defaulting to
-// ["float","base64"] would let a base64 request pass the capability filter
-// only to be silently downgraded to float (or 400'd) downstream.
+// effectiveEncodingFormats returns the encoding formats a request may ask for.
+//
+// Both "float" and "base64" are always available, whatever the descriptor says,
+// because neither depends on the provider wire any more: "float" is what every
+// embedding codec emits unconditionally, and "base64" is guaranteed by the
+// ingress response layer (honorEmbeddingEncodingFormat in
+// internal/ingress/proxy), which re-encodes canonical float vectors to
+// little-endian float32 base64 for the caller.
+//
+// This used to require an explicit per-model "base64" declaration, on the
+// reasoning that only the OpenAI-native codec passed encoding_format to the wire
+// and a base64 request would otherwise be silently downgraded (or 400'd by
+// Cohere). That reasoning was sound but the guard did not hold: the
+// explicit-model passthrough path never runs this filter, so a base64 request to
+// e.g. gemini-embedding-001 sailed through and WAS silently downgraded — and the
+// OpenAI SDKs, having implicitly asked for base64, decoded the float array into a
+// quarter-length garbage vector (observed on staging 2026-07-27). Guaranteeing
+// base64 on the response path fixes the whole class instead of gating it.
+//
+// A descriptor that declares formats still widens the set (a provider-specific
+// encoding beyond these two), it just cannot narrow it below the two the gateway
+// itself guarantees.
 func effectiveEncodingFormats(emb *EmbeddingsCapability) []string {
-	if len(emb.SupportedEncodingFormats) > 0 {
-		return emb.SupportedEncodingFormats
+	out := []string{"float", "base64"}
+	for _, f := range emb.SupportedEncodingFormats {
+		if f != "float" && f != "base64" {
+			out = append(out, f)
+		}
 	}
-	return []string{"float"}
+	return out
 }
 
 func containsInt(slice []int, v int) bool {

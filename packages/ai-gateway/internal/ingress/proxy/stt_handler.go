@@ -24,7 +24,6 @@ package proxy
 
 import (
 	"bytes"
-	"errors"
 	"mime"
 	"net/http"
 	"strings"
@@ -42,6 +41,7 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -64,6 +64,21 @@ type authApplier interface {
 // translations) is preserved verbatim to the upstream (both share one wire
 // shape, so the path is the only discriminator — gap #6), so a single handler
 // serves both routes.
+// stampSTTResponseMarkers puts this hop on the response.
+//
+// The transcription route is a parallel handler: it never runs the ServeProxy
+// stage chain, which is where PrependVia lives, so without this its responses
+// carried the allowlisted upstream headers and no sign they had crossed the
+// gateway at all. nexus-headers.md states the minimum every Nexus-stamped
+// response shows, and a missing hop marker breaks the via chain's one job —
+// telling a reader how many Nexus hops a response actually made.
+//
+// Prepend, not set: a request that reached here through the compliance proxy
+// or an agent already carries their entries, and the chain reads newest-first.
+func stampSTTResponseMarkers(h http.Header) {
+	traffic.PrependVia(h, "ai-gateway")
+}
+
 func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// In-flight admission gate: reject-fast before any per-request setup,
@@ -90,6 +105,7 @@ func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 			IngressFormat:   string(in.BodyFormat),
 			EndpointType:    string(typology.EndpointKindSTT),
 		}
+		stampCallerAttribution(rec, r.Header)
 
 		// Owned, panic-safe audit tail (SDD A5): the generative-caps slot
 		// release and the audit enqueue run on EVERY exit path — success,
@@ -191,8 +207,11 @@ func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 			return
 		}
 
-		// The audio fingerprint is the INPUT artifact (never the bytes — R-7).
+		// The audio fingerprint is the INPUT artifact, recorded whether or not
+		// the bytes are captured — it is what proves which file was sent.
 		rec.ArtifactRefs = sttReq.ArtifactRefsJSON()
+
+		h.captureSTTAudio(rec, sttReq)
 		// No output scanning yet; coverage starts none and scanSTTPrompt
 		// upgrades it to prompt-only when a content hook cleanly scanned the
 		// prompt field (the one request-side text leaf — audio stays
@@ -211,7 +230,7 @@ func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 		// the canonical stays nil and non-smart routing selects on metadata.
 		rctx := h.buildRequestContext(r, vkMeta, nil, in.BodyFormat, sttReq.Model, string(typology.EndpointKindSTT))
 		routeRes, routeErr := h.resolveRouteOrPassthrough(r.Context(), rctx, in, sttReq.Model, typology.EndpointKindSTT)
-		if routeErr != nil || routeRes == nil || len(routeRes.Targets) == 0 {
+		if routeErr != nil || routeRes == nil || len(routeRes.AllTargets()) == 0 {
 			// 404, NOT 502: an unknown / unconfigured / not-allowed-for-this-VK
 			// model is a CLIENT-correctable condition (parity with the chat
 			// no-match path). A 5xx would make an OpenAI SDK retry a request that
@@ -221,7 +240,7 @@ func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 				"Check the model name, or add a provider + model mapping for it")
 			return
 		}
-		target0 := routeRes.Targets[0]
+		target0 := routeRes.Primary()
 		rec.ModelID = target0.ModelID
 		rec.ModelName = target0.ModelName
 		rec.RoutedModelID = target0.ModelID
@@ -237,16 +256,26 @@ func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 		// failover is reachable; it is deferred because a wedged-credential retry
 		// also wants circuit-breaker feedback the executor owns (signed residual
 		// A6). An upstream failure returns the error to the caller.
+		// 502 says the upstream failed. Nothing here has reached an upstream:
+		// the resolver is a dependency of OURS that was never wired, and the
+		// code claimed nothing was compatible when nothing was even asked.
+		// Reporting it as a gateway fault also polluted every dashboard that
+		// counts 502s as provider unavailability.
 		if h.deps.Resolver == nil {
-			h.writeDetailedErr(w, rec, http.StatusBadGateway, "NO_COMPATIBLE_PROVIDER",
-				"stt target resolver is not configured", "Contact an operator")
+			h.writeDetailedErr(w, rec, http.StatusServiceUnavailable, "STT_RESOLVER_UNAVAILABLE",
+				"speech-to-text target resolver is not configured on this gateway",
+				"This is a gateway-side configuration gap, not a provider failure — contact an operator")
 			return
 		}
 		callTarget, resolveErr := h.deps.Resolver.Resolve(r.Context(), target0.ProviderID, target0.ModelID,
 			provtarget.ResolveHints{StickyKey: vkMeta.ID})
 		if resolveErr != nil {
-			h.writeDetailedErr(w, rec, http.StatusBadGateway, "PROVIDER_RESOLVE_FAILED",
-				"could not resolve the upstream provider credential", "Check the provider credential configuration")
+			// Resolving a credential is a lookup against our own configuration.
+			// It fails before any request leaves the gateway, so it is not an
+			// upstream fault.
+			h.writeDetailedErr(w, rec, http.StatusServiceUnavailable, "PROVIDER_RESOLVE_FAILED",
+				"could not resolve the upstream provider credential",
+				"This is a gateway-side configuration problem — check the provider credential configuration")
 			return
 		}
 		rec.ProviderID = callTarget.ProviderID
@@ -274,8 +303,14 @@ func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 		upstreamURL := strings.TrimRight(callTarget.BaseURL, "/") + r.URL.Path
 		upReq, reqErr := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, bytes.NewReader(fwdBody))
 		if reqErr != nil {
-			h.writeDetailedErr(w, rec, http.StatusBadGateway, "STT_UPSTREAM_BUILD_FAILED",
-				"failed to build the upstream request", "Check the provider base URL configuration")
+			// The request could not be constructed, which means our own
+			// configured base URL is malformed. Nothing was sent, and a retry
+			// cannot help — 500 rather than a 502 blaming a provider we never
+			// contacted. Matches STT_REEMIT_FAILED above, the other
+			// construction failure on this path.
+			h.writeDetailedErr(w, rec, http.StatusInternalServerError, "STT_UPSTREAM_BUILD_FAILED",
+				"failed to build the upstream request from the configured base URL",
+				"This is a gateway-side configuration problem — check the provider base URL")
 			return
 		}
 		// Copy the allowlisted client headers (provider betas / tracing) FIRST,
@@ -337,6 +372,7 @@ func (h *Handler) ServeSTT(in Ingress) http.HandlerFunc {
 		h.captureParallelResponse(rec, respBody, resp.Header.Get("Content-Type"))
 
 		// Relay: allowlisted response headers, upstream status, transcript body.
+		stampSTTResponseMarkers(w.Header())
 		filtered := provdispatch.FilterResponseHeaders(h.deps.Allowlist, callTarget.Format, resp.Header, false)
 		for k, vs := range filtered {
 			for _, v := range vs {
@@ -399,49 +435,6 @@ func (h *Handler) meterSTT(rec *audit.Record, respBody []byte, modelID string, r
 		OutputUsdPerM: &outPrice,
 	})
 	rec.EstimatedCostUsd = cost.Total
-}
-
-// sttStreamRequested reports whether the client asked for a streamed
-// transcription via the `stream` form field. Truthy = "true" / "1" (OpenAI
-// sends "true"); anything else (absent, "false", "0") is non-streaming.
-func sttStreamRequested(stream string) bool {
-	switch strings.ToLower(strings.TrimSpace(stream)) {
-	case "true", "1":
-		return true
-	default:
-		return false
-	}
-}
-
-// sttParseErrorResponse maps a ParseSTTMultipart error to the HTTP status,
-// machine code, message, and hint the handler returns. A MaxBytesReader trip
-// (the mid-stream size ceiling) is a 413 — enforced BEFORE the body drains, so
-// a chunked / lying-Content-Length upload cannot force an unbounded read; every
-// other malformed / governance-bound multipart error (missing file, missing
-// model, duplicate governance field, multipart bomb) is a client 400 carrying
-// the parser's own message.
-func sttParseErrorResponse(err error) (status int, code, message, hint string) {
-	var mbe *http.MaxBytesError
-	if errors.As(err, &mbe) {
-		return http.StatusRequestEntityTooLarge, "STT_UPLOAD_TOO_LARGE",
-			"audio upload exceeds the STT size ceiling",
-			"Reduce the audio file size, or an operator can raise AI_GATEWAY_GENERATIVE_CAP_STT_MAX_BYTES"
-	}
-	return http.StatusBadRequest, "STT_BAD_MULTIPART",
-		err.Error(),
-		"Fix the multipart body: exactly one file part, a model field, no duplicated model/response_format"
-}
-
-// sttFormatSupported reports whether a response_format is served in v1
-// (json / verbose_json / text; empty = json default). srt / vtt / streaming
-// are deferred → 400.
-func sttFormatSupported(format string) bool {
-	switch format {
-	case "", "json", "verbose_json", "text":
-		return true
-	default:
-		return false
-	}
 }
 
 // sttAudioSeconds extracts the billable audio duration (seconds) from a

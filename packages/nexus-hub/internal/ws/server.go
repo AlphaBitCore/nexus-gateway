@@ -113,7 +113,7 @@ func (s *Server) SetOpsMetricsHandler(h OpsMetricsHandler) { s.ops = h }
 func (s *Server) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 	thingID, thingType, err := s.authenticate(r)
 	if err != nil {
-		s.logger.Warn("ws authenticate failed", "error", err, "remote_addr", r.RemoteAddr)
+		s.logRejectedUpgrade(r, err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

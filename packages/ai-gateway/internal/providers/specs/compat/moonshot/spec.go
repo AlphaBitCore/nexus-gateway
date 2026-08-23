@@ -12,6 +12,7 @@ import (
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
 
 // NewSpec returns the Moonshot [provcore.AdapterSpec].
@@ -26,7 +27,11 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		// entry points — the cross-format canonical door (bodies bridged
 		// from /v1/messages and the other non-OpenAI ingresses) and the
 		// native-leg differential. No dispatch-level rewrite callback.
-		SchemaCodec:     openai.NewIdentityCodec(Contract()),
+		// Wrapped so Moonshot's ONE content-level difference from the
+		// OpenAI-compatible shape — it does not fetch images by URL — is
+		// enforced here rather than in the identity codec, which is shared
+		// with providers that do fetch. See codec_content.go.
+		SchemaCodec:     specutil.GateContent(openai.NewIdentityCodec(Contract()), specutil.UniformPolicy(contentPolicy())),
 		StreamDecoder:   openai.NewStreamDecoder(log),
 		ErrorNormalizer: openai.ErrorNormalizerInstance(),
 	}

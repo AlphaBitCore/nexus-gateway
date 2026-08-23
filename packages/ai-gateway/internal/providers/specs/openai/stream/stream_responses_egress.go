@@ -103,6 +103,16 @@ func (s *responsesEgressSession) Next(ctx context.Context) (provcore.Chunk, erro
 			}
 		}
 
+		// Both egress modes decode upstream frames, so both need the
+		// mid-stream error arm — otherwise an error envelope reaches the
+		// caller as an empty chunk followed by a clean stream end (§3a
+		// Rule 10). Checked before the mode split so neither branch can
+		// be fixed without the other.
+		if pe := streamFrameError(ev.Data); pe != nil {
+			s.done = true
+			return provcore.Chunk{}, pe
+		}
+
 		if s.mode == egressModeCopier {
 			chunk := s.copierChunk(ev)
 			if chunk.Done {

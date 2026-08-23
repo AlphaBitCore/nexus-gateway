@@ -327,7 +327,6 @@ func expectErasureHappy(m pgxmock.PgxPoolIface) {
 	m.ExpectQuery(`SELECT COUNT`).WithArgs("subj1").
 		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(2))
 	m.ExpectExec(`UPDATE traffic_event_payload`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 4))
-	m.ExpectExec(`UPDATE traffic_event_normalized`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 5))
 	m.ExpectExec(`UPDATE traffic_event\s+SET entity_id = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 3))
 	m.ExpectExec(`UPDATE traffic_event t\s+SET source_ip = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 2))
 	m.ExpectExec(`DELETE FROM "AssistantMemory"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
@@ -366,8 +365,12 @@ func TestFulfillDSARErasure(t *testing.T) {
 	if res.PayloadsScrubbed != 4 {
 		t.Errorf("PayloadsScrubbed = %d; want 4", res.PayloadsScrubbed)
 	}
-	if res.NormalizedScrubbed != 5 {
-		t.Errorf("NormalizedScrubbed = %d; want 5", res.NormalizedScrubbed)
+	// Deprecated and structurally zero: the traffic_event_normalized sidecar is
+	// gone, so there is no second copy of the text to scrub. Pinned rather than
+	// dropped so a reintroduced UPDATE — a resurrected second erasure surface —
+	// fails here instead of passing unnoticed.
+	if res.NormalizedScrubbed != 0 {
+		t.Errorf("NormalizedScrubbed = %d; want 0 (the sidecar is dropped; nothing left to scrub)", res.NormalizedScrubbed)
 	}
 	if res.SpillRefsOrphaned != 2 {
 		t.Errorf("SpillRefsOrphaned = %d; want 2", res.SpillRefsOrphaned)
@@ -433,7 +436,6 @@ func TestFulfillDSARErasure(t *testing.T) {
 			m.ExpectBegin()
 			m.ExpectQuery(`SELECT COUNT`).WithArgs("subj1").WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
 			m.ExpectExec(`UPDATE traffic_event_payload`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-			m.ExpectExec(`UPDATE traffic_event_normalized`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event\s+SET entity_id = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event t\s+SET source_ip = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`DELETE FROM "AssistantMemory"`).WithArgs("subj1").WillReturnError(errors.New("x"))
@@ -443,7 +445,6 @@ func TestFulfillDSARErasure(t *testing.T) {
 			m.ExpectBegin()
 			m.ExpectQuery(`SELECT COUNT`).WithArgs("subj1").WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
 			m.ExpectExec(`UPDATE traffic_event_payload`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-			m.ExpectExec(`UPDATE traffic_event_normalized`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event\s+SET entity_id = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event t\s+SET source_ip = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`DELETE FROM "AssistantMemory"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
@@ -457,7 +458,6 @@ func TestFulfillDSARErasure(t *testing.T) {
 			m.ExpectBegin()
 			m.ExpectQuery(`SELECT COUNT`).WithArgs("subj1").WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
 			m.ExpectExec(`UPDATE traffic_event_payload`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-			m.ExpectExec(`UPDATE traffic_event_normalized`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event\s+SET entity_id = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event t\s+SET source_ip = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`DELETE FROM "AssistantMemory"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
@@ -472,7 +472,6 @@ func TestFulfillDSARErasure(t *testing.T) {
 			m.ExpectBegin()
 			m.ExpectQuery(`SELECT COUNT`).WithArgs("subj1").WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
 			m.ExpectExec(`UPDATE traffic_event_payload`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-			m.ExpectExec(`UPDATE traffic_event_normalized`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event\s+SET entity_id = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`UPDATE traffic_event t\s+SET source_ip = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 			m.ExpectExec(`DELETE FROM "AssistantMemory"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 0))

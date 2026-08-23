@@ -15,7 +15,7 @@ type ABSplitStrategy struct {
 
 func (s *ABSplitStrategy) Type() string { return "ab_split" }
 
-func (s *ABSplitStrategy) Evaluate(ctx context.Context, node core.StrategyNode, _ *core.RoutingContext, trace *[]core.TraceEntry, _ int, _ RecurseFunc) ([]core.RoutingTarget, error) {
+func (s *ABSplitStrategy) Evaluate(ctx context.Context, node core.StrategyNode, _ *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 	if len(node.ABTargets) == 0 {
 		*trace = append(*trace, core.TraceEntry{
 			StrategyType: "ab_split",

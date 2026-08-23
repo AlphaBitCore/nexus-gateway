@@ -103,11 +103,15 @@ type Config struct {
 // bytes_out / policy_rule_id / source_user) ride inside `details` —
 // they aren't first-class columns on traffic_event.
 type AuditEvent struct {
-	ID            string    `json:"id"`
-	TraceID       string    `json:"traceId,omitempty"`
-	Timestamp     time.Time `json:"timestamp"`
-	SourceIP      string    `json:"sourceIp,omitempty"`
-	SourceProcess string    `json:"sourceProcess"`
+	ID      string `json:"id"`
+	TraceID string `json:"traceId,omitempty"`
+	// The caller's own x-request-id, carried through unchanged so an external
+	// system can join agent rows to its own logs the way it already can for
+	// gateway rows. Distinct from TraceID, which is ours.
+	ExternalRequestID string    `json:"externalRequestId,omitempty"`
+	Timestamp         time.Time `json:"timestamp"`
+	SourceIP          string    `json:"sourceIp,omitempty"`
+	SourceProcess     string    `json:"sourceProcess"`
 	// Canonical first-class request-row columns.
 	TargetHost            string   `json:"targetHost,omitempty"`
 	Method                string   `json:"method,omitempty"`

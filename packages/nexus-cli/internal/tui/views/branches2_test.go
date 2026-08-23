@@ -44,7 +44,7 @@ func TestChat_TranscriptWrapsLongText(t *testing.T) {
 
 func TestChat_TranscriptTrimsToBudget(t *testing.T) {
 	c := newChat(sampleGateway(), testSession())
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		c.turns = append(c.turns, chatTurn{role: "user", text: "line"})
 	}
 	out := c.transcript(80, 4) // budget far smaller than the transcript

@@ -3,89 +3,30 @@ package wiring
 
 import (
 	"fmt"
-	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
-	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
-	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
-	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	streamcache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
-	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/debug"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/models"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/proxy"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
-	epMetrics "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store/asyncjob"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
-	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
+	"strings"
 )
 
 // RouteDeps carries every subsystem the HTTP route layer needs.
-type RouteDeps struct {
-	Config         *config.Config
-	CacheLayer     *cachelayer.Layer
-	DB             *store.DB
-	VKAuth         *vkauth.Authenticator
-	RateLimiter    *ratelimit.Limiter
-	CredManager    *credmanager.Manager
-	RouterResolver *routing.Resolver
-	Executor       *executor.TargetExecutor
-	// Resolver is the shared (providerID, modelID) → CallTarget resolver
-	// (the same *provtarget.PgResolver the executor holds). The STT
-	// streaming-proxy handler resolves its single upstream target through it.
-	Resolver          provtarget.Resolver
-	HookConfigCache   *pipeline.HookConfigCache
-	GWHookRegistry    *hookcore.HookRegistry
-	ProviderReg       *provcore.Registry
-	HealthTracker     *store.HealthTracker
-	AuditWriter       *audit.Writer
-	NormalizeReg      *normcore.Registry
-	Metrics           *epMetrics.Recorder
-	QuotaEngine       *quota.Engine
-	ResponseCache     *cache.Cache
-	UpstreamClient    *http.Client
-	PayloadCapture    *payloadcapture.Store
-	StreamingPolicy   *streampolicy.Store
-	FormatBridge      *canonicalbridge.Bridge
-	Allowlist         *forwardheader.Resolved
-	NormEngine        *wirerewrite.Engine
-	GeminiCacheMgrSet *geminicache.ManagerSet
-	PassthroughCache  *passthrough.Cache
-	Logger            *slog.Logger
-	// Semantic holds the L2 semantic cache subsystem (all fields nil-safe → degraded mode when absent).
-	Semantic SemanticDeps
-}
-
-// MountCoreRoutes registers health, metrics, internal admin, and all /v1/* API
-// routes. Returns the fully wrapped handler with middleware applied.
-// AI Guard classify routes are mounted separately via MountAIGuardRoutes.
 func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	// Health + metrics.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -137,42 +78,44 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	}
 
 	handlerDeps := &proxy.Deps{
-		Models:                 deps.CacheLayer,
-		VKAuth:                 deps.VKAuth,
-		RateLimiter:            deps.RateLimiter,
-		CredManager:            deps.CredManager,
-		Router:                 deps.RouterResolver,
-		Executor:               deps.Executor,
-		Resolver:               deps.Resolver,
-		AsyncJobs:              asyncJobs,
-		HookConfigCache:        deps.HookConfigCache,
-		ProviderReg:            deps.ProviderReg,
-		HealthTracker:          deps.HealthTracker,
-		AuditWriter:            deps.AuditWriter,
-		NormalizeRegistry:      deps.NormalizeReg,
-		Metrics:                deps.Metrics,
-		QuotaEngine:            deps.QuotaEngine,
-		Cache:                  deps.ResponseCache,
-		BrokerRegistry:         brokerRegistry,
-		CacheMetrics:           cacheMetrics,
-		UpstreamClient:         deps.UpstreamClient,
-		PayloadCapture:         deps.PayloadCapture,
-		StreamingPolicy:        deps.StreamingPolicy,
-		StreamCaptureHardCap:   deps.Config.Spill.PerObjectCap(),
-		TrafficAdapters:        trafficReg,
-		SchemaMismatchRecorder: deps.Metrics,
-		CanonicalBridge:        deps.FormatBridge,
-		RoutingDefaultPolicy:   deps.Config.Routing.DefaultRetryPolicy,
-		Allowlist:              deps.Allowlist,
-		CachePricing:           deps.CacheLayer,
-		Normaliser:             deps.NormEngine,
-		GeminiCacheMgrSet:      deps.GeminiCacheMgrSet,
-		PassthroughCache:       deps.PassthroughCache,
-		LatencyDetail:          deps.Config.Observability.LatencyDetail,
-		Logger:                 deps.Logger,
+		Models:                    deps.CacheLayer,
+		VKAuth:                    deps.VKAuth,
+		RateLimiter:               deps.RateLimiter,
+		CredManager:               deps.CredManager,
+		Router:                    deps.RouterResolver,
+		Executor:                  deps.Executor,
+		Resolver:                  deps.Resolver,
+		AsyncJobs:                 asyncJobs,
+		HookConfigCache:           deps.HookConfigCache,
+		ProviderReg:               deps.ProviderReg,
+		HealthTracker:             deps.HealthTracker,
+		AuditWriter:               deps.AuditWriter,
+		NormalizeRegistry:         deps.NormalizeReg,
+		Metrics:                   deps.Metrics,
+		QuotaEngine:               deps.QuotaEngine,
+		Cache:                     deps.ResponseCache,
+		BrokerRegistry:            brokerRegistry,
+		CacheMetrics:              cacheMetrics,
+		UpstreamClient:            deps.UpstreamClient,
+		PayloadCapture:            deps.PayloadCapture,
+		StreamingPolicy:           deps.StreamingPolicy,
+		StreamCaptureHardCap:      deps.Config.Spill.PerObjectCap(),
+		TrafficAdapters:           trafficReg,
+		SchemaMismatchRecorder:    deps.Metrics,
+		CanonicalBridge:           deps.FormatBridge,
+		RoutingDefaultPolicy:      deps.Config.Routing.DefaultRetryPolicy,
+		EnforceNamedModelModality: deps.Config.Routing.EnforceNamedModelModality,
+		Allowlist:                 deps.Allowlist,
+		CachePricing:              deps.CacheLayer,
+		Normaliser:                deps.NormEngine,
+		GeminiCacheMgrSet:         deps.GeminiCacheMgrSet,
+		PassthroughCache:          deps.PassthroughCache,
+		LatencyDetail:             deps.Config.Observability.LatencyDetail,
+		Logger:                    deps.Logger,
 		// L2 semantic cache fields are nil-safe; the proxy skips L2 gracefully
 		// when SemanticReader/SemanticWriter are nil.
 		FreshnessDetector:   deps.Semantic.Detector,
+		CapCache:            deps.CapCache,
 		SemanticReader:      deps.Semantic.Reader,
 		SemanticWriter:      deps.Semantic.Writer,
 		SemanticConfigCache: deps.Semantic.ConfigCache,
@@ -250,16 +193,20 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	mux.HandleFunc("POST /v1/audio/speech", proxyHandler.ServeProxy(proxy.Ingress{
 		WireShape: typology.WireShapeOpenAIAudioSpeech, BodyFormat: provcore.FormatOpenAI,
 	}))
-	// STT (speech-to-text): the multipart /v1/audio/transcriptions +
-	// /v1/audio/translations routes go through the PARALLEL streaming-proxy
-	// handler (ServeSTT), NOT the small-JSON ServeProxy pipeline — their body
-	// is a large one-shot binary stream (see e88-s5). Both share one wire
-	// shape; ServeSTT preserves the ingress path (transcriptions vs
-	// translations) verbatim to the upstream.
+	// STT (speech-to-text): the multipart /v1/audio/transcriptions route goes
+	// through the PARALLEL streaming-proxy handler (ServeSTT), NOT the
+	// small-JSON ServeProxy pipeline — its body is a large one-shot binary
+	// stream. ServeSTT preserves the ingress path verbatim to the upstream.
+	//
+	// /v1/audio/translations is deliberately NOT mounted. It was, and it never
+	// served anything: only whisper-1 implements the endpoint upstream, and
+	// measurement showed every other speech model answering the provider's own
+	// "Invalid URL (POST /v1/audio/translations)" 404 — a confusing envelope to
+	// hand a caller for a route this deployment has no use for. Unmounted, the
+	// path falls to the gateway's own ENDPOINT_NOT_SUPPORTED, which at least
+	// says whose refusal it is. The handler still preserves the ingress path,
+	// so remounting it is one line if a deployment ever wants it.
 	mux.HandleFunc("POST /v1/audio/transcriptions", proxyHandler.ServeSTT(proxy.Ingress{
-		WireShape: typology.WireShapeOpenAIAudioTranscriptions, BodyFormat: provcore.FormatOpenAI,
-	}))
-	mux.HandleFunc("POST /v1/audio/translations", proxyHandler.ServeSTT(proxy.Ingress{
 		WireShape: typology.WireShapeOpenAIAudioTranscriptions, BodyFormat: provcore.FormatOpenAI,
 	}))
 	// Reranking: canonical = Cohere shape (no OpenAI rerank API), so FormatCohere.
@@ -280,51 +227,13 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	mux.HandleFunc("POST /v1/guardrail", proxyHandler.ServeGuardrail())
 	mux.HandleFunc("POST /v1/estimate", proxyHandler.ServeEstimate)
 
-	// Gemini native ingress.
-	mux.HandleFunc("POST /v1beta/models/{model}", func(w http.ResponseWriter, r *http.Request) {
-		full := r.PathValue("model")
-		switch {
-		case strings.HasSuffix(full, ":streamGenerateContent"):
-			proxyHandler.ServeProxy(proxy.Ingress{
-				WireShape:      typology.WireShapeGeminiGenerateContent,
-				BodyFormat:     provcore.FormatGemini,
-				Stream:         true,
-				StreamFromPath: true,
-			})(w, r)
-		case strings.HasSuffix(full, ":generateContent"):
-			proxyHandler.ServeProxy(proxy.Ingress{
-				WireShape:  typology.WireShapeGeminiGenerateContent,
-				BodyFormat: provcore.FormatGemini,
-			})(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})
+	// Vendor-native wire-shape ingress (Gemini, Azure OpenAI, GLM) — see
+	// routes_native.go.
+	mountNativeProviderRoutes(mux, proxyHandler)
 
-	// Azure OpenAI native ingress.
-	mux.HandleFunc("POST /openai/deployments/{deployment}/chat/completions", proxyHandler.ServeProxy(proxy.Ingress{
-		WireShape: typology.WireShapeOpenAIChat, BodyFormat: provcore.FormatAzureOpenAI,
-	}))
-	mux.HandleFunc("POST /openai/deployments/{deployment}/embeddings", proxyHandler.ServeProxy(proxy.Ingress{
-		WireShape: typology.WireShapeOpenAIEmbeddings, BodyFormat: provcore.FormatAzureOpenAI,
-	}))
-
-	// GLM (ZhipuAI) native ingress.
-	mux.HandleFunc("POST /api/paas/v4/chat/completions", proxyHandler.ServeProxy(proxy.Ingress{
-		WireShape: typology.WireShapeOpenAIChat, BodyFormat: provcore.FormatGLM,
-	}))
-	mux.HandleFunc("POST /api/paas/v4/embeddings", proxyHandler.ServeProxy(proxy.Ingress{
-		WireShape: typology.WireShapeOpenAIEmbeddings, BodyFormat: provcore.FormatGLM,
-	}))
-
-	// Model catalog + usage. These authenticated read-only endpoints are
-	// DB-backed and were previously unthrottled: a valid VK could
-	// hammer /v1/models or /v1/usage* with no per-key cap. Wrap them in the
-	// same per-VK RPM limiter the data-plane ServeProxy path enforces so one
-	// key cannot drive unbounded catalog/usage queries.
-	// Pass interface-typed nils when the concrete deps are nil so the wrapper's
-	// nil checks fire correctly (a typed-nil pointer in an interface is not ==
-	// nil). When either is absent the wrapper degrades to pass-through.
+	// Authenticated read-only endpoints (DB-backed), wrapped in the per-VK RPM
+	// limiter so one key can't drive unbounded catalog/usage queries. Interface-
+	// typed nils below let the wrapper's nil checks degrade to pass-through.
 	var readAuth readVKAuthenticator
 	if deps.VKAuth != nil {
 		readAuth = deps.VKAuth
@@ -337,8 +246,50 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	modelCatalog := selectModelCatalog(deps)
 	mux.HandleFunc("GET /v1/models", readRL(models.ModelsHandler(modelCatalog, deps.VKAuth, deps.Logger)))
 	mux.HandleFunc("GET /v1/models/{model}", readRL(models.ModelDetailHandler(modelCatalog, deps.VKAuth, deps.Logger)))
-	mux.HandleFunc("GET /v1/usage", readRL(envelope.UsageSummaryHandler(deps.DB, deps.VKAuth, deps.QuotaEngine, deps.Logger)))
-	mux.HandleFunc("GET /v1/usage/daily", readRL(envelope.UsageDailyHandler(deps.DB, deps.VKAuth, deps.Logger)))
+	mux.HandleFunc("GET /v1/usage", readRL(envelope.UsageSummaryHandler(selectUsageStore(deps), deps.VKAuth, deps.QuotaEngine, deps.Logger)))
+	mux.HandleFunc("GET /v1/usage/daily", readRL(envelope.UsageDailyHandler(selectUsageStore(deps), deps.VKAuth, deps.Logger)))
+
+	// Public model catalog (no VK): full enabled catalog in the enriched "catalog"
+	// shape, limit/offset paginated, 5-minute Redis cache. readRL passes keyless
+	// callers through and throttles keyed ones.
+	mux.HandleFunc("GET /api/v1/open/models", readRL(models.OpenModelsHandler(selectModelCatalog(deps), deps.Rdb, deps.Logger)))
+
+	// Public single-model detail (no VK): full catalogDetail shape (pricing
+	// detail, capability matrix, parameter constraints, family) for one model.
+	// The trailing wildcard ({model_id...}, not {model_id}) is load-bearing: the
+	// list endpoint emits provider-prefixed ids ("openai/gpt-4o"), which span two
+	// path segments and would never bind to a single-segment wildcard.
+	mux.HandleFunc("GET /api/v1/open/models/{model_id...}", readRL(models.OpenModelDetailHandler(selectModelCatalog(deps), deps.Logger)))
+
+	// Fallback for any /v1 path this gateway does not serve. Go's ServeMux
+	// answers an unmatched pattern with `404 page not found` as text/plain, and
+	// both OpenAI SDKs JSON-parse error bodies — so an unmounted endpoint used to
+	// surface as an APIStatusError with no message at all. Every registered
+	// pattern above is more specific than "/v1/", so this only catches the gaps
+	// (/v1/completions, /v1/moderations, /v1/images/edits, …).
+	// The same fallback at the root. Registering it only under /v1/ left every
+	// other prefix on the text/plain default — /v1beta typos reached the Gemini
+	// client as a status with no message, and so did a mistyped Azure-compat
+	// deployment path. Go's ServeMux prefers the most specific pattern, so every
+	// route registered above still wins over this one.
+	notSupported := func(w http.ResponseWriter, r *http.Request) {
+		// A catch-all matches everything, which puts ServeMux's own 405/Allow
+		// branch out of reach — that branch runs only when NO pattern matched.
+		// Without this, every wrong-method request became a 404 whose body
+		// claimed the gateway does not serve a path it does serve. Asking the
+		// mux which methods would have matched keeps the answer accurate, and
+		// upgrades the /v1 prefix too, which had the same hole before the
+		// catch-all was widened.
+		if allow := servedUnderOtherMethods(mux, r); len(allow) > 0 {
+			w.Header().Set("Allow", strings.Join(allow, ", "))
+			envelope.WriteGatewayError(w, r, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
+				r.Method+" is not allowed on "+r.URL.Path, "Allowed: "+strings.Join(allow, ", "))
+			return
+		}
+		envelope.WriteEndpointNotSupported(w, r.URL.Path)
+	}
+	mux.HandleFunc("/v1/", notSupported)
+	mux.HandleFunc("/", notSupported)
 
 	// Wrap the mounted mux with the ai-gateway middleware chain.
 	return applyMiddleware(mux, deps)

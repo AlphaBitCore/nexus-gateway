@@ -203,6 +203,14 @@ func (s *Store) GetMatrixAuditEvent(ctx context.Context, id string) (map[string]
 	var details json.RawMessage
 	var requestBody, responseBody *json.RawMessage
 	var reqEncoding, respEncoding string
+	// Truncation facts for the stored bodies. A body that reached
+	// payload_capture.maxInlineBodyBytes with no spill backend configured is kept
+	// as a PREFIX (spillstore.EmitBody); the row records that plus the REAL
+	// captured size. This endpoint has no UI surface, but it is a published admin
+	// API contract — a consumer reading requestBody/responseBody has no other way
+	// to tell a prefix from a whole body.
+	var reqTruncated, respTruncated bool
+	var reqSizeBytes, respSizeBytes *int64
 
 	err := s.pool.QueryRow(ctx, `
 		SELECT e.id, e.details->>'transactionId', e.details->>'connectionId',
@@ -211,14 +219,17 @@ func (s *Store) GetMatrixAuditEvent(ctx context.Context, id string) (map[string]
 			e.request_hook_reason_code, e.latency_ms, e.timestamp, e.compliance_tags, e.entity_id,
 			e.details->>'userAgent', e.details,
 			p.inline_request_body, p.inline_response_body,
-			COALESCE(p.inline_request_encoding, ''), COALESCE(p.inline_response_encoding, '')
+			COALESCE(p.inline_request_encoding, ''), COALESCE(p.inline_response_encoding, ''),
+			COALESCE(p.request_truncated, false), COALESCE(p.response_truncated, false),
+			p.request_size_bytes, p.response_size_bytes
 		FROM traffic_event e
 		LEFT JOIN traffic_event_payload p ON p.traffic_event_id = e.id
 		WHERE e.id = $1
 	`, id).Scan(&eid, &txID, &connID, &trafficSrc, &ingressType, &bumpStatus,
 		&srcIP, &target, &method, &path_, &statusCode, &hookDec, &hookReason,
 		&hookRC, &latency, &ts, &complianceTags, &subjectID, new(*string), &details,
-		&requestBody, &responseBody, &reqEncoding, &respEncoding)
+		&requestBody, &responseBody, &reqEncoding, &respEncoding,
+		&reqTruncated, &respTruncated, &reqSizeBytes, &respSizeBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +254,18 @@ func (s *Store) GetMatrixAuditEvent(ctx context.Context, id string) (map[string]
 		if rendered := renderInlineBody([]byte(*responseBody), respEncoding); rendered != nil {
 			result["responseBody"] = rendered
 		}
+	}
+	// Always emitted, including false: a consumer branching on the key must not
+	// have to distinguish "not truncated" from "this build does not report it".
+	// Key names match the traffic detail endpoint so the two describe the same
+	// stored body the same way.
+	result["requestBodyTruncated"] = reqTruncated
+	result["responseBodyTruncated"] = respTruncated
+	if reqSizeBytes != nil {
+		result["requestBodySizeBytes"] = *reqSizeBytes
+	}
+	if respSizeBytes != nil {
+		result["responseBodySizeBytes"] = *respSizeBytes
 	}
 	return result, nil
 }

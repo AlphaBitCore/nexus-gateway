@@ -43,7 +43,7 @@ func TestSmartStrategy_TypeAndMissingConfig(t *testing.T) {
 		t.Errorf("Type=%q want smart", strat.Type())
 	}
 	var trace []core.TraceEntry
-	out, err := strat.Evaluate(context.Background(), core.StrategyNode{Type: "smart"}, aiChatRctx(), &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), core.StrategyNode{Type: "smart"}, aiChatRctx(), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestSmartStrategy_StoreError_FallsBackToDefault(t *testing.T) {
 	}
 	var trace []core.TraceEntry
 	strat := &SmartStrategy{deps: fx.deps()}
-	out, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, poolOf(aiChatRctx(), candidates), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestSmartStrategy_VKAllowedModelsFilter_LeavesEmptyCandidates(t *testing.T)
 	}
 	var trace []core.TraceEntry
 	strat := &SmartStrategy{deps: fx.deps()}
-	out, err := strat.Evaluate(context.Background(), node, rctx, &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, fx.pool(rctx), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestSmartStrategy_NilDecider_FallsBack(t *testing.T) {
 	}
 	var trace []core.TraceEntry
 	strat := &SmartStrategy{deps: deps}
-	out, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, poolOf(aiChatRctx(), candidates), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestSmartStrategy_UnknownModelFromDecider_FallsBack(t *testing.T) {
 	}
 	var trace []core.TraceEntry
 	strat := &SmartStrategy{deps: fx.deps()}
-	out, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, poolOf(aiChatRctx(), candidates), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestSmartStrategy_LookupFailureOnSelected_FallsBack(t *testing.T) {
 	}
 	var trace []core.TraceEntry
 	strat := &SmartStrategy{deps: deps}
-	out, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, poolOf(aiChatRctx(), candidates), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestSmartFallback_NoDefaultConfigured_NoTargets(t *testing.T) {
 	node := core.StrategyNode{RouterProviderID: "p-r", RouterModelID: "m-r"}
 	var trace []core.TraceEntry
 	strat := &SmartStrategy{deps: fx.deps()}
-	out, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, poolOf(aiChatRctx(), candidates), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestSmartFallback_DefaultLookupError_NoTargets(t *testing.T) {
 	}
 	var trace []core.TraceEntry
 	strat := &SmartStrategy{deps: deps}
-	out, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil)
+	out, err := strat.Evaluate(context.Background(), node, poolOf(aiChatRctx(), candidates), &trace)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}

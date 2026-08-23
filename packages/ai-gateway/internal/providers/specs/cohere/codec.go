@@ -13,12 +13,11 @@ import (
 
 // codec implements provcore.SchemaCodec for Cohere's Chat v2 API.
 //
-// EncodeRequest is largely passthrough — Cohere v2 accepts the OpenAI
-// chat-completions request shape verbatim ({model, messages, tools,
-// tool_choice, stream, temperature, max_tokens, ...}). We only rewrite
-// fields that have different names or semantics:
-//   - top_p stays top_p (matches Cohere's `p` field via OpenAI alias)
-//   - max_tokens stays max_tokens
+// EncodeRequest projects the canonical body onto the field set Cohere v2
+// actually accepts, renaming the canonical spellings that differ (top_p → p,
+// top_k → k, stop → stop_sequences, max_completion_tokens → max_tokens). See
+// codec_request_fields.go for the measured set and for why this is a projection
+// rather than the passthrough-with-exceptions it used to be.
 //
 // DecodeResponse converts Cohere's response shape back to canonical
 // OpenAI chat-completions:
@@ -36,8 +35,7 @@ import (
 // already wired for that field can see it.
 type codec struct{}
 
-// EncodeRequest passes the canonical body through to Cohere with
-// optional field-name adjustments.
+// EncodeRequest reduces the canonical body to the Cohere v2 wire shape.
 func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, target provcore.CallTarget) (provcore.EncodeResult, error) {
 	switch endpoint {
 	case typology.WireShapeCohereChat:
@@ -55,21 +53,31 @@ func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 	if !gjson.ValidBytes(canonicalBody) {
 		return provcore.EncodeResult{}, fmt.Errorf("cohere: invalid canonical body")
 	}
-	// If `model` is missing on the canonical body but target has the
-	// provider model id, inject it so Cohere sees the model name.
-	if !gjson.GetBytes(canonicalBody, "model").Exists() && target.ProviderModelID != "" {
-		var obj map[string]any
-		if err := json.Unmarshal(canonicalBody, &obj); err != nil {
-			return provcore.EncodeResult{}, err
-		}
-		obj["model"] = target.ProviderModelID
-		body, err := json.Marshal(obj)
+	// Content first: a file part has to leave the message array before the
+	// projection runs, because `documents` is a top-level field the projection
+	// carries and `messages` is one it forwards verbatim.
+	lifted, err := translateContentForCohereChat(canonicalBody)
+	if err != nil {
+		return provcore.EncodeResult{}, err
+	}
+	body := projectToCohereChat(lifted)
+	// The model this wire is told to call is the one ROUTING resolved. The
+	// canonical body carries the caller's word — often "auto", or another
+	// provider's name — and no upstream knows it, so forwarding it buys a 404
+	// naming a model nobody asked for. A target that resolved nothing leaves
+	// the caller's word alone, which is how a caller addressing this provider
+	// directly still reaches it.
+	// The same stamp the native door applies, for the same reason it states:
+	// an unresolved model in the body root is a 404 from Cohere naming a model
+	// nobody asked for.
+	if target.ProviderModelID != "" {
+		out, err := provcore.SurgicalModelStamp(body, target.ProviderModelID)
 		if err != nil {
 			return provcore.EncodeResult{}, err
 		}
-		return provcore.EncodeResult{Body: body, ContentType: "application/json"}, nil
+		return provcore.EncodeResult{Body: out, ContentType: "application/json"}, nil
 	}
-	return provcore.EncodeResult{Body: canonicalBody, ContentType: "application/json"}, nil
+	return provcore.EncodeResult{Body: body, ContentType: "application/json"}, nil
 }
 
 // DecodeResponse converts Cohere v2 response to canonical OpenAI shape.
@@ -122,11 +130,21 @@ func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 		finishReason = "stop"
 	}
 
+	// Cohere's chat response carries no model field, so reading it off the
+	// body yields "" — and an auto-routed caller then cannot see from the
+	// body which model answered. The resolved target is the model the call
+	// was MADE with; the body's own value still wins if a future API
+	// version starts reporting one.
+	model := gjson.GetBytes(nativeBody, "model").Str
+	if model == "" {
+		model = reqCtx.Target.ProviderModelID
+	}
+
 	canonical := map[string]any{
 		"id":      gjson.GetBytes(nativeBody, "id").Str,
 		"object":  "chat.completion",
 		"created": 0,
-		"model":   gjson.GetBytes(nativeBody, "model").Str,
+		"model":   model,
 		"choices": []any{
 			map[string]any{
 				"index":         0,

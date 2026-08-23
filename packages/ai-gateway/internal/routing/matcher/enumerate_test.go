@@ -87,36 +87,62 @@ func TestEnumerate_Loadbalance_WeightsBecomeProbabilities(t *testing.T) {
 	}
 }
 
-func TestEnumerate_NestedLoadbalance_ProbabilitiesMultiply(t *testing.T) {
-	// outer weights 50/50 into inner nodes that each split 80/20.
-	inner := func(a, b string) core.StrategyNode {
-		return core.StrategyNode{
-			Type: "loadbalance",
-			Weighted: []core.WeightedTarget{
-				{Weight: 80, Node: core.StrategyNode{Type: "single", ProviderID: a, ModelID: "m1"}},
-				{Weight: 20, Node: core.StrategyNode{Type: "single", ProviderID: b, ModelID: "m2"}},
-			},
-		}
+// TestEnumerate_ANestedEntryIsReportedUnreachableNotExpanded.
+//
+// This replaces a test asserting that a loadbalance nested inside another
+// expanded into four leaves with multiplied probabilities. It did, and the
+// evaluator followed it — until entries became provider+model leaves. Left as
+// it was, simulate answered "this rule reaches these four models, with these
+// odds" about a rule that reaches none of them.
+//
+// The branch is still listed, because an operator who wrote it needs to see it.
+// What changed is that it is marked unmatched and says why, so the page reads
+// as "you wrote this and it is inert" rather than as a working distribution.
+func TestEnumerate_ANestedEntryIsReportedUnreachableNotExpanded(t *testing.T) {
+	inner := core.StrategyNode{
+		Type: "loadbalance",
+		Weighted: []core.WeightedTarget{
+			{Weight: 80, Node: core.StrategyNode{Type: "single", ProviderID: "a1", ModelID: "m1"}},
+			{Weight: 20, Node: core.StrategyNode{Type: "single", ProviderID: "a2", ModelID: "m2"}},
+		},
 	}
 	outer := core.StrategyNode{
 		Type: "loadbalance",
 		Weighted: []core.WeightedTarget{
-			{Weight: 1, Node: inner("a1", "a2")},
-			{Weight: 1, Node: inner("b1", "b2")},
+			{Weight: 1, Node: inner},
+			{Weight: 1, Node: core.StrategyNode{Type: "single", ProviderID: "b1", ModelID: "m3"}},
 		},
 	}
 	branches := EnumerateTerminalTargets(context.Background(), outer, &core.RoutingContext{}, enumLookup)
-	if len(branches) != 4 {
-		t.Fatalf("expected 4 leaves, got %d (%+v)", len(branches), branches)
+
+	if len(branches) != 2 {
+		t.Fatalf("branches = %d, want 2 — the nested entry was expanded into the models it "+
+			"names, and simulate reports odds for targets no request can reach: %+v",
+			len(branches), branches)
 	}
-	// Each outer branch has 0.5; inner 0.8/0.2.
-	a1 := findBranch(branches, "a1", "m1")
-	a2 := findBranch(branches, "a2", "m2")
-	if math.Abs(a1.Probability-0.4) > 1e-9 || math.Abs(a2.Probability-0.1) > 1e-9 {
-		t.Errorf("a-branch probs wrong: %v / %v (want 0.4 / 0.1)", a1.Probability, a2.Probability)
+	var nested, leaf *core.BranchedTarget
+	for i := range branches {
+		if branches[i].Matched {
+			leaf = &branches[i]
+		} else {
+			nested = &branches[i]
+		}
 	}
-	if math.Abs(sumProb(branches)-1.0) > 1e-9 {
-		t.Errorf("nested probs should sum to 1.0, got %v", sumProb(branches))
+	if nested == nil {
+		t.Fatal("the nested entry is reported as matched; the page reads as a working " +
+			"distribution over a branch that routes nothing")
+	}
+	if !strings.Contains(nested.Note, "not evaluated") {
+		t.Errorf("the unreachable branch does not say why: %q", nested.Note)
+	}
+	if leaf == nil || leaf.Target.ProviderID != "b1" {
+		t.Errorf("the sibling leaf stopped being reported: %+v", branches)
+	}
+	// The reachable half keeps its real odds — the nested entry still consumed
+	// its share of the weight, and pretending otherwise would overstate what
+	// the leaf actually receives.
+	if math.Abs(leaf.Probability-0.5) > 1e-9 {
+		t.Errorf("leaf probability = %v, want 0.5", leaf.Probability)
 	}
 }
 

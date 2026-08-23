@@ -175,7 +175,7 @@ func (h *Handler) ServeVideoUnsupported(in Ingress, code, message, hint string) 
 // arms.
 func newVideoFollowRecord(r *http.Request, in Ingress, start time.Time) *audit.Record {
 	requestID := r.Header.Get("X-Nexus-Request-Id")
-	return &audit.Record{
+	rec := &audit.Record{
 		RequestID:       requestID,
 		ClientRequestID: r.Header.Get("x-request-id"),
 		TraceID:         requestID,
@@ -186,6 +186,8 @@ func newVideoFollowRecord(r *http.Request, in Ingress, start time.Time) *audit.R
 		IngressFormat:   string(in.BodyFormat),
 		EndpointType:    string(typology.EndpointKindVideoGeneration),
 	}
+	stampCallerAttribution(rec, r.Header)
+	return rec
 }
 
 // videoFollowJob runs the shared follow-up admission: store presence, VK auth,

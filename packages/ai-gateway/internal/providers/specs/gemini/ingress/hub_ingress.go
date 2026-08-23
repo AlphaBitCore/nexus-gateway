@@ -4,8 +4,14 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"github.com/goccy/go-json"
+	"strings"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // GenerateContentRequestToOpenAIChatCompletion converts a Gemini
@@ -36,6 +42,27 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 		}
 		if v := gc.Get("maxOutputTokens"); v.Exists() {
 			out["max_tokens"] = v.Int()
+		}
+		// `responseSchema` is how this wire spells structured output, and the
+		// canonical body is the OpenAI shape (§3a), so it becomes
+		// `response_format.json_schema`. Without this the schema stopped here and
+		// whatever target routing picked was asked for JSON with no shape.
+		//
+		// `responseMimeType: application/json` on its OWN is the json_object case,
+		// not this one: it asks for "some JSON", which every target either honours
+		// natively or is instructed into, so treating it as a schema constraint
+		// would narrow the routing pool for a requirement no model fails.
+		//
+		// The envelope's `name` comes from specutil because OpenAI requires it and
+		// this wire has no field to take it from — see CanonicalSchemaName.
+		if rs := gc.Get("responseSchema"); rs.IsObject() {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(rs.Raw), &m); err == nil && len(m) > 0 {
+				out["response_format"] = map[string]any{
+					"type":        "json_schema",
+					"json_schema": specutil.CanonicalJSONSchema(m),
+				}
+			}
 		}
 		if ss := gc.Get("stopSequences"); ss.Exists() && ss.IsArray() {
 			var list []string
@@ -72,7 +99,18 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 	if !contents.Exists() || !contents.IsArray() {
 		return nil, fmt.Errorf("gemini hub: missing contents")
 	}
-	contents.ForEach(func(_, c gjson.Result) bool {
+	// Pending tool calls awaiting their response, keyed by function name and
+	// held FIFO so parallel calls to the same function are matched in order.
+	//
+	// Gemini pairs a functionResponse with its functionCall by NAME when the
+	// model emits no id — which is every model before Gemini 3. Canonical
+	// OpenAI pairs them by tool_call_id, so the id we synthesize for the call
+	// has to be the id the response quotes. Deriving them independently is what
+	// broke: the call hashed name+args into call_<hash> while the response fell
+	// back to the bare name, so the two never matched and an OpenAI-compatible
+	// upstream saw a tool result referring to a call it had never been given.
+	pendingCallIDs := map[string][]string{}
+	contents.ForEach(func(contentIndex, c gjson.Result) bool {
 		role := c.Get("role").String()
 		openAIRole := role
 		if role == "model" {
@@ -88,7 +126,7 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 		var images []map[string]any
 		parts := c.Get("parts")
 		if parts.IsArray() {
-			parts.ForEach(func(_, p gjson.Result) bool {
+			parts.ForEach(func(partIndex, p gjson.Result) bool {
 				if t := p.Get("text"); t.Exists() {
 					// A thought part is the model's reasoning, not visible
 					// content — folding it into text would corrupt a
@@ -114,18 +152,38 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 					data := inline.Get("data").String()
 					if data != "" {
 						url := "data:" + mime + ";base64," + data
-						images = append(images, map[string]any{
-							"type":      "image_url",
-							"image_url": map[string]any{"url": url, "detail": "auto"},
-						})
+						if isImageMime(mime) {
+							images = append(images, map[string]any{
+								"type":      "image_url",
+								"image_url": map[string]any{"url": url, "detail": "auto"},
+							})
+						} else {
+							images = append(images, map[string]any{
+								"type": "file",
+								"file": map[string]any{"file_data": url},
+							})
+						}
 					}
 				}
 				if file := p.Get("fileData"); file.Exists() {
 					if uri := file.Get("fileUri").String(); uri != "" {
-						images = append(images, map[string]any{
-							"type":      "image_url",
-							"image_url": map[string]any{"url": uri, "detail": "auto"},
-						})
+						// Gemini uses one part shape for every attachment, so
+						// the declared mime type is the only thing that says
+						// which modality it is. Reading them all as images made
+						// a PDF arrive at the next wire claiming to be one —
+						// the same masquerade the canonical's separate file
+						// part exists to prevent.
+						if isImageMime(file.Get("mimeType").String()) {
+							images = append(images, map[string]any{
+								"type":      "image_url",
+								"image_url": map[string]any{"url": uri, "detail": "auto"},
+							})
+						} else {
+							images = append(images, map[string]any{
+								"type": "file",
+								"file": map[string]any{"file_url": uri},
+							})
+						}
 					}
 				}
 				if fc := p.Get("functionCall"); fc.Exists() {
@@ -133,18 +191,27 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 					if args == "" {
 						args = "{}"
 					}
+					fnName := fc.Get("name").String()
 					id := fc.Get("id").String()
 					if id == "" {
-						h := sha1.Sum([]byte(fc.Get("name").String() + "\x00" + args))
-						id = "call_" + fmt.Sprintf("%x", h)[:10]
+						id = geminiSyntheticCallID(fnName, args, int(contentIndex.Int()), int(partIndex.Int()))
+					}
+					pendingCallIDs[fnName] = append(pendingCallIDs[fnName], id)
+					function := map[string]any{
+						"name":      fnName,
+						"arguments": args,
+					}
+					// thoughtSignature belongs to this exact Gemini Part, not
+					// to the function name or to the enclosing content. Keep it
+					// on the canonical function so parallel identical calls do
+					// not exchange provider-native signatures.
+					if sig := p.Get("thoughtSignature").String(); sig != "" {
+						function["thought_signature"] = sig
 					}
 					toolCalls = append(toolCalls, map[string]any{
-						"id":   id,
-						"type": "function",
-						"function": map[string]any{
-							"name":      fc.Get("name").String(),
-							"arguments": args,
-						},
+						"id":       id,
+						"type":     "function",
+						"function": function,
 					})
 				}
 				if fr := p.Get("functionResponse"); fr.Exists() {
@@ -157,14 +224,20 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 							contentStr = resp.String()
 						}
 					}
-					// Prefer Gemini 3+ functionResponse.id as the
-					// canonical OpenAI tool_call_id; fall back to name
-					// for older models that don't emit id (canonical
-					// callers still get a stable identifier and the
-					// codec encode-side echoes it back to Gemini).
+					// Prefer Gemini 3+ functionResponse.id as the canonical
+					// OpenAI tool_call_id. Without one, quote the id assigned
+					// to the matching earlier functionCall — same name, FIFO
+					// for parallel calls — so the pair correlates on the
+					// canonical side exactly as it does on the Gemini wire.
+					// The bare name is the last resort, for a response whose
+					// call is not in this request (a truncated history).
 					tid := fr.Get("id").String()
 					if tid == "" {
-						tid = name
+						if q := pendingCallIDs[name]; len(q) > 0 {
+							tid, pendingCallIDs[name] = q[0], q[1:]
+						} else {
+							tid = name
+						}
 					}
 					toolMsgs = append(toolMsgs, map[string]any{
 						"role":         "tool",
@@ -240,7 +313,77 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 		}
 	}
 
-	return json.Marshal(out)
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+
+	// Preserve the caller's `thinkingConfig` so the canonical → wire encode can
+	// re-inject it, the same way the Anthropic ingress preserves `thinking`.
+	//
+	// Without this the field dies on this leg: the codec's read side keys off
+	// `nexus.ext.gemini.thinking_config`, and nothing in the repo was setting
+	// it — so a Gemini client asking for a thinking budget got a request with
+	// no budget, and the only sign was the answer arriving without the
+	// reasoning it paid for. `thinkingBudget: -1` (Gemini for "you decide") is
+	// carried through unchanged; it is an expression, not an absent value.
+	if tc := root.Get("generationConfig.thinkingConfig"); tc.Exists() && tc.IsObject() {
+		var cfg any
+		if jerr := json.Unmarshal([]byte(tc.Raw), &cfg); jerr == nil && cfg != nil {
+			body, err = canonicalext.Set(body, "gemini", "thinking_config", cfg)
+			if err != nil {
+				return nil, err
+			}
+		}
+		// The extension above is only legible to this wire. Every OTHER wire
+		// reads the canonical level, so without it a caller who sized their
+		// reasoning in tokens arrives at an Anthropic or OpenAI target having
+		// said nothing at all.
+		if effort := canonicalEffortForThinkingConfig(tc); effort != "" {
+			body, err = sjson.SetBytes(body, "reasoning_effort", effort)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return body, nil
+}
+
+// geminiSyntheticCallID is stable for one request and collision-free for
+// duplicate name/argument pairs because the content and Part coordinates are
+// part of the digest. Native Gemini ids are handled by the caller and never
+// pass through this fallback.
+func geminiSyntheticCallID(name, _ string, contentIndex, partIndex int) string {
+	h := sha1.Sum([]byte(fmt.Sprintf("%s\x00content:%d\x00part:%d", name, contentIndex, partIndex)))
+	return "call_" + fmt.Sprintf("%x", h)[:10]
+}
+
+// canonicalEffortForThinkingConfig states a Gemini `thinkingConfig` in the
+// canonical vocabulary, or "" when it says nothing a level can carry.
+//
+// The caller's own figure is not lost — it rides in this provider's extension,
+// so a Gemini target restores it exactly. This is what the request says to
+// everyone else.
+func canonicalEffortForThinkingConfig(tc gjson.Result) string {
+	b := tc.Get("thinkingBudget")
+	switch {
+	case !b.Exists():
+		// Only `includeThoughts`. That asks for the reasoning to come BACK, not
+		// for any particular amount of it, so there is no level to state — and
+		// inventing one would make a request about the response's shape into a
+		// request for more reasoning than the caller asked to pay for.
+		return ""
+	case b.Int() == 0:
+		return "none"
+	case b.Int() < 0:
+		// Gemini's "you decide". It is an ask to reason with the amount left
+		// open, which no level in the canonical vocabulary means — so this is
+		// the one place a figure is chosen rather than read. The exact -1 stays
+		// in the extension, so a Gemini target still gets "you decide".
+		return "medium"
+	default:
+		return normcore.EffortForBudget(int(b.Int()))
+	}
 }
 
 // geminiCompositeMessage assembles a canonical OpenAI chat message that may
@@ -274,128 +417,10 @@ func geminiCompositeMessage(role, text, reasoning string, images []map[string]an
 	return entry
 }
 
-// OpenAIChatCompletionToGenerateContentResponse converts canonical OpenAI
-// chat.completion JSON into a Gemini `generateContent` response envelope.
-func OpenAIChatCompletionToGenerateContentResponse(openaiBody []byte) ([]byte, error) {
-	if len(openaiBody) == 0 {
-		return nil, fmt.Errorf("gemini hub: empty openai response")
-	}
-	root := gjson.ParseBytes(openaiBody)
-
-	msg := root.Get("choices.0.message")
-	text := msg.Get("content").String()
-	var parts []map[string]any
-	if tcs := msg.Get("tool_calls"); tcs.Exists() && tcs.IsArray() {
-		tcs.ForEach(func(_, tc gjson.Result) bool {
-			fn := tc.Get("function")
-			args := fn.Get("arguments").String()
-			if args == "" {
-				args = "{}"
-			}
-			var argsObj any
-			_ = json.Unmarshal([]byte(args), &argsObj)
-			if argsObj == nil {
-				argsObj = map[string]any{}
-			}
-			fc := map[string]any{
-				"name": fn.Get("name").String(),
-				"args": argsObj,
-			}
-			// Only forward id when canonical carried one. Older Gemini
-			// models reject unknown fields on request bodies; the
-			// response shape mirrors that and clients tolerate the
-			// absence. See codec.go openAIMessageToGeminiParts.
-			if id := tc.Get("id").String(); id != "" {
-				fc["id"] = id
-			}
-			parts = append(parts, map[string]any{
-				"functionCall": fc,
-			})
-			return true
-		})
-	}
-	if text != "" {
-		parts = append([]map[string]any{{"text": text}}, parts...)
-	}
-	// Cross-format reasoning preservation: canonical reasoning_content
-	// → Gemini `{text:"...", thought:true}` part. Matches the L1→L2
-	// forward path that already collects Gemini `thought:true` parts
-	// AND OpenAI/Anthropic/DeepSeek-shape reasoning into the canonical
-	// reasoning_content field. Prepended so the thinking summary
-	// appears before the visible text in the candidate's parts — same
-	// ordering Gemini 2.5+ uses natively when
-	// generationConfig.thinkingConfig.includeThoughts is set.
-	if r := msg.Get("reasoning_content").String(); r != "" {
-		parts = append([]map[string]any{{"text": r, "thought": true}}, parts...)
-	}
-	if len(parts) == 0 {
-		parts = []map[string]any{{"text": ""}}
-	}
-
-	finish := mapOpenAIFinishToGemini(root.Get("choices.0.finish_reason").String())
-
-	cand := map[string]any{
-		"index":        0,
-		"content":      map[string]any{"parts": parts, "role": "model"},
-		"finishReason": finish,
-	}
-
-	usageMeta := map[string]any{}
-	if u := root.Get("usage"); u.Exists() {
-		if v := u.Get("prompt_tokens"); v.Exists() {
-			usageMeta["promptTokenCount"] = v.Int()
-		}
-		if v := u.Get("completion_tokens"); v.Exists() {
-			usageMeta["candidatesTokenCount"] = v.Int()
-		}
-		if v := u.Get("total_tokens"); v.Exists() {
-			usageMeta["totalTokenCount"] = v.Int()
-		}
-		// Cache-hit token count. The canonical chat-completions shape
-		// carries this as `prompt_tokens_details.cached_tokens`
-		// (Anthropic's cross-format codec also restores cache_read_*
-		// fields here — see specutil.cachedTokenAliases). Gemini's
-		// native response field is `cachedContentTokenCount`; without
-		// this translation, cross-routed requests that hit upstream
-		// cache silently return usageMetadata WITHOUT
-		// cachedContentTokenCount — the client-visible Gemini envelope
-		// would not reflect the cache hit even though traffic_event records it.
-		if v := u.Get("prompt_tokens_details.cached_tokens"); v.Exists() && v.Int() > 0 {
-			usageMeta["cachedContentTokenCount"] = v.Int()
-		}
-		// Reasoning tokens — Gemini exposes thoughts as a separate count.
-		// Canonical maps to OpenAI's completion_tokens_details.reasoning_tokens
-		// (specutil.cachedTokenAliases). When present, surface as
-		// thoughtsTokenCount on the Gemini envelope so clients that show
-		// reasoning effort don't see 0.
-		if v := u.Get("completion_tokens_details.reasoning_tokens"); v.Exists() && v.Int() > 0 {
-			usageMeta["thoughtsTokenCount"] = v.Int()
-		}
-	}
-
-	out := map[string]any{
-		"responseId":    root.Get("id").String(),
-		"modelVersion":  root.Get("model").String(),
-		"candidates":    []map[string]any{cand},
-		"usageMetadata": usageMeta,
-	}
-	return json.Marshal(out)
-}
-
-func mapOpenAIFinishToGemini(r string) string {
-	switch r {
-	case "stop":
-		return "STOP"
-	case "length":
-		return "MAX_TOKENS"
-	case "content_filter":
-		return "SAFETY"
-	case "tool_calls":
-		return "STOP"
-	default:
-		if r == "" {
-			return "STOP"
-		}
-		return "OTHER"
-	}
+// isImageMime reports whether a Gemini attachment's declared mime type is an
+// image. An absent mime is treated as an image: that was the behaviour for
+// every attachment before this split, and a URI with no declared type is far
+// more often an image than a document.
+func isImageMime(mime string) bool {
+	return mime == "" || strings.HasPrefix(mime, "image/")
 }

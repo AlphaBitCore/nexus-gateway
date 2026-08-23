@@ -139,7 +139,7 @@ func TestVKs_RevokeProdConfirm(t *testing.T) {
 	m, cmd := v.Update(keyRunes("y")) // quick-allow the prod confirm
 	v = m.(*vks)
 	m, _ = v.Update(cmd())
-	v = m.(*vks)
+	_ = m.(*vks) // asserted for type, not read
 	if gw.lastRevokedVK != "vk1" {
 		t.Fatalf("confirmed prod revoke should fire, got %q", gw.lastRevokedVK)
 	}
@@ -323,7 +323,7 @@ func TestRouting_ProdConfirmAndError(t *testing.T) {
 	m, cmd := v.Update(keyRunes("y")) // quick-allow the prod confirm
 	v = m.(*routing)
 	m, _ = v.Update(cmd())
-	v = m.(*routing)
+	_ = m.(*routing) // asserted for type, not read
 	if gw.lastRuleEnabled == nil || !*gw.lastRuleEnabled {
 		t.Fatalf("confirmed prod toggle should enable r1: %v", gw.lastRuleEnabled)
 	}

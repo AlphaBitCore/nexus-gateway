@@ -44,7 +44,7 @@ func TestWireOnReconnect_NilBufferIsNoop(t *testing.T) {
 
 func TestCaptureThingClientResult_NilClientReturnsEmpty(t *testing.T) {
 	cfg := &config.Config{}
-	result := CaptureThingClientResult(nil, cfg, time.Now(), testLogger())
+	result := CaptureThingClientResult(nil, cfg, "prod-1@abc1234", time.Now(), testLogger())
 	if result.Client != nil {
 		t.Error("expected nil Client for nil input")
 	}
@@ -56,11 +56,21 @@ func TestCaptureThingClientResult_NilClientReturnsEmpty(t *testing.T) {
 func TestCaptureThingClientResult_NonNilClientPopulatesResult(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.PublicURL = "http://proxy.test:3040"
-	result := CaptureThingClientResult(sharedTestThingClient, cfg, time.Now(), testLogger())
+	result := CaptureThingClientResult(sharedTestThingClient, cfg, "prod-20260819b@caa2934c3",
+		time.Now(), testLogger())
 	if result.Client == nil {
 		t.Error("expected non-nil Client")
 	}
 	if !result.StaticInfoReady {
 		t.Error("expected StaticInfoReady=true")
+	}
+	// The reconnect path reports the same identity as the startup path. It used
+	// to report the literal "compliance-proxy/0.1.0" with an empty sha, so a
+	// node that had reconnected could not be tied to a build at all.
+	if got := result.StaticInfo.ServiceVersion; got != "compliance-proxy/prod-20260819b@caa2934c3" {
+		t.Errorf("ServiceVersion = %q, want the stamped build version", got)
+	}
+	if got := result.StaticInfo.BuildSHA; got != "caa2934c3" {
+		t.Errorf("BuildSHA = %q, want the sha carried by the build version", got)
 	}
 }

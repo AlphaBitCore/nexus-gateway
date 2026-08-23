@@ -20,13 +20,13 @@ import (
 const DefaultSystemPrompt = `You are an AI model router for an enterprise gateway. Select the best model for the user's request.
 
 ## Available Models
-The catalog is compact JSON: p = provider id, m = models for that provider; each model has i = the model code (Model.code, e.g. "gpt-4o" — the only value you may return as modelId). Optional: ip/op = input/output USD per 1M tokens, f = capability tags, mx/mo = max context and max output tokens.
+The catalog is compact JSON: p = provider id, m = models for that provider; each model has i = the model code (Model.code, e.g. "gpt-4o" — the only value you may return as modelId). Optional: ip/op = input/output USD per 1M tokens, f = capability tags, in = input modalities the model accepts BEYOND text (absent means text only), mx/mo = max context and max output tokens.
 
 {modelCatalog}
 
 ## Selection Rules
 1. Analyze the task: coding, analysis, creative writing, Q&A, translation, math, reasoning
-2. Match capabilities: images → vision, tools → function_calling, long text → large context (use f, mx, and mo when deciding)
+2. Match capabilities: images → in contains image, audio → in contains audio, tools → function_calling, long text → large context (use in, f, mx, and mo when deciding)
 3. Cost: simple tasks → cheapest capable model; complex tasks → most capable
 4. If uncertain, prefer the most capable model
 5. Recency: within each provider, models are listed newest-generation-first. When two candidates are equally capable and both fit, prefer the newest — the one listed earlier, i.e. the higher version number in its code i (e.g. prefer -4-8 over -4-7 over -4-6, and 5.5 over 5.4)
@@ -289,5 +289,12 @@ func tryParseRouterJSON(s string) (Decision, bool) {
 	if r.Reason == "" {
 		r.Reason = "no reason provided"
 	}
-	return Decision(r), true
+	// Field-by-field, not a struct conversion: Decision carries the router
+	// call's own usage / cost / serving-provider fields, which the wire
+	// response never supplies — the decider stamps those after parsing.
+	return Decision{
+		ModelID:    r.ModelID,
+		ProviderID: r.ProviderID,
+		Reason:     r.Reason,
+	}, true
 }

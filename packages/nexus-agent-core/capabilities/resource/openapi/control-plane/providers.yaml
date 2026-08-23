@@ -611,6 +611,21 @@ paths:
                                     type: array
                                     items:
                                         type: string
+                                inputModalities:
+                                    description: Modalities the model accepts. Omit to derive them from `type`.
+                                    type: array
+                                    items:
+                                        type: string
+                                outputModalities:
+                                    description: Modalities the model produces. Omit to derive them from `type`.
+                                    type: array
+                                    items:
+                                        type: string
+                                requiredModalities:
+                                    description: Modalities a request MUST carry for this model to serve it. Omit for no constraint, which is the normal case.
+                                    type: array
+                                    items:
+                                        type: string
                                 inputPricePerMillion:
                                     type:
                                         - number
@@ -665,7 +680,6 @@ paths:
                             type: chat
                             features:
                                 - chat
-                                - vision
             responses:
                 "404":
                     description: Not Found
@@ -985,6 +999,21 @@ components:
                     description: 'Model type. Validated against the fixed set: chat, embedding, image, audio, tts, stt, rerank, video, realtime — an out-of-set value is rejected 400.'
                     enum: [chat, embedding, image, audio, tts, stt, rerank, video, realtime]
                 features:
+                    type: array
+                    items:
+                        type: string
+                inputModalities:
+                    description: Modalities the model accepts. Omit to derive them from `type`.
+                    type: array
+                    items:
+                        type: string
+                outputModalities:
+                    description: Modalities the model produces. Omit to derive them from `type`.
+                    type: array
+                    items:
+                        type: string
+                requiredModalities:
+                    description: Modalities a request MUST carry for this model to serve it. Omit for no constraint, which is the normal case.
                     type: array
                     items:
                         type: string

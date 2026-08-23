@@ -50,19 +50,6 @@ func BenchmarkMatchGlob(b *testing.B) {
 	}
 }
 
-func BenchmarkNarrowing_MergePolicy(b *testing.B) {
-	policy := core.StrategyNode{
-		Type:             "policy",
-		AllowModelIDs:    []string{"gpt-4", "claude-3", "gemini-pro"},
-		DenyModelIDs:     []string{"gpt-3.5-turbo"},
-		AllowProviderIDs: []string{"openai", "anthropic"},
-	}
-	for b.Loop() {
-		state := EmptyNarrowingState()
-		MergePolicyIntoState(state, policy)
-	}
-}
-
 func BenchmarkRuleMatchesContext(b *testing.B) {
 	conds := &core.MatchConditions{
 		Models:      []string{"gpt-4", "claude-3"},

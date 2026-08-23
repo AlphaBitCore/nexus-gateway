@@ -98,7 +98,7 @@ func (r *resourceView) tableView(fr *resFrame, width int) string {
 	var hdr strings.Builder
 	hdr.WriteString("  ")
 	for i, c := range fr.cols {
-		hdr.WriteString(fmt.Sprintf("%-*s ", widths[i], kit.Clip(strings.ToUpper(c), widths[i])))
+		fmt.Fprintf(&hdr, "%-*s ", widths[i], kit.Clip(strings.ToUpper(c), widths[i]))
 	}
 	b.WriteString(lipgloss.NewStyle().Foreground(styles.Sub).Render(hdr.String()))
 	b.WriteString("\n")
@@ -106,7 +106,7 @@ func (r *resourceView) tableView(fr *resFrame, width int) string {
 		cursor := "  "
 		var line strings.Builder
 		for i, c := range fr.cols {
-			line.WriteString(fmt.Sprintf("%-*s ", widths[i], kit.Clip(restable.CellString(row[c]), widths[i])))
+			fmt.Fprintf(&line, "%-*s ", widths[i], kit.Clip(restable.CellString(row[c]), widths[i]))
 		}
 		s := line.String()
 		if ri == fr.cursor {

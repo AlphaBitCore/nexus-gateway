@@ -2,17 +2,10 @@ package codec
 
 import "github.com/tidwall/gjson"
 
-// reconstructThinkingBlocks rebuilds the Anthropic `thinking` /
-// `redacted_thinking` content blocks that must lead an assistant turn's
-// content array. Two sources, preferred in order:
-//   - nexus_thinking: the per-block array the Anthropic ingress sets from
-//     the client's own history — each block keeps its OWN signature
-//     (Anthropic validates a signature against the exact content it
-//     signed, so blocks must not be merged) and redacted blocks survive.
-//   - reasoning_content: the L2 universal fallback a cross-format upstream
-//     (DeepSeek/OpenAI) produced — one unsigned thinking block.
-//
-// Returns nil when the message carried no reasoning.
+// reconstructThinkingBlocks rebuilds only signed Anthropic thinking and
+// redacted_thinking blocks from the nexus_thinking exact-replay carrier.
+// reasoning_content is universal text, not provider-native signed thinking,
+// and must never be fabricated into an Anthropic block.
 func reconstructThinkingBlocks(msg gjson.Result) []map[string]any {
 	if nt := msg.Get("nexus_thinking"); nt.IsArray() {
 		var blocks []map[string]any
@@ -21,19 +14,17 @@ func reconstructThinkingBlocks(msg gjson.Result) []map[string]any {
 				blocks = append(blocks, map[string]any{"type": "redacted_thinking", "data": rd})
 				return true
 			}
-			block := map[string]any{"type": "thinking", "thinking": b.Get("thinking").String()}
-			if sig := b.Get("signature").String(); sig != "" {
-				block["signature"] = sig
+			sig := b.Get("signature").String()
+			if sig == "" {
+				return true
 			}
+			block := map[string]any{"type": "thinking", "thinking": b.Get("thinking").String(), "signature": sig}
 			blocks = append(blocks, block)
 			return true
 		})
 		if len(blocks) > 0 {
 			return blocks
 		}
-	}
-	if r := msg.Get("reasoning_content").String(); r != "" {
-		return []map[string]any{{"type": "thinking", "thinking": r}}
 	}
 	return nil
 }

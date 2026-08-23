@@ -32,8 +32,8 @@ func TestMapFinishReason_AllEnums(t *testing.T) {
 		{"BLOCKLIST", "content_filter"},
 		{"IMAGE_SAFETY", "content_filter"},
 		{"MODEL_ARMOR", "content_filter"},
-		{"MALFORMED_FUNCTION_CALL", "tool_calls"},
-		{"UNEXPECTED_TOOL_CALL", "tool_calls"},
+		{"MALFORMED_FUNCTION_CALL", "MALFORMED_FUNCTION_CALL"},
+		{"UNEXPECTED_TOOL_CALL", "UNEXPECTED_TOOL_CALL"},
 		{"OTHER", "stop"},
 		{"", "stop"},
 		{"FUTURE_VENDOR_VALUE", "FUTURE_VENDOR_VALUE"},
@@ -103,6 +103,25 @@ func TestRoundTrip_functionCall_GeminiNative(t *testing.T) {
 	}
 }
 
+func TestDecodeResponse_GeminiDuplicateUnsignedCallsKeepDistinctIDs(t *testing.T) {
+	native := []byte(`{"candidates":[{"index":0,"content":{"role":"model","parts":[` +
+		`{"functionCall":{"name":"lookup","args":{"q":"same"}},"thoughtSignature":"sig-a"},` +
+		`{"functionCall":{"name":"lookup","args":{"q":"same"}},"thoughtSignature":"sig-b"}` +
+		`]},"finishReason":"STOP"}]}`)
+	decoded, err := codec{}.DecodeResponse(typology.WireShapeGeminiGenerateContent, native, "", provcore.DecodeContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := gjson.GetBytes(decoded.CanonicalBody, "choices.0.message.tool_calls.0")
+	second := gjson.GetBytes(decoded.CanonicalBody, "choices.0.message.tool_calls.1")
+	if first.Get("id").String() == "" || first.Get("id").String() == second.Get("id").String() {
+		t.Fatalf("duplicate unsigned calls collapsed IDs: %s", decoded.CanonicalBody)
+	}
+	if first.Get("function.thought_signature").String() != "sig-a" || second.Get("function.thought_signature").String() != "sig-b" {
+		t.Fatalf("signatures lost or reordered: %s", decoded.CanonicalBody)
+	}
+}
+
 // TestStreamDecoder_FunctionCallBufferedAcrossFrames covers SDD T-GEM-TOOLS
 // streaming acceptance: a function-call argument that arrives across three
 // content frames must surface as ToolCallDeltas with progressive args; the
@@ -142,12 +161,11 @@ func TestStreamDecoder_FunctionCallBufferedAcrossFrames(t *testing.T) {
 			finalUsage = ch.Usage
 		}
 	}
-	if len(deltaArgs) < 3 {
-		t.Errorf("expected at least 3 args fragments, got %d: %#v", len(deltaArgs), deltaArgs)
+	if len(deltaArgs) != 1 {
+		t.Fatalf("expected one final canonical args snapshot, got %d: %#v", len(deltaArgs), deltaArgs)
 	}
-	last := deltaArgs[len(deltaArgs)-1]
-	if !strings.Contains(last, "San Francisco") {
-		t.Errorf("final args fragment missing location: %q", last)
+	if got := gjson.Get(deltaArgs[0], "location").String(); got != "San Francisco" {
+		t.Errorf("final args location=%q want San Francisco; raw=%q", got, deltaArgs[0])
 	}
 	if doneCount != 1 {
 		t.Errorf("expected exactly one Done frame, got %d", doneCount)

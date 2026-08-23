@@ -143,8 +143,8 @@ func contextPanel(s agent.ContextStats, window int, model string) string {
 		{"~history", "← /clear to reset", s.History},
 		{"~bundle", "situation + view + memory", s.Bundle},
 	} {
-		b.WriteString(fmt.Sprintf("%-9s %6s  %s  %s\n",
-			r.label, kit.Ktok(r.v), ctxMiniBar(r.v, s.Used, 10), styles.TileLabel.Render(r.note)))
+		fmt.Fprintf(&b, "%-9s %6s  %s  %s\n",
+			r.label, kit.Ktok(r.v), ctxMiniBar(r.v, s.Used, 10), styles.TileLabel.Render(r.note))
 	}
 
 	if s.CompactBudget > 0 {

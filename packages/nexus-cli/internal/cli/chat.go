@@ -39,7 +39,7 @@ func newChatCmd(a *App) *cobra.Command {
 			onDelta := func(d string) {
 				sb.WriteString(d)
 				if !a.isJSON() {
-					fmt.Fprint(a.Out, d) // stream live in table mode
+					_, _ = fmt.Fprint(a.Out, d) // stream live in table mode
 				}
 			}
 			usage, err := a.client().ChatStream(cmd.Context(), secret, req, onDelta)

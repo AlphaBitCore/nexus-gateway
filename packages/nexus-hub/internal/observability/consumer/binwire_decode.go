@@ -178,6 +178,12 @@ func decodeBinaryRecordInto(e *TrafficEventMessage, data []byte, skipBody bool) 
 			e.EmbeddingModelID = r.str()
 		case mq.FldAIGuardCostUsd:
 			e.AIGuardCostUsd = pF64(r.f64())
+		case mq.FldRouterCostUsd:
+			e.RouterCostUsd = pF64(r.f64())
+		case mq.FldRouterProviderID:
+			e.RouterProviderID = r.str()
+		case mq.FldEmbeddingProviderID:
+			e.EmbeddingProviderID = r.str()
 		case mq.FldInternalOpsBreakdown:
 			e.InternalOpsBreakdown = r.json()
 		case mq.FldCacheCreationTokens:

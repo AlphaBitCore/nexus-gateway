@@ -9,7 +9,8 @@
 //   http-form      → key=value table.
 //   http-sse       → structured frame list (event chip + per-frame data),
 //                    collapsed beyond 50 frames, truncation note.
-//   http-binary    → metadata card (size · content-type · sha256).
+//   http-binary    → the shared media card: modality · mime · size,
+//                    with preview and download when the bytes are reachable.
 //   unsupported    → muted placeholder with link-to-raw hint.
 //
 // When `payload.redacted === true` the entire content was dropped per
@@ -29,9 +30,18 @@ import {
   renderHttpForm,
   renderHttpBinary,
   HttpSseView,
-  formatBytesShort,
 } from './NormalizedHttpViews';
+import {
+  MediaCard,
+  resolveLocator,
+  canResolveLocator,
+  sniffMime,
+  extensionForMime,
+} from '@nexus-gateway/ui-shared';
+import { MessageBubble, AgentMediaCard, renderTextWithSpans } from './NormalizedMessageView';
 import css from './NormalizedPayloadView.module.css';
+
+export { AgentMediaCard } from './NormalizedMessageView';
 
 interface Props {
   payload: NormalizedPayload | null | undefined;
@@ -40,10 +50,16 @@ interface Props {
   errorReason?: string | null;
   /** "request" | "response" — addressed in TransformSpan.contentAddress prefix. */
   direction: 'request' | 'response';
+  /**
+   * The captured body of this direction. The agent is self-contained, so
+   * it already holds these bytes — passing them here is what makes media
+   * preview and download work with no server round-trip.
+   */
+  body?: Uint8Array;
 }
 
 export function NormalizedPayloadView(props: Props) {
-  const { payload, spans, status, errorReason } = props;
+  const { payload, spans, status, errorReason, body } = props;
   const { t } = useTranslation();
 
   // Failure / partial banner.
@@ -134,7 +150,7 @@ export function NormalizedPayloadView(props: Props) {
       {banner}
       {renderTierBadge(payload, t)}
       {payload.kind === 'ai-embedding' ? renderAiEmbedding(payload, t) : null}
-      {payload.kind !== 'ai-embedding' && payload.kind.startsWith('ai-') ? renderAi(payload, spans, props.direction, t) : null}
+      {payload.kind !== 'ai-embedding' && payload.kind.startsWith('ai-') ? renderAi(payload, spans, props.direction, t, body) : null}
       {payload.kind === 'http-json' ? renderHttpJson(payload, t) : null}
       {payload.kind === 'http-text' ? renderHttpText(payload) : null}
       {payload.kind === 'http-form' ? renderHttpForm(payload, t) : null}
@@ -145,7 +161,7 @@ export function NormalizedPayloadView(props: Props) {
           t={t}
         />
       ) : null}
-      {payload.kind === 'http-multipart' || payload.kind === 'http-binary' ? renderHttpBinary(payload, t) : null}
+      {payload.kind === 'http-multipart' || payload.kind === 'http-binary' ? renderHttpBinary(payload, t, body) : null}
       {payload.kind === 'unsupported' ? (
         <div className={css.placeholder}>
           {t('normalized.banner.unsupported')}
@@ -225,6 +241,7 @@ function renderAi(
   allSpans: TransformSpan[] | null | undefined,
   _direction: 'request' | 'response',
   t: ReturnType<typeof useTranslation>['t'],
+  body?: Uint8Array,
 ) {
   const usage = payload.usage;
   const modelLine = payload.model ?? payload.protocol ?? '';
@@ -244,6 +261,7 @@ function renderAi(
           messageIndex={i}
           spans={allSpans}
           t={t}
+          body={body}
         />
       ))}
 
@@ -364,143 +382,9 @@ function renderAiEmbedding(
   );
 }
 
-function MessageBubble({
-  message,
-  messageIndex,
-  spans,
-  t,
-}: {
-  message: NormalizedMessage;
-  messageIndex: number;
-  spans: TransformSpan[] | null | undefined;
-  t: ReturnType<typeof useTranslation>['t'];
-}) {
-  const role = message.role;
-  const bubbleClass = `${css.chatBubble} ${
-    role === 'user' ? css.chatBubbleUser :
-    role === 'assistant' ? css.chatBubbleAssistant :
-    role === 'system' ? css.chatBubbleSystem :
-    css.chatBubbleTool
-  }`;
-  const chipClass = `${css.roleChip} ${
-    role === 'user' ? css.roleChipUser :
-    role === 'assistant' ? css.roleChipAssistant :
-    role === 'system' ? css.roleChipSystem :
-    css.roleChipTool
-  }`;
-  return (
-    <div className={bubbleClass}>
-      <div className={css.roleRow}>
-        <span className={chipClass}>{t(`normalized.role.${role}`)}</span>
-        {message.finishReason ? (
-          <span className={css.finishReason}>
-            {t('normalized.finishReason')}: {message.finishReason}
-          </span>
-        ) : null}
-      </div>
-      {(message.content ?? []).map((b, j) => (
-        <ContentBlockRow
-          key={j}
-          block={b}
-          address={`messages.${messageIndex}.content.${j}`}
-          spans={spans}
-        />
-      ))}
-    </div>
-  );
-}
 
-function ContentBlockRow({
-  block,
-  address,
-  spans,
-}: {
-  block: NormalizedContentBlock;
-  address: string;
-  spans: TransformSpan[] | null | undefined;
-}) {
-  if (block.type === 'text') {
-    return <div className={css.contentText}>{renderTextWithSpans(block.text ?? '', address, spans)}</div>;
-  }
-  if (block.type === 'reasoning') {
-    return <div className={css.contentReasoning}>{block.text ?? ''}</div>;
-  }
-  if (block.type === 'tool_use') {
-    return (
-      <div className={css.contentToolUse}>
-        <strong>{block.toolUse?.name}</strong>
-        {block.toolUse?.callId ? ` · ${block.toolUse.callId}` : ''}
-        <div>{JSON.stringify(block.toolUse?.input ?? {}, null, 2)}</div>
-      </div>
-    );
-  }
-  if (block.type === 'tool_result') {
-    return (
-      <div className={css.contentToolUse}>
-        <strong>tool_result</strong>
-        {block.toolResult?.callId ? ` · ${block.toolResult.callId}` : ''}
-        <div>{renderTextWithSpans(block.toolResult?.output ?? '', `${address}.toolResult`, spans)}</div>
-      </div>
-    );
-  }
-  if (block.type === 'image_ref') {
-    return (
-      <div className={css.binaryCard}>
-        <span>
-          {block.imageRef?.contentType ?? 'image'} · {formatBytesShort(block.imageRef?.size ?? 0)}
-        </span>
-        {block.imageRef?.sha256 ? <code>{block.imageRef.sha256.slice(0, 16)}…</code> : null}
-      </div>
-    );
-  }
-  return null;
-}
 
-// renderTextWithSpans inserts redaction badges for spans that address
-// this content block. Spans not addressing this block are ignored.
-function renderTextWithSpans(
-  text: string,
-  address: string,
-  spans: TransformSpan[] | null | undefined,
-): React.ReactNode {
-  if (!spans || spans.length === 0) return text;
-  const relevant = spans
-    .filter((s) => s.contentAddress === address)
-    .sort((a, b) => a.start - b.start);
-  if (relevant.length === 0) return text;
 
-  // Walk text left-to-right, alternating verbatim slices and badges.
-  const out: React.ReactNode[] = [];
-  let cursor = 0;
-  relevant.forEach((s, i) => {
-    if (s.start > cursor) {
-      out.push(text.slice(cursor, s.start));
-    }
-    // The redacted substring has already been replaced by ApplySpans in
-    // the stored payload — what we read in `text` is the post-redact
-    // version. We render a badge with the rule id + tooltip.
-    const tooltip = [
-      s.sourceId ? `rule: ${s.sourceId}` : null,
-      s.source ? `source: ${s.source}` : null,
-      s.action ? `action: ${s.action}` : null,
-      s.reason ? `reason: ${s.reason}` : null,
-    ].filter(Boolean).join('\n');
-    // The replacement string is already substituted in `text`; we
-    // overlay a badge styling on it by rendering the same text inside
-    // a span with the badge class for the replacement-length.
-    // For simplicity we render the badge AROUND the replacement text.
-    const replacementLen = s.replacement ? s.replacement.length : (s.end - s.start);
-    const segEnd = s.start + replacementLen;
-    out.push(
-      <span key={i} className={css.redactBadge} title={tooltip}>
-        {text.slice(s.start, segEnd)}
-      </span>,
-    );
-    cursor = segEnd;
-  });
-  if (cursor < text.length) {
-    out.push(text.slice(cursor));
-  }
-  return out;
-}
+
+
 

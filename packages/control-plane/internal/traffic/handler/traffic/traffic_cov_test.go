@@ -25,15 +25,26 @@ import (
 )
 
 // trafficEventCovRow builds the column set + value row matching GetTrafficEvent's
-// 95 base scan destinations plus the 6 payload-JOIN columns
+// 95 base scan destinations plus the 10 payload-JOIN columns
 // (inline_request_body, inline_response_body, request_spill_ref,
-// response_spill_ref, inline_request_encoding, inline_response_encoding). Base
-// columns 0/1/2/72 carry the non-nullable values (ID, Source, Timestamp,
-// CreatedAt); every other base column is SQL NULL. The caller fills the 6
-// payload columns (indices 95..100) to drive the body/spill branches.
+// response_spill_ref, inline_request_encoding, inline_response_encoding,
+// request_truncated, response_truncated, request_size_bytes,
+// response_size_bytes). Base columns 0/1/2/72 carry the non-nullable values
+// (ID, Source, Timestamp, CreatedAt); every other base column is SQL NULL. The
+// caller fills the first 6 payload columns to drive the body/spill branches;
+// the truncation pair defaults to false/NULL (an untruncated body) and is
+// overridden by trafficEventCovRowTruncated.
 func trafficEventCovRow(id string, reqBody, respBody, reqSpill, respSpill []byte, reqEnc, respEnc string) *pgxmock.Rows {
+	return trafficEventCovRowTruncated(id, reqBody, respBody, reqSpill, respSpill, reqEnc, respEnc, false, false, nil, nil)
+}
+
+// trafficEventCovRowTruncated is trafficEventCovRow with the truncation columns
+// under the caller's control, so a handler test can assert what the detail JSON
+// says about a body that was stored as a PREFIX.
+func trafficEventCovRowTruncated(id string, reqBody, respBody, reqSpill, respSpill []byte, reqEnc, respEnc string,
+	reqTrunc, respTrunc bool, reqSize, respSize *int64) *pgxmock.Rows {
 	const n = 96 // base SELECT cols: 91 + end_user_id/session_id + artifact_refs/compliance_coverage/endpoint_type
-	const extra = 6
+	const extra = 10
 	cols := make([]string, n+extra)
 	vals := make([]any, n+extra)
 	for i := range cols {
@@ -50,6 +61,10 @@ func trafficEventCovRow(id string, reqBody, respBody, reqSpill, respSpill []byte
 	vals[99] = nullableBytes(respSpill)
 	vals[100] = reqEnc
 	vals[101] = respEnc
+	vals[102] = reqTrunc
+	vals[103] = respTrunc
+	vals[104] = reqSize
+	vals[105] = respSize
 	return pgxmock.NewRows(cols).AddRow(vals...)
 }
 
@@ -81,6 +96,77 @@ var tNowCov = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
 func errNoRowsStub() error { return pgx.ErrNoRows }
 
 // ── GetTrafficEvent success paths ────────────────────────────────────────────
+
+// The detail JSON is what the drawer actually reads, so the truncation facts have
+// to survive all the way to the wire — not just into the store struct. This is the
+// exact shape of the ABC stg row that started this: a streamed response whose
+// stored copy stops at the 100 KiB inline cutoff, in the middle of an SSE frame,
+// while the provider actually sent 254432 bytes and finished normally. Rendering
+// that prefix without these two fields is indistinguishable from a model that
+// stopped thinking part-way.
+func TestGetTrafficEvent_TruncatedBody_ReportsFlagAndTrueSizeOnTheWire(t *testing.T) {
+	h, mock := newHandlerWithMock(t)
+	reqSize, respSize := int64(561168), int64(254432)
+	truncatedSSE := []byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\ndata: {\"object\":\"chat.completion.chu")
+	mock.ExpectQuery(`LEFT JOIN traffic_event_payload p`).
+		WithArgs("evt-truncated").
+		WillReturnRows(trafficEventCovRowTruncated(
+			"evt-truncated",
+			[]byte(`{"prompt":"hi"}`), truncatedSSE,
+			nil, nil, "text", "text",
+			true, true, &reqSize, &respSize))
+
+	c, rec := echoCtx(http.MethodGet, "/traffic/evt-truncated")
+	c.SetParamNames("id")
+	c.SetParamValues("evt-truncated")
+	if err := h.GetTrafficEvent(c); err != nil {
+		t.Fatalf("GetTrafficEvent: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		RequestBodyTruncated  bool   `json:"requestBodyTruncated"`
+		ResponseBodyTruncated bool   `json:"responseBodyTruncated"`
+		RequestBodySizeBytes  *int64 `json:"requestBodySizeBytes"`
+		ResponseBodySizeBytes *int64 `json:"responseBodySizeBytes"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if !got.RequestBodyTruncated || !got.ResponseBodyTruncated {
+		t.Errorf("truncation flags missing from the detail JSON: request=%v response=%v",
+			got.RequestBodyTruncated, got.ResponseBodyTruncated)
+	}
+	if got.ResponseBodySizeBytes == nil || *got.ResponseBodySizeBytes != respSize {
+		t.Errorf("response size on the wire: want %d, got %v", respSize, got.ResponseBodySizeBytes)
+	}
+	if got.RequestBodySizeBytes == nil || *got.RequestBodySizeBytes != reqSize {
+		t.Errorf("request size on the wire: want %d, got %v", reqSize, got.RequestBodySizeBytes)
+	}
+}
+
+// The truncation flags are non-omitempty booleans, so an untruncated row must
+// emit them as false rather than dropping them — a missing key and "false" read
+// the same to a JS client only by accident, and the drawer branches on the key.
+func TestGetTrafficEvent_WholeBody_EmitsTruncationFlagsAsFalse(t *testing.T) {
+	h, mock := newHandlerWithMock(t)
+	mock.ExpectQuery(`LEFT JOIN traffic_event_payload p`).
+		WithArgs("evt-whole").
+		WillReturnRows(trafficEventCovRow(
+			"evt-whole", []byte(`{"prompt":"hi"}`), []byte(`{"ok":true}`), nil, nil, "text", "text"))
+
+	c, rec := echoCtx(http.MethodGet, "/traffic/evt-whole")
+	c.SetParamNames("id")
+	c.SetParamValues("evt-whole")
+	if err := h.GetTrafficEvent(c); err != nil {
+		t.Fatalf("GetTrafficEvent: %v", err)
+	}
+	raw := rec.Body.String()
+	if !strings.Contains(raw, `"requestBodyTruncated":false`) || !strings.Contains(raw, `"responseBodyTruncated":false`) {
+		t.Errorf("untruncated row must still carry both flags as false; got %s", raw)
+	}
+}
 
 func TestGetTrafficEvent_InlineBodies_RendersJSONAndWrapsNonJSON(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
@@ -242,12 +328,14 @@ func TestResolveSpillBody_SHA256Match_ReturnsBody(t *testing.T) {
 
 // normalizeInputCols mirrors GetTrafficEventForNormalize's SELECT order:
 // ingress_format, model, path, req_body, req_enc, resp_body, resp_enc,
-// req_content_type, resp_content_type, req_spill_ref, resp_spill_ref.
+// req_content_type, resp_content_type, req_spill_ref, resp_spill_ref,
+// endpoint_type, artifact_refs, request_truncated, response_truncated.
 var normalizeInputCols = []string{
 	"ingress_format", "model", "path",
 	"req_body", "req_enc", "resp_body", "resp_enc",
 	"req_ct", "resp_ct", "req_spill", "resp_spill",
-	"endpoint_type",
+	"endpoint_type", "artifact_refs",
+	"req_truncated", "resp_truncated",
 }
 
 func TestGetTrafficEventNormalized_InlineRecompute_ReturnsComputed(t *testing.T) {
@@ -261,7 +349,7 @@ func TestGetTrafficEventNormalized_InlineRecompute_ReturnsComputed(t *testing.T)
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"anthropic", "claude-opus-4-7", "/v1/messages",
 			reqBody, "", respBody, "",
-			"application/json", "text/event-stream", nil, nil, ""))
+			"application/json", "text/event-stream", nil, nil, "", "", false, false))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-norm/normalized")
 	c.SetParamNames("id")
@@ -291,81 +379,29 @@ func TestGetTrafficEventNormalized_InlineRecompute_ReturnsComputed(t *testing.T)
 	}
 }
 
-func TestGetTrafficEventNormalized_NoInlineBody_FallsBackToSidecar(t *testing.T) {
-	h, mock := newHandlerWithMock(t)
-	// First query: NormalizeInput with empty bodies → recompute skipped.
-	mock.ExpectQuery(`COALESCE\(a.ingress_format`).
-		WithArgs("evt-fb").
-		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
-			"anthropic", "claude-opus-4-7", "/v1/messages",
-			nil, "", nil, "", "", "", nil, nil, ""))
-	// Second query: stored sidecar row is returned.
-	normCols := []string{"traffic_event_id", "request_normalized", "response_normalized",
-		"request_status", "response_status", "request_error_reason", "response_error_reason",
-		"request_redaction_spans", "response_redaction_spans", "normalize_version", "created_at"}
-	mock.ExpectQuery(`FROM traffic_event_normalized`).
-		WithArgs("evt-fb").
-		WillReturnRows(pgxmock.NewRows(normCols).AddRow(
-			"evt-fb", []byte(`{"r":1}`), nil,
-			sptr("ok"), nil, nil, nil, nil, nil, "1", tNowCov))
-
-	c, rec := echoCtx(http.MethodGet, "/traffic/evt-fb/normalized")
-	c.SetParamNames("id")
-	c.SetParamValues("evt-fb")
-	if err := h.GetTrafficEventNormalized(c); err != nil {
-		t.Fatalf("GetTrafficEventNormalized: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got trafficstore.TrafficEventNormalized
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.TrafficEventID != "evt-fb" {
-		t.Errorf("trafficEventId = %q, want evt-fb (sidecar fallback)", got.TrafficEventID)
-	}
-	if string(got.RequestNormalized) != `{"r":1}` {
-		t.Errorf("requestNormalized = %s, want stored sidecar value", got.RequestNormalized)
-	}
-}
-
-func TestGetTrafficEventNormalized_NoInlineNoSidecar_Returns404(t *testing.T) {
+// A row the parent lookup finds but which carries no recoverable body — capture
+// was off, or the bodies have gone to retention — is unavailable, not an error.
+//
+// This test used to assert a 200 carrying the stored traffic_event_normalized
+// sidecar. That tier is gone with the table, so the assertion inverts: exactly
+// ONE query is issued (the parent lookup) and the answer is 404. The
+// single-query expectation is the part that matters — it is what would fail if
+// the sidecar SELECT were ever reintroduced.
+func TestGetTrafficEventNormalized_NoRecoverableBody_Returns404(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
 	mock.ExpectQuery(`COALESCE\(a.ingress_format`).
 		WithArgs("evt-empty").
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
-			"anthropic", "m", "/v1/messages", nil, "", nil, "", "", "", nil, nil, ""))
-	mock.ExpectQuery(`FROM traffic_event_normalized`).
-		WithArgs("evt-empty").
-		WillReturnError(errNoRowsStub())
+			"anthropic", "m", "/v1/messages", nil, "", nil, "", "", "", nil, nil, "", "", false, false))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-empty/normalized")
 	c.SetParamNames("id")
 	c.SetParamValues("evt-empty")
 	_ = h.GetTrafficEventNormalized(c)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when no inline body and no sidecar, got %d", rec.Code)
+		t.Fatalf("expected 404 when no body is recoverable, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("the parent lookup must be the only query issued: %v", err)
 	}
 }
-
-func TestGetTrafficEventNormalized_SidecarFallbackDBError_Returns500(t *testing.T) {
-	h, mock := newHandlerWithMock(t)
-	mock.ExpectQuery(`COALESCE\(a.ingress_format`).
-		WithArgs("evt-fb-err").
-		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
-			"anthropic", "m", "/v1/messages", nil, "", nil, "", "", "", nil, nil, ""))
-	mock.ExpectQuery(`FROM traffic_event_normalized`).
-		WithArgs("evt-fb-err").
-		WillReturnError(errStub("db down"))
-
-	c, rec := echoCtx(http.MethodGet, "/traffic/evt-fb-err/normalized")
-	c.SetParamNames("id")
-	c.SetParamValues("evt-fb-err")
-	_ = h.GetTrafficEventNormalized(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 on sidecar fallback DB error, got %d", rec.Code)
-	}
-}
-
-func sptr(s string) *string { return &s }

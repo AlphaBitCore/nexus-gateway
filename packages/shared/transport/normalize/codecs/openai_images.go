@@ -9,6 +9,7 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 )
 
 // OpenAIImagesNormalizer handles OpenAI's /v1/images/generations surface for
@@ -28,10 +29,10 @@ import (
 //	{"created":..,"data":[{"b64_json":"..","revised_prompt":".."}|{"url":".."}]}
 //
 // revised_prompt (the provider's rewritten prompt) is projected as assistant
-// text; each artifact becomes an image_ref summary (b64 decoded byte size +
-// sniffed mime, NEVER the bytes) or, for url mode, an inert text block carrying
-// the reference (BinaryRef has no url field, and a plain-text block renders
-// non-clickable — no auto-fetch, no anchor). Kind = ai-image.
+// text; each artifact becomes a media block carrying the decoded size, the
+// sniffed mime and a locator into the stored body — never the bytes. In url
+// mode the artifact is an inert external reference: provider-hosted, expiring,
+// never fetched. Kind = ai-image.
 type OpenAIImagesNormalizer struct{}
 
 // NewOpenAIImagesNormalizer returns a stateless normalizer instance.
@@ -136,22 +137,21 @@ func (n *OpenAIImagesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (
 		Model:            meta.Model,
 	}
 	var blocks []core.ContentBlock
-	for _, d := range resp.Data {
+	for i, d := range resp.Data {
 		if d.RevisedPrompt != "" {
 			blocks = append(blocks, core.ContentBlock{Type: core.ContentText, Text: d.RevisedPrompt})
 		}
 		switch {
 		case d.B64JSON != "":
-			size, mime := b64ArtifactSummary(d.B64JSON)
-			blocks = append(blocks, core.ContentBlock{
-				Type:     core.ContentImageRef,
-				ImageRef: &core.BinaryRef{Size: size, ContentType: mime},
-			})
+			mime := b64ArtifactSniff(d.B64JSON)
+			blocks = append(blocks, mediaBlock(capturedMedia(
+				mime, d.B64JSON, locator.JSON(locator.JoinPath("data", i)+".b64_json"),
+			)))
 		case d.URL != "":
-			// BinaryRef has no url field; carry the reference as an inert
-			// text block (renders non-clickable — no auto-fetch, no anchor,
-			// no server-side deref).
-			blocks = append(blocks, core.ContentBlock{Type: core.ContentText, Text: "image url: " + d.URL})
+			// A generated-image URL is provider-hosted and expires; the
+			// gateway never fetched it, so it is an inert external ref
+			// rather than the text marker this used to degrade to.
+			blocks = append(blocks, mediaBlock(externalMedia("", d.URL, core.ModalityImage)))
 		}
 	}
 	if len(blocks) > 0 {
@@ -160,19 +160,12 @@ func (n *OpenAIImagesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (
 	return out, nil
 }
 
-// b64ArtifactSummary returns the decoded byte size and a sniffed mime for a
-// base64 image artifact WITHOUT allocating the whole decoded blob: the size is
-// computed arithmetically, and only a short prefix is decoded to sniff the mime.
-func b64ArtifactSummary(b64 string) (int64, string) {
-	size := int64(base64.StdEncoding.DecodedLen(len(b64)))
-	// DecodedLen is an upper bound (it ignores padding); subtract the '='
-	// padding bytes for the exact size.
-	for i := len(b64) - 1; i >= 0 && b64[i] == '='; i-- {
-		size--
-	}
-	if size < 0 {
-		size = 0
-	}
+// b64ArtifactSniff returns a sniffed mime for a base64 image artifact
+// WITHOUT allocating the whole decoded blob — only a short prefix is
+// decoded to read the magic bytes. Size is not returned: decodedSize owns
+// that arithmetic, and two implementations of one number is how they came
+// to disagree elsewhere.
+func b64ArtifactSniff(b64 string) string {
 	mime := "application/octet-stream"
 	// Decode a bounded prefix (16 b64 chars → 12 bytes) to sniff magic bytes.
 	prefixLen := len(b64)
@@ -181,12 +174,8 @@ func b64ArtifactSummary(b64 string) (int64, string) {
 	}
 	if head, err := base64.StdEncoding.DecodeString(b64[:prefixLen]); err == nil {
 		mime = sniffImageMagic(head)
-	} else {
-		// The prefix is not valid base64, so the arithmetic size is a fiction —
-		// report 0 rather than a fabricated byte count for a malformed artifact.
-		size = 0
 	}
-	return size, mime
+	return mime
 }
 
 // sniffImageMagic returns the image mime for the common web image magic bytes,

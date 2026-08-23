@@ -28,6 +28,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 )
 
 // EstimateRequest is the POST /v1/estimate request body.
@@ -114,41 +116,51 @@ func isValidReasoningEffort(v string) bool {
 func (h *Handler) ServeEstimate(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	if r.Method != http.MethodPost {
-		writeEstimateError(w, http.StatusMethodNotAllowed, "estimate_method_not_allowed", "POST only")
+		writeEstimateError(w, http.StatusMethodNotAllowed, "ESTIMATE_METHOD_NOT_ALLOWED", "POST only")
 		return
 	}
 
 	// VK auth — same surface as the proxy /v1/* endpoints.
 	vkMeta, err := h.authenticate(r)
 	if err != nil {
-		writeEstimateError(w, http.StatusUnauthorized, "estimate_unauthorized", err.Error())
+		writeEstimateError(w, http.StatusUnauthorized, "ESTIMATE_UNAUTHORIZED", err.Error())
 		return
 	}
 
 	// Separate per-VK compareEndpointRateLimit bucket.
 	if err := h.checkCompareRateLimit(w, vkMeta); err != nil {
-		writeEstimateError(w, http.StatusTooManyRequests, "estimate_compare_rate_limited", err.Error())
+		writeEstimateError(w, http.StatusTooManyRequests, "ESTIMATE_COMPARE_RATE_LIMITED", err.Error())
 		return
 	}
 
 	var req EstimateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeEstimateError(w, http.StatusBadRequest, "estimate_invalid_json", err.Error())
+		writeEstimateError(w, http.StatusBadRequest, "ESTIMATE_INVALID_JSON", err.Error())
 		return
 	}
 	if len(req.CompareTargets) == 0 {
-		writeEstimateError(w, http.StatusBadRequest, "estimate_no_targets",
+		writeEstimateError(w, http.StatusBadRequest, "ESTIMATE_NO_TARGETS",
 			"compareTargets array must contain at least 1 target")
 		return
 	}
 	if len(req.CompareTargets) > 10 {
-		writeEstimateError(w, http.StatusBadRequest, "estimate_too_many_targets",
+		writeEstimateError(w, http.StatusBadRequest, "ESTIMATE_TOO_MANY_TARGETS",
 			"compareTargets exceeds maximum of 10 entries per request")
 		return
 	}
 	if len(req.Request) == 0 {
-		writeEstimateError(w, http.StatusBadRequest, "estimate_no_request",
+		writeEstimateError(w, http.StatusBadRequest, "ESTIMATE_NO_REQUEST",
 			"request body is required")
+		return
+	}
+
+	// options.ingressFormat reached a Prometheus label value straight from the
+	// body, so any authenticated caller could mint unbounded label cardinality
+	// on two counters. Refusing an unrecognised value bounds that, and stops
+	// the endpoint accepting a word it cannot act on.
+	if f := req.Options.IngressFormat; f != nil && *f != "" && !provcore.Format(*f).Valid() {
+		writeEstimateError(w, http.StatusBadRequest, "ESTIMATE_INVALID_INGRESS_FORMAT",
+			fmt.Sprintf("options.ingressFormat=%q is not a wire format this gateway speaks", *f))
 		return
 	}
 
@@ -160,7 +172,7 @@ func (h *Handler) ServeEstimate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !isValidReasoningEffort(*t.ReasoningEffort) {
-			writeEstimateError(w, http.StatusBadRequest, "estimate_invalid_reasoning_effort",
+			writeEstimateError(w, http.StatusBadRequest, "ESTIMATE_INVALID_REASONING_EFFORT",
 				fmt.Sprintf("compareTargets[%d].reasoningEffort=%q must be one of {minimal, low, medium, high} or a positive integer budget", i, *t.ReasoningEffort))
 			return
 		}
@@ -209,7 +221,7 @@ func (h *Handler) runEstimateOnce(ctx context.Context, body []byte, target Estim
 	m, ok := h.resolveTargetModel(ctx, target)
 	if !ok {
 		out.Error = &EstimateTargetError{
-			Code:    "estimate_target_not_found",
+			Code:    "ESTIMATE_TARGET_NOT_FOUND",
 			Message: fmt.Sprintf("model %q under provider %q not found in catalog", target.ModelID, target.ProviderID),
 		}
 		return out
@@ -243,6 +255,21 @@ func (h *Handler) runEstimateOnce(ctx context.Context, body []byte, target Estim
 		CachedInputWriteUsdPerM: m.CachedInputWritePricePM,
 	}
 
+	// Modality endpoints whose unit is derivable from the request (rerank →
+	// search units, image → images, tts → input characters) are priced per that
+	// unit, not per token. Tokenizing the request and multiplying by a per-image
+	// or per-search rate wildly misstates the preview. Price via the SAME formula
+	// (estimator.Lookup(EndpointKind)) the actual cost stamp uses so the estimate
+	// reconciles with the bill. stt/video are absent from modalityUnitsFromRequest
+	// — their units are not knowable pre-call — so they fall through to the token
+	// path below.
+	if r, ok := modalityUnitsFromRequest(m.Type, body); ok {
+		cost := estimator.Lookup(r.EndpointKind)(r.Units, prices)
+		out.Cost = &estimator.CostBreakdown{Currency: "USD", Low: cost, Expected: cost, High: cost}
+		out.Assumptions = []string{r.Assumption}
+		return out
+	}
+
 	maxOutput := 0
 	if m.MaxOutputTokens != nil {
 		maxOutput = *m.MaxOutputTokens
@@ -251,6 +278,12 @@ func (h *Handler) runEstimateOnce(ctx context.Context, body []byte, target Estim
 	in := estimator.EstimateInput{
 		CanonicalRequest: body,
 		IngressFormat:    provcore.FormatOpenAI,
+		ReasoningEffortOverride: func() string {
+			if target.ReasoningEffort == nil {
+				return ""
+			}
+			return *target.ReasoningEffort
+		}(),
 		Target: estimator.ResolvedTarget{
 			ProviderID:  m.ProviderID,
 			ModelID:     m.ID,
@@ -271,7 +304,7 @@ func (h *Handler) runEstimateOnce(ctx context.Context, body []byte, target Estim
 	}
 	if err != nil {
 		out.Error = &EstimateTargetError{
-			Code:    "estimate_failed",
+			Code:    "ESTIMATE_FAILED",
 			Message: err.Error(),
 		}
 		return out
@@ -284,9 +317,29 @@ func (h *Handler) runEstimateOnce(ctx context.Context, body []byte, target Estim
 	return out
 }
 
+// resolveTargetModel finds the (providerId, modelId) row the caller named.
+//
+// providerId used to be echoed back and nothing else: the lookup was by code
+// alone, so two providers serving one code both resolved to whichever row the
+// catalog returned first, and a compare across two providers of the same model
+// — the endpoint's whole purpose — priced both at one provider's rates. It is
+// consulted first now, and the by-code lookups stay as the fallback for a
+// caller that names only the model.
 func (h *Handler) resolveTargetModel(ctx context.Context, target EstimateCompareTarget) (store.Model, bool) {
 	if h.deps == nil || h.deps.Models == nil {
 		return store.Model{}, false
+	}
+	if target.ProviderID != "" {
+		if rows, err := h.deps.Models.ListEnabledModels(ctx); err == nil {
+			for _, m := range rows {
+				if m.ProviderID != target.ProviderID {
+					continue
+				}
+				if m.Code == target.ModelID || m.ID == target.ModelID {
+					return m, true
+				}
+			}
+		}
 	}
 	if m, err := h.deps.Models.GetModelByCode(ctx, target.ModelID); err == nil && m != nil {
 		return *m, true
@@ -330,18 +383,20 @@ func buildEstimateSummary(targets []EstimatePerTarget) EstimateCompareSummary {
 	return s
 }
 
-// writeEstimateError writes a structured per-endpoint error. (The
-// proxy-style writeJSONError carries different framing — code embedded
-// in `error.code` numeric — and uses `type: "proxy_error"`. We want
-// `error.code` to be a stable string slug, so this is a distinct
-// helper rather than a shim around writeJSONError.)
+// writeEstimateError answers through the single gateway-error envelope.
+//
+// This route had its own shape: a lower_snake code and no type at all, on the
+// reasoning that the alternative at the time put a numeric status in
+// error.code. Wanting a stable string slug was right; owning a private
+// envelope to get one was not, and it left estimate as the only route whose
+// errors carry no type. The codes are UPPER_SNAKE now, which is what the rest
+// of the surface emits and what sdk_compat asserts.
 func writeEstimateError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]string{
-			"code":    code,
-			"message": message,
-		},
-	})
+	// /v1/estimate is gateway-native: no vendor dialect claims it, so the shape
+	// is the OpenAI one. Going through the shared builder with the empty format
+	// says that on purpose rather than by picking a writer, and keeps the route
+	// inside the invariant the AST guard enforces.
+	_, _ = w.Write(envelope.GatewayErrorBodyForIngress("", status, code, message, ""))
 }

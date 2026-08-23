@@ -55,6 +55,13 @@ var (
 	ErrInvalid  = errors.New("vkauth: virtual key invalid")
 	ErrDisabled = errors.New("vkauth: virtual key disabled")
 	ErrExpired  = errors.New("vkauth: virtual key expired")
+	// ErrUnavailable is OUR failure, not the caller's: the key could not be
+	// resolved because the lookup itself failed (database unreachable, query
+	// error). It used to be wrapped in ErrInvalid, so a Postgres outage told
+	// every caller their virtual key was invalid — they rotate keys, which
+	// cannot help, and the real fault stays invisible. Distinguished so the
+	// handler can answer 503 instead of blaming the caller for a 401.
+	ErrUnavailable = errors.New("vkauth: virtual key lookup unavailable")
 )
 
 // VKMeta holds validated virtual key metadata attached to a request context.
@@ -169,7 +176,12 @@ func (a *Authenticator) AuthenticateWithHash(ctx context.Context, r *http.Reques
 
 	vk, matchedHash, err := a.lookupVK(ctx, raw)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w", ErrInvalid, err)
+		// A malformed token is the caller's problem and lookupVK reports it
+		// as ErrInvalid; anything else reaching here is a failure of ours.
+		if errors.Is(err, ErrInvalid) {
+			return nil, "", err
+		}
+		return nil, "", fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if vk == nil {
 		return nil, "", ErrInvalid

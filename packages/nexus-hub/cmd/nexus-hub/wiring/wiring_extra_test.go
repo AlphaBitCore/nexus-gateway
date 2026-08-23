@@ -379,7 +379,7 @@ func TestReadyzHandler_NilDB_HealthyConsumer(t *testing.T) {
 	cfg.Consumers.Enabled = true
 	fakeConsumer := &fakeMQConsumer{}
 	opsReg := newIsolatedOpsReg()
-	mgr := InitConsumerManager(cfg, nil, fakeConsumer, opsReg, testLogger())
+	mgr, _ := InitConsumerManager(cfg, nil, fakeConsumer, opsReg, testLogger())
 
 	h := readyzHandler(nil, nil, mgr)
 	e := echo.New()

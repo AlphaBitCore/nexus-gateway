@@ -25,6 +25,7 @@ import (
 	creddecrypt "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/decrypt"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/costing"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
@@ -414,7 +415,7 @@ func TestInitRouter_withNonNilCacheLayerAndPtResolver(t *testing.T) {
 
 	ht := store.NewHealthTracker()
 	t.Cleanup(ht.Stop)
-	stratReg, healthRanker, resolver, capCache := InitRouter(l, ht, ptResolver, adapterReg, discardLogger())
+	stratReg, healthRanker, resolver, capCache := InitRouter(context.Background(), l, ht, ptResolver, adapterReg, discardLogger(), false)
 	if stratReg == nil {
 		t.Fatal("expected non-nil strategyReg")
 	}
@@ -645,11 +646,20 @@ func TestBuildBackend_priceLookup_withNonNilDBAndModel(t *testing.T) {
 	if ab.PriceLookup == nil {
 		t.Fatal("expected PriceLookup to be set")
 	}
-	// Call PriceLookup to exercise the closure body — model exists so returns prices.
-	in, out := ab.PriceLookup("model-price-test")
-	// makeTestModelRow sets inP="3.0", outP="12.0".
-	if in == 0 && out == 0 {
-		t.Log("priceLookup returned (0,0) — model may not have prices set in stub")
+	// Exercise the closure body. makeTestModelRow sets all four catalog price
+	// columns (3.0 / 12.0 / 0.3 / 3.75), so all four must reach the classifier
+	// — the cache pair especially: dropping it is what made the AI Guard bill
+	// its cached judge prompt at the full input rate.
+	rates, priced := ab.PriceLookup("model-price-test")
+	if !priced {
+		t.Fatal("a seeded model with catalog prices must report as priced")
+	}
+	want := costing.Rates{
+		InputUSDPerM: 3.0, OutputUSDPerM: 12.0,
+		CacheReadUSDPerM: 0.3, CacheWriteUSDPerM: 3.75,
+	}
+	if rates != want {
+		t.Errorf("rates = %+v, want %+v — all four catalog columns must reach the backend", rates, want)
 	}
 }
 
@@ -687,10 +697,10 @@ func TestBuildBackend_priceLookup_modelNotFound(t *testing.T) {
 		t.Fatalf("buildBackend: %v", err)
 	}
 	ab := backend.(*aiguard.AdapterBackend)
-	// PriceLookup with a model not in the layer → err!=nil branch → returns (0, 0).
-	in, out := ab.PriceLookup("nonexistent-model")
-	if in != 0 || out != 0 {
-		t.Errorf("expected (0,0) for missing model, got (%v, %v)", in, out)
+	// PriceLookup with a model not in the layer → err!=nil branch → unpriced.
+	rates, priced := ab.PriceLookup("nonexistent-model")
+	if priced || rates != (costing.Rates{}) {
+		t.Errorf("expected unpriced zero rates for a missing model, got (%+v, %v)", rates, priced)
 	}
 }
 
@@ -725,9 +735,9 @@ func TestBuildBackend_priceLookup_nilDB(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *aiguard.AdapterBackend")
 	}
-	in, out := ab.PriceLookup("model-nil-db")
-	if in != 0 || out != 0 {
-		t.Errorf("expected (0,0) for nil DB, got (%v, %v)", in, out)
+	rates, priced := ab.PriceLookup("model-nil-db")
+	if priced || rates != (costing.Rates{}) {
+		t.Errorf("expected unpriced zero rates for a nil DB, got (%+v, %v)", rates, priced)
 	}
 }
 

@@ -2,6 +2,7 @@ package thingclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
 	"log/slog"
@@ -641,6 +642,9 @@ func (c *Client) runLoop(ctx context.Context) {
 
 	state := transportWS
 	failures := 0
+	// authRejected keeps the credential verdict across loop turns so the WARN is
+	// emitted once per stretch of rejections rather than once per attempt.
+	authRejected := false
 
 	dial := c.connectWS
 	if c.connectWSFn != nil {
@@ -686,6 +690,26 @@ func (c *Client) runLoop(ctx context.Context) {
 			c.promMetrics.wsConnections.WithLabelValues("failure").Inc()
 			failures++
 			c.wsConsecutiveFailures.Store(int32(failures))
+			if errors.Is(err, ErrAuthRejected) {
+				// Logged once per stretch of rejections, not per attempt: a
+				// line every two seconds is how the last one stayed invisible.
+				if !authRejected {
+					c.logger.Warn("Hub rejected this Thing's credential — it is no longer "+
+						"enrolled. Retrying slowly; re-enrol to recover.",
+						slog.String("event", "ws_auth_rejected"),
+						slog.String("thing_id", c.cfg.ThingID),
+						slog.String("error", err.Error()),
+					)
+				}
+				authRejected = true
+				c.setMode(ModeDisconnected)
+				select {
+				case <-ctx.Done():
+				case <-time.After(authBackoff):
+				}
+				continue
+			}
+			authRejected = false
 			// Demote the very first failure to DEBUG: when all 4 services boot
 			// in parallel, each Thing fails its first WS dial because Hub is
 			// also still starting. The next backoff cycle succeeds. WARN here
@@ -785,6 +809,12 @@ func (c *Client) connectWS(ctx context.Context) error {
 	})
 	if err != nil {
 		c.setMode(ModeDisconnected)
+		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			// Not transient: retrying a refused credential at connect
+			// cadence produced ~33 rejected upgrades a minute against
+			// production for hours.
+			return fmt.Errorf("dial hub: %w: %w", ErrAuthRejected, err)
+		}
 		return fmt.Errorf("dial hub: %w", err)
 	}
 	// websocket.Dial returns the underlying HTTP handshake response; the
@@ -1296,3 +1326,15 @@ func (c *Client) Close(ctx context.Context) error {
 	)
 	return nil
 }
+
+// ErrAuthRejected marks a handshake the Hub refused on CREDENTIALS rather than
+// on reachability: the credential was revoked, the Thing deleted, or the token
+// never issued, so the fast retry every other dial failure deserves never
+// recovers. Treating the two alike held ~33 rejected upgrades a minute against
+// production for hours.
+var ErrAuthRejected = errors.New("hub rejected the credential")
+
+// authBackoff is the ceiling applied once the Hub has refused the credential.
+// Long enough that a fleet of stale agents costs the Hub almost nothing, short
+// enough that a re-enrolment is picked up without a restart.
+const authBackoff = 5 * time.Minute

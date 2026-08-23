@@ -51,10 +51,13 @@ func newSimulateCmd(a *App) *cobra.Command {
 			}
 			var pretty bytes.Buffer
 			if err := json.Indent(&pretty, raw, "", "  "); err != nil {
-				a.printf("%s\n", raw) // not JSON (e.g. an error envelope) — print raw
-				return nil
+				// Not JSON (e.g. an error envelope). Showing the caller what the
+				// server actually said IS this command's successful outcome, so a
+				// failure to pretty-print is not the command's failure.
+				a.printf("%s\n", raw)
+				return nil //nolint:nilerr // the raw body was delivered; indenting is best-effort
 			}
-			fmt.Fprintln(a.Out, pretty.String())
+			_, _ = fmt.Fprintln(a.Out, pretty.String())
 			return nil
 		},
 	}

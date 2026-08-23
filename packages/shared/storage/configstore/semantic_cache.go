@@ -108,6 +108,14 @@ type embeddingCapability struct {
 	MaxInputTokens      int   `json:"max_input_tokens"`
 	DefaultDimension    int   `json:"default_dimension"`
 	SupportedDimensions []int `json:"supported_dimensions"`
+	// MinDimension / MaxDimension describe a model that accepts any dimension
+	// in a range (Matryoshka truncation) rather than a fixed set. Kept in
+	// lockstep with the gateway's routing capability filter: an operator must
+	// not be blocked here from configuring a dimension the gateway would
+	// happily forward, and must not be allowed to configure one it would
+	// reject. The two checks answer the same question and must agree.
+	MinDimension int `json:"min_dimension"`
+	MaxDimension int `json:"max_dimension"`
 }
 
 // parseEmbeddingCapability extracts the embeddings capability block from a
@@ -129,8 +137,10 @@ func parseEmbeddingCapability(raw []byte) embeddingCapability {
 
 // resolveEmbeddingDimension applies the capability to the requested dimension:
 //   - nil dimension → derive the model's default_dimension (error if none).
-//   - supplied dimension → must be in supported_dimensions when that list is
-//     non-empty (else ErrUnsupportedEmbeddingDimension).
+//   - supplied dimension → when the model declares a range (max_dimension > 0)
+//     it must fall inside [min_dimension or 1, max_dimension]; otherwise it
+//     must be in supported_dimensions when that list is non-empty (else
+//     ErrUnsupportedEmbeddingDimension).
 //
 // A model that declares neither supported_dimensions nor default_dimension is
 // treated permissively: any supplied dimension passes (legacy models without
@@ -142,6 +152,16 @@ func resolveEmbeddingDimension(requested *int, capb embeddingCapability) (*int, 
 			return &d, nil
 		}
 		return nil, ErrEmbeddingDimensionRequired
+	}
+	if capb.MaxDimension > 0 {
+		min := capb.MinDimension
+		if min <= 0 {
+			min = 1
+		}
+		if *requested < min || *requested > capb.MaxDimension {
+			return nil, fmt.Errorf("%w: %d (supported range: %d-%d)", ErrUnsupportedEmbeddingDimension, *requested, min, capb.MaxDimension)
+		}
+		return requested, nil
 	}
 	if len(capb.SupportedDimensions) > 0 {
 		ok := false

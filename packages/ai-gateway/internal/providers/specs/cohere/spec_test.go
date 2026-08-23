@@ -252,8 +252,11 @@ func TestCohere_FinishReasonMap(t *testing.T) {
 		"MAX_TOKENS":    "length",
 		"STOP_SEQUENCE": "stop",
 		"TOOL_CALL":     "tool_calls",
-		"ERROR":         "error",
-		"unknown":       "unknown",
+		// ERROR is deliberately absent: the stream session raises it as a
+		// ProviderError before this mapper is consulted, because no
+		// finish_reason can honestly name a failure. See
+		// TestCohereStream_ErrorFinishReasonRaises.
+		"unknown": "unknown",
 	}
 	for in, want := range cases {
 		if got := mapFinishReason(in); got != want {

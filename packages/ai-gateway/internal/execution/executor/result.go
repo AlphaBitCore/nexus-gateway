@@ -34,14 +34,39 @@ type Attempt struct {
 	// on success, on a transport failure that produced no provider
 	// envelope, and on every entry with Dispatched false.
 	Code string
-	// RetryReason is the cfgpolicy.ErrorClass string ("network",
-	// "timeout", "429", "5xx") that classified this attempt as a
-	// retryable failure. Empty on success and on terminal 4xx
-	// (CodeInvalidRequest / CodeAuthFailed / CodeEndpointUnsupported /
-	// CodeNoCompatibleProvider). Stamped regardless of whether a retry
-	// actually happened so the audit row records why each attempt would
-	// have been retryable.
-	RetryReason string
+	// Coerced lists the request fields the adapter REWROTE before dispatching
+	// to this target, as "<from>→<to>".
+	//
+	// It is per-attempt because a coercion is per-target: the same request
+	// translated for two wires is rewritten differently, and a walk that ends
+	// on the third target was not coerced the way the first one was. It rides
+	// here rather than on the request because the response header that used to
+	// be its only home reaches a caller who has already discarded it, and the
+	// operator asking "what did we change" hours later has the traffic row and
+	// nothing else — while the adapter contract says a field we coerced is a
+	// field we own.
+	Coerced []string
+	// SelectionReason says WHY this target was the one tried next:
+	// "next-in-list" when nothing about the previous failure argued with the
+	// strategy's order, "largest-window" after a context overflow,
+	// "different-provider" after a rate limit or an upstream fault.
+	//
+	// Selection stopped being positional, so the trace has to carry the
+	// decision. Reading a chain that jumped over three entries, an operator
+	// otherwise cannot tell a deliberate choice from a bug — and the invariant
+	// that used to police this ("every target passed over has a named reason")
+	// was itself positional and stopped meaning anything.
+	SelectionReason string
+	// ErrorClass is what this attempt was classified AS — the finest name the
+	// executor has for the failure, and the one it branched on. Empty on
+	// success.
+	//
+	// It is not the `retryOn` value: several classes have no `retryOn`
+	// spelling, and one that does have one ("unclassified" is retried as
+	// network) means something else by it. Reporting the retry bucket instead
+	// is how a provider error the classifier did not recognise reached the row
+	// as a network fault.
+	ErrorClass string
 }
 
 // ExecutionResult is the aggregate outcome of [TargetExecutor.Execute].

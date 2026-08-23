@@ -163,7 +163,7 @@ func newResourceReadCmd(a *App) *cobra.Command {
 			kind, opID := args[0], args[1]
 			method, path, mutating, err := resource.ResolveOperation(kind, opID, params)
 			if err != nil {
-				return fmt.Errorf("%w: %v", errUsage, err)
+				return fmt.Errorf("%w: %w", errUsage, err)
 			}
 			if mutating {
 				return fmt.Errorf("%w: %s is a %s write — use `nexus resource invoke`", errUsage, opID, method)
@@ -194,14 +194,14 @@ func newResourceInvokeCmd(a *App) *cobra.Command {
 			kind, opID := args[0], args[1]
 			method, path, mutating, err := resource.ResolveOperation(kind, opID, params)
 			if err != nil {
-				return fmt.Errorf("%w: %v", errUsage, err)
+				return fmt.Errorf("%w: %w", errUsage, err)
 			}
 			if !mutating {
 				return fmt.Errorf("%w: %s is a GET read — use `nexus resource read`", errUsage, opID)
 			}
 			payload, err := resolveBody(body, bodyFile, cmd.InOrStdin())
 			if err != nil {
-				return fmt.Errorf("%w: %v", errUsage, err)
+				return fmt.Errorf("%w: %w", errUsage, err)
 			}
 			if !yes {
 				ok, err := a.confirmWrite(cmd, method, path)

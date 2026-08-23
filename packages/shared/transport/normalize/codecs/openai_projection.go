@@ -80,10 +80,10 @@ type ProjectionWireMetadata struct {
 //   - core.ContentReasoning → concatenated into message.reasoning_content
 //     (OpenAI o-series + Deepseek/Moonshot/Kimi convention)
 //   - core.ContentToolUse   → message.tool_calls[] entry. CallID falls back
-//     to a synthesised "call_<sha1[:10]>" derived from (name + args)
-//     when the upstream did not assign one (Gemini's functionCall has
-//     no native id field).
-//   - core.ContentImageRef / core.ContentToolResult → ignored on the response
+//     to a synthesised "call_<sha1[:10]>" derived from (name + assistant/
+//     block coordinates) when the upstream did not assign one
+//     (Gemini's functionCall has no native id field).
+//   - core.ContentMedia / core.ContentToolResult → ignored on the response
 //     path; Tier-1 response normalizers don't emit them, and the OpenAI
 //     chat-completion response shape has no field for them.
 //
@@ -158,7 +158,7 @@ func projectChoices(payload core.NormalizedPayload, metaFinishReason string) []a
 
 	choices := make([]any, 0, len(assistants))
 	for i, a := range assistants {
-		text, reasoning, toolCalls := projectAssistantBlocks(a.Content)
+		text, reasoning, toolCalls := projectAssistantBlocksAt(a.Content, i)
 		message := map[string]any{
 			"role":    "assistant",
 			"content": text,
@@ -198,7 +198,11 @@ func projectChoices(payload core.NormalizedPayload, metaFinishReason string) []a
 // projectAssistantBlocks walks an assistant message's content blocks
 // and returns the (text, reasoning, toolCalls) triple in OpenAI shape.
 func projectAssistantBlocks(blocks []core.ContentBlock) (text, reasoning string, toolCalls []any) {
-	for _, b := range blocks {
+	return projectAssistantBlocksAt(blocks, 0)
+}
+
+func projectAssistantBlocksAt(blocks []core.ContentBlock, assistantIndex int) (text, reasoning string, toolCalls []any) {
+	for blockIndex, b := range blocks {
 		switch b.Type {
 		case core.ContentText:
 			text += b.Text
@@ -216,20 +220,23 @@ func projectAssistantBlocks(blocks []core.ContentBlock) (text, reasoning string,
 			}
 			id := b.ToolUse.CallID
 			if id == "" {
-				// Synthesise a stable id from (name + args). Matches
-				// the existing spec_gemini codec convention and keeps
-				// SDK clients that index tool_calls by id consistent
-				// across replays.
-				h := sha1.Sum([]byte(b.ToolUse.Name + "\x00" + args))
+				// Include canonical coordinates so duplicate calls with the
+				// same name and arguments remain addressable independently.
+				// The coordinates are stable across normalization replays.
+				h := sha1.Sum([]byte(fmt.Sprintf("%s\x00assistant:%d\x00block:%d", b.ToolUse.Name, assistantIndex, blockIndex)))
 				id = fmt.Sprintf("call_%x", h)[:15]
 			}
+			function := map[string]any{
+				"name":      b.ToolUse.Name,
+				"arguments": args,
+			}
+			if b.ToolUse.ThoughtSignature != "" {
+				function["thought_signature"] = b.ToolUse.ThoughtSignature
+			}
 			toolCalls = append(toolCalls, map[string]any{
-				"id":   id,
-				"type": "function",
-				"function": map[string]any{
-					"name":      b.ToolUse.Name,
-					"arguments": args,
-				},
+				"id":       id,
+				"type":     "function",
+				"function": function,
 			})
 		}
 	}

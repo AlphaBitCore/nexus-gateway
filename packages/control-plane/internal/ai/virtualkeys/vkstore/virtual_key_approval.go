@@ -8,13 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// VirtualKeyExpiry holds minimal fields for expiry notification.
-type VirtualKeyExpiry struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	ExpiresAt time.Time `json:"expiresAt"`
-}
-
 // ApproveVirtualKey transitions a pending virtual key to active.
 func (store *Store) ApproveVirtualKey(ctx context.Context, id, approvedBy string) error {
 	tag, err := store.pool.Exec(ctx, `
@@ -47,12 +40,24 @@ func (store *Store) RejectVirtualKey(ctx context.Context, id, rejectedBy, reason
 	return nil
 }
 
-// RenewVirtualKey extends the expiry of an active application virtual key.
+// RenewVirtualKey extends the expiry of an application virtual key and returns
+// it to active.
+//
+// Both time-derived states are renewable. Renewing an already-expired key is
+// the primary reason the endpoint exists: callers validate newExpiresAt is in
+// the future, so once the row carries that date the key is by definition no
+// longer expired. Accepting only 'active' would leave an expired key with no
+// route back — the hourly expiry job moves active -> expired and never the
+// reverse.
+//
+// 'revoked' and 'rejected' remain excluded: those are administrative
+// decisions, not clock events, and are reversed by issuing a new key rather
+// than by extending a date.
 func (store *Store) RenewVirtualKey(ctx context.Context, id string, newExpiresAt time.Time) error {
 	tag, err := store.pool.Exec(ctx, `
 		UPDATE "VirtualKey"
-		SET "expiresAt" = $2, "updatedAt" = NOW()
-		WHERE id = $1 AND "vkType" = 'application' AND "vkStatus" = 'active'
+		SET "expiresAt" = $2, "vkStatus" = 'active', "updatedAt" = NOW()
+		WHERE id = $1 AND "vkType" = 'application' AND "vkStatus" IN ('active', 'expired')
 	`, id, newExpiresAt)
 	if err != nil {
 		return fmt.Errorf("renew virtual key: %w", err)
@@ -77,45 +82,4 @@ func (store *Store) RevokeVirtualKey(ctx context.Context, id string) error {
 		return pgx.ErrNoRows
 	}
 	return nil
-}
-
-// ExpireOverdueVirtualKeys sets vkStatus='expired' for all active keys past their expiry.
-// Returns the number of rows updated.
-func (store *Store) ExpireOverdueVirtualKeys(ctx context.Context) (int64, error) {
-	tag, err := store.pool.Exec(ctx, `
-		UPDATE "VirtualKey"
-		SET "vkStatus" = 'expired', "updatedAt" = NOW()
-		WHERE "expiresAt" <= NOW() AND "vkStatus" = 'active'
-	`)
-	if err != nil {
-		return 0, fmt.Errorf("expire overdue virtual keys: %w", err)
-	}
-	return tag.RowsAffected(), nil
-}
-
-// ListExpiringVirtualKeys returns active application keys expiring within the given number of days.
-func (store *Store) ListExpiringVirtualKeys(ctx context.Context, withinDays int) ([]VirtualKeyExpiry, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT id, name, "expiresAt"
-		FROM "VirtualKey"
-		WHERE "expiresAt" <= NOW() + ($1 || ' days')::interval
-		  AND "expiresAt" > NOW()
-		  AND "vkStatus" = 'active'
-		  AND "vkType" = 'application'
-		ORDER BY "expiresAt" ASC
-	`, withinDays)
-	if err != nil {
-		return nil, fmt.Errorf("list expiring virtual keys: %w", err)
-	}
-	defer rows.Close()
-
-	keys := []VirtualKeyExpiry{}
-	for rows.Next() {
-		var k VirtualKeyExpiry
-		if err := rows.Scan(&k.ID, &k.Name, &k.ExpiresAt); err != nil {
-			return nil, fmt.Errorf("scan virtual key expiry: %w", err)
-		}
-		keys = append(keys, k)
-	}
-	return keys, rows.Err()
 }

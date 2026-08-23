@@ -188,6 +188,7 @@ func (x *bumpedExchange) runStreamingRequestPhase() bool {
 		TransactionID:       x.txID,
 		ConnectionID:        bo.connectionID,
 		TraceID:             x.traceID,
+		ExternalRequestID:   x.r.Header.Get("X-Request-Id"),
 		Headers:             sanitisedHeaders,
 		RequestMeta:         reqMeta,
 		PhaseSink:           x.phaseSink,

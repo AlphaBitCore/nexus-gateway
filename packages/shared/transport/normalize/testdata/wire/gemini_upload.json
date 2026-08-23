@@ -1,0 +1,14 @@
+{
+  "file": {
+    "name": "files/rf9ysxbpu442",
+    "mimeType": "image/png",
+    "sizeBytes": "190",
+    "createTime": "2026-08-04T18:03:12.870494Z",
+    "updateTime": "2026-08-04T18:03:12.870494Z",
+    "expirationTime": "2026-08-06T18:03:11.884111076Z",
+    "sha256Hash": "ZTY3M2UxYTc4ODRiMzQ1N2QzMjY5MTlhZmFkZjNiMzMxNTE2ZWI5NWFkNzQ0NzA2OTFkNTM3Zjk0NDg3N2JhNA==",
+    "uri": "https://generativelanguage.googleapis.com/v1beta/files/rf9ysxbpu442",
+    "state": "ACTIVE",
+    "source": "UPLOADED"
+  }
+}

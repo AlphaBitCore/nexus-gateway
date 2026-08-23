@@ -1,6 +1,6 @@
 {
   "kind": "http-json",
-  "normalizeVersion": "2",
+  "normalizeVersion": "3",
   "protocol": "generic-http",
   "http": {
     "bodyView": {

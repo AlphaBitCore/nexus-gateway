@@ -96,7 +96,13 @@ func (a *Authenticator) LoginBrowser(ctx context.Context) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// ListenConfig satisfies noctx, and that is ALL it does here. The ctx is
+	// used only while resolving the address, and this address is a literal —
+	// `go doc net.ListenConfig.Listen`: "it does not affect the returned
+	// Listener". Cancellation is handled where it always was, by the
+	// `case <-ctx.Done()` arm of the select below.
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("start loopback listener: %w", err)
 	}
@@ -201,7 +207,7 @@ func (a *Authenticator) fetchAuthctx(ctx context.Context, challenge, state, redi
 	if err != nil {
 		return "", fmt.Errorf("authorize request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 	loc := resp.Header.Get("Location")
 	if loc == "" {
 		return "", fmt.Errorf("/oauth/authorize did not redirect (status %d)", resp.StatusCode)
@@ -231,7 +237,7 @@ func (a *Authenticator) passwordExchange(ctx context.Context, authctx, email, pa
 	if err != nil {
 		return "", fmt.Errorf("password request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("/authserver/password returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -272,7 +278,7 @@ func (a *Authenticator) exchangeCode(ctx context.Context, code, verifier, redire
 	if err != nil {
 		return tokenResponse{}, fmt.Errorf("token request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return tokenResponse{}, fmt.Errorf("/oauth/token returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -317,5 +323,9 @@ func browserCommand(goos, target string) (string, []string) {
 // openInBrowser opens url in the OS default browser.
 func openInBrowser(target string) error {
 	cmd, args := browserCommand(runtime.GOOS, target)
-	return exec.Command(cmd, args...).Start()
+	// Deliberately NOT CommandContext. This Start()s a detached browser the user
+	// is about to log in with; binding it to the login's context would close
+	// their window the moment the command returns or is cancelled — killing the
+	// very session it was opened to create.
+	return exec.Command(cmd, args...).Start() //nolint:noctx // the browser must outlive this command
 }

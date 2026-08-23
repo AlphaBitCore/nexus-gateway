@@ -110,8 +110,10 @@ func TestRecordToMessage_AllFields(t *testing.T) {
 
 	msg := w.recordToMessage(rec)
 
-	if msg.ID != "req-123" {
-		t.Errorf("ID = %q, want %q", msg.ID, "req-123")
+	// The primary key is minted per event, never the caller-supplied
+	// X-Nexus-Request-Id — that value keeps its correlation role on TraceID.
+	if msg.ID == "" || msg.ID == "req-123" {
+		t.Errorf("ID = %q, want a minted id distinct from the request id", msg.ID)
 	}
 	if msg.Source != "ai-gateway" {
 		t.Errorf("Source = %q, want %q", msg.Source, "ai-gateway")

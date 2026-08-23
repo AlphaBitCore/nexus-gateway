@@ -82,14 +82,14 @@ func TestBuildRequestBody_LongConversation_KeepsAllTurnsThatFit(t *testing.T) {
 }
 
 // TestBuildRequestBody_MultimodalContent_FlattensTextBlocksOnly shows
-// that multimodal request payloads (text + image_ref + tool_use)
+// that multimodal request payloads (text + media + tool_use)
 // surface only their text projection in the router-LLM prompt — the
 // router does not need to see images or tool plumbing to pick a model.
 func TestBuildRequestBody_MultimodalContent_FlattensTextBlocksOnly(t *testing.T) {
 	userMsgs := []normalize.Message{
 		{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
 			{Type: normalize.ContentText, Text: "Analyse this:"},
-			{Type: normalize.ContentImageRef, ImageRef: &normalize.BinaryRef{Size: 1, ContentType: "image/png", SHA256: "abc"}},
+			{Type: normalize.ContentMedia, MediaRef: &normalize.MediaRef{SizeBytes: 1, Mime: "image/png", SHA256: "abc"}},
 			{Type: normalize.ContentText, Text: "and tell me the dominant colour."},
 		}},
 	}

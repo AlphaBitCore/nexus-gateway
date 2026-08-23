@@ -78,3 +78,36 @@ func TestRegistry_EmptyKeyNotConfigured(t *testing.T) {
 		t.Errorf("ConfiguredKeys = %v, want [openai]", keys)
 	}
 }
+
+// TestSameBillingHost is the gate that keeps adapter type from being mistaken
+// for vendor identity. Provider.adapterType names a WIRE FORMAT: a self-hosted
+// model or any OpenAI-compatible endpoint is configured as "openai" while
+// costing the OpenAI organization nothing. Billing it against the real vendor's
+// cost API would report the same vendor dollars twice — once under the real
+// provider and once under a provider that never spent them — and raise a drift
+// alert on a bill that was never issued.
+func TestSameBillingHost(t *testing.T) {
+	cases := []struct {
+		name        string
+		providerURL string
+		billingHost string
+		want        bool
+	}{
+		{"the real vendor matches", "https://api.openai.com", "api.openai.com", true},
+		{"path and scheme are irrelevant", "http://api.openai.com/v1/", "api.openai.com", true},
+		{"a port does not change host identity", "https://api.openai.com:443", "api.openai.com", true},
+		{"case is not identity", "https://API.OpenAI.com", "api.openai.com", true},
+		{"empty baseUrl means the adapter's own endpoint", "", "api.openai.com", true},
+		{"a value with no recoverable host is kept, not dropped", "localhost:9001", "api.openai.com", true},
+		{"a self-hosted box on the OpenAI wire format is not OpenAI", "http://localhost:9001/v1", "api.openai.com", false},
+		{"an internal domain is not the vendor", "https://llm.corp.example/v1", "api.openai.com", false},
+		{"a lookalike host is not the vendor", "https://api.openai.com.evil.test", "api.openai.com", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := SameBillingHost(c.providerURL, c.billingHost); got != c.want {
+				t.Errorf("SameBillingHost(%q, %q) = %v, want %v", c.providerURL, c.billingHost, got, c.want)
+			}
+		})
+	}
+}

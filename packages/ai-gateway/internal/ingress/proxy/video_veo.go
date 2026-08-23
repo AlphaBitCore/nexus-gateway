@@ -204,9 +204,18 @@ func (h *Handler) veoOperationForward(w http.ResponseWriter, r *http.Request, re
 	if opErr != nil {
 		// The id was minted from a provider response — a hostile mint fails
 		// here on every decode, never into a URL.
-		h.writeDetailedErr(w, rec, http.StatusBadGateway, "VIDEO_JOB_ID_UNSAFE",
+		//
+		// But it cannot fail here for the PROVIDER's reasons: submit already
+		// validated that this exact id round-trips (see the VeoOperationName
+		// check before correlation) and refused the job otherwise. Reaching
+		// this on a follow-up means the stored bytes no longer match what was
+		// validated — our storage or our encoding, not the provider's
+		// response. It answered 502 with a hint telling the operator the
+		// provider had sent a malformed name, which is the one thing submit
+		// has already ruled out.
+		h.writeDetailedErr(w, rec, http.StatusInternalServerError, "VIDEO_JOB_ID_UNSAFE",
 			"the stored operation reference cannot be decoded safely",
-			"The provider returned a malformed operation name at submit; contact an operator")
+			"This job's reference passed validation at submit, so the stored copy has since diverged — a gateway-side fault; contact an operator")
 		return geminicodec.VeoJobView{}, provcore.CallTarget{}, false
 	}
 	callTarget, ok := h.videoResolvePinned(w, r, rec, job)

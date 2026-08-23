@@ -452,8 +452,8 @@ func TestOpenAIMessageToGeminiParts_DataURLMalformed(t *testing.T) {
 	}
 }
 
-// TestParseDataURL_EdgeCases pins every fail path of parseDataURL
-// (codec.go:449-467).
+// TestParseDataURL_EdgeCases pins every fail path this codec's inline-media
+// branch depends on.
 func TestParseDataURL_EdgeCases(t *testing.T) {
 	cases := []struct {
 		name string
@@ -464,7 +464,17 @@ func TestParseDataURL_EdgeCases(t *testing.T) {
 		{"no_comma", "data:image/pngbase64xxx", false},
 		{"trailing_comma_empty_payload", "data:image/png;base64,", false},
 		{"missing_base64_marker", "data:image/png,xxx", false},
-		{"empty_media_defaults_to_octet_stream", "data:;base64,xxx", true},
+		{"empty_media_defaults_to_octet_stream", "data:;base64,YWJj", true},
+		// A payload that decodes under NO base64 alphabet is refused rather
+		// than forwarded. The fixture needs a character outside every
+		// alphabet: "xxx" looks malformed but is valid unpadded base64, and
+		// generativelanguage.googleapis.com accepts unpadded input, so
+		// refusing it would impose one vendor's strictness on another.
+		{"undecodable_payload", "data:image/png;base64,not valid!!!", false},
+		// Unpadded and URL-safe payloads are normalized, not refused —
+		// measured: Gemini answers 200 and reads the image for both.
+		{"unpadded_is_normalized", "data:image/png;base64,YWJjZA", true},
+		{"urlsafe_is_normalized", "data:image/png;base64,-_-_", true},
 		{"happy_path", "data:image/webp;base64,YWJj", true},
 	}
 	for _, tc := range cases {

@@ -386,6 +386,22 @@ func TestChatModelCatalog(t *testing.T) {
 		}
 	})
 
+	// The picker must not offer a model that is out of service — the user would
+	// otherwise pick one whose every call fails upstream. The exclusion happens
+	// in SQL, so what this can observe is that the query carries the predicate:
+	// pgxmock answers only a query matching the expectation, so dropping any
+	// conjunct makes the call error and the catalog come back empty.
+	t.Run("query withdraws models by provider and status", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		mock.ExpectQuery(`m\.enabled = true AND p\.enabled = true AND m\.status <> 'disabled'`).
+			WillReturnRows(chatCatalogRows([3]string{"gpt-5", "GPT-5", "OpenAI"}))
+		h := New(Config{Pool: mock})
+		if _, ok := h.chatModelCatalog(context.Background()); !ok {
+			t.Fatal("catalog query must carry the servable predicate the gateway uses")
+		}
+	})
+
 	t.Run("query error to false", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		defer mock.Close()

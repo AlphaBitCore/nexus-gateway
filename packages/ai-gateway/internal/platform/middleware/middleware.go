@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
@@ -89,7 +90,13 @@ func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 			defer func() {
 				if rec := recover(); rec != nil {
 					logger.Error("panic recovered", "panic", rec, "path", r.URL.Path)
-					http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+					// Not http.Error: it answers text/plain, and the body it
+					// carried made `error` a STRING, so err.error.message threw
+					// in every SDK that reached for it. A panic is the response
+					// a caller is least equipped to interpret, so it gets the
+					// same envelope as every other gateway error.
+					envelope.WriteGatewayError(w, r, http.StatusInternalServerError,
+						"INTERNAL_ERROR", "internal server error", "")
 				}
 			}()
 			next.ServeHTTP(w, r)

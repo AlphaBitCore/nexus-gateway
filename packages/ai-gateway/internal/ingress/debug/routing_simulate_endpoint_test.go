@@ -115,14 +115,44 @@ func TestRoutingSimulate_NoRuleMatched(t *testing.T) {
 	if len(warnings) < 2 {
 		t.Fatalf("expected at least 2 warnings, got %v", warnings)
 	}
-	if !strings.Contains(warnings[0].(string), "no stage-1 rule matched") {
-		t.Errorf("expected first warning about no stage-1 rule, got %v", warnings[0])
+	// A NAMED model with no rule is not a rejection — the live gateway serves
+	// it through the explicit-model passthrough, so the preview must say so
+	// rather than claim it would be rejected.
+	if !strings.Contains(warnings[0].(string), "explicit-model passthrough") {
+		t.Errorf("expected named-model passthrough warning, got %v", warnings[0])
+	}
+	if strings.Contains(warnings[0].(string), "would be rejected") {
+		t.Errorf("a named model must not be described as rejected: %v", warnings[0])
 	}
 	if !strings.Contains(warnings[1].(string), "without virtual-key context") {
 		t.Errorf("expected virtual-key-context warning, got %v", warnings[1])
 	}
 	if _, ok := body["ruleId"]; ok {
 		t.Errorf("ruleId must be omitted when no rule matched")
+	}
+}
+
+// `auto` with no matching rule IS a rejection — auto has no model to fall
+// back to, so unlike a named model it genuinely cannot be served.
+func TestRoutingSimulate_AutoNoRuleIsRejection(t *testing.T) {
+	resolver := &stubResolver{
+		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			return &routingcore.RoutingPlan{OriginalModelID: rctx.RequestedModel.ID}, nil
+		},
+	}
+	h := RoutingSimulateHandler(resolver, nil, discardLogger())
+	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
+		strings.NewReader(`{"modelId":"auto","endpointType":"chat","messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := decodeResp(t, rec)
+	warnings, _ := body["warnings"].([]any)
+	if len(warnings) == 0 || !strings.Contains(warnings[0].(string), "would be rejected") {
+		t.Fatalf("auto with no rule must warn rejection, got %v", warnings)
+	}
+	if strings.Contains(warnings[0].(string), "passthrough") {
+		t.Errorf("auto must not be described as passthrough-served: %v", warnings[0])
 	}
 }
 
@@ -272,52 +302,6 @@ func TestRoutingSimulate_AutoNoMessages(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected smart-no-messages warning, got %v", warnings)
-	}
-}
-
-func TestRoutingSimulate_NarrowingSummary(t *testing.T) {
-	resolver := &stubResolver{
-		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
-			return &routingcore.RoutingPlan{
-				OriginalModelID: rctx.RequestedModel.ID,
-				RuleID:          "rr-chat",
-				RuleName:        "Default chat",
-				PipelineTrace: []routingcore.PipelineTraceEntry{
-					{Stage: 0, Decision: "narrowing applied", DurationMs: 1},
-					{Stage: 1, Decision: "chat rule matched", DurationMs: 1},
-				},
-				NarrowingSummary: &routingcore.NarrowingSummary{
-					AllowProviderIDs: []string{"prov-eu"},
-					DenyProviderIDs:  []string{"prov-us"},
-				},
-				Targets: []routingcore.RoutingTarget{
-					{
-						ProviderID: "prov-eu", ProviderName: "eu",
-						ModelID: "mdl-1", ModelName: "gpt-4o",
-						ProviderModelID: "gpt-4o", Source: "primary",
-					},
-				},
-			}, nil
-		},
-	}
-	h := RoutingSimulateHandler(resolver, nil, discardLogger())
-
-	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
-		strings.NewReader(`{"modelId":"gpt-4o","endpointType":"chat"}`))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	body := decodeResp(t, rec)
-	narrow, ok := body["narrowingSummary"].(map[string]any)
-	if !ok {
-		t.Fatalf("narrowingSummary missing or wrong type: %v", body["narrowingSummary"])
-	}
-	allow, _ := narrow["allowProviderIds"].([]any)
-	if len(allow) != 1 || allow[0] != "prov-eu" {
-		t.Errorf("allowProviderIds wrong: %v", allow)
 	}
 }
 

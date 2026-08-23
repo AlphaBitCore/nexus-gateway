@@ -459,8 +459,396 @@ paths:
                             example:
                                 data: []
                                 total: 0
+    /api/admin/analytics/vendor-bill-reconciliation:
+        get:
+            operationId: vendorBillReconciliation
+            summary: Provider × day vendor-bill reconciliation report
+            description: |-
+                Returns provider×day rows comparing the gateway's own recorded vendor spend
+                against each covered vendor's authoritative daily bill, over a window
+                (default trailing 30 days ending today, UTC). Read-only; part of the
+                Cost/Analytics surface. Rows are produced by the `vendor-bill-reconcile` Hub
+                job (see `docs/superpowers/specs/2026-07-19-vendor-bill-reconciliation-design.md`
+                and the 2026-08-04 addendum) and joined to `Provider` for a display name.
+
+                Only OpenAI and Anthropic are covered in v1 — the two vendors with a
+                dollar-denominated cost API. A row's `coverage` value tells you whether
+                `diffUsd` / `diffPct` mean anything:
+
+                - `scoped` — narrowed to the gateway's own key/project/workspace.
+                  Comparable; the only coverage the drift alert (`vendor.bill_drift`) fires on.
+                - `org_only` — the vendor reported an org-wide total that could not be
+                  narrowed to the gateway. Reference only, alert-suppressed.
+                - `fetch_failed` — the vendor cost-API call failed for a day that had no
+                  number yet; a placeholder is written and never overwrites a day already
+                  reconciled. `vendorReportedUsd` / `diffUsd` / `diffPct` are null.
+                - `no_basis` — the vendor reported a real number but the gateway recorded no
+                  vendor spend for that provider×day, so there is nothing to compare it
+                  against. `vendorReportedUsd` is real; `ourBilledUsd` / `ourVendorSpendUsd` /
+                  `ourInternalOpsUsd` are placeholder zeros and `diffUsd` / `diffPct` are null.
+                  Expected for days predating the vendor-spend rollout; on a recent day it
+                  means cost-stamping produced nothing for that provider — a 100%
+                  under-record of real vendor money.
+                - `priority_tier_undercount` — reserved for Anthropic Priority Tier usage
+                  (excluded from Anthropic's cost-report API entirely); recognised by the
+                  CP-UI badge and the drift-alert filter but not currently written by the
+                  reconcile job.
+
+                `fetch_failed` and `no_basis` rows that stay unhealed past ~25h each raise one
+                `vendor.bill_sync_failed` alert per affected provider — see
+                `docs/operators/ops/runbooks/alerts.md`.
+            x-nexus-iam-action: iam.ResourceAnalytics.Action(iam.VerbRead)
+            x-nexus-tier: auto
+            parameters:
+                - name: from
+                  in: query
+                  required: false
+                  description: |-
+                    Inclusive start day (`YYYY-MM-DD`, UTC). Defaults to 30 days before `to`.
+                    An unparseable value is silently ignored and the default is kept.
+                  schema:
+                    type: string
+                    example: "2026-07-05"
+                - name: to
+                  in: query
+                  required: false
+                  description: |-
+                    Inclusive end day (`YYYY-MM-DD`, UTC). Defaults to today (UTC). An
+                    unparseable value is silently ignored and the default is kept.
+                  schema:
+                    type: string
+                    example: "2026-08-04"
+                - name: limit
+                  in: query
+                  required: false
+                  description: |-
+                    Maximum rows to return. Omit for every row in the window, which is the
+                    behaviour this endpoint shipped with and remains the default. Values
+                    above 500 are capped at 500. Unlike `from`/`to`, an unusable value is
+                    rejected with 400 rather than ignored: a misread page size would return
+                    the wrong slice of data while looking entirely normal.
+                  schema:
+                    type: integer
+                    minimum: 1
+                    maximum: 500
+                    example: 25
+                - name: offset
+                  in: query
+                  required: false
+                  description: |-
+                    Rows to skip before the page, in the same `day DESC, providerName ASC`
+                    order the response uses. Defaults to 0. Rejected with 400 when negative
+                    or unparseable.
+                  schema:
+                    type: integer
+                    minimum: 0
+                    default: 0
+                    example: 50
+            responses:
+                "400":
+                    description: Bad Request — `limit` or `offset` is not a usable page parameter.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error: limit must be a positive integer
+                                code: bad_request
+                "500":
+                    description: Internal Server Error — database unavailable, count failed, query failed, or row-scan failed.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error: query failed
+                                code: server_error
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    rows:
+                                        type: array
+                                        items:
+                                            $ref: '#/components/schemas/handler_vendorBillReconRow'
+                                    total:
+                                        type: integer
+                                        description: |-
+                                            How many rows the window holds in full, independent of `limit`/`offset`.
+                                            A pager sizes itself from this; sizing from `rows.length` would show one
+                                            page and silently hide the rest.
+                                        example: 137
+                                required:
+                                    - rows
+                                    - total
+                            example:
+                                total: 3
+                                rows:
+                                    - providerId: 3f9c6b1a-2e3e-4c2a-9d3a-2f6a2d5e9b11
+                                      providerName: OpenAI
+                                      day: "2026-08-01"
+                                      ourBilledUsd: 12.4
+                                      ourVendorSpendUsd: 14.61
+                                      ourInternalOpsUsd: 2.21
+                                      vendorReportedUsd: 14.68
+                                      diffUsd: 0.07
+                                      diffPct: 0.0048
+                                      scopeKind: project
+                                      coverage: scoped
+                                      status: open
+                                      reviewedBy: null
+                                      note: null
+                                      updatedAt: "2026-08-02T00:14:03Z"
+                                    - providerId: 7a1d4e2b-6c9f-4a1e-8b3d-1e2f3a4b5c6d
+                                      providerName: Anthropic
+                                      day: "2026-08-01"
+                                      ourBilledUsd: 83.14
+                                      ourVendorSpendUsd: 83.14
+                                      ourInternalOpsUsd: 0
+                                      vendorReportedUsd: 83.08
+                                      diffUsd: -0.06
+                                      diffPct: -0.0007
+                                      scopeKind: workspace
+                                      coverage: scoped
+                                      status: reviewed
+                                      reviewedBy: ada@example.com
+                                      note: Known -0.07% estimator error, tracked separately.
+                                      updatedAt: "2026-08-02T00:14:05Z"
+                                    - providerId: 3f9c6b1a-2e3e-4c2a-9d3a-2f6a2d5e9b11
+                                      providerName: OpenAI
+                                      day: "2026-07-18"
+                                      ourBilledUsd: 0
+                                      ourVendorSpendUsd: 0
+                                      ourInternalOpsUsd: 0
+                                      vendorReportedUsd: 41.56
+                                      diffUsd: null
+                                      diffPct: null
+                                      scopeKind: project
+                                      coverage: no_basis
+                                      status: open
+                                      reviewedBy: null
+                                      note: null
+                                      updatedAt: "2026-08-02T00:14:03Z"
+    /api/admin/analytics/vendor-bill-reconciliation/{providerId}/{day}/review:
+        post:
+            operationId: vendorBillReconciliationReview
+            summary: Mark one reconciliation row reviewed
+            description: |-
+                Sets `status='reviewed'` on one provider×day reconciliation row, stamping the
+                acting admin identity (from the AdminAuth session/API-key context — the same
+                identity source every other admin handler uses) as `reviewedBy` and an
+                optional free-text `note`. Review state survives the reconcile job's
+                self-healing re-runs: a later UPSERT over the same (provider, day) refreshes
+                the money columns and `coverage` but never resets `status` / `reviewedBy` /
+                `note`.
+
+                `reviewedBy` prefers the identity's human-readable name and falls back to its
+                id; an identity carrying neither name nor id is rejected with 401 rather than
+                stamping a blank reviewer.
+            x-nexus-iam-action: iam.ResourceAnalytics.Action(iam.VerbRead)
+            x-nexus-tier: auto
+            parameters:
+                - name: providerId
+                  in: path
+                  required: true
+                  description: The `Provider.id` of the reconciliation row to mark reviewed.
+                  schema:
+                    type: string
+                - name: day
+                  in: path
+                  required: true
+                  description: The row's day, `YYYY-MM-DD` (UTC). A value that fails to parse is rejected with HTTP 400.
+                  schema:
+                    type: string
+                    example: "2026-08-01"
+            requestBody:
+                required: false
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                note:
+                                    type: string
+                                    description: Optional free-text review note. Omitted or empty stores no note.
+                        example:
+                            note: Known estimator error, no action needed.
+            responses:
+                "400":
+                    description: Bad Request — `day` path segment is not a valid `YYYY-MM-DD` date.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error: 'invalid day (want YYYY-MM-DD)'
+                                code: bad_request
+                "401":
+                    description: |-
+                        Unauthorized — either no authenticated admin identity was found on the
+                        request context, or the identity carries neither a name nor an id to
+                        stamp as `reviewedBy`.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error: no authenticated admin identity
+                                code: unauthorized
+                "404":
+                    description: Not Found — no reconciliation row exists for that `(providerId, day)`.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error: reconciliation row not found
+                                code: not_found
+                "500":
+                    description: Internal Server Error — database unavailable or the update failed.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error: update failed
+                                code: server_error
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: string
+                                        enum:
+                                            - reviewed
+                                    reviewedBy:
+                                        type: string
+                                    providerId:
+                                        type: string
+                                    day:
+                                        type: string
+                                required:
+                                    - status
+                                    - reviewedBy
+                                    - providerId
+                                    - day
+                            example:
+                                status: reviewed
+                                reviewedBy: ada@example.com
+                                providerId: 7a1d4e2b-6c9f-4a1e-8b3d-1e2f3a4b5c6d
+                                day: "2026-08-01"
 components:
     schemas:
+        handler_vendorBillReconRow:
+            type: object
+            description: |-
+                One provider×day vendor-bill reconciliation row. Nullable money/annotation
+                fields are `null` rather than `0`/`""` so the UI can tell "not yet
+                finalized / fetch failed / no basis" apart from a genuine zero.
+            properties:
+                providerId:
+                    type: string
+                providerName:
+                    type: string
+                day:
+                    type: string
+                    description: "`YYYY-MM-DD`, UTC."
+                ourBilledUsd:
+                    type: number
+                    description: |-
+                        The customer-quota basis: `metric_rollup_1d.billed_cost_usd` for this
+                        provider×day. Kept for continuity; NOT the reconciliation basis.
+                ourVendorSpendUsd:
+                    type: number
+                    description: |-
+                        The reconciliation basis `diffUsd` / `diffPct` are computed from: every
+                        dollar the gateway caused this vendor to charge, internal-ops calls
+                        (smart router, L2 embedding, ai-guard classifier) included. 0 on rows
+                        written before the vendor-spend series shipped (2026-08-04) — such a
+                        row's diff was computed on the old `ourBilledUsd` basis and is not
+                        comparable.
+                ourInternalOpsUsd:
+                    type: number
+                    description: |-
+                        The internal-ops subset of `ourVendorSpendUsd` — router + embedding +
+                        classifier overhead, separated out so the report can tell estimator
+                        error apart from routing overhead. 0 on pre-cutover rows, same caveat
+                        as `ourVendorSpendUsd`.
+                vendorReportedUsd:
+                    type:
+                        - number
+                        - "null"
+                    description: Null when the vendor side is absent (`fetch_failed`) or not yet finalized.
+                diffUsd:
+                    type:
+                        - number
+                        - "null"
+                    description: "`vendorReportedUsd - ourVendorSpendUsd`. Null whenever `vendorReportedUsd` is null, or coverage is `no_basis`."
+                diffPct:
+                    type:
+                        - number
+                        - "null"
+                    description: Signed relative error against the vendor's number as denominator. Null under the same conditions as `diffUsd`.
+                scopeKind:
+                    type: string
+                    enum:
+                        - api_key
+                        - project
+                        - workspace
+                        - org
+                coverage:
+                    type: string
+                    description: |-
+                        Drives the UI honesty badge. Only `scoped` rows are alert-eligible for
+                        `vendor.bill_drift`; `fetch_failed` and `no_basis` additionally feed the
+                        separate `vendor.bill_sync_failed` staleness alert.
+                    enum:
+                        - scoped
+                        - org_only
+                        - fetch_failed
+                        - no_basis
+                        - priority_tier_undercount
+                status:
+                    type: string
+                    enum:
+                        - open
+                        - reviewed
+                reviewedBy:
+                    type:
+                        - string
+                        - "null"
+                note:
+                    type:
+                        - string
+                        - "null"
+                updatedAt:
+                    type: string
+                    description: RFC3339 timestamp of the row's last UPSERT.
+            required:
+                - providerId
+                - day
+                - ourBilledUsd
+                - ourVendorSpendUsd
+                - ourInternalOpsUsd
+                - vendorReportedUsd
+                - diffUsd
+                - diffPct
+                - scopeKind
+                - coverage
+                - status
+                - updatedAt
         analyticsstore_AnalyticsSummary:
             type: object
             properties:

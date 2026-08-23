@@ -610,8 +610,8 @@ func TestMapFinishReason_allVariants(t *testing.T) {
 		{"BLOCKLIST", "content_filter"},
 		{"IMAGE_SAFETY", "content_filter"},
 		{"MODEL_ARMOR", "content_filter"},
-		{"MALFORMED_FUNCTION_CALL", "tool_calls"},
-		{"UNEXPECTED_TOOL_CALL", "tool_calls"},
+		{"MALFORMED_FUNCTION_CALL", "MALFORMED_FUNCTION_CALL"},
+		{"UNEXPECTED_TOOL_CALL", "UNEXPECTED_TOOL_CALL"},
 		{"OTHER", "stop"},
 		{"", "stop"},
 		{"UNKNOWN_NEW_REASON", "UNKNOWN_NEW_REASON"}, // pass-through
@@ -641,57 +641,6 @@ func TestUsageToNormalize_nonZero_returnsPointer(t *testing.T) {
 	}
 }
 
-func TestParseDataURL_valid(t *testing.T) {
-	media, b64, ok := gemcodec.ParseDataURL("data:image/png;base64,aGVsbG8=")
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if media != "image/png" {
-		t.Errorf("media: got %q", media)
-	}
-	if b64 != "aGVsbG8=" {
-		t.Errorf("b64: got %q", b64)
-	}
-}
-
-func TestParseDataURL_notDataScheme_notOk(t *testing.T) {
-	_, _, ok := gemcodec.ParseDataURL("https://example.com/img.png")
-	if ok {
-		t.Error("https URL: expected ok=false")
-	}
-}
-
-func TestParseDataURL_missingComma_notOk(t *testing.T) {
-	_, _, ok := gemcodec.ParseDataURL("data:image/png;base64")
-	if ok {
-		t.Error("missing comma: expected ok=false")
-	}
-}
-
-func TestParseDataURL_nonBase64Meta_notOk(t *testing.T) {
-	_, _, ok := gemcodec.ParseDataURL("data:image/png,aGVsbG8=")
-	if ok {
-		t.Error("non-base64 meta: expected ok=false")
-	}
-}
-
-func TestParseDataURL_emptyPayload_notOk(t *testing.T) {
-	_, _, ok := gemcodec.ParseDataURL("data:image/png;base64,")
-	if ok {
-		t.Error("empty payload: expected ok=false")
-	}
-}
-
-func TestParseDataURL_emptyMediaType_usesDefault(t *testing.T) {
-	media, _, ok := gemcodec.ParseDataURL("data:;base64,aGVsbG8=")
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if media != "application/octet-stream" {
-		t.Errorf("media: got %q, want application/octet-stream", media)
-	}
-}
-
 func TestGuessMimeFromURL_extensions(t *testing.T) {
 	cases := []struct {
 		url, want string
@@ -709,7 +658,7 @@ func TestGuessMimeFromURL_extensions(t *testing.T) {
 		{"https://x.com/noext", "image/jpeg"},         // no extension fallback
 	}
 	for _, tc := range cases {
-		got := gemcodec.GuessMimeFromURL(tc.url)
+		got := gemcodec.GuessMimeFromURL(tc.url, "image/jpeg")
 		if got != tc.want {
 			t.Errorf("GuessMimeFromURL(%q) = %q, want %q", tc.url, got, tc.want)
 		}

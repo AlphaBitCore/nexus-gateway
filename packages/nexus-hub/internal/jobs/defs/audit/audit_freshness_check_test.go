@@ -192,3 +192,70 @@ func TestAuditFreshnessCheck_QueryErrorReturned(t *testing.T) {
 		t.Errorf("mock expectations: %v", err)
 	}
 }
+
+// TestAuditFreshnessCheck_IdleDeploymentDoesNotFire pins the fix: a stale table
+// that WOULD fire under the age-only rule is NOT an error when the Hub received
+// no traffic-event message recently — the deployment is idle, not broken. This
+// is the prod false-alarm: an idle box firing a per-minute ERROR that trains
+// operators to ignore the one that matters.
+func TestAuditFreshnessCheck_IdleDeploymentDoesNotFire(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	latest := time.Now().UTC().Add(-10 * time.Minute) // stale table (would fire age-only)
+	mock.ExpectQuery(`FROM traffic_event`).
+		WillReturnRows(pgxmock.NewRows([]string{"latest", "lag_sec", "any_row"}).
+			AddRow(latest, float64(600), true))
+
+	opsReg, buf, j := runAuditFreshness(t, mock)
+	// The last message arrived 20 minutes ago — well past the 5-minute threshold,
+	// so nothing was arriving to persist: idle, not a stalled pipeline.
+	idleSince := time.Now().Add(-20 * time.Minute)
+	j.WithLastReceived(func() time.Time { return idleSince })
+
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(buf.String(), "audit pipeline appears stale") {
+		t.Errorf("an IDLE deployment fired the stale ERROR — the check must tell 'no traffic' apart from 'pipeline broken':\n%s", buf.String())
+	}
+	if staleFiredTotal(opsReg) != 0 {
+		t.Errorf("fires counter = %v, want 0 on an idle box", staleFiredTotal(opsReg))
+	}
+}
+
+// TestAuditFreshnessCheck_StalledPipelineFires is the other half: events ARE
+// arriving (a message received seconds ago) but the table is stale — the INSERT
+// is failing (the 2026-05-14 silent-loss shape). This MUST still fire, so the
+// idle carve-out never masks a real stall.
+func TestAuditFreshnessCheck_StalledPipelineFires(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	latest := time.Now().UTC().Add(-10 * time.Minute)
+	mock.ExpectQuery(`FROM traffic_event`).
+		WillReturnRows(pgxmock.NewRows([]string{"latest", "lag_sec", "any_row"}).
+			AddRow(latest, float64(600), true))
+
+	opsReg, buf, j := runAuditFreshness(t, mock)
+	// A message arrived 5 seconds ago — events are flowing, but the table is
+	// stale: the pipeline is stalled, exactly what this check exists to catch.
+	recent := time.Now().Add(-5 * time.Second)
+	j.WithLastReceived(func() time.Time { return recent })
+
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(buf.String(), "audit pipeline appears stale") {
+		t.Errorf("a STALLED pipeline (events arriving, table stale) must fire:\n%s", buf.String())
+	}
+	if staleFiredTotal(opsReg) != 1 {
+		t.Errorf("fires counter = %v, want 1 for a real stall", staleFiredTotal(opsReg))
+	}
+}

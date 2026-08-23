@@ -134,6 +134,27 @@ func (w *TrafficEventWriter) insertTrafficEvents(ctx context.Context, tx pgx.Tx,
 			// end_user_id / session_id ($96, $97). Caller-declared correlation
 			// tags; NULL when absent.
 			stripNulPtr(e.EndUserID), stripNulPtr(e.SessionID),
+			// Vendor-spend attribution ($98-$100). router_cost_usd is the
+			// smart-router LLM call's cost; router_provider_id is the provider
+			// that served it (frequently not routed_provider_id — see
+			// packages/shared/transport/mq/messages.go). embedding_provider_id
+			// is the sibling attribution for embedding_cost_usd. All NULL when
+			// absent. Appended last so existing $N positions never shift.
+			e.RouterCostUsd,
+			func() any {
+				s := stripNul(e.RouterProviderID)
+				if s == "" {
+					return nil
+				}
+				return s
+			}(),
+			func() any {
+				s := stripNul(e.EmbeddingProviderID)
+				if s == "" {
+					return nil
+				}
+				return s
+			}(),
 		)
 	}
 
@@ -216,8 +237,13 @@ INSERT INTO traffic_event (
     artifact_refs, compliance_coverage,
     -- Caller-declared correlation tags (their customer id and their
     -- session/conversation id, not Nexus identities). NULL for
-    -- compliance-proxy / agent rows. Appended LAST.
-    end_user_id, session_id
+    -- compliance-proxy / agent rows.
+    end_user_id, session_id,
+    -- Vendor-spend attribution (2026-08-04): smart-router LLM call cost +
+    -- the provider that served it (frequently not routed_provider_id), plus
+    -- the provider that served the L2 embedding call whose cost is in
+    -- embedding_cost_usd. NULL when absent. Appended LAST.
+    router_cost_usd, router_provider_id, embedding_provider_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -260,7 +286,8 @@ INSERT INTO traffic_event (
     $90,
     $91,
     $92, $93,
-    $94, $95, $96, $97
+    $94, $95, $96, $97,
+    $98, $99, $100
 ) ON CONFLICT (id) DO NOTHING
 `
 

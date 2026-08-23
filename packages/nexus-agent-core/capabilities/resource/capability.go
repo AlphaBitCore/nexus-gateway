@@ -1,6 +1,7 @@
 package resource
 
 import (
+	"net/http"
 	"sort"
 	"strings"
 )
@@ -42,9 +43,9 @@ func (rk resourceKind) capabilities() []string {
 	hasPut := map[string]bool{}
 	for _, op := range ops {
 		switch op.Method {
-		case "GET":
+		case http.MethodGet:
 			hasGet[op.Path] = true
-		case "PUT", "PATCH":
+		case http.MethodPut, http.MethodPatch:
 			hasPut[op.Path] = true
 		}
 	}
@@ -72,7 +73,7 @@ func (rk resourceKind) capabilities() []string {
 		// an item path is collection access, not a singleton config surface.
 		if isConfigPath(op.Path) && (op.Path == coll || op.CanonicalVerb() == "") {
 			switch op.Method {
-			case "GET", "PUT", "PATCH":
+			case http.MethodGet, http.MethodPut, http.MethodPatch:
 				add("config")
 				continue
 			}
@@ -81,7 +82,7 @@ func (rk resourceKind) capabilities() []string {
 			add(v)
 			continue
 		}
-		if op.Method == "GET" { // rule 3
+		if op.Method == http.MethodGet { // rule 3
 			add("report")
 			continue
 		}
@@ -97,18 +98,25 @@ func (rk resourceKind) capabilities() []string {
 	// re-partition for the documented display order).
 	var cfg, rep, acts []string
 	for _, v := range rest {
-		switch {
-		case v == "config":
+		switch v {
+		case "config":
 			cfg = append(cfg, v)
-		case v == "report":
+		case "report":
 			rep = append(rep, v)
 		default:
 			acts = append(acts, v)
 		}
 	}
-	out := append(crud, cfg...)
+	// Build into a fresh slice rather than appending onto `crud`. Nothing reads
+	// crud after this today, so the old form was not a live aliasing bug — but it
+	// wrote into crud's backing array, and the first reader added after it would
+	// have inherited a silent one. One allocation, sized exactly.
+	out := make([]string, 0, len(crud)+len(cfg)+len(rep)+len(acts))
+	out = append(out, crud...)
+	out = append(out, cfg...)
 	out = append(out, rep...)
-	return append(out, acts...)
+	out = append(out, acts...)
+	return out
 }
 
 // actionSeg names a rule-4 action from the last non-{param} path segment, so

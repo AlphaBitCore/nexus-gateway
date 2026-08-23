@@ -46,13 +46,13 @@ var (
 	}
 	modelCols = []string{
 		"id", "code", "name", "providerId", "p_name", "p_adapter_type",
-		"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled",
+		"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled", "p_enabled", "m_status",
 		"inputPricePerMillion", "outputPricePerMillion",
 		"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 		"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		"features", "maxContextTokens", "maxOutputTokens", "aliases",
 		// Capability matrix columns:
-		"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
+		"inputModalities", "outputModalities", "requiredModalities", "lifecycle", "capabilityJson",
 	}
 	credentialCols = []string{
 		"id", "name", "providerId", "encryptedKey", "encryptionIv", "encryptionTag",
@@ -73,8 +73,38 @@ var (
 
 func strPtr(s string) *string { return &s }
 
-// makeModelRow builds a row matching the cachelayer loadModels SELECT (see modelCols).
+// modelColIdx locates a loadModels SELECT column by name. Fixtures that patch
+// one cell of a model row address it through here: a hardcoded index silently
+// lands on the neighbouring column the moment the SELECT gains one, turning a
+// column-order change into a confusing scan error somewhere else.
+func modelColIdx(name string) int {
+	for i, c := range modelCols {
+		if c == name {
+			return i
+		}
+	}
+	panic("modelCols has no column " + name)
+}
+
+// makeModelRow builds a row matching the cachelayer loadModels SELECT (see
+// modelCols), on an ENABLED provider — the ordinary case.
 func makeModelRow(id, code, providerID string, enabled bool) []any {
+	return makeModelRowOnProvider(id, code, providerID, enabled, true)
+}
+
+// makeModelRowWithStatus is makeModelRow with an explicit Model.status, so tests
+// can build the "operator marked this model disabled" row.
+func makeModelRowWithStatus(id, code, providerID string, enabled bool, status string) []any {
+	r := makeModelRowOnProvider(id, code, providerID, enabled, true)
+	r[modelColIdx("m_status")] = status
+	return r
+}
+
+// makeModelRowOnProvider is makeModelRow with explicit control over the joined
+// Provider.enabled flag, so tests can build the enabled-model-on-disabled-provider
+// row that must never reach the servable indexes.
+func makeModelRowOnProvider(id, code, providerID string, enabled, providerEnabled bool) []any {
+	const status = "active"
 	display := "OpenAI"
 	inP := "3.0"
 	outP := "12.0"
@@ -83,17 +113,18 @@ func makeModelRow(id, code, providerID string, enabled bool) []any {
 	return []any{
 		id, code, "model-" + id, providerID,
 		"openai", "openai", &display, "https://api.openai.com",
-		"gpt-4o", "chat", enabled,
+		"gpt-4o", "chat", enabled, providerEnabled, status,
 		&inP, &outP, &crP, &cwP,
 		// Audio rates: nil on non-realtime models (schema default).
 		(*string)(nil), (*string)(nil), (*string)(nil),
-		[]string{"vision"},
+		[]string{"function_calling"},
 		pgtype.Int4{Int32: 128000, Valid: true},
 		pgtype.Int4{Int32: 16384, Valid: true},
 		[]string{},
 		// Capability matrix fields (defaults match schema):
 		[]string{"text"},
 		[]string{"text"},
+		[]string{},
 		"ga",
 		// Pass an empty JSONB literal rather than NULL so pgxmock's Scan
 		// projection of []byte does not collapse against the nullable

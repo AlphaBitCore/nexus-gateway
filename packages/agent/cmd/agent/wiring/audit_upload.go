@@ -28,14 +28,15 @@ func ShouldUploadFlow(e auditevent.Event, levelFn func() string) bool {
 // MQ wire envelope that Hub's TrafficEventMessage consumer reads.
 func AuditEventToMap(e auditevent.Event) map[string]any {
 	m := map[string]any{
-		"id":            e.ID,
-		"traceId":       e.TraceID,
-		"timestamp":     e.Timestamp,
-		"sourceIp":      e.SourceIP,
-		"sourceProcess": e.SourceProcess,
-		"targetHost":    e.TargetHost,
-		"method":        e.Method,
-		"path":          e.Path,
+		"id":                e.ID,
+		"traceId":           e.TraceID,
+		"externalRequestId": e.ExternalRequestID,
+		"timestamp":         e.Timestamp,
+		"sourceIp":          e.SourceIP,
+		"sourceProcess":     e.SourceProcess,
+		"targetHost":        e.TargetHost,
+		"method":            e.Method,
+		"path":              e.Path,
 		// Agent is a transparent forwarder — target_path mirrors request_path 1:1.
 		"targetMethod":          e.Method,
 		"targetPath":            e.Path,
@@ -248,6 +249,7 @@ func BuildHTTPAuditEvents(events []auditevent.Event) []hub.AuditEvent {
 		hubEvents[i] = hub.AuditEvent{
 			ID:                    e.ID,
 			TraceID:               e.TraceID,
+			ExternalRequestID:     e.ExternalRequestID,
 			Timestamp:             e.Timestamp,
 			SourceIP:              e.SourceIP,
 			SourceProcess:         e.SourceProcess,

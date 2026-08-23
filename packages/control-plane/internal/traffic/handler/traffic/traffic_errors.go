@@ -52,7 +52,12 @@ func classifyTrafficErrorAttribution(errorCode, statusRange string) string {
 	switch errorCode {
 	// BUMP_FAILED is the compliance-proxy failing to TLS-intercept —
 	// interception infrastructure, admin-actionable.
-	case "ROUTING_NO_MATCH", "USAGE_QUERY_FAILED",
+	// ROUTING_RULES_RESOLVED_NOTHING is a rule that matched and resolved no
+	// target — a deleted target model, a disabled provider, a strategy the
+	// gateway cannot dispatch. Admin-actionable, and it carries a 503, so
+	// without naming it here the 5xx default below books a pure configuration
+	// mistake against the provider that was never called.
+	case "ROUTING_NO_MATCH", "ROUTING_RULES_RESOLVED_NOTHING", "USAGE_QUERY_FAILED",
 		"no_compatible_provider", "not_implemented", "endpoint_unsupported",
 		"context_overflow", "auth_failed", "BUMP_FAILED":
 		return attributionOurs

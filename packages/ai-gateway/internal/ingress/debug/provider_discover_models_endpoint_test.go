@@ -43,8 +43,12 @@ func TestSuggestModelType(t *testing.T) {
 		// A speech id is typed precisely; a bare "audio" id that is neither
 		// tts nor stt (gpt-audio chat-with-audio models) falls to the coarse
 		// audio arm, which runs after the precise arms.
-		{"gpt-audio-1.5", "audio"},
-		{"audio-preview", "audio"},
+		// Served on chat completions by the provider; the id contains
+		// "audio" because it ACCEPTS audio parts, which is a modality
+		// question, not an endpoint one. Typing it "audio" made the
+		// routing guard reject every one of its requests.
+		{"gpt-audio-1.5", "chat"},
+		{"audio-preview", "chat"},
 		// realtime beats the audio arm: -whisper/-translate variants are
 		// realtime-family, not REST audio.
 		{"gpt-realtime-2.1", "realtime"},

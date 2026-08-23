@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import type { useTranslation } from 'react-i18next';
 import type { NormalizedPayload, SSEFrame } from './types';
+import { AgentMediaCard } from './NormalizedPayloadView';
 import css from './NormalizedPayloadView.module.css';
 
 export function renderHttpJson(
@@ -121,28 +122,21 @@ export function HttpSseView({
 export function renderHttpBinary(
   payload: NormalizedPayload,
   t: ReturnType<typeof useTranslation>['t'],
+  body?: Uint8Array,
 ) {
-  const ref = payload.http?.bodyView?.binaryRef;
+  const ref = payload.http?.bodyView?.mediaRef;
+  if (ref) {
+    // One card for every media element, whole-body included. A TTS
+    // response is captured audio with locator "body"; rendering it as a
+    // read-only metadata box was the one family the product goal named
+    // (audio must at minimum be downloadable) and the UI could not serve.
+    return <AgentMediaCard mediaRef={ref} body={body} t={t} />;
+  }
+  // No mediaRef at all: the body was never captured.
   return (
     <div className={css.binaryCard}>
       <strong>{t('normalized.binary.title')}</strong>
-      {ref ? (
-        <>
-          <span>
-            {t('normalized.binary.size')}: <code>{formatBytesShort(ref.size)}</code>
-          </span>
-          <span>
-            {t('normalized.binary.contentType')}: <code>{ref.contentType || '(unknown)'}</code>
-          </span>
-          {ref.sha256 ? (
-            <span>
-              sha256: <code>{ref.sha256}</code>
-            </span>
-          ) : null}
-        </>
-      ) : (
-        <span>{t('normalized.binary.metadataOnly')}</span>
-      )}
+      <span>{t('normalized.binary.metadataOnly')}</span>
     </div>
   );
 }

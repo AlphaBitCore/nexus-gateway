@@ -10,7 +10,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // respondStage writes the direct-path response to the client. It is the
@@ -61,14 +60,10 @@ func (st respondStage) run() bool {
 		// above runs only when the broker is unwired or the cache is off,
 		// in which case there is no L2 write to perform.
 		if s.gatewayCacheStatus == audit.GatewayCacheMiss {
-			var l2CanonMsgs []normcore.Message
-			if np := s.cacheNormalized(); np != nil {
-				l2CanonMsgs = np.Messages
-			}
 			h.scheduleL2Write(
 				s.rec,
-				s.routeResult.Targets[0],
-				l2CanonMsgs,
+				s.routeResult.Primary(),
+				l2CanonicalFrom(s.cacheNormalized()),
 				result.Body,
 				provcoreUsageToMap(&result.Usage),
 				false,

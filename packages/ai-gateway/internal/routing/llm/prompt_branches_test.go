@@ -11,14 +11,14 @@ import (
 
 // TestBuildRequestBody_SkipsEmptyTextMessages pins the "drop user
 // messages whose text projection is empty" branch. A user message that
-// holds only an image_ref (no ContentText blocks) projects to "" via
+// holds only a media block (no ContentText blocks) projects to "" via
 // textOf — the builder must skip it rather than emit a blank
 // {"role":"user","content":""} entry. Otherwise the router LLM sees a
 // confusing empty turn and may refuse to pick.
 func TestBuildRequestBody_SkipsEmptyTextMessages(t *testing.T) {
 	userMsgs := []normalize.Message{
 		{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
-			{Type: normalize.ContentImageRef, ImageRef: &normalize.BinaryRef{Size: 1, ContentType: "image/png", SHA256: "abc"}},
+			{Type: normalize.ContentMedia, MediaRef: &normalize.MediaRef{SizeBytes: 1, Mime: "image/png", SHA256: "abc"}},
 		}}, // text-empty — must be skipped
 		{Role: normalize.RoleUser, Content: []normalize.ContentBlock{
 			{Type: normalize.ContentText, Text: "real text"},

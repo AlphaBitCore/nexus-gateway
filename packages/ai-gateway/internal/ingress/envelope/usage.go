@@ -15,10 +15,16 @@ import (
 
 const maxDailyRangeDays = 90
 
-// usageStore is the DB seam consumed by the usage handlers.
+// UsageStore is the DB seam consumed by the usage handlers.
 // *store.DB satisfies this interface at all wiring call sites via Go
 // structural typing — no changes to that package are required.
-type usageStore interface {
+//
+// Exported so the wiring can hold one and decide whether to fill it. A
+// concrete nil pointer boxed into an interface is NOT nil, so a wiring site
+// that hands *store.DB straight in defeats the `db == nil` guard below and
+// turns a no-database boot into a panic; naming the type is what lets the
+// choice be made before the boxing rather than after.
+type UsageStore interface {
 	GetDailyUsageForVK(ctx context.Context, virtualKeyID string, start, end time.Time) ([]store.DailyModelUsage, error)
 }
 
@@ -92,7 +98,7 @@ type totalBlock struct {
 // UsageSummaryHandler handles GET /v1/usage — real-time summary + quota status.
 // db and vkAuth are injected via interfaces so the package can be unit-tested
 // without a live PostgreSQL connection or real HMAC-backed authenticator.
-func UsageSummaryHandler(db usageStore, vkAuth vkAuthenticator, quotaEngine *quota.Engine, logger *slog.Logger) http.HandlerFunc {
+func UsageSummaryHandler(db UsageStore, vkAuth vkAuthenticator, quotaEngine *quota.Engine, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if db == nil {
 			writeDetailedError(w, http.StatusInternalServerError, "USAGE_QUERY_FAILED",
@@ -191,7 +197,7 @@ func UsageSummaryHandler(db usageStore, vkAuth vkAuthenticator, quotaEngine *quo
 // model/provider breakdowns.
 // db and vkAuth are injected via interfaces so the package can be unit-tested
 // without a live PostgreSQL connection or real HMAC-backed authenticator.
-func UsageDailyHandler(db usageStore, vkAuth vkAuthenticator, logger *slog.Logger) http.HandlerFunc {
+func UsageDailyHandler(db UsageStore, vkAuth vkAuthenticator, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if db == nil {
 			writeDetailedError(w, http.StatusInternalServerError, "USAGE_QUERY_FAILED",
@@ -339,20 +345,14 @@ func buildDailyResponse(vkID string, start, end time.Time, rows []store.DailyMod
 	}
 }
 
-// writeDetailedError writes a JSON error response with code/message/hint fields.
+// writeDetailedError answers a usage-query failure through the single
+// gateway-error envelope. It used to stamp the constant "proxy_error" as the
+// type, which is not a value in any SDK's vocabulary and told a caller nothing
+// the status had not already said.
 func writeDetailedError(w http.ResponseWriter, status int, code, message, hint string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	errBody := map[string]any{
-		"message": message,
-		"type":    "proxy_error",
-		"code":    code,
-	}
-	if hint != "" {
-		errBody["hint"] = hint
-	}
-	resp, _ := json.Marshal(map[string]any{"error": errBody})
-	_, _ = w.Write(resp)
+	_, _ = w.Write(GatewayErrorBody(status, code, message, hint))
 }
 
 // parsePeriodStart parses "2026-04" into the first day of that month.

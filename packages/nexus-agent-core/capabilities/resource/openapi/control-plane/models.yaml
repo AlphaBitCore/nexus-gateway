@@ -244,6 +244,27 @@ paths:
                                     type: array
                                     items:
                                         type: string
+                                inputModalities:
+                                    description: 'Modalities the model accepts. Absent leaves the stored value unchanged. The legacy `vision` feature is folded in here when present on features: it means image input, and this is where that fact lives.'
+                                    type:
+                                        - array
+                                        - "null"
+                                    items:
+                                        type: string
+                                outputModalities:
+                                    description: Modalities the model produces. Absent leaves the stored value unchanged.
+                                    type:
+                                        - array
+                                        - "null"
+                                    items:
+                                        type: string
+                                requiredModalities:
+                                    description: Modalities a request MUST carry for this model to serve it. Absent leaves the stored value unchanged; an explicit empty array clears the constraint. inputModalities is the ceiling, this is the floor — gpt-audio-mini accepts text and requires audio.
+                                    type:
+                                        - array
+                                        - "null"
+                                    items:
+                                        type: string
                                 capabilityJson:
                                     description: Arbitrary JSON object describing model capabilities. When present, must parse as a JSON object.
                         example:
@@ -256,7 +277,6 @@ paths:
                                 - gpt-4o-latest
                             features:
                                 - tools
-                                - vision
             responses:
                 "500":
                     description: Internal Server Error

@@ -139,11 +139,11 @@ func catalogModelRow(code string) []any {
 	return []any{
 		"m-" + code, code, "Snapshot Model", "p1",
 		"openai", "openai", &display, "https://api.openai.com",
-		"gpt-4o", "chat", true,
+		"gpt-4o", "chat", true, true, "active",
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		[]string{}, pgtype.Int4{}, pgtype.Int4{}, []string{},
-		[]string{"text"}, []string{"text"}, "ga", []byte(`{}`),
+		[]string{"text"}, []string{"text"}, []string{}, "ga", []byte(`{}`),
 	}
 }
 
@@ -162,11 +162,11 @@ var catalogCredentialCols = []string{
 // and cachelayer.loadModels (identical column sets).
 var catalogModelCols = []string{
 	"id", "code", "name", "providerId", "p_name", "p_adapter_type",
-	"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled",
+	"p_displayName", "p_baseUrl", "providerModelId", "type", "enabled", "p_enabled", "m_status",
 	"inputPricePerMillion", "outputPricePerMillion",
 	"cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 	"audioInputPricePerMillion", "audioOutputPricePerMillion",
 	"cachedAudioInputReadPricePerMillion",
 	"features", "maxContextTokens", "maxOutputTokens", "aliases",
-	"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
+	"inputModalities", "outputModalities", "requiredModalities", "lifecycle", "capabilityJson",
 }

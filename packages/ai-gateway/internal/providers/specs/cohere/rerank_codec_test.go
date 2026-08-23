@@ -62,21 +62,31 @@ func TestCohereCodec_EncodeRequest_rerank_modelInjectedFromTarget(t *testing.T) 
 	}
 }
 
-func TestCohereCodec_EncodeRequest_rerank_bodyWithModel_passthroughUnchanged(t *testing.T) {
-	// Body already carries `model` → verbatim passthrough (canonical IS Cohere
-	// shape), even when the target also names a model.
+func TestCohereCodec_EncodeRequest_rerank_targetModelOverridesTheBody(t *testing.T) {
+	// This used to assert the opposite — that a body carrying `model` passed
+	// through untouched — on the grounds that the canonical rerank shape IS the
+	// Cohere shape. That reasoning belongs to the NATIVE door, which is where
+	// verbatim passthrough lives and which stamps the resolved model for this
+	// very wire. Reaching EncodeRequest means routing resolved a target, and
+	// the caller's word is then a name the upstream does not have.
 	c := newCohereCodec()
 	body := []byte(`{"model":"rerank-english-v3.0","query":"q","documents":["a","b"],"top_n":1}`)
 	encRes, err := c.EncodeRequest(typology.WireShapeCohereRerank, body, provcore.CallTarget{ProviderModelID: "rerank-multilingual-v3.0"})
 	if err != nil {
 		t.Fatalf("EncodeRequest: %v", err)
 	}
-	if !bytes.Equal(encRes.Body, body) {
-		t.Errorf("body must pass through byte-for-byte: got %s, want %s", encRes.Body, body)
+	if got := gjson.GetBytes(encRes.Body, "model").Str; got != "rerank-multilingual-v3.0" {
+		t.Errorf("resolved model must win: got %q", got)
 	}
-	// The target model must NOT override the body model on the passthrough path.
-	if got := gjson.GetBytes(encRes.Body, "model").Str; got != "rerank-english-v3.0" {
-		t.Errorf("body model must win: got %q", got)
+	// Everything else the caller sent survives the stamp.
+	if got := gjson.GetBytes(encRes.Body, "query").Str; got != "q" {
+		t.Errorf("query lost: %s", encRes.Body)
+	}
+	if n := gjson.GetBytes(encRes.Body, "documents.#").Int(); n != 2 {
+		t.Errorf("documents lost: %s", encRes.Body)
+	}
+	if got := gjson.GetBytes(encRes.Body, "top_n").Int(); got != 1 {
+		t.Errorf("top_n lost: %s", encRes.Body)
 	}
 }
 

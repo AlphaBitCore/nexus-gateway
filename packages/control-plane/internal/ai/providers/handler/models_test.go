@@ -300,7 +300,7 @@ func TestUpdateModel_WidenedTypesAccepted(t *testing.T) {
 			mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
 				WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 			mock.ExpectQuery(`UPDATE "Model"`).
-				WithArgs(anyArgs(25)...).
+				WithArgs(anyArgs(26)...).
 				WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 			h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 			c, rec := putReq(t, map[string]any{"type": typ}, "model-1")
@@ -367,7 +367,7 @@ func TestUpdateModel_HappyAuditAndHubInvalidate(t *testing.T) {
 	// ($1=id, $2...$25 = 24 COALESCE/CASE params covering every mutable
 	// column, incl. the 2 cached-text and 3 realtime audio price columns).
 	mock.ExpectQuery(`UPDATE "Model"`).
-		WithArgs(anyArgs(25)...).
+		WithArgs(anyArgs(26)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	hub := &hubSpy{}
 	aud := &auditSpy{}
@@ -415,7 +415,7 @@ func TestUpdateModel_ValidCapabilityJsonAccepted(t *testing.T) {
 	mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	mock.ExpectQuery(`UPDATE "Model"`).
-		WithArgs(anyArgs(25)...).
+		WithArgs(anyArgs(26)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	c, rec := putReq(t, map[string]any{
@@ -534,3 +534,76 @@ func TestDeleteModel_HappyAuditAndHubInvalidate(t *testing.T) {
 
 // Empty body Content-Type so c.Bind doesn't choke on optional fields.
 var _ = errors.New
+
+// argAt fills an argument list with AnyArg except at the named 1-based
+// positions, so a test can pin the two values it cares about without
+// restating twenty-three it does not.
+func argAt(n int, pinned map[int]any) []any {
+	out := make([]any, n)
+	for i := range out {
+		if v, ok := pinned[i+1]; ok {
+			out[i] = v
+			continue
+		}
+		out[i] = pgxmock.AnyArg()
+	}
+	return out
+}
+
+// The admin UI has been able to edit modalities since the field shipped; the
+// handler did not read them, so an admin changed the value, saw 200, and the
+// row was untouched. This asserts the arrays reach the UPDATE — $22 and $23.
+func TestUpdateModel_ModalitiesReachTheUpdate(t *testing.T) {
+	mock, db := newMockStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
+		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+	mock.ExpectQuery(`UPDATE "Model"`).
+		WithArgs(argAt(26, map[int]any{
+			22: []string{"text", "audio"},
+			23: []string{"text"},
+		})...).
+		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+	c, rec := putReq(t, map[string]any{
+		"inputModalities":  []string{"text", "audio"},
+		"outputModalities": []string{"text"},
+	}, "model-1")
+	if err := h.UpdateModel(c); err != nil {
+		t.Fatalf("UpdateModel: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("modalities did not reach the UPDATE: %v", err)
+	}
+}
+
+// A client that still speaks the legacy vocabulary must keep meaning what it
+// meant. `vision` is not stored any more, so it is translated: stripped from
+// features ($19) and added to input modalities ($22), on top of the row's
+// existing arrays because the PUT mentioned no modalities of its own.
+func TestUpdateModel_LegacyVisionFeatureBecomesImageInput(t *testing.T) {
+	mock, db := newMockStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	mock.ExpectQuery(`FROM "Model" WHERE id`).WithArgs("model-1").
+		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+	mock.ExpectQuery(`UPDATE "Model"`).
+		WithArgs(argAt(26, map[int]any{
+			19: []string{"streaming"},
+			22: []string{"text", "image"},
+		})...).
+		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(makeModelRow(now)...))
+	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+	c, rec := putReq(t, map[string]any{"features": []string{"streaming", "vision"}}, "model-1")
+	if err := h.UpdateModel(c); err != nil {
+		t.Fatalf("UpdateModel: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("vision was not folded into the modalities: %v", err)
+	}
+}

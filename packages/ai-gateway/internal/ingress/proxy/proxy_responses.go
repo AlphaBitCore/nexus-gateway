@@ -30,7 +30,6 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // handleStreamWithSubscription is the unified streaming pipeline used
@@ -103,7 +102,7 @@ func (h *Handler) handleNonStreamWithSubscription(
 	endpointType, requestID string,
 	start time.Time,
 	logger *slog.Logger,
-	canonicalMsgs []normcore.Message,
+	canon l2Canonical,
 ) {
 	defer func() {
 		if err := sub.Close(); err != nil {
@@ -129,7 +128,7 @@ func (h *Handler) handleNonStreamWithSubscription(
 				h.writeDetailedErr(w, rec, pe.Status, pe.Code, pe.Message, "")
 				return
 			}
-			h.writeError(w, rec, http.StatusBadGateway, err.Error())
+			h.writeError(w, rec, http.StatusBadGateway, "RESPONSES_STREAM_FAILED", err.Error())
 			return
 		}
 		if chunk.Delta != "" {
@@ -165,7 +164,7 @@ func (h *Handler) handleNonStreamWithSubscription(
 		h.scheduleL2Write(
 			rec,
 			target,
-			canonicalMsgs,
+			canon,
 			canonicalBody,
 			provcoreUsageToMap(&usage),
 			false,
@@ -190,7 +189,8 @@ func (h *Handler) handleNonStreamWithSubscription(
 	// produced the wrong-envelope responses).
 	if shaped, err := h.egressReshapeNonStream(ingress, target, respBody); err != nil {
 		logger.Error("response hub reshape failed (broker non-stream)", "error", err)
-		h.writeError(w, rec, http.StatusBadGateway, "upstream response could not be reshaped for ingress format")
+		h.writeError(w, rec, http.StatusBadGateway, "EGRESS_RESHAPE_FAILED",
+			"upstream response could not be reshaped for ingress format")
 		return
 	} else {
 		respBody = shaped
@@ -280,9 +280,13 @@ func (h *Handler) handleNonStreamWithSubscription(
 	default:
 		rec.UsageExtractionStatus = "parse_failed"
 	}
-	// Update embedding dimension from the canonical response body.
+	// Update embedding dimension from the canonical response body, then honour
+	// encoding_format on the way out (see embedding_encoding.go).
 	if rec.EndpointType == "embeddings" {
 		rec.Metadata = updateEmbeddingDimension(rec.Metadata, respBody)
+		respBody = honorEmbeddingEncodingFormat(respBody, rec.Metadata)
+	} else {
+		respBody = unwrapJSONObjectFences(respBody, rec.Metadata)
 	}
 
 	pcCfg := h.payloadCaptureConfig()

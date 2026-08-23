@@ -100,8 +100,24 @@ func TestTransport_BuildURL_CustomBaseURL(t *testing.T) {
 func TestTransport_BuildURL_UnsupportedEndpoint(t *testing.T) {
 	tr := voyage.NewTransport(slog.Default())
 	_, err := tr.BuildURL(provcore.CallTarget{}, typology.WireShapeOpenAIChat, false)
-	if err == nil || !strings.Contains(err.Error(), "only embeddings") {
-		t.Fatalf("expected embeddings-only error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "unsupported endpoint") {
+		t.Fatalf("expected an unsupported-endpoint error, got %v", err)
+	}
+}
+
+// Rerank must be addressable. The codec has encoded and decoded
+// WireShapeVoyageRerank all along while BuildURL accepted embeddings only, so
+// every rerank request failed before a URL existed and Voyage was never
+// called — the same split Cohere had.
+func TestTransport_BuildURL_Rerank(t *testing.T) {
+	tr := voyage.NewTransport(slog.Default())
+	got, err := tr.BuildURL(provcore.CallTarget{BaseURL: "https://api.voyageai.com"},
+		typology.WireShapeVoyageRerank, false)
+	if err != nil {
+		t.Fatalf("BuildURL returned %v; rerank must have a URL", err)
+	}
+	if !strings.HasSuffix(got, "/v1/rerank") {
+		t.Errorf("URL = %q, want it to end in /v1/rerank", got)
 	}
 }
 

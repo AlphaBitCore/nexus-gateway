@@ -1,10 +1,12 @@
 package resource
 
 import (
-	"github.com/goccy/go-json"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-json"
 
 	capres "github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/capabilities/resource"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/restable"
@@ -93,7 +95,7 @@ func childOps(kind, basePath string) []capres.OperationInfo {
 // fetch of a record), if any.
 func findGet(kind, path string) (capres.OperationInfo, bool) {
 	for _, op := range capres.Operations(kind) {
-		if op.Path == path && op.Method == "GET" {
+		if op.Path == path && op.Method == http.MethodGet {
 			return op, true
 		}
 	}

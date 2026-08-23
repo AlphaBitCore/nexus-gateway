@@ -29,11 +29,6 @@ package mq
 // has a registered id.
 
 import (
-	"encoding/binary"
-	"math"
-
-	"github.com/goccy/go-json"
-
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 )
 
@@ -167,6 +162,14 @@ const (
 	// field silently into the other. Never renumber, never share.
 	FldEndUserID FieldID = 107
 	FldSessionID FieldID = 108
+	// Vendor-spend attribution (2026-08-04). router_cost_usd is a new cost
+	// component; router_provider_id / embedding_provider_id name the provider
+	// actually charged, which differs from routed_provider_id. Same
+	// FORWARD-INCOMPATIBLE deploy-order note as 103/104 above
+	// (deploy order: schema → Hub → producers).
+	FldRouterCostUsd       FieldID = 109
+	FldRouterProviderID    FieldID = 110
+	FldEmbeddingProviderID FieldID = 111
 )
 
 // AllFieldIDs returns every registered field-id in wire order. It exists so the
@@ -204,64 +207,9 @@ func AllFieldIDs() []FieldID {
 		FldAttestationAgentID, FldSourceProcess, FldAction,
 		FldRequestHooksUs, FldResponseHooksUs,
 		FldArtifactRefs, FldComplianceCoverage, FldEndUserID, FldSessionID,
+		FldRouterCostUsd, FldRouterProviderID, FldEmbeddingProviderID,
 	}
 }
-
-// --- low-level value appenders (id-tagged). Value layout is implied by the id. ---
-
-func putID(dst []byte, id FieldID) []byte { return binary.AppendUvarint(dst, uint64(id)) }
-
-func aStr(dst []byte, id FieldID, s string) []byte {
-	dst = putID(dst, id)
-	dst = binary.AppendUvarint(dst, uint64(len(s)))
-	return append(dst, s...)
-}
-
-func aBytes(dst []byte, id FieldID, b []byte) []byte {
-	dst = putID(dst, id)
-	dst = binary.AppendUvarint(dst, uint64(len(b)))
-	return append(dst, b...)
-}
-
-// aI64 writes a signed integer zig-zag varint (compact for small magnitudes).
-func aI64(dst []byte, id FieldID, v int64) []byte {
-	dst = putID(dst, id)
-	return binary.AppendVarint(dst, v)
-}
-
-func aF64(dst []byte, id FieldID, f float64) []byte {
-	dst = putID(dst, id)
-	return binary.LittleEndian.AppendUint64(dst, math.Float64bits(f))
-}
-
-func aBool(dst []byte, id FieldID, v bool) []byte {
-	dst = putID(dst, id)
-	if v {
-		return append(dst, 1)
-	}
-	return append(dst, 0)
-}
-
-func aTimeNanos(dst []byte, id FieldID, nanos int64) []byte {
-	dst = putID(dst, id)
-	return binary.AppendVarint(dst, nanos)
-}
-
-func aStrSlice(dst []byte, id FieldID, ss []string) []byte {
-	dst = putID(dst, id)
-	dst = binary.AppendUvarint(dst, uint64(len(ss)))
-	for _, s := range ss {
-		dst = binary.AppendUvarint(dst, uint64(len(s)))
-		dst = append(dst, s...)
-	}
-	return dst
-}
-
-// aJSON writes a length-prefixed raw-JSON blob for the schema-opaque fields
-// (Identity / *HooksPipeline / RoutingTrace / Details / *Normalized /
-// *RedactionSpans / *BlockingRule / InternalOpsBreakdown / LatencyBreakdown).
-// The decoder stores these back verbatim as json.RawMessage.
-func aJSON(dst []byte, id FieldID, raw []byte) []byte { return aBytes(dst, id, raw) }
 
 // AppendBinary appends m as one binary TLV record to dst and returns the grown
 // slice. Only present fields are written (mirroring the producer's omitempty);
@@ -367,6 +315,9 @@ func (m *TrafficEventMessage) AppendBinary(dst []byte) []byte {
 	// Pointer floats (emit if non-nil).
 	dst = optPtrF64(dst, FldGatewayCacheSavingsUsd, m.GatewayCacheSavingsUsd)
 	dst = optPtrF64(dst, FldEmbeddingCostUsd, m.EmbeddingCostUsd)
+	dst = optPtrF64(dst, FldRouterCostUsd, m.RouterCostUsd)
+	dst = optStr(dst, FldRouterProviderID, m.RouterProviderID)
+	dst = optStr(dst, FldEmbeddingProviderID, m.EmbeddingProviderID)
 	dst = optPtrF64(dst, FldAIGuardCostUsd, m.AIGuardCostUsd)
 	dst = optPtrF64(dst, FldCacheWriteCostUsd, m.CacheWriteCostUsd)
 	dst = optPtrF64(dst, FldCacheReadSavingsUsd, m.CacheReadSavingsUsd)
@@ -408,84 +359,4 @@ func (m *TrafficEventMessage) AppendBinary(dst []byte) []byte {
 	dst = audit.AppendBodyBinary(dst, m.ResponseBody)
 
 	return dst
-}
-
-// --- present-check wrappers (keep AppendBinary readable) ---
-
-func optStr(dst []byte, id FieldID, s string) []byte {
-	if s == "" {
-		return dst
-	}
-	return aStr(dst, id, s)
-}
-
-func optPtrStr(dst []byte, id FieldID, p *string) []byte {
-	if p == nil {
-		return dst
-	}
-	return aStr(dst, id, *p)
-}
-
-func optI64(dst []byte, id FieldID, v int64) []byte {
-	if v == 0 {
-		return dst
-	}
-	return aI64(dst, id, v)
-}
-
-func optPtrI64(dst []byte, id FieldID, p *int64) []byte {
-	if p == nil {
-		return dst
-	}
-	return aI64(dst, id, *p)
-}
-
-func optPtrIntAsI64(dst []byte, id FieldID, p *int) []byte {
-	if p == nil {
-		return dst
-	}
-	return aI64(dst, id, int64(*p))
-}
-
-func optF64(dst []byte, id FieldID, f float64) []byte {
-	if f == 0 {
-		return dst
-	}
-	return aF64(dst, id, f)
-}
-
-func optPtrF64(dst []byte, id FieldID, p *float64) []byte {
-	if p == nil {
-		return dst
-	}
-	return aF64(dst, id, *p)
-}
-
-func optRaw(dst []byte, id FieldID, raw json.RawMessage) []byte {
-	if len(raw) == 0 {
-		return dst
-	}
-	return aJSON(dst, id, raw)
-}
-
-func optPtrRaw(dst []byte, id FieldID, p *json.RawMessage) []byte {
-	if p == nil || len(*p) == 0 {
-		return dst
-	}
-	return aJSON(dst, id, *p)
-}
-
-// optJSONValue marshals a schema-opaque value (map/any) and writes it as a JSON
-// blob when it is non-nil and not the literal null. A marshal error drops the
-// field (it would have produced an unreadable column anyway); audit never fails
-// the surrounding record over one opaque side-field.
-func optJSONValue(dst []byte, id FieldID, v any) []byte {
-	if v == nil {
-		return dst
-	}
-	raw, err := json.Marshal(v)
-	if err != nil || len(raw) == 0 || string(raw) == "null" {
-		return dst
-	}
-	return aJSON(dst, id, raw)
 }

@@ -93,6 +93,22 @@ func TestOpenAIStreamEncoder_ToolCallDelta(t *testing.T) {
 	}
 }
 
+func TestOpenAIStreamEncoder_ProviderCarriers(t *testing.T) {
+	enc := newOpenAIStreamEncoder("gemini-2.5-pro")
+	enc.headerSent = true
+	b, err := enc.Write(context.Background(), provcore.Chunk{
+		NexusThinking:  []provcore.NexusThinkingBlock{{Thinking: "plan", Signature: "sig-anth"}},
+		ToolCallDeltas: []provcore.ToolCallDelta{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{}`, ThoughtSignature: "sig-gem"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"nexus_thinking":[{"thinking":"plan","signature":"sig-anth"}]`) || !strings.Contains(s, `"thought_signature":"sig-gem"`) {
+		t.Fatalf("provider carriers missing from canonical stream encoder: %s", s)
+	}
+}
+
 // --- anthropicStreamEncoder ---
 
 func TestAnthropicStreamEncoder_FullSequence(t *testing.T) {
@@ -217,6 +233,21 @@ func TestGeminiStreamEncoder_Done(t *testing.T) {
 	}
 	if !strings.Contains(s, "usageMetadata") {
 		t.Errorf("done frame should carry usageMetadata; got %q", s)
+	}
+}
+
+func TestGeminiStreamEncoder_DonePreservesToolSignature(t *testing.T) {
+	enc := &geminiStreamEncoder{}
+	b, err := enc.Write(context.Background(), provcore.Chunk{
+		Done: true, FinishReason: "tool_calls",
+		ToolCallDeltas: []provcore.ToolCallDelta{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{}`, ThoughtSignature: "sig-gem"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"functionCall":{"args":{},"id":"call-1","name":"lookup"}`) || !strings.Contains(s, `"thoughtSignature":"sig-gem"`) || !strings.Contains(s, `"finishReason":"STOP"`) {
+		t.Fatalf("done frame dropped tool signature/call: %s", s)
 	}
 }
 
@@ -363,7 +394,7 @@ func TestCanonicalFinishMappers(t *testing.T) {
 		t.Error("finishReasonOrStop")
 	}
 	if canonicalFinishToAnthropicStop("tool_calls") != "tool_use" ||
-		canonicalFinishToAnthropicStop("content_filter") != "stop_sequence" ||
+		canonicalFinishToAnthropicStop("content_filter") != "refusal" ||
 		canonicalFinishToAnthropicStop("weird") != "weird" {
 		t.Error("canonicalFinishToAnthropicStop")
 	}

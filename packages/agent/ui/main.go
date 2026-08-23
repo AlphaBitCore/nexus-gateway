@@ -12,7 +12,8 @@ package main
 
 import (
 	"embed"
-	"log"
+	"fmt"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -64,6 +65,11 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		// stderr + os.Exit rather than log.Fatal: the fleet is read through
+		// slog, and this is the one failure that happens before any logger
+		// exists — the window never opened. log.Fatal would stamp it with the
+		// standard log's own format, which nothing downstream parses.
+		fmt.Fprintf(os.Stderr, "nexus agent dashboard: %v\n", err)
+		os.Exit(1)
 	}
 }

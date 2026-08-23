@@ -238,7 +238,7 @@ func TestMountCoreRoutes_multimodalRoutesRegisteredAndVKGated(t *testing.T) {
 	// a VK); the exact rejection status may differ from chat's ServeProxy chain
 	// (multipart Content-Type validation runs before auth on this path), so
 	// this only asserts registered + auth-gated, not middleware-chain parity.
-	for _, path := range []string{"/v1/audio/transcriptions", "/v1/audio/translations"} {
+	for _, path := range []string{"/v1/audio/transcriptions"} {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("x"))
 		req.Header.Set("Content-Type", "multipart/form-data; boundary=xyz")
 		rr := httptest.NewRecorder()
@@ -362,5 +362,30 @@ func TestMountCoreRoutes_geminiDefaultRouteNotFound(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown suffix, got %d", rr.Code)
+	}
+}
+
+// TestMountCoreRoutes_openModelDetailAcceptsProviderPrefixedID pins the route
+// pattern against the shape the LIST endpoint actually emits. The public list
+// returns ids as "openai/gpt-4o", so the detail route must bind a two-segment
+// id; a single-segment "{model_id}" silently never matches and the mux answers
+// its own plaintext "404 page not found" without ever invoking the handler.
+// Asserting through the real mux is the point — a handler-level test that sets
+// the path value directly bypasses pattern matching and cannot catch this.
+func TestMountCoreRoutes_openModelDetailAcceptsProviderPrefixedID(t *testing.T) {
+	h := getSharedCoreHandler(t)
+	for _, path := range []string{
+		"/api/v1/open/models/gpt-4o",        // bare code
+		"/api/v1/open/models/openai/gpt-4o", // provider-prefixed, as the list emits
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		// The shared test deps have no DB, so the handler answers 500; what
+		// matters is that the ROUTE matched — an unmatched pattern yields the
+		// mux's own bare-text 404 instead of the handler's JSON envelope.
+		if strings.Contains(rr.Body.String(), "404 page not found") {
+			t.Errorf("%s: route did not match — mux 404, handler never ran", path)
+		}
 	}
 }

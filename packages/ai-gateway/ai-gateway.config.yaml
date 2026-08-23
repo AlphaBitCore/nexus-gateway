@@ -180,6 +180,18 @@ routing:
     backoffInitial: 250ms
     backoffMax: 5s
     backoffJitter: 0.2
+  # enforceNamedModelModality: when a caller NAMES one model (direct id, or a
+  # rule with a single explicit target), should the gateway reject the request
+  # on its OWN modality-capability data (input-modality ceiling + required-
+  # modality floor)? Default false: forward it and let the upstream give its
+  # own verdict, because that data is a claim about our catalogue — which has
+  # been wrong — and would otherwise block a request the model can serve. The
+  # caller named the model and owns its limits. Flip to true to enforce the
+  # modality floor+ceiling for named models too. `auto`/smart routing is
+  # unaffected either way (a model WE chose must be able to serve the request,
+  # so it filters unconditionally); the embeddings parameter guard is unaffected
+  # (not a modality question).
+  enforceNamedModelModality: false
 
 # Body spill: bodies at or above the inline-vs-spill threshold are written to an
 # object store and the audit row keeps a reference instead of the bytes.

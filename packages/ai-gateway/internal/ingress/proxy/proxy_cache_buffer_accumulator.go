@@ -29,8 +29,11 @@ const defaultCanonicalBufferMaxBytes = 8 * 1024 * 1024
 // only monotonic in the real payload size.
 func canonicalChunkSize(c provcore.Chunk) int {
 	n := len(c.Delta) + len(c.ReasoningDelta)
+	for _, b := range c.NexusThinking {
+		n += len(b.Thinking) + len(b.Signature) + len(b.RedactedData)
+	}
 	for _, d := range c.ToolCallDeltas {
-		n += len(d.ID) + len(d.Name) + len(d.Arguments)
+		n += len(d.ID) + len(d.Name) + len(d.Arguments) + len(d.ThoughtSignature)
 	}
 	return n
 }
@@ -43,6 +46,7 @@ type canonicalStreamAccumulator struct {
 	model     string
 	content   strings.Builder
 	reasoning strings.Builder
+	thinking  []provcore.NexusThinkingBlock
 	toolOrder []int
 	tools     map[int]*toolCallAccum
 	// finishReason holds the last non-empty canonical finish_reason observed
@@ -58,9 +62,10 @@ type canonicalStreamAccumulator struct {
 // concatenated verbatim and lands as the canonical message.tool_calls[].function
 // .arguments string the OpenAI rewriter masks (BUG-toolcall canonical path).
 type toolCallAccum struct {
-	id   string
-	name string
-	args strings.Builder
+	id               string
+	name             string
+	thoughtSignature string
+	args             strings.Builder
 }
 
 func newCanonicalStreamAccumulator(model string) *canonicalStreamAccumulator {
@@ -78,6 +83,7 @@ func newCanonicalStreamAccumulator(model string) *canonicalStreamAccumulator {
 func (a *canonicalStreamAccumulator) add(c provcore.Chunk) {
 	a.content.WriteString(c.Delta)
 	a.reasoning.WriteString(c.ReasoningDelta)
+	a.thinking = append(a.thinking, c.NexusThinking...)
 	if c.FinishReason != "" {
 		a.finishReason = c.FinishReason
 	}
@@ -93,6 +99,9 @@ func (a *canonicalStreamAccumulator) add(c provcore.Chunk) {
 		}
 		if d.Name != "" {
 			t.name = d.Name
+		}
+		if d.ThoughtSignature != "" {
+			t.thoughtSignature = d.ThoughtSignature
 		}
 		t.args.WriteString(d.Arguments)
 	}
@@ -122,16 +131,23 @@ func (a *canonicalStreamAccumulator) canonicalBody() []byte {
 			if args == "" {
 				args = "{}"
 			}
+			function := map[string]any{
+				"name":      t.name,
+				"arguments": args,
+			}
+			if t.thoughtSignature != "" {
+				function["thought_signature"] = t.thoughtSignature
+			}
 			calls = append(calls, map[string]any{
-				"id":   t.id,
-				"type": "function",
-				"function": map[string]any{
-					"name":      t.name,
-					"arguments": args,
-				},
+				"id":       t.id,
+				"type":     "function",
+				"function": function,
 			})
 		}
 		msg["tool_calls"] = calls
+	}
+	if len(a.thinking) > 0 {
+		msg["nexus_thinking"] = a.thinking
 	}
 	finish := a.finishReason
 	if finish == "" {
@@ -169,10 +185,17 @@ func syntheticChunkFromCanonical(body []byte, reasoning string) provcore.Chunk {
 	}
 	msg.Get("tool_calls").ForEach(func(i, call gjson.Result) bool {
 		ch.ToolCallDeltas = append(ch.ToolCallDeltas, provcore.ToolCallDelta{
-			Index:     int(i.Int()),
-			ID:        call.Get("id").String(),
-			Name:      call.Get("function.name").String(),
-			Arguments: call.Get("function.arguments").String(),
+			Index:            int(i.Int()),
+			ID:               call.Get("id").String(),
+			Name:             call.Get("function.name").String(),
+			Arguments:        call.Get("function.arguments").String(),
+			ThoughtSignature: call.Get("function.thought_signature").String(),
+		})
+		return true
+	})
+	msg.Get("nexus_thinking").ForEach(func(i, block gjson.Result) bool {
+		ch.NexusThinking = append(ch.NexusThinking, provcore.NexusThinkingBlock{
+			Index: int(i.Int()), Thinking: block.Get("thinking").String(), Signature: block.Get("signature").String(), RedactedData: block.Get("redacted_data").String(),
 		})
 		return true
 	})

@@ -70,6 +70,8 @@ const (
 	CodeEndpointUnsupported  = core.CodeEndpointUnsupported
 	CodeNotImplemented       = core.CodeNotImplemented
 	CodeNoCompatibleProvider = core.CodeNoCompatibleProvider
+	CodeClientGone           = core.CodeClientGone
+	CodeLocalProcessing      = core.CodeLocalProcessing
 )
 
 // Other core helpers forwarded into the dispatch namespace.

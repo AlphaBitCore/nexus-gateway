@@ -43,6 +43,38 @@ func noopBatch() *BatchAccumulator[pendingTrafficMessage] {
 	})
 }
 
+// TestTrafficEventWriter_LastReceivedTracksReceipt pins the denominator the
+// audit-freshness check reads to tell an IDLE deployment (no events arriving)
+// apart from a STALLED pipeline (events arriving, rows not advancing): before
+// any message LastReceived is the zero time, and a handled message advances it
+// to a recent instant — even though this writer's nil pool never flushes, so
+// receipt is stamped independently of persistence (the whole point).
+func TestTrafficEventWriter_LastReceivedTracksReceipt(t *testing.T) {
+	w := newTestTrafficWriter(t)
+
+	if got := w.LastReceived(); !got.IsZero() {
+		t.Fatalf("LastReceived before any message = %v; want zero time", got)
+	}
+
+	before := time.Now()
+	msg := &mq.Message{
+		Data: []byte(`{"id":"evt-lr","source":"ai-gateway","timestamp":"2026-04-18T00:00:00Z"}`),
+		Ack:  func() error { return nil },
+		Nak:  func() error { return nil },
+	}
+	if err := w.handleMessage("nexus.event.ai-traffic", noopBatch(), msg); !errors.Is(err, mq.ErrDeferAck) {
+		t.Fatalf("handleMessage returned %v; want mq.ErrDeferAck", err)
+	}
+
+	got := w.LastReceived()
+	if got.IsZero() {
+		t.Fatal("LastReceived after a handled message is still zero; markReceived did not stamp")
+	}
+	if got.Before(before) {
+		t.Errorf("LastReceived = %v predates the receipt at %v", got, before)
+	}
+}
+
 // TestTrafficEventWriter_HandleMessage_ReturnsErrDeferAck verifies the C3 fix:
 // after a successful batch.Add, the handler returns mq.ErrDeferAck so the MQ
 // driver does NOT auto-ack. The message's Ack() must fire only later, when

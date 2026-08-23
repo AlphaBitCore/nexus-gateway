@@ -44,7 +44,7 @@ func (s *stubVKAuthCacheTest) Authenticate(_ context.Context, _ *http.Request) (
 type stubRouterCacheTest struct{ targets []routingcore.RoutingTarget }
 
 func (s *stubRouterCacheTest) ResolveTargets(_ context.Context, _ *routingcore.RoutingContext) (*routingcore.RouteResult, error) {
-	return &routingcore.RouteResult{Targets: s.targets, RuleID: "rule-test", RuleName: "Test rule"}, nil
+	return &routingcore.RouteResult{Dispatch: s.targets, RuleID: "rule-test", RuleName: "Test rule"}, nil
 }
 
 // captureProducer collects MQ enqueues so the test can inspect the audit

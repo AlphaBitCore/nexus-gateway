@@ -49,12 +49,18 @@ func TestAnthropicRewriteNative_D3_StripsSamplingForRejectingFamily(t *testing.T
 			t.Fatalf("%s must be stripped for a rejecting family: %s", f, res.Body)
 		}
 	}
-	if !gjson.GetBytes(res.Body, "thinking.budget_tokens").Exists() {
+	// The strip must not DELETE thinking; on this adaptive-contract model the
+	// block is coerced to the shape its wire accepts, budget carried as a level.
+	if gjson.GetBytes(res.Body, "thinking.type").String() != "adaptive" {
 		t.Fatalf("native thinking must survive the sampling strip: %s", res.Body)
 	}
-	want := map[string]bool{"temperature→removed": true, "top_p→removed": true, "top_k→removed": true}
-	if len(res.Rewrites) != 3 {
-		t.Fatalf("expected 3 coercion rewrites, got %v", res.Rewrites)
+	if gjson.GetBytes(res.Body, "output_config.effort").String() != "low" {
+		t.Fatalf("the 1024 budget must survive as a level: %s", res.Body)
+	}
+	want := map[string]bool{"temperature→removed": true, "top_p→removed": true, "top_k→removed": true,
+		"thinking.enabled→adaptive+output_config.effort=low": true}
+	if len(res.Rewrites) != 4 {
+		t.Fatalf("expected 4 coercion rewrites, got %v", res.Rewrites)
 	}
 	for _, r := range res.Rewrites {
 		if !want[r] {

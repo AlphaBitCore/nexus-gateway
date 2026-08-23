@@ -3,16 +3,15 @@ package geminicache
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/goccy/go-json"
 	"log/slog"
 	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 	"golang.org/x/sync/singleflight"
+
+	geminicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/codec"
 )
 
 // KeyResolver resolves an API key and base URL for a given (providerID, modelID)
@@ -110,27 +109,21 @@ func (m *Manager) Inject(ctx context.Context, providerID, modelID string, body [
 		return body, InjectResult{}, nil
 	}
 
-	// Extract the systemInstruction block from the Gemini body.
-	sysInstr := gjson.GetBytes(body, "systemInstruction")
-	if !sysInstr.Exists() || sysInstr.Raw == "" {
+	// Read the Gemini wire fields that participate in a cachedContent. The codec
+	// owns the field names + the mutual-exclusion rule; the manager only decides
+	// what to do with them. systemInstruction gates the feature; tools/toolConfig
+	// (empty when the caller sends none) are folded into the cachedContent at
+	// create time and keyed into the hash, so a hit guarantees the cached copies
+	// match this request.
+	systemJSON, toolsJSON, toolConfigJSON := geminicodec.ExtractCacheableFields(body)
+	if systemJSON == "" {
 		m.metrics.recordSkipped("no_system")
 		return body, InjectResult{}, nil
 	}
-	systemJSON := sysInstr.Raw
-
 	if len(systemJSON) < cfg.minSystemChars() {
 		m.metrics.recordSkipped("below_threshold")
 		return body, InjectResult{}, nil
 	}
-
-	// Gemini rejects a request that references a cachedContent AND also sets
-	// tools / toolConfig — they must live INSIDE the cache. Capture them so they
-	// are folded into the cachedContent at create time, keyed into the hash (so a
-	// hit guarantees the cached tools match this request), and stripped from the
-	// wire on a hit. Empty when the caller sends no tools (the hash/body are then
-	// unchanged from the system-only form, preserving existing cache entries).
-	toolsJSON := rawIfPresent(body, "tools")
-	toolConfigJSON := rawIfPresent(body, "toolConfig")
 
 	rk := contentHash(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON)
 
@@ -144,7 +137,7 @@ func (m *Manager) Inject(ctx context.Context, providerID, modelID string, body [
 				m.logger.Warn("geminicache: corrupt Redis record, treating as miss",
 					"key", rk, "error", jsonErr)
 			} else if rec.Name != "" {
-				rewritten, rewriteErr := rewriteBody(body, rec.Name)
+				rewritten, rewriteErr := geminicodec.InjectCachedContentRef(body, rec.Name)
 				if rewriteErr != nil {
 					m.logger.Warn("geminicache: body rewrite failed, pass-through",
 						"error", rewriteErr)
@@ -188,16 +181,6 @@ func (m *Manager) Inject(ctx context.Context, providerID, modelID string, body [
 	m.metrics.recordMiss(modelID)
 	m.asyncCreate(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON, rk, cfg)
 	return body, InjectResult{}, nil
-}
-
-// rawIfPresent returns the raw JSON of body[path] when it exists and is
-// non-empty, else "". Used to fold optional tools / toolConfig blocks into the
-// cache key + create payload without changing behaviour when they are absent.
-func rawIfPresent(body []byte, path string) string {
-	if r := gjson.GetBytes(body, path); r.Exists() && r.Raw != "" {
-		return r.Raw
-	}
-	return ""
 }
 
 // asyncCreate schedules a background call to the Gemini cachedContents API,
@@ -304,28 +287,4 @@ func (m *Manager) recordFailure(cfg Config) {
 func (m *Manager) resetCircuitBreaker() {
 	m.cbFailures.Store(0)
 	m.cbOpenUntil.Store(0)
-}
-
-// rewriteBody rewrites a Gemini body to reference a cachedContent. It removes
-// the fields Gemini forbids alongside a cachedContent reference — systemInstruction,
-// tools, and toolConfig — and sets cachedContent. All three were folded into the
-// cache at create time and are part of the cache key, so a hit guarantees the
-// cached copies match this request; deleting a field that is absent is a no-op.
-// Without stripping tools/toolConfig, Gemini returns 400 "CachedContent can not be
-// used with GenerateContent request setting system_instruction, tools or
-// tool_config" for every tool-calling request (e.g. the operator agent).
-func rewriteBody(body []byte, cachedContentName string) ([]byte, error) {
-	out := body
-	for _, field := range []string{"systemInstruction", "tools", "toolConfig"} {
-		var err error
-		out, err = sjson.DeleteBytes(out, field)
-		if err != nil {
-			return nil, fmt.Errorf("delete %s: %w", field, err)
-		}
-	}
-	out, err := sjson.SetBytes(out, "cachedContent", cachedContentName)
-	if err != nil {
-		return nil, fmt.Errorf("set cachedContent: %w", err)
-	}
-	return out, nil
 }

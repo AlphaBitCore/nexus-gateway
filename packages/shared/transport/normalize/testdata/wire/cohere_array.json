@@ -1,0 +1,1 @@
+{"id":"52ff43ea-03b0-4909-ac71-a12f1f4bebde","message":{"role":"assistant","content":[{"type":"text","text":"The color of the square in the image is red."}]},"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":261,"output_tokens":11},"tokens":{"input_tokens":498,"output_tokens":12,"image_tokens":259},"cached_tokens":480}}

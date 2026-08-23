@@ -27,6 +27,7 @@ func TestCanonicalCodes_MatchSharedVocabulary(t *testing.T) {
 		{"invalid_request", CodeInvalidRequest, errorcode.InvalidRequest},
 		{"auth_failed", CodeAuthFailed, errorcode.AuthFailed},
 		{"rate_limited", CodeRateLimited, errorcode.RateLimited},
+		{"provider_quota_exhausted", CodeProviderQuotaExhausted, errorcode.ProviderQuotaExhausted},
 		{"timeout", CodeTimeout, errorcode.Timeout},
 		{"upstream_error", CodeUpstreamError, errorcode.UpstreamError},
 		{"endpoint_unsupported", CodeEndpointUnsupported, errorcode.EndpointUnsupported},
@@ -37,6 +38,29 @@ func TestCanonicalCodes_MatchSharedVocabulary(t *testing.T) {
 		if tc.local != tc.shared {
 			t.Errorf("%s: providers/core has %q, shared/schemas/errorcode has %q — the Hub reads the shared value, so this divergence silently breaks its alert rules",
 				tc.name, tc.local, tc.shared)
+		}
+	}
+}
+
+// The pinning table above is hand-written, so it can fall behind the const
+// block — the exact drift this file exists to make loud, and the drift its own
+// comment says already cost provider_upstream_error its entire production
+// life. Counting against CanonicalCodes turns "someone added a code and forgot
+// this table" from a silent pass into a failure.
+func TestCanonicalCodes_TableCoversEveryDeclaredCode(t *testing.T) {
+	pinned := map[string]bool{
+		CodeInvalidRequest: true, CodeAuthFailed: true, CodeRateLimited: true,
+		CodeProviderQuotaExhausted: true, CodeTimeout: true, CodeUpstreamError: true,
+		CodeEndpointUnsupported: true, CodeContextOverflow: true,
+		CodeNotImplemented: true, CodeNoCompatibleProvider: true,
+	}
+	if len(pinned) != len(CanonicalCodes) {
+		t.Fatalf("the pinning table names %d codes but providers/core declares %d — a canonical code was added without checking that the Hub's shared vocabulary knows it, and IsUpstream then reports it as a gateway-side failure",
+			len(pinned), len(CanonicalCodes))
+	}
+	for _, c := range CanonicalCodes {
+		if !pinned[c] {
+			t.Errorf("canonical code %q is not pinned against the shared vocabulary", c)
 		}
 	}
 }

@@ -81,7 +81,7 @@ func (c *Client) Lookup(ctx context.Context, indexName string, in *LookupInput) 
 	filterParts := []string{
 		fmt.Sprintf("@vk_scope:{%s}", escapeTagValue(in.VKScope)),
 		fmt.Sprintf("@response_kind:{%s}", escapeTagValue(in.ResponseKind)),
-		fmt.Sprintf("@fingerprint:{%s}", escapeTagValue(in.Fingerprint)),
+		fmt.Sprintf("@fingerprint:{%s}", escapeTagValue(validityTag(in.Fingerprint, in.AnswerKey))),
 	}
 	if !in.AllowCrossModel {
 		filterParts = append(filterParts,
@@ -301,6 +301,9 @@ type ReadRequest struct {
 	UpstreamProvider string
 	UpstreamModel    string
 	ResponseKind     string // "response" | "stream"
+	// AnswerKey must equal the value the write path used; see
+	// WriteRequest.AnswerKey.
+	AnswerKey string
 
 	// Pre-computed embedding input text (via inputstaging.Plan).
 	EmbeddingInput string
@@ -350,12 +353,29 @@ type ReadResult struct {
 	// embedding for this request.  Empty when no embedding call was issued
 	// (e.g. skip_disabled path).  Stamped on traffic_event.embedding_model_id.
 	EmbeddingModelID string
+
+	// EmbeddingProviderID is the provider that served the embedding call —
+	// the exact snap.EmbeddingProviderID value passed to sf.Embed, never
+	// inferred from the model id or a display name. Empty when no embedding
+	// call was issued (mirrors EmbeddingModelID). Stamped on
+	// traffic_event.embedding_provider_id so the L2 embedding cost can be
+	// attributed to a provider dimension in the vendor-spend rollup.
+	EmbeddingProviderID string
+}
+
+// Lookuper is the minimal FT.SEARCH surface Reader.Read needs from the
+// Valkey client. *Client satisfies it with zero behaviour change — this
+// exists purely as a test seam so unit tests can inject a fake that returns
+// a canned *Entry deterministically, reaching branches (e.g. skip_poisoned)
+// that real FT.SEARCH gates behind MiniValkey's vector-search support.
+type Lookuper interface {
+	Lookup(ctx context.Context, indexName string, in *LookupInput) (*Entry, error)
 }
 
 // Reader orchestrates the L2 read path.
 type Reader struct {
 	cache   *ConfigCache
-	client  *Client
+	client  Lookuper
 	sf      *EmbeddingSingleflight
 	metrics *Metrics
 	poison  PoisonList // negative-feedback poison list; never nil (nopPoisonList when not configured)
@@ -365,7 +385,7 @@ type Reader struct {
 // poison may be nil; a nopPoisonList is used so the reader never crashes.
 func NewReader(
 	cache *ConfigCache,
-	client *Client,
+	client Lookuper,
 	sf *EmbeddingSingleflight,
 	metrics *Metrics,
 ) *Reader {
@@ -382,7 +402,7 @@ func NewReader(
 // poison may be nil; a nopPoisonList is substituted in that case.
 func NewReaderWithPoison(
 	cache *ConfigCache,
-	client *Client,
+	client Lookuper,
 	sf *EmbeddingSingleflight,
 	metrics *Metrics,
 	poison PoisonList,
@@ -453,10 +473,11 @@ func (r *Reader) Read(ctx context.Context, req ReadRequest) (ReadResult, error) 
 	if snap.EmbeddingDimension > 0 && len(resp.Embedding) != snap.EmbeddingDimension {
 		r.metrics.IncLookup("skip_embedding_dim_mismatch")
 		return ReadResult{
-			Outcome:          "skip_embedding_dim_mismatch",
-			SkipReason:       audit.GatewayCacheSkipReasonEmbeddingDimMismatch,
-			EmbeddingCostUSD: costUSD,
-			EmbeddingModelID: snap.EmbeddingModelID,
+			Outcome:             "skip_embedding_dim_mismatch",
+			SkipReason:          audit.GatewayCacheSkipReasonEmbeddingDimMismatch,
+			EmbeddingCostUSD:    costUSD,
+			EmbeddingModelID:    snap.EmbeddingModelID,
+			EmbeddingProviderID: snap.EmbeddingProviderID,
 		}, nil
 	}
 
@@ -467,6 +488,7 @@ func (r *Reader) Read(ctx context.Context, req ReadRequest) (ReadResult, error) 
 		UpstreamModel:    req.UpstreamModel,
 		ResponseKind:     req.ResponseKind,
 		Fingerprint:      snap.Fingerprint,
+		AnswerKey:        req.AnswerKey,
 		Embedding:        resp.Embedding,
 		Threshold:        req.Threshold,
 		AllowCrossModel:  req.AllowCrossModel,
@@ -490,10 +512,11 @@ func (r *Reader) Read(ctx context.Context, req ReadRequest) (ReadResult, error) 
 		r.metrics.IncLookup(outcome)
 		r.metrics.ObserveLookupSimilarity(0)
 		return ReadResult{
-			Outcome:          outcome,
-			SkipReason:       reason,
-			EmbeddingCostUSD: costUSD,
-			EmbeddingModelID: snap.EmbeddingModelID,
+			Outcome:             outcome,
+			SkipReason:          reason,
+			EmbeddingCostUSD:    costUSD,
+			EmbeddingModelID:    snap.EmbeddingModelID,
+			EmbeddingProviderID: snap.EmbeddingProviderID,
 		}, nil
 	}
 
@@ -502,9 +525,10 @@ func (r *Reader) Read(ctx context.Context, req ReadRequest) (ReadResult, error) 
 		r.metrics.IncLookup("miss")
 		r.metrics.ObserveLookupSimilarity(0)
 		return ReadResult{
-			Outcome:          "miss",
-			EmbeddingCostUSD: costUSD,
-			EmbeddingModelID: snap.EmbeddingModelID,
+			Outcome:             "miss",
+			EmbeddingCostUSD:    costUSD,
+			EmbeddingModelID:    snap.EmbeddingModelID,
+			EmbeddingProviderID: snap.EmbeddingProviderID,
 		}, nil
 	}
 
@@ -518,20 +542,22 @@ func (r *Reader) Read(ctx context.Context, req ReadRequest) (ReadResult, error) 
 		r.metrics.IncLookup("skip_poisoned")
 		r.metrics.ObserveLookupSimilarity(0)
 		return ReadResult{
-			Outcome:          "skip_poisoned",
-			SkipReason:       audit.GatewayCacheSkipReasonPoisoned,
-			EmbeddingCostUSD: costUSD,
-			EmbeddingModelID: snap.EmbeddingModelID,
+			Outcome:             "skip_poisoned",
+			SkipReason:          audit.GatewayCacheSkipReasonPoisoned,
+			EmbeddingCostUSD:    costUSD,
+			EmbeddingModelID:    snap.EmbeddingModelID,
+			EmbeddingProviderID: snap.EmbeddingProviderID,
 		}, nil
 	}
 
 	r.metrics.IncLookup("hit")
 	r.metrics.ObserveLookupSimilarity(entry.Similarity)
 	return ReadResult{
-		Entry:            entry,
-		Outcome:          "hit",
-		EmbeddingCostUSD: costUSD,
-		EmbeddingModelID: snap.EmbeddingModelID,
+		Entry:               entry,
+		Outcome:             "hit",
+		EmbeddingCostUSD:    costUSD,
+		EmbeddingModelID:    snap.EmbeddingModelID,
+		EmbeddingProviderID: snap.EmbeddingProviderID,
 	}, nil
 }
 

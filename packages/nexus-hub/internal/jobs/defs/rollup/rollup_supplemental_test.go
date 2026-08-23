@@ -87,51 +87,85 @@ func TestFakeThresholds_Thresholds(t *testing.T) {
 
 // Rollup5mJob.processOneBucket — full happy path (one traffic_event row)
 
+// trafficEventVendorSpendCols pairs each vendor-spend attribution column with
+// a nil value of its scan type. pgxmock matches row values to Scan
+// destinations by position AND type, so router_cost_usd cannot share the
+// *string nil the error-class columns use. Keeping name and nil type in one
+// table means a future column is added in exactly one place.
+var trafficEventVendorSpendCols = []struct {
+	name   string
+	nilVal any
+}{
+	{"router_cost_usd", (*float64)(nil)},
+	{"router_provider_id", (*string)(nil)},
+	{"embedding_provider_id", (*string)(nil)},
+}
+
 // trafficEventErrorClassTail lists the trailing error-class columns that only
-// the FLEET aggregator selects (traffic.error_class.* series); the per-Thing
-// SELECT stops before them. Fleet row builders append errorClassNilTail();
-// thing wrappers strip it via trimErrorClassTail.
+// the FLEET aggregator selects (traffic.error_class.* series).
 var trafficEventErrorClassTail = []string{
 	"provider_name", "routed_provider_name", "model_name", "routed_model_name",
 	"internal_purpose",
 }
 
-// trafficEventCols lists the 48 SELECT columns that aggregateTrafficEvents
-// scans in exactly the order the Scan call expects them:
-// embedding_cost_usd / ai_guard_cost_usd cover internal-ops cost rollup
-// metrics, followed by the error-class tail.
-var trafficEventCols = append([]string{
-	"source", "provider_id", "model_id",
-	"entity_id", "entity_type", "org_id",
-	"routed_provider_id",
-	"routing_rule_id", "target_host", "source_ip",
-	"status_code", "latency_ms", "cache_hit",
-	"prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "gateway_cache_savings_usd",
-	"request_hook_decision", "response_hook_decision", "bump_status",
-	"routed_model_id", "original_model_id",
-	"has_quality_signals", "virtual_key_id", "project_id",
-	"error_code",
-	"timestamp",
-	"cache_write_cost_usd", "cache_read_savings_usd", "cache_net_savings_usd",
-	"cache_creation_tokens", "cache_read_tokens", "l4_cache_hit",
-	"normalized_strip_count", "normalized_strip_bytes", "cache_marker_injected",
-	"upstream_ttfb_ms", "upstream_total_ms", "request_hooks_ms", "response_hooks_ms",
-	"embedding_cost_usd", "ai_guard_cost_usd",
-}, trafficEventErrorClassTail...)
+// trafficEventCols lists the 51 SELECT columns that aggregateTrafficEvents
+// scans in exactly the order the Scan call expects them: internal-ops costs
+// (embedding_cost_usd / ai_guard_cost_usd), then the vendor-spend attribution
+// columns, then the error-class tail.
+//
+// The last two blocks are FLEET-ONLY — the per-Thing SELECT stops before them.
+// Fleet row builders append fleetOnlyNilTail(); thing wrappers strip both
+// blocks via trimFleetOnlyTail.
+var trafficEventCols = buildTrafficEventCols()
 
-// errorClassNilTail returns all-nil values for trafficEventErrorClassTail.
-func errorClassNilTail() []any {
-	tail := make([]any, len(trafficEventErrorClassTail))
-	for i := range tail {
-		tail[i] = (*string)(nil)
+func buildTrafficEventCols() []string {
+	cols := []string{
+		"source", "provider_id", "model_id",
+		"entity_id", "entity_type", "org_id",
+		"routed_provider_id",
+		"routing_rule_id", "target_host", "source_ip",
+		"status_code", "latency_ms", "cache_hit",
+		"prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "gateway_cache_savings_usd",
+		"request_hook_decision", "response_hook_decision", "bump_status",
+		"routed_model_id", "original_model_id",
+		"has_quality_signals", "virtual_key_id", "project_id",
+		"error_code",
+		"timestamp",
+		"cache_write_cost_usd", "cache_read_savings_usd", "cache_net_savings_usd",
+		"cache_creation_tokens", "cache_read_tokens", "l4_cache_hit",
+		"normalized_strip_count", "normalized_strip_bytes", "cache_marker_injected",
+		"upstream_ttfb_ms", "upstream_total_ms", "request_hooks_ms", "response_hooks_ms",
+		"embedding_cost_usd", "ai_guard_cost_usd",
+	}
+	for _, c := range trafficEventVendorSpendCols {
+		cols = append(cols, c.name)
+	}
+	return append(cols, trafficEventErrorClassTail...)
+}
+
+// fleetOnlyTailLen is the number of trailing columns the per-Thing SELECT does
+// not carry: the vendor-spend attribution block plus the error-class tail.
+func fleetOnlyTailLen() int {
+	return len(trafficEventVendorSpendCols) + len(trafficEventErrorClassTail)
+}
+
+// fleetOnlyNilTail returns all-nil values, correctly typed, for the fleet-only
+// tail columns.
+func fleetOnlyNilTail() []any {
+	tail := make([]any, 0, fleetOnlyTailLen())
+	for _, c := range trafficEventVendorSpendCols {
+		tail = append(tail, c.nilVal)
+	}
+	for range trafficEventErrorClassTail {
+		tail = append(tail, (*string)(nil))
 	}
 	return tail
 }
 
-// trimErrorClassTail drops the fleet-only error-class tail so a fleet row
-// builder can feed the per-Thing column shape.
-func trimErrorClassTail(row []any) []any {
-	return row[:len(row)-len(trafficEventErrorClassTail)]
+// trimFleetOnlyTail drops the fleet-only tail columns so a fleet row builder
+// can feed the per-Thing column shape.
+func trimFleetOnlyTail(row []any) []any {
+	return row[:len(row)-fleetOnlyTailLen()]
 }
 
 // oneTrafficEventRow returns one valid AddRow call matching trafficEventCols.
@@ -147,7 +181,7 @@ func oneTrafficEventRow(ts time.Time) []any {
 		nilF64   *float64
 		nilInt64 *int64
 	)
-	return []any{
+	return append([]any{
 		&src,     // source
 		nilStr,   // provider_id
 		nilStr,   // model_id
@@ -191,12 +225,7 @@ func oneTrafficEventRow(ts time.Time) []any {
 		nilInt,   // response_hooks_ms
 		nilF64,   // embedding_cost_usd
 		nilF64,   // ai_guard_cost_usd
-		nilStr,   // provider_name
-		nilStr,   // routed_provider_name
-		nilStr,   // model_name
-		nilStr,   // routed_model_name
-		nilStr,   // internal_purpose
-	}
+	}, fleetOnlyNilTail()...)
 }
 
 // TestRollup5m_AggregateTrafficEvents_OneRow exercises aggregateTrafficEvents
@@ -551,7 +580,13 @@ func TestRollupCorrection_Run_HappyPath(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	// A run that reaches the end of the window publishes its watermark.
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
+	j := NewRollupCorrection(mock, r5m, m1h, m1d, m1mo, 1, 0, 24*time.Hour, testLogger())
 	// Pin a mid-month date so the monthly re-merge branch does NOT fire (the
 	// single lookback day stays within the unsealed current month). The
 	// month-end path has its own test below.
@@ -609,7 +644,13 @@ func TestRollupCorrection_Run_MonthEnd_RemergesMonthly(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	// A run that reaches the end of the window publishes its watermark.
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
+	j := NewRollupCorrection(mock, r5m, m1h, m1d, m1mo, 1, 0, 24*time.Hour, testLogger())
 	// 2026-06-01: the single lookback day = 2026-05-31, in the now-sealed month
 	// of May → monthly re-merge of May fires.
 	j.nowFn = func() time.Time { return time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC) }
@@ -644,7 +685,7 @@ func TestRollupCorrection_Run_5mBucketError(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	j := NewRollupCorrection(nil, r5m, m1h, m1d, m1mo, 1, 0, 24*time.Hour, testLogger())
 
 	if err := j.Run(context.Background()); err == nil {
 		t.Fatal("expected error from 5m bucket failure")
@@ -663,14 +704,16 @@ func TestThingRollup5m_Interval(t *testing.T) {
 // ThingRollup5mJob.processOneBucket — full happy path (one row)
 
 // thingTrafficEventCols is the 42-column SELECT used by aggregateThingEvents
-// (prepends thing_id to trafficEventCols).
+// (prepends thing_id to trafficEventCols, minus the fleet-only tail: the
+// per-Thing aggregator selects neither the vendor-spend attribution columns nor
+// the error-class columns).
 var thingTrafficEventCols = append([]string{"thing_id"},
-	trafficEventCols[:len(trafficEventCols)-len(trafficEventErrorClassTail)]...)
+	trafficEventCols[:len(trafficEventCols)-fleetOnlyTailLen()]...)
 
 // oneThingTrafficEventRow returns one valid AddRow for thingTrafficEventCols.
 func oneThingTrafficEventRow(ts time.Time) []any {
 	thingID := "thing-1"
-	return append([]any{&thingID}, trimErrorClassTail(oneTrafficEventRow(ts))...)
+	return append([]any{&thingID}, trimFleetOnlyTail(oneTrafficEventRow(ts))...)
 }
 
 // TestThingRollup5m_AggregateThingEvents_OneRow exercises aggregateThingEvents

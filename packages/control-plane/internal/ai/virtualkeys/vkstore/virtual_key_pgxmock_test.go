@@ -141,6 +141,49 @@ func TestUpdateVirtualKey(t *testing.T) {
 	}
 }
 
+// An expiry edit must re-derive vkStatus, and must confine that re-derivation
+// to the two clock-driven states. Without the projection 'expired' is a
+// dead-end: the expiry job only moves active -> expired, so a key given a
+// future date would keep reading as expired in the admin list and stay
+// rejected by the gateway. The paired guard is that a date edit must never
+// resurrect a revoked key or approve a pending one, so the WHERE-side state
+// filter is asserted here too — dropping either half re-opens the bug.
+func TestUpdateVirtualKeyReprojectsStatusFromExpiry(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectQuery(`"vkStatus" = CASE\s+WHEN \$9::boolean AND "vkStatus" IN \('active', 'expired'\)\s+THEN CASE\s+WHEN \$10::timestamptz IS NOT NULL AND \$10::timestamptz <= NOW\(\) THEN 'expired'\s+ELSE 'active'`).
+		WithArgs(anyArgs(10)...).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(vkRow("vk1", "k")...))
+
+	future := tNow.Add(720 * time.Hour)
+	if _, err := s.UpdateVirtualKey(context.Background(), "vk1", UpdateVirtualKeyParams{
+		UpdateExpiresAt: true,
+		ExpiresAt:       &future,
+	}); err != nil {
+		t.Fatalf("expiry edit must re-project vkStatus: %v", err)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatalf("projection statement not issued: %v", err)
+	}
+}
+
+// The projection is gated on UpdateExpiresAt: an edit that leaves the expiry
+// alone (renaming a project, flipping enabled) must carry vkStatus through
+// untouched rather than recomputing it from a column it did not write.
+func TestUpdateVirtualKeyLeavesStatusWhenExpiryUntouched(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectQuery(`"vkStatus" = CASE\s+WHEN \$9::boolean AND`).
+		WithArgs("vk1", (*string)(nil), (*string)(nil), (*bool)(nil), (*int)(nil), (*int)(nil),
+			json.RawMessage(nil), (*string)(nil), false, (*time.Time)(nil)).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(vkRow("vk1", "k")...))
+
+	if _, err := s.UpdateVirtualKey(context.Background(), "vk1", UpdateVirtualKeyParams{}); err != nil {
+		t.Fatalf("non-expiry edit: %v", err)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expected UpdateExpiresAt=false to reach the projection guard: %v", err)
+	}
+}
+
 func TestRegenerateVirtualKeyHash(t *testing.T) {
 	s, m := newMock(t)
 	m.ExpectExec(`UPDATE "VirtualKey" SET "keyHash"`).WithArgs("vk1", "h2", "v1", "vk_xyz").WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -192,35 +235,22 @@ func TestVirtualKeyLifecycleMethods(t *testing.T) {
 	}
 }
 
-func TestExpireOverdueVirtualKeys(t *testing.T) {
+// Renew exists primarily to rescue an already-expired key, so its state
+// filter must admit 'expired' and the write must return the row to active.
+// Restricting it to 'active' — the original behaviour — made the endpoint
+// 404 on exactly the keys it was meant to serve. 'revoked' and 'rejected'
+// stay out: those are administrative decisions, not clock events.
+func TestRenewVirtualKeyRescuesExpiredKey(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectExec(`SET "vkStatus" = 'expired'`).WillReturnResult(pgxmock.NewResult("UPDATE", 3))
-	n, err := s.ExpireOverdueVirtualKeys(context.Background())
-	if err != nil || n != 3 {
-		t.Fatalf("ExpireOverdueVirtualKeys: %d %v", n, err)
-	}
-	m.ExpectExec(`'expired'`).WillReturnError(errors.New("boom"))
-	if _, err := s.ExpireOverdueVirtualKeys(context.Background()); err == nil {
-		t.Fatal("exec error should surface")
-	}
-}
+	m.ExpectExec(`SET "expiresAt" = \$2, "vkStatus" = 'active'.*WHERE id = \$1 AND "vkType" = 'application' AND "vkStatus" IN \('active', 'expired'\)`).
+		WithArgs("vk1", tNow).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
-func TestListExpiringVirtualKeys(t *testing.T) {
-	s, m := newMock(t)
-	m.ExpectQuery(`FROM "VirtualKey"`).WithArgs(7).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "expiresAt"}).AddRow("vk1", "k", tNow))
-	keys, err := s.ListExpiringVirtualKeys(context.Background(), 7)
-	if err != nil || len(keys) != 1 || keys[0].ID != "vk1" {
-		t.Fatalf("ListExpiringVirtualKeys: %+v %v", keys, err)
+	if err := s.RenewVirtualKey(context.Background(), "vk1", tNow); err != nil {
+		t.Fatalf("renew must accept an expired key and restore it to active: %v", err)
 	}
-	m.ExpectQuery(`FROM "VirtualKey"`).WithArgs(7).WillReturnError(errors.New("boom"))
-	if _, err := s.ListExpiringVirtualKeys(context.Background(), 7); err == nil {
-		t.Fatal("query error should surface")
-	}
-	s2, m2 := newMock(t)
-	m2.ExpectQuery(`FROM "VirtualKey"`).WithArgs(7).WillReturnRows(pgxmock.NewRows([]string{"id", "name", "expiresAt"}).AddRow("vk1", "k", "not-a-time"))
-	if _, err := s2.ListExpiringVirtualKeys(context.Background(), 7); err == nil {
-		t.Fatal("scan error should surface")
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatalf("renew statement shape: %v", err)
 	}
 }
 

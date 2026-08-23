@@ -15,33 +15,52 @@ import (
 	"strings"
 
 	openaicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/codec"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
+
+// kimiFamiliesAcceptingTemperature lists the ids inside Moonshot's `kimi-`
+// namespace that a live probe has shown to accept a caller-supplied
+// temperature. Everything else under `kimi-` is treated as fixed-temp.
+//
+// Membership requires an observed 200 with a temperature in the body.
+// Absence costs a stripped parameter (recorded on x-nexus-coerced, the
+// upstream applies its mandatory =1); presence costs a hard 400. The
+// asymmetry is why this is an ACCEPTS list and not a denylist.
+var kimiFamiliesAcceptingTemperature = []string{
+	// Probed: accepts arbitrary temperature.
+	"kimi-k2-thinking",
+}
 
 // IsFixedTempModel reports whether the Moonshot model id belongs to a
 // family that hardcodes temperature on the upstream side and rejects
 // any caller-supplied value with HTTP 400 "invalid temperature: only
-// 1 is allowed for this model." Older kimi-k2-thinking and
-// moonshot-v1-* models accept arbitrary temperature.
+// 1 is allowed for this model."
 //
 // Observed, each by sending temperature to that model and reading the
 // upstream's own 400 back: kimi-k2.5, kimi-k2.6, kimi-k2.7-code,
 // kimi-k2.7-code-highspeed. Each answers 200 to the same request with
 // temperature omitted, so the family, not the request, is the cause.
 //
-// This list is a denylist, and a denylist over a catalog that gains
-// models without a code change is a list that goes stale silently: the
-// k2.7 families shipped in the catalog and 400'd every
-// temperature-sending client until a smoke run caught them. When a
-// Moonshot family appears, send it a temperature before assuming it
-// accepts one (the quirk-coverage lint forces the recorded decision).
+// This was a denylist of those four, and a denylist over a catalog that
+// gains models without a code change goes stale silently: the k2.7
+// families shipped in the catalog and 400'd every temperature-sending
+// client until a smoke run caught them. Inverting it makes the stale
+// direction harmless — a `kimi-` id nobody has probed (kimi-k3 is one, as
+// of 2026-08-06 it is in the vendor's /v1/models and not in our catalog)
+// is stripped rather than forwarded on a guess. `moonshot-v1-*` sits
+// outside the namespace and keeps its caller's temperature untouched.
+//
+// Same shape as the anthropic codec's accepts list, for the same reason.
 func IsFixedTempModel(modelID string) bool {
-	switch {
-	case strings.HasPrefix(modelID, "kimi-k2.5"),
-		strings.HasPrefix(modelID, "kimi-k2.6"),
-		strings.HasPrefix(modelID, "kimi-k2.7"):
-		return true
+	if !strings.HasPrefix(modelID, "kimi-") {
+		return false
 	}
-	return false
+	for _, family := range kimiFamiliesAcceptingTemperature {
+		if specutil.MatchesFamily(modelID, family) {
+			return false
+		}
+	}
+	return true
 }
 
 // Contract assembles the Moonshot wire contract: the fixed-temp families

@@ -55,43 +55,6 @@ type RuntimeConfig struct {
 	ModelContextLimit int
 }
 
-// TrafficEvent is the internal audit record handed to the sink for every
-// classify attempt (success, cache hit, or failure). The HTTP handler and
-// in-process caller both funnel through classifyImpl, so this is the single
-// emission point for ai-guard traffic events.
-type TrafficEvent struct {
-	DetectorType    string
-	Decision        string
-	JudgeLatencyMs  int
-	CacheHit        bool
-	BackendMode     string
-	InternalPurpose string // always "ai-guard"
-	ErrorDetail     string // non-empty on failure
-
-	// TraceID carries the triggering user request's correlation id
-	// (the inbound X-Nexus-Request-Id propagated on ctx). It is stamped
-	// onto the ai-guard row's trace_id so the classifier's own cost row
-	// (internal_purpose='ai-guard', fresh row id) can be joined back to the
-	// user-traffic row that invoked the hook. Empty for ad-hoc callers
-	// (tests, tooling) that never set a request id on the context.
-	TraceID string
-
-	// Stamped from Response.Metadata after a successful classifier call;
-	// left zero on CacheHit, failures, or when AdapterBackend has no
-	// PriceLookup wired. Sink writes these to traffic_event.{prompt_tokens,
-	// completion_tokens, ai_guard_cost_usd}.
-	PromptTokens     int
-	CompletionTokens int
-	CostUsd          float64
-}
-
-// TrafficSink is the minimal audit interface classifyImpl requires. The
-// production implementation bridges into the existing traffic_event MQ
-// pipeline; tests capture events in-memory.
-type TrafficSink interface {
-	Emit(ctx context.Context, e TrafficEvent)
-}
-
 // BackendUnavailable signals an upstream judge failure. The HTTP handler
 // maps this to 503 with ErrorBody{Error:"backend_unavailable", Detail:...}.
 // Validation errors (missing fields, bad prompt template) are returned as
@@ -268,6 +231,12 @@ func classifyImpl(
 			BackendMode:     cfg.BackendMode,
 			InternalPurpose: internalPurposeAIGuard,
 			TraceID:         traceID,
+			// cached.Metadata carries the provider that served the original
+			// (cache-writing) call. No new call is made on a cache hit — cost
+			// is correctly zero — but the provider identity is still real,
+			// sourced from that original resolved call target.
+			ProviderID:   cached.Metadata.ProviderID,
+			ProviderName: cached.Metadata.ProviderName,
 		})
 		DecisionsTotal.WithLabelValues(req.DetectorType, cached.Decision).Inc()
 		return cached, nil
@@ -353,18 +322,15 @@ func classifyImpl(
 		InternalPurpose:  internalPurposeAIGuard,
 		PromptTokens:     resp.Metadata.PromptTokens,
 		CompletionTokens: resp.Metadata.CompletionTokens,
-		CostUsd:          resp.Metadata.CostUsd,
-		TraceID:          traceID,
+		// The cached share of PromptTokens, carried so the row records the
+		// basis of its own charge rather than just the amount.
+		CacheReadTokens:     resp.Metadata.CacheReadTokens,
+		CacheCreationTokens: resp.Metadata.CacheCreationTokens,
+		CostUsd:             resp.Metadata.CostUsd,
+		TraceID:             traceID,
+		ProviderID:          resp.Metadata.ProviderID,
+		ProviderName:        resp.Metadata.ProviderName,
 	})
 	DecisionsTotal.WithLabelValues(req.DetectorType, resp.Decision).Inc()
 	return resp, nil
-}
-
-// emit is a nil-safe helper; a nil sink is tolerated so ad-hoc callers
-// (tests, tooling) don't need a no-op stub.
-func emit(ctx context.Context, sink TrafficSink, e TrafficEvent) {
-	if sink == nil {
-		return
-	}
-	sink.Emit(ctx, e)
 }

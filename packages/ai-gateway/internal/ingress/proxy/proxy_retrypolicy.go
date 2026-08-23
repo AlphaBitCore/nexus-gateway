@@ -49,9 +49,7 @@ func (h *Handler) effectiveRetryPolicy(raw json.RawMessage, logger *slog.Logger)
 		// always populates it from cfg.Routing.DefaultRetryPolicy, which
 		// the config loader merges against DefaultRetryPolicy() so a
 		// real deployment always carries non-zero fields.
-		dp := h.deps.RoutingDefaultPolicy
-		if dp.MaxAttemptsPerTarget != 0 || dp.RetryOn != nil ||
-			dp.BackoffInitial != 0 || dp.BackoffMax != 0 || dp.BackoffJitter != 0 {
+		if dp := h.deps.RoutingDefaultPolicy; !dp.IsZero() {
 			base = dp
 		}
 	}

@@ -566,6 +566,20 @@ function PayloadsSection({
   );
 }
 
+/**
+ * Decodes the wire-shape body (Go marshals `[]byte` as base64) into the
+ * raw bytes a media locator addresses. Returns undefined when there is no
+ * body — capture disabled, or spilled to a backend the agent cannot read.
+ */
+function decodeCapturedBody(base64?: string): Uint8Array | undefined {
+  if (!base64) return undefined;
+  try {
+    return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  } catch {
+    return undefined;
+  }
+}
+
 function PayloadDirection({
   label,
   base64,
@@ -589,7 +603,15 @@ function PayloadDirection({
         {label}
       </div>
       {tab === 'normalized' && normalized ? (
-        <NormalizedPayloadView payload={normalized} direction={direction} />
+        // The captured body goes down with the payload so media locators
+        // resolve locally — the agent holds these bytes already, so
+        // preview and download need no server round-trip. A body spilled
+        // to a remote backend arrives absent, and the card says so.
+        <NormalizedPayloadView
+          payload={normalized}
+          direction={direction}
+          body={decodeCapturedBody(base64)}
+        />
       ) : (
         <PayloadView base64={base64} spillRef={spillRef} t={t} />
       )}

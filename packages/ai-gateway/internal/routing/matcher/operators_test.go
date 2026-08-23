@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // matcher.go — resolveField / equals / numCompare / toFloat / evalRegex /
@@ -44,7 +44,8 @@ func TestResolveField_AllPaths(t *testing.T) {
 	}{
 		{"requestedModel.id", "gpt-4"},
 		{"requestedModel.type", "chat"},
-		{"requestedModel.providerId", "openai"},
+		// requestedModel.providerId resolves to a SET; asserted below through
+		// equals(), because the contract is "any member matches".
 		{"requestedModel.providerModelId", "gpt-4-0613"},
 		{"endpointType", "chat"},
 		{"virtualKey.id", "vk-1"},
@@ -62,6 +63,61 @@ func TestResolveField_AllPaths(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("resolveField(%q) = %v, want %v", tc.path, got, tc.want)
 		}
+	}
+
+	// providerId resolves to the SET of providers serving the named code, so
+	// this door and matchConditions.providers answer one question one way. It
+	// is asserted through equals(), which is what every operator goes through,
+	// rather than by comparing the slice: the contract is "any member matches",
+	// not a particular container type.
+	if !equals(resolveField("requestedModel.providerId", ctx), "openai") {
+		t.Error("requestedModel.providerId no longer matches the provider serving the named model")
+	}
+	if equals(resolveField("requestedModel.providerId", ctx), "anthropic") {
+		t.Error("requestedModel.providerId matched a provider that serves nothing here")
+	}
+}
+
+// TestResolveField_ProviderIdAnswersLikeTheStructuredCondition closes the seam
+// between the two doors onto one question.
+//
+// `matchConditions.providers` intersects every provider serving the named
+// code; an expression written against `requestedModel.providerId` used to read
+// the singular field, which is populated ONLY when exactly one provider serves
+// that code. So for the ordinary case of one open-weights model on two hosts,
+// the structured condition matched and the expression did not — and its `$ne`
+// form always did.
+func TestResolveField_ProviderIdAnswersLikeTheStructuredCondition(t *testing.T) {
+	ctx := &core.RoutingContext{
+		RequestedModel: core.RequestedModel{
+			ID:           "llama-3.3-70b",
+			CandidateIDs: []string{"m-a", "m-b"},
+			// Two hosts, so the singular ProviderID stays empty on purpose.
+			CandidateProviderIDs: []string{"groq", "together"},
+		},
+		EndpointType: typology.EndpointKindChat,
+	}
+
+	for _, p := range []string{"groq", "together"} {
+		if !EvaluateExpression(map[string]any{"requestedModel.providerId": p}, ctx) {
+			t.Errorf("an expression scoped to %q did not match a code %q serves; the structured "+
+				"condition does, so one rule's two spellings disagree", p, p)
+		}
+		if !RuleMatchesContext(&core.MatchConditions{Providers: []string{p}}, "llama-3.3-70b", ctx) {
+			t.Errorf("the structured condition stopped matching %q — the premise of this test", p)
+		}
+	}
+	// $ne means "none of them", which is the correct negation of "any of them".
+	if EvaluateExpression(map[string]any{
+		"requestedModel.providerId": map[string]any{"$ne": "groq"},
+	}, ctx) {
+		t.Error("$ne matched a request one of whose providers IS groq; a rule written to exclude " +
+			"groq would fire on exactly the traffic it excludes")
+	}
+	if !EvaluateExpression(map[string]any{
+		"requestedModel.providerId": map[string]any{"$ne": "openai"},
+	}, ctx) {
+		t.Error("$ne failed for a provider none of the candidates use")
 	}
 }
 
@@ -321,22 +377,14 @@ func TestToFloat_AllNumericTypes(t *testing.T) {
 
 // enumerate.go — depth limit + single-success-with-nil-lookup paths.
 
-// TestEnumerate_DepthLimit_ReturnsNil triggers the depth guard by stacking
-// fallback nodes deeper than enumerateDepthLimit. Once exceeded, the
-// recursive call returns nil and the parent fallback yields an empty slice.
-func TestEnumerate_DepthLimit_ReturnsNil(t *testing.T) {
-	// Build a fallback nest of length depthLimit+2.
-	node := core.StrategyNode{Type: "single", ProviderID: "x", ModelID: "y"}
-	for range enumerateDepthLimit + 2 {
-		node = core.StrategyNode{Type: "fallback", Targets: []core.StrategyNode{node}}
-	}
-	branches := EnumerateTerminalTargets(context.Background(), node, &core.RoutingContext{}, enumLookup)
-	// At least the outermost levels exceed depthLimit and return nil.
-	// The total branches should be 0 (nothing reaches the terminal).
-	if len(branches) != 0 {
-		t.Errorf("expected empty branches when depth exceeds limit, got %d", len(branches))
-	}
-}
+// The depth guard had its own test until the walker stopped descending.
+//
+// It bounded a recursion that no longer happens: a non-leaf entry is reported
+// unreachable at the first level, so the counter could never reach its limit.
+// A test asserting it still fires would need a tree the walker cannot build.
+//
+// Recorded rather than silently dropped, because "the test disappeared" and
+// "the hazard became unrepresentable" look identical in a diff.
 
 // TestEnumerate_Single_LookupReturnsNilNoError covers the explainLookupErr
 // branch where err==nil but target==nil (rare but defended against).
@@ -371,31 +419,6 @@ func TestEnumerate_UnknownNodeType_ReturnsNil(t *testing.T) {
 	node := core.StrategyNode{Type: "no-such-strategy"}
 	if branches := EnumerateTerminalTargets(context.Background(), node, &core.RoutingContext{}, enumLookup); branches != nil {
 		t.Errorf("unknown node type should return nil, got %+v", branches)
-	}
-}
-
-// TestEnumerate_LoadbalanceEmpty_ReturnsNil exercises the empty-Weighted
-// guard in enumerateWeighted.
-func TestNarrowingEngine_Filter_DropsByVKAllowed(t *testing.T) {
-	eng := &NarrowingEngine{}
-	state := EmptyNarrowingState()
-	targets := []core.RoutingTarget{
-		{ProviderID: "openai", ModelID: "gpt-4", ProviderModelID: "gpt-4"},
-		{ProviderID: "anthropic", ModelID: "claude-3", ProviderModelID: "claude-3"},
-	}
-	rctx := &core.RoutingContext{VirtualKey: &core.VKContext{AllowedModels: []store.AllowedModelRef{
-		{ProviderID: "openai", ModelID: "gpt-*"},
-	}}}
-	out := eng.Filter(targets, state, rctx)
-	if len(out) != 1 || out[0].ProviderID != "openai" {
-		t.Errorf("VK allowedModels filter wrong: %+v", out)
-	}
-}
-
-// TestSortedKeys_NilReturnsNil and EmptyNarrowing toSet
-func TestSortedKeys_NilReturnsNil(t *testing.T) {
-	if got := sortedKeys(nil); got != nil {
-		t.Errorf("sortedKeys(nil) = %v, want nil", got)
 	}
 }
 

@@ -14,7 +14,7 @@ type SingleStrategy struct {
 
 func (s *SingleStrategy) Type() string { return "single" }
 
-func (s *SingleStrategy) Evaluate(ctx context.Context, node core.StrategyNode, _ *core.RoutingContext, trace *[]core.TraceEntry, _ int, _ RecurseFunc) ([]core.RoutingTarget, error) {
+func (s *SingleStrategy) Evaluate(ctx context.Context, node core.StrategyNode, _ *core.RoutingContext, trace *[]core.TraceEntry) ([]core.RoutingTarget, error) {
 	target, err := s.lookup(ctx, node.ProviderID, node.ModelID)
 	if err != nil {
 		*trace = append(*trace, core.TraceEntry{

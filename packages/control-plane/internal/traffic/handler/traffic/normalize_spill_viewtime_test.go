@@ -25,13 +25,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
 )
 
-// normSidecarCols mirrors GetTrafficEventNormalized's SELECT order.
-var normSidecarCols = []string{
-	"traffic_event_id", "request_normalized", "response_normalized",
-	"request_status", "response_status", "request_error_reason", "response_error_reason",
-	"request_redaction_spans", "response_redaction_spans", "normalize_version", "created_at",
-}
-
 // TestGetTrafficEventNormalized_SpillFetch_Recompute is tier (b): the request
 // body spilled out-of-band (inline NULL, spill ref present). The handler must
 // fetch the RAW spilled bytes and recompute — a spilled row normalizes exactly
@@ -53,7 +46,7 @@ func TestGetTrafficEventNormalized_SpillFetch_Recompute(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil, ""))
+			"application/json", "", spillRef, nil, "", "", false, false))
 	// No sidecar query expected — the spill fetch satisfies tier (b).
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-spill/normalized")
@@ -97,7 +90,7 @@ func TestGetTrafficEventNormalized_SpillFetch_RawSSE(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"", "text/event-stream", nil, spillRef, ""))
+			"", "text/event-stream", nil, spillRef, "", "", false, false))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-sse-spill/normalized")
 	c.SetParamNames("id")
@@ -120,11 +113,16 @@ func TestGetTrafficEventNormalized_SpillFetch_RawSSE(t *testing.T) {
 	}
 }
 
-// TestGetTrafficEventNormalized_SpillGone_FallsBackToSidecar is tier (c): the
-// spill object aged out to retention (Get errors). The fetch must degrade that
-// direction to empty WITHOUT erroring the endpoint, then the handler falls back
-// to the stored sidecar so the historical row stays visible.
-func TestGetTrafficEventNormalized_SpillGone_FallsBackToSidecar(t *testing.T) {
+// The spill object aged out to retention (Get errors). The fetch must degrade
+// that direction to empty WITHOUT erroring the endpoint — a gone blob is a
+// missing payload, not a server fault, and the caller must be able to tell the
+// difference.
+//
+// This used to end in a 200 carrying the stored traffic_event_normalized
+// sidecar. The table is being dropped, so the row is now genuinely unavailable
+// and the answer is 404. The property under test is unchanged and is the one
+// that mattered: the spill error does not become a 500.
+func TestGetTrafficEventNormalized_SpillGone_NotFoundNotError(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
 	spillRef := []byte(`{"backend":"test","key":"gone-k"}`)
 	h.spillStore = &testSpillStore{getErr: errStub("spill object aged out")}
@@ -134,12 +132,7 @@ func TestGetTrafficEventNormalized_SpillGone_FallsBackToSidecar(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil, ""))
-	mock.ExpectQuery(`FROM traffic_event_normalized`).
-		WithArgs("evt-gone").
-		WillReturnRows(pgxmock.NewRows(normSidecarCols).AddRow(
-			"evt-gone", []byte(`{"historical":true}`), nil,
-			sptr("ok"), nil, nil, nil, nil, nil, "1", tNowCov))
+			"application/json", "", spillRef, nil, "", "", false, false))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-gone/normalized")
 	c.SetParamNames("id")
@@ -147,15 +140,8 @@ func TestGetTrafficEventNormalized_SpillGone_FallsBackToSidecar(t *testing.T) {
 	if err := h.GetTrafficEventNormalized(c); err != nil {
 		t.Fatalf("GetTrafficEventNormalized: %v", err)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (graceful sidecar fallback), got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got trafficstore.TrafficEventNormalized
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if string(got.RequestNormalized) != `{"historical":true}` {
-		t.Fatalf("requestNormalized = %s, want the stored sidecar value", got.RequestNormalized)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("a spill object that aged out must read as 404, not %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -175,7 +161,7 @@ func TestGetTrafficEventNormalized_SpillIntegrityFail_GracefulUnavailable(t *tes
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil, ""))
+			"application/json", "", spillRef, nil, "", "", false, false))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-tamper").
 		WillReturnError(errNoRowsStub())
@@ -208,7 +194,7 @@ func TestGetTrafficEventNormalized_ResponseSpillGone_RequestInlineStill200(t *te
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			reqBody, "", nil, "",
-			"application/json", "text/event-stream", nil, respSpill, ""))
+			"application/json", "text/event-stream", nil, respSpill, "", "", false, false))
 	// No sidecar query: the inline request body satisfies tier (a) for the row.
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-mixed/normalized")
@@ -245,7 +231,7 @@ func TestGetTrafficEventNormalized_BadSpillRef_GracefulFallback(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", []byte("not-json"), nil, ""))
+			"application/json", "", []byte("not-json"), nil, "", "", false, false))
 	mock.ExpectQuery(`FROM traffic_event_normalized`).
 		WithArgs("evt-badref").
 		WillReturnError(errNoRowsStub())
@@ -273,33 +259,32 @@ func TestGetTrafficEventNormalized_SpillReadError_GracefulFallback(t *testing.T)
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "", spillRef, nil, ""))
-	mock.ExpectQuery(`FROM traffic_event_normalized`).
-		WithArgs("evt-readerr").
-		WillReturnRows(pgxmock.NewRows(normSidecarCols).AddRow(
-			"evt-readerr", []byte(`{"sidecar":true}`), nil,
-			sptr("ok"), nil, nil, nil, nil, nil, "1", tNowCov))
-
+			"application/json", "", spillRef, nil, "", "", false, false))
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-readerr/normalized")
 	c.SetParamNames("id")
 	c.SetParamValues("evt-readerr")
 	if err := h.GetTrafficEventNormalized(c); err != nil {
 		t.Fatalf("GetTrafficEventNormalized: %v", err)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (sidecar fallback after read error), got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "sidecar") {
-		t.Fatalf("expected sidecar fallback value, got %s", rec.Body.String())
+	// The read failed halfway through, so the bytes are untrustworthy and the
+	// direction degrades to empty. What must NOT happen is a 500 or a partial
+	// normalize over a truncated body; 404 is the honest answer now that there
+	// is no sidecar tier behind it.
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("a mid-read failure must degrade to 404, not %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
 // TestGetTrafficEventNormalized_DSARScrubbedBody_EmptyNormalized is the C1
 // regression: after a GDPR erasure, the subject's payload body is nulled
-// (dsarstore step 1: inline_*_body + *_spill_ref → NULL) and the sidecar
-// normalized copy is nulled (step 1b). This simulates that exact post-erasure DB
-// state and asserts the view-time recompute resurrects NO prompt/response text —
-// erasure correctness now rests on the body scrub.
+// (dsarstore step 1: inline_*_body + *_spill_ref → NULL). This simulates that
+// exact post-erasure DB state and asserts the view-time recompute resurrects NO
+// prompt/response text — erasure correctness rests entirely on the body scrub.
+//
+// Dropping traffic_event_normalized strengthens this property rather than
+// weakening it. Step 1b used to null the sidecar's normalized copy; with the
+// table gone there is no second copy to null, so the erasure has one surface
+// instead of two and this test no longer has to trust that step 1b ran.
 func TestGetTrafficEventNormalized_DSARScrubbedBody_EmptyNormalized(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
 	// A spill store IS wired, to prove the scrub (NULL spill ref) — not the
@@ -316,34 +301,26 @@ func TestGetTrafficEventNormalized_DSARScrubbedBody_EmptyNormalized(t *testing.T
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "gpt-4o", "/v1/chat/completions",
 			nil, "", nil, "",
-			"application/json", "application/json", nil, nil, ""))
-	// Post-erasure sidecar row: normalized copies NULL (step 1b). The row still
-	// exists (old-agent capture), but carries no text.
-	mock.ExpectQuery(`FROM traffic_event_normalized`).
-		WithArgs("evt-erased").
-		WillReturnRows(pgxmock.NewRows(normSidecarCols).AddRow(
-			"evt-erased", nil, nil,
-			nil, nil, nil, nil, nil, nil, "1", tNowCov))
-
+			"application/json", "application/json", nil, nil, "", "", false, false))
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-erased/normalized")
 	c.SetParamNames("id")
 	c.SetParamValues("evt-erased")
 	if err := h.GetTrafficEventNormalized(c); err != nil {
 		t.Fatalf("GetTrafficEventNormalized: %v", err)
 	}
-	// 200 with an empty projection (sidecar row present but scrubbed) is the
-	// expected post-erasure shape; the load-bearing assertion is "no PII".
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (scrubbed sidecar present), got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got trafficstore.TrafficEventNormalized
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got.RequestNormalized) != 0 || len(got.ResponseNormalized) != 0 {
-		t.Fatalf("PII RESURRECTED after erasure: req=%s resp=%s", got.RequestNormalized, got.ResponseNormalized)
+	// The scrubbed row has nothing left to project, so 404 is the post-erasure
+	// shape. The load-bearing assertion is the one below it: whatever the status,
+	// no erased text appears in the response.
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a fully scrubbed row, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "SENSITIVE PII") || strings.Contains(rec.Body.String(), "123-45-6789") {
 		t.Fatalf("erased PII leaked into view-time response: %s", rec.Body.String())
+	}
+	// The spill store is wired and holds the PII. Proving it was never consulted
+	// is what makes this a test of the scrub rather than of an absent backend.
+	if h.spillStore.(*testSpillStore).getCalls != 0 {
+		t.Fatalf("the spill store was consulted %d times after erasure; a NULL ref must never reach it",
+			h.spillStore.(*testSpillStore).getCalls)
 	}
 }

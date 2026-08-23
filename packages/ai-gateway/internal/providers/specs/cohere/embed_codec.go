@@ -11,6 +11,15 @@
 // Cohere v2 models do not require input_type; it is optional but recommended.
 // The embed-english-light-v2.0 and embed-multilingual-v2.0 lines are fixed-
 // dimension and do not accept a "dimensions" parameter.
+//
+// Embed v4 broke that "all Cohere models are fixed-dimension" assumption.
+// Probed against api.cohere.com/v2/embed on 2026-08-19: embed-v4.0 accepts
+// output_dimension 256/512/1024/1536 and returns a vector exactly that wide,
+// answers 422 for anything else ("[256 512 1024 1536] is supported"), and
+// defaults to 1536 when the field is omitted; embed-english-v3.0 answers 400
+// to the field's mere presence. So the parameter is carried for v4 and still
+// withheld from v3 — a fixed SET, which is why the catalog row enumerates
+// rather than declaring a min/max range.
 package cohere
 
 import (
@@ -31,6 +40,13 @@ import (
 // embed-multilingual-v3.0 (Cohere API docs, observed behavior).
 var cohereV3Regex = regexp.MustCompile(`^embed-(english|multilingual)-v3`)
 
+// cohereOutputDimensionRegex matches the Cohere embedding models that accept
+// an output_dimension. Generation-gated rather than an exact suffix list for
+// the same reason the DeepSeek thinking gate is: an exact list goes stale in
+// the direction that hurts, and the next v4-line model would silently drop the
+// caller's width again. v3 and v2 are excluded because they reject the field.
+var cohereOutputDimensionRegex = regexp.MustCompile(`^embed-v[4-9]`)
+
 // canonicalToCohereEmbed translates a canonical OpenAI-shape embedding request
 // into the Cohere /v1/embed wire body.
 //
@@ -39,8 +55,11 @@ var cohereV3Regex = regexp.MustCompile(`^embed-(english|multilingual)-v3`)
 //   - canonical input ([]string) → wire texts: [...]
 //   - canonical input (tokens)   → safety-net 400 (Cohere does not support token arrays)
 //   - canonical model            → wire model
-//   - canonical dimensions       → ignored (Cohere models are fixed-dimension)
-//   - canonical encoding_format  → if "float" → embedding_types: ["float"]; if "base64" → 400
+//   - canonical dimensions       → wire output_dimension on models that accept
+//     it (v4); withheld on v3/v2, which reject the field outright
+//   - canonical encoding_format  → embedding_types: ["float"] for both "float" and
+//     "base64"; Cohere's wire has no base64 type, so the ingress response layer
+//     re-encodes for a caller who asked for it (see the encoding_format branch below)
 //   - nexus.ext.cohere.input_type → wire input_type (required for v3 models)
 //   - nexus.ext.cohere.embedding_types → wire embedding_types (overrides encoding_format derivation)
 //   - nexus.ext.cohere.truncate   → wire truncate (NONE/START/END; default END)
@@ -135,6 +154,17 @@ func canonicalToCohereEmbed(canonicalBody []byte, target provcore.CallTarget) (p
 	}
 	wire, _ = sjson.SetBytes(wire, "texts", texts)
 
+	// -- dimensions → output_dimension (v4 and later only) --
+	// Withheld on v3/v2: they answer 400 to the field's presence, so sending it
+	// would turn a servable request into a failure. On v4 the opposite holds —
+	// dropping it returned a 1536-wide vector to a caller who asked for 512,
+	// and a vector of the wrong width is a wrong answer with no error attached,
+	// not a clamped one.
+	if d := gjson.GetBytes(canonicalBody, "dimensions"); d.Exists() && d.Int() > 0 &&
+		cohereOutputDimensionRegex.MatchString(model) {
+		wire, _ = sjson.SetBytes(wire, "output_dimension", d.Int())
+	}
+
 	// -- encoding_format → embedding_types (before ext override) --
 	var embeddingTypes []string
 	if ef := gjson.GetBytes(canonicalBody, "encoding_format"); ef.Exists() {
@@ -142,12 +172,14 @@ func canonicalToCohereEmbed(canonicalBody []byte, target provcore.CallTarget) (p
 		case "float", "":
 			embeddingTypes = []string{"float"}
 		case "base64":
-			// Cohere has no direct base64 embedding type equivalent.
-			return provcore.EncodeResult{}, &provcore.ProviderError{
-				Status:  http.StatusBadRequest,
-				Code:    provcore.CodeInvalidRequest,
-				Message: "cohere embed: encoding_format 'base64' has no Cohere wire equivalent; use 'float' or omit the field",
-			}
+			// Cohere's wire has no base64 embedding type, so ask for float and let
+			// the ingress response layer re-encode to base64 for the caller
+			// (honorEmbeddingEncodingFormat in internal/ingress/proxy). Rejecting
+			// used to be the safe choice, but the official OpenAI SDKs send
+			// encoding_format="base64" IMPLICITLY when the caller omits it, so a
+			// 400 here broke a stock `embeddings.create(model="embed-english-v3.0")`
+			// outright — observed on staging 2026-07-27.
+			embeddingTypes = []string{"float"}
 		}
 	}
 
@@ -226,13 +258,6 @@ func cohereEmbedResponseToCanonical(nativeBody, reqBody []byte) (provcore.Decode
 	embeddingsVal := gjson.GetBytes(nativeBody, "embeddings")
 
 	var floatRows [][]float64
-	// returnedEmbeddingType records which embedding type key was selected when
-	// the Cohere response carries a multi-type object (Case 2 below). It is
-	// stamped into nexus.ext.cohere.returned_embedding_type on the canonical
-	// body so audit consumers can see which representation was forwarded without
-	// inspecting the raw Cohere response. It is NOT emitted on the OpenAI wire
-	// shape returned to the caller — it is metadata only.
-	var returnedEmbeddingType string
 
 	if embeddingsVal.IsArray() {
 		// Case 1: flat array of float arrays — single embedding type.
@@ -249,16 +274,12 @@ func cohereEmbedResponseToCanonical(nativeBody, reqBody []byte) (provcore.Decode
 		})
 	} else if embeddingsVal.IsObject() {
 		// Case 2: object with per-type keys — prefer "float", else first key.
-		// Record the selected type name for audit metadata.
 		floatKey := embeddingsVal.Get("float")
-		if floatKey.IsArray() {
-			returnedEmbeddingType = "float"
-		} else {
+		if !floatKey.IsArray() {
 			// Fall back to first key.
-			embeddingsVal.ForEach(func(k, v gjson.Result) bool {
+			embeddingsVal.ForEach(func(_, v gjson.Result) bool {
 				if v.IsArray() {
 					floatKey = v
-					returnedEmbeddingType = k.Str
 					return false // stop after first
 				}
 				return true
@@ -317,18 +338,6 @@ func cohereEmbedResponseToCanonical(nativeBody, reqBody []byte) (provcore.Decode
 	canonicalBytes, err := json.Marshal(canonical)
 	if err != nil {
 		return provcore.DecodeResult{}, fmt.Errorf("cohere embed response: marshal canonical: %w", err)
-	}
-
-	// Stamp the returned embedding type into nexus.ext.cohere.returned_embedding_type
-	// when a multi-type response object was present. This field is for audit and
-	// downstream metadata only — it is NOT forwarded to the OpenAI-shape wire
-	// response (EncodeOpenAIEmbeddingsResponse strips nexus.ext.* before sending
-	// the canonical body back to the caller).
-	if returnedEmbeddingType != "" {
-		stamped, stampErr := canonicalext.Set(canonicalBytes, "cohere", "returned_embedding_type", returnedEmbeddingType)
-		if stampErr == nil {
-			canonicalBytes = stamped
-		}
 	}
 
 	// Extract usage via the shared normalizer path.

@@ -621,8 +621,12 @@ func TestBuildResponseRecord_IdentityStamps(t *testing.T) {
 	if rec.ProviderID != "p-openai" || rec.ModelID != "m-rt" {
 		t.Errorf("provider/model stamps: %q/%q", rec.ProviderID, rec.ModelID)
 	}
-	if rec.TraceID != "sess-uuid-1" || rec.RequestID == "" || rec.RequestID == rec.TraceID {
-		t.Errorf("row identity: id=%q trace=%q", rec.RequestID, rec.TraceID)
+	// Each row's traffic_event id is minted by the audit writer, so RequestID
+	// carries the upgrade request's real correlation value instead of a
+	// synthetic one; TraceID stays the server-minted session that groups the
+	// session's rows.
+	if rec.TraceID != "sess-uuid-1" || rec.RequestID != "rid-upgrade-1" {
+		t.Errorf("row identity: requestId=%q trace=%q", rec.RequestID, rec.TraceID)
 	}
 	if rec.LatencyMs != 42 || rec.UpstreamTotalMs == nil || *rec.UpstreamTotalMs != 42 {
 		t.Errorf("latency stamps: %d / %v", rec.LatencyMs, rec.UpstreamTotalMs)

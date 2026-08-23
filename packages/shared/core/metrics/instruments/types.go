@@ -66,6 +66,28 @@ const (
 	MetricEmbeddingCostUSD = "embedding_cost_usd"
 	MetricAIGuardCostUSD   = "ai_guard_cost_usd"
 
+	// Vendor-spend reconciliation series. vendor_spend_usd is every dollar the
+	// gateway caused a vendor to charge, attributed to the provider ACTUALLY
+	// charged — so one traffic_event row can contribute to SEVERAL
+	// routed_provider dimensions (customer traffic to the provider that served
+	// the request, the smart-router call to the router model's own provider,
+	// the L2 embedding to the embedding model's provider). Emitted only on
+	// `routed_provider=<id>` dimensions; there is deliberately no global
+	// dimension, because summing per-provider rows is the reconciliation
+	// total and a global row would double it.
+	//
+	// vendor_spend_internal_usd is the internal-ops subset of the same total
+	// (smart-router + L2 embedding + ai-guard classifier), so a reconciliation
+	// report can separate estimator error from internal overhead. Both are
+	// plain additive sums, so the merge cascade's Sum default carries them
+	// from 5m → 1h → 1d → 1mo unchanged.
+	//
+	// NOT quota-bearing: billed_cost_usd remains the only series the live
+	// quota counter and its boot backfill consume. Read by the
+	// vendor-bill-reconcile job.
+	MetricVendorSpendUSD         = "vendor_spend_usd"
+	MetricVendorSpendInternalUSD = "vendor_spend_internal_usd"
+
 	// Normalisation pipeline metrics.
 	MetricNormalisedStripCount = "normalised_strip_count"
 	MetricNormalisedStripBytes = "normalised_strip_bytes"

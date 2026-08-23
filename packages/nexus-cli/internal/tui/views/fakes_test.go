@@ -296,7 +296,3 @@ func keyRunes(s string) tea.KeyPressMsg {
 	}
 	return k
 }
-
-func testSessionProd() kit.Session { return kit.Session{EnvName: "prod", IsProd: true} }
-
-func testSessionLocal() kit.Session { return kit.Session{EnvName: "local"} }

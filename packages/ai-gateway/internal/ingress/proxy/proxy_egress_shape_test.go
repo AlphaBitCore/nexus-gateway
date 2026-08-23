@@ -201,6 +201,26 @@ func TestServeProxy_PrimaryLeg_StripsNexusThinking(t *testing.T) {
 	}
 }
 
+func TestServeProxy_PrimaryLeg_IdentityStripsProviderCarriers(t *testing.T) {
+	realBridge := canonicalbridge.New(nil)
+	fexec := &fakeExecutor{Result: &executor.ExecutionResult{StatusCode: http.StatusOK, Body: []byte(egressCanonicalBody), Target: egressTarget("openai")}}
+	fb := &fakeBridge{stripInternalCarriers: realBridge.StripInternalCarriersForTarget}
+	deps := makeFakeDeps(t, fexec, fb)
+	rec := httptest.NewRecorder()
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"assistant","reasoning_content":"why","nexus_thinking":[{"thinking":"why","signature":"sig-a"}],"tool_calls":[{"type":"function","function":{"name":"lookup","arguments":"{}","thought_signature":"sig-gem"}}]}]}`)
+	req := freshChatRequest(t, string(body))
+	NewHandler(deps).ServeProxy(Ingress{WireShape: typology.WireShapeOpenAIChat, BodyFormat: provcore.FormatOpenAI}).ServeHTTP(rec, req)
+	if fexec.PreparedCalls == 0 {
+		t.Fatalf("primary identity leg did not fire (status=%d body=%s)", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(fexec.LastPreparedBody, []byte("nexus_thinking")) || bytes.Contains(fexec.LastPreparedBody, []byte("thought_signature")) {
+		t.Fatalf("identity OpenAI primary leg leaked provider carriers: %s", fexec.LastPreparedBody)
+	}
+	if !bytes.Contains(fexec.LastPreparedBody, []byte("reasoning_content")) {
+		t.Fatalf("universal reasoning_content was stripped: %s", fexec.LastPreparedBody)
+	}
+}
+
 func TestServeProxy_Direct_NonOpenAIIngress_ReshapesToIngress(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

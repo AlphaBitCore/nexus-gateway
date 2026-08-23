@@ -73,10 +73,10 @@ func TestLoadModels_NilPricesAndNullableSizes(t *testing.T) {
 	mock, l := newMockLayer(t, Config{})
 	// nil prices, NULL maxCtx/maxOut, "" code (excluded from byCode).
 	row := makeModelRow("m-nil", "", "p1", true)
-	row[11] = (*string)(nil)
-	row[12] = (*string)(nil)
-	row[13] = (*string)(nil)
-	row[14] = (*string)(nil)
+	row[modelColIdx("inputPricePerMillion")] = (*string)(nil)
+	row[modelColIdx("outputPricePerMillion")] = (*string)(nil)
+	row[modelColIdx("cachedInputReadPricePerMillion")] = (*string)(nil)
+	row[modelColIdx("cachedInputWritePricePerMillion")] = (*string)(nil)
 	mock.ExpectQuery(`FROM "Model" m`).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(row...))
 	out, err := l.loadModels(context.Background())

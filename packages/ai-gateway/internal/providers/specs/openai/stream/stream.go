@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
@@ -97,7 +98,52 @@ func (s *openaiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 		break
 	}
 
+	if pe := streamFrameError(ev.Data); pe != nil {
+		s.done = true
+		return provcore.Chunk{}, pe
+	}
+
 	return chatChunkFromFrame(ev), nil
+}
+
+// streamFrameError reports an OpenAI-compatible upstream that signalled a
+// mid-stream failure by sending an error envelope as a data frame rather
+// than by closing the connection. Returns nil for an ordinary chunk.
+//
+// Without this arm the frame fell through to [chatChunkFromFrame], which
+// reads only `choices` and `usage`, and decoded to a chunk carrying no
+// content and no error. The stream then ended normally, so the caller
+// received a truncated answer that was indistinguishable from a short
+// complete one — the failure §3a Rule 10 forbids.
+//
+// The canonical code is always upstream_error, never the class the vendor's
+// envelope would normalize to on a fresh request. By the time a data frame
+// arrives the response is committed at HTTP 200 with bytes already sent, so
+// a code the executor treats as retryable would be answering a question that
+// is no longer open. The vendor's own type survives on Type for triage.
+func streamFrameError(data []byte) *provcore.ProviderError {
+	errObj := gjson.GetBytes(data, "error")
+	if !errObj.IsObject() {
+		return nil
+	}
+	pe := &provcore.ProviderError{
+		Status:  http.StatusBadGateway,
+		Code:    provcore.CodeUpstreamError,
+		Type:    firstNonEmptyStr(errObj.Get("type").String(), errObj.Get("code").String()),
+		Message: errObj.Get("message").String(),
+		Raw:     data,
+	}
+	if pe.Message == "" {
+		pe.Message = "upstream sent an error frame mid-stream with no message"
+	}
+	return pe
+}
+
+func firstNonEmptyStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // chatChunkFromFrame decodes one non-empty OpenAI chat-completions SSE data

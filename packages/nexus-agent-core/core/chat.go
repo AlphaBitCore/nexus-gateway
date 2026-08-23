@@ -75,7 +75,7 @@ func (c *Client) chatStreamOnce(ctx context.Context, vkSecret string, req ChatRe
 	if err != nil {
 		return nil, err
 	}
-	defer body.Close()
+	defer body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 	return scanChatSSE(body, onDelta)
 }
 
@@ -109,7 +109,7 @@ func (c *Client) openChatStream(ctx context.Context, vkSecret string, req ChatRe
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespBody))
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 		return nil, parseAPIError(resp.StatusCode, body)
 	}
 	return resp.Body, nil
@@ -135,7 +135,7 @@ func (c *Client) GatewayModels(ctx context.Context, vkSecret string) ([]string, 
 	if err != nil {
 		return nil, &APIError{kind: ErrTransport, Message: err.Error()}
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespBody))
 	if resp.StatusCode >= 400 {
 		return nil, parseAPIError(resp.StatusCode, body)
@@ -199,7 +199,7 @@ func (c *Client) chatToolStreamOnce(ctx context.Context, vkSecret string, req Ch
 	if err != nil {
 		return nil, err
 	}
-	defer body.Close()
+	defer body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 	return scanChatToolSSE(body, onDelta, onReasoning)
 }
 
@@ -218,7 +218,7 @@ func retryableStreamDrop(err error) bool {
 	// envelope carries a non-zero Status even when mapped to ErrTransport — the gateway
 	// already processed the request (and may have billed it), so it must NOT be retried,
 	// even if its error text happens to contain a connection-drop word.
-	if ae.kind != ErrTransport || ae.Status != 0 {
+	if !errors.Is(ae.kind, ErrTransport) || ae.Status != 0 {
 		return false
 	}
 	msg := ae.Message

@@ -60,10 +60,13 @@ func (n *OpenAIAudioSpeechNormalizer) Normalize(_ context.Context, raw []byte, m
 			NormalizeVersion: core.SchemaVersion,
 			Protocol:         "openai-audio-speech",
 			DetectedSpec:     "openai-audio-speech",
-			HTTP: &core.HTTPPayload{BodyView: &core.HTTPBodyView{BinaryRef: &core.BinaryRef{
-				Size:        int64(len(raw)),
-				ContentType: mime,
-				SHA256:      hex.EncodeToString(sum[:]),
+			HTTP: &core.HTTPPayload{BodyView: &core.HTTPBodyView{MediaRef: &core.MediaRef{
+				Modality:  modalityFromMime(mime),
+				Mime:      mime,
+				SizeBytes: int64(len(raw)),
+				SHA256:    hex.EncodeToString(sum[:]),
+				Source:    core.MediaCaptured,
+				Locator:   "body",
 			}}},
 		}, nil
 	default:

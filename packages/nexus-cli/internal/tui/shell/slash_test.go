@@ -153,7 +153,7 @@ func TestSlashPaletteArrowsClampWithinMatches(t *testing.T) {
 	}
 	// Down past the last match clamps at the bottom.
 	last := len(p.matches) - 1
-	for i := 0; i < len(p.matches)+2; i++ {
+	for range len(p.matches) + 2 {
 		p, _ = p.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if p.cursor != last {

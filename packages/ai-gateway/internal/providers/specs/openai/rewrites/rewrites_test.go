@@ -32,6 +32,15 @@ func TestRejectsSamplingParams_Boundaries(t *testing.T) {
 		{"gpt-5", true},
 		{"gpt-5-mini", true},
 		{"gpt-5.9", true},
+		// Generations past 5 that do not exist yet. The rejecting set is
+		// "generation >= 5", not the literal "gpt-5" string: a lineage nobody
+		// has probed must land INSIDE the strip, or its first caller pays the
+		// 400 (kimi-k2.7 reached callers exactly that way).
+		{"gpt-6", true},
+		{"gpt-6-mini", true},
+		{"gpt-6.2-nova", true},
+		{"gpt-7", true},
+		{"gpt-12", true},
 		// Probed 200 on both wires: the gpt-5.4 carve-out.
 		{"gpt-5.4", false},
 		{"gpt-5.4-mini", false},
@@ -70,10 +79,19 @@ func TestNeedsMaxTokensRename_Boundaries(t *testing.T) {
 		{"o1", true},
 		{"o3-mini", true},
 		{"o4-mini", true},
+		// Same generation test as the sampling strip: an unreleased gpt-6 is
+		// the same reasoning lineage and needs the same rename, or it 400s on
+		// a parameter name we could have translated.
+		{"gpt-6", true},
+		{"gpt-6-mini", true},
+		{"gpt-7.1", true},
 		// Untouched families.
 		{"gpt-4o", false},
 		{"gpt-4.1", false},
+		{"gpt-4.5-preview", false},
 		{"openai-gpt4", false},
+		{"gpt-", false},
+		{"gpt-x", false},
 		{"", false},
 	}
 	for _, tc := range cases {
@@ -109,6 +127,7 @@ func TestOpenAIContract_Shape(t *testing.T) {
 		{"temperature", "", "", ""},
 		{"top_p", "", "", ""},
 		{"reasoning_effort", "", `"none"`, "tools"},
+		{"modalities", "", "", ""},
 	}
 	if len(c.Chat) != len(chatWant) {
 		t.Fatalf("chat rules: got %d, want %d", len(c.Chat), len(chatWant))
@@ -202,7 +221,18 @@ func TestOpenAIContract_SamplingGates(t *testing.T) {
 			continue
 		}
 		got := r.Applies("gpt-5.4")
-		want := r.Field == "max_tokens" // only the rename touches gpt-5.4
+		// What this test guards is the SAMPLING carve-out: gpt-5.4 accepts
+		// temperature and top_p, so those two rules must not gate-match it.
+		// Every other chat rule legitimately does — the max_tokens rename, and
+		// the modalities strip, which was added after a replay showed gpt-5.4
+		// answering 400 "Unknown parameter: 'modalities'" to real callers.
+		//
+		// Written as "not a sampling field" rather than "is max_tokens", which
+		// is what it was: that phrasing made every future rule an assertion
+		// failure regardless of whether the carve-out still held, so it would
+		// have been relaxed under pressure rather than because the guarantee
+		// changed.
+		want := r.Field != "temperature" && r.Field != "top_p"
 		if got != want {
 			t.Errorf("chat rule %s: Applies(gpt-5.4) = %v, want %v", r.Field, got, want)
 		}
@@ -216,6 +246,39 @@ func TestOpenAIContract_SamplingGates(t *testing.T) {
 	for _, r := range c.Responses {
 		if r.Applies("gpt-5.4") {
 			t.Errorf("responses rule %s must not gate-match gpt-5.4 (probed 200)", r.Field)
+		}
+	}
+}
+
+// TestRejectsModalities_TheAudioCarveOutIsSubstringNotPrefix.
+//
+// Measured on the live gateway: 17 models answered "Unknown parameter:
+// 'modalities'", across gpt-5.x and the o-series. Audio models are excluded
+// EXPLICITLY rather than left to the generation test — stripping the field
+// there turns a working request into "This model requires that either input
+// content or output modality contain audio".
+//
+// Substring, not prefix, is the load-bearing part. A prefix catches today's
+// "gpt-audio-*" and misses a future "gpt-6-audio", which WOULD match the
+// generation test and lose the one field it cannot run without.
+func TestRejectsModalities_TheAudioCarveOutIsSubstringNotPrefix(t *testing.T) {
+	for _, m := range []string{"gpt-5.4", "gpt-5.4-mini", "gpt-5.6-luna", "o1", "o3-mini", "o4-mini"} {
+		if !rewrites.RejectsModalities(m) {
+			t.Errorf("%s: modalities is forwarded to a model measured to answer "+
+				"\"Unknown parameter: 'modalities'\"", m)
+		}
+	}
+	for _, m := range []string{"gpt-audio-mini", "gpt-6-audio", "gpt-4o-audio-preview"} {
+		if rewrites.RejectsModalities(m) {
+			t.Errorf("%s: modalities is stripped from an audio model, which then answers "+
+				"\"This model requires that either input content or output modality contain "+
+				"audio\" — a working request turned into a 400 by us", m)
+		}
+	}
+	for _, m := range []string{"gpt-4o", "gpt-4-turbo", "text-embedding-3-small"} {
+		if rewrites.RejectsModalities(m) {
+			t.Errorf("%s: a field is stripped from a model that was never measured to "+
+				"reject it", m)
 		}
 	}
 }

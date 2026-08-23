@@ -42,6 +42,12 @@ func (ErrorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 	case "UNAUTHENTICATED", "PERMISSION_DENIED":
 		pe.Code = provcore.CodeAuthFailed
 	case "RESOURCE_EXHAUSTED":
+		// Deliberately NOT split into a quota-exhausted classification. Google
+		// uses this one status for both a per-minute rate limit and a spent
+		// project quota, and words both as "Quota exceeded for quota metric",
+		// so there is no discriminator to read — not in the status, not in the
+		// type, not in the message. Guessing would move a request off a
+		// provider that a second of backoff would have served.
 		pe.Code = provcore.CodeRateLimited
 		if ra := ParseRetryAfter(headers.Get("retry-after")); ra != nil {
 			pe.RetryAfter = ra
@@ -89,4 +95,28 @@ func ParseRetryAfter(v string) *time.Duration {
 		return &d
 	}
 	return nil
+}
+
+// IsStaleCacheRefError reports whether a Gemini 403 response body carries the
+// stale-cachedContent error signature. Gemini phrases the message a few ways
+// across API versions ("CachedContent not found", "permission denied" with the
+// cache name, "GenerateContentRequest: cachedContent not found"); we match on
+// the substrings that are stable across all of them, keeping false-positives
+// low. Recognising Gemini's wire-error shape is a codec concern — the proxy
+// only asks "is this the stale-cache signal?" and reacts (invalidate the
+// cached ref); it never carries the Gemini prose itself.
+func IsStaleCacheRefError(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	// gjson would be more rigorous but the error payload shape varies;
+	// substring match on the lowercase body is robust to wrapping.
+	low := strings.ToLower(string(body))
+	if strings.Contains(low, "cachedcontent not found") ||
+		strings.Contains(low, "cached content not found") ||
+		strings.Contains(low, "cachedcontents/") && strings.Contains(low, "not found") ||
+		strings.Contains(low, "cachedcontents/") && strings.Contains(low, "permission denied") {
+		return true
+	}
+	return false
 }

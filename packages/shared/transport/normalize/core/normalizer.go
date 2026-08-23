@@ -11,8 +11,11 @@ import (
 // as a re-normalization candidate, so historical rows heal automatically
 // — no data migration. Version 2: decoder-unification payload shape
 // (stream-fold content blocks, http-sse frame projections, frame-coverage
-// confidence, fallback provenance stamps).
-const SchemaVersion = "2"
+// confidence, fallback provenance stamps). Version 3: media unification —
+// one MediaRef with a locator into the captured body replaces BinaryRef,
+// and "media" replaces the "image_ref" block type so audio, video and
+// files stop masquerading as images.
+const SchemaVersion = "3"
 
 // ErrUnsupported is returned by a Normalizer when its input does not
 // match the protocol / content-type this normalizer handles. Callers
@@ -56,11 +59,6 @@ type Meta struct {
 	// response (SSE, chunked event stream). Normalizers fold chunks
 	// into the final assembled payload.
 	Stream bool
-
-	// SpillRef, when non-nil, addresses the original raw bytes in the
-	// spill store; AI image / binary content references this rather
-	// than inlining bytes into the normalized JSON.
-	SpillRef *BinaryRef
 }
 
 // Normalizer transforms raw captured bytes into a NormalizedPayload.

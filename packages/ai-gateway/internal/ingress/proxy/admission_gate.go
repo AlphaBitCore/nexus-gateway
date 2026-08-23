@@ -143,17 +143,19 @@ var generativeCapShedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 // known here, before any per-request state exists.
 func writeOverloaded(w http.ResponseWriter, ingress provcore.Format) {
 	const msg = "gateway is at capacity, retry shortly"
-	var body []byte
-	if ingress != "" && !ingress.IsOpenAIFamily() {
-		// CodeRateLimited maps to each envelope's semantically-correct type
-		// (anthropic "rate_limit_error", gemini RESOURCE_EXHAUSTED) so SDK
-		// classification matches the OpenAI-shape fallback below.
-		body = envelope.EncodeErrorEnvelopeForIngress(ingress, ingress, &provcore.ProviderError{
-			Status: http.StatusTooManyRequests, Code: provcore.CodeRateLimited, Message: msg,
-		})
-	} else {
-		body = []byte(`{"error":{"message":"` + msg + `","type":"rate_limit_error","code":"gateway_overloaded"}}`)
-	}
+	// One code on every route, one decision point for the shape. This used to
+	// branch on IsOpenAIFamily and substitute provcore.CodeRateLimited on the
+	// other side — which meant a caller shed on /v1/rerank (mounted as cohere)
+	// received lower_snake "rate_limited" on a surface whose contract is
+	// UPPER_SNAKE, and a client branching on GATEWAY_OVERLOADED never saw it.
+	//
+	// The substitution was defended as giving each envelope its
+	// semantically-correct type. Measured, it does not: both codes yield
+	// anthropic rate_limit_error and gemini RESOURCE_EXHAUSTED, because those
+	// mappers derive the type from the STATUS. It changed nothing a caller sees
+	// except the one field that names the refusal.
+	body := envelope.GatewayErrorBodyForIngress(
+		ingress, http.StatusTooManyRequests, "GATEWAY_OVERLOADED", msg, "")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Retry-After", "1")
 	w.WriteHeader(http.StatusTooManyRequests)

@@ -33,17 +33,22 @@ type AgentAuditAPI struct {
 
 // AgentAuditEvent is the event format uploaded by the Agent.
 type AgentAuditEvent struct {
-	ID            string `json:"id"`
-	TraceID       string `json:"traceId,omitempty"`
-	Timestamp     string `json:"timestamp"`
-	SourceIP      string `json:"sourceIp,omitempty"`
-	TargetHost    string `json:"targetHost,omitempty"`
-	Method        string `json:"method,omitempty"`
-	Path          string `json:"path,omitempty"`
-	StatusCode    int    `json:"statusCode,omitempty"`
-	LatencyMs     int    `json:"latencyMs,omitempty"`
-	SourceProcess string `json:"sourceProcess,omitempty"`
-	Action        string `json:"action,omitempty"`
+	ID      string `json:"id"`
+	TraceID string `json:"traceId,omitempty"`
+	// The CALLER's own request id, carried up from the agent. Distinct from
+	// TraceID, which is ours and groups a unit of work. Without it here the
+	// agent captures the value, stores it, uploads it, and the Hub drops it
+	// on the floor — which is the same silence as never capturing it.
+	ExternalRequestID string `json:"externalRequestId,omitempty"`
+	Timestamp         string `json:"timestamp"`
+	SourceIP          string `json:"sourceIp,omitempty"`
+	TargetHost        string `json:"targetHost,omitempty"`
+	Method            string `json:"method,omitempty"`
+	Path              string `json:"path,omitempty"`
+	StatusCode        int    `json:"statusCode,omitempty"`
+	LatencyMs         int    `json:"latencyMs,omitempty"`
+	SourceProcess     string `json:"sourceProcess,omitempty"`
+	Action            string `json:"action,omitempty"`
 	// wire keys are requestHookDecision/Reason/ReasonCode (agent
 	// AuditEventToMap stamps the request-stage hook decision under those
 	// keys; emit envelope below also uses the request* prefix for
@@ -182,7 +187,6 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 	for _, evt := range events {
 		envelope := map[string]any{
 			"id":            evt.ID,
-			"traceId":       evt.TraceID,
 			"timestamp":     evt.Timestamp,
 			"source":        "agent",
 			"sourceIp":      evt.SourceIP,
@@ -230,6 +234,25 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 			"apiKeyFingerprint": "",
 			"thingId":           thingID,
 			"thingName":         thingName,
+		}
+		// Both ids are stamped only when the agent actually has one, so an
+		// absent id lands as SQL NULL rather than the empty string.
+		//
+		// Three things in this repo assume that. The ops-metrics writers say
+		// so outright — they write NULL "so admin queries can filter WHERE
+		// trace_id IS NULL cleanly". The ai-gateway producer's message uses
+		// omitempty and yields NULL. And the traffic_event trace index is
+		// PARTIAL on `WHERE trace_id IS NOT NULL`, so '' rows would enter an
+		// index they can never be found through.
+		//
+		// A column that is NULL from one producer and '' from another makes
+		// IS NULL disagree by source — for two fields whose entire purpose is
+		// joining across systems.
+		if evt.TraceID != "" {
+			envelope["traceId"] = evt.TraceID
+		}
+		if evt.ExternalRequestID != "" {
+			envelope["externalRequestId"] = evt.ExternalRequestID
 		}
 		if evt.ErrorCode != "" {
 			envelope["errorCode"] = evt.ErrorCode

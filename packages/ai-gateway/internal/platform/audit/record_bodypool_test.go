@@ -53,7 +53,7 @@ func TestRequestBodyPool_ReclaimedAfterPublish_NoCorruption(t *testing.T) {
 	if !bytes.Equal(body, src) {
 		t.Fatal("AcquireRequestBody returned wrong bytes")
 	}
-	rec := &Record{RequestID: "r1", Timestamp: time.Unix(1700000000, 0).UTC(), RequestBody: body, RequestAction: decision.ActionApprove, ModelName: "m1", StatusCode: 200, Path: "/v1/x"}
+	rec := &Record{RequestID: "r1", TraceID: "r1", Timestamp: time.Unix(1700000000, 0).UTC(), RequestBody: body, RequestAction: decision.ActionApprove, ModelName: "m1", StatusCode: 200, Path: "/v1/x"}
 	rec.AttachPooledRequestBody(h)
 
 	w.publishBatchOn(0, []*Record{rec})
@@ -69,7 +69,7 @@ func TestRequestBodyPool_ReclaimedAfterPublish_NoCorruption(t *testing.T) {
 		for _, p := range call {
 			for _, line := range splitLines(p) {
 				var msg mq.TrafficEventMessage
-				if json.Unmarshal(line, &msg) == nil && msg.ID == "r1" {
+				if json.Unmarshal(line, &msg) == nil && msg.TraceID == "r1" {
 					found = true
 					if !bytes.Equal(msg.RequestBody.InlineBytes, src) {
 						t.Fatalf("published body corrupted by pool: got %d bytes", len(msg.RequestBody.InlineBytes))
@@ -92,7 +92,7 @@ func TestRequestBodyPool_ReclaimedOnFailure_RetryByteLossless(t *testing.T) {
 	w := NewWriter(failingBatchProducer{}, "q", nil, slog.Default())
 	origBody := []byte(`{"model":"mf","pad":"` + strings.Repeat("b", 512) + `"}`)
 	body, h := AcquireRequestBody(origBody)
-	rec := &Record{RequestID: "rf", Timestamp: time.Unix(1700000000, 0).UTC(), RequestBody: body, RequestAction: decision.ActionApprove, ModelName: "mf", StatusCode: 200, Path: "/v1/x"}
+	rec := &Record{RequestID: "rf", TraceID: "rf", Timestamp: time.Unix(1700000000, 0).UTC(), RequestBody: body, RequestAction: decision.ActionApprove, ModelName: "mf", StatusCode: 200, Path: "/v1/x"}
 	rec.AttachPooledRequestBody(h)
 
 	// Size the bounded queue so handlePublishFailure re-queues onto recCh rather
@@ -133,7 +133,7 @@ func TestRequestBodyPool_ReclaimedOnFailure_RetryByteLossless(t *testing.T) {
 		for _, p := range call {
 			for _, line := range splitLines(p) {
 				var msg mq.TrafficEventMessage
-				if json.Unmarshal(line, &msg) == nil && msg.ID == "rf" {
+				if json.Unmarshal(line, &msg) == nil && msg.TraceID == "rf" {
 					found = true
 					if !bytes.Equal(msg.RequestBody.InlineBytes, origBody) {
 						t.Fatalf("retry published wrong body (bleed/loss): got %q", msg.RequestBody.InlineBytes)
@@ -166,7 +166,7 @@ func TestResponseBodyPool_ReclaimedAfterPublish_NoCorruption(t *testing.T) {
 	rh := AcquireResponseBuffer()
 	respSrc := []byte("data: " + strings.Repeat("r", 2048) + "\n\n")
 	*rh = append(*rh, respSrc...)
-	rec := &Record{RequestID: "rr1", Timestamp: time.Unix(1700000000, 0).UTC(), ResponseBody: *rh, ResponseAction: decision.ActionApprove, ModelName: "m1", StatusCode: 200, Path: "/v1/x"}
+	rec := &Record{RequestID: "rr1", TraceID: "rr1", Timestamp: time.Unix(1700000000, 0).UTC(), ResponseBody: *rh, ResponseAction: decision.ActionApprove, ModelName: "m1", StatusCode: 200, Path: "/v1/x"}
 	rec.AttachPooledResponseBody(rh)
 
 	w.publishBatchOn(0, []*Record{rec})
@@ -182,7 +182,7 @@ func TestResponseBodyPool_ReclaimedAfterPublish_NoCorruption(t *testing.T) {
 		for _, p := range call {
 			for _, line := range splitLines(p) {
 				var msg mq.TrafficEventMessage
-				if json.Unmarshal(line, &msg) == nil && msg.ID == "rr1" {
+				if json.Unmarshal(line, &msg) == nil && msg.TraceID == "rr1" {
 					found = true
 					if !bytes.Equal(msg.ResponseBody.InlineBytes, respSrc) {
 						t.Fatalf("published response body corrupted by pool: got %d bytes", len(msg.ResponseBody.InlineBytes))
@@ -205,7 +205,7 @@ func TestResponseBodyPool_ReclaimedOnFailure_RetryByteLossless(t *testing.T) {
 	rh := AcquireResponseBuffer()
 	origResp := []byte("data: " + strings.Repeat("k", 512) + "\n\n")
 	*rh = append(*rh, origResp...)
-	rec := &Record{RequestID: "rrf", Timestamp: time.Unix(1700000000, 0).UTC(), ResponseBody: *rh, ResponseAction: decision.ActionApprove, ModelName: "mf", StatusCode: 200, Path: "/v1/x"}
+	rec := &Record{RequestID: "rrf", TraceID: "rrf", Timestamp: time.Unix(1700000000, 0).UTC(), ResponseBody: *rh, ResponseAction: decision.ActionApprove, ModelName: "mf", StatusCode: 200, Path: "/v1/x"}
 	rec.AttachPooledResponseBody(rh)
 
 	// Size the bounded queue so the failed record re-queues onto recCh.
@@ -236,7 +236,7 @@ func TestResponseBodyPool_ReclaimedOnFailure_RetryByteLossless(t *testing.T) {
 		for _, p := range call {
 			for _, line := range splitLines(p) {
 				var msg mq.TrafficEventMessage
-				if json.Unmarshal(line, &msg) == nil && msg.ID == "rrf" {
+				if json.Unmarshal(line, &msg) == nil && msg.TraceID == "rrf" {
 					found = true
 					if !bytes.Equal(msg.ResponseBody.InlineBytes, origResp) {
 						t.Fatalf("retry published wrong response body (bleed/loss): got %q", msg.ResponseBody.InlineBytes)

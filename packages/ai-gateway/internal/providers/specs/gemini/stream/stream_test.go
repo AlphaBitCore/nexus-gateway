@@ -100,7 +100,7 @@ func TestStreamDecoder_thoughtPart_reasoningDelta(t *testing.T) {
 // functionCall → ToolCallDeltas
 
 func TestStreamDecoder_functionCallPart_toolCallDeltaEmitted(t *testing.T) {
-	payload := `{"candidates":[{"index":0,"content":{"parts":[{"functionCall":{"id":"fc_1","name":"search","args":{"q":"hello"}}}],"role":"model"}}]}`
+	payload := `{"candidates":[{"index":0,"content":{"parts":[{"functionCall":{"id":"fc_1","name":"search","args":{"q":"hello"}}}],"role":"model"},"finishReason":"STOP"}]}`
 	sess := openSession(t, sseData(payload))
 	chunk, err := sess.Next(context.Background())
 	if err != nil {
@@ -120,7 +120,7 @@ func TestStreamDecoder_functionCallPart_toolCallDeltaEmitted(t *testing.T) {
 
 func TestStreamDecoder_functionCallPart_noID_syntheticIDGenerated(t *testing.T) {
 	// No id in functionCall → synthetic call_<sha1> id.
-	payload := `{"candidates":[{"index":0,"content":{"parts":[{"functionCall":{"name":"calc","args":{}}}],"role":"model"}}]}`
+	payload := `{"candidates":[{"index":0,"content":{"parts":[{"functionCall":{"name":"calc","args":{}}}],"role":"model"},"finishReason":"STOP"}]}`
 	sess := openSession(t, sseData(payload))
 	chunk, err := sess.Next(context.Background())
 	if err != nil {
@@ -136,7 +136,7 @@ func TestStreamDecoder_functionCallPart_noID_syntheticIDGenerated(t *testing.T) 
 
 func TestStreamDecoder_functionCallPart_emptyArgs_defaultsToEmptyObject(t *testing.T) {
 	// functionCall with no args → "{}" default.
-	payload := `{"candidates":[{"index":0,"content":{"parts":[{"functionCall":{"id":"fc_2","name":"fn"}}],"role":"model"}}]}`
+	payload := `{"candidates":[{"index":0,"content":{"parts":[{"functionCall":{"id":"fc_2","name":"fn"}}],"role":"model"},"finishReason":"STOP"}]}`
 	sess := openSession(t, sseData(payload))
 	chunk, err := sess.Next(context.Background())
 	if err != nil {
@@ -147,6 +147,50 @@ func TestStreamDecoder_functionCallPart_emptyArgs_defaultsToEmptyObject(t *testi
 	}
 	if chunk.ToolCallDeltas[0].Arguments != "{}" {
 		t.Errorf("Arguments: got %q, want {}", chunk.ToolCallDeltas[0].Arguments)
+	}
+}
+
+func TestStreamDecoder_functionCallPart_duplicateUnsignedCallsRemainDistinct(t *testing.T) {
+	payload := `{"candidates":[{"index":0,"content":{"parts":[` +
+		`{"functionCall":{"name":"lookup","args":{"q":"same"}},"thoughtSignature":"sig-a"},` +
+		`{"functionCall":{"name":"lookup","args":{"q":"same"}},"thoughtSignature":"sig-b"}` +
+		`],"role":"model"},"finishReason":"STOP"}]}`
+	sess := openSession(t, sseData(payload))
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.ToolCallDeltas) != 2 || chunk.ToolCallDeltas[0].ID == chunk.ToolCallDeltas[1].ID {
+		t.Fatalf("duplicate unsigned calls collapsed: %+v", chunk.ToolCallDeltas)
+	}
+	if chunk.ToolCallDeltas[0].ThoughtSignature != "sig-a" || chunk.ToolCallDeltas[1].ThoughtSignature != "sig-b" {
+		t.Fatalf("signatures lost or reordered: %+v", chunk.ToolCallDeltas)
+	}
+}
+
+func TestStreamDecoder_functionCallPart_duplicateNativeIDsRemainDistinctByPosition(t *testing.T) {
+	payload := `{"candidates":[{"index":0,"content":{"parts":[` +
+		`{"functionCall":{"id":"duplicate-id","name":"lookup","args":{"q":"first"}},"thoughtSignature":"sig-a"},` +
+		`{"functionCall":{"id":"duplicate-id","name":"lookup","args":{"q":"second"}},"thoughtSignature":"sig-b"}` +
+		`],"role":"model"},"finishReason":"STOP"}]}`
+	sess := openSession(t, sseData(payload))
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.ToolCallDeltas) != 2 {
+		t.Fatalf("duplicate native IDs merged distinct Parts: %+v", chunk.ToolCallDeltas)
+	}
+	if chunk.ToolCallDeltas[0].ID != "duplicate-id" || chunk.ToolCallDeltas[1].ID != "duplicate-id" {
+		t.Fatalf("native IDs changed: %+v", chunk.ToolCallDeltas)
+	}
+	if chunk.ToolCallDeltas[0].Arguments != `{"q":"first"}` ||
+		chunk.ToolCallDeltas[1].Arguments != `{"q":"second"}` {
+		t.Fatalf("arguments merged or reordered: %+v", chunk.ToolCallDeltas)
+	}
+	if chunk.ToolCallDeltas[0].ThoughtSignature != "sig-a" ||
+		chunk.ToolCallDeltas[1].ThoughtSignature != "sig-b" {
+		t.Fatalf("signatures merged or reordered: %+v", chunk.ToolCallDeltas)
 	}
 }
 
@@ -312,7 +356,7 @@ func TestStreamDecoder_finishReason_mapped(t *testing.T) {
 		"MAX_TOKENS":              "length",
 		"SAFETY":                  "content_filter",
 		"STOP":                    "stop",
-		"MALFORMED_FUNCTION_CALL": "tool_calls",
+		"MALFORMED_FUNCTION_CALL": "MALFORMED_FUNCTION_CALL",
 		"OTHER":                   "stop",
 		"FUTURE_UNKNOWN_VALUE":    "FUTURE_UNKNOWN_VALUE", // default arm passes through
 	}

@@ -347,21 +347,21 @@ func TestServesResponses(t *testing.T) {
 	// The default is the adapter RequestShapes default; the per-provider
 	// override is downgrade-only.
 	b := testBridge(t)
-	if !b.ServesResponses(provcore.FormatOpenAI, nil) {
+	if !b.ServesResponses(provcore.FormatOpenAI, nil, nil) {
 		t.Errorf("FormatOpenAI must serve /v1/responses by default (lockstep with spec_openai RequestShapes)")
 	}
 	// Bedrock has no Responses codec (AWS event-stream framing).
-	if b.ServesResponses(provcore.FormatBedrock, nil) {
+	if b.ServesResponses(provcore.FormatBedrock, nil, nil) {
 		t.Errorf("FormatBedrock must NOT serve /v1/responses")
 	}
 	// Override is downgrade-only: false wins for an OpenAI target.
 	no := false
-	if b.ServesResponses(provcore.FormatOpenAI, &no) {
+	if b.ServesResponses(provcore.FormatOpenAI, &no, nil) {
 		t.Errorf("override=false must force canonical(chat) even for FormatOpenAI")
 	}
 	// Override=true cannot grant a capability the adapter lacks.
 	yes := true
-	if b.ServesResponses(provcore.FormatAnthropic, &yes) {
+	if b.ServesResponses(provcore.FormatAnthropic, &yes, nil) {
 		t.Errorf("override=true must NOT make a non-Responses adapter serve /v1/responses")
 	}
 }

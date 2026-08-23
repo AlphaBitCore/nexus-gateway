@@ -74,7 +74,7 @@ func richTrafficEventRow(ts time.Time) []any {
 	routedProvider := "provider-uuid"
 	routingRuleID := "rule-uuid"
 	targetHost := "openai.com"
-	return []any{
+	return append([]any{
 		&src,            // source
 		(*string)(nil),  // provider_id
 		(*string)(nil),  // model_id
@@ -118,12 +118,7 @@ func richTrafficEventRow(ts time.Time) []any {
 		&respHooksMs,    // response_hooks_ms
 		(*float64)(nil), // embedding_cost_usd
 		(*float64)(nil), // ai_guard_cost_usd
-		(*string)(nil),  // provider_name
-		(*string)(nil),  // routed_provider_name
-		(*string)(nil),  // model_name
-		(*string)(nil),  // routed_model_name
-		(*string)(nil),  // internal_purpose
-	}
+	}, fleetOnlyNilTail()...)
 }
 
 // bumpExemptTrafficEventRow has bumpStatus = "BUMP_EXEMPT_PASSTHROUGH" and
@@ -150,7 +145,7 @@ func bumpExemptTrafficEventRow(ts time.Time) []any {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}, errorClassNilTail()...)
+	}, fleetOnlyNilTail()...)
 }
 
 // bumpDisabledHookErrorRow exercises bumpDisabled + hookError branches.
@@ -175,7 +170,7 @@ func bumpDisabledHookErrorRow(ts time.Time) []any {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}, errorClassNilTail()...)
+	}, fleetOnlyNilTail()...)
 }
 
 // hookUnknownRow exercises the hookUnknown default branch.
@@ -199,7 +194,7 @@ func hookUnknownRow(ts time.Time) []any {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}, errorClassNilTail()...)
+	}, fleetOnlyNilTail()...)
 }
 
 // TestRollup5m_AggregateTrafficEvents_RichRow drives aggregateTrafficEvents
@@ -270,7 +265,7 @@ func TestRollup5m_AggregateTrafficEvents_ScanError(t *testing.T) {
 		(*int64)(nil), (*int64)(nil), (*int64)(nil),
 		(*int)(nil), (*int)(nil), (*int)(nil), (*int)(nil),
 		(*float64)(nil), (*float64)(nil),
-	}, errorClassNilTail()...)...)
+	}, fleetOnlyNilTail()...)...)
 	mock.ExpectQuery(`FROM traffic_event`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(badRows)
@@ -292,25 +287,25 @@ func TestRollup5m_AggregateTrafficEvents_ScanError(t *testing.T) {
 // richThingTrafficEventRow prepends a thingID to richTrafficEventRow.
 func richThingTrafficEventRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, trimErrorClassTail(richTrafficEventRow(ts))...)
+	return append([]any{&thingID}, trimFleetOnlyTail(richTrafficEventRow(ts))...)
 }
 
 // bumpExemptThingRow prepends thingID to bumpExemptTrafficEventRow.
 func bumpExemptThingRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, trimErrorClassTail(bumpExemptTrafficEventRow(ts))...)
+	return append([]any{&thingID}, trimFleetOnlyTail(bumpExemptTrafficEventRow(ts))...)
 }
 
 // bumpDisabledThingRow prepends thingID to bumpDisabledHookErrorRow.
 func bumpDisabledThingRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, trimErrorClassTail(bumpDisabledHookErrorRow(ts))...)
+	return append([]any{&thingID}, trimFleetOnlyTail(bumpDisabledHookErrorRow(ts))...)
 }
 
 // hookUnknownThingRow prepends thingID to hookUnknownRow.
 func hookUnknownThingRow(ts time.Time) []any {
 	thingID := "thing-rich-1"
-	return append([]any{&thingID}, trimErrorClassTail(hookUnknownRow(ts))...)
+	return append([]any{&thingID}, trimFleetOnlyTail(hookUnknownRow(ts))...)
 }
 
 // TestThingRollup5m_AggregateThingEvents_RichRow exercises emitThingEventMetrics
@@ -671,7 +666,7 @@ func TestRollupCorrection_Run_1hBucketError(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	j := NewRollupCorrection(nil, r5m, m1h, m1d, m1mo, 1, 0, 24*time.Hour, testLogger())
 	j.nowFn = func() time.Time { return time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC) }
 	if err := j.Run(context.Background()); !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want 1h sentinel", err)
@@ -718,7 +713,7 @@ func TestRollupCorrection_Run_1dBucketError(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	j := NewRollupCorrection(nil, r5m, m1h, m1d, m1mo, 1, 0, 24*time.Hour, testLogger())
 	j.nowFn = func() time.Time { return time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC) }
 	if err := j.Run(context.Background()); !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want 1d sentinel", err)

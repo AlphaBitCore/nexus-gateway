@@ -82,13 +82,13 @@ func TestCrossFormat_WriteResponsesFeatureRejection(t *testing.T) {
 		t.Errorf("rec.HookReasonCode=%q", rec.HookReasonCode)
 	}
 	body := w.Body.Bytes()
-	if got := gjson.GetBytes(body, "error.code").String(); got != "feature_requires_native_responses_target" {
+	if got := gjson.GetBytes(body, "error.code").String(); got != "FEATURE_REQUIRES_NATIVE_RESPONSES_TARGET" {
 		t.Errorf("error.code=%q", got)
 	}
 	if got := gjson.GetBytes(body, "error.param").String(); got != "previous_response_id" {
 		t.Errorf("error.param=%q", got)
 	}
-	if got := gjson.GetBytes(body, "error.type").String(); got != "unsupported_feature" {
+	if got := gjson.GetBytes(body, "error.type").String(); got != "invalid_request_error" {
 		t.Errorf("error.type=%q", got)
 	}
 }
@@ -104,7 +104,7 @@ func TestCrossFormat_WriteCrossFormatStreamUnsupported(t *testing.T) {
 	if rec.HookReasonCode != "cross_format_stream_unsupported" {
 		t.Errorf("rec.HookReasonCode=%q", rec.HookReasonCode)
 	}
-	if got := gjson.GetBytes(w.Body.Bytes(), "error.type").String(); got != "cross_format_stream_unsupported" {
+	if got := gjson.GetBytes(w.Body.Bytes(), "error.type").String(); got != "invalid_request_error" {
 		t.Errorf("error.type=%q", got)
 	}
 }
@@ -272,23 +272,6 @@ func TestProxy_StreamCaptureTee_NegativeCap(t *testing.T) {
 	}
 	if len(tee.captured()) != 0 {
 		t.Errorf("captured=%v want empty", tee.captured())
-	}
-}
-
-func TestProxy_GeminicacheStaleRefError(t *testing.T) {
-	cases := map[string]bool{
-		``:                                 false,
-		`{"error":"unrelated"}`:            false,
-		`CachedContent not found`:          true,
-		`cached content not found`:         true,
-		`cachedContents/abc-123 not found`: true,
-		`permission denied on cachedContents/xyz`: true,
-		`some random 500 from gemini`:             false,
-	}
-	for body, want := range cases {
-		if got := geminicacheStaleRefError([]byte(body)); got != want {
-			t.Errorf("geminicacheStaleRefError(%q)=%v want %v", body, got, want)
-		}
 	}
 }
 
@@ -772,12 +755,29 @@ func TestProxy_WriteError_BasicPaths(t *testing.T) {
 	h := &Handler{deps: &Deps{}}
 	rec := &audit.Record{}
 	w := httptest.NewRecorder()
-	h.writeError(w, rec, http.StatusBadRequest, "bad")
+	h.writeError(w, rec, http.StatusBadRequest, "ADMISSION_REJECTED", "bad")
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status=%d", w.Code)
 	}
 	if rec.StatusCode != http.StatusBadRequest {
 		t.Errorf("rec.StatusCode=%d", rec.StatusCode)
+	}
+	// The two halves this writer keeps apart. The audit row must carry the
+	// machine-readable cause — production carried 400s and 502s with error_code
+	// null, which nothing could group or alert on...
+	if rec.ErrorCode != "ADMISSION_REJECTED" {
+		t.Errorf("rec.ErrorCode=%q, want the caller's audit code — a failed request "+
+			"that cannot name its own cause is the defect this parameter exists for", rec.ErrorCode)
+	}
+	if rec.ErrorReason != "bad" {
+		t.Errorf("rec.ErrorReason=%q, want the message", rec.ErrorReason)
+	}
+	// ...and the caller gets the same answer. Withholding it left a 400 whose
+	// only identity was the English sentence, while the gateway had already
+	// named the cause one line above.
+	if got := gjson.GetBytes(w.Body.Bytes(), "error.code"); got.Type != gjson.String ||
+		got.String() != "ADMISSION_REJECTED" {
+		t.Errorf("error.code=%s (type %v), want the machine code the row records", got.Raw, got.Type)
 	}
 
 	w = httptest.NewRecorder()

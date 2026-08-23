@@ -1,6 +1,6 @@
 {
   "kind": "ai-chat",
-  "normalizeVersion": "2",
+  "normalizeVersion": "3",
   "protocol": "anthropic-messages",
   "model": "claude-sonnet-4-6",
   "messages": [

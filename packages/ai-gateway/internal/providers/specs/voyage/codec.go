@@ -226,14 +226,6 @@ func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 		return provcore.DecodeResult{}, fmt.Errorf("voyage embed response: marshal canonical: %w", err)
 	}
 
-	// Stamp the model into nexus.ext.voyage.model for audit consumers.
-	if model := gjson.GetBytes(nativeBody, "model").Str; model != "" {
-		stamped, stampErr := canonicalext.Set(canonicalBytes, "voyage", "model", model)
-		if stampErr == nil {
-			canonicalBytes = stamped
-		}
-	}
-
 	usage := provcore.ExtractUsage(canonicalBytes, provcore.FormatOpenAI)
 	return provcore.DecodeResult{CanonicalBody: canonicalBytes, Usage: usage}, nil
 }

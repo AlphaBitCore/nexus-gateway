@@ -8,12 +8,11 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// StripInternalCarriersForTarget removes canonical-only carrier fields that
-// must not egress to a target whose codec does not consume them. Today the sole
-// such field is nexus_thinking, the Anthropic-round-trip-private per-block
-// signature carrier the Anthropic ingress converter stamps; reasoning_content
-// (the L2 universal text) is deliberately left intact, a legitimate field a
-// reasoning target (DeepSeek) consumes.
+// StripInternalCarriersForTarget removes provider-private carrier fields that
+// must not egress to a target whose codec does not consume them. Anthropic and
+// Bedrock consume nexus_thinking; Gemini and Vertex consume
+// tool_calls[].function.thought_signature. Every other target strips both.
+// reasoning_content remains universal.
 //
 // The gate is a DENYLIST by consumer, not an allowlist by wire shape: only the
 // Anthropic-family codecs read nexus_thinking to rebuild signed thinking blocks
@@ -31,10 +30,13 @@ import (
 // (stage_cache_body's prepareUpstreamBody, whose prepared bytes attempt-0 sends
 // and which never reaches IngressChatToWire) calls it explicitly.
 func (b *Bridge) StripInternalCarriersForTarget(canon []byte, target provcore.Format) []byte {
-	if targetConsumesNexusThinking(target) {
-		return canon
+	if !targetConsumesNexusThinking(target) {
+		canon = stripNexusThinking(canon)
 	}
-	return stripNexusThinking(canon)
+	if !targetConsumesThoughtSignature(target) {
+		canon = stripThoughtSignatures(canon)
+	}
+	return canon
 }
 
 // targetConsumesNexusThinking reports whether a target's codec reads the
@@ -51,13 +53,23 @@ func targetConsumesNexusThinking(target provcore.Format) bool {
 	}
 }
 
+func targetConsumesThoughtSignature(target provcore.Format) bool {
+	switch target {
+	case provcore.FormatGemini, provcore.FormatVertex:
+		return true
+	default:
+		return false
+	}
+}
+
 // stripNexusThinking removes the nexus_thinking field from every message that
 // carries it. Gated on a substring pre-check so a body with no replayed
 // thinking pays only a linear scan; on a body that has it, only the messages
 // that actually carry the field pay a delete (the ForEach value guards against
 // a full-body sjson walk per thinking-free message).
 func stripNexusThinking(canon []byte) []byte {
-	if !bytes.Contains(canon, []byte(`"nexus_thinking"`)) {
+	if !bytes.Contains(canon, []byte(`"nexus_thinking"`)) &&
+		!bytes.Contains(canon, []byte(`\u`)) {
 		return canon
 	}
 	msgs := gjson.GetBytes(canon, "messages")
@@ -72,6 +84,36 @@ func stripNexusThinking(canon []byte) []byte {
 		if deleted, derr := sjson.DeleteBytes(out, "messages."+idx.String()+".nexus_thinking"); derr == nil {
 			out = deleted
 		}
+		return true
+	})
+	return out
+}
+
+func stripThoughtSignatures(canon []byte) []byte {
+	if !bytes.Contains(canon, []byte(`"thought_signature"`)) &&
+		!bytes.Contains(canon, []byte(`\u`)) {
+		return canon
+	}
+	msgs := gjson.GetBytes(canon, "messages")
+	if !msgs.IsArray() {
+		return canon
+	}
+	out := canon
+	msgs.ForEach(func(msgIdx, msg gjson.Result) bool {
+		calls := msg.Get("tool_calls")
+		if !calls.IsArray() {
+			return true
+		}
+		calls.ForEach(func(callIdx, call gjson.Result) bool {
+			if !call.Get("function.thought_signature").Exists() {
+				return true
+			}
+			path := "messages." + msgIdx.String() + ".tool_calls." + callIdx.String() + ".function.thought_signature"
+			if deleted, err := sjson.DeleteBytes(out, path); err == nil {
+				out = deleted
+			}
+			return true
+		})
 		return true
 	})
 	return out

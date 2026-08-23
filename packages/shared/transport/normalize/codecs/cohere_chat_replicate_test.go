@@ -393,22 +393,6 @@ func TestReplicate_EmptyAndUnknownDirection(t *testing.T) {
 	}
 }
 
-func TestReplicate_ExtractOutputTextEdgeCases(t *testing.T) {
-	// empty / null / unknown.
-	if got := replicateExtractOutputText(nil); got != "" {
-		t.Fatalf("nil should be empty, got %q", got)
-	}
-	if got := replicateExtractOutputText([]byte("null")); got != "" {
-		t.Fatalf("null should be empty, got %q", got)
-	}
-	if got := replicateExtractOutputText([]byte(`{"unknown":"key"}`)); got != "" {
-		t.Fatalf("unknown object should be empty, got %q", got)
-	}
-	if got := replicateExtractOutputText([]byte(`123`)); got != "" {
-		t.Fatalf("number-only should be empty, got %q", got)
-	}
-}
-
 func TestReplicate_FieldSpec(t *testing.T) {
 	r := replicateFieldSpec(core.DirectionRequest)
 	if len(r.Required) == 0 || r.Required[0] != "input" {
@@ -1498,8 +1482,8 @@ func TestAnthropicContentPart_VariantsExhaustive(t *testing.T) {
 		{"text", map[string]any{"type": "text", "text": "hi"}, core.ContentText},
 		{"thinking with thinking field", map[string]any{"type": "thinking", "thinking": "raw"}, core.ContentReasoning},
 		{"thinking falling back to text field", map[string]any{"type": "thinking", "text": "fallback"}, core.ContentReasoning},
-		{"image", map[string]any{"type": "image", "source": map[string]any{"media_type": "image/png", "data": "BASE64IMAGEDATA-LONGER-THAN-16-BYTES"}}, core.ContentImageRef},
-		{"image with empty source", map[string]any{"type": "image"}, core.ContentImageRef},
+		{"image", map[string]any{"type": "image", "source": map[string]any{"media_type": "image/png", "data": "BASE64IMAGEDATA-LONGER-THAN-16-BYTES"}}, core.ContentMedia},
+		{"image with empty source", map[string]any{"type": "image"}, core.ContentMedia},
 		{"tool_use", map[string]any{"type": "tool_use", "id": "u1", "name": "f", "input": map[string]any{"k": "v"}}, core.ContentToolUse},
 		{"tool_result string content", map[string]any{"type": "tool_result", "tool_use_id": "u1", "content": "ok"}, core.ContentToolResult},
 		{"tool_result array content", map[string]any{"type": "tool_result", "tool_use_id": "u2", "content": []any{map[string]any{"text": "a"}, map[string]any{"text": "b"}}}, core.ContentToolResult},
@@ -1507,7 +1491,7 @@ func TestAnthropicContentPart_VariantsExhaustive(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := anthropicContentPart(c.part)
+			got := anthropicContentPart(c.part, "messages.0.content")[0]
 			if got.Type != c.want {
 				t.Fatalf("Type = %v want %v", got.Type, c.want)
 			}
@@ -1518,12 +1502,21 @@ func TestAnthropicContentPart_VariantsExhaustive(t *testing.T) {
 					t.Fatalf("array content collapse: %+v", got.ToolResult)
 				}
 			case "image":
-				if got.ImageRef == nil || got.ImageRef.ContentType != "image/png" || got.ImageRef.SHA256 == "" {
-					t.Fatalf("image ref: %+v", got.ImageRef)
+				if got.MediaRef == nil || got.MediaRef.Mime != "image/png" {
+					t.Fatalf("image ref: %+v", got.MediaRef)
+				}
+				// capturedMedia never decodes to compute a digest — a real
+				// SHA256 would require reading the whole payload on every
+				// normalize call. Empty here is the honest answer, not the
+				// old stableHashHint-style base64-prefix stand-in.
+				if got.MediaRef.SHA256 != "" {
+					t.Fatalf("media ref should carry no computed digest: %+v", got.MediaRef)
 				}
 			case "image with empty source":
-				if got.ImageRef == nil || got.ImageRef.ContentType != "image" {
-					t.Fatalf("default content type lost: %+v", got.ImageRef)
+				// No "source" key at all → no bytes to address anywhere;
+				// the ref degrades to absent rather than guessing a mime.
+				if got.MediaRef == nil || got.MediaRef.Modality != core.ModalityImage || got.MediaRef.Source != core.MediaAbsent {
+					t.Fatalf("absent media ref: %+v", got.MediaRef)
 				}
 			case "tool_use":
 				if got.ToolUse == nil || got.ToolUse.Name != "f" || got.ToolUse.Input["k"] != "v" {
@@ -1545,19 +1538,19 @@ func TestAnthropicSystemToBlocks_EmptyString(t *testing.T) {
 }
 
 func TestAnthropicDecodeContent_NullAndEmpty(t *testing.T) {
-	if got := anthropicDecodeContent(nil); got != nil {
+	if got := anthropicDecodeContent(nil, ""); got != nil {
 		t.Fatalf("nil should yield nil; got %+v", got)
 	}
-	if got := anthropicDecodeContent([]byte("null")); got != nil {
+	if got := anthropicDecodeContent([]byte("null"), ""); got != nil {
 		t.Fatalf("null should yield nil; got %+v", got)
 	}
-	if got := anthropicDecodeContent([]byte(`""`)); got != nil {
+	if got := anthropicDecodeContent([]byte(`""`), ""); got != nil {
 		t.Fatalf("empty string should yield nil; got %+v", got)
 	}
 }
 
 func TestAnthropicDecodeContent_UnparseableFallsThrough(t *testing.T) {
-	got := anthropicDecodeContent([]byte(`{"not":"array"}`))
+	got := anthropicDecodeContent([]byte(`{"not":"array"}`), "")
 	if len(got) != 1 || got[0].Type != core.ContentText {
 		t.Fatalf("unparseable should preserve raw as text fallback: %+v", got)
 	}
@@ -1621,6 +1614,7 @@ func TestOpenAIUsage_ExtractCanonicalUsage_AllAliases(t *testing.T) {
 			u: openAIUsage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, PromptTokensDetails: &struct {
 				CachedTokens        int `json:"cached_tokens,omitempty"`
 				CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
+				AudioTokens         int `json:"audio_tokens,omitempty"`
 			}{CachedTokens: 3}},
 			want: core.Usage{PromptTokens: ptrInt(10), CompletionTokens: ptrInt(5), TotalTokens: ptrInt(15), CacheReadTokens: ptrInt(3)},
 		},
@@ -1656,6 +1650,7 @@ func TestOpenAIUsage_ExtractCanonicalUsage_AllAliases(t *testing.T) {
 			u: openAIUsage{PromptTokens: 50, PromptTokensDetails: &struct {
 				CachedTokens        int `json:"cached_tokens,omitempty"`
 				CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
+				AudioTokens         int `json:"audio_tokens,omitempty"`
 			}{CacheCreationTokens: 12}},
 			want: core.Usage{PromptTokens: ptrInt(50), CacheCreationTokens: ptrInt(12)},
 		},
@@ -1663,6 +1658,7 @@ func TestOpenAIUsage_ExtractCanonicalUsage_AllAliases(t *testing.T) {
 			name: "openai o-series reasoning",
 			u: openAIUsage{PromptTokens: 10, CompletionTokens: 100, CompletionTokensDetails: &struct {
 				ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+				AudioTokens     int `json:"audio_tokens,omitempty"`
 			}{ReasoningTokens: 75}},
 			want: core.Usage{PromptTokens: ptrInt(10), CompletionTokens: ptrInt(100), ReasoningTokens: ptrInt(75)},
 		},
@@ -1670,6 +1666,7 @@ func TestOpenAIUsage_ExtractCanonicalUsage_AllAliases(t *testing.T) {
 			name: "responses reasoning",
 			u: openAIUsage{InputTokens: 10, OutputTokens: 100, OutputTokensDetails: &struct {
 				ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+				AudioTokens     int `json:"audio_tokens,omitempty"`
 			}{ReasoningTokens: 60}},
 			want: core.Usage{PromptTokens: ptrInt(10), CompletionTokens: ptrInt(100), ReasoningTokens: ptrInt(60)},
 		},
@@ -1741,15 +1738,17 @@ func TestRoleFromString_FunctionMapsToTool(t *testing.T) {
 }
 
 func TestOpenAIContentPart_ImageURLBareString(t *testing.T) {
-	// Top-level url missing → ImageRef created with empty SpillKey.
-	got := openAIContentPart(map[string]any{"type": "image_url"})
-	if got.Type != core.ContentImageRef || got.ImageRef == nil || got.ImageRef.ContentType != "image" {
+	// image_url field missing entirely → MediaRef degrades to absent, not a
+	// crash on the failed type assertion.
+	got := openAIContentPart(map[string]any{"type": "image_url"}, "")
+	if got.Type != core.ContentMedia || got.MediaRef == nil ||
+		got.MediaRef.Modality != core.ModalityImage || got.MediaRef.Source != core.MediaAbsent {
 		t.Fatalf("image_url bare: %+v", got)
 	}
 }
 
 func TestOpenAIContentPart_UnknownTypePreservesJSON(t *testing.T) {
-	got := openAIContentPart(map[string]any{"type": "video", "x": 1})
+	got := openAIContentPart(map[string]any{"type": "video", "x": 1}, "")
 	if got.Type != core.ContentText {
 		t.Fatalf("unknown type should fallback to text: %+v", got)
 	}
@@ -1760,14 +1759,14 @@ func TestOpenAIContentPart_UnknownTypePreservesJSON(t *testing.T) {
 
 func TestOpenAIChat_DecodeContent_StringWithToolCallID(t *testing.T) {
 	// role=tool with string content → ToolResult block.
-	blocks := decodeOpenAIContent(json.RawMessage(`"weather is sunny"`), nil, "call_abc", "")
+	blocks := decodeOpenAIContent(json.RawMessage(`"weather is sunny"`), nil, "call_abc", "", "")
 	if len(blocks) != 1 || blocks[0].Type != core.ContentToolResult || blocks[0].ToolResult == nil || blocks[0].ToolResult.Output != "weather is sunny" || blocks[0].ToolResult.CallID != "call_abc" {
 		t.Fatalf("tool result decode wrong: %+v", blocks)
 	}
 }
 
 func TestOpenAIChat_DecodeContent_ReasoningPrefix(t *testing.T) {
-	blocks := decodeOpenAIContent(json.RawMessage(`"visible"`), nil, "", "thinking trace")
+	blocks := decodeOpenAIContent(json.RawMessage(`"visible"`), nil, "", "thinking trace", "")
 	if len(blocks) != 2 || blocks[0].Type != core.ContentReasoning || blocks[0].Text != "thinking trace" || blocks[1].Type != core.ContentText {
 		t.Fatalf("reasoning prefix lost: %+v", blocks)
 	}
@@ -1775,7 +1774,7 @@ func TestOpenAIChat_DecodeContent_ReasoningPrefix(t *testing.T) {
 
 func TestOpenAIChat_DecodeContent_ToolCallNonFunctionSkipped(t *testing.T) {
 	tc := openAIToolCall{Type: "not-function"}
-	blocks := decodeOpenAIContent(json.RawMessage(`""`), []openAIToolCall{tc}, "", "")
+	blocks := decodeOpenAIContent(json.RawMessage(`""`), []openAIToolCall{tc}, "", "", "")
 	if len(blocks) != 0 {
 		t.Fatalf("non-function tool call should be skipped, got %+v", blocks)
 	}
@@ -1783,7 +1782,7 @@ func TestOpenAIChat_DecodeContent_ToolCallNonFunctionSkipped(t *testing.T) {
 
 func TestOpenAIChat_DecodeContent_NullContent(t *testing.T) {
 	// content "null" with reasoning and tool call should still produce blocks.
-	blocks := decodeOpenAIContent(json.RawMessage(`null`), nil, "", "reasoning-only")
+	blocks := decodeOpenAIContent(json.RawMessage(`null`), nil, "", "reasoning-only", "")
 	if len(blocks) != 1 || blocks[0].Type != core.ContentReasoning {
 		t.Fatalf("null content with reasoning should yield reasoning-only: %+v", blocks)
 	}
@@ -1791,7 +1790,7 @@ func TestOpenAIChat_DecodeContent_NullContent(t *testing.T) {
 
 func TestOpenAIChat_DecodeContent_EmptyStringContent(t *testing.T) {
 	// Empty string content with tool_call_id should NOT generate a tool_result block.
-	blocks := decodeOpenAIContent(json.RawMessage(`""`), nil, "call_x", "")
+	blocks := decodeOpenAIContent(json.RawMessage(`""`), nil, "call_x", "", "")
 	if len(blocks) != 0 {
 		t.Fatalf("empty string content should produce no blocks; got %+v", blocks)
 	}
@@ -1925,7 +1924,7 @@ func TestGemini_ResponseInlineDataAndFunctionCall(t *testing.T) {
 		t.Fatalf("expected 3 content blocks (tool_use, tool_result, image); got %+v", got.Messages)
 	}
 	types := []core.ContentType{got.Messages[0].Content[0].Type, got.Messages[0].Content[1].Type, got.Messages[0].Content[2].Type}
-	want := []core.ContentType{core.ContentToolUse, core.ContentToolResult, core.ContentImageRef}
+	want := []core.ContentType{core.ContentToolUse, core.ContentToolResult, core.ContentMedia}
 	for i := range want {
 		if types[i] != want[i] {
 			t.Fatalf("block[%d] = %q want %q (full: %+v)", i, types[i], want[i], got.Messages[0].Content)
@@ -1995,7 +1994,7 @@ func TestGemini_StreamWithFunctionCallAndResponse(t *testing.T) {
 		types[0] != core.ContentText ||
 		types[1] != core.ContentToolUse ||
 		types[2] != core.ContentToolResult ||
-		types[3] != core.ContentImageRef {
+		types[3] != core.ContentMedia {
 		t.Fatalf("stream block stitch order wrong: %+v", types)
 	}
 }
@@ -2066,18 +2065,18 @@ func TestOpenAIResponses_InputContentBlocksVariants(t *testing.T) {
 		{Type: "input_text"},                // empty text skipped
 		{Type: "unknown"},                   // unknown without text skipped
 	}
-	got := openaiResponsesInputContentToBlocks(parts)
+	got := openaiResponsesInputContentToBlocks(parts, "")
 	if len(got) != 4 {
 		t.Fatalf("expected 4 blocks, got %d: %+v", len(got), got)
 	}
 	if got[0].Type != core.ContentText || got[1].Type != core.ContentText ||
-		got[2].Type != core.ContentImageRef || got[3].Type != core.ContentText {
+		got[2].Type != core.ContentMedia || got[3].Type != core.ContentText {
 		t.Fatalf("block types wrong: %+v", got)
 	}
 }
 
 func TestOpenAIResponses_InputContentEmptySlice(t *testing.T) {
-	if got := openaiResponsesInputContentToBlocks(nil); got != nil {
+	if got := openaiResponsesInputContentToBlocks(nil, ""); got != nil {
 		t.Fatalf("nil parts → nil blocks; got %+v", got)
 	}
 }

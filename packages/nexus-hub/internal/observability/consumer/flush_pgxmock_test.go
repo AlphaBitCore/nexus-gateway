@@ -81,22 +81,16 @@ func countingMsg(ackCount, nakCount *int32) *mq.Message {
 // TrafficEventWriter.flush — happy path through the full seam.
 //
 // Begin → SendBatch(traffic_event) → SendBatch(traffic_event_payload) →
-// SendBatch(traffic_event_normalized) → Commit → ackAll. The batch-size
+// Commit → ackAll. The batch-size
 // histogram and flushTotal{result="success"} counter must both fire.
 func TestTrafficWriter_Flush_HappyPath_AcksAllAndCommits(t *testing.T) {
 	w, mock := trafficFlushWriter(t)
 
 	mock.ExpectBegin()
 	eb1 := mock.ExpectBatch()
-	eb1.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb1.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	eb2 := mock.ExpectBatch()
 	eb2.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	// Normalized sidecar fast path: SAVEPOINT (Begin) → pipelined batch →
-	// RELEASE SAVEPOINT (Commit), then the outer Commit.
-	mock.ExpectBegin()
-	eb3 := mock.ExpectBatch()
-	eb3.ExpectExec(`INSERT INTO traffic_event_normalized`).WithArgs(anyArgs(10)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectCommit()
 	mock.ExpectCommit()
 
 	var ackCount, nakCount int32
@@ -141,15 +135,10 @@ func TestTrafficWriter_Flush_PersistsEndpointType(t *testing.T) {
 	mock.ExpectBegin()
 	eb1 := mock.ExpectBatch()
 	eb1.ExpectExec(`INSERT INTO traffic_event`).
-		WithArgs(append(append(anyArgs(89), "embeddings", ""), anyArgs(6)...)...).
+		WithArgs(append(append(anyArgs(89), "embeddings", ""), anyArgs(9)...)...).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	eb2 := mock.ExpectBatch()
 	eb2.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	// Normalized sidecar fast path: SAVEPOINT → batch → RELEASE.
-	mock.ExpectBegin()
-	eb3 := mock.ExpectBatch()
-	eb3.ExpectExec(`INSERT INTO traffic_event_normalized`).WithArgs(anyArgs(10)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectCommit()
 	mock.ExpectCommit()
 
 	var ackCount, nakCount int32
@@ -192,7 +181,7 @@ func TestTrafficWriter_Flush_PersistsIngressFormat(t *testing.T) {
 	mock.ExpectBegin()
 	eb1 := mock.ExpectBatch()
 	eb1.ExpectExec(`INSERT INTO traffic_event`).
-		WithArgs(append(append(anyArgs(90), "anthropic"), anyArgs(6)...)...).
+		WithArgs(append(append(anyArgs(90), "anthropic"), anyArgs(9)...)...).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	eb2 := mock.ExpectBatch()
 	eb2.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
@@ -256,8 +245,10 @@ func TestTrafficWriter_Flush_InternalOpsBreakdownNulStripped(t *testing.T) {
 	// $88 (internal_ops_breakdown) must arrive NUL-free and stripped.
 	args := append(anyArgs(87), nulFreeJSONArg{want: `{"raw":"ab","esc":"pq"}`})
 	// $89 l2 key, $90 endpoint_type, $91 ingress_format, $92/$93 hooks_us,
-	// $94/$95 artifact_refs/compliance_coverage, $96/$97 end_user_id/session_id.
-	args = append(args, anyArgs(9)...)
+	// $94/$95 artifact_refs/compliance_coverage, $96/$97 end_user_id/session_id,
+	// $98-$100 vendor-spend attribution (router_cost_usd/router_provider_id/
+	// embedding_provider_id).
+	args = append(args, anyArgs(12)...)
 	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(args...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
@@ -286,64 +277,6 @@ func TestTrafficWriter_Flush_InternalOpsBreakdownNulStripped(t *testing.T) {
 	}
 }
 
-// TestTrafficWriter_FlushItem_NormalizedFailureStillCommits pins the per-item
-// durability guarantee: when the batched attempt fails and the row is
-// reprocessed alone, a failure in its normalized sidecar must NOT roll back the
-// raw row — the raw traffic_event still commits and the message is acked.
-func TestTrafficWriter_FlushItem_NormalizedFailureStillCommits(t *testing.T) {
-	w, mock := trafficFlushWriter(t)
-
-	transient := errors.New("deadlock detected")
-	// Batched attempt fails on the traffic_event insert → triggers per-item.
-	mock.ExpectBegin()
-	ebBatch := mock.ExpectBatch()
-	ebBatch.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(transient)
-	mock.ExpectRollback()
-	// Per-item: traffic_event ok; body absent (no payload batch); normalized
-	// sidecar fails (fast batch then row-by-row, both non-poison) but the outer
-	// tx still commits.
-	mock.ExpectBegin()
-	ebTE := mock.ExpectBatch()
-	ebTE.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectBegin() // normalized savepoint (fast path)
-	ebN := mock.ExpectBatch()
-	ebN.ExpectExec(`INSERT INTO traffic_event_normalized`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("normalize-batch-failed"))
-	mock.ExpectRollback()
-	mock.ExpectBegin() // normalized row-by-row savepoint
-	mock.ExpectExec(`INSERT INTO traffic_event_normalized`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("normalize-row-failed"))
-	mock.ExpectRollback()
-	mock.ExpectCommit() // outer commit — raw row survives
-
-	var ackCount, nakCount int32
-	items := []pendingTrafficMessage{
-		{
-			event: TrafficEventMessage{
-				ID: "iso-norm", Source: "ai-gateway", Timestamp: time.Now().UTC(),
-				RequestBody:       sharedaudit.EmptyBody(),
-				ResponseBody:      sharedaudit.EmptyBody(),
-				RequestNormalized: json.RawMessage(`{"messages":[]}`),
-			},
-			msg: countingMsg(&ackCount, &nakCount),
-		},
-	}
-	if err := w.flush(context.Background(), items); err != nil {
-		t.Fatalf("flush: %v", err)
-	}
-	if got := atomic.LoadInt32(&ackCount); got != 1 {
-		t.Errorf("ackAll: got %d, want 1 (raw row must commit despite sidecar failure)", got)
-	}
-	if got := atomic.LoadInt32(&nakCount); got != 0 {
-		t.Errorf("nakAll: got %d, want 0", got)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("expectations: %v", err)
-	}
-}
-
-// TrafficEventWriter.flush — Begin failure. The batched fast path's Begin fails,
-// so flush falls back to per-item reprocessing where each item's own Begin also
-// fails and the item is nak'd for redelivery. errors_total{db_begin} +
-// flushTotal{error} fire; flush returns nil because every item is resolved.
 func TestTrafficWriter_Flush_BeginFailureViaSeam(t *testing.T) {
 	w, mock := trafficFlushWriter(t)
 
@@ -389,12 +322,12 @@ func TestTrafficWriter_Flush_InsertPoisonPill22021AcksToSkip(t *testing.T) {
 	// Batched fast-path attempt aborts on the poison row.
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
-	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(poison)
+	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnError(poison)
 	mock.ExpectRollback()
 	// Per-item fallback re-runs the same row, hits the same typed poison, acks.
 	mock.ExpectBegin()
 	ebItem := mock.ExpectBatch()
-	ebItem.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(poison)
+	ebItem.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnError(poison)
 	mock.ExpectRollback()
 
 	var ackCount, nakCount int32
@@ -438,18 +371,18 @@ func TestTrafficWriter_Flush_PoisonRowIsolatedHealthyCommits(t *testing.T) {
 	// the rest).
 	mock.ExpectBegin()
 	ebBatch := mock.ExpectBatch()
-	ebBatch.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(poison)
-	ebBatch.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(poison)
+	ebBatch.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnError(poison)
+	ebBatch.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnError(poison)
 	mock.ExpectRollback()
 	// Per-item: poison row first — Begin, insert(22021), Rollback, ack-to-skip.
 	mock.ExpectBegin()
 	ebP := mock.ExpectBatch()
-	ebP.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(poison)
+	ebP.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnError(poison)
 	mock.ExpectRollback()
 	// Per-item: healthy row — Begin, insert ok, Commit, ack.
 	mock.ExpectBegin()
 	ebH := mock.ExpectBatch()
-	ebH.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	ebH.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	var poisonAck, poisonNak int32
@@ -499,12 +432,12 @@ func TestTrafficWriter_Flush_InsertNonPoisonFailureNaksAll(t *testing.T) {
 	transient := errors.New("unique_violation")
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
-	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(transient)
+	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnError(transient)
 	mock.ExpectRollback()
 	// Per-item retry: same transient failure → nak.
 	mock.ExpectBegin()
 	ebItem := mock.ExpectBatch()
-	ebItem.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnError(transient)
+	ebItem.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnError(transient)
 	mock.ExpectRollback()
 
 	var ackCount, nakCount int32
@@ -541,14 +474,14 @@ func TestTrafficWriter_Flush_InsertPayloadsFailureNaksAll(t *testing.T) {
 	payloadErr := errors.New("disk-full")
 	mock.ExpectBegin()
 	eb1 := mock.ExpectBatch()
-	eb1.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb1.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	eb2 := mock.ExpectBatch()
 	eb2.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnError(payloadErr)
 	mock.ExpectRollback()
 	// Per-item retry: traffic_event ok, payload fails again → nak.
 	mock.ExpectBegin()
 	eb1b := mock.ExpectBatch()
-	eb1b.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb1b.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	eb2b := mock.ExpectBatch()
 	eb2b.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnError(payloadErr)
 	mock.ExpectRollback()
@@ -577,77 +510,20 @@ func TestTrafficWriter_Flush_InsertPayloadsFailureNaksAll(t *testing.T) {
 	}
 }
 
-// TrafficEventWriter.flush — insertNormalizedPayloads fails (non-poison). The
-// sidecar runs in its OWN savepoint, so the failure rolls back ONLY that
-// savepoint (ROLLBACK TO SAVEPOINT) and the raw traffic_event row still
-// COMMITS — the durability guarantee. flush WARNs + counts
-// errors_total{db_insert_normalized} but ackAll fires on the successful outer
-// commit; nothing is nak'd.
-func TestTrafficWriter_Flush_NormalizedFailureWarnsButCommits(t *testing.T) {
-	w, mock := trafficFlushWriter(t)
-
-	mock.ExpectBegin()
-	eb1 := mock.ExpectBatch()
-	eb1.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	// Body absent → insertPayloads short-circuits, no traffic_event_payload
-	// batch is sent. Normalized fast path: SAVEPOINT → batch(err) → ROLLBACK TO
-	// SAVEPOINT, then row-by-row retry: SAVEPOINT → Exec(err) → ROLLBACK. The
-	// outer Commit then still runs and the raw row survives.
-	mock.ExpectBegin()
-	ebN := mock.ExpectBatch()
-	ebN.ExpectExec(`INSERT INTO traffic_event_normalized`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("normalize-batch-failed"))
-	mock.ExpectRollback()
-	mock.ExpectBegin()
-	mock.ExpectExec(`INSERT INTO traffic_event_normalized`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("normalize-row-failed"))
-	mock.ExpectRollback()
-	mock.ExpectCommit()
-
-	var ackCount, nakCount int32
-	items := []pendingTrafficMessage{
-		{
-			event: TrafficEventMessage{
-				ID:                "n-x",
-				Source:            "ai-gateway",
-				Timestamp:         time.Now(),
-				RequestBody:       sharedaudit.EmptyBody(),
-				ResponseBody:      sharedaudit.EmptyBody(),
-				RequestNormalized: json.RawMessage(`{"messages":[]}`),
-			},
-			msg: countingMsg(&ackCount, &nakCount),
-		},
-	}
-	if err := w.flush(context.Background(), items); err != nil {
-		t.Fatalf("flush: got %v, want nil (normalize failure is non-fatal)", err)
-	}
-	if got := atomic.LoadInt32(&ackCount); got != 1 {
-		t.Errorf("ackAll: got %d, want 1 (commit succeeded, ack must fire)", got)
-	}
-	if got := atomic.LoadInt32(&nakCount); got != 0 {
-		t.Errorf("nakAll: got %d, want 0 (normalize sidecar failure must NOT nak the raw batch)", got)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("expectations: %v", err)
-	}
-}
-
-// TrafficEventWriter.flush — Commit fails after every insert succeeded. The
-// batched attempt's commit fails, then the per-item retry's commit fails too;
-// the item is nak'd for redelivery. flushTotal{error} + errors_total{db_commit}
-// fire; flush returns nil.
 func TestTrafficWriter_Flush_CommitFailureNaksAll(t *testing.T) {
 	w, mock := trafficFlushWriter(t)
 
 	commitErr := errors.New("commit-rejected")
 	mock.ExpectBegin()
 	eb1 := mock.ExpectBatch()
-	eb1.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb1.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	// Body absent + no normalize → only the traffic_event insert; commit fails.
 	mock.ExpectCommit().WillReturnError(commitErr)
 	mock.ExpectRollback()
 	// Per-item retry: insert ok, commit fails again → nak.
 	mock.ExpectBegin()
 	eb1b := mock.ExpectBatch()
-	eb1b.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb1b.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit().WillReturnError(commitErr)
 	mock.ExpectRollback()
 
@@ -695,7 +571,7 @@ func TestTrafficWriter_Flush_NilRegistryHappyPath(t *testing.T) {
 
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
-	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(97)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(100)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	var ackCount, nakCount int32
@@ -953,7 +829,10 @@ func TestAdminAuditWriter_Flush_NilRegistryHappyPath(t *testing.T) {
 // same-typed strings, so a swapped pair passes every count-based guard and
 // silently attributes one caller dimension to the other. The positional
 // assertion is the only thing that catches it. ($94/$95 are the multimodal
-// artifact_refs / compliance_coverage stamps, NULL on this non-multimodal row.)
+// artifact_refs / compliance_coverage stamps, NULL on this non-multimodal row.
+// $98-$100 are the vendor-spend attribution columns appended after
+// end_user_id/session_id — wildcarded here since this test targets the
+// end_user_id/session_id pair specifically.)
 func TestTrafficWriter_Flush_EndUserAndSessionPositions(t *testing.T) {
 	w, mock := trafficFlushWriter(t)
 
@@ -961,6 +840,7 @@ func TestTrafficWriter_Flush_EndUserAndSessionPositions(t *testing.T) {
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
 	args := append(anyArgs(95), &endUser, &session)
+	args = append(args, anyArgs(3)...)
 	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(args...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
@@ -971,6 +851,50 @@ func TestTrafficWriter_Flush_EndUserAndSessionPositions(t *testing.T) {
 				ID: "evt-eu", Source: "ai-gateway", Timestamp: time.Now(),
 				EndUserID: &endUser, SessionID: &session,
 				RequestBody: sharedaudit.EmptyBody(), ResponseBody: sharedaudit.EmptyBody(),
+			},
+			msg: countingMsg(&ackCount, &nakCount),
+		},
+	}
+	if err := w.flush(context.Background(), items); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := atomic.LoadInt32(&ackCount); got != 1 {
+		t.Errorf("ackAll: got %d, want 1", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+// TestTrafficWriter_Flush_VendorSpendAttributionPositions pins the
+// value-level positions of the three vendor-spend attribution columns
+// appended after end_user_id/session_id: router_cost_usd ($98),
+// router_provider_id ($99), embedding_provider_id ($100). Two of the three
+// are adjacent same-typed strings, so — like end_user_id/session_id above —
+// a swapped pair would pass every count-based guard; the positional
+// assertion is what catches it. Also exercises the pgx.Batch INSERT path's
+// (as opposed to the COPY path's, covered in traffic_copy_test.go)
+// empty-string-coalesces-to-nil branch for router_provider_id by leaving it
+// unset while embedding_provider_id is set.
+func TestTrafficWriter_Flush_VendorSpendAttributionPositions(t *testing.T) {
+	w, mock := trafficFlushWriter(t)
+
+	routerCost := 0.0066
+	embeddingProvider := "prov-openai-embed"
+	mock.ExpectBegin()
+	eb := mock.ExpectBatch()
+	args := append(anyArgs(97), &routerCost, nil, embeddingProvider)
+	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(args...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mock.ExpectCommit()
+
+	var ackCount, nakCount int32
+	items := []pendingTrafficMessage{
+		{
+			event: TrafficEventMessage{
+				ID: "evt-router", Source: "ai-gateway", Timestamp: time.Now(),
+				RouterCostUsd:       &routerCost,
+				EmbeddingProviderID: embeddingProvider,
+				RequestBody:         sharedaudit.EmptyBody(), ResponseBody: sharedaudit.EmptyBody(),
 			},
 			msg: countingMsg(&ackCount, &nakCount),
 		},

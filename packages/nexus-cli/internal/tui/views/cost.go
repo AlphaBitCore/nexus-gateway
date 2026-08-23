@@ -119,13 +119,14 @@ func (c *cost) View(width, height int) string {
 		return styles.TileLabel.Render("loading cost…")
 	}
 	var b strings.Builder
-	if c.flushErr != nil {
+	switch {
+	case c.flushErr != nil:
 		b.WriteString(lipgloss.NewStyle().Foreground(styles.Red).Render("⚠ flush: " + c.flushErr.Error()))
 		b.WriteString("\n")
-	} else if c.flushing {
+	case c.flushing:
 		b.WriteString(styles.TileLabel.Render("flushing cache…"))
 		b.WriteString("\n")
-	} else if c.flushNote != "" {
+	case c.flushNote != "":
 		b.WriteString(lipgloss.NewStyle().Foreground(styles.Green).Render("✓ " + c.flushNote))
 		b.WriteString("\n")
 	}

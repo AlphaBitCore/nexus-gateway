@@ -68,10 +68,10 @@ func TestServeProxy_GateSheds_PerIngressShape(t *testing.T) {
 		absent string
 	}{
 		// Both shapes carry rate_limit semantics; they differ in envelope:
-		// OpenAI = {"error":{...,"code":"gateway_overloaded"}}, Anthropic =
+		// OpenAI = {"error":{...,"code":"GATEWAY_OVERLOADED"}}, Anthropic =
 		// {"type":"error","error":{"type":"rate_limit_error",...}}.
-		{"openai-shape", provcore.FormatOpenAI, `"code":"gateway_overloaded"`, `"type":"error"`},
-		{"anthropic-shape", provcore.FormatAnthropic, `"type":"error"`, `"gateway_overloaded"`},
+		{"openai-shape", provcore.FormatOpenAI, `"code":"GATEWAY_OVERLOADED"`, `"type":"error"`},
+		{"anthropic-shape", provcore.FormatAnthropic, `"type":"error"`, `"GATEWAY_OVERLOADED"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

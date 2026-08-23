@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
@@ -52,6 +53,15 @@ type geminiStreamSession struct {
 	// anomaly (e.g. Gemini implicit-cache empty-body response) and is
 	// surfaced as a ProviderError rather than a silent EOF.
 	dataSeen bool
+	// Gemini frames carry cumulative snapshots. The candidate/Part coordinate
+	// owns continuity; a native id is payload, not a global merge key, because
+	// a malformed response can repeat one id at two distinct Part positions.
+	toolIndexByPosition map[string]int
+	nextToolIndex       int
+	// Gemini functionCall args are cumulative snapshots; emit only the latest
+	// snapshot for each slot when the candidate finishes.
+	pendingTools         map[int]provcore.ToolCallDelta
+	toolCandidateByIndex map[int]int
 }
 
 func (s *geminiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) {
@@ -97,10 +107,37 @@ func (s *geminiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 	}
 	root := gjson.ParseBytes(ev.Data)
 
+	// Gemini reports a mid-stream failure by sending its standard Google
+	// API error envelope as a data frame. With no arm for it the frame fell
+	// through to the candidates walk below, which found none, and produced a
+	// chunk with no content and no error — the stream then ended cleanly and
+	// the caller received a truncated answer that looked complete (§3a
+	// Rule 10). Gemini's SSE carries no terminal marker of its own, so
+	// nothing downstream could have caught it either.
+	//
+	// The canonical code is pinned to upstream_error rather than derived
+	// from `error.status`: bytes are already committed at HTTP 200, so a
+	// code the executor treats as retryable would reopen a decision that is
+	// closed. The vendor's status survives on Type.
+	if errObj := root.Get("error"); errObj.IsObject() {
+		s.done = true
+		msg := errObj.Get("message").String()
+		if msg == "" {
+			msg = "upstream sent an error frame mid-stream with no message"
+		}
+		return provcore.Chunk{}, &provcore.ProviderError{
+			Status:  http.StatusBadGateway,
+			Code:    provcore.CodeUpstreamError,
+			Type:    errObj.Get("status").String(),
+			Message: msg,
+			Raw:     ev.Data,
+		}
+	}
+
 	candidates := root.Get("candidates")
 	candidates.ForEach(func(_, cand gjson.Result) bool {
 		parts := cand.Get("content.parts")
-		parts.ForEach(func(_, p gjson.Result) bool {
+		parts.ForEach(func(partIndex, p gjson.Result) bool {
 			if t := p.Get("text"); t.Exists() {
 				// Gemini 2.5+ tags thinking-summary parts with thought=true.
 				// Route them to ReasoningDelta so downstream encoders surface
@@ -117,22 +154,57 @@ func (s *geminiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 				if args == "" {
 					args = "{}"
 				}
-				id := fc.Get("id").String()
+				nativeID := fc.Get("id").String()
+				id := nativeID
 				if id == "" {
-					h := sha1.Sum([]byte(fc.Get("name").String() + "\x00" + args))
+					h := sha1.Sum([]byte(fmt.Sprintf("%s\x00candidate:%d\x00part:%d", fc.Get("name").String(), cand.Get("index").Int(), partIndex.Int())))
 					id = "call_" + fmt.Sprintf("%x", h)[:10]
 				}
-				chunk.ToolCallDeltas = append(chunk.ToolCallDeltas, provcore.ToolCallDelta{
-					Index:     int(cand.Get("index").Int()),
-					ID:        id,
-					Name:      fc.Get("name").String(),
-					Arguments: args,
-				})
+				if s.toolIndexByPosition == nil {
+					s.toolIndexByPosition = make(map[string]int)
+				}
+				positionKey := fmt.Sprintf("candidate:%d\x00part:%d", cand.Get("index").Int(), partIndex.Int())
+				toolIndex, ok := s.toolIndexByPosition[positionKey]
+				if !ok {
+					toolIndex = s.nextToolIndex
+					s.nextToolIndex++
+				}
+				s.toolIndexByPosition[positionKey] = toolIndex
+				if s.pendingTools == nil {
+					s.pendingTools = make(map[int]provcore.ToolCallDelta)
+				}
+				if s.toolCandidateByIndex == nil {
+					s.toolCandidateByIndex = make(map[int]int)
+				}
+				pending := s.pendingTools[toolIndex]
+				pending.Index = toolIndex
+				if id != "" {
+					pending.ID = id
+				}
+				if name := fc.Get("name").String(); name != "" {
+					pending.Name = name
+				}
+				pending.Arguments = args
+				if sig := p.Get("thoughtSignature").String(); sig != "" {
+					pending.ThoughtSignature = sig
+				}
+				s.pendingTools[toolIndex] = pending
+				s.toolCandidateByIndex[toolIndex] = int(cand.Get("index").Int())
 			}
 			return true
 		})
 		if fr := cand.Get("finishReason"); fr.Exists() && fr.String() != "" {
 			s.finishSeen = true
+			for idx := range s.nextToolIndex {
+				if s.toolCandidateByIndex[idx] != int(cand.Get("index").Int()) {
+					continue
+				}
+				if pending, ok := s.pendingTools[idx]; ok {
+					chunk.ToolCallDeltas = append(chunk.ToolCallDeltas, pending)
+					delete(s.pendingTools, idx)
+					delete(s.toolCandidateByIndex, idx)
+				}
+			}
 			// Map Gemini's finishReason enum into the canonical OpenAI
 			// vocabulary so a re-encoder (buffer mode) preserves it instead
 			// of collapsing to "stop".
@@ -167,11 +239,12 @@ func mapGeminiFinishToCanonical(r string) string {
 	case "SAFETY", "RECITATION", "LANGUAGE", "PROHIBITED_CONTENT",
 		"SPII", "BLOCKLIST", "IMAGE_SAFETY", "MODEL_ARMOR":
 		return "content_filter"
-	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
-		return "tool_calls"
 	case "OTHER", "":
 		return "stop"
 	}
+	// MALFORMED_FUNCTION_CALL / UNEXPECTED_TOOL_CALL pass through raw: both
+	// mean no usable tool call was produced, so "tool_calls" sent an agent
+	// loop hunting for an array that is empty.
 	return r
 }
 

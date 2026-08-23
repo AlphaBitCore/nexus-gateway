@@ -254,7 +254,7 @@ func RunSubagent(ctx context.Context, spec SubagentSpec) (SubagentResult, error)
 	var denials []Denial
 	validatorAttempts := 0
 
-	for round := 0; round < maxTurns; round++ {
+	for round := range maxTurns {
 		if halt, stopped := haltForCtx(ctx, runCtx); stopped {
 			return SubagentResult{Summary: lastText(produced), Usage: total, Halt: halt, Denials: denials, Turns: round}, nil
 		}

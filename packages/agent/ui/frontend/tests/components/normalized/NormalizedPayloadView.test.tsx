@@ -32,7 +32,7 @@ describe('NormalizedPayloadView', () => {
   });
 
   it('renders an http-binary metadata card', () => {
-    wrap({ kind: 'http-binary', normalizeVersion: 'v2', http: { bodyView: { binaryRef: { size: 2048, contentType: 'application/octet-stream', sha256: 'abc123' } } } });
+    wrap({ kind: 'http-binary', normalizeVersion: 'v2', http: { bodyView: { mediaRef: { sizeBytes: 2048, mime: 'application/octet-stream', sha256: 'abc123' , modality: 'file', source: 'captured', locator: 'body' } } } });
     expect(screen.getByText(/abc123/)).toBeInTheDocument();
   });
 

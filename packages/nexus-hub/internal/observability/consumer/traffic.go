@@ -130,6 +130,15 @@ type TrafficEventWriter struct {
 	dlqInsertedTotal *opsmetrics.Counter
 	diskDLQTotal     *opsmetrics.Counter
 
+	// lastReceivedNano is the UnixNano of the most recent traffic-event MESSAGE
+	// this writer received off NATS, stamped at receipt in handleMessage BEFORE
+	// the flush. The audit-freshness check reads it (LastReceived) to tell a
+	// STALLED pipeline (messages arriving but not landing in traffic_event —
+	// the 2026-05-14 incident, where every INSERT failed) apart from an IDLE
+	// deployment (no messages at all): only the former is worth an ERROR. Zero
+	// until the first message.
+	lastReceivedNano atomic.Int64
+
 	// diskDLQ is the DB-independent, on-disk dead-letter sink used only when
 	// the DB-backed insertDLQ itself fails (DB unreachable). Never nil after
 	// construction.
@@ -153,6 +162,26 @@ type TrafficEventWriter struct {
 	// (called per flush) reads a cheap atomic, not a broker round-trip. Set via
 	// WithBacklogSampler. Ignored if backlogProbe is already set.
 	backlogSampleFn func(context.Context) (float64, bool)
+}
+
+// markReceived stamps the current time as the last-received moment. Called at
+// message receipt (before flush) so a stalled flush still records that events
+// are arriving.
+func (w *TrafficEventWriter) markReceived() {
+	w.lastReceivedNano.Store(time.Now().UnixNano())
+}
+
+// LastReceived returns the wall-clock time of the most recent traffic-event
+// message this writer received off NATS, or the zero time if none yet. The
+// audit-freshness check uses it as its "were there requests to persist?"
+// denominator, so an idle deployment (no messages) is not mistaken for a
+// stalled pipeline (messages arriving but not landing).
+func (w *TrafficEventWriter) LastReceived() time.Time {
+	n := w.lastReceivedNano.Load()
+	if n == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, n)
 }
 
 // WithBacklogProbe wires a cheap, already-cached fill-fraction reader directly

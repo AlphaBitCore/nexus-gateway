@@ -52,14 +52,32 @@ func TestProviderHealthRollup_Run_ClassifiesStatuses(t *testing.T) {
 			AddRow("prov-2", "p2", int(100), int(10), int(150), now, &lastErr). // degraded (10%)
 			AddRow("prov-3", "p3", int(100), int(30), int(200), now, &lastErr)) // unavailable (30%)
 
-	// 3 separate UPSERTs.
-	for range 3 {
-		mock.ExpectExec(`INSERT INTO "ProviderHealth"`).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	// One UPSERT per provider, and the third argument is the STATUS — which is
+	// what this test is named for and previously did not assert at all.
+	//
+	// Two things made these expectations decorative. ExpectExec without
+	// WithArgs means "expects ZERO arguments" in pgxmock, and upsert passes
+	// nine, so none of them could ever match; and without ExpectationsWereMet
+	// nothing reports an unmatched expectation. The Execs errored, Run logged
+	// and continued, and the test passed green over a classification that never
+	// reached the database.
+	anyArg := pgxmock.AnyArg
+	for _, want := range []string{"healthy", "degraded", "unavailable"} {
+		mock.ExpectExec(`INSERT INTO "ProviderHealth"`).
+			WithArgs(anyArg(), anyArg(), want, anyArg(), anyArg(),
+				anyArg(), anyArg(), anyArg(), anyArg()).
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	}
+	// The stale-verdict reset runs after the upserts on every pass.
+	mock.ExpectExec(`UPDATE "ProviderHealth"`).WithArgs(anyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 
 	j := &ProviderHealthRollupJob{pool: mock, logger: testLogger()}
 	if err := j.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("a classification never reached the database: %v", err)
 	}
 }
 

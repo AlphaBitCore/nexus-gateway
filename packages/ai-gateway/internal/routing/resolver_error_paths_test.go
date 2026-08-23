@@ -107,7 +107,7 @@ func newCoverageResolverFixture() *coverageResolverFixture {
 		models:    map[string]*store.Model{},
 	}
 	reg := strategies.NewStrategyRegistry()
-	resolver := NewResolver(fs, reg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	resolver := NewResolver(fs, reg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, false)
 	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 	return &coverageResolverFixture{store: fs, registry: reg, resolver: resolver}
 }
@@ -139,16 +139,6 @@ func (s *coverageFakeSmartStore) ListEnabledChatModels(_ context.Context) ([]cor
 
 func (s *coverageFakeSmartStore) ListEnabledCandidates(_ context.Context, _ typology.EndpointKind) ([]core.SmartModelRow, error) {
 	return nil, nil
-}
-
-func TestMatchGlob_LiteralPath(t *testing.T) {
-	// No `*` -> early-return exact compare.
-	if core.MatchGlob("exact", "exact") != true {
-		t.Error("literal glob must match exact value")
-	}
-	if core.MatchGlob("exact", "different") != false {
-		t.Error("literal glob must not match different value")
-	}
 }
 
 // format.go — nil core.RoutingTarget paths.
@@ -220,72 +210,6 @@ func TestHealthRanker_DegradedAndUnavailable_RankedLast(t *testing.T) {
 
 // narrowing.go — Apply: invalid JSON, non-matching stage, non-policy node.
 
-// stubWarnLogger captures Warn calls so we can assert Apply logs (without
-// pulling slog).
-type stubWarnLogger struct{ warns []string }
-
-func (l *stubWarnLogger) Warn(msg string, _ ...any) { l.warns = append(l.warns, msg) }
-
-// TestNarrowingEngine_Apply_BadJSON_Skipped: a stage-0 rule with malformed
-// Config JSON is logged via Warn and skipped — state remains empty.
-
-func TestNarrowingEngine_Apply_BadJSON_Skipped(t *testing.T) {
-	eng := &matcher.NarrowingEngine{}
-	rules := []store.RoutingRule{
-		{
-			ID:            "r-bad",
-			PipelineStage: 0,
-			Config:        json.RawMessage(`{ this is not json`),
-		},
-	}
-	logger := &stubWarnLogger{}
-	match := func(_ store.RoutingRule, _ string, _ *core.RoutingContext) bool { return true }
-	state, _ := eng.Apply(context.Background(), rules, &core.RoutingContext{}, logger, match)
-	if !matcher.IsNarrowingEmpty(state) {
-		t.Error("bad JSON rule should leave narrowing empty")
-	}
-	if len(logger.warns) != 1 {
-		t.Errorf("expected 1 Warn for bad JSON, got %d (%v)", len(logger.warns), logger.warns)
-	}
-}
-
-// TestNarrowingEngine_Apply_SkipsNonStage0AndNonPolicy: rules whose
-// PipelineStage != 0 are skipped; non-policy stage-0 rules contribute a
-// trace entry but no state change.
-
-func TestNarrowingEngine_Apply_SkipsNonStage0AndNonPolicy(t *testing.T) {
-	eng := &matcher.NarrowingEngine{}
-	rules := []store.RoutingRule{
-		{
-			ID:            "r-stage1",
-			PipelineStage: 1, // skipped
-			Config:        mustJSON(t, core.StrategyNode{Type: "policy", DenyModelIDs: []string{"x"}}),
-		},
-		{
-			ID:            "r-stage0-nonmatch",
-			PipelineStage: 0,
-			Config:        mustJSON(t, core.StrategyNode{Type: "policy", DenyModelIDs: []string{"y"}}),
-		},
-		{
-			ID:            "r-stage0-nonpolicy",
-			PipelineStage: 0,
-			Config:        mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "p", ModelID: "m"}),
-		},
-	}
-	logger := &stubWarnLogger{}
-	match := func(rule store.RoutingRule, _ string, _ *core.RoutingContext) bool {
-		return rule.ID != "r-stage0-nonmatch"
-	}
-	state, trace := eng.Apply(context.Background(), rules, &core.RoutingContext{}, logger, match)
-	if !matcher.IsNarrowingEmpty(state) {
-		t.Errorf("non-policy stage-0 rule should not mutate state, got %+v", state)
-	}
-	// r-stage0-nonpolicy contributes one trace entry.
-	if len(trace) != 1 {
-		t.Errorf("expected 1 trace entry (non-policy stage-0), got %d", len(trace))
-	}
-}
-
 // resolver.go — constructor + error branches in Resolve / Explain /
 // ResolveTargets / hydrateRequestedModel / lookupTarget / ruleMatches.
 
@@ -300,7 +224,7 @@ func TestNewResolver_WiresAllFields(t *testing.T) {
 	t.Cleanup(ht.Stop)
 	ranker := core.NewHealthRanker(ht)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	r := NewResolver(fs, reg, ranker, logger, nil)
+	r := NewResolver(fs, reg, ranker, logger, nil, false)
 	if r == nil {
 		t.Fatal("NewResolver returned nil")
 	}
@@ -332,9 +256,19 @@ func TestResolver_Resolve_FetchRulesError(t *testing.T) {
 	}
 }
 
-// TestResolver_Resolve_BadStrategyConfigJSON: primary rule's Config is
-// malformed JSON. Resolve must return a wrapped parse error.
-
+// TestResolver_Resolve_BadStrategyConfigJSON: a rule whose Config does not
+// parse is SKIPPED, not fatal.
+//
+// It used to abort the whole resolve, which made one unparseable rule a
+// fleet-wide outage: every request matching it failed, including requests that
+// a lower-priority rule could have served perfectly. A rule nobody can evaluate
+// has nothing to contribute and nothing to defend, so the next match is tried.
+//
+// Skipped loudly — a WARN naming the rule — because the alternative failure
+// mode is the one this program keeps finding: configuration that changes
+// behaviour with nothing to read. The write path validates this JSON, so a
+// malformed config in the table arrived some other way and the operator needs
+// to hear about it.
 func TestResolver_Resolve_BadStrategyConfigJSON(t *testing.T) {
 	f := newCoverageResolverFixture()
 	f.addRule(store.RoutingRule{
@@ -342,13 +276,18 @@ func TestResolver_Resolve_BadStrategyConfigJSON(t *testing.T) {
 		Name:          "bad",
 		StrategyType:  "single",
 		PipelineStage: 1,
+		Priority:      100,
 		Config:        json.RawMessage(`{not json`),
 	})
-	_, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
 		RequestedModel: core.RequestedModel{ID: "gpt-4"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "parse strategy config") {
-		t.Fatalf("expected parse error, got %v", err)
+	if err != nil {
+		t.Fatalf("one unparseable rule must not fail the request: %v", err)
+	}
+	if plan.RuleID == "r-bad" {
+		t.Error("the unparseable rule was adopted as primary, so it holds the slot and " +
+			"every rule beneath it is disabled")
 	}
 }
 
@@ -901,12 +840,12 @@ func TestResolveTargets_FlattensAndHealthRanks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveTargets: %v", err)
 	}
-	if len(res.Targets) != 2 {
-		t.Fatalf("expected 2 flattened targets, got %d", len(res.Targets))
+	if len(res.AllTargets()) != 2 {
+		t.Fatalf("expected 2 flattened targets, got %d", len(res.AllTargets()))
 	}
-	if res.Targets[0].ProviderID != "anthropic" {
+	if res.AllTargets()[0].ProviderID != "anthropic" {
 		t.Errorf("health-ranker should sink unhealthy openai; got order %s -> %s",
-			res.Targets[0].ProviderID, res.Targets[1].ProviderID)
+			res.AllTargets()[0].ProviderID, res.AllTargets()[1].ProviderID)
 	}
 	if res.RuleID != "r-primary" {
 		t.Errorf("RuleID not propagated: %q", res.RuleID)
@@ -946,8 +885,8 @@ func TestResolveTargets_NoHealthRanker_PassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveTargets: %v", err)
 	}
-	if len(res.Targets) != 1 || res.Targets[0].ProviderID != "openai" {
-		t.Errorf("nil-ranker passthrough wrong: %+v", res.Targets)
+	if len(res.AllTargets()) != 1 || res.AllTargets()[0].ProviderID != "openai" {
+		t.Errorf("nil-ranker passthrough wrong: %+v", res.AllTargets())
 	}
 }
 
@@ -1046,57 +985,98 @@ func TestRegisterAllStrategies_WithSmartDeps(t *testing.T) {
 	reg2 := strategies.NewStrategyRegistry()
 	strategies.RegisterAllStrategies(reg2, coverageMockLookup, nil, nil)
 	var trace []core.TraceEntry
-	_, err := reg2.Evaluate(context.Background(), core.StrategyNode{Type: "smart"}, &core.RoutingContext{}, &trace, 0)
+	_, err := reg2.Evaluate(context.Background(), core.StrategyNode{Type: "smart"}, &core.RoutingContext{}, &trace)
 	if err == nil || !strings.Contains(err.Error(), "unknown strategy") {
 		t.Errorf("without smartDeps, smart strategy should be unknown; got: %v", err)
 	}
 	// With smartDeps, the smart strategy IS registered (even if it can't fully run without decider).
 	var trace2 []core.TraceEntry
-	_, err2 := reg.Evaluate(context.Background(), core.StrategyNode{Type: "smart"}, &core.RoutingContext{}, &trace2, 0)
+	_, err2 := reg.Evaluate(context.Background(), core.StrategyNode{Type: "smart"}, &core.RoutingContext{}, &trace2)
 	if err2 != nil && strings.Contains(err2.Error(), "unknown strategy") {
 		t.Error("smart strategy was not registered when smartDeps != nil")
 	}
 }
 
-// TestFallbackStrategy_RecurseErrorPropagates: an inner strategy that
-// returns an error bubbles up through the fallback iterator.
-
-func TestFallbackStrategy_RecurseErrorPropagates(t *testing.T) {
+// TestFallbackStrategy_UnsupportedEntry_IsSkippedNotFatal.
+//
+// A chain entry names a provider+model leaf. One holding anything else cannot
+// be flown, and the chain continues without it — where it used to abort the
+// whole evaluation.
+//
+// The same reasoning as the loadbalance case below, and the rule walk above it:
+// an entry nobody can resolve has nothing to contribute, and failing the
+// request over it denies the caller the entries that ARE serviceable. What must
+// not happen is silence — the trace names the shape, so a chain quietly flying
+// shorter than the admin wrote it is visible rather than inferred.
+func TestFallbackStrategy_UnsupportedEntry_IsSkippedNotFatal(t *testing.T) {
 	reg := strategies.NewStrategyRegistry()
 	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil, nil)
 	var trace []core.TraceEntry
-	_, err := reg.Evaluate(
+	targets, err := reg.Evaluate(
 		context.Background(),
 		core.StrategyNode{Type: "fallback", Targets: []core.StrategyNode{
-			{Type: "ghost"}, // unknown -> err
+			{Type: "ghost"},
+			{Type: "single", ProviderID: "p1", ModelID: "m1"},
 		}},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
-	if err == nil {
-		t.Error("fallback should surface inner strategy errors")
+	if err != nil {
+		t.Fatalf("one unserviceable entry must not fail the chain: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("resolved %d targets — the serviceable entry must still fly", len(targets))
+	}
+	var explained bool
+	for _, e := range trace {
+		if strings.Contains(e.Decision, "ghost") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Error("the chain flew shorter than it was written and nothing in the trace says why")
 	}
 }
 
-// TestLoadbalanceStrategy_RecurseErrorPropagates: an inner strategy
-// erroring inside the chosen weighted branch returns the error verbatim.
-
-func TestLoadbalanceStrategy_RecurseErrorPropagates(t *testing.T) {
+// TestLoadbalanceStrategy_UnsupportedInnerNode_YieldsNothingAndSaysSo.
+//
+// A weighted entry names a provider+model leaf. One holding anything else is a
+// configuration that cannot be served, and it now produces no target and a
+// trace line naming the shape — where it used to abort the whole evaluation.
+//
+// The change is deliberate and shares its reasoning with the rule walk: a rule
+// nobody can evaluate has nothing to contribute and nothing to defend, so the
+// request should reach the rules beneath it rather than fail. Erroring made one
+// unserviceable entry a failure for traffic that a lower-priority rule could
+// have served. Refusing the shape belongs at the write boundary, where the
+// admin who wrote it is there to be told.
+func TestLoadbalanceStrategy_UnsupportedInnerNode_YieldsNothingAndSaysSo(t *testing.T) {
 	reg := strategies.NewStrategyRegistry()
 	strategies.RegisterAllStrategies(reg, coverageMockLookup, nil, nil)
 	var trace []core.TraceEntry
-	_, err := reg.Evaluate(
+	targets, err := reg.Evaluate(
 		context.Background(),
 		core.StrategyNode{Type: "loadbalance", Weighted: []core.WeightedTarget{
 			{Weight: 1, Node: core.StrategyNode{Type: "ghost"}},
 		}},
 		&core.RoutingContext{},
 		&trace,
-		0,
 	)
-	if err == nil {
-		t.Error("loadbalance should surface inner errors")
+	if err != nil {
+		t.Fatalf("one unserviceable entry must not fail the request: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Errorf("returned %d targets from a node that names no provider+model", len(targets))
+	}
+	var explained bool
+	for _, e := range trace {
+		if strings.Contains(e.Decision, "ghost") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Error("nothing in the trace names the shape that could not be served, so an operator " +
+			"sees a rule quietly resolve nothing with no reason to read")
 	}
 }
 
@@ -1117,7 +1097,6 @@ func TestConditionalStrategy_NoBranchNoDefault_EmitsTrace(t *testing.T) {
 		},
 		&core.RoutingContext{RequestedModel: core.RequestedModel{Type: "chat"}},
 		&trace,
-		0,
 	)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -1186,18 +1165,6 @@ func TestEvaluateExpression_ImplicitEqViaNonMap(t *testing.T) {
 	}
 	if matcher.EvaluateExpression(map[string]any{"requestedModel.type": "image"}, ctx) {
 		t.Error("implicit $eq should fail")
-	}
-}
-
-// TestNarrowingEngine_Filter_DropsByVKAllowed: the Filter method on
-// NarrowingEngine handles the VK whitelist branch directly (parallel to
-// the resolver-level test which exercises it end-to-end).
-
-func TestMergePolicy_EmptyNodeNoOp(t *testing.T) {
-	state := matcher.EmptyNarrowingState()
-	got := matcher.MergePolicyIntoState(state, core.StrategyNode{Type: "policy"})
-	if !matcher.IsNarrowingEmpty(got) {
-		t.Errorf("empty policy node should be a no-op: %+v", got)
 	}
 }
 

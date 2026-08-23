@@ -117,6 +117,28 @@ type Routing struct {
 	// Load() field-merges this against cfgpolicy.DefaultRetryPolicy() so
 	// admins can specify only the knobs they want to change.
 	DefaultRetryPolicy cfgpolicy.RetryPolicy `yaml:"defaultRetryPolicy"`
+
+	// EnforceNamedModelModality decides who owns the modality verdict when a
+	// caller NAMES one model (a direct model id, or a rule with a single
+	// explicit target — callerNamedTheModel). Default false: the gateway does
+	// NOT reject a named request on its own modality-capability data, it
+	// forwards it and lets the upstream give its own verdict — because that
+	// data (input-modality ceilings, required-modality floors) is a claim
+	// about our catalogue, which has been wrong (video and reasoning cells
+	// were mislabelled) and would then block a request the model can actually
+	// serve. The caller named the model and owns its limits.
+	//
+	// Flip to true to have the gateway enforce the modality floor + input-
+	// modality ceiling for named models too — trading the upstream round-trip
+	// for a local 400 at the cost of trusting the catalogue.
+	//
+	// It does NOT touch `auto` / smart routing: when the gateway CHOSE the
+	// model it must hand the executor one that can serve the request, so those
+	// paths filter by modality unconditionally regardless of this flag. It
+	// also does not touch the embeddings parameter-compatibility guard, which
+	// is not a modality question. Operator-side feature flag (yaml-only,
+	// redeploy to flip) per configuration-architecture.md §2.
+	EnforceNamedModelModality bool `yaml:"enforceNamedModelModality"`
 }
 
 // HTTPClientsConfig groups ai-gateway's named HTTP clients.

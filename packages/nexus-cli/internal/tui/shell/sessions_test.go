@@ -142,7 +142,7 @@ func TestModelSessionsResumeContinuesSameSessionID(t *testing.T) {
 	// runtime.TestBuildAgentResumesInjectedSession).
 	m.conv.input.SetValue("and now?")
 	m, cmd = updateModel(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = pumpModel(m, cmd)
+	_ = pumpModel(m, cmd) // pumped for effect; the model is not read after this
 	if rr.gotText != "and now?" {
 		t.Fatalf("the next turn must run, got %q", rr.gotText)
 	}
@@ -534,7 +534,7 @@ func TestSessionPickerWindowsAroundCursor(t *testing.T) {
 		t.Fatalf("rows beyond the window must not render:\n%s", out)
 	}
 	// Walk the cursor deep into the list: the window follows it.
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		p, _ = p.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	out = stripSGR(p.View())

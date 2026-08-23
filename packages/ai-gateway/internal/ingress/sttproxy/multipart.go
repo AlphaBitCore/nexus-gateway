@@ -52,12 +52,14 @@ type STTRequest struct {
 	// response_format value); the handler gates it (streaming deferred in v1a).
 	Stream string
 	// AudioRef is the input-audio fingerprint (sha256/size/mime) for the audit
-	// row — reference only, never the bytes (R-7).
+	// row. It is recorded whether or not the bytes themselves are captured,
+	// so an event whose payload capture is off still proves WHICH file was
+	// transcribed.
 	AudioRef ArtifactRef
 
 	fileFieldName string
 	fileFileName  string
-	audio         []byte // the audio bytes, for ReEmit; NEVER handed to the audit pool
+	audio         []byte // the audio bytes: read by ReEmit and by Audio()
 	extraFields   []formField
 }
 
@@ -211,4 +213,19 @@ func (s *STTRequest) ReEmit(providerModelID string) ([]byte, string, error) {
 func (s *STTRequest) ArtifactRefsJSON() string {
 	return fmt.Sprintf(`[{"sha256":%q,"sizeBytes":%d,"mime":%q}]`,
 		s.AudioRef.Sha256, s.AudioRef.SizeBytes, s.AudioRef.Mime)
+}
+
+// Audio returns the parsed audio bytes for capture, with the mime the
+// fingerprint recorded.
+//
+// The bytes are handed over, not copied: they are already materialised here
+// (the parser buffers the file part), so a capture that copied them would
+// pay 1.36 ms and 27 MB on the request path at the 26 MiB ceiling, measured,
+// for nothing. The caller must treat the slice as read-only — ReEmit reads
+// it too, and capture must never change what is forwarded.
+//
+// Returns nil when there is no file part, which the handler has already
+// rejected by then.
+func (s *STTRequest) Audio() ([]byte, string) {
+	return s.audio, s.AudioRef.Mime
 }
