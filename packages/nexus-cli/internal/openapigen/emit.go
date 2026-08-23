@@ -108,7 +108,7 @@ func buildOperation(kind string, r route, params []string, sb *schemaBuilder) *o
 		op.Set("parameters", ps)
 	}
 
-	if r.Request != nil && (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") {
+	if r.Request != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
 		op.Set("requestBody", newOMap().
 			Set("required", true).
 			Set("content", newOMap().Set("application/json",

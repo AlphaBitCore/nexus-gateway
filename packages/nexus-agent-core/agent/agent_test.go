@@ -149,7 +149,7 @@ func TestAgentTurnBoundsModelViewButPersistsFullHistory(t *testing.T) {
 		OnCompact: func(s CompactStat) { trimmed = &s },
 	})
 	// Seed prior alternating turns whose bodies are large enough to exceed the budget.
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		role := RoleUser
 		if i%2 == 1 {
 			role = RoleAssistant
@@ -200,7 +200,7 @@ func TestAgentManualCompactRewritesAndPersists(t *testing.T) {
 		Compactor: comp, Situation: fakeSituation{}, Env: "local", Session: NewSession("local"),
 		OnCompact: func(s CompactStat) { fired = &s },
 	})
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		role := RoleUser
 		if i%2 == 1 {
 			role = RoleAssistant
@@ -247,7 +247,7 @@ func TestAgentManualCompactSurfacesModelError(t *testing.T) {
 		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Memory: OpenMemoryStore(dir, "local"), Store: openStoreAt(dir),
 		Compactor: comp, Situation: fakeSituation{}, Env: "local", Session: NewSession("local"),
 	})
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		role := RoleUser
 		if i%2 == 1 {
 			role = RoleAssistant

@@ -30,7 +30,7 @@ func TestStartChatStream_DrainsDeltasThenDone(t *testing.T) {
 	s := StartChatStream(gw, "vk", func(context.Context) core.ChatRequest { return core.ChatRequest{} })
 
 	var got []string
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		msg := s.Wait(
 			func(d string) tea.Msg { return d },
 			func(sd StreamDone) tea.Msg { return sd },

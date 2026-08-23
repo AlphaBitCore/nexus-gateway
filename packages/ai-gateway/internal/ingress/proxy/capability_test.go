@@ -137,11 +137,13 @@ func TestWriteNoCompatibleCapability(t *testing.T) {
 	if !ok {
 		t.Fatalf("error field missing or wrong type: %v", payload)
 	}
-	if errObj["type"] != "no_compatible_capability" {
-		t.Errorf("error.type = %v, want no_compatible_capability", errObj["type"])
+	// type is the status-derived OpenAI vocabulary; the identity of the
+	// failure is error.code, which is where every other gateway error puts it.
+	if errObj["type"] != "invalid_request_error" {
+		t.Errorf("error.type = %v, want invalid_request_error", errObj["type"])
 	}
-	if errObj["code"] != "no_compatible_capability" {
-		t.Errorf("error.code = %v, want no_compatible_capability", errObj["code"])
+	if errObj["code"] != "NO_COMPATIBLE_CAPABILITY" {
+		t.Errorf("error.code = %v, want NO_COMPATIBLE_CAPABILITY", errObj["code"])
 	}
 	caps, ok := errObj["available_capabilities"].([]any)
 	if !ok {
@@ -170,7 +172,7 @@ func TestWriteNoCompatibleCapability_Empty(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	errObj := payload["error"].(map[string]any)
-	if errObj["type"] != "no_compatible_capability" {
-		t.Errorf("error.type = %v, want no_compatible_capability", errObj["type"])
+	if errObj["type"] != "invalid_request_error" {
+		t.Errorf("error.type = %v, want invalid_request_error", errObj["type"])
 	}
 }

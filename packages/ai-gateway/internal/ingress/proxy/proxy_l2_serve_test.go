@@ -238,7 +238,7 @@ func TestScheduleL2Write_NilCredManager(t *testing.T) {
 		// CredManager omitted on purpose.
 	}}
 	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
-		sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+		l2Canonical{msgs: sampleMsgs()}, []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer must not be called when CredManager is nil")
 	}
@@ -255,7 +255,7 @@ func TestScheduleL2Write_CredError(t *testing.T) {
 		CredManager:         &stubCredManager{err: errCredLookupFailed},
 	}}
 	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
-		sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+		l2Canonical{msgs: sampleMsgs()}, []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer must not be called when embedding cred lookup fails")
 	}

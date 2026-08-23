@@ -28,6 +28,23 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
 )
 
+// runBudget is what Run is GIVEN to do its work; runBackstop is how long the
+// test waits for it to come back. They must not be equal.
+//
+// Every test here used 5s for both, which makes the assertion a coin flip: Run
+// is expected to return BECAUSE its context expired, so the goroutine has to
+// notice the expiry, unwind and close(done) — all after the same instant the
+// test's own timer fires. Under -race on a shared runner the test's timer wins
+// often enough that CI reported "Run with pinning exemption did not return
+// within 5s" for work that was returning correctly, just not in zero time.
+//
+// The backstop is deliberately far larger. It is not a second deadline on the
+// work; it exists only so a genuine hang fails the suite instead of wedging it.
+const (
+	runBudget   = 2 * time.Second
+	runBackstop = 60 * time.Second
+)
+
 // TestLogRelayResult_NilErr verifies that nil errors are silently ignored
 // (no log output, no panic). logRelayResult is the pass-through logging
 // helper called after every PassThrough; it must not log anything on success.
@@ -94,7 +111,7 @@ func TestRun_KillSwitchEnabled(t *testing.T) {
 		Logger:            slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	// Run must return (not hang). The passthrough dial will fail quickly
@@ -108,7 +125,7 @@ func TestRun_KillSwitchEnabled(t *testing.T) {
 	select {
 	case <-done:
 		// Good — Run returned.
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with kill-switch enabled did not return within 5s")
 	}
 }
@@ -127,7 +144,7 @@ func TestRun_KillSwitchNil(t *testing.T) {
 		Logger:            slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -138,7 +155,7 @@ func TestRun_KillSwitchNil(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with nil kill-switch did not return within 5s")
 	}
 }
@@ -166,7 +183,7 @@ func TestRun_PinningExemptPassthrough(t *testing.T) {
 		Logger:         slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -177,7 +194,7 @@ func TestRun_PinningExemptPassthrough(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with pinning exemption did not return within 5s")
 	}
 }
@@ -198,7 +215,7 @@ func TestRun_NoComplianceNoBump(t *testing.T) {
 		// GetCert and Upstream nil — BumpConnection will fail fast at TLS.
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -209,7 +226,7 @@ func TestRun_NoComplianceNoBump(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run without compliance pipeline did not return within 5s")
 	}
 }
@@ -238,7 +255,7 @@ func TestRun_ExemptionStoreMatch(t *testing.T) {
 		Logger: logger,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -249,7 +266,7 @@ func TestRun_ExemptionStoreMatch(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with exemption store match did not return within 5s")
 	}
 }
@@ -274,7 +291,7 @@ func TestRun_ExemptionStoreNoMatch(t *testing.T) {
 		Logger:         logger,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -285,7 +302,7 @@ func TestRun_ExemptionStoreNoMatch(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with no exemption match did not return within 5s")
 	}
 }
@@ -369,7 +386,7 @@ func TestRun_KillSwitchEnabled_WithMetricsAndAudit(t *testing.T) {
 		Logger:            slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -380,7 +397,7 @@ func TestRun_KillSwitchEnabled_WithMetricsAndAudit(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with kill-switch + metrics + audit did not return within 5s")
 	}
 }
@@ -408,7 +425,7 @@ func TestRun_PinningExemptPassthrough_WithMetrics(t *testing.T) {
 		Logger:         slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -419,7 +436,7 @@ func TestRun_PinningExemptPassthrough_WithMetrics(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with pinning exemption + metrics did not return within 5s")
 	}
 }
@@ -447,7 +464,7 @@ func TestRun_HookExemptionWithAudit(t *testing.T) {
 		Logger:             logger,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -458,7 +475,7 @@ func TestRun_HookExemptionWithAudit(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with hook exemption + audit did not return within 5s")
 	}
 }
@@ -492,7 +509,7 @@ func TestRun_CompliancePipelineNonNil_BumpOpts(t *testing.T) {
 		Logger:               logger,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -503,7 +520,7 @@ func TestRun_CompliancePipelineNonNil_BumpOpts(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run with non-nil CompliancePipeline did not return within 5s")
 	}
 }
@@ -565,7 +582,7 @@ func TestRun_PinningError_RecordFailure(t *testing.T) {
 		Logger:         logger,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*runBudget)
 	defer cancel()
 
 	// Run BumpConnection on the server side in a goroutine.
@@ -591,7 +608,7 @@ func TestRun_PinningError_RecordFailure(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(runBackstop):
 		t.Fatal("Run did not return after pinning error within 10s")
 	}
 }

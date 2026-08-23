@@ -8,6 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
 
 // errorNormalizer handles Cohere's error envelopes:
@@ -36,6 +37,14 @@ func (errorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 	switch status {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		pe.Code = provcore.CodeInvalidRequest
+		// A spent account budget can arrive on this arm indistinguishable from
+		// a malformed body. The marker set is deliberately narrow — it excludes
+		// the bare phrase "quota exceeded", which is also how per-minute rate
+		// limits are worded — so an ambiguous message stays invalid_request
+		// rather than being guessed into a failover.
+		if specutil.IsQuotaExhaustedMessage(pe.Message) {
+			pe.Code = provcore.CodeProviderQuotaExhausted
+		}
 	case http.StatusUnauthorized, http.StatusForbidden:
 		pe.Code = provcore.CodeAuthFailed
 	case http.StatusTooManyRequests:

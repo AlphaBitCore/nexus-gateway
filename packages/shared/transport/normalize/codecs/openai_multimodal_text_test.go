@@ -101,13 +101,13 @@ func TestOpenAIImages_ResponseSummary_NoInlineB64(t *testing.T) {
 				t.Fatal("base64 leaked into a text block")
 			}
 		}
-		if b.Type == core.ContentImageRef {
+		if b.Type == core.ContentMedia {
 			sawRef = true
-			if b.ImageRef.ContentType != "image/png" {
-				t.Errorf("mime=%s want image/png", b.ImageRef.ContentType)
+			if b.MediaRef.Mime != "image/png" {
+				t.Errorf("mime=%s want image/png", b.MediaRef.Mime)
 			}
-			if b.ImageRef.Size != int64(len(tinyPNG)) {
-				t.Errorf("size=%d want %d", b.ImageRef.Size, len(tinyPNG))
+			if b.MediaRef.SizeBytes != int64(len(tinyPNG)) {
+				t.Errorf("size=%d want %d", b.MediaRef.SizeBytes, len(tinyPNG))
 			}
 		}
 	}
@@ -120,22 +120,34 @@ func TestOpenAIImages_ResponseSummary_NoInlineB64(t *testing.T) {
 	}
 }
 
-func TestOpenAIImages_ResponseURL_InertText(t *testing.T) {
+func TestOpenAIImages_ResponseURL_InertExternalRef(t *testing.T) {
+	// A provider-hosted, expiring image URL is never fetched — it must
+	// surface as an inert external MediaRef, not get flattened into an
+	// unstructured text marker (the defect this codec used to have, per
+	// the comment on the d.URL branch in openai_images.go).
 	n := NewOpenAIImagesNormalizer()
 	p, err := n.Normalize(context.Background(),
 		[]byte(`{"data":[{"url":"https://cdn.example/img.png"}]}`), respMeta("/v1/images/generations", "application/json"))
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
-	got := firstText(p)
-	if !strings.Contains(got, "https://cdn.example/img.png") {
-		t.Errorf("url text=%q", got)
+	if len(p.Messages) != 1 || len(p.Messages[0].Content) != 1 {
+		t.Fatalf("expected exactly one media block, got %+v", p.Messages)
 	}
-	// url mode must NOT emit an image_ref (BinaryRef has no url field).
-	for _, b := range p.Messages[0].Content {
-		if b.Type == core.ContentImageRef {
-			t.Fatal("url mode wrongly emitted an image_ref")
-		}
+	b := p.Messages[0].Content[0]
+	if b.Type != core.ContentMedia || b.MediaRef == nil {
+		t.Fatalf("expected a media block, got %+v", b)
+	}
+	if b.MediaRef.Source != core.MediaExternal || b.MediaRef.URL != "https://cdn.example/img.png" {
+		t.Errorf("media ref: %+v", b.MediaRef)
+	}
+	if b.MediaRef.Modality != core.ModalityImage {
+		t.Errorf("modality=%s want image", b.MediaRef.Modality)
+	}
+	// The URL must never leak into a free-text block, which is what the
+	// old "inert text" degradation did.
+	if got := firstText(p); got != "" {
+		t.Errorf("url should not degrade into a text block; got %q", got)
 	}
 }
 
@@ -169,14 +181,14 @@ func TestOpenAIAudioSpeech_ResponseBinary_TerminalClaim(t *testing.T) {
 	if p.Kind != core.KindHTTPBinary {
 		t.Fatalf("kind=%s want http-binary", p.Kind)
 	}
-	if p.HTTP == nil || p.HTTP.BodyView == nil || p.HTTP.BodyView.BinaryRef == nil {
-		t.Fatal("missing binary ref")
+	if p.HTTP == nil || p.HTTP.BodyView == nil || p.HTTP.BodyView.MediaRef == nil {
+		t.Fatal("missing media ref")
 	}
-	if p.HTTP.BodyView.BinaryRef.ContentType != "audio/mpeg" {
-		t.Errorf("mime=%s", p.HTTP.BodyView.BinaryRef.ContentType)
+	if p.HTTP.BodyView.MediaRef.Mime != "audio/mpeg" {
+		t.Errorf("mime=%s", p.HTTP.BodyView.MediaRef.Mime)
 	}
-	if p.HTTP.BodyView.BinaryRef.Size != int64(len(audio)) {
-		t.Errorf("size=%d", p.HTTP.BodyView.BinaryRef.Size)
+	if p.HTTP.BodyView.MediaRef.SizeBytes != int64(len(audio)) {
+		t.Errorf("size=%d", p.HTTP.BodyView.MediaRef.SizeBytes)
 	}
 }
 
@@ -301,18 +313,18 @@ func TestMultimodalCodecs_EdgeText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid-b64 err=%v", err)
 	}
-	var ref *core.BinaryRef
+	var ref *core.MediaRef
 	for _, b := range pr.Messages[0].Content {
-		if b.Type == core.ContentImageRef {
-			ref = b.ImageRef
+		if b.Type == core.ContentMedia {
+			ref = b.MediaRef
 		}
 	}
-	if ref == nil || ref.ContentType != "application/octet-stream" {
+	if ref == nil || ref.Mime != "application/octet-stream" {
 		t.Errorf("invalid-b64 ref=%v", ref)
 	}
 	// Invalid base64 → the arithmetic size is a fiction; report 0, not a fake count.
-	if ref != nil && ref.Size != 0 {
-		t.Errorf("invalid-b64 size=%d want 0 (no fabricated byte count)", ref.Size)
+	if ref != nil && ref.SizeBytes != 0 {
+		t.Errorf("invalid-b64 size=%d want 0 (no fabricated byte count)", ref.SizeBytes)
 	}
 }
 

@@ -438,7 +438,7 @@ func TestWizard_EnvStep_StartsAndLists(t *testing.T) {
 	if w.envCursor != 0 {
 		t.Fatal("up at top should stay")
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		w, _ = w.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if w.envCursor != 2 { // 2 envs → indices 0,1 + create row at 2
@@ -894,7 +894,7 @@ func TestWizard_EnvStep_EditUpdatesURLs(t *testing.T) {
 		t.Fatalf("AIGW step in edit mode must prefill with the existing AI Gateway URL, got %q", got)
 	}
 	w.input.SetValue("https://aigw.new-staging")
-	w, _ = w.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, _ = w.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // driven for effect
 	if f.updatedName != "staging" || f.updatedCP != "https://cp.new-staging" || f.updatedAIGW != "https://aigw.new-staging" {
 		t.Fatalf("UpdateEnv args wrong: name=%q cp=%q aigw=%q",
 			f.updatedName, f.updatedCP, f.updatedAIGW)

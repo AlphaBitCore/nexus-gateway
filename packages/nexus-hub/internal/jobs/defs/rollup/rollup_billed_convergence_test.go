@@ -2,6 +2,7 @@ package rollup
 
 import (
 	"context"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -112,6 +113,40 @@ func TestRollup5m_BilledPassesThroughEstimated_EvenWithInternalOps(t *testing.T)
 	}
 	if guardMetric != aiGuard*fanout {
 		t.Errorf("ai-guard cost is not intact on its own series: got %v want %v", guardMetric, aiGuard*fanout)
+	}
+}
+
+// The vendor-spend series added a THIRD and FOURTH internal-ops component
+// (smart-router cost, and the ai-guard classifier now that it is attributable).
+// This pins the same quota isolation against all of them at once: the live
+// quota counter charges EstimatedCostUsd and usage_cache_backfill re-seeds it
+// from billed_cost_usd, so anything folded in makes the counter jump on restart
+// — charged one number while live, re-seeded from a larger one.
+func TestRollup5m_BilledCostExcludesEveryInternalOpsComponent(t *testing.T) {
+	rows := rollupFixtureRows(t, trafficEventFixture{
+		RoutedProviderID:    "prov-openai",
+		EstimatedCostUsd:    0.40,
+		TotalTokens:         1200,
+		StatusCode:          200,
+		GatewayCacheStatus:  "miss",
+		RouterCostUsd:       0.0055,
+		RouterProviderID:    "prov-openai",
+		EmbeddingCostUsd:    0.000004,
+		EmbeddingProviderID: "prov-openai",
+		AIGuardCostUsd:      0.0002,
+	})
+
+	dim := metrics.BuildDimensionKey("routed_provider", "prov-openai")
+	billed := vendorSpendByDim(t, rows, metrics.MetricBilledCostUSD)
+	if math.Abs(billed[dim]-0.40) > 1e-12 {
+		t.Errorf("billed_cost_usd = %v, want exactly estimated_cost_usd 0.40", billed[dim])
+	}
+
+	// Excluded from billed must not mean invisible: every internal-ops dollar
+	// still shows up on the internal vendor-spend series.
+	internal := vendorSpendByDim(t, rows, metrics.MetricVendorSpendInternalUSD)
+	if want := 0.0055 + 0.000004 + 0.0002; math.Abs(internal[dim]-want) > 1e-12 {
+		t.Errorf("vendor_spend_internal_usd = %v, want %v — the internal-ops money must stay visible somewhere", internal[dim], want)
 	}
 }
 

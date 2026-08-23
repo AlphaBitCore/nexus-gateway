@@ -56,8 +56,12 @@ func (h *Handler) extractMultimodalForHooks(kind typology.EndpointKind, ingressF
 //   - image_generation (/v1/images/generations): `prompt` — the only
 //     user-text field on the OpenAI images wire; size/quality/n/response_format
 //     are non-text knobs, `model` is routing metadata.
-//   - tts (/v1/audio/speech): `input` — the synthesized text; voice/format/
-//     speed are non-text knobs.
+//   - tts (/v1/audio/speech): `input` — the synthesized text — and
+//     `instructions`, free-form prose the caller writes to steer delivery.
+//     Both are the caller's own words, so both are scanned and redactable;
+//     the normalize codec treats them the same way, appending instructions
+//     alongside input and reporting no-user-text only when both are empty.
+//     voice/format/speed are non-text knobs.
 //
 // STT is absent by design: its transcriptions route is not registered yet
 // (multipart), and its user content is the audio artifact + the response
@@ -67,7 +71,7 @@ func multimodalUserTextPaths(kind typology.EndpointKind) []string {
 	case typology.EndpointKindImageGeneration:
 		return []string{"prompt"}
 	case typology.EndpointKindTTS:
-		return []string{"input"}
+		return []string{"input", "instructions"}
 	}
 	return nil
 }

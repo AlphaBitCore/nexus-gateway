@@ -145,7 +145,7 @@ func (b *schemaBuilder) arraySchema(elem types.Type) *omap {
 func (b *schemaBuilder) structSchema(s *types.Struct) *omap {
 	props := newOMap()
 	var required []string
-	for i := 0; i < s.NumFields(); i++ {
+	for i := range s.NumFields() {
 		f := s.Field(i)
 		if !f.Exported() && !f.Embedded() {
 			continue
@@ -176,7 +176,7 @@ func (b *schemaBuilder) structSchema(s *types.Struct) *omap {
 // inlineStruct promotes an embedded struct's fields into the parent property
 // set (Go struct embedding flattens into the JSON object).
 func inlineStruct(props *omap, required *[]string, b *schemaBuilder, s *types.Struct) {
-	for i := 0; i < s.NumFields(); i++ {
+	for i := range s.NumFields() {
 		f := s.Field(i)
 		if !f.Exported() {
 			continue

@@ -43,10 +43,18 @@ func (t *Transport) BuildURL(target provcore.CallTarget, endpoint typology.WireS
 	if base == "" {
 		base = defaultBaseURL
 	}
-	if endpoint != typology.WireShapeVoyageEmbeddings {
-		return "", fmt.Errorf("voyage: only embeddings endpoint is supported; got %q", endpoint)
+	switch endpoint {
+	case typology.WireShapeVoyageEmbeddings:
+		return base + "/v1/embeddings", nil
+	case typology.WireShapeVoyageRerank:
+		// Same split Cohere had: the codec encodes and decodes rerank, and
+		// this function only ever knew about embeddings, so every rerank
+		// request failed before a URL existed and the provider was never
+		// called. An adapter whose codec speaks a wire its transport cannot
+		// address is not one adapter.
+		return base + "/v1/rerank", nil
 	}
-	return base + "/v1/embeddings", nil
+	return "", fmt.Errorf("voyage: unsupported endpoint %q", endpoint)
 }
 
 // ApplyAuth stamps the Bearer token from the API key.

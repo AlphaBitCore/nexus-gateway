@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/matcher"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/strategies"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // fakeStore is an in-memory routingStore used to drive Resolver.Resolve
@@ -23,6 +25,9 @@ type fakeStore struct {
 	rules     []store.RoutingRule
 	providers map[string]*store.Provider
 	models    map[string]*store.Model
+	// candidatesErr makes ResolveModelCandidates fail, so a test can drive the
+	// catalogue-blip path rather than assert against a hand-built context.
+	candidatesErr error
 }
 
 func (f *fakeStore) GetEnabledRoutingRules(_ context.Context) ([]store.RoutingRule, error) {
@@ -53,6 +58,9 @@ func (f *fakeStore) GetModel(_ context.Context, id string) (*store.Model, error)
 // every enabled Model whose Code equals the request string OR whose
 // Aliases contain it. The fake walks the in-memory map.
 func (f *fakeStore) ResolveModelCandidates(_ context.Context, code string) ([]store.Model, error) {
+	if f.candidatesErr != nil {
+		return nil, f.candidatesErr
+	}
 	if code == "" {
 		return nil, nil
 	}
@@ -91,11 +99,11 @@ func newResolverFixture() *resolverFixture {
 
 	reg := strategies.NewStrategyRegistry()
 	resolver := &Resolver{
-		db:              fs,
-		registry:        reg,
-		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		narrowingEngine: &matcher.NarrowingEngine{},
-		capCache:        nil, // nil = capability pre-filter disabled in these tests
+		db:       fs,
+		registry: reg,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		vkAccess: matcher.VKAccessFilter{},
+		capCache: nil, // nil = capability pre-filter disabled in these tests
 	}
 	strategies.RegisterAllStrategies(reg, resolver.LookupTargetFunc(), nil, nil)
 	return &resolverFixture{store: fs, registry: reg, resolver: resolver}
@@ -168,141 +176,28 @@ func TestResolver_HappyPath_PrimarySingle(t *testing.T) {
 	}
 }
 
-// TestResolver_Stage0Narrowing_FiltersPrimaryTarget verifies that a stage-0
-// policy rule denying the model causes the primary target to be filtered out
-// (and that core.NarrowingSummary reflects what was applied).
-func TestResolver_Stage0Narrowing_FiltersPrimaryTarget(t *testing.T) {
+// TestResolver_ANamedModelTheKeyCannotUseIsRefused.
+//
+// The caller pinned a model. Their key does not permit it. Serving the request
+// anyway — because a rule would redirect it to something the key CAN use — is
+// how a client hard-coded to one model got 200s from another: the client's own
+// configuration silently overridden, every response attributed to a model the
+// key cannot use, and nothing in the exchange saying so.
+//
+// This is a deliberate reversal. The access filter's own comment argued against
+// it, and correctly, for the UNCONDITIONAL version — see the sibling test.
+func TestResolver_ANamedModelTheKeyCannotUseIsRefused(t *testing.T) {
 	f := newResolverFixture()
 	f.addProvider("openai", true)
 	f.addModel("gpt-4", "openai", "gpt-4", true)
 
 	f.addRule(store.RoutingRule{
-		ID:            "r-policy",
-		Name:          "deny gpt-4",
-		StrategyType:  "policy",
-		PipelineStage: 0,
-		Priority:      100,
-		Config: mustJSON(t, core.StrategyNode{
-			Type:         "policy",
-			DenyModelIDs: []string{"gpt-4"},
-		}),
-	})
-	f.addRule(store.RoutingRule{
-		ID:            "r-primary",
-		Name:          "primary",
-		StrategyType:  "single",
-		PipelineStage: 1,
-		Priority:      100,
-		Config:        mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
+		ID: "r-primary", Name: "primary", StrategyType: "single", PipelineStage: 1,
+		Config: mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
 	})
 
-	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
-		RequestedModel: core.RequestedModel{ID: "gpt-4"},
-	})
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if len(plan.Targets) != 0 {
-		t.Fatalf("expected 0 primary targets (denied), got %d", len(plan.Targets))
-	}
-	if plan.NarrowingSummary == nil {
-		t.Fatal("expected core.NarrowingSummary to be populated")
-	}
-	if len(plan.NarrowingSummary.DenyModelIDs) != 1 || plan.NarrowingSummary.DenyModelIDs[0] != "gpt-4" {
-		t.Errorf("unexpected deny summary: %+v", plan.NarrowingSummary)
-	}
-}
-
-// TestResolver_Stage0Narrowing_IntersectAllowUnionDeny verifies that multiple
-// stage-0 policies compose: allow-lists intersect, deny-lists union.
-func TestResolver_Stage0Narrowing_IntersectAllowUnionDeny(t *testing.T) {
-	f := newResolverFixture()
-	f.addProvider("openai", true)
-	f.addProvider("anthropic", true)
-	f.addModel("gpt-4", "openai", "gpt-4", true)
-	f.addModel("gpt-3.5", "openai", "gpt-3.5", true)
-	f.addModel("claude-3", "anthropic", "claude-3", true)
-
-	f.addRule(store.RoutingRule{
-		ID:            "r-policy-a",
-		Name:          "allow gpt-4, gpt-3.5",
-		StrategyType:  "policy",
-		PipelineStage: 0,
-		Priority:      200,
-		Config: mustJSON(t, core.StrategyNode{
-			Type:          "policy",
-			AllowModelIDs: []string{"gpt-4", "gpt-3.5"},
-		}),
-	})
-	f.addRule(store.RoutingRule{
-		ID:            "r-policy-b",
-		Name:          "allow gpt-4, claude-3",
-		StrategyType:  "policy",
-		PipelineStage: 0,
-		Priority:      100,
-		Config: mustJSON(t, core.StrategyNode{
-			Type:          "policy",
-			AllowModelIDs: []string{"gpt-4", "claude-3"},
-		}),
-	})
-	f.addRule(store.RoutingRule{
-		ID:            "r-policy-c",
-		Name:          "deny gpt-3.5",
-		StrategyType:  "policy",
-		PipelineStage: 0,
-		Priority:      50,
-		Config: mustJSON(t, core.StrategyNode{
-			Type:         "policy",
-			DenyModelIDs: []string{"gpt-3.5"},
-		}),
-	})
-	f.addRule(store.RoutingRule{
-		ID:            "r-primary",
-		Name:          "primary",
-		StrategyType:  "single",
-		PipelineStage: 1,
-		Priority:      100,
-		Config:        mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
-	})
-
-	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
-		RequestedModel: core.RequestedModel{ID: "gpt-4"},
-	})
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if len(plan.Targets) != 1 || plan.Targets[0].ModelID != "gpt-4" {
-		t.Fatalf("expected gpt-4 to survive intersect-allow, got %+v", plan.Targets)
-	}
-	if plan.NarrowingSummary == nil {
-		t.Fatal("expected NarrowingSummary")
-	}
-	// Intersect(a,b) keeps only gpt-4.
-	if got := plan.NarrowingSummary.AllowModelIDs; len(got) != 1 || got[0] != "gpt-4" {
-		t.Errorf("expected allow=[gpt-4] after intersect, got %v", got)
-	}
-	if got := plan.NarrowingSummary.DenyModelIDs; len(got) != 1 || got[0] != "gpt-3.5" {
-		t.Errorf("expected deny=[gpt-3.5], got %v", got)
-	}
-}
-
-// TestResolver_VKAllowedModels_FiltersPrimary verifies that VK AllowedModels
-// filter runs after narrowing and excludes targets not in the VK whitelist.
-func TestResolver_VKAllowedModels_FiltersPrimary(t *testing.T) {
-	f := newResolverFixture()
-	f.addProvider("openai", true)
-	f.addModel("gpt-4", "openai", "gpt-4", true)
-
-	f.addRule(store.RoutingRule{
-		ID:            "r-primary",
-		Name:          "primary",
-		StrategyType:  "single",
-		PipelineStage: 1,
-		Config:        mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
-	})
-
-	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
-		RequestedModel: core.RequestedModel{ID: "gpt-4"},
+	_, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "gpt-4", CandidateIDs: []string{"gpt-4"}},
 		VirtualKey: &core.VKContext{
 			ID: "vk-1",
 			AllowedModels: []store.AllowedModelRef{
@@ -310,11 +205,116 @@ func TestResolver_VKAllowedModels_FiltersPrimary(t *testing.T) {
 			},
 		},
 	})
+	var notAllowed *core.ModelNotAllowedError
+	if !errors.As(err, &notAllowed) {
+		t.Fatalf("err = %v, want a model-not-allowed refusal — the caller named a model this "+
+			"key may not use and the request was served regardless", err)
+	}
+	if notAllowed.RequestedModel != "gpt-4" {
+		t.Errorf("the refusal names %q, want the model the caller actually sent — an error "+
+			"naming the redirect target tells them to fix something they never asked for",
+			notAllowed.RequestedModel)
+	}
+}
+
+// lookupSpy records the model ids the resolver asked the catalogue about.
+type lookupSpy struct {
+	*fakeStore
+	asked []string
+}
+
+func (l *lookupSpy) GetModel(ctx context.Context, id string) (*store.Model, error) {
+	l.asked = append(l.asked, id)
+	return l.fakeStore.GetModel(ctx, id)
+}
+
+// TestResolver_AnAutoRequestFromARestrictedKeyStillRoutes.
+//
+// The other half, and the reason the rule above is conditional. `auto` is not a
+// catalog model and can never appear on an allow list; a code that fans out to
+// several providers has no single reference to match. Requiring either to be
+// allowed refuses every routed request from every restricted key — it deletes
+// routing rather than tightening it.
+//
+// The target side still holds: the rule's answer is filtered to what the key
+// may use, so a restricted key routing `auto` reaches only its own models.
+func TestResolver_AnAutoRequestFromARestrictedKeyStillRoutes(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addProvider("anthropic", true)
+	f.addModel("gpt-4", "openai", "gpt-4", true)
+	f.addModel("claude-3", "anthropic", "claude-3", true)
+
+	f.addRule(store.RoutingRule{
+		ID: "r-allowed", Name: "to the allowed model", StrategyType: "single", PipelineStage: 1,
+		Priority: 100,
+		Config:   mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "anthropic", ModelID: "claude-3"}),
+	})
+
+	spy := &lookupSpy{fakeStore: f.store}
+	f.resolver.db = spy
+
+	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "auto"},
+		VirtualKey: &core.VKContext{
+			ID:            "vk-1",
+			AllowedModels: []store.AllowedModelRef{{ProviderID: "anthropic", ModelID: "claude-3"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("an auto request from a restricted key was refused: %v — `auto` can never be "+
+			"on an allow list, so this refuses every routed request the key makes", err)
+	}
+	if len(plan.Targets) != 1 || plan.Targets[0].ModelID != "claude-3" {
+		t.Errorf("targets = %+v, want the one model this key may use", plan.Targets)
+	}
+	// The guard must not even ASK about "auto".
+	//
+	// Asserting only that the request succeeded would pass for the wrong
+	// reason: looking up a model id that does not exist fails, and the guard
+	// keeps the request on a lookup failure — correctly, since an unreadable
+	// catalogue is not evidence a key lacks permission. So an unconditional
+	// guard would ask about "auto", get nothing, and let it through anyway,
+	// leaving this test green while the condition it exists for was gone.
+	for _, id := range spy.asked {
+		if id == "auto" {
+			t.Errorf("the access guard asked the catalogue about %q — it is running for a "+
+				"request that named no model, and it survives here only because the lookup "+
+				"happens to fail. A code that fans out to several providers resolves, and "+
+				"that one would be refused.", id)
+		}
+	}
+}
+
+// TestResolver_AutoRoutedToAModelTheKeyLacksYieldsNothing.
+//
+// The target-side filter, unchanged by the tightening above. When WE choose the
+// model, a choice the key cannot use is removed from the plan rather than
+// served — the rule yields, and the rules below it get their turn.
+func TestResolver_AutoRoutedToAModelTheKeyLacksYieldsNothing(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addModel("gpt-4", "openai", "gpt-4", true)
+
+	f.addRule(store.RoutingRule{
+		ID: "r-primary", Name: "to a model this key lacks", StrategyType: "single", PipelineStage: 1,
+		Config: mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
+	})
+
+	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "auto"},
+		VirtualKey: &core.VKContext{
+			ID:            "vk-1",
+			AllowedModels: []store.AllowedModelRef{{ProviderID: "anthropic", ModelID: "claude-3"}},
+		},
+	})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 	if len(plan.Targets) != 0 {
-		t.Fatalf("expected 0 targets after VK filter, got %+v", plan.Targets)
+		t.Fatalf("targets = %+v, want none — the rule chose a model this key cannot use, and "+
+			"dispatching it would spend the key's own credential on a model it is denied",
+			plan.Targets)
 	}
 }
 
@@ -541,11 +541,12 @@ func TestResolver_NoRuleMatches_ReturnsEmptyPlan(t *testing.T) {
 	if plan.RuleID != "" {
 		t.Errorf("expected no rule match, got RuleID=%q", plan.RuleID)
 	}
-	if len(plan.PipelineTrace) != 2 {
-		t.Fatalf("expected 2 pipeline trace entries (stage-0, stage-1), got %d", len(plan.PipelineTrace))
+	// One entry, not two: stage 0 was policy narrowing and is gone with it.
+	if len(plan.PipelineTrace) != 1 {
+		t.Fatalf("expected 1 pipeline trace entry (stage-1), got %d", len(plan.PipelineTrace))
 	}
-	if !strings.Contains(plan.PipelineTrace[1].Decision, "resolved 0 targets") {
-		t.Errorf("stage-1 decision unclear: %q", plan.PipelineTrace[1].Decision)
+	if !strings.Contains(plan.PipelineTrace[0].Decision, "resolved 0 targets") {
+		t.Errorf("stage-1 decision unclear: %q", plan.PipelineTrace[0].Decision)
 	}
 }
 
@@ -773,65 +774,6 @@ func TestResolver_Loadbalance_DistributesBranches(t *testing.T) {
 	}
 }
 
-// TestResolver_Narrowing_BlocksRecoveryTargets verifies that narrowing
-// applies to RecoveryTargets too (inline fallback chain + fallback-strategy rule).
-func TestResolver_Narrowing_BlocksRecoveryTargets(t *testing.T) {
-	f := newResolverFixture()
-	f.addProvider("openai", true)
-	f.addProvider("anthropic", true)
-	f.addModel("gpt-4", "openai", "gpt-4", true)
-	f.addModel("claude-3", "anthropic", "claude-3", true)
-
-	f.addRule(store.RoutingRule{
-		ID:            "r-policy",
-		Name:          "deny anthropic",
-		StrategyType:  "policy",
-		PipelineStage: 0,
-		Config: mustJSON(t, core.StrategyNode{
-			Type:            "policy",
-			DenyProviderIDs: []string{"anthropic"},
-		}),
-	})
-	f.addRule(store.RoutingRule{
-		ID:            "r-primary",
-		Name:          "primary",
-		StrategyType:  "single",
-		PipelineStage: 1,
-		Priority:      100,
-		Config:        mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
-	})
-	f.addRule(store.RoutingRule{
-		ID:            "r-fallback",
-		Name:          "recovery",
-		StrategyType:  "fallback",
-		PipelineStage: 1,
-		Priority:      50,
-		Config: mustJSON(t, core.StrategyNode{
-			Type: "fallback",
-			Targets: []core.StrategyNode{
-				{Type: "single", ProviderID: "anthropic", ModelID: "claude-3"},
-			},
-		}),
-	})
-
-	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
-		RequestedModel: core.RequestedModel{ID: "gpt-4"},
-	})
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if len(plan.Targets) != 1 {
-		t.Fatalf("expected 1 primary, got %+v", plan.Targets)
-	}
-	// The fallback-strategy rule path runs through NarrowingEngine.Filter,
-	// so anthropic (denied by stage-0 policy) must be filtered out there.
-	for _, rt := range plan.RecoveryTargets {
-		if rt.ProviderID == "anthropic" && rt.Source == "recovery" {
-			t.Errorf("fallback-strategy rule leaked denied provider into RecoveryTargets: %+v", plan.RecoveryTargets)
-		}
-	}
-}
-
 // TestRuleMatches_MatchConditionsIsSoleFilter locks the contract: with the
 // RoutingRule.modelId column removed, rule applicability is decided
 // exclusively from matchConditions. Covers the three shapes that together
@@ -1048,5 +990,668 @@ func TestResolver_Explain_NoRuleMatched_LeavesBranchesEmpty(t *testing.T) {
 	}
 	if plan.RuleID != "" || len(plan.Branches) != 0 {
 		t.Errorf("expected empty explain result when no rule matched, got ruleId=%q branches=%+v", plan.RuleID, plan.Branches)
+	}
+}
+
+// TestResolve_APolicyRuleDoesNotSwallowTheRulesBelowIt.
+//
+// The `policy` strategy returns no targets and no error. It was written as a
+// placeholder for a stage-0 narrowing engine that was never built, and left
+// inert it would be harmless — but it is not inert.
+//
+// It is not a `fallback` rule, so it competes for the primary slot like any
+// other. Winning it, it produces nothing and reports nothing: the resolver's
+// warning fires only on an error, and it returned none. Every lower-priority
+// rule is then locked out, and the request falls through to the requested-model
+// passthrough — one rule silently disabling all the routing beneath it, with
+// nothing shown to the operator.
+func TestResolve_APolicyRuleDoesNotSwallowTheRulesBelowIt(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("p1", true)
+	f.addModel("m1", "p1", "gpt-4o", true)
+
+	// Ordered as the resolver receives them: highest priority first.
+	f.addRule(store.RoutingRule{
+		ID: "r-policy", Name: "narrow", StrategyType: "policy",
+		Priority: 100, PipelineStage: 1,
+		Config: json.RawMessage(`{"type":"policy","denyProviderIds":["p-bad"]}`),
+	})
+	f.addRule(store.RoutingRule{
+		ID: "r-real", Name: "the actual routing", StrategyType: "single",
+		Priority: 50, PipelineStage: 1,
+		Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"m1"}`),
+	})
+
+	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "auto"},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(plan.Targets) == 0 {
+		t.Fatalf("the policy rule took the primary slot and produced nothing, so the rule "+
+			"below it never ran — routing quietly stops working with no error anywhere "+
+			"(matched rule: %q)", plan.RuleName)
+	}
+	if plan.RuleID != "r-real" {
+		t.Errorf("served by rule %q, want the rule that actually resolves a target", plan.RuleID)
+	}
+}
+
+// TestResolve_ARuleThatResolvesNothingYieldsTheSlot.
+//
+// The dangerous shape is not the rule that errors — that one is loud. It is the
+// rule that evaluates perfectly and produces nothing: a `single` whose model was
+// disabled last week, or one whose every target this virtual key cannot reach.
+// Nothing is wrong from the strategy's point of view, so nothing is reported,
+// and holding the primary slot on that basis disables every rule beneath it.
+//
+// The virtual-key case is the sharper one, because the rule works for most
+// callers and silently removes routing for exactly the keys that were narrowed.
+func TestResolve_ARuleThatResolvesNothingYieldsTheSlot(t *testing.T) {
+	t.Run("a rule pointing at a disabled model", func(t *testing.T) {
+		f := newResolverFixture()
+		f.addProvider("p1", true)
+		f.addModel("gone", "p1", "retired", false) // disabled
+		f.addModel("live", "p1", "gpt-4o", true)
+
+		f.addRule(store.RoutingRule{
+			ID: "r-stale", Name: "points at a retired model", StrategyType: "single",
+			Priority: 100, PipelineStage: 1,
+			Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"gone"}`),
+		})
+		f.addRule(store.RoutingRule{
+			ID: "r-live", Name: "still works", StrategyType: "single",
+			Priority: 50, PipelineStage: 1,
+			Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"live"}`),
+		})
+
+		plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+			RequestedModel: core.RequestedModel{ID: "auto"},
+		})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.RuleID != "r-live" {
+			t.Fatalf("served by rule %q with %d targets — a rule that resolves nothing held "+
+				"the slot and disabled the one below it, with no error to read",
+				plan.RuleID, len(plan.Targets))
+		}
+	})
+
+	t.Run("a rule whose targets this key cannot reach", func(t *testing.T) {
+		f := newResolverFixture()
+		f.addProvider("p1", true)
+		f.addModel("restricted", "p1", "gpt-4o", true)
+		f.addModel("allowed", "p1", "gpt-4o-mini", true)
+
+		f.addRule(store.RoutingRule{
+			ID: "r-restricted", Name: "the key cannot reach this", StrategyType: "single",
+			Priority: 100, PipelineStage: 1,
+			Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"restricted"}`),
+		})
+		f.addRule(store.RoutingRule{
+			ID: "r-allowed", Name: "the key can reach this", StrategyType: "single",
+			Priority: 50, PipelineStage: 1,
+			Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"allowed"}`),
+		})
+
+		plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+			RequestedModel: core.RequestedModel{ID: "auto"},
+			VirtualKey: &core.VKContext{
+				AllowedModels: []store.AllowedModelRef{{ProviderID: "p1", ModelID: "allowed"}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.RuleID != "r-allowed" {
+			t.Fatalf("served by rule %q with %d targets — the rule resolved a target this key "+
+				"cannot be served, then held the slot; routing disappears for exactly the keys "+
+				"that were narrowed, and works for everyone else", plan.RuleID, len(plan.Targets))
+		}
+	})
+}
+
+// TestResolve_TheModelPoolIsReadOnce.
+//
+// "Which models could serve this request" is a fact about the request, so it is
+// established where the request context is prepared and every strategy that
+// needs it reads that one answer.
+//
+// It used to be asked twice. The smart strategy fetched the catalogue itself
+// and applied the virtual key's allowlist in its own loop, alongside the
+// resolver's. Two readers of one snapshot is how the defects this program keeps
+// finding begin — not because a second read is slow, but because the two can
+// answer differently, and the one that disagrees is invisible until a request
+// lands on the difference.
+func TestResolve_TheModelPoolIsReadOnce(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("p1", true)
+	f.addModel("m1", "p1", "gpt-4o", true)
+	f.addRule(store.RoutingRule{
+		ID: "r1", Name: "smart", StrategyType: "single", PipelineStage: 1,
+		Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"m1"}`),
+	})
+
+	counting := &countingPool{rows: []core.SmartModelRow{
+		{ModelID: "m1", ProviderID: "p1", ProviderModelID: "gpt-4o"},
+	}}
+	r := f.resolver.WithModelPool(counting)
+
+	rctx := &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "auto"}}
+	if _, err := r.Resolve(context.Background(), rctx); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if counting.calls != 1 {
+		t.Errorf("the catalogue was read %d times for one request — every extra read is a "+
+			"second answer to a settled question", counting.calls)
+	}
+	if len(rctx.ModelPool) != 1 {
+		t.Errorf("the prepared context carries %d models; a strategy reading it would fall "+
+			"back to its own fetch and narrow it a second time", len(rctx.ModelPool))
+	}
+}
+
+// countingPool records how many times the catalogue is asked, and for which
+// endpoint kinds — a pool prepared for chat and consumed by an image request
+// reads as one call but answers a different question.
+type countingPool struct {
+	rows  []core.SmartModelRow
+	calls int
+	kinds []typology.EndpointKind
+}
+
+func (c *countingPool) ListEnabledChatModels(context.Context) ([]core.SmartModelRow, error) {
+	c.calls++
+	c.kinds = append(c.kinds, typology.EndpointKindChat)
+	return c.rows, nil
+}
+
+func (c *countingPool) ListEnabledCandidates(_ context.Context, kind typology.EndpointKind) ([]core.SmartModelRow, error) {
+	c.calls++
+	c.kinds = append(c.kinds, kind)
+	return c.rows, nil
+}
+
+// brokenPool stands for a catalogue read that fails — a dropped connection, a
+// snapshot mid-reload.
+type brokenPool struct{ err error }
+
+func (b *brokenPool) ListEnabledChatModels(context.Context) ([]core.SmartModelRow, error) {
+	return nil, b.err
+}
+
+func (b *brokenPool) ListEnabledCandidates(context.Context, typology.EndpointKind) ([]core.SmartModelRow, error) {
+	return nil, b.err
+}
+
+// TestResolve_APoolFailureDoesNotSinkRulesThatNeverWantedAPool.
+//
+// The pool is prepared for every request because Stage A assembles facts once,
+// but most rules name their target outright and never look at it. Treating a
+// catalogue read failure as fatal would convert an outage in one optional
+// input into a total routing outage — the rules that could still be served
+// perfectly are the majority, and they would go down with it.
+//
+// The pool is left nil rather than empty. Those are different statements: nil
+// says "not available", empty says "nothing qualifies", and a strategy that
+// reads the difference falls back to its own fetch instead of concluding no
+// model can serve the request.
+func TestResolve_APoolFailureDoesNotSinkRulesThatNeverWantedAPool(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("p1", true)
+	f.addModel("m1", "p1", "gpt-4o", true)
+	f.addRule(store.RoutingRule{
+		ID: "r1", Name: "direct", StrategyType: "single", PipelineStage: 1,
+		Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"m1"}`),
+	})
+
+	r := f.resolver.WithModelPool(&brokenPool{err: errors.New("catalogue unavailable")})
+	rctx := &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "gpt-4o"}}
+
+	plan, err := r.Resolve(context.Background(), rctx)
+	if err != nil {
+		t.Fatalf("a rule naming its own target was refused because an input it never reads "+
+			"was unavailable: %v", err)
+	}
+	if len(plan.Targets) != 1 || plan.Targets[0].ModelID != "m1" {
+		t.Errorf("targets = %+v, want the rule's own target — the routing decision does not "+
+			"depend on the pool here", plan.Targets)
+	}
+	if rctx.ModelPool != nil {
+		t.Error("the pool was left non-nil after a failed read; a strategy cannot then tell " +
+			"'unavailable' from 'nothing qualifies' and will refuse instead of falling back")
+	}
+}
+
+// TestResolveTargets_ACrossModalityDropIsVisibleInTheTrace.
+//
+// The modality guard exists because a rule can name a model that cannot serve
+// the endpoint it is routing — an image model on a chat rule, most often after
+// a model is re-tagged in the catalogue and the rule that names it is not
+// revisited. Dropping the target is right; dropping it quietly is not.
+//
+// Silent, the operator sees a rule that matched, produced nothing, and left
+// nothing to read — the failure looks like a rule that "just doesn't work". The
+// trace entry is the difference between that and a one-line answer, and it is
+// the half of this guard nothing was asserting: the drop itself is exercised by
+// the recovery tests, the explanation was not.
+func TestResolveTargets_ACrossModalityDropIsVisibleInTheTrace(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("p1", true)
+	f.addModel("m-img", "p1", "dall-e-3", true)
+	f.store.models["m-img"].Type = "image"
+	f.addRule(store.RoutingRule{
+		ID: "r1", Name: "names an image model", StrategyType: "single", PipelineStage: 1,
+		Config: json.RawMessage(`{"type":"single","providerId":"p1","modelId":"m-img"}`),
+	})
+
+	res, err := f.resolver.ResolveTargets(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "m-img"},
+		EndpointType:   typology.EndpointKindChat,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(res.AllTargets()) != 0 {
+		t.Fatalf("targets = %+v, want none — an image model cannot serve a chat request",
+			res.AllTargets())
+	}
+
+	var explained bool
+	for _, e := range res.PipelineTrace {
+		if strings.Contains(e.Decision, "modality guard") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Errorf("the drop left no trace entry: %+v — the operator sees a rule that matched "+
+			"and produced nothing, with no way to learn the model's type was the reason",
+			res.PipelineTrace)
+	}
+}
+
+// TestResolve_TheModelPoolIsReadOnce_WhenAStrategyActuallyUsesIt.
+//
+// The sibling test above uses a `single` rule, so no strategy ever reaches for
+// a pool: it counts the pipeline's own read and would stay green if every
+// strategy fetched its own. This one puts the strategy that DOES need a pool on
+// the other end, and does it on a non-chat endpoint — the shape where the two
+// readers disagreed. The pipeline was reading the chat set for every request
+// while `model=auto` on an image endpoint fetched the image set for itself: two
+// catalogue reads on the routing hot path, one of them thrown away, and a
+// prepared field describing a different endpoint than the request.
+//
+// Two reads are not merely wasteful. They are two snapshots: a model enabled
+// between them is routable by one and not the other, and which one wins depends
+// on timing.
+func TestResolve_TheModelPoolIsReadOnce_WhenAStrategyActuallyUsesIt(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("p1", true)
+	f.addModel("m-img", "p1", "dall-e-3", true)
+	f.store.models["m-img"].Type = "image"
+	f.addRule(store.RoutingRule{
+		ID: "r1", Name: "auto", StrategyType: "smart", PipelineStage: 1,
+		Config: json.RawMessage(`{"type":"smart"}`),
+	})
+
+	counting := &countingPool{rows: []core.SmartModelRow{
+		{ModelID: "m-img", ProviderID: "p1", ProviderModelID: "dall-e-3"},
+	}}
+	// Re-register the strategies with smart wired to the SAME catalogue the
+	// pipeline reads, so a second read anywhere is visible on one counter.
+	reg := strategies.NewStrategyRegistry()
+	f.resolver.registry = reg
+	strategies.RegisterAllStrategies(reg, f.resolver.LookupTargetFunc(), nil, &strategies.SmartDeps{
+		Store:  counting,
+		Lookup: f.resolver.LookupTargetFunc(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	r := f.resolver.WithModelPool(counting)
+
+	rctx := &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "auto"},
+		EndpointType:   typology.EndpointKindImageGeneration,
+	}
+	plan, err := r.Resolve(context.Background(), rctx)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(plan.Targets) != 1 {
+		t.Fatalf("targets = %+v — the strategy never consumed a pool, so this test is not "+
+			"looking at the path it claims to guard", plan.Targets)
+	}
+	if counting.calls != 1 {
+		t.Errorf("the catalogue was read %d times (%v) for one request — the pipeline and the "+
+			"strategy each answered 'which models could serve this', from two snapshots that "+
+			"need not agree", counting.calls, counting.kinds)
+	}
+	for _, k := range counting.kinds {
+		if k != typology.EndpointKindImageGeneration {
+			t.Errorf("the catalogue was read for %s on an image request — the prepared pool "+
+				"describes a different endpoint than the one being routed, so the strategy "+
+				"either discards it or routes from chat models", k)
+		}
+	}
+}
+
+// TestResolve_ARuleOwnChainComesBeforeAnotherRulesAnswer.
+//
+// Two kinds of backup end up in one plan: the chain an admin wrote ON the rule
+// that won, and the rules they wrote below it. The first is that rule's own
+// statement about what to do when its answer fails; the second is a different
+// rule's answer. A request should exhaust the first before reaching the second.
+//
+// Collecting them in evaluation order inverts that — the lower rules are seen
+// while the loop is still running and the winner's chain is assembled after it,
+// so a rule the admin ranked last got tried before the backup attached to the
+// rule that actually matched.
+func TestResolve_ARuleOwnChainComesBeforeAnotherRulesAnswer(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("p1", true)
+	f.addProvider("p2", true)
+	f.addProvider("p3", true)
+	f.addModel("m-primary", "p1", "primary", true)
+	f.addModel("m-chain", "p2", "chain", true)
+	f.addModel("m-lower", "p3", "lower", true)
+
+	f.addRule(store.RoutingRule{
+		ID: "r-a-primary", Name: "the rule that wins", StrategyType: "single", PipelineStage: 1,
+		Priority: 100,
+		Config:   json.RawMessage(`{"type":"single","providerId":"p1","modelId":"m-primary"}`),
+		FallbackChain: mustJSON(t, []core.FallbackChainEntry{
+			{ProviderID: "p2", ModelID: "m-chain"},
+		}),
+	})
+	f.addRule(store.RoutingRule{
+		ID: "r-b-lower", Name: "the rule underneath", StrategyType: "single", PipelineStage: 1,
+		Priority: 1,
+		Config:   json.RawMessage(`{"type":"single","providerId":"p3","modelId":"m-lower"}`),
+	})
+
+	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "primary"},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	var order []string
+	for _, tgt := range plan.Targets {
+		order = append(order, tgt.ModelID)
+	}
+	for _, tgt := range plan.RecoveryTargets {
+		order = append(order, tgt.ModelID)
+	}
+	want := []string{"m-primary", "m-chain", "m-lower"}
+	for i := range want {
+		if i >= len(order) || order[i] != want[i] {
+			t.Fatalf("order = %v, want %v — the backup an admin attached to the rule that "+
+				"matched must be tried before a rule they ranked below it", order, want)
+		}
+	}
+}
+
+// TestResolveTargets_ReportsThatARuleMatchedEvenWhenItResolvedNothing is the
+// resolver half of the passthrough precondition. Its twin below holds the
+// other boundary: a filter emptying the plan is NOT this case.
+//
+// The handler decides between "no rule applies — serve the model they asked
+// for" and "a rule applies and yielded — refuse" from this count alone. Without
+// it the two cases are one empty target list, and the request a rule redirected
+// gets served by the model the rule redirects AWAY from. The count is about the
+// MATCH, not the outcome: a rule pointing at a row that is gone still applied.
+func TestResolveTargets_ReportsThatARuleMatchedEvenWhenItResolvedNothing(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addModel("gpt-4", "openai", "gpt-4", true)
+
+	f.addRule(store.RoutingRule{
+		ID: "r-redirect", Name: "compliance redirect", StrategyType: "single",
+		PipelineStage: 1, Priority: 100,
+		Config: mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "m-decommissioned"}),
+	})
+
+	res, err := f.resolver.ResolveTargets(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "gpt-4", CandidateIDs: []string{"gpt-4"}},
+		EndpointType:   typology.EndpointKindChat,
+	})
+	if err != nil {
+		t.Fatalf("resolve targets: %v", err)
+	}
+	if len(res.AllTargets()) != 0 {
+		t.Fatalf("fixture is wrong: the rule resolved %d target(s), so this test cannot see the "+
+			"case it exists for", len(res.AllTargets()))
+	}
+	if !res.RuleMatchedAndResolvedNothing {
+		t.Fatal("the handler reads this to tell a redirected request from an unrouted one; " +
+			"false sends the redirected one to the model it was redirected away from")
+	}
+}
+
+// TestHydrateRequestedModel_TwoProvidersLeaveTheProviderFieldsEmpty.
+//
+// The catalogue query states no order, so "the first candidate's provider" is
+// not a fact about the request — it is a fact about which row came back. Naming
+// it anyway put a provider on the routing context that a second identical
+// request could disagree with, and `matchConditions.providers` compared against
+// exactly that. The set is recorded instead; the singular field stays empty,
+// which every consumer already treats as "not known".
+func TestHydrateRequestedModel_TwoProvidersLeaveTheProviderFieldsEmpty(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("groq", true)
+	f.addProvider("together", true)
+	f.addModel("m-groq", "groq", "llama-3.3-70b", true)
+	f.addModel("m-together", "together", "llama-3.3-70b", true)
+	// Same code on both rows: one model, two hosts.
+	f.store.models["m-groq"].Code = "llama-3.3-70b"
+	f.store.models["m-together"].Code = "llama-3.3-70b"
+
+	rctx := &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "llama-3.3-70b"}}
+	f.resolver.hydrateRequestedModel(context.Background(), rctx)
+
+	rm := rctx.RequestedModel
+	if len(rm.CandidateProviderIDs) != 2 {
+		t.Fatalf("CandidateProviderIDs = %v, want both providers — without the set there is "+
+			"nothing for a provider condition to compare against", rm.CandidateProviderIDs)
+	}
+	if rm.ProviderID != "" || rm.ProviderName != "" || rm.ProviderModelID != "" {
+		t.Errorf("the singular fields name %q/%q/%q for a code two providers serve; whichever "+
+			"row happened to be first is not a fact about the request",
+			rm.ProviderID, rm.ProviderName, rm.ProviderModelID)
+	}
+	// The type is shared by every host of one code, so it stays available.
+	if rm.Type != "chat" {
+		t.Errorf("Type = %q, want chat — every candidate agrees, so there is nothing to guess", rm.Type)
+	}
+}
+
+// TestResolveTargets_AFilterEmptyingThePlanIsNotARuleRefusing is the boundary
+// the first version of this signal got wrong, and the mistake took out a whole
+// class of endpoint.
+//
+// The handler refuses rather than passing through when a rule applied and
+// resolved nothing. Counting that AFTER the filters made a catch-all rule — an
+// empty matchConditions matches every request — take down every non-chat
+// endpoint in the deployment: the rule matched, resolved its chat target, the
+// modality filter dropped it because the request was for images, and an image
+// request that passthrough serves correctly got a 503.
+//
+// A filter emptying the plan is OUR fact about the targets, not the rule
+// refusing anything. The rule resolved something; we are the ones who could
+// not use it.
+func TestResolveTargets_AFilterEmptyingThePlanIsNotARuleRefusing(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addModel("m-chat", "openai", "gpt-4o", true)
+	f.addModel("m-image", "openai", "dall-e-3", true)
+	f.store.models["m-image"].Type = "image"
+
+	// The catch-all: no match conditions, so it applies to every request.
+	f.addRule(store.RoutingRule{
+		ID: "r-catchall", Name: "catch-all", StrategyType: "single",
+		PipelineStage: 1, Priority: 100,
+		Config: mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "m-chat"}),
+	})
+
+	res, err := f.resolver.ResolveTargets(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "dall-e-3", CandidateIDs: []string{"m-image"}},
+		EndpointType:   typology.EndpointKindImageGeneration,
+	})
+	if err != nil {
+		t.Fatalf("resolve targets: %v", err)
+	}
+	if len(res.AllTargets()) != 0 {
+		t.Fatalf("fixture is wrong: the modality filter did not empty the plan (%d target(s)), "+
+			"so this test cannot see the case it exists for", len(res.AllTargets()))
+	}
+	if res.RuleMatchedAndResolvedNothing {
+		t.Fatal("a chat rule matched an image request, resolved its chat target, and the " +
+			"modality filter dropped it — reporting that as the RULE resolving nothing makes " +
+			"the handler refuse a request passthrough serves correctly, and one catch-all rule " +
+			"then takes down every non-chat endpoint in the deployment")
+	}
+}
+
+// TestHydrateRequestedModel_RecordsThatTheCatalogueCouldNotAnswer.
+//
+// The candidate fields end up empty for two very different reasons: the caller
+// named nothing, or the caller named something and the lookup failed. Only the
+// first makes a provider condition inapplicable. Without a flag distinguishing
+// them, a catalogue read failure widened every provider-scoped rule to every
+// provider — and the failure was logged at Debug, so nothing said so either.
+func TestHydrateRequestedModel_RecordsThatTheCatalogueCouldNotAnswer(t *testing.T) {
+	f := newResolverFixture()
+	f.store.candidatesErr = errors.New("store: resolve model candidates: connection reset")
+
+	rctx := &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "gpt-4o"}}
+	f.resolver.hydrateRequestedModel(context.Background(), rctx)
+
+	if !rctx.RequestedModel.HydrationFailed {
+		t.Fatal("a failed catalogue lookup left no trace on the request, so downstream it is " +
+			"indistinguishable from a caller who named nothing — and a provider-scoped rule " +
+			"then matches every provider")
+	}
+	if !rctx.RequestedModel.ProviderIsUnknowable() {
+		t.Error("ProviderIsUnknowable() is false after a failed lookup of a NAMED model")
+	}
+
+	// The other direction: a caller who named nothing has not "failed" anything.
+	auto := &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "auto"}}
+	f.resolver.hydrateRequestedModel(context.Background(), auto)
+	if auto.RequestedModel.ProviderIsUnknowable() {
+		t.Error("`auto` reported as unknowable; it names no model, which is an ANSWER, and " +
+			"reporting it as a failure makes provider-scoped rules refuse the requests they exist for")
+	}
+}
+
+// TestResolveTargets_ThePlanNeverHoldsOneTargetTwice.
+//
+// The strategy's answer and the rule's own fallback chain are assembled
+// independently, so a chain naming a model the strategy also picked put that
+// model in the plan twice. Not cosmetic: the walk gives each entry its own
+// state and dispatches to it again after a transient failure, and
+// EffectiveCallBudget is derived from the plan's LENGTH — so a duplicate
+// silently buys the request another pair of attempts against a provider the
+// admin bounded.
+func TestResolveTargets_ThePlanNeverHoldsOneTargetTwice(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addProvider("anthropic", true)
+	f.addModel("m-primary", "openai", "gpt-4o", true)
+	f.addModel("m-backup", "anthropic", "claude", true)
+
+	f.addRule(store.RoutingRule{
+		ID: "r-dupe", Name: "chain repeats the pick", StrategyType: "single",
+		PipelineStage: 1, Priority: 100,
+		Config: mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "m-primary"}),
+		FallbackChain: mustJSON(t, []core.FallbackChainEntry{
+			// The admin listed the primary again, plus a real alternative.
+			{ProviderID: "openai", ModelID: "m-primary"},
+			{ProviderID: "anthropic", ModelID: "m-backup"},
+		}),
+	})
+
+	res, err := f.resolver.ResolveTargets(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "gpt-4o", CandidateIDs: []string{"m-primary"}},
+		EndpointType:   typology.EndpointKindChat,
+	})
+	if err != nil {
+		t.Fatalf("resolve targets: %v", err)
+	}
+
+	seen := map[string]int{}
+	for _, tgt := range res.AllTargets() {
+		seen[tgt.ProviderID+"/"+tgt.ModelID]++
+	}
+	if n := seen["openai/m-primary"]; n != 1 {
+		t.Fatalf("openai/m-primary appears %d times in a %d-target plan: %+v — the budget is "+
+			"derived from that length, so the duplicate raises what one request may spend",
+			n, len(res.AllTargets()), res.AllTargets())
+	}
+	// The real alternative must survive the deduplication.
+	if seen["anthropic/m-backup"] != 1 {
+		t.Errorf("the chain's genuine alternative was dropped: %+v", res.AllTargets())
+	}
+	// And the pick keeps position zero — first occurrence wins, which is the
+	// position the strategy and the health reorder chose for it.
+	if res.Primary().ModelID != "m-primary" {
+		t.Errorf("Primary() = %q, want m-primary", res.Primary().ModelID)
+	}
+}
+
+// TestResolveTargets_TheReasoningFlagReachesTheTarget.
+//
+// An egress codec's whole per-model payload is the target it is handed. Until
+// this landed, `features` was not part of it — so a codec could not ask whether
+// the model it was about to call reasons at all, and every adapter either sent
+// a reasoning parameter to all of its models or to none of them. `openai`'s
+// identity codec does the first: `reasoning_effort` rides through to gpt-4o
+// as readily as to o3.
+//
+// Asserted end-to-end from a catalogue row, because the failure this replaces
+// was precisely a fact that existed in the catalogue and stopped existing three
+// hops later.
+func TestResolveTargets_TheReasoningFlagReachesTheTarget(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addModel("m-reasoner", "openai", "o3", true)
+	f.addModel("m-plain", "openai", "gpt-4o", true)
+	f.store.models["m-reasoner"].Features = []string{"streaming", core.FeatureReasoning}
+	f.store.models["m-plain"].Features = []string{"streaming", "function_calling"}
+
+	for _, tc := range []struct {
+		model string
+		want  bool
+	}{
+		{"m-reasoner", true},
+		{"m-plain", false},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			f2 := newResolverFixture()
+			f2.addProvider("openai", true)
+			f2.store.models[tc.model] = f.store.models[tc.model]
+			f2.addRule(store.RoutingRule{
+				ID: "r-" + tc.model, Name: tc.model, StrategyType: "single",
+				PipelineStage: 1, Priority: 100,
+				Config: mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: tc.model}),
+			})
+			res, err := f2.resolver.ResolveTargets(context.Background(), &core.RoutingContext{
+				RequestedModel: core.RequestedModel{ID: "auto"},
+				EndpointType:   typology.EndpointKindChat,
+			})
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if len(res.AllTargets()) == 0 {
+				t.Fatalf("fixture resolved nothing, so this asserts about no target")
+			}
+			if got := res.Primary().Reasons; got != tc.want {
+				t.Fatalf("Reasons = %v, want %v — the catalogue says so and the codec that will "+
+					"call this model reads it from here", got, tc.want)
+			}
+		})
 	}
 }

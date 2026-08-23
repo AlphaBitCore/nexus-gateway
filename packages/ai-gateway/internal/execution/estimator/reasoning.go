@@ -5,7 +5,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // reasoningMarker / thinkingMarker are the substrings every reasoning-intent key
@@ -27,15 +27,19 @@ type ReasoningSignal struct {
 	Source       string // for assumptions
 }
 
-// ReadReasoningSignal extracts reasoning intent from a canonical
-// request body. The canonical body is OpenAI shape, but some clients
-// also include the Anthropic-shape thinking object or Gemini-shape
-// thinkingConfig — we honor whichever is present.
+// ReadReasoningSignal extracts reasoning intent from a canonical request body.
 //
-// Returned effort uses the OpenAI canonical vocabulary (minimal/low/
-// medium/high). When a numeric budget is given (Anthropic /
-// Gemini), it's bucketed: <2000=low, 2000-7999=medium, ≥8000=high.
-func ReadReasoningSignal(rawBody []byte, ingressFormat provcore.Format) ReasoningSignal {
+// The level and the amount are not alternatives — they are one statement
+// recorded in two places. Canonicalization writes the level, because that is
+// the only spelling every wire reads; the caller's own figure stays in their
+// provider's extension. So both are gathered: reading the level and stopping
+// would zero the exact budget on every body that carries one, and reading only
+// the budget would miss the level a caller stated directly.
+//
+// The effort uses the canonical vocabulary. When only an amount was given, the
+// level is derived from it — through the same function canonicalization uses,
+// so the estimate is anchored to the level the request will actually carry.
+func ReadReasoningSignal(rawBody []byte) ReasoningSignal {
 	// Fast prefilter: every reasoning-intent key carries "reasoning" or "thinking"
 	// as a substring (see the marker vars). A body with neither cannot carry a
 	// signal, so skip the gjson parse entirely — gjson.ParseBytes copies the whole
@@ -48,50 +52,39 @@ func ReadReasoningSignal(rawBody []byte, ingressFormat provcore.Format) Reasonin
 	}
 	root := gjson.ParseBytes(rawBody)
 
-	// 1. OpenAI canonical reasoning_effort string.
-	if v := root.Get("reasoning_effort"); v.Exists() {
-		return ReasoningSignal{Effort: v.String(), Source: "reasoning_effort"}
-	}
-	// OpenAI Responses-API places it under reasoning.effort.
-	if v := root.Get("reasoning.effort"); v.Exists() {
-		return ReasoningSignal{Effort: v.String(), Source: "reasoning.effort"}
-	}
-
-	// 2. Anthropic thinking.budget_tokens (lifted into canonical body as
-	//    a nexus.ext.* round-trip when the canonicalbridge processed the
-	//    ingress).
-	if v := root.Get("thinking.budget_tokens"); v.Exists() {
-		b := int(v.Int())
-		return ReasoningSignal{Effort: bucketBudget(b), BudgetTokens: b, Source: "thinking.budget_tokens"}
-	}
-	if v := root.Get("nexus.ext.anthropic.thinking.budget_tokens"); v.Exists() {
-		b := int(v.Int())
-		return ReasoningSignal{Effort: bucketBudget(b), BudgetTokens: b, Source: "nexus.ext.anthropic.thinking.budget_tokens"}
-	}
-
-	// 3. Gemini thinking_config.thinking_budget.
-	if v := root.Get("thinking_config.thinking_budget"); v.Exists() {
-		b := int(v.Int())
-		return ReasoningSignal{Effort: bucketBudget(b), BudgetTokens: b, Source: "thinking_config.thinking_budget"}
-	}
-	if v := root.Get("nexus.ext.gemini.thinking_config.thinking_budget"); v.Exists() {
-		b := int(v.Int())
-		return ReasoningSignal{Effort: bucketBudget(b), BudgetTokens: b, Source: "nexus.ext.gemini.thinking_config.thinking_budget"}
+	// The amount, from wherever this body records one. The two extension keys
+	// are what canonicalization writes; the two bare keys are what a caller can
+	// hand the estimate endpoint directly, which takes whatever they post.
+	//
+	// The Gemini extension holds the caller's own object, so the key inside it
+	// keeps Gemini's camelCase spelling rather than this file's snake_case one.
+	var sig ReasoningSignal
+	for _, key := range []string{
+		"thinking.budget_tokens",
+		"nexus.ext.anthropic.thinking.budget_tokens",
+		"thinking_config.thinking_budget",
+		"nexus.ext.gemini.thinking_config.thinkingBudget",
+	} {
+		if v := root.Get(key); v.Exists() {
+			sig.BudgetTokens = int(v.Int())
+			sig.Source = key
+			break
+		}
 	}
 
-	return ReasoningSignal{}
-}
-
-// bucketBudget maps a numeric budget to the OpenAI effort vocabulary.
-func bucketBudget(b int) string {
-	switch {
-	case b <= 0:
-		return ""
-	case b < 2000:
-		return "low"
-	case b < 8000:
-		return "medium"
-	default:
-		return "high"
+	// The level, which outranks the amount as the SOURCE of the effort: it is
+	// what the request will actually carry to the wire, and for an amount no
+	// level can express — Gemini's "you decide" — it is the only statement
+	// there is.
+	for _, key := range []string{"reasoning_effort", "reasoning.effort"} {
+		if v := root.Get(key); v.Exists() {
+			sig.Effort = v.String()
+			sig.Source = key
+			return sig
+		}
 	}
+	if sig.BudgetTokens != 0 {
+		sig.Effort = normcore.EffortForBudget(sig.BudgetTokens)
+	}
+	return sig
 }

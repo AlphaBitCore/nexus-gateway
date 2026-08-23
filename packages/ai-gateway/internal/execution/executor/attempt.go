@@ -63,9 +63,19 @@ func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Respons
 		// entry it builds records a call that left the process.
 		Dispatched: true,
 	}
+	// Recorded on every outcome, not only success: a coercion that preceded a
+	// FAILED dispatch is the one an operator most wants to see, because "we
+	// rewrote this field and then it 400ed" is the shape of the question.
+	//
+	// Guarded, because a TRANSPORT failure produces no response at all — the
+	// adapter returns (nil, err), and reading through it here would panic on
+	// every connection reset the gateway survives today.
+	if resp != nil {
+		a.Coerced = resp.Coerced
+	}
 
 	cls, errCl := classify(resp, err)
-	a.RetryReason = string(errCl)
+	a.ErrorClass = cls.name()
 
 	// The canonical code the classifier branched on, kept on the attempt so
 	// the terminal outcome carries its cause to the handler instead of being
@@ -79,8 +89,8 @@ func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Respons
 		a.Code = pe.Code
 	}
 
-	switch cls {
-	case classSuccess:
+	switch {
+	case cls == classSuccess:
 		a.StatusCode = resp.StatusCode
 		e.recordHealth(target, true, latency)
 		return attemptOutcome{
@@ -99,7 +109,28 @@ func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Respons
 				TargetPath:   resp.TargetPath,
 			},
 		}
-	case classNoFailoverNoRetry, classContextOverflow:
+	case cls == classClientGone:
+		// No recordHealth call, and that omission is the point. The provider
+		// may have been about to answer perfectly; the only thing that failed
+		// is our ability to deliver the answer. Counting it against the
+		// provider lets a wave of client disconnects push every provider it
+		// touched past the unavailability threshold, and the requests that
+		// then get routed away are other people's.
+		if pe != nil {
+			a.StatusCode = pe.Status
+			a.Error = pe.Error()
+		}
+		return attemptOutcome{
+			attempt: a,
+			class:   cls,
+			execResult: &ExecutionResult{
+				StatusCode: 499,
+				Target:     target,
+				Error:      context.Canceled,
+			},
+		}
+
+	case cls.surfacesUpstreamEnvelope():
 		// 4xx terminal (or context overflow on what may be the last
 		// target) — surface the upstream body + headers directly so the
 		// handler can either pass through (ingress == upstream) or
@@ -107,7 +138,9 @@ func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Respons
 		if pe != nil {
 			a.StatusCode = pe.Status
 			a.Error = pe.Error()
-			e.recordHealth(target, false, latency)
+			if cls.recordsProviderHealth() {
+				e.recordHealth(target, false, latency)
+			}
 			return attemptOutcome{
 				attempt: a,
 				class:   cls,
@@ -124,7 +157,9 @@ func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Respons
 		}
 		// classifier promised a ProviderError for this class; defensive fallback.
 		a.Error = "no-failover error without provider envelope"
-		e.recordHealth(target, false, latency)
+		if cls.recordsProviderHealth() {
+			e.recordHealth(target, false, latency)
+		}
 		return attemptOutcome{
 			attempt:    a,
 			class:      cls,
@@ -138,7 +173,12 @@ func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Respons
 		} else if err != nil {
 			a.Error = err.Error()
 		}
-		e.recordHealth(target, false, latency)
+		// Every class reaching here is a deprioritise class, all of which are
+		// evidence about the provider — asked rather than assumed, so a class
+		// routed here later cannot skip the question.
+		if cls.recordsProviderHealth() {
+			e.recordHealth(target, false, latency)
+		}
 		return attemptOutcome{
 			attempt: a,
 			class:   cls,
@@ -158,8 +198,25 @@ func (e *TargetExecutor) recordHealth(target routingcore.RoutingTarget, success 
 	}
 }
 
+// recordCredentialStats feeds the credential circuit breaker, which counts
+// failures per key and opens the circuit when authentication failures reach a
+// threshold.
+//
+// Two classes are withheld, for the same reason health tracking withholds them:
+// they are not the credential's business, and the breaker acts on what it is
+// told. A cancelled caller says nothing about the key that was about to be
+// used. A local decode failure happened on our side of a response the upstream
+// had already accepted — with that key, successfully.
+//
+// The breaker reads raw HTTP status codes and derives its own vocabulary from
+// them, so it cannot make this distinction itself: a client-gone 499 reads as
+// an ordinary 4xx and a local-processing 502 as an upstream fault. Filtering at
+// the source is what keeps the two classifiers from disagreeing.
 func (e *TargetExecutor) recordCredentialStats(credID string, o *attemptOutcome) {
 	if e.stats == nil || credID == "" {
+		return
+	}
+	if !o.class.chargesCredential() {
 		return
 	}
 	e.stats.RecordAttempt(credID, o.attempt.StatusCode, o.attempt.Error)

@@ -14,7 +14,7 @@ import (
 // user message — the shape a real turn loop produces.
 func altHistory(n int) []Message {
 	h := make([]Message, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i%2 == 0 {
 			h = append(h, TextMessage(RoleUser, "u"+strconv.Itoa(i)))
 		} else {
@@ -70,7 +70,7 @@ func TestFitToWindowElidesOldestToolOutputToFit(t *testing.T) {
 	c.keepRecent = 2
 	var hist []Message
 	hist = append(hist, TextMessage(RoleUser, "investigate the jobs"))
-	for i := 0; i < 6; i++ { // six big tool rounds
+	for i := range 6 { // six big tool rounds
 		hist = append(hist, toolRound("t"+strconv.Itoa(i), strings.Repeat("data ", 60))...) // ~75 tok each
 	}
 	before := estimateMessages(hist)
@@ -107,7 +107,7 @@ func TestFitToWindowElidesTextWhenToolOutputNotEnough(t *testing.T) {
 	c.trimBudget = 200
 	c.keepRecent = 2
 	var hist []Message
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		role := RoleUser
 		if i%2 == 1 {
 			role = RoleAssistant
@@ -125,7 +125,7 @@ func TestFitToWindowProtectsRecentTail(t *testing.T) {
 	c.trimBudget = 260 // above floor + protected tail, so the recent tail is preserved
 	c.keepRecent = 3
 	var hist []Message
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		role := RoleUser
 		if i%2 == 1 {
 			role = RoleAssistant
@@ -152,7 +152,7 @@ func TestFitToWindowHysteresisFreesHeadroom(t *testing.T) {
 	c.trimBudget = 1000
 	c.keepRecent = 2
 	hist := []Message{TextMessage(RoleUser, "start")}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		hist = append(hist, toolRound("t"+strconv.Itoa(i), strings.Repeat("data ", 60))...)
 	}
 	out, stat := c.FitToWindow(hist)
@@ -182,7 +182,7 @@ func TestLoopBoundsModelViewAcrossManyLargeToolReads(t *testing.T) {
 		return Result{Content: big}, nil
 	}})
 	var resps []*ModelResponse
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		resps = append(resps, asstToolUse("u"+strconv.Itoa(i), "read", `{}`))
 	}
 	resps = append(resps, asstText("done"))
@@ -326,7 +326,7 @@ func TestLoopRecoversFromContextOverflow(t *testing.T) {
 	fm := &overflowModel{overflowTimes: 1, err: errors.New("400 invalid_request: prompt is too long: 250000 tokens > 200000 maximum")}
 	comp := NewCompactor(fm, 200000)
 	var hist []Message
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		hist = append(hist, toolRound("t"+strconv.Itoa(i), strings.Repeat("data ", 200))...)
 	}
 	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), StepCap: 40, Compactor: comp}
@@ -398,7 +398,7 @@ func TestForceCompactBoundsItsOwnInput(t *testing.T) {
 	c.keepTarget = 20
 	var hist []Message
 	hist = append(hist, TextMessage(RoleUser, "start"))
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		hist = append(hist, toolRound("t"+strconv.Itoa(i), strings.Repeat("data ", 80))...)
 	}
 	if _, _, err := c.ForceCompact(context.Background(), hist); err != nil {

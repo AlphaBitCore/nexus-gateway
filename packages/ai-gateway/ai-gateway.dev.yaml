@@ -218,6 +218,10 @@ routing:
     backoffInitial: 250ms
     backoffMax: 5s
     backoffJitter: 0.2
+  # See ai-gateway.config.yaml for the full note. Default false = named-model
+  # modality verdicts are the upstream's (fail-open on our catalogue data);
+  # `auto` filters unconditionally regardless.
+  enforceNamedModelModality: false
 
 # E34-S? — out-of-band body storage. Bodies whose captured size meets/exceeds
 # inline on traffic_event_payload. All 4 services (Hub, ai-gateway,

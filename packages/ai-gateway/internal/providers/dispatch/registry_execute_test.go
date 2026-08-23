@@ -395,10 +395,18 @@ func TestExecuteWithBody_ApplyAuthError(t *testing.T) {
 	}
 }
 
-// TestExecuteWithBody_CanceledCtx_SurfacesTimeout proves the ctx.Err()
-// branch wins over the generic upstream-error path when the caller has
-// already canceled.
-func TestExecuteWithBody_CanceledCtx_SurfacesTimeout(t *testing.T) {
+// TestExecuteWithBody_CanceledCtx_IsNotATimeout proves two things: the
+// caller-context branch still wins over the generic upstream-error path, and
+// what it produces is no longer a timeout.
+//
+// The distinction is not cosmetic. A timeout is evidence against the provider —
+// the executor records a health failure and, once selection is failure-driven,
+// steers later traffic away from it. A cancelled caller is evidence about the
+// caller. Collapsing them meant a user pressing stop counted against whichever
+// provider happened to be mid-flight, and a wave of disconnects could push
+// every provider it touched past the unavailability threshold, degrading
+// routing for everyone else.
+func TestExecuteWithBody_CanceledCtx_IsNotATimeout(t *testing.T) {
 	tr := &fakeTransport{
 		do: func(ctx context.Context, _ *http.Request) (*http.Response, error) {
 			return nil, ctx.Err()
@@ -416,8 +424,12 @@ func TestExecuteWithBody_CanceledCtx_SurfacesTimeout(t *testing.T) {
 	if !errors.As(err, &pe) {
 		t.Fatalf("want *ProviderError, got %T (%v)", err, err)
 	}
-	if pe.Code != CodeTimeout || pe.Status != http.StatusGatewayTimeout {
-		t.Errorf("canceled-ctx must surface timeout: status=%d code=%q", pe.Status, pe.Code)
+	if pe.Code == CodeTimeout {
+		t.Errorf("a cancelled caller was reported as a provider timeout — the provider "+
+			"gets a health failure it did not earn: status=%d code=%q", pe.Status, pe.Code)
+	}
+	if pe.Code != CodeClientGone || pe.Status != 499 {
+		t.Errorf("status=%d code=%q, want 499 / %s", pe.Status, pe.Code, CodeClientGone)
 	}
 }
 
@@ -490,8 +502,12 @@ func TestExecuteWithBody_DecodeResponseError(t *testing.T) {
 	if !errors.As(err, &pe) {
 		t.Fatalf("want *ProviderError, got %T (%v)", err, err)
 	}
-	if pe.Status != http.StatusBadGateway || pe.Code != CodeUpstreamError {
-		t.Errorf("DecodeResponse error: status=%d code=%q (want 502 / upstream_error)", pe.Status, pe.Code)
+	// The upstream answered 2xx and billed for it; the decode failed on our
+	// side. Coding this as an upstream error put it inside the default retry
+	// classes, so a flaky decode bought one fresh generation per attempt and
+	// then one per remaining target.
+	if pe.Status != http.StatusBadGateway || pe.Code != CodeLocalProcessing {
+		t.Errorf("DecodeResponse error: status=%d code=%q (want 502 / %s)", pe.Status, pe.Code, CodeLocalProcessing)
 	}
 	if !bytes.Contains(pe.Raw, []byte(`"native"`)) {
 		t.Errorf("Raw must carry the upstream body; got %q", pe.Raw)
@@ -524,8 +540,10 @@ func TestExecuteWithBody_StreamOpenError(t *testing.T) {
 	if !errors.As(err, &pe) {
 		t.Fatalf("want *ProviderError, got %T (%v)", err, err)
 	}
-	if pe.Code != CodeUpstreamError {
-		t.Errorf("stream-open error must surface upstream_error, got %q", pe.Code)
+	// Same reasoning as the decode path: the upstream accepted the request and
+	// began answering before we failed to open the stream.
+	if pe.Code != CodeLocalProcessing {
+		t.Errorf("stream-open error must surface %s, got %q", CodeLocalProcessing, pe.Code)
 	}
 	if !closedBody {
 		t.Error("stream-open error must close the upstream body to avoid a leak")
@@ -1066,7 +1084,7 @@ type errReader struct{}
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("simulated upstream stream broke") }
 func (errReader) Close() error             { return nil }
 
-func TestExecute_ReadBodyError_SurfacesUpstreamError(t *testing.T) {
+func TestExecute_ReadBodyError_IsALocalFailure(t *testing.T) {
 	tr := &fakeTransport{
 		do: func(_ context.Context, _ *http.Request) (*http.Response, error) {
 			return &http.Response{
@@ -1086,7 +1104,10 @@ func TestExecute_ReadBodyError_SurfacesUpstreamError(t *testing.T) {
 	if !errors.As(err, &pe) {
 		t.Fatalf("want *ProviderError, got %T (%v)", err, err)
 	}
-	if pe.Status != http.StatusBadGateway || pe.Code != CodeUpstreamError {
+	// Reading the body failed after a 2xx: the answer exists upstream and was
+	// paid for, we just could not carry it across. Retrying does not recover
+	// it — it commissions another one.
+	if pe.Status != http.StatusBadGateway || pe.Code != CodeLocalProcessing {
 		t.Errorf("got status=%d code=%q (want 502/upstream_error)", pe.Status, pe.Code)
 	}
 }

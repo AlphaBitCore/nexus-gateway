@@ -54,12 +54,18 @@ func SuggestModelType(id string) string {
 		return "tts"
 	case strings.Contains(l, "whisper"), strings.Contains(l, "transcribe"):
 		return "stt"
-	// The bare "audio" arm runs AFTER the precise tts/stt/realtime arms so a
-	// speech id is typed precisely; what remains ("gpt-audio-*", "audio-preview")
-	// is a chat-completions-with-audio model whose coarse "audio" type the admin
-	// can refine on save.
-	case strings.Contains(l, "audio"):
-		return "audio"
+	// No bare "audio" arm. What reaches here after the precise tts / stt /
+	// realtime arms — "gpt-audio-*", "audio-preview" — is a model the
+	// provider serves on chat completions that happens to accept and emit
+	// audio parts, so it falls through to "chat" below.
+	//
+	// It used to return "audio", with a comment saying the admin could
+	// refine it on save. They did not, and the type is what the routing
+	// guard compares against the endpoint kind: every request to
+	// /v1/chat/completions for one of these models was rejected with
+	// MODEL_MODALITY_MISMATCH. `type` answers "which endpoint serves this
+	// model", and for these the answer is chat; which modalities it handles
+	// is what inputModalities/outputModalities are for.
 	case strings.Contains(l, "dall-e"), strings.Contains(l, "image"):
 		return "image"
 	default:

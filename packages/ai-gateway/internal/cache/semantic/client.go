@@ -2,13 +2,10 @@ package semantic
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
 	"log/slog"
-	"math"
 	"strings"
 	"time"
 
@@ -207,7 +204,7 @@ func (c *Client) StoreEntry(ctx context.Context, indexName string, in StoreInput
 		"upstream_model":    in.UpstreamModel,
 		"vk_scope":          in.VKScope,
 		"response_kind":     in.ResponseKind,
-		"fingerprint":       in.Fingerprint,
+		"fingerprint":       validityTag(in.Fingerprint, in.AnswerKey),
 		"response_body":     string(in.ResponseBody),
 		"usage":             string(usageJSON),
 		"cached_at":         fmt.Sprintf("%d", time.Now().Unix()),
@@ -238,48 +235,6 @@ func (c *Client) StoreEntry(ctx context.Context, indexName string, in StoreInput
 	return nil
 }
 
-// Key helpers
-
-// entryKey returns the Redis HASH key for an L2 entry. The hash folds the
-// embedding input together with the entry's scope (vk_scope), response kind,
-// and — unless AllowCrossModel is set — its upstream provider + model, so
-// that logically-distinct entries that happen to share embedding text do not
-// collide on a single key and evict each other via HSET overwrite.
-//
-// A NUL separator delimits the components so concatenation is unambiguous
-// (no value can contain a NUL byte). When AllowCrossModel is true the model
-// is interchangeable for retrieval, so provider+model are omitted and the
-// newest response for a given (input, scope, kind) supersedes the prior one.
-func entryKey(indexName string, in StoreInput) string {
-	var sb strings.Builder
-	sb.WriteString(in.EmbeddingInput)
-	sb.WriteByte(0)
-	sb.WriteString(in.VKScope)
-	sb.WriteByte(0)
-	sb.WriteString(in.ResponseKind)
-	if !in.AllowCrossModel {
-		sb.WriteByte(0)
-		sb.WriteString(in.UpstreamProvider)
-		sb.WriteByte(0)
-		sb.WriteString(in.UpstreamModel)
-	}
-	h := sha256.Sum256([]byte(sb.String()))
-	hex := fmt.Sprintf("%x", h)
-	return indexName + ":" + hex[:keyHashLen]
-}
-
-// Vector encoding helpers
-
-// float32sToBytes encodes []float32 as FLOAT32 little-endian bytes.
-// This matches the binary blob format expected by valkey-search.
-func float32sToBytes(v []float32) []byte {
-	b := make([]byte, len(v)*4)
-	for i, f := range v {
-		binary.LittleEndian.PutUint32(b[i*4:], math.Float32bits(f))
-	}
-	return b
-}
-
 // Error classifiers
 
 func isIndexExistsError(err error) bool {
@@ -298,3 +253,18 @@ func isIndexMissingError(err error) bool {
 	return strings.Contains(msg, indexNotFoundMsg) ||
 		errors.Is(err, ErrIndexMissing)
 }
+
+// validityTag composes the `fingerprint` TAG value written on an entry and
+// queried by a lookup. Both sides call this one function so the two can never
+// drift — a writer and a reader that composed the tag independently would
+// fail as a permanent 100% miss, which is quieter than the wrong-answer bug
+// this exists to prevent.
+//
+// The tag means "the conditions under which this cached answer is valid", of
+// which the config fingerprint is one and the caller's answer-affecting
+// request parameters are another. Folding both into the existing TAG rather
+// than adding a new schema field is deliberate: EnsureIndex is idempotent and
+// never alters a live index, so a new field would be absent from every index
+// already deployed and the query referencing it would fail outright.
+//
+// An empty answerKey yields the fingerprint unchanged, so requests that carry

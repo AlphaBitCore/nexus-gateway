@@ -101,6 +101,10 @@ type ModelRow struct {
 	// protocol-required output cap reads it here rather than carrying its
 	// own copy of the fact.
 	MaxOutputTokens int
+	// Reasons mirrors the catalogue's `reasoning` feature. An adapter that
+	// would otherwise send a reasoning parameter to every model, or to none,
+	// asks here instead.
+	Reasons bool
 }
 
 // CredentialCandidate is one entry in the multi-credential pool.
@@ -184,6 +188,7 @@ func (r *PgResolver) Resolve(ctx context.Context, providerID, modelID string, hi
 		CredentialName:     credName,
 		ProviderModelID:    mr.ProviderModelID,
 		MaxOutputTokens:    mr.MaxOutputTokens,
+		Reasons:            mr.Reasons,
 		ServesResponsesAPI: pr.ServesResponsesAPI,
 	}
 	if len(pr.Extras) > 0 {

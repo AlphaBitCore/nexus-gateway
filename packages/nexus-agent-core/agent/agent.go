@@ -168,7 +168,10 @@ func (a *Agent) Turn(ctx context.Context, userText, activeView string) (string, 
 		clean := Message{Role: RoleUser, Blocks: []Block{{Type: BlockText, Text: userText}}}
 		produced = append([]Message{clean}, produced[1:]...)
 	}
-	a.Session.Messages = append(full, produced...)
+	// append to the field itself: `full` is a.Session.Messages (assigned above),
+	// so this was already appending into that slice — writing it indirectly only
+	// made the aliasing hard to see.
+	a.Session.Messages = append(a.Session.Messages, produced...)
 	// Persist even on a step-cap/loop error so the partial turn is resumable.
 	_ = a.Store.Save(a.Session)
 

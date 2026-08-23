@@ -101,19 +101,27 @@ func TestQueueWriter_IntervalTrigger(t *testing.T) {
 // The shipped default is now lossmode.Spill: overflow is written durably off the caller's
 // goroutine. So the contract to pin is the stronger one — a full channel loses NOTHING — and
 // the old assertion is now the DROP mode's test below.
+//
+// It drives handleOverflow rather than racing the flush loop, for the same reason the drop-mode
+// test below does: enqueueing five events into a channel of two only overflows if the producer
+// outruns the consumer on that machine, that run. On an idle machine it does; on a loaded CI
+// runner the flush loop drains the channel first, nothing overflows, and the guard below fires
+// with "the overflow path was never taken". That guard is doing its job — the test was racy, not
+// the writer. The property being pinned belongs to the OVERFLOW POLICY, not to the scheduler,
+// and handleOverflow is exactly the branch Enqueue takes when the select's default arm fires,
+// which is what "the channel is full" means to this writer.
 func TestQueueWriter_ChannelFull_DefaultModeLosesNothing(t *testing.T) {
 	q := newWriterAdapterTestQueue(t)
-	// bufferSize=2, batch=1000 (never tripped), interval=1h (never): the only way past the
-	// channel is the overflow path.
+	// batch=1000 (never tripped), interval=1h (never): nothing commits until Close.
 	w := NewQueueWriterWithOptions(q, 2, 1000, time.Hour)
 
 	const n = 5
 	for i := range n {
-		w.Enqueue(sharedaudit.AuditEvent{
+		w.handleOverflow(w.buildRow(sharedaudit.AuditEvent{
 			ID:         fmt.Sprintf("overflow-%d", i),
 			Timestamp:  time.Now().UTC(),
 			TargetHost: "test.example.com",
-		})
+		}))
 	}
 	// Close drains both the channel and the overflow buffer, so after it every accepted event
 	// must be on disk.
@@ -125,9 +133,10 @@ func TestQueueWriter_ChannelFull_DefaultModeLosesNothing(t *testing.T) {
 		t.Errorf("Drops() = %d, want 0. The default mode writes overflow durably; a drop here "+
 			"means the agent is losing audit records under ordinary channel pressure.", got)
 	}
-	if got := w.OverflowWrites(); got == 0 {
-		t.Error("OverflowWrites() = 0, so the overflow path was never taken and this test is not " +
-			"exercising what it exists for — check that the channel really filled.")
+	if got := w.OverflowWrites(); got != n {
+		t.Errorf("OverflowWrites() = %d, want %d. Every event handed to the overflow path must be "+
+			"durably written under the default mode; an exact count is asserted because a "+
+			"\"> 0\" bar cannot tell a working overflow path from a partly working one.", got, n)
 	}
 	_, total, err := q.QueryEvents("", "", 0, 100)
 	if err != nil {
@@ -140,28 +149,71 @@ func TestQueueWriter_ChannelFull_DefaultModeLosesNothing(t *testing.T) {
 	}
 }
 
-// TestQueueWriter_ChannelFull_DropModeStillDrops keeps the old behaviour under test, because it is
-// still reachable — it is now a deliberate configuration rather than the only option, and a
-// deployment that selects it must actually get it.
-func TestQueueWriter_ChannelFull_DropModeStillDrops(t *testing.T) {
+// TestQueueWriter_DropModeDropsWhenTheChannelIsFull keeps the old behaviour
+// under test, because it is still reachable — it is now a deliberate
+// configuration rather than the only option, and a deployment that selects it
+// must actually get it.
+//
+// It drives handleOverflow rather than racing the flush loop. The previous
+// version enqueued five events into a channel of two and asserted a drop; the
+// loop drains that channel into its batch, so whether anything dropped came
+// down to whether the producer outran the consumer on that machine, that run.
+// It usually did, which is the worst kind of flake: it passes often enough to
+// look like a real assertion.
+//
+// The property is a property of the OVERFLOW POLICY, not of the scheduler.
+// This exercises exactly the branch Enqueue takes when the select's default
+// arm fires, which is what "the channel is full" means to this writer.
+func TestQueueWriter_DropModeDropsWhenTheChannelIsFull(t *testing.T) {
 	q := newWriterAdapterTestQueue(t)
 	w := NewQueueWriterWithOptions(q, 2, 1000, time.Hour).WithLossMode("drop")
 	defer func() { _ = w.Close(context.Background()) }()
 
-	for i := range 5 {
-		w.Enqueue(sharedaudit.AuditEvent{
+	const n = 5
+	for i := range n {
+		w.handleOverflow(w.buildRow(sharedaudit.AuditEvent{
 			ID:         fmt.Sprintf("drop-%d", i),
 			Timestamp:  time.Now().UTC(),
 			TargetHost: "test.example.com",
-		})
+		}))
 	}
-	if got := w.Drops(); got == 0 {
-		t.Errorf("Drops() = 0 under lossMode=drop; the mode must be honoured when it is chosen " +
-			"explicitly, otherwise the vocabulary is decorative (channel size 2, 5 enqueues)")
+
+	if got := w.Drops(); got != n {
+		t.Errorf("Drops() = %d, want %d; the mode must be honoured when it is chosen "+
+			"explicitly, otherwise the vocabulary is decorative", got, n)
 	}
 	if got := w.OverflowWrites(); got != 0 {
 		t.Errorf("OverflowWrites() = %d under lossMode=drop; drop must not quietly persist "+
 			"through the durable path, or drop and spill are the same mode", got)
+	}
+}
+
+// And the other half, which the old test could not state because it never
+// knew whether the channel had actually filled: a channel with room does NOT
+// drop, whatever the loss mode says. Drop mode is a saturation policy, not a
+// licence to discard.
+func TestQueueWriter_DropModeKeepsEverythingWhileThereIsRoom(t *testing.T) {
+	q := newWriterAdapterTestQueue(t)
+	w := NewQueueWriterWithOptions(q, 256, 1000, time.Hour).WithLossMode("drop")
+
+	const n = 7
+	for i := range n {
+		w.Enqueue(sharedaudit.AuditEvent{
+			ID:         fmt.Sprintf("keep-%d", i),
+			Timestamp:  time.Now().UTC(),
+			TargetHost: "test.example.com",
+		})
+	}
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := w.Drops(); got != 0 {
+		t.Errorf("Drops() = %d with a channel of 256 and %d events; drop mode must only "+
+			"drop under saturation", got, n)
+	}
+	_, total, _ := q.QueryEvents("", "", 0, 100)
+	if total != n {
+		t.Errorf("persisted %d of %d; drop mode must still deliver what it accepted", total, n)
 	}
 }
 

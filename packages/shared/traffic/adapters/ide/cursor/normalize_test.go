@@ -119,13 +119,13 @@ func TestCursorNormalize_Request_GetChatRequest(t *testing.T) {
 	if payload.Confidence < 0.85 {
 		t.Errorf("confidence: %v want >= 0.85 (multi-message + model)", payload.Confidence)
 	}
-	// Dual view: raw bytes referenced via BinaryRef (protobuf is not
+	// Dual view: raw bytes referenced via MediaRef (protobuf is not
 	// human-readable as text, so we keep size + content-type only).
-	if payload.HTTP == nil || payload.HTTP.BodyView == nil || payload.HTTP.BodyView.BinaryRef == nil {
-		t.Fatalf("BodyView.BinaryRef not populated: %+v", payload.HTTP)
+	if payload.HTTP == nil || payload.HTTP.BodyView == nil || payload.HTTP.BodyView.MediaRef == nil {
+		t.Fatalf("BodyView.MediaRef not populated: %+v", payload.HTTP)
 	}
-	if payload.HTTP.BodyView.BinaryRef.Size != int64(len(body)) {
-		t.Errorf("BinaryRef.Size: %d want %d", payload.HTTP.BodyView.BinaryRef.Size, len(body))
+	if payload.HTTP.BodyView.MediaRef.SizeBytes != int64(len(body)) {
+		t.Errorf("MediaRef.SizeBytes: %d want %d", payload.HTTP.BodyView.MediaRef.SizeBytes, len(body))
 	}
 }
 

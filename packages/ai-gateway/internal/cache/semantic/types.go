@@ -17,6 +17,13 @@ type StoreInput struct {
 	ResponseKind     string // "response" | "stream"
 	Fingerprint      string // ConfigCache fingerprint at time of write
 
+	// AnswerKey digests the caller's answer-affecting request parameters
+	// (sampling settings, tool declarations). Folded into the entry's
+	// validity tag by validityTag so a request pinned to temperature=0 can
+	// only retrieve answers generated at temperature=0. Empty when the
+	// request carried no such parameters.
+	AnswerKey string
+
 	// Vector
 	EmbeddingInput string    // exact text fed to the embedding model
 	Embedding      []float32 // float32 vector produced by the embedding model
@@ -50,6 +57,7 @@ type LookupInput struct {
 	UpstreamModel    string // may be ignored when AllowCrossModel is true
 	ResponseKind     string
 	Fingerprint      string // ConfigCache fingerprint at lookup time
+	AnswerKey        string // see StoreInput.AnswerKey; must match the write side exactly
 
 	Embedding       []float32
 	Threshold       float32 // minimum cosine similarity to qualify as a hit (e.g. 0.96)

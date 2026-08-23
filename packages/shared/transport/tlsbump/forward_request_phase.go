@@ -105,13 +105,14 @@ func (x *bumpedExchange) runRequestPhase() bool {
 		x.phaseBreakdown["conn_setup_ms"] = connSetupMs
 	}
 	auditInfo := compliance.AuditInfo{
-		TransactionID:    x.txID,
-		ConnectionID:     bo.connectionID,
-		TraceID:          x.traceID,
-		Headers:          sanitisedHeaders,
-		RequestMeta:      reqMeta,
-		PhaseSink:        x.phaseSink,
-		LatencyBreakdown: x.phaseBreakdown,
+		TransactionID:     x.txID,
+		ConnectionID:      bo.connectionID,
+		TraceID:           x.traceID,
+		ExternalRequestID: x.r.Header.Get("X-Request-Id"),
+		Headers:           sanitisedHeaders,
+		RequestMeta:       reqMeta,
+		PhaseSink:         x.phaseSink,
+		LatencyBreakdown:  x.phaseBreakdown,
 		// Stamp classification inputs so the agent audit row
 		// carries enough context for classify() to distinguish
 		// Inspect / Processed / Blocked / Bump failed /

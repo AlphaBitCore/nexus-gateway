@@ -192,6 +192,18 @@ type TrafficEvent struct {
 	// RequestBody/ResponseBody before returning to the UI.
 	RequestSpillRef  json.RawMessage `json:"requestSpillRef,omitempty"`
 	ResponseSpillRef json.RawMessage `json:"responseSpillRef,omitempty"`
+	// Truncation flags + the TRUE captured size, from traffic_event_payload.
+	// A body is truncated when it reached the inline-vs-spill cutoff
+	// (payload_capture.maxInlineBodyBytes) and no spill backend was configured
+	// to take it out of band: the row then holds a PREFIX while *SizeBytes
+	// still reports the real captured size (see spillstore.EmitBody). Without
+	// both fields the UI renders that prefix as if it were the whole body — a
+	// truncated SSE stream is indistinguishable from a response the model
+	// never finished.
+	RequestBodyTruncated  bool   `json:"requestBodyTruncated"`
+	ResponseBodyTruncated bool   `json:"responseBodyTruncated"`
+	RequestBodySizeBytes  *int64 `json:"requestBodySizeBytes,omitempty"`
+	ResponseBodySizeBytes *int64 `json:"responseBodySizeBytes,omitempty"`
 }
 
 // TrafficEventListParams holds filter/pagination for traffic events.
@@ -381,7 +393,9 @@ func (store *Store) ListTrafficEvents(ctx context.Context, p TrafficEventListPar
 func (store *Store) GetTrafficEvent(ctx context.Context, id string) (*TrafficEvent, error) {
 	q := fmt.Sprintf(
 		`SELECT %s, p.inline_request_body, p.inline_response_body, p.request_spill_ref, p.response_spill_ref,
-		        COALESCE(p.inline_request_encoding, ''), COALESCE(p.inline_response_encoding, '')
+		        COALESCE(p.inline_request_encoding, ''), COALESCE(p.inline_response_encoding, ''),
+		        COALESCE(p.request_truncated, false), COALESCE(p.response_truncated, false),
+		        p.request_size_bytes, p.response_size_bytes
 		 %s
 		 LEFT JOIN traffic_event_payload p ON p.traffic_event_id = a.id
 		 WHERE a.id = $1`,
@@ -437,6 +451,8 @@ func (store *Store) GetTrafficEvent(ctx context.Context, id string) (*TrafficEve
 		&a.RequestBody, &a.ResponseBody,
 		&a.RequestSpillRef, &a.ResponseSpillRef,
 		&a.RequestBodyEncoding, &a.ResponseBodyEncoding,
+		&a.RequestBodyTruncated, &a.ResponseBodyTruncated,
+		&a.RequestBodySizeBytes, &a.ResponseBodySizeBytes,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

@@ -1,6 +1,7 @@
 package wiring
 
 import (
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/models"
 )
 
@@ -29,4 +30,24 @@ func selectModelCatalog(deps RouteDeps) models.ModelLookup {
 	default:
 		return nil
 	}
+}
+
+// selectUsageStore is the same guard as selectModelCatalog above, for the
+// usage seam that reads the database directly.
+//
+// The trap is worth restating because it is invisible at the call site: a nil
+// *store.DB handed into an interface parameter becomes a NON-nil interface
+// holding a nil pointer. The handler's `db == nil` guard then never fires and
+// the first read dereferences the nil instead of answering "database not
+// available" — the answer that guard was written to give.
+//
+// Deps passed as STRUCT FIELDS are handled at the consumer instead: see
+// proxy.NewHandler, which normalizes every interface field of proxy.Deps at
+// once rather than relying on the wiring to remember field by field. That is
+// not available here, because these are function arguments.
+func selectUsageStore(deps RouteDeps) envelope.UsageStore {
+	if deps.DB == nil {
+		return nil
+	}
+	return deps.DB
 }

@@ -243,7 +243,7 @@ func (f *opForm) view() string {
 		} else {
 			val = fld.ti.View()
 		}
-		b.WriteString(fmt.Sprintf("%s%-22s %s\n", cursor, name, val))
+		fmt.Fprintf(&b, "%s%-22s %s\n", cursor, name, val)
 	}
 	b.WriteString(styles.TileLabel.Render("↑/↓ field · ←/→ choose · type to edit · enter submit · esc cancel"))
 	return b.String()

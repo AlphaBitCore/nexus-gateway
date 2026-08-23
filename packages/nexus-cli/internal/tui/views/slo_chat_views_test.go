@@ -442,7 +442,7 @@ func TestChat_CompareGuardsAndTrim(t *testing.T) {
 	if len(c.rounds) != 0 {
 		t.Fatal("append/finish with no rounds must be no-ops")
 	}
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		c.rounds = append(c.rounds, compareRound{prompt: "p", a: sideResult{model: "a", text: "x"}, b: sideResult{model: "b", text: "y"}})
 	}
 	out := c.compareTranscript(120, 2) // clamps to 4 then trims
@@ -707,7 +707,7 @@ func TestSLO_ProviderToggleProdConfirm(t *testing.T) {
 		t.Fatal("a matching confirmation should fire the write")
 	}
 	v, _ = sv.Update(cmd())
-	sv = v.(*slo)
+	_ = v.(*slo) // asserted for type, not read
 	if gw.lastProviderEnabled == nil {
 		t.Fatal("the write should fire after confirmation")
 	}
@@ -770,7 +770,7 @@ func TestCost_CacheFlush(t *testing.T) {
 	v, cmd = pc.Update(keyRunes("y")) // quick-allow the prod confirm
 	pc = v.(*cost)
 	v, _ = pc.Update(cmd())
-	pc = v.(*cost)
+	_ = v.(*cost) // asserted for type, not read
 	if !pgw.cacheFlushed {
 		t.Fatal("confirmed flush should fire")
 	}

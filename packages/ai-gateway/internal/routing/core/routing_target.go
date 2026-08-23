@@ -44,6 +44,15 @@ type RoutingTarget struct {
 	BaseURL            string
 	Region             string
 	Source             string // "primary", "fallback", "recovery"
+	// RuleID names the routing rule this target came from.
+	//
+	// The walk needs it to know where one rule's answer ends and the next
+	// begins: a rule is advanced past only when every one of ITS targets has
+	// been ELIMINATED, never because the call budget ran out. Without the
+	// boundary the plan is a flat list of equals, and a rule an admin wrote as
+	// a lower-priority alternative starts serving traffic the moment the rule
+	// above it hits one transient failure.
+	RuleID string
 	// ServesResponsesAPI mirrors Provider.serves_responses_api (nil = adapter
 	// RequestShapes default). Carried on the routing snapshot so the proxy
 	// stages (cross-format guard, body canonicalization, egress reshape) and
@@ -56,4 +65,30 @@ type RoutingTarget struct {
 	// attempt) hands the codec the real cap; 0 here breaks the anthropic
 	// clamp+fill. See §5 of provider-adapter-architecture.md.
 	MaxOutputTokens int
+	// Reasons mirrors the catalogue's `reasoning` feature: this model thinks
+	// before answering, whatever the vendor calls it.
+	//
+	// A named field rather than the whole `features` slice, following
+	// ServesResponsesAPI beside it. A bag would let the next capability ride
+	// along untyped and unasked-for, and the question a codec has is not "what
+	// are this model's features" but "may I send a reasoning parameter to it" —
+	// which today it cannot ask at all, so `reasoning_effort` reaches models
+	// that do not reason by accident of an identity codec.
+	Reasons bool
+	// MaxContextTokens mirrors Model.maxContextTokens (0 = NULL column).
+	//
+	// The executor reads it when an attempt overflows: the next target to try
+	// is then the one with the largest remaining window, not the next one in
+	// the list. Position says nothing useful here — a list ordered by price
+	// puts the next-cheapest model next, whose window is as likely to be
+	// smaller as larger, so a walk can spend several calls overflowing in a
+	// row. Sorting the remainder by window is the only move that improves the
+	// odds on the one dimension that just failed.
+	MaxContextTokens int
 }
+
+// FeatureReasoning is the catalogue's spelling for "this model thinks before
+// answering". One constant so the string is written once: it was spelled
+// `thinking` on some rows and `reasoning` on others until the catalogue was
+// de-duplicated, and a literal at each read site is how that happens.
+const FeatureReasoning = "reasoning"

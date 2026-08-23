@@ -30,7 +30,15 @@ func (a *ProxyRoutingNoMatch) OnEvent(rt *alerteval.Runtime, evt *alerteval.Even
 	if evt.Kind != alerteval.EventTraffic || evt.Traffic == nil {
 		return
 	}
-	if derefString(evt.Traffic.ErrorCode) != "ROUTING_NO_MATCH" {
+	// Both codes are this aggregator's subject, and the second is the one an
+	// operator is likelier to have caused: a rule that MATCHED and resolved
+	// nothing, because its target model was deleted or its provider disabled.
+	// The doc above already names that population — "deleted rule, model
+	// rename, alias drift" — and matching only the older literal left the
+	// newer, more specific failure with no alert at all.
+	switch derefString(evt.Traffic.ErrorCode) {
+	case "ROUTING_NO_MATCH", "ROUTING_RULES_RESOLVED_NOTHING":
+	default:
 		return
 	}
 	w := rt.Window("global", 1200)

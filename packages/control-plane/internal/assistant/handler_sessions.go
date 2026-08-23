@@ -67,8 +67,13 @@ type chatModelInfo struct {
 	Provider string
 }
 
-// chatModelCatalog returns the chat-type model catalog (enabled + active) as a map of
-// code → {label, provider}, and true. The map's KEYS are the chat-modality filter set
+// chatModelCatalog returns the chat-type servable model catalog as a map of
+// code → {label, provider}, and true. Servable here mirrors the gateway's own rule —
+// the model row enabled, its provider enabled, its status not `disabled` — because a
+// picker that offers a withdrawn model hands the user one whose every call fails
+// upstream. The gateway is the authority (the reachable set this is intersected with
+// is its `/v1/models`); repeating the predicate here only hardens the picker against
+// a stale gateway snapshot. The map's KEYS are the chat-modality filter set
 // applied on top of the VK-reachable set in ListModels auto mode (a VK may route
 // embedding/image models too; the chat assistant only offers chat models); the VALUES
 // enrich each offered code with its catalog label + provider for the grouped picker.
@@ -80,7 +85,7 @@ func (h *Handler) chatModelCatalog(ctx context.Context) (map[string]chatModelInf
 	}
 	rows, err := h.cfg.Pool.Query(ctx,
 		`SELECT m.code, m.name, p.name FROM "Model" m JOIN "Provider" p ON p.id = m."providerId" `+
-			`WHERE m.type = 'chat' AND m.enabled = true AND m.status = 'active'`)
+			`WHERE m.type = 'chat' AND m.enabled = true AND p.enabled = true AND m.status <> 'disabled'`)
 	if err != nil {
 		return nil, false
 	}

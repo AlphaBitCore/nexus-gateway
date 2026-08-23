@@ -233,3 +233,47 @@ func TestResolveEmbeddingDimension(t *testing.T) {
 		t.Fatalf("permissive legacy: got=%v err=%v", got, err)
 	}
 }
+
+// TestResolveEmbeddingDimension_Range covers the Matryoshka case: a model that
+// truncates to any dimension up to its maximum cannot be described by a list,
+// and an operator configuring a dimension inside the declared range must not be
+// blocked here when the gateway's routing filter would forward it. The two
+// checks answer the same question, so they have to agree.
+func TestResolveEmbeddingDimension_Range(t *testing.T) {
+	large := embeddingCapability{
+		DefaultDimension: 3072,
+		// The stale enumeration that caused the live rejections; it omits 1536
+		// and must no longer be the deciding factor once a range is declared.
+		SupportedDimensions: []int{256, 512, 1024, 3072},
+		MinDimension:        1,
+		MaxDimension:        3072,
+	}
+	d1536 := 1536
+	got, err := resolveEmbeddingDimension(&d1536, large)
+	if err != nil {
+		t.Fatalf("1536 is inside the declared range and must resolve; got %v", err)
+	}
+	if got == nil || *got != 1536 {
+		t.Fatalf("resolved dimension = %v, want 1536", got)
+	}
+
+	// The range is a real bound, not an off switch.
+	d4096 := 4096
+	if _, err := resolveEmbeddingDimension(&d4096, large); !errors.Is(err, ErrUnsupportedEmbeddingDimension) {
+		t.Fatalf("4096 is above the declared maximum and must be rejected; got %v", err)
+	}
+
+	// A floor is enforced too when one is declared.
+	floored := embeddingCapability{DefaultDimension: 1024, MinDimension: 256, MaxDimension: 3072}
+	d128 := 128
+	if _, err := resolveEmbeddingDimension(&d128, floored); !errors.Is(err, ErrUnsupportedEmbeddingDimension) {
+		t.Fatalf("128 is below the declared minimum and must be rejected; got %v", err)
+	}
+
+	// Declaring only a ceiling means "anything up to it", not "nothing".
+	ceilOnly := embeddingCapability{DefaultDimension: 3072, MaxDimension: 3072}
+	d1 := 1
+	if _, err := resolveEmbeddingDimension(&d1, ceilOnly); err != nil {
+		t.Fatalf("1 must resolve when only a maximum is declared; got %v", err)
+	}
+}

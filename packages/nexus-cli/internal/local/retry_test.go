@@ -45,7 +45,7 @@ func TestRetryTransport_RetriesIdempotentGetOnConnLost(t *testing.T) {
 		t.Fatalf("expected transparent recovery, got: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	if n := atomic.LoadInt32(&inner.calls); n != 2 {
@@ -84,7 +84,7 @@ func TestRetryTransport_DoesNotRetryNonConnError(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 500 || atomic.LoadInt32(&calls) != 1 {
+	if resp.StatusCode != http.StatusInternalServerError || atomic.LoadInt32(&calls) != 1 {
 		t.Fatalf("a 500 response must not be retried: status=%d calls=%d", resp.StatusCode, calls)
 	}
 }

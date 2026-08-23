@@ -32,7 +32,7 @@ func NewRootCmd(a *App) *cobra.Command {
 				return nil
 			}
 			if err := a.ensureEnv(); err != nil {
-				return fmt.Errorf("%w: %v — run `nexus setup` to configure an environment (its Control Plane URL, etc.), then `nexus login`", core.ErrUnauthorized, err)
+				return fmt.Errorf("%w: %w — run `nexus setup` to configure an environment (its Control Plane URL, etc.), then `nexus login`", core.ErrUnauthorized, err)
 			}
 			if cmd.Annotations["skipAuth"] == "true" {
 				return nil
@@ -86,7 +86,7 @@ func Main() int {
 		// The error string can embed a server-supplied response body (a 4xx/5xx body
 		// is wrapped into the transport error). Sanitize it so an attacker-controlled
 		// body cannot inject terminal escape sequences on the error path.
-		fmt.Fprintln(a.ErrOut, "error:", restable.SanitizeTerminal(err.Error()))
+		_, _ = fmt.Fprintln(a.ErrOut, "error:", restable.SanitizeTerminal(err.Error()))
 		return exitCode(err)
 	}
 	return 0

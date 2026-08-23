@@ -2,7 +2,9 @@ package traffic
 
 import (
 	"encoding/base64"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -33,7 +35,7 @@ func expectArtifactRow(mock pgxmock.PgxPoolIface, id, path string, respBody []by
 		WillReturnRows(pgxmock.NewRows(normalizeInputCols).AddRow(
 			"openai", "m", path,
 			nil, "", respBody, "",
-			"", respCT, nil, nil, endpointType))
+			"", respCT, nil, nil, endpointType, "", false, false))
 }
 
 func callArtifact(t *testing.T, h *Handler, id, query string) (int, string, []byte) {
@@ -140,10 +142,16 @@ func TestGetTrafficEventArtifact_TTS_MislabeledCT_SniffsAudio(t *testing.T) {
 	}
 }
 
-// TestGetTrafficEventArtifact_NonImageBytes_DegradesToOctet is the load-bearing
-// XSS control: an image body whose bytes are NOT a known raster type (e.g. an
-// HTML/SVG polyglot) must serve as application/octet-stream — never an active
-// content-type — with nosniff so the browser cannot re-interpret it.
+// An image body whose bytes match no known signature serves as
+// application/octet-stream — never an active content-type — with nosniff so
+// the browser cannot re-interpret it.
+//
+// The name this test used to carry claimed it covered an HTML/SVG polyglot.
+// It did not: bare markup matches no signature, so it took the same path as
+// any unknown blob. A REAL polyglot goes the other way — a file that is a
+// valid GIF *and* valid HTML sniffs as image/gif and IS served inline — which
+// TestArtifactPolyglotServesAsItsContainer covers, with the reasoning for why
+// that is the safe answer.
 func TestGetTrafficEventArtifact_NonImageBytes_DegradesToOctet(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
 	html := base64.StdEncoding.EncodeToString([]byte("<html><script>alert(1)</script></html>"))
@@ -183,12 +191,15 @@ func TestSniffImageMime(t *testing.T) {
 		{"unknown", []byte("plain text bytes here"), "application/octet-stream"},
 	}
 	for _, c := range cases {
-		if got := sniffImageMime(c.b); got != c.want {
+		if got := locator.SniffMime(c.b); got != c.want {
 			t.Errorf("%s: sniff=%s want %s", c.name, got, c.want)
 		}
 	}
 }
 
+// Kept as a smoke check on the endpoint's use of the shared sniffer. The
+// authority is transport/normalize/locator/testdata/sniff-vectors.json,
+// which both this program's sniffers assert against.
 func TestSniffAudioMime(t *testing.T) {
 	cases := []struct {
 		name string
@@ -200,10 +211,13 @@ func TestSniffAudioMime(t *testing.T) {
 		{"flac", []byte("fLaC\x00"), "audio/flac"},
 		{"id3", []byte("ID3\x04\x00"), "audio/mpeg"},
 		{"adts", []byte{0xFF, 0xF1, 0x00}, "audio/mpeg"},
-		{"default", []byte{0x00, 0x01}, "audio/mpeg"},
+		// Unrecognisable bytes are NOT guessed at. The TTS route supplies
+		// audio/mpeg as a fallback because it knows what it serves; the
+		// sniffer itself never invents a type from nothing.
+		{"unrecognised", []byte{0x00, 0x01}, "application/octet-stream"},
 	}
 	for _, c := range cases {
-		if got := sniffAudioMime(c.b); got != c.want {
+		if got := locator.SniffMime(c.b); got != c.want {
 			t.Errorf("%s: sniff=%s want %s", c.name, got, c.want)
 		}
 	}
@@ -237,5 +251,74 @@ func TestGetTrafficEventArtifact_RowNotFound_404(t *testing.T) {
 	code, _, _ := callArtifact(t, h, "ghost", "")
 	if code != http.StatusNotFound {
 		t.Fatalf("status=%d want 404 (row absent)", code)
+	}
+}
+
+// A polyglot — bytes that are simultaneously a valid GIF and valid HTML — is
+// the case the sniffer actually has to answer, and it answers "GIF".
+//
+// That is correct, and worth writing down so the next reader does not
+// "harden" it into a refusal. The threat is a browser EXECUTING captured
+// bytes. Serving image/gif does not create an executing context: nosniff
+// forbids re-interpretation, the CSP is `default-src 'none'; sandbox` with
+// `frame-ancestors 'none'`, and CORP keeps the response in this origin. The
+// markup half is inert under every one of those.
+//
+// Refusing to serve it, or serving it as octet-stream, would instead break
+// the honest case: a real GIF that happens to contain a `<` byte would stop
+// previewing for a reason no reader could see.
+func TestArtifactPolyglotServesAsItsContainer(t *testing.T) {
+	h, mock := newHandlerWithMock(t)
+	polyglot := base64.StdEncoding.EncodeToString(
+		[]byte("GIF89a<html><script>alert(1)</script></html>"))
+	body := []byte(`{"data":[{"b64_json":"` + polyglot + `"}]}`)
+	expectArtifactRow(mock, "poly", "/v1/images/generations", body, "application/json")
+
+	rec := callArtifactRec(t, h, "poly", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/gif" {
+		t.Fatalf("content-type=%q — the bytes ARE a gif and must be named as one", ct)
+	}
+	// And the containment that makes that safe must be present on this very
+	// response, not assumed from another test.
+	if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatal("a polyglot served inline without nosniff is re-interpretable")
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'none'", "sandbox"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("CSP %q is missing %q — the markup half is only inert because of it", csp, want)
+		}
+	}
+}
+
+// The TTS fallback: an audio body with NO recognisable container header.
+//
+// Both existing TTS tests feed bytes starting 0xFF 0xFB, which the sniffer
+// resolves through the MPEG frame-sync branch — so they passed without the
+// route's fallback ever running, and deleting it left them green. A
+// headerless payload (raw PCM from `response_format=pcm`, or an MP3 whose
+// first frame is not at byte zero) is what actually reaches it.
+func TestArtifactTTSFallbackNamesTheAudioTheRouteGuarantees(t *testing.T) {
+	h, mock := newHandlerWithMock(t)
+	// Deliberately unrecognisable: no ID3, no frame sync, no container magic.
+	raw := make([]byte, 64)
+	for i := range raw {
+		raw[i] = byte(i % 7)
+	}
+	expectArtifactRow(mock, "pcm", "/v1/audio/speech", raw, "application/json")
+
+	rec := callArtifactRec(t, h, "pcm", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "audio/mpeg" {
+		t.Fatalf("content-type=%q — the route serves speech and nothing else, which is OUR knowledge, not the provider's declaration", ct)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, ".mp3") || !strings.HasPrefix(cd, "inline;") {
+		t.Fatalf("Content-Disposition = %q, want an inline .mp3", cd)
 	}
 }

@@ -93,8 +93,12 @@ func InitIntrospectRegistry(deps IntrospectDeps, mux *http.ServeMux) *runtimeint
 		})
 		introspectReg.Register(runtimeintrospect.SourceFunc{
 			SourceName: "cache.models",
-			Fn: func(ctx context.Context) (any, error) {
-				return deps.CacheLayer.ListEnabledModels(ctx)
+			Fn: func(_ context.Context) (any, error) {
+				// The whole snapshot, not the servable subset: this is the
+				// surface an operator reads to answer "why is my model gone?",
+				// and it can only answer that if the withdrawn rows are in it
+				// with their enabled / provider-enabled / status flags.
+				return deps.CacheLayer.AllModels(), nil
 			},
 		})
 		introspectReg.Register(runtimeintrospect.SourceFunc{

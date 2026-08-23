@@ -31,14 +31,35 @@ type SmartModelRow struct {
 	// ModelCode is the customer-facing identifier ("gpt-4o"). Sent to
 	// the LLM in the model catalog so it returns a short, recognisable
 	// token; mapped back to ModelID after the LLM responds.
-	ModelCode        string
-	ModelName        string
-	ProviderID       string
-	ProviderName     string
-	ProviderModelID  string
-	InputPricePM     *float64
-	OutputPricePM    *float64
-	Features         []string
-	MaxContextTokens *int
-	MaxOutputTokens  *int
+	ModelCode       string
+	ModelName       string
+	ProviderID      string
+	ProviderName    string
+	ProviderModelID string
+	InputPricePM    *float64
+	OutputPricePM   *float64
+	Features        []string
+	// InputModalities is what the model accepts, and the only thing consulted
+	// for a modality question — by the capability filter and by the router
+	// LLM's catalog alike. `Features` used to carry a "vision" entry saying
+	// the same thing in a second vocabulary, and the two disagreed on 34
+	// production rows; it is no longer stored. Features keeps the
+	// capabilities that are not modalities (streaming, function_calling,
+	// json_mode, thinking).
+	//
+	// Not all of them are routing CONSTRAINTS, and `streaming` is the one that
+	// looks like it should be. It discriminates — the rows without it are the
+	// embedding, image, video and speech models, which is a real fact — but no
+	// routing path reads it, and none should: whether a wire can stream is the
+	// adapter's business, not a reason to prefer one target over another. It is
+	// published by the model catalogue because callers read it to decide
+	// whether to ask for a stream, and that is the whole of its job.
+	InputModalities []string
+	// RequiredModalities is the model's floor. A request that carries none of
+	// these cannot be served by this model at all — gpt-audio-mini accepts
+	// text and requires audio, and a text-only request routed to it is a
+	// measured upstream 400. Empty is the normal case.
+	RequiredModalities []string
+	MaxContextTokens   *int
+	MaxOutputTokens    *int
 }

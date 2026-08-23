@@ -136,6 +136,10 @@ type testSpillStore struct {
 	// compares a ref's backend against the CONFIGURED store's backend, so tests
 	// that exercise that comparison need to control both sides.
 	backend string
+	// getCalls counts Get invocations. A test that proves a scrubbed row never
+	// reaches the spill backend needs to observe the absence of the call, which
+	// no return value can express.
+	getCalls int
 }
 
 func (s *testSpillStore) Backend() string {
@@ -148,6 +152,7 @@ func (s *testSpillStore) Put(_ context.Context, _ io.Reader, _ int64, _ spillsto
 	return sharedaudit.SpillRef{}, nil
 }
 func (s *testSpillStore) Get(_ context.Context, ref sharedaudit.SpillRef) (io.ReadCloser, error) {
+	s.getCalls++
 	if s.getErr != nil {
 		return nil, s.getErr
 	}
@@ -1782,7 +1787,7 @@ func TestProxyForward_PostMethod_SendsBody(t *testing.T) {
 
 // compliance_reports.go — ComplianceAuditDetail success, ComplianceReport success
 
-// matrixAuditCols matches the 24 columns scanned by GetMatrixAuditEvent.
+// matrixAuditCols matches the 28 columns scanned by GetMatrixAuditEvent.
 var matrixAuditCols = []string{
 	"id", "transactionId", "connectionId", "trafficSource", "ingressType", "bumpStatus",
 	"sourceIp", "targetHost", "method", "path", "statusCode",
@@ -1790,6 +1795,8 @@ var matrixAuditCols = []string{
 	"complianceTags", "entityId", "userAgent", "details",
 	"requestBody", "responseBody",
 	"inline_request_encoding", "inline_response_encoding",
+	"request_truncated", "response_truncated",
+	"request_size_bytes", "response_size_bytes",
 }
 
 // ptrStr returns a pointer to the given string (for pgxmock *string scan targets).
@@ -1800,7 +1807,7 @@ func ptrInt(i int) *int { return &i }
 
 func TestComplianceAuditDetail_Success_Returns200(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
-	// GetMatrixAuditEvent uses QueryRow + Scan of 22 columns.
+	// GetMatrixAuditEvent uses QueryRow + Scan of 28 columns.
 	// All *string targets must receive *string (not bare string) for pgxmock v4.
 	mock.ExpectQuery("FROM traffic_event e").
 		WithArgs(pgxmock.AnyArg()).
@@ -1828,6 +1835,8 @@ func TestComplianceAuditDetail_Success_Returns200(t *testing.T) {
 			nil,                   // requestBody (*json.RawMessage)
 			nil,                   // responseBody (*json.RawMessage)
 			"", "",                // inline_request_encoding, inline_response_encoding (string)
+			false, false, // request_truncated, response_truncated (bool, COALESCE'd)
+			nil, nil, // request_size_bytes, response_size_bytes (*int64)
 		))
 
 	c, rec := echoCtx(http.MethodGet, "/compliance/audit/evt-matrix-1")
@@ -1841,6 +1850,19 @@ func TestComplianceAuditDetail_Success_Returns200(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&body)
 	if body["id"] != "evt-matrix-1" {
 		t.Errorf("expected id='evt-matrix-1', got %v", body["id"])
+	}
+	// This endpoint has no UI; the JSON IS the product. A consumer reading the
+	// captured bodies must be able to tell a stored prefix from a whole body,
+	// so both flags ride on every response — false included.
+	for _, k := range []string{"requestBodyTruncated", "responseBodyTruncated"} {
+		v, ok := body[k]
+		if !ok {
+			t.Errorf("%s missing from the compliance audit detail response", k)
+			continue
+		}
+		if v != false {
+			t.Errorf("%s = %v, want false", k, v)
+		}
 	}
 }
 
@@ -2134,10 +2156,12 @@ var trafficEventGetCols = []string{
 	// Cost-transparency JOIN columns from Model (per-million prices).
 	"model_input_price_per_m", "model_output_price_per_m",
 	"model_cached_in_read_price_per_m", "model_cached_in_write_price_per_m",
-	// 6 payload columns
+	// 10 payload columns
 	"inline_request_body", "inline_response_body",
 	"request_spill_ref", "response_spill_ref",
 	"inline_request_encoding", "inline_response_encoding",
+	"request_truncated", "response_truncated",
+	"request_size_bytes", "response_size_bytes",
 }
 
 func newTrafficEventRow() *pgxmock.Rows {
@@ -2232,8 +2256,10 @@ func newTrafficEventRow() *pgxmock.Rows {
 		nil, nil, nil, nil,
 		// payload group: inline_request_body, inline_response_body (TEXT → []byte),
 		// request_spill_ref, response_spill_ref (json.RawMessage),
-		// inline_request_encoding, inline_response_encoding (string, COALESCE'd to '')
-		nil, nil, nil, nil, "", "",
+		// inline_request_encoding, inline_response_encoding (string, COALESCE'd to ''),
+		// request_truncated, response_truncated (bool, COALESCE'd to false),
+		// request_size_bytes, response_size_bytes (*int64)
+		nil, nil, nil, nil, "", "", false, false, nil, nil,
 	)
 	return rows
 }
@@ -2355,8 +2381,9 @@ func TestGetTrafficEvent_WithSpillStore_ResolvesFailed_StillReturns200(t *testin
 		nil, nil, nil, nil,
 		// payload: inline_request_body (nil → triggers spill resolve), inline_response_body,
 		//          request_spill_ref (non-empty JSON), response_spill_ref,
-		//          inline_request_encoding, inline_response_encoding
-		nil, nil, spillRefJSON, nil, "", "",
+		//          inline_request_encoding, inline_response_encoding,
+		//          request_truncated, response_truncated, request_size_bytes, response_size_bytes
+		nil, nil, spillRefJSON, nil, "", "", false, false, nil, nil,
 	)
 
 	mock.ExpectQuery("FROM traffic_event a").
@@ -2388,12 +2415,14 @@ func TestGetTrafficEventNormalized_Success_Returns200(t *testing.T) {
 			"inline_response_body", "inline_response_encoding",
 			"request_content_type", "response_content_type",
 			"request_spill_ref", "response_spill_ref", "endpoint_type",
+			"artifact_refs", "request_truncated", "response_truncated",
 		}).AddRow(
 			"openai", "gpt-4o-mini", "/v1/chat/completions",
 			[]byte(reqBody), "text",
 			nil, "",
 			"application/json", "",
 			nil, nil, "chat",
+			"", false, false,
 		))
 
 	c, rec := echoCtx(http.MethodGet, "/traffic/evt-norm-1/normalized")

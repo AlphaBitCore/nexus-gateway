@@ -153,6 +153,7 @@ func (h *Handler) ServeRealtime(in Ingress) http.HandlerFunc {
 			// every row says so honestly.
 			ComplianceCoverage: "none",
 		}
+		stampCallerAttribution(rec, r.Header)
 
 		// Panic-safe finalize tail: caps release + session row enqueue run on
 		// EVERY exit path — pre-upgrade refusals, dial failures, session
@@ -275,11 +276,11 @@ func (h *Handler) ServeRealtime(in Ingress) http.HandlerFunc {
 		// injection are OpenAI-shaped; other formats are not relayable here.
 		rctx := h.buildRequestContext(r, vkMeta, nil, in.BodyFormat, requestedModel, string(typology.EndpointKindRealtime))
 		routeRes, routeErr := h.resolveRouteOrPassthrough(r.Context(), rctx, in, requestedModel, typology.EndpointKindRealtime)
-		if routeErr != nil || routeRes == nil || len(routeRes.Targets) == 0 {
+		if routeErr != nil || routeRes == nil || len(routeRes.AllTargets()) == 0 {
 			h.writeRealtimeNoProvider(w, rec)
 			return
 		}
-		targets := filterRealtimeTargets(routeRes.Targets)
+		targets := filterRealtimeTargets(routeRes.AllTargets())
 		if len(targets) == 0 {
 			h.writeRealtimeNoProvider(w, rec)
 			return

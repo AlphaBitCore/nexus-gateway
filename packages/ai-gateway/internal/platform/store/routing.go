@@ -90,7 +90,7 @@ func (db *DB) loadRoutingRules(ctx context.Context) ([]RoutingRule, error) {
 		       enabled
 		FROM "RoutingRule"
 		WHERE enabled = true
-		ORDER BY "pipelineStage" ASC, priority DESC
+		ORDER BY "pipelineStage" ASC, priority DESC, "createdAt" ASC, id ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("store: get routing rules: %w", err)

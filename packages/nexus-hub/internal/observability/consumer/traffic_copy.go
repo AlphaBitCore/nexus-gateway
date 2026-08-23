@@ -100,6 +100,11 @@ var trafficEventColumns = []string{
 	"artifact_refs", "compliance_coverage",
 	// Caller-declared correlation tags (appended last); NULL when absent.
 	"end_user_id", "session_id",
+	// Vendor-spend attribution (2026-08-04): smart-router LLM call cost + the
+	// provider that served it, plus the provider that served the L2 embedding
+	// call whose cost is in embedding_cost_usd. NULL when absent. Appended
+	// last so existing column positions never shift.
+	"router_cost_usd", "router_provider_id", "embedding_provider_id",
 }
 
 // trafficEventRowValues returns the column values for one traffic_event row in
@@ -135,6 +140,20 @@ func appendTrafficEventRow(dst []any, e TrafficEventMessage) []any {
 	}()
 	l2EntryKey := func() any {
 		s := stripNul(e.GatewayCacheL2EntryKey)
+		if s == "" {
+			return nil
+		}
+		return s
+	}()
+	routerProviderID := func() any {
+		s := stripNul(e.RouterProviderID)
+		if s == "" {
+			return nil
+		}
+		return s
+	}()
+	embeddingProviderID := func() any {
+		s := stripNul(e.EmbeddingProviderID)
 		if s == "" {
 			return nil
 		}
@@ -184,6 +203,7 @@ func appendTrafficEventRow(dst []any, e TrafficEventMessage) []any {
 		e.RequestHooksUs, e.ResponseHooksUs,
 		stripNulPtr(e.ArtifactRefs), stripNulPtr(e.ComplianceCoverage),
 		stripNulPtr(e.EndUserID), stripNulPtr(e.SessionID),
+		e.RouterCostUsd, routerProviderID, embeddingProviderID,
 	)
 }
 

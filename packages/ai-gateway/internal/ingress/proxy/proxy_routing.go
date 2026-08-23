@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -21,98 +20,13 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
-// proxy_routing.go holds the per-request authentication, rate-limit, request-context
-// build, route resolution, and quota-enforcement helpers split out of proxy.go
-// (behavior unchanged). ServeProxy orchestrates these in order.
-
-func (h *Handler) authenticate(r *http.Request) (*vkauth.VKMeta, error) {
-	if h.deps.VKAuth == nil {
-		return nil, fmt.Errorf("VIRTUAL_KEY_MISSING: authenticator not configured")
-	}
-	return h.deps.VKAuth.Authenticate(r.Context(), r)
-}
-
-// writeAuthError writes an appropriate auth error response with machine-parseable codes.
-func (h *Handler) writeAuthError(w http.ResponseWriter, rec *audit.Record, err error) {
-	code := "AUTH_INVALID_KEY"
-	hint := "Verify your virtual key is correct"
-	switch {
-	case errors.Is(err, vkauth.ErrMissing):
-		code = "AUTH_KEY_MISSING"
-		hint = "Include a virtual key via X-Nexus-Virtual-Key header or Authorization: Bearer"
-	case errors.Is(err, vkauth.ErrDisabled):
-		code = "AUTH_KEY_DISABLED"
-		hint = "This key has been disabled by an administrator"
-	case errors.Is(err, vkauth.ErrExpired):
-		code = "AUTH_KEY_EXPIRED"
-		hint = "This key has expired; request a new one from your admin"
-	}
-	h.writeDetailedErr(w, rec, http.StatusUnauthorized, code, err.Error(), hint)
-}
-
-// checkRateLimit checks per-key rate limits. Sets Retry-After header on rejection.
+// proxy_routing.go answers "which target should serve this", once admission
+// has already established who is calling (see proxy_admission.go): request
+// context construction, route resolution, the requested-model passthrough,
+// and quota.
 //
-// The bucket is keyed on vkMeta.ID — the globally-unique VirtualKey id —
-// NOT vkMeta.Name. VirtualKey.name has no uniqueness constraint, so two
-// tenants that happen to pick the same display label would otherwise share
-// one Redis bucket (`nexus:rl:<name>`) and exhaust each other's budget.
-//
-// /v1/estimate compare requests use a dedicated per-VK bucket
-// (checkCompareRateLimit, keyed by the VK id + ":compare") so estimation
-// traffic cannot exhaust the real-call quota and vice versa.
-func (h *Handler) checkRateLimit(w http.ResponseWriter, vkMeta *vkauth.VKMeta) error {
-	if vkMeta.RateLimitRpm == nil || h.deps.RateLimiter == nil {
-		return nil
-	}
-	allowed, retryAfter := h.deps.RateLimiter.Allow(vkMeta.ID, *vkMeta.RateLimitRpm, 60_000)
-	if !allowed {
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		return fmt.Errorf("rate limit exceeded")
-	}
-	return nil
-}
-
-// compareEndpointRateLimitDefault is the per-VK fallback when
-// CompareEndpointRateLimitRpm is NULL.
-const compareEndpointRateLimitDefault = 30
-
-func (h *Handler) checkCompareRateLimit(w http.ResponseWriter, vkMeta *vkauth.VKMeta) error {
-	if h.deps.RateLimiter == nil {
-		return nil
-	}
-	limit := compareEndpointRateLimitDefault
-	if vkMeta.CompareEndpointRateLimitRpm != nil {
-		limit = *vkMeta.CompareEndpointRateLimitRpm
-	}
-	if limit <= 0 {
-		return nil
-	}
-	allowed, retryAfter := h.deps.RateLimiter.Allow(vkMeta.ID+":compare", limit, 60_000)
-	if !allowed {
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		return fmt.Errorf("compare-endpoint rate limit exceeded")
-	}
-	return nil
-}
-
-// buildRequestContext constructs the L3 request context. It performs
-// exactly one normcore.Registry.Normalize call per request (skipped for
-// empty bodies) and packages the canonical NormalizedPayload alongside
-// identity, endpoint, headers, and raw body into an immutable
-// *requestcontext.RequestContext. Downstream L4 consumers (routing,
-// hooks, audit) read from this single artefact instead of re-parsing
-// raw bytes.
-//
-// Normalize errors are swallowed: the canonical payload remains nil and
-// routing/hooks fall back to their nil-Request behaviour. A malformed
-// or unrecognised body must not block the request — the routing layer
-// makes its own non-smart fallback.
-// requestNormalizeMeta builds the request-direction normalize Meta.
-// Aligned with the audit-path Meta (auditbridge.BuildAuditFn): lowercased
-// AdapterType + stripped ContentType, so the registry selects the
-// identical normalizer everywhere the request body is normalized —
-// admission (buildRequestContext) and the post-rewrite cache canonical
-// (proxyState.cacheNormalized) must never diverge on normalizer choice.
+// requestNormalizeMeta is shared with the cache stage deliberately — the two
+// (here and proxyState.cacheNormalized) must never diverge on normalizer choice.
 func requestNormalizeMeta(r *http.Request, ingressFormat provcore.Format, modelID string) normcore.Meta {
 	return normcore.Meta{
 		AdapterType:  strings.ToLower(string(ingressFormat)),
@@ -216,6 +130,14 @@ func (h *Handler) resolveRoute(ctx context.Context, rctxFull *requestcontext.Req
 		rctx.EmbeddingRequest = parseEmbeddingRequest(body)
 	}
 
+	// Structured output is the same shape of fact as the embedding parameters
+	// above: the router needs it, and the normalized payload does not carry it.
+	// Read only when a smart rule could actually pick the model — an explicitly
+	// named model is the caller's own choice and its limits are the model's.
+	if canonReq != nil {
+		rctx.RequiresStructuredOutput = requestRequiresStructuredOutput(rctxFull.RawBody())
+	}
+
 	return h.deps.Router.ResolveTargets(ctx, rctx)
 }
 
@@ -232,23 +154,81 @@ func (h *Handler) resolveRoute(ctx context.Context, rctxFull *requestcontext.Req
 // rule matched", which is exactly the passthrough case.
 func (h *Handler) resolveRouteOrPassthrough(ctx context.Context, rctxFull *requestcontext.RequestContext, in Ingress, modelID string, endpointKind typology.EndpointKind) (*routingcore.RouteResult, error) {
 	routeRes, err := h.resolveRoute(ctx, rctxFull, modelID, endpointKind)
-	if err != nil {
+	switch {
+	case err != nil:
 		// Mirror the ServeProxy routing stage (stage_routing): only an EMPTY
 		// NoCompatibleProviderError — the resolver's "no rules enabled" signal —
 		// degrades to the requested-model passthrough. Any other resolver error
 		// (a strategy evaluation failure, a DB error inside lookupTarget) is a
 		// genuine fault and MUST fail closed: silently passing through would
-		// serve the requested model while dropping the admin-authored routing /
-		// policy narrowing a real error should surface.
+		// serve the requested model while dropping the admin-authored routing a
+		// real error should surface.
 		var ncpErr *routingcore.NoCompatibleProviderError
 		if !errors.As(err, &ncpErr) || len(ncpErr.Available) > 0 {
 			return nil, err
 		}
 		// empty NoCompatibleProviderError → fall through to passthrough
-	} else if routeRes != nil && len(routeRes.Targets) > 0 {
+	case routeRes != nil && len(routeRes.AllTargets()) > 0:
 		return routeRes, nil
+	case routeRes != nil && routeRes.RuleMatchedAndResolvedNothing:
+		// Same precondition ServeProxy's routing stage enforces: passthrough
+		// answers "no rule applies, serve what was asked", and a rule that
+		// applied and resolved nothing is the opposite situation. This entry
+		// point serves the STT / video / realtime handlers, which had no such
+		// check — so a compliance rule redirecting audio elsewhere, whose
+		// targets were unavailable, was silently undone on exactly the
+		// endpoints where it was not being watched.
+		return nil, &routingFallbackError{
+			status:  http.StatusServiceUnavailable,
+			code:    "ROUTING_RULES_RESOLVED_NOTHING",
+			message: "a routing rule applies to this request but none could resolve a target",
+			hint: "Check the routing trace on this request: each rule records why it yielded. " +
+				"Serving the requested model directly would bypass the rule that matched.",
+		}
 	}
-	return h.resolveNoMatchPassthrough(ctx, modelID, rctxFull.Identity(), in, endpointKind)
+	return h.resolveNoMatchPassthrough(ctx, modelID, rctxFull.Identity(), in, endpointKind, deferredRequest{canonical: rctxFull.Normalized, rawBody: rctxFull.RawBody})
+}
+
+// requestRequiresStructuredOutput reports whether the caller asked for an
+// answer held to a JSON Schema.
+//
+// Only a SCHEMA counts. `json_object` asks for "some JSON" and every target
+// either honours it natively or is given a system instruction that does (see
+// the Anthropic codec), so it does not constrain WHICH model may serve the
+// request. A schema does: the answer either matches it or the caller's parse
+// fails, and one model in the pool returns prose with HTTP 200 rather than
+// saying no.
+//
+// This reads the RAW ingress body, so it has to know every dialect the gateway
+// accepts — the first version knew only the OpenAI chat spelling, which left
+// `/v1/responses` and `/v1/messages` unprotected while reading as if the
+// feature were complete. Each entry below is where that ingress's own codec
+// puts the field:
+//
+//	OpenAI chat        response_format.type == "json_schema"
+//	OpenAI Responses   text.format.type     == "json_schema"   (codec_responses.go:168)
+//	Anthropic Messages output_config.format.type == "json_schema"
+//	Gemini             generationConfig.responseSchema (a schema object, no type tag)
+//
+// The images and audio endpoints are the counter-case that keeps this from
+// over-matching: they carry `response_format` as a STRING ("url", "mp3"), so a
+// `.type` lookup misses them, and Gemini's `responseMimeType: application/json`
+// WITHOUT a responseSchema is the json_object equivalent — JSON asked for, no
+// schema to hold it to, no constraint on the pool.
+func requestRequiresStructuredOutput(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	for _, path := range []string{
+		"response_format.type",
+		"text.format.type",
+		"output_config.format.type",
+	} {
+		if gjson.GetBytes(body, path).String() == "json_schema" {
+			return true
+		}
+	}
+	return gjson.GetBytes(body, "generationConfig.responseSchema").IsObject()
 }
 
 // parseEmbeddingRequest extracts the embedding request parameters from
@@ -302,6 +282,13 @@ func buildOrgPath(orgID string, parents map[string]string) []string {
 // Returns pricing info and optional Decision.
 // Sets rec.StatusCode and writes a response if quota is rejected (caller must
 // check rec.StatusCode != 0).
+// tokenBilled reports whether a model of this type is billed per token, and so
+// whether a missing price row is a misconfiguration rather than the normal
+// state of affairs.
+func tokenBilled(modelType string) bool {
+	return modelType != "rerank"
+}
+
 func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.Record, vkMeta *vkauth.VKMeta, result *routingcore.RouteResult, body []byte, requestedModel string) (float64, float64, *quota.Decision) {
 	if vkMeta == nil {
 		return 0, 0, nil
@@ -310,7 +297,11 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 		return 0, 0, nil
 	}
 
-	firstTarget := result.Targets[0]
+	// The head of the dispatch order — the strategy's first choice when it has
+	// one, and the chain's when every ranked target was filtered away. Quota
+	// prices the model the request will actually reach, not the one the rule
+	// nominated.
+	firstTarget := result.AllTargets()[0]
 	var quotaInPrice, quotaOutPrice float64
 	// modelPriced tracks whether the routed model has a pricing row at all.
 	// We distinguish "unpriced" (no price set — InputPricePM and
@@ -364,14 +355,15 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 	// pre-check is an approximation; the authoritative cost is always the
 	// reconciled actual usage. See §6 of
 	// docs/developers/architecture/cross-cutting/safety/quota-architecture.md.
-	maxTokens := gjson.GetBytes(body, "max_tokens").Int()
-	if maxTokens <= 0 {
-		maxTokens = 4096
-	}
-
+	// The pre-check reserves the endpoint's billable units, not always tokens:
+	// a rerank request priced per search unit must not reserve its documents'
+	// thousands of "tokens" against a per-search rate. preCallBillableUnits
+	// returns tokens for token endpoints and the endpoint's own unit otherwise,
+	// so `units × price / 1M` reconciles with the post-call cost stamp.
+	inputUnits, outputUnits := preCallBillableUnits(firstTarget.ModelType, body)
 	estimate := quota.CostEstimate{
-		EstimatedInputTokens: estimateTokens(body),
-		MaxOutputTokens:      maxTokens,
+		EstimatedInputTokens: inputUnits,
+		MaxOutputTokens:      outputUnits,
 		InputPricePM:         quotaInPrice,
 		OutputPricePM:        quotaOutPrice,
 	}
@@ -384,7 +376,20 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 	// signal. When a cost limit is actually enforced for this caller, fail
 	// closed instead of serving unaccounted spend. Free models (price set to
 	// 0) are unaffected — only a missing price row triggers this.
-	if !modelPriced && quotaHasCostLimit(decision) {
+	// Rerank is exempt, and it is the only exemption. Cohere bills it per
+	// search unit ($2 per 1000), so it HAS no per-token price to configure —
+	// a standing catalog assertion deliberately requires the columns to stay
+	// NULL rather than carry a fabricated number or a zero that would claim
+	// the endpoint is free. Treating that as a missing price row made rerank
+	// return 503 for every caller holding an application virtual key, which
+	// is the key type real customers hold; personal and service keys skip the
+	// cost check entirely, which is why every smoke run was blind to it.
+	//
+	// Only rerank. image, tts and video carry per-token approximations in the
+	// catalog today and must keep failing closed when someone forgets one —
+	// this is not a family exemption, and it stops being needed the moment
+	// the engine learns a non-token pricing dimension.
+	if !modelPriced && tokenBilled(firstTarget.ModelType) && quotaHasCostLimit(decision) {
 		logger := h.deps.Logger.With("model", firstTarget.ModelID, "vk", vkMeta.ID)
 		logger.Warn("quota: routed model has no price configured; rejecting under an active cost quota")
 		// 503, not 429: this is a server-side misconfiguration (a missing price
@@ -403,8 +408,24 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 			return quotaInPrice, quotaOutPrice, decision
 		}
 		if decision.Action == "downgrade" {
-			modelIDs := make([]string, len(result.Targets))
-			for i, t := range result.Targets {
+			// Only ordinary targets are downgrade candidates. An armed
+			// context-upgrade target was chosen for its window size, so picking
+			// it on price makes it primary for a reason it was never selected
+			// for — same class as the health-reorder defect.
+			// Both lists are downgrade candidates. A rule whose strategy picks
+			// an expensive model and whose chain names a cheap one is exactly
+			// the shape a near-cap key needs; looking only at the ranked half
+			// would answer "no affordable model" about a model that is right
+			// there in the plan.
+			all := result.AllTargets()
+			downgradable := make([]routingcore.RoutingTarget, 0, len(all))
+			for _, t := range all {
+				if !t.ContextUpgradeOnly {
+					downgradable = append(downgradable, t)
+				}
+			}
+			modelIDs := make([]string, len(downgradable))
+			for i, t := range downgradable {
 				modelIDs[i] = t.ModelID
 			}
 			storePricing, pErr := h.deps.Models.FetchModelPricing(r.Context(), modelIDs)
@@ -418,9 +439,15 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 				// (LimitCents-CurrentCents) across all levels that carry a limit.
 				budget := quotaDowngradeBudget(decision)
 				idx := quota.SelectCheapestIndex(pricing, estimate, budget)
-				if idx >= 0 && idx < len(result.Targets) {
-					selected := result.Targets[idx]
-					result.Targets = []routingcore.RoutingTarget{selected}
+				// idx indexes DOWNGRADABLE, which modelIDs and the pricing slice
+				// were built from; indexing result.Targets would select a
+				// different model whenever anything was filtered out.
+				if idx >= 0 && idx < len(downgradable) {
+					selected := downgradable[idx]
+					// The cheapest becomes primary; the rest STAY as fallbacks.
+					// Truncating to one made a transient failure terminal — a
+					// second, unexplained penalty for being near a quota.
+					result.Promote(selected)
 					// Re-resolve the quota prices from the model we
 					// actually downgraded TO. Without this, Reconcile increments
 					// the quota counter and rec.EstimatedCostUsd uses the
@@ -443,7 +470,7 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 					return quotaInPrice, quotaOutPrice, decision
 				}
 			} else {
-				h.writeError(w, rec, http.StatusTooManyRequests, decision.Message)
+				h.writeError(w, rec, http.StatusTooManyRequests, "QUOTA_EXCEEDED", decision.Message)
 				return quotaInPrice, quotaOutPrice, decision
 			}
 		}

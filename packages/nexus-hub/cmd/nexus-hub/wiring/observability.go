@@ -110,12 +110,11 @@ func InitSelfInstrumentation(
 		ctxPush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		info := sharedopsplatform.CaptureStaticInfo(sharedopsplatform.BuildInfo{
-			ServiceVersion: "nexus-hub/" + buildVersion,
-			BuildSHA:       "",
-			BuildTime:      "",
-			StartTime:      processStartTime.Format(time.RFC3339),
-			PublicURL:      cfg.PublicURL,
-			PrivateURL:     sharedopsplatform.EffectivePrivateURL(cfg.PrivateURL, cfg.Server.Host, cfg.Server.Port),
+			Service:      "nexus-hub",
+			BuildVersion: buildVersion,
+			StartTime:    processStartTime.Format(time.RFC3339),
+			PublicURL:    cfg.PublicURL,
+			PrivateURL:   sharedopsplatform.EffectivePrivateURL(cfg.PrivateURL, cfg.Server.Host, cfg.Server.Port),
 		})
 		if err := opsStaticWriter.UpsertStaticInfo(ctxPush, hubThingID, info); err != nil {
 			logger.Warn("hub static_info upsert failed at startup", "error", err)

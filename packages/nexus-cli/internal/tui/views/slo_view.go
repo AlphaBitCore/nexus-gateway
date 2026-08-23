@@ -103,8 +103,8 @@ func (s *slo) detailView() string {
 		fmt.Sprintf("  %-10s %-10s %-10s %-12s %-12s", "p50", "p95", "p99", "TTFB p95", "UPSTREAM p95")))
 	b.WriteString("\n")
 	p95 := lipgloss.NewStyle().Foreground(sloLatencyColor(r.TotalP95Ms)).Render(fmt.Sprintf("%-10s", kit.Ms(r.TotalP95Ms)))
-	b.WriteString(fmt.Sprintf("  %-10s %s %-10s %-12s %-12s",
-		kit.Ms(r.TotalP50Ms), p95, kit.Ms(r.TotalP99Ms), kit.Ms(r.UpstreamTTFBP95Ms), kit.Ms(r.UpstreamTotalP95Ms)))
+	fmt.Fprintf(&b, "  %-10s %s %-10s %-12s %-12s",
+		kit.Ms(r.TotalP50Ms), p95, kit.Ms(r.TotalP99Ms), kit.Ms(r.UpstreamTTFBP95Ms), kit.Ms(r.UpstreamTotalP95Ms))
 	return b.String()
 }
 

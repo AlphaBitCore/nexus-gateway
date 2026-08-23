@@ -94,7 +94,7 @@ func TestHandleNonStreamWithSubscription_Truncated_StampsTruncatedStatus(t *test
 	target := routingcore.RoutingTarget{ProviderName: "openai", ModelCode: "gpt-4o", AdapterType: "openai"}
 
 	h.handleNonStreamWithSubscription(openAIIngressRequest(t), httptest.NewRecorder(), rec, sub,
-		target, nil, 2.0, 2.0, nil, "chat", "req", time.Now(), slog.Default(), nil)
+		target, nil, 2.0, 2.0, nil, "chat", "req", time.Now(), slog.Default(), l2Canonical{})
 
 	if rec.UsageExtractionStatus != "truncated" {
 		t.Errorf("UsageExtractionStatus=%q want truncated", rec.UsageExtractionStatus)

@@ -111,9 +111,14 @@ func TestExecute_L2_Retry_RotatesCredential(t *testing.T) {
 // must drop to L3 failover rather than surface a raw resolve error to the
 // client or spin the remaining L2 budget against a pool that has nothing to
 // give.
+//
+// The failure is a 5xx rather than a rate limit because those take different
+// routes now: a 5xx is the case an immediate in-place retry can help, so it is
+// the one that reaches the re-resolve this test is about. A rate limit is
+// handed back to the walk instead, and never asks the pool a second time.
 func TestExecute_L2_Retry_NoEligibleCredential_FallsToL3(t *testing.T) {
 	adapter := &mockAdapter{format: mockFormat, responses: []scripted{
-		{err: &provcore.ProviderError{Status: 429, Code: provcore.CodeRateLimited, Message: "rl"}},
+		{err: &provcore.ProviderError{Status: 500, Code: provcore.CodeUpstreamError, Message: "boom"}},
 		{resp: &provcore.Response{StatusCode: 200, Body: []byte(`second target ok`)}},
 	}}
 	reg := newRegistry(t, adapter)
@@ -129,7 +134,7 @@ func TestExecute_L2_Retry_NoEligibleCredential_FallsToL3(t *testing.T) {
 	result := exec.Execute(context.Background(),
 		[]routingcore.RoutingTarget{target(providerSlug), target("provider-b")},
 		baseReq(),
-		fastBackoffPolicy(3, configtypes.ErrorClassRate429),
+		fastBackoffPolicy(3, configtypes.ErrorClass5xx),
 	)
 
 	if result.Error != nil {

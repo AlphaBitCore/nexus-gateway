@@ -1,6 +1,9 @@
 package resource
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 // TestDistillExposesEveryOperation asserts distill no longer drops non-CRUD ops:
 // every catalog operation for a kind appears, each with an operationId + label +
@@ -43,10 +46,10 @@ func TestSemanticCacheNotReadOnly(t *testing.T) {
 	d, _ := distillKind(rk, raw)
 	var hasPut, hasPrewarm bool
 	for _, op := range d.Operations {
-		if op.OperationID == "putConfig" && op.Method == "PUT" {
+		if op.OperationID == "putConfig" && op.Method == http.MethodPut {
 			hasPut = true
 		}
-		if op.OperationID == "prewarmCache" && op.Method == "POST" {
+		if op.OperationID == "prewarmCache" && op.Method == http.MethodPost {
 			hasPrewarm = true
 		}
 	}

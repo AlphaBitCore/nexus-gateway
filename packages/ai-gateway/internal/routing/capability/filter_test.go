@@ -178,40 +178,63 @@ func TestCompatible_EncodingFormatMismatch(t *testing.T) {
 	}
 }
 
-// TestCompatible_EncodingFormatDefaultIsFloatOnly — a model that omits
-// SupportedEncodingFormats defaults to ["float"] only. base64 must be explicitly
-// opted-in because only some provider codecs honor it, so a base64 request
-// against a descriptor-omitting model is rejected here rather than silently
-// downgraded to float downstream.
-func TestCompatible_EncodingFormatDefaultIsFloatOnly(t *testing.T) {
+// TestCompatible_EncodingFormatBothAlwaysAvailable — a model that omits
+// SupportedEncodingFormats still accepts BOTH float and base64.
+//
+// This inverts the previous expectation (base64 rejected unless explicitly
+// declared). That gate was meant to stop a base64 request being silently
+// downgraded by a codec that ignores the field, but it never fired on the
+// explicit-model passthrough path, which skips this filter entirely — so a
+// base64 request to a non-declaring model was downgraded anyway, and the OpenAI
+// SDKs decoded the resulting float array into a quarter-length garbage vector
+// (AP-3, observed on staging 2026-07-27). base64 is now guaranteed on the
+// response path instead, so there is nothing left to gate.
+func TestCompatible_EncodingFormatBothAlwaysAvailable(t *testing.T) {
 	cap := makeEmbCap(&EmbeddingsCapability{}) // no SupportedEncodingFormats set
 
-	// base64 must be rejected against the implicit default.
-	rejReq := &EmbeddingRequest{BatchSize: 1, EncodingFormat: "base64"}
-	ok, reason, proj := Compatible(rejReq, cap)
-	if ok {
-		t.Error("expected reject: base64 must not pass against the float-only default")
-	}
-	if reason == "" {
-		t.Error("expected non-empty reason on base64 rejection")
-	}
-	if len(proj.SupportedEncodingFormats) != 1 || proj.SupportedEncodingFormats[0] != "float" {
-		t.Errorf("expected default projection [\"float\"], got %v", proj.SupportedEncodingFormats)
+	for _, format := range []string{"float", "base64"} {
+		ok, reason, proj := Compatible(&EmbeddingRequest{BatchSize: 1, EncodingFormat: format}, cap)
+		if !ok {
+			t.Errorf("%s must pass against the implicit default; rejected with %q", format, reason)
+		}
+		if !containsStr(proj.SupportedEncodingFormats, format) {
+			t.Errorf("projection %v should advertise %s", proj.SupportedEncodingFormats, format)
+		}
 	}
 
-	// float still passes against the implicit default.
-	floatReq := &EmbeddingRequest{BatchSize: 1, EncodingFormat: "float"}
-	if ok, _, _ := Compatible(floatReq, cap); !ok {
-		t.Error("expected float to pass against the float-only default")
+	// A format the gateway cannot produce is still rejected.
+	ok, reason, _ := Compatible(&EmbeddingRequest{BatchSize: 1, EncodingFormat: "int8"}, cap)
+	if ok {
+		t.Error("an undeclared, non-guaranteed format must still be rejected")
+	}
+	if reason == "" {
+		t.Error("expected a non-empty reason on rejection")
 	}
 }
 
-// TestEffectiveEncodingFormats_Default — direct assertion that the
-// default produced when the descriptor omits the field is exactly ["float"].
+// TestEffectiveEncodingFormats_Default — the gateway guarantees float and
+// base64 for every embeddings model, whatever the descriptor says.
 func TestEffectiveEncodingFormats_Default(t *testing.T) {
 	got := effectiveEncodingFormats(&EmbeddingsCapability{})
-	if len(got) != 1 || got[0] != "float" {
-		t.Fatalf("default effectiveEncodingFormats = %v, want [\"float\"]", got)
+	for _, want := range []string{"float", "base64"} {
+		if !containsStr(got, want) {
+			t.Fatalf("default effectiveEncodingFormats = %v, must include %q", got, want)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("default should be exactly [float base64], got %v", got)
+	}
+}
+
+// TestEffectiveEncodingFormats_DescriptorWidensOnly — a descriptor can add a
+// provider-specific encoding but cannot narrow the set below the two the
+// gateway itself guarantees.
+func TestEffectiveEncodingFormats_DescriptorWidensOnly(t *testing.T) {
+	got := effectiveEncodingFormats(&EmbeddingsCapability{SupportedEncodingFormats: []string{"float", "int8"}})
+	for _, want := range []string{"float", "base64", "int8"} {
+		if !containsStr(got, want) {
+			t.Errorf("effectiveEncodingFormats = %v, must include %q", got, want)
+		}
 	}
 }
 
@@ -320,5 +343,102 @@ func TestCompatible_AllRulesPass(t *testing.T) {
 	ok, reason, _ := Compatible(req, cap)
 	if !ok {
 		t.Errorf("expected ok for all matching params; got reason: %q", reason)
+	}
+}
+
+// --- Matryoshka range dimensions -------------------------------------------
+//
+// The failures these cover are not hypothetical. text-embedding-3-large
+// truncates to ANY dimension up to its maximum, so no enumeration describes
+// it honestly; a catalog that listed [256,512,1024,3072] turned every
+// `dimensions: 1536` caller into a 400 MODEL_CAPABILITY_MISMATCH, sustained
+// for days on staging. The fix is to let a model declare the range it really
+// accepts and let anything inside it reach the provider, which is the only
+// party that can say no for a reason we did not invent.
+
+// TestCompatible_RangeDimension_InsideRangePasses — the exact production
+// rejection: 1536 requested, enumeration omits it, but the model declares a
+// range that covers it. Range wins; the request goes upstream.
+func TestCompatible_RangeDimension_InsideRangePasses(t *testing.T) {
+	cap := makeEmbCap(&EmbeddingsCapability{
+		SupportedDimensions: []int{256, 512, 1024, 3072}, // the stale enumeration
+		MinDimension:        1,
+		MaxDimension:        3072,
+		MaxBatchSize:        2048,
+	})
+	req := &EmbeddingRequest{BatchSize: 1, Dimensions: intPtr(1536)}
+	ok, reason, _ := Compatible(req, cap)
+	if !ok {
+		t.Fatalf("1536 is inside the declared range [1,3072] and must pass; got reject %q", reason)
+	}
+}
+
+// TestCompatible_RangeDimension_AboveMaxRejected — the range is a real bound,
+// not a way of switching the check off. Above the ceiling still rejects.
+func TestCompatible_RangeDimension_AboveMaxRejected(t *testing.T) {
+	cap := makeEmbCap(&EmbeddingsCapability{
+		MinDimension: 1,
+		MaxDimension: 3072,
+		MaxBatchSize: 2048,
+	})
+	req := &EmbeddingRequest{BatchSize: 1, Dimensions: intPtr(4096)}
+	ok, reason, _ := Compatible(req, cap)
+	if ok {
+		t.Fatal("4096 is above the declared maximum 3072 and must be rejected")
+	}
+	if reason == "" {
+		t.Error("expected a non-empty reason")
+	}
+}
+
+// TestCompatible_RangeDimension_BelowMinRejected — same on the floor.
+func TestCompatible_RangeDimension_BelowMinRejected(t *testing.T) {
+	cap := makeEmbCap(&EmbeddingsCapability{
+		MinDimension: 256,
+		MaxDimension: 3072,
+		MaxBatchSize: 2048,
+	})
+	req := &EmbeddingRequest{BatchSize: 1, Dimensions: intPtr(128)}
+	if ok, _, _ := Compatible(req, cap); ok {
+		t.Fatal("128 is below the declared minimum 256 and must be rejected")
+	}
+}
+
+// TestCompatible_RangeDimension_MaxOnlyTreatsMinAsOne — declaring only a
+// ceiling is the common case (any dimension up to the model max), and must
+// not accidentally reject everything by treating an absent min as a bound.
+func TestCompatible_RangeDimension_MaxOnlyTreatsMinAsOne(t *testing.T) {
+	cap := makeEmbCap(&EmbeddingsCapability{MaxDimension: 3072, MaxBatchSize: 2048})
+	if ok, reason, _ := Compatible(&EmbeddingRequest{BatchSize: 1, Dimensions: intPtr(1)}, cap); !ok {
+		t.Fatalf("1 must pass when only a maximum is declared; got reject %q", reason)
+	}
+}
+
+// TestCompatible_EnumerationStillAppliesWithoutRange — a model with a genuinely
+// fixed set (Cohere embed-english-v3.0 produces 1024 and nothing else) keeps
+// the enumeration behaviour. Adding the range form must not weaken models that
+// are correctly described by a list.
+func TestCompatible_EnumerationStillAppliesWithoutRange(t *testing.T) {
+	cap := makeEmbCap(&EmbeddingsCapability{
+		SupportedDimensions: []int{1024},
+		MaxBatchSize:        96,
+	})
+	if ok, _, _ := Compatible(&EmbeddingRequest{BatchSize: 1, Dimensions: intPtr(1536)}, cap); ok {
+		t.Fatal("1536 must still be rejected for a model whose only dimension is 1024")
+	}
+	if ok, reason, _ := Compatible(&EmbeddingRequest{BatchSize: 1, Dimensions: intPtr(1024)}, cap); !ok {
+		t.Fatalf("1024 must pass for that model; got reject %q", reason)
+	}
+}
+
+// TestCompatible_RangeProjectedForOperators — the rejection projection feeds
+// the "available capabilities" block of the 400, so an operator reading it has
+// to see the range that was actually applied, not just a stale list.
+func TestCompatible_RangeProjectedForOperators(t *testing.T) {
+	cap := makeEmbCap(&EmbeddingsCapability{MinDimension: 256, MaxDimension: 3072})
+	_, _, proj := Compatible(&EmbeddingRequest{BatchSize: 1, Dimensions: intPtr(9999)}, cap)
+	if proj.MinDimension != 256 || proj.MaxDimension != 3072 {
+		t.Errorf("projection must carry the range: got min=%d max=%d, want 256/3072",
+			proj.MinDimension, proj.MaxDimension)
 	}
 }

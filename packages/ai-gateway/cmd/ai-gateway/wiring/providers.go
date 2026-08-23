@@ -8,8 +8,11 @@
 package wiring
 
 import (
+	"slices"
+
 	"context"
 	"fmt"
+	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"log/slog"
 
 	"github.com/redis/go-redis/v9"
@@ -89,6 +92,7 @@ func (m *modelStoreAdapter) GetModelByID(ctx context.Context, modelID string) (p
 		ProviderID:      mod.ProviderID,
 		ProviderModelID: mod.ProviderModelID,
 		Disabled:        !mod.Enabled,
+		Reasons:         slices.Contains(mod.Features, routingcore.FeatureReasoning),
 	}
 	if mod.MaxOutputTokens != nil {
 		row.MaxOutputTokens = *mod.MaxOutputTokens

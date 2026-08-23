@@ -42,7 +42,7 @@ func TestBuildRoutingAuditTrace_AllEmpty(t *testing.T) {
 
 func TestBuildRoutingAuditTrace_SplitsRecovery(t *testing.T) {
 	r := &routingcore.RouteResult{
-		Targets: []routingcore.RoutingTarget{
+		Dispatch: []routingcore.RoutingTarget{
 			{ProviderID: "p1", Source: "primary", ProviderName: "openai"},
 			{ProviderID: "p2", Source: "fallback", ProviderName: "openai"},
 			{ProviderID: "p3", Source: "recovery", ProviderName: "anthropic"},
@@ -487,7 +487,7 @@ func TestServeEstimate_GETMethodRejected(t *testing.T) {
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status=%d want 405", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "estimate_method_not_allowed") {
+	if !strings.Contains(w.Body.String(), "ESTIMATE_METHOD_NOT_ALLOWED") {
 		t.Errorf("body=%s want code", w.Body.String())
 	}
 }
@@ -528,7 +528,7 @@ func TestServeEstimate_CompareRateLimited(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status=%d want 429; body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "estimate_compare_rate_limited") {
+	if !strings.Contains(w.Body.String(), "ESTIMATE_COMPARE_RATE_LIMITED") {
 		t.Errorf("body=%s want code", w.Body.String())
 	}
 }
@@ -548,7 +548,7 @@ func TestServeEstimate_InvalidReasoningEffort(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400; body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "estimate_invalid_reasoning_effort") {
+	if !strings.Contains(w.Body.String(), "ESTIMATE_INVALID_REASONING_EFFORT") {
 		t.Errorf("body=%s want code", w.Body.String())
 	}
 }

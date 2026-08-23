@@ -12,6 +12,8 @@ import (
 
 	hooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+
+	"github.com/tidwall/gjson"
 )
 
 // TestRequestID_StampsHeaderAndContext asserts that RequestID:
@@ -161,8 +163,16 @@ func TestRecovery_CatchesPanic_Returns500(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), `"error":"internal server error"`) {
-		t.Fatalf("body = %q, want canonical JSON error envelope", w.Body.String())
+	// The old body made `error` a STRING, so err.error.message threw in every
+	// SDK that reached for it, and http.Error sent it as text/plain.
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if got := gjson.Get(w.Body.String(), "error.message").String(); got != "internal server error" {
+		t.Fatalf("error.message = %q, want the panic answer in the gateway envelope (body %s)", got, w.Body)
+	}
+	if got := gjson.Get(w.Body.String(), "error.code").String(); got != "INTERNAL_ERROR" {
+		t.Errorf("error.code = %q, want INTERNAL_ERROR", got)
 	}
 	if !strings.Contains(buf.String(), "panic recovered") {
 		t.Fatalf("log missing panic-recovered message; got %q", buf.String())

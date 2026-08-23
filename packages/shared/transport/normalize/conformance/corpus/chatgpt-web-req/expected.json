@@ -1,6 +1,6 @@
 {
   "kind": "ai-chat",
-  "normalizeVersion": "2",
+  "normalizeVersion": "3",
   "protocol": "chatgpt-web",
   "model": "gpt-5-5-thinking",
   "messages": [

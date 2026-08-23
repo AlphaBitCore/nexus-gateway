@@ -81,7 +81,7 @@ func rewriteChatRequest(body []byte, content traffic.NormalizedContent) ([]byte,
 		case c.IsArray():
 			parts := c.Array()
 			for pIdx := range parts {
-				if parts[pIdx].Get("type").Str != "text" {
+				if !partCarriesScannableText(parts[pIdx]) {
 					continue
 				}
 				if segIdx >= len(content.Segments) {

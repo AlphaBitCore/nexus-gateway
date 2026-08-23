@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 )
 
 // readVKAuthenticator authenticates a virtual key from an HTTP request. Narrow
@@ -30,7 +31,8 @@ type readRateLimiter interface {
 // catalog/usage queries.
 //
 // The wrapper authenticates the VK, applies the limiter keyed on the VK id, and
-// returns 429 with Retry-After on exceed. On any auth failure it falls through
+// returns 429 with Retry-After, X-RateLimit-Limit and the gateway error
+// envelope on exceed — the same three the data-plane path gives. On any auth failure it falls through
 // to the wrapped handler unchanged — the inner handler runs its own requireVK
 // and emits the canonical 401, so this wrapper never duplicates the 401 shape.
 // VK auth is cache-backed (VKTTL), so the second Authenticate inside the inner
@@ -63,7 +65,14 @@ func vkReadRateLimit(
 			if !allowed {
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(*vkMeta.RateLimitRpm))
-				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				// The same envelope and the same code the data-plane path
+				// emits. http.Error answered text/plain here, so a client
+				// backing off on the gateway's rate limit had to parse two
+				// different things depending on which route it hit — and on
+				// this one there was nothing to parse.
+				envelope.WriteGatewayError(w, r, http.StatusTooManyRequests, "RATE_LIMITED",
+					"rate limit exceeded",
+					"Reduce request frequency or contact admin to increase limits")
 				return
 			}
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(*vkMeta.RateLimitRpm))

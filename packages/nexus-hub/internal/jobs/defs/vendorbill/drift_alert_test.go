@@ -57,12 +57,15 @@ func makeDriftJob(mock pgxmock.PgxPoolIface, raiser *fakeRaiser, loader *fakeRul
 	}
 }
 
-// scopedRow is a single scoped reconciliation row for the query mock.
-func expectScopedRow(mock pgxmock.PgxPoolIface, providerID string, d time.Time, our, vendor, diffUSD, diffPct float64, display string) {
+// expectScopedRow queues a single scoped reconciliation row for the query mock.
+// `our` is the quota basis (our_billed_usd) and `spend` the reconciliation
+// basis (our_vendor_spend_usd) that diff_usd / diff_pct are derived from; they
+// are passed separately so a test can prove which one the alert quotes.
+func expectScopedRow(mock pgxmock.PgxPoolIface, providerID string, d time.Time, our, spend, vendor, diffUSD, diffPct float64, display string) {
 	mock.ExpectQuery(`FROM vendor_bill_reconciliation`).
 		WithArgs(pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "day", "our_billed_usd", "vendor_reported_usd", "diff_usd", "diff_pct", "display_name"}).
-			AddRow(providerID, d, our, vendor, diffUSD, diffPct, display))
+		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "day", "our_billed_usd", "our_vendor_spend_usd", "vendor_reported_usd", "diff_usd", "diff_pct", "display_name"}).
+			AddRow(providerID, d, our, spend, vendor, diffUSD, diffPct, display))
 }
 
 func TestDrift_FiresWhenBothFloorsExceeded(t *testing.T) {
@@ -70,7 +73,7 @@ func TestDrift_FiresWhenBothFloorsExceeded(t *testing.T) {
 	defer mock.Close()
 	raiser := &fakeRaiser{}
 	// diff_pct 8% > 5% AND diff_usd $2 > $1 → fire.
-	expectScopedRow(mock, "prov1", day(2026, 7, 17), 23, 25, 2, 0.08, "OpenAI")
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 18, 23, 25, 2, 0.08, "OpenAI")
 	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: enabledRule()}, day(2026, 7, 19))
 
 	if err := j.Run(context.Background()); err != nil {
@@ -89,6 +92,19 @@ func TestDrift_FiresWhenBothFloorsExceeded(t *testing.T) {
 	if !strings.Contains(r.Message, "OpenAI") || !strings.Contains(r.Message, "8.0%") {
 		t.Errorf("message missing detail: %q", r.Message)
 	}
+	// The "ours" figure quoted next to the percentage must be the reconciliation
+	// basis ($23, our_vendor_spend_usd), not the quota basis ($18) — quoting the
+	// latter would print 25 vs 18 alongside a percentage derived from 25 vs 23.
+	if !strings.Contains(r.Message, "ours $23.00") {
+		t.Errorf("message must quote the vendor-spend basis: %q", r.Message)
+	}
+	if got := r.Details["ourVendorSpendUsd"]; got != 23.0 {
+		t.Errorf("details ourVendorSpendUsd = %v, want 23", got)
+	}
+	// The shipped field keeps its original meaning: the customer-quota basis.
+	if got := r.Details["ourBilledUsd"]; got != 18.0 {
+		t.Errorf("details ourBilledUsd = %v, want 18 (quota basis, unchanged)", got)
+	}
 	if len(raiser.resolves) != 0 {
 		t.Errorf("a breaching row must not resolve, got %v", raiser.resolves)
 	}
@@ -99,7 +115,7 @@ func TestDrift_SuppressedWhenPctBelowFloor(t *testing.T) {
 	defer mock.Close()
 	raiser := &fakeRaiser{}
 	// diff_usd $5 > $1 but diff_pct 2% < 5% → suppressed (dual floor), self-heal resolve.
-	expectScopedRow(mock, "prov1", day(2026, 7, 17), 245, 250, 5, 0.02, "OpenAI")
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 240, 245, 250, 5, 0.02, "OpenAI")
 	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: enabledRule()}, day(2026, 7, 19))
 
 	if err := j.Run(context.Background()); err != nil {
@@ -118,7 +134,7 @@ func TestDrift_SuppressedWhenUsdBelowFloor(t *testing.T) {
 	defer mock.Close()
 	raiser := &fakeRaiser{}
 	// diff_pct 50% > 5% but diff_usd $0.50 < $1 → suppressed (dual floor).
-	expectScopedRow(mock, "prov1", day(2026, 7, 17), 0.5, 1.0, 0.5, 0.5, "DeepThink")
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 0.2, 0.5, 1.0, 0.5, 0.5, "DeepThink")
 	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: enabledRule()}, day(2026, 7, 19))
 
 	if err := j.Run(context.Background()); err != nil {
@@ -129,12 +145,42 @@ func TestDrift_SuppressedWhenUsdBelowFloor(t *testing.T) {
 	}
 }
 
+// A row with a difference but no recorded vendor spend is a pre-cutover row: its
+// diff_pct came from the old basis and does not follow from its (zero) spend, so
+// alerting on it would print "vendor $25.00 vs ours $0.00 (28.0%)" and demand
+// action on a number nobody can act on. The 7-day scan reaches further back than
+// the 4-day rewrite window, so today-6 / today-7 always contain such rows, and a
+// day the reconcile job skipped contains one permanently.
+//
+// It must land in the RESOLVE branch, not merely be skipped: an alert already
+// raised on the old basis has to clear, and filtering the row out of the scan
+// would leave it firing forever.
+func TestDrift_PreCutoverRowResolvesInsteadOfReportingZeroSpend(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+	raiser := &fakeRaiser{}
+	// Both floors are breached on the persisted old-basis numbers (28% and $7),
+	// so only the zero spend can stop this row from firing.
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 18, 0, 25, 7, 0.28, "OpenAI")
+	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: enabledRule()}, day(2026, 7, 19))
+
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(raiser.raises) != 0 {
+		t.Fatalf("a row with no recorded vendor spend must not fire, got %+v", raiser.raises)
+	}
+	if len(raiser.resolves) != 1 || raiser.resolves[0][1] != "vendor-bill:prov1:2026-07-17" {
+		t.Fatalf("it must resolve so an alert raised on the old basis clears, got %v", raiser.resolves)
+	}
+}
+
 func TestDrift_NegativeDriftFires(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 	raiser := &fakeRaiser{}
 	// We UNDER-charged: vendor > ours. |−8%| and |−$2| both breach.
-	expectScopedRow(mock, "prov1", day(2026, 7, 17), 25, 23, -2, -0.08, "OpenAI")
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 20, 25, 23, -2, -0.08, "OpenAI")
 	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: enabledRule()}, day(2026, 7, 19))
 
 	if err := j.Run(context.Background()); err != nil {
@@ -206,7 +252,7 @@ func TestDrift_RaiseErrorAggregated(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 	raiser := &fakeRaiser{raiseErr: errors.New("raise failed")}
-	expectScopedRow(mock, "prov1", day(2026, 7, 17), 23, 25, 2, 0.08, "OpenAI")
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 18, 23, 25, 2, 0.08, "OpenAI")
 	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: enabledRule()}, day(2026, 7, 19))
 	if err := j.Run(context.Background()); err == nil {
 		t.Fatal("a raiser error must surface")
@@ -217,7 +263,7 @@ func TestDrift_ResolveErrorAggregated(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 	raiser := &fakeRaiser{resolveErr: errors.New("resolve failed")}
-	expectScopedRow(mock, "prov1", day(2026, 7, 17), 245, 250, 5, 0.02, "OpenAI") // non-breaching → resolve
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 240, 245, 250, 5, 0.02, "OpenAI") // non-breaching → resolve
 	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: enabledRule()}, day(2026, 7, 19))
 	if err := j.Run(context.Background()); err == nil {
 		t.Fatal("a resolve error must surface")
@@ -259,7 +305,7 @@ func TestDrift_FloatParamDefault(t *testing.T) {
 	defer mock.Close()
 	raiser := &fakeRaiser{}
 	rule := &alerting.AlertRule{ID: driftRuleID, Enabled: true, DefaultSeverity: alerting.SeverityHigh, Params: nil}
-	expectScopedRow(mock, "prov1", day(2026, 7, 17), 9.5, 10, 0.5, 0.05, "OpenAI") // 5% not > 5% → suppressed
+	expectScopedRow(mock, "prov1", day(2026, 7, 17), 9.0, 9.5, 10, 0.5, 0.05, "OpenAI") // 5% not > 5% → suppressed
 	j := makeDriftJob(mock, raiser, &fakeRuleLoader{rule: rule}, day(2026, 7, 19))
 	if err := j.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)

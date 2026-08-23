@@ -638,6 +638,18 @@
       "binaryInputNotStored": "二进制 token 数组输入 — 按审计策略不予存储。",
       "vectorsNotStored": "嵌入向量按审计策略不予存储。",
       "noInputs": "未捕获到输入。"
+    },
+    "media": {
+      "captured": "已随该请求存储 —— 字节可用。",
+      "external": "远端内容 —— Nexus 从未获取或存储。",
+      "providerRef": "内容由服务商持有。",
+      "fingerprint": "未保留字节 —— 仅有指纹。",
+      "agedOut": "曾捕获,已按保留期清除。",
+      "absent": "未捕获。",
+      "truncated": "捕获不完整或无法读取 —— 媒体不可恢复。",
+      "download": "下载",
+      "previewFailed": "无法预览 —— 存储的字节读取失败。",
+      "sizeUnknown": "大小未知"
     }
   },
   "trafficDetail": {

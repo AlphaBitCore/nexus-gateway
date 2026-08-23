@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"github.com/goccy/go-json"
 	"log/slog"
@@ -290,39 +289,6 @@ func requireApplicationExpiry(expiresAt *time.Time) (errMsg string) {
 	}
 	if !expiresAt.After(time.Now().UTC()) {
 		return "expiresAt must be in the future"
-	}
-	return ""
-}
-
-// allowedModelRef mirrors the AI Gateway's store.AllowedModelRef — the exact
-// shape the gateway unmarshals the persisted VirtualKey.allowedModels column
-// into. CP stores that column verbatim (json.RawMessage), so a create/update
-// body carrying any other shape is persisted intact and only fails later, at
-// the gateway, where an unparseable value 401s every request the VK makes with
-// an opaque decoder error. Validating the shape here — at the write boundary —
-// converts that deferred, cryptic failure into an immediate, clear 400.
-type allowedModelRef struct {
-	ProviderID string `json:"providerId"`
-	ModelID    string `json:"modelId"`
-}
-
-// validateAllowedModels returns a non-empty error message when raw is not a
-// JSON array of {providerId, modelId} objects with non-empty values. A nil/empty
-// value or an empty array means "no restriction" and is valid. Extra object keys
-// are allowed (the gateway ignores them). Decoding uses the same goccy/go-json
-// the gateway uses, so acceptance here guarantees the gateway can parse it.
-func validateAllowedModels(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var refs []allowedModelRef
-	if err := json.Unmarshal(raw, &refs); err != nil {
-		return "allowedModels must be a JSON array of {providerId, modelId} objects"
-	}
-	for i, r := range refs {
-		if r.ProviderID == "" || r.ModelID == "" {
-			return fmt.Sprintf("allowedModels[%d] requires a non-empty providerId and modelId", i)
-		}
 	}
 	return ""
 }

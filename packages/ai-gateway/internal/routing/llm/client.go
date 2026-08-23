@@ -80,4 +80,31 @@ type Decision struct {
 	// Reason is the router-LLM's natural-language justification.
 	// Surfaces in the audit routing_trace.
 	Reason string
+
+	// PromptTokens / CompletionTokens are the router call's OWN usage, as
+	// reported by the upstream. Zero when the response carried no usage block.
+	PromptTokens     int
+	CompletionTokens int
+
+	// CacheReadTokens / CacheCreationTokens are the provider-cached share of
+	// PromptTokens, which is the TOTAL input on every adapter (see
+	// costing.Tokens). They are load-bearing for cost, not decoration: the
+	// router replays a near-identical prompt on every call, so the cached share
+	// is routinely most of the input, and it bills at a fraction of the input
+	// rate. Zero when the provider reported no cache buckets.
+	CacheReadTokens     int
+	CacheCreationTokens int
+
+	// CostUsd is what this router call cost, priced from the tokens above.
+	// Zero when the decider has no PriceLookup or the router model has no
+	// price in the catalog — the call still happened, so ServedProviderID is
+	// stamped regardless and the row records attribution without an amount.
+	CostUsd float64
+
+	// ServedProviderID is the provider that SERVED this router call. It is NOT
+	// ProviderID above, which is the provider of the model the router PICKED.
+	// The distinction is load-bearing: on 2026-07-30 production made 2,020
+	// router calls while only 1,258 requests were served by OpenAI, so ~38% of
+	// router spend belongs to a vendor that did not serve the request.
+	ServedProviderID string
 }

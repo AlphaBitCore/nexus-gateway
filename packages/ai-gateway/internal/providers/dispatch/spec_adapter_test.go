@@ -488,31 +488,29 @@ func TestSpecAdapter_Passthrough_StripsNexusNamespace(t *testing.T) {
 	}
 }
 
-// TestStripNexusNamespace_FastPaths exercises stripNexusNamespace's
-// short-circuits to lock the no-op behavior for the common case where the
-// client did not include a nexus extension (which is most production
-// traffic).
-func TestStripNexusNamespace_FastPaths(t *testing.T) {
+// TestStripInternalCarriers_FastPaths exercises the short-circuits that keep
+// the no-op case cheap — most production traffic carries no extension at all.
+func TestStripInternalCarriers_FastPaths(t *testing.T) {
 	t.Run("nil_body", func(t *testing.T) {
-		if got := stripNexusNamespace(nil); got != nil {
+		if got := stripInternalCarriers(nil); got != nil {
 			t.Fatalf("nil body must short-circuit; got %v", got)
 		}
 	})
 	t.Run("empty_body", func(t *testing.T) {
-		if got := stripNexusNamespace([]byte{}); len(got) != 0 {
+		if got := stripInternalCarriers([]byte{}); len(got) != 0 {
 			t.Fatalf("empty body must return empty; got %v", got)
 		}
 	})
 	t.Run("body_without_nexus", func(t *testing.T) {
 		in := []byte(`{"model":"x","messages":[]}`)
-		got := stripNexusNamespace(in)
+		got := stripInternalCarriers(in)
 		if !bytes.Equal(in, got) {
 			t.Fatalf("body without nexus must be returned identical; got %s", got)
 		}
 	})
 	t.Run("body_with_nexus", func(t *testing.T) {
 		in := []byte(`{"model":"x","nexus":{"dry_run":true}}`)
-		got := stripNexusNamespace(in)
+		got := stripInternalCarriers(in)
 		if bytes.Contains(got, []byte(`"nexus"`)) {
 			t.Fatalf("nexus must be removed; got %s", got)
 		}

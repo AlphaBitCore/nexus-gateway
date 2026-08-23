@@ -14,6 +14,7 @@ import (
 	specerrors "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/errors"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/rewrites"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/stream"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
 
 // NewSpec returns a fully wired OpenAI [provcore.AdapterSpec].
@@ -28,7 +29,11 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		// max_tokens rename + sampling strips on both chat and responses
 		// wires; ada-002 embedding strips) into both codec entry points —
 		// no dispatch-level rewrite callback.
-		SchemaCodec:     codec.New(rewrites.OpenAIContract()),
+		// Gated: the wire's content-part limits are declared in codec_content.go
+		// and enforced on both codec doors, so a document it cannot carry as a
+		// document rides as text and a part it has no variant for is refused in
+		// our words rather than in OpenAI's deserializer vocabulary.
+		SchemaCodec:     specutil.GateContent(codec.New(rewrites.OpenAIContract()), contentPolicyFor),
 		StreamDecoder:   stream.NewStreamDecoder(log),
 		ErrorNormalizer: specerrors.ErrorNormalizer{},
 		// OpenAI natively serves chat-completions, responses-api, and embeddings.

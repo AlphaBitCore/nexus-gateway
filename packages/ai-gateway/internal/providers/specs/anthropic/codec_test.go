@@ -1050,7 +1050,7 @@ func TestMapOpenAIFinishToStopReason_AllBranches(t *testing.T) {
 		"stop":           "end_turn",
 		"length":         "max_tokens",
 		"tool_calls":     "tool_use",
-		"content_filter": "stop_sequence",
+		"content_filter": "refusal",
 		"":               "end_turn",
 		"some_future":    "some_future", // unknown passthrough
 	}
@@ -1088,8 +1088,8 @@ func TestOpenAIChatCompletionToMessagesResponse_ToolCallsAndCacheFields(t *testi
 		"choices":[{"message":{"role":"assistant","tool_calls":[
 			{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}
 		]},"finish_reason":"tool_calls"}],
-		"usage":{"prompt_tokens":4,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":3}},
-		"nexus":{"ext":{"anthropic":{"cache_creation_input_tokens":5}}}
+		"usage":{"prompt_tokens":12,"completion_tokens":2,
+			"prompt_tokens_details":{"cached_tokens":3,"cache_creation_tokens":5}}
 	}`)
 	out, err := OpenAIChatCompletionToMessagesResponse(openai)
 	if err != nil {

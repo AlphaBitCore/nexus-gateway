@@ -152,7 +152,7 @@ func (c *Client) roundtrip(ctx context.Context, method, baseURL, path string, qu
 		if err != nil {
 			return 0, nil, &APIError{kind: ErrTransport, Message: err.Error()}
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck // the body is drained before this runs; a Close error is not actionable
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespBody))
 		return resp.StatusCode, respBody, nil
 	}

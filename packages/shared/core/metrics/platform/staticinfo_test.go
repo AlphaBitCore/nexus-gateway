@@ -10,10 +10,9 @@ import (
 
 func TestCaptureStaticInfoIncludesIdentity(t *testing.T) {
 	info := CaptureStaticInfo(BuildInfo{
-		ServiceVersion: "v1.4.2",
-		BuildSHA:       "abc123",
-		BuildTime:      "2026-04-25T10:00:00Z",
-		StartTime:      "2026-04-26T08:00:00Z",
+		Service:      "nexus-hub",
+		BuildVersion: "v1.4.2@abc1234",
+		StartTime:    "2026-04-26T08:00:00Z",
 	})
 	if info.Hostname == "" {
 		t.Error("hostname not captured")
@@ -24,8 +23,18 @@ func TestCaptureStaticInfoIncludesIdentity(t *testing.T) {
 	if info.CPUCores <= 0 {
 		t.Errorf("cpuCores = %d, want >0", info.CPUCores)
 	}
-	if info.ServiceVersion != "v1.4.2" {
+	if info.ServiceVersion != "nexus-hub/v1.4.2@abc1234" {
 		t.Errorf("serviceVersion mismatch: %q", info.ServiceVersion)
+	}
+	// The three build fields are resolved inside CaptureStaticInfo now, so a
+	// caller cannot report an empty sha by forgetting to fill one in.
+	// Seven hex digits because that is git's own abbreviation floor and the
+	// shortest thing shaFromTaggedVersion will accept. It used to be six,
+	// which no `git rev-parse --short` emits by default — a stand-in short
+	// enough that it is now rejected, which is the point of the validation
+	// rather than an accident of it.
+	if info.BuildSHA != "abc1234" {
+		t.Errorf("buildSHA = %q, want the sha carried by the build version", info.BuildSHA)
 	}
 }
 

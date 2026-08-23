@@ -116,8 +116,8 @@ var AllEndpointKinds = []EndpointKind{
 }
 
 // EndpointKindAcceptsModelType reports whether a catalog model of the given
-// type (Model.type: chat/embedding/image/audio/tts/stt/realtime/video/rerank)
-// can serve a
+// type (Model.type: chat/embedding/image/tts/stt/realtime/video/rerank, plus
+// the deprecated `audio` — see the note below) can serve a
 // request classified as this EndpointKind. It is the routing layer's modality
 // guard: every routing strategy (single, loadbalance, conditional, latency,
 // smart, fallback) and the requested-model passthrough resolve their targets
@@ -137,6 +137,26 @@ var AllEndpointKinds = []EndpointKind{
 // constraint and accept any type. An empty modelType is the caller's signal to
 // apply no constraint (see the resolver's modality filter), so it is accepted
 // here too rather than guessed.
+// "audio" is DEPRECATED as a model type and still accepted here.
+//
+// It was minted by the discovery heuristic for any id containing "audio",
+// and it was wrong for the models that got it: gpt-audio-* are served on
+// chat completions, so comparing this field against the endpoint kind
+// rejected every one of their requests. `type` answers WHICH ENDPOINT serves
+// a model; which modalities it handles is what inputModalities and
+// outputModalities are for, and one scalar cannot answer both.
+//
+// The heuristic no longer mints it and the seeded rows are retyped, so no NEW
+// row acquires it. Removing it from this map as well was the first attempt,
+// and it broke a shipped contract: an admin-created row carrying "audio" is
+// not in any fixture, so no reseed repairs it — it would have gone
+// permanently unroutable on every endpoint, with no migration and no
+// deprecation window. The 1.0 GA rule is back-compat or a versioned
+// migration, and closing the source while leaving existing rows working is
+// the back-compat half.
+//
+// It comes out when the deprecation window closes and a migration has
+// retyped the remaining rows.
 func EndpointKindAcceptsModelType(k EndpointKind, modelType string) bool {
 	if modelType == "" {
 		return true
@@ -149,11 +169,11 @@ func EndpointKindAcceptsModelType(k EndpointKind, modelType string) bool {
 	case EndpointKindImageGeneration:
 		return modelType == "image"
 	case EndpointKindTTS:
-		return modelType == "tts" || modelType == "audio"
+		return modelType == "tts" || modelType == "audio" // deprecated, see above
 	case EndpointKindSTT:
-		return modelType == "stt" || modelType == "audio"
+		return modelType == "stt" || modelType == "audio" // deprecated, see above
 	case EndpointKindRealtime:
-		return modelType == "realtime" || modelType == "audio"
+		return modelType == "realtime" || modelType == "audio" // deprecated, see above
 	case EndpointKindVideoGeneration:
 		return modelType == "video" || modelType == "image"
 	case EndpointKindRerank:

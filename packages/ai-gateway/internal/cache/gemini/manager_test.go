@@ -2,7 +2,6 @@ package geminicache
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -91,29 +90,6 @@ func TestInject_BelowThreshold(t *testing.T) {
 	}
 }
 
-func TestInject_CacheHit_Rewrites(t *testing.T) {
-	systemJSON := `{"parts":[{"text":"very long system"}]}`
-	body := []byte(`{"systemInstruction":` + systemJSON + `,"contents":[{"role":"user","parts":[{"text":"q"}]}]}`)
-
-	// Test the rewriteBody path directly (no Redis needed for this assertion).
-	rewritten, err := rewriteBody(body, "cachedContents/abc123")
-	if err != nil {
-		t.Fatalf("rewriteBody error: %v", err)
-	}
-	// systemInstruction must be gone.
-	if gjsonGetStr(rewritten, "systemInstruction") != "" {
-		t.Error("systemInstruction should be removed")
-	}
-	// cachedContent must be set.
-	if gjsonGetStr(rewritten, "cachedContent") != "cachedContents/abc123" {
-		t.Errorf("cachedContent not set: %s", rewritten)
-	}
-	// contents must be preserved.
-	if gjsonGetStr(rewritten, "contents.0.role") != "user" {
-		t.Errorf("contents not preserved: %s", rewritten)
-	}
-}
-
 func TestInject_RedisMiss_FiresAsync(t *testing.T) {
 	m := newTestManager(Config{Enabled: true, MinSystemChars: 1})
 	body := []byte(`{"systemInstruction":{"parts":[{"text":"x"}]},"contents":[]}`)
@@ -154,53 +130,4 @@ func TestReload(t *testing.T) {
 	if !cfg.Enabled || cfg.MinSystemChars != 9999 {
 		t.Fatal("Reload did not update config")
 	}
-}
-
-// gjsonGetStr is a minimal helper for test assertions.
-func gjsonGetStr(data []byte, path string) string {
-	// Use simple json unmarshalling to avoid importing gjson in tests.
-	var v map[string]any
-	if err := json.Unmarshal(data, &v); err != nil {
-		return ""
-	}
-	parts := splitPath(path)
-	var cur any = v
-	for _, p := range parts {
-		switch t := cur.(type) {
-		case map[string]any:
-			cur = t[p]
-		case []any:
-			// numeric index
-			idx := 0
-			for _, c := range p {
-				idx = idx*10 + int(c-'0')
-			}
-			if idx < len(t) {
-				cur = t[idx]
-			} else {
-				return ""
-			}
-		default:
-			return ""
-		}
-	}
-	if s, ok := cur.(string); ok {
-		return s
-	}
-	return ""
-}
-
-func splitPath(path string) []string {
-	var parts []string
-	var cur []byte
-	for _, c := range path {
-		if c == '.' {
-			parts = append(parts, string(cur))
-			cur = nil
-		} else {
-			cur = append(cur, byte(c))
-		}
-	}
-	parts = append(parts, string(cur))
-	return parts
 }

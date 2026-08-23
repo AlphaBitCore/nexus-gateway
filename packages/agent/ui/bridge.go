@@ -344,7 +344,10 @@ func (b *AgentBridge) sendJSONWith(command string, timeout time.Duration) (map[s
 	if err != nil {
 		return nil, fmt.Errorf("dial agent socket: %w", err)
 	}
-	defer conn.Close()
+	// Explicit discard, matching the deadline calls below: the response has
+	// already been read by the time this runs, so a Close error says nothing
+	// the caller could act on and must not fail a successful command.
+	defer func() { _ = conn.Close() }()
 
 	deadline := time.Now().Add(timeout)
 	_ = conn.SetWriteDeadline(deadline)

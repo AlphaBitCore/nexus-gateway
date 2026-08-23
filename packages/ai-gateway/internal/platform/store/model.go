@@ -7,36 +7,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// servableModelPredicate is the SQL spelling of [Model.Servable], shared by
+// every query that answers "may this model serve traffic". It is a compile-time
+// constant spliced into the query text, never caller input. Written once so the
+// SQL and the Go predicate cannot drift into disagreeing about what servable
+// means — a drift that shows up as a catalog advertising models the router
+// refuses.
+const servableModelPredicate = `m.enabled = true AND p.enabled = true AND m.status <> '` + ModelStatusDisabled + `'`
+
 // GetModelByCode resolves a customer-supplied identifier in the
 // `{"model": "..."}` slot to a Model row. Strict match on Model.code
 // — UUIDs and display names are not accepted, keeping the customer
 // API contract narrow and stable: rename the display name without
 // breaking integrations, and never expose internal UUIDs as a valid
-// API input. Only enabled models are returned.
+// API input. Only servable models are returned (see [Model.Servable]), so a
+// disabled provider — or a model an operator marked disabled — takes the row
+// out of both the catalog and the passthrough routing path.
 func (db *DB) GetModelByCode(ctx context.Context, code string) (*Model, error) {
 	row := db.pool.QueryRow(ctx, `
 		SELECT m.id, m.code, m.name, m."providerId", p.name, p.adapter_type, p."displayName", p."baseUrl",
-		       m."providerModelId", m.type, m.enabled,
+		       m."providerModelId", m.type, m.enabled, COALESCE(p.enabled, false), COALESCE(m.status, 'active'),
 		       "inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 		       "audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		       COALESCE(features, '{}'), "maxContextTokens", "maxOutputTokens",
 		       COALESCE(aliases, '{}'),
-		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
+		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'), COALESCE(m."requiredModalities", '{}'),
 		       COALESCE(m.lifecycle, 'ga'), m."capabilityJson"
+		       , m."minOutputTokens", m."temperatureMin", m."temperatureMax", m.family
 		FROM "Model" m
 		LEFT JOIN "Provider" p ON p.id = m."providerId"
-		WHERE m.code = $1 AND m.enabled = true
+		WHERE m.code = $1 AND `+servableModelPredicate+`
 		LIMIT 1
 	`, code)
 	var m Model
 	var inPrice, outPrice, cacheReadPrice, cacheWritePrice *string
 	var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 	var maxCtx, maxOut pgtype.Int4
+	var minOut pgtype.Int4
+	var tempMin, tempMax pgtype.Float8
 	err := row.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName, &m.ProviderBaseURL,
 		&m.ProviderModelID,
-		&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
+		&m.Type, &m.Enabled, &m.ProviderEnabled, &m.Status, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
 		&audioInPrice, &audioOutPrice, &cachedAudioReadPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
-		&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson)
+		&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson,
+		&minOut, &tempMin, &tempMax, &m.Family)
 	if err != nil {
 		return nil, fmt.Errorf("store: get model by code: %w", err)
 	}
@@ -63,6 +77,9 @@ func (db *DB) GetModelByCode(ctx context.Context, code string) (*Model, error) {
 	}
 	m.MaxContextTokens = intFromPgInt4(maxCtx)
 	m.MaxOutputTokens = intFromPgInt4(maxOut)
+	m.MinOutputTokens = intFromPgInt4(minOut)
+	m.TemperatureMin = floatFromPgFloat8(tempMin)
+	m.TemperatureMax = floatFromPgFloat8(tempMax)
 	return &m, nil
 }
 
@@ -75,16 +92,26 @@ func (db *DB) GetModelByCode(ctx context.Context, code string) (*Model, error) {
 // (e.g. "gpt-4o"), and Match Conditions store Model.id UUIDs, so the engine
 // resolves the string to a UUID set here and intersects against
 // MatchConditions.Models.
+//
+// Provider.enabled is deliberately NOT filtered here, unlike every other
+// model lookup. This resolves the identity of the model the caller ASKED
+// for, not a model that will serve the call: a rule whose whole purpose is
+// to redirect requests away from a disabled provider matches on that
+// provider's model UUID, and filtering it out would stop the rule from ever
+// matching. Servability is decided downstream — lookupTarget rejects a
+// disabled provider for rule-chosen targets, and Servable() covers the
+// passthrough path.
 func (db *DB) ResolveModelCandidates(ctx context.Context, code string) ([]Model, error) {
 	rows, err := db.pool.Query(ctx, `
 		SELECT m.id, m.code, m.name, m."providerId", p.name, p.adapter_type, p."displayName", p."baseUrl",
-		       m."providerModelId", m.type, m.enabled,
+		       m."providerModelId", m.type, m.enabled, COALESCE(p.enabled, false), COALESCE(m.status, 'active'),
 		       "inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 		       "audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		       COALESCE(features, '{}'), "maxContextTokens", "maxOutputTokens",
 		       COALESCE(aliases, '{}'),
-		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
+		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'), COALESCE(m."requiredModalities", '{}'),
 		       COALESCE(m.lifecycle, 'ga'), m."capabilityJson"
+		       , m."minOutputTokens", m."temperatureMin", m."temperatureMax", m.family
 		FROM "Model" m
 		LEFT JOIN "Provider" p ON p.id = m."providerId"
 		WHERE m.enabled = true
@@ -101,11 +128,14 @@ func (db *DB) ResolveModelCandidates(ctx context.Context, code string) ([]Model,
 		var inPrice, outPrice, cacheReadPrice, cacheWritePrice *string
 		var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 		var maxCtx, maxOut pgtype.Int4
+		var minOut pgtype.Int4
+		var tempMin, tempMax pgtype.Float8
 		if err := rows.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName, &m.ProviderBaseURL,
 			&m.ProviderModelID,
-			&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
+			&m.Type, &m.Enabled, &m.ProviderEnabled, &m.Status, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
 			&audioInPrice, &audioOutPrice, &cachedAudioReadPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
-			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson); err != nil {
+			&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson,
+			&minOut, &tempMin, &tempMax, &m.Family); err != nil {
 			return nil, fmt.Errorf("store: scan model candidate: %w", err)
 		}
 		if f, ok := ParseDecimal(inPrice); ok {
@@ -131,25 +161,33 @@ func (db *DB) ResolveModelCandidates(ctx context.Context, code string) ([]Model,
 		}
 		m.MaxContextTokens = intFromPgInt4(maxCtx)
 		m.MaxOutputTokens = intFromPgInt4(maxOut)
+		m.MinOutputTokens = intFromPgInt4(minOut)
+		m.TemperatureMin = floatFromPgFloat8(tempMin)
+		m.TemperatureMax = floatFromPgFloat8(tempMax)
 		out = append(out, m)
 	}
 	return out, nil
 }
 
-// ListEnabledModels returns all enabled models.
+// ListEnabledModels returns every servable model (see [Model.Servable]).
+// This is the catalog GET /v1/models advertises, so a model withdrawn by
+// either its provider or its own status must not appear: a client that trusts
+// the catalog would otherwise select it and get an upstream failure instead of
+// simply never seeing it.
 func (db *DB) ListEnabledModels(ctx context.Context) ([]Model, error) {
 	rows, err := db.pool.Query(ctx, `
 		SELECT m.id, m.code, m.name, m."providerId", p.name, p.adapter_type, p."displayName", p."baseUrl",
-		       m."providerModelId", m.type, m.enabled,
+		       m."providerModelId", m.type, m.enabled, COALESCE(p.enabled, false), COALESCE(m.status, 'active'),
 		       "inputPricePerMillion", "outputPricePerMillion", "cachedInputReadPricePerMillion", "cachedInputWritePricePerMillion",
 		       "audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 		       COALESCE(features, '{}'), "maxContextTokens", "maxOutputTokens",
 		       COALESCE(aliases, '{}'),
-		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'),
+		       COALESCE(m."inputModalities", '{}'), COALESCE(m."outputModalities", '{}'), COALESCE(m."requiredModalities", '{}'),
 		       COALESCE(m.lifecycle, 'ga'), m."capabilityJson"
+		       , m."minOutputTokens", m."temperatureMin", m."temperatureMax", m.family
 		FROM "Model" m
 		LEFT JOIN "Provider" p ON p.id = m."providerId"
-		WHERE m.enabled = true
+		WHERE `+servableModelPredicate+`
 		ORDER BY m."providerId", m.name
 	`)
 	if err != nil {
@@ -163,11 +201,14 @@ func (db *DB) ListEnabledModels(ctx context.Context) ([]Model, error) {
 		var inPrice, outPrice, cacheReadPrice, cacheWritePrice *string
 		var audioInPrice, audioOutPrice, cachedAudioReadPrice *string
 		var maxCtx, maxOut pgtype.Int4
+		var minOut pgtype.Int4
+		var tempMin, tempMax pgtype.Float8
 		if err := rows.Scan(&m.ID, &m.Code, &m.Name, &m.ProviderID, &m.ProviderName, &m.ProviderAdapterType, &m.ProviderDisplayName, &m.ProviderBaseURL,
 			&m.ProviderModelID,
-			&m.Type, &m.Enabled, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
+			&m.Type, &m.Enabled, &m.ProviderEnabled, &m.Status, &inPrice, &outPrice, &cacheReadPrice, &cacheWritePrice,
 			&audioInPrice, &audioOutPrice, &cachedAudioReadPrice, &m.Features, &maxCtx, &maxOut, &m.Aliases,
-			&m.InputModalities, &m.OutputModalities, &m.Lifecycle, &m.CapabilityJson); err != nil {
+			&m.InputModalities, &m.OutputModalities, &m.RequiredModalities, &m.Lifecycle, &m.CapabilityJson,
+			&minOut, &tempMin, &tempMax, &m.Family); err != nil {
 			return nil, fmt.Errorf("store: scan model: %w", err)
 		}
 		if f, ok := ParseDecimal(inPrice); ok {
@@ -193,6 +234,9 @@ func (db *DB) ListEnabledModels(ctx context.Context) ([]Model, error) {
 		}
 		m.MaxContextTokens = intFromPgInt4(maxCtx)
 		m.MaxOutputTokens = intFromPgInt4(maxOut)
+		m.MinOutputTokens = intFromPgInt4(minOut)
+		m.TemperatureMin = floatFromPgFloat8(tempMin)
+		m.TemperatureMax = floatFromPgFloat8(tempMax)
 		models = append(models, m)
 	}
 	return models, nil

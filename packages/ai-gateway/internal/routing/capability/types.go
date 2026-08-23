@@ -8,14 +8,31 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
 
 // EmbeddingsCapability is the parsed `capabilityJson.embeddings` block
 // of a Model row, used by the routing pre-filter to reject candidates
 // before strategy dispatch.
 type EmbeddingsCapability struct {
-	MaxInputTokens           int      `json:"max_input_tokens,omitempty"`
-	SupportedDimensions      []int    `json:"supported_dimensions,omitempty"`
+	MaxInputTokens      int   `json:"max_input_tokens,omitempty"`
+	SupportedDimensions []int `json:"supported_dimensions,omitempty"`
+	// MinDimension / MaxDimension describe a model that accepts ANY dimension
+	// in a range rather than a fixed set — Matryoshka-style truncation, which
+	// is what OpenAI's text-embedding-3-* and Gemini's embedding models
+	// actually do. For those models every enumeration is wrong, so listing one
+	// converts a satisfiable request into a 400 the provider would have
+	// accepted (staging rejected `dimensions: 1536` against
+	// text-embedding-3-large for days on a list that simply omitted it).
+	//
+	// When MaxDimension > 0 the range is authoritative and any dimension
+	// inside it is forwarded, leaving the provider — the only party that can
+	// refuse for a reason we did not invent — to decide. SupportedDimensions
+	// still governs models genuinely limited to a fixed set (Cohere v3 emits
+	// 1024 and nothing else), so both forms coexist rather than one replacing
+	// the other. MinDimension is optional and defaults to 1.
+	MinDimension             int      `json:"min_dimension,omitempty"`
+	MaxDimension             int      `json:"max_dimension,omitempty"`
 	DefaultDimension         int      `json:"default_dimension,omitempty"`
 	MaxBatchSize             int      `json:"max_batch_size,omitempty"`
 	SupportedEncodingFormats []string `json:"supported_encoding_formats,omitempty"`
@@ -34,8 +51,10 @@ type EmbeddingsCapability struct {
 type ModelCapability struct {
 	InputModalities  []string
 	OutputModalities []string
-	Lifecycle        string
-	Embeddings       *EmbeddingsCapability // nil if model is not an embedding model
+	// RequiredModalities is what a request must carry; empty = no constraint.
+	RequiredModalities []string
+	Lifecycle          string
+	Embeddings         *EmbeddingsCapability // nil if model is not an embedding model
 }
 
 // EmbeddingRequest is the routing-side view of an embedding request,
@@ -56,6 +75,8 @@ type CandidateCapability struct {
 	Provider                 string   `json:"provider"`
 	Model                    string   `json:"model"`
 	SupportedDimensions      []int    `json:"supported_dimensions,omitempty"`
+	MinDimension             int      `json:"min_dimension,omitempty"`
+	MaxDimension             int      `json:"max_dimension,omitempty"`
 	MaxBatchSize             int      `json:"max_batch_size,omitempty"`
 	SupportedEncodingFormats []string `json:"supported_encoding_formats,omitempty"`
 	RequiredExtensions       []string `json:"required_extensions,omitempty"`
@@ -79,9 +100,10 @@ func ParseModelCapability(m *store.Model) *ModelCapability {
 		return nil
 	}
 	cap := &ModelCapability{
-		InputModalities:  m.InputModalities,
-		OutputModalities: m.OutputModalities,
-		Lifecycle:        m.Lifecycle,
+		InputModalities:    routingcore.NormalizeModalities(m.InputModalities),
+		OutputModalities:   m.OutputModalities,
+		RequiredModalities: routingcore.NormalizeModalities(m.RequiredModalities),
+		Lifecycle:          m.Lifecycle,
 	}
 	if len(m.CapabilityJson) == 0 {
 		return cap

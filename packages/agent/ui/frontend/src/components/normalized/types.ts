@@ -17,12 +17,11 @@ export type NormalizedKind =
   | 'http-binary'
   | 'unsupported';
 
-export interface BinaryRef {
-  size: number;
-  contentType: string;
-  sha256: string;
-  spillKey?: string;
-}
+// MediaRef is defined once in @nexus-gateway/ui-shared: the Control Plane
+// renders the same normalized payload, and two parallel copies of this
+// shape is precisely the drift that let audio and PDFs render as
+// zero-byte images.
+export type { MediaRef, MediaModality, MediaSource } from '@nexus-gateway/ui-shared';
 
 export interface ToolUse {
   callId?: string;
@@ -35,12 +34,14 @@ export interface ToolResult {
   output?: string;
 }
 
-export type ContentBlockType = 'text' | 'image_ref' | 'tool_use' | 'tool_result' | 'reasoning';
+// 'media' replaces 'image_ref' — modality is a field on the ref, not a
+// block type.
+export type ContentBlockType = 'text' | 'media' | 'tool_use' | 'tool_result' | 'reasoning';
 
 export interface NormalizedContentBlock {
   type: ContentBlockType;
   text?: string;
-  imageRef?: BinaryRef;
+  mediaRef?: import('@nexus-gateway/ui-shared').MediaRef;
   toolUse?: ToolUse;
   toolResult?: ToolResult;
 }
@@ -65,7 +66,7 @@ export interface HTTPBodyView {
   text?: string;
   json?: unknown;
   form?: Record<string, string>;
-  binaryRef?: BinaryRef;
+  mediaRef?: import('@nexus-gateway/ui-shared').MediaRef;
   sseFrames?: SSEFrame[];
   sseTruncated?: boolean;
 }

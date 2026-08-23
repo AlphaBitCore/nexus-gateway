@@ -11,37 +11,11 @@ import (
 	"testing"
 )
 
-// TestRewriteBody_StripsToolFieldsForCacheHit guards the fix for the Gemini 400
-// "CachedContent can not be used with GenerateContent request setting
-// system_instruction, tools or tool_config": on a cache hit a tool-calling
-// request must have systemInstruction AND tools AND toolConfig removed (they live
-// in the cachedContent), while the per-turn contents are preserved.
-func TestRewriteBody_StripsToolFieldsForCacheHit(t *testing.T) {
-	body := []byte(`{"systemInstruction":{"parts":[{"text":"sys"}]},` +
-		`"tools":[{"functionDeclarations":[{"name":"f"}]}],` +
-		`"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},` +
-		`"contents":[{"role":"user","parts":[{"text":"q"}]}]}`)
-
-	out, err := rewriteBody(body, "cachedContents/x")
-	if err != nil {
-		t.Fatalf("rewriteBody: %v", err)
-	}
-	var v map[string]any
-	if err := json.Unmarshal(out, &v); err != nil {
-		t.Fatalf("rewritten body is not valid JSON: %v", err)
-	}
-	for _, forbidden := range []string{"systemInstruction", "tools", "toolConfig"} {
-		if _, present := v[forbidden]; present {
-			t.Errorf("%q must be stripped alongside cachedContent (else Gemini 400): %s", forbidden, out)
-		}
-	}
-	if v["cachedContent"] != "cachedContents/x" {
-		t.Errorf("cachedContent must be set, got %v", v["cachedContent"])
-	}
-	if _, ok := v["contents"]; !ok {
-		t.Error("per-turn contents must be preserved (only the cached prefix is removed)")
-	}
-}
+// The tool-stripping wire shape (systemInstruction/tools/toolConfig removed
+// alongside a cachedContent reference) now lives in the Gemini codec as
+// InjectCachedContentRef and is tested there
+// (specs/gemini/codec/cachedcontent_request_test.go). This file keeps the
+// manager-side behaviour: that tools/toolConfig participate in the cache key.
 
 // TestContentHash_KeyedOnTools verifies tools / toolConfig participate in the
 // cache key (they are folded into the cachedContent, so distinct tool sets need

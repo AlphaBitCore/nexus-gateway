@@ -63,6 +63,28 @@ func InitReconciler(
 	pool := db.InternalPool()
 	cs := cachestore.New(pool)
 	meta := systemmetastore.New(pool)
+
+	// One WARN per boot naming every system_metadata key no code claims.
+	//
+	// The table has no schema and no owner, so a key outlives the code that
+	// read it silently. `audit.payload` did for three months, and its value was
+	// the OPPOSITE of the setting in force with a timestamp that kept moving —
+	// so the obvious query answered the obvious question wrongly and the
+	// investigation stopped there.
+	//
+	// WARN and not fatal: an unclaimed row does not break anything, and
+	// refusing to start over one would turn bookkeeping into an outage. What it
+	// needs is a person to look, which is precisely what nothing prompted
+	// before. Failure to run the audit is itself only a Warn — a boot must not
+	// hinge on a diagnostic.
+	if unknown, err := meta.AuditUnknownKeys(ctx); err != nil {
+		logger.Warn("system_metadata key audit did not run", "error", err)
+	} else if len(unknown) > 0 {
+		logger.Warn("system_metadata holds keys no code claims — each is either a row to delete "+
+			"or a registration to add; a stale one answers an operator's question with a value "+
+			"nothing maintains",
+			"keys", unknown, "count", len(unknown))
+	}
 	semStore := configstore.NewSemanticCacheStoreWithPgxPool(pool)
 	extStore := configstore.NewExtractCacheStoreWithPgxPool(pool)
 	watches := []configreconcile.Watch{

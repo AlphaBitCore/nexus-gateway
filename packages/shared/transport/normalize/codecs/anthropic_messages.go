@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
+	"sort"
 	"strings"
 
+	"github.com/goccy/go-json"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/locator"
 )
 
 // AnthropicMessagesNormalizer handles Anthropic's /v1/messages surface
@@ -150,6 +153,15 @@ type anthropicRequest struct {
 	TopP          *float64           `json:"top_p,omitempty"`
 	TopK          *int               `json:"top_k,omitempty"`
 	StopSequences []string           `json:"stop_sequences,omitempty"`
+	// Thinking is Anthropic's BUDGET spelling of the reasoning request.
+	// `type` is "enabled" / "disabled"; a disabled block is the caller saying
+	// NOT to reason, which is an expressed intent and is recorded as such.
+	Thinking *anthropicThinking `json:"thinking,omitempty"`
+}
+
+type anthropicThinking struct {
+	Type         string `json:"type,omitempty"`
+	BudgetTokens *int   `json:"budget_tokens,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -188,8 +200,8 @@ func (n *AnthropicMessagesNormalizer) normalizeRequest(raw []byte, meta core.Met
 		}
 	}
 
-	for _, m := range req.Messages {
-		blocks := anthropicDecodeContent(m.Content)
+	for i, m := range req.Messages {
+		blocks := anthropicDecodeContent(m.Content, locator.JoinPath("messages", i)+".content")
 		out.Messages = append(out.Messages, core.Message{Role: roleFromString(m.Role), Content: blocks})
 	}
 
@@ -208,13 +220,29 @@ func (n *AnthropicMessagesNormalizer) normalizeRequest(raw []byte, meta core.Met
 		out.Tools = tools
 	}
 
-	if req.Temperature != nil || req.TopP != nil || req.TopK != nil || req.MaxTokens != nil || len(req.StopSequences) > 0 {
+	if req.Temperature != nil || req.TopP != nil || req.TopK != nil || req.MaxTokens != nil ||
+		len(req.StopSequences) > 0 || req.Thinking != nil {
 		out.Params = &core.SamplingParam{
 			Temperature: req.Temperature,
 			TopP:        req.TopP,
 			TopK:        req.TopK,
 			MaxTokens:   req.MaxTokens,
 			Stop:        req.StopSequences,
+		}
+		// Recorded as the caller wrote it. A disabled block carries no budget,
+		// so it lands as an Effort of "none" — the one word every wire's
+		// vocabulary can express, and the only derivation done here, because
+		// "do not reason" is not a quantity any codec can compute back from a
+		// nil budget.
+		if t := req.Thinking; t != nil {
+			r := &core.Reasoning{BudgetTokens: t.BudgetTokens}
+			if t.Type == "disabled" {
+				r.Effort = "none"
+				r.BudgetTokens = nil
+			}
+			if r.Asked() {
+				out.Params.Reasoning = r
+			}
 		}
 	}
 
@@ -232,12 +260,21 @@ func anthropicSystemToBlocks(raw json.RawMessage) []core.ContentBlock {
 		}
 		return []core.ContentBlock{{Type: core.ContentText, Text: s}}
 	}
-	return anthropicDecodeContent(raw)
+	// The system field is text-only in practice; no positional context is
+	// threaded because a media part there has no defined wire shape.
+	return anthropicDecodeContent(raw, "")
 }
 
 // anthropicDecodeContent expands an Anthropic content field (string or
 // content-block array) into ContentBlocks.
-func anthropicDecodeContent(raw json.RawMessage) []core.ContentBlock {
+//
+// base is the gjson path of the content array this call is expanding
+// (e.g. "messages.0.content"); each part's locator is base + its index, so
+// a media part addresses its own bytes inside the captured body. An empty
+// base means the caller has no positional context — media parts then carry
+// no locator and degrade to a fingerprint-free absent ref rather than
+// pointing somewhere wrong.
+func anthropicDecodeContent(raw json.RawMessage, base string) []core.ContentBlock {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
@@ -252,41 +289,77 @@ func anthropicDecodeContent(raw json.RawMessage) []core.ContentBlock {
 	var parts []map[string]any
 	if err := json.Unmarshal(raw, &parts); err != nil {
 		// Could not parse — keep raw text so audit readers see it.
-		return []core.ContentBlock{{Type: core.ContentText, Text: string(raw)}}
+		// A mixed-type array (a bare string beside a block object) fails the
+		// typed unmarshal. Rendering the raw bytes here would copy any
+		// payload inside it into scanned text.
+		return []core.ContentBlock{{Type: core.ContentText, Text: payloadSafeRaw(raw)}}
 	}
 	out := make([]core.ContentBlock, 0, len(parts))
-	for _, p := range parts {
-		out = append(out, anthropicContentPart(p))
+	for i, p := range parts {
+		out = append(out, anthropicContentPart(p, locator.JoinPath(base, i))...)
 	}
 	return out
 }
 
-func anthropicContentPart(part map[string]any) core.ContentBlock {
+// anthropicContentPart returns the blocks one wire part projects to. It is
+// a slice because a tool_result can carry media inside it: the result text
+// and each nested image are separate blocks, and the media must not be
+// flattened into the text the way it used to be.
+func anthropicContentPart(part map[string]any, path string) []core.ContentBlock {
+	return anthropicPartAtDepth(part, path, 0)
+}
+
+func anthropicPartAtDepth(part map[string]any, path string, depth int) []core.ContentBlock {
 	t, _ := part["type"].(string)
 	switch t {
 	case "text":
 		s, _ := part["text"].(string)
-		return core.ContentBlock{Type: core.ContentText, Text: s}
+		return []core.ContentBlock{{Type: core.ContentText, Text: s}}
 	case "thinking":
 		s, _ := part["thinking"].(string)
 		if s == "" {
 			// Some SDK shapes carry the reasoning text under "text".
 			s, _ = part["text"].(string)
 		}
-		return core.ContentBlock{Type: core.ContentReasoning, Text: s}
-	case "image":
-		var ref core.BinaryRef
-		ref.ContentType = "image"
-		if src, ok := part["source"].(map[string]any); ok {
-			if mt, _ := src["media_type"].(string); mt != "" {
-				ref.ContentType = mt
+		return []core.ContentBlock{{Type: core.ContentReasoning, Text: s}}
+	case "image", "document":
+		// Images and documents share one `source` envelope, but two of its
+		// five variants carry text rather than bytes. Routing those into a
+		// media ref would drop the text — and because TextProjection feeds
+		// the compliance hooks only from text-shaped blocks, dropping it
+		// would hide the content from scanning entirely. Dispatch on the
+		// source type first: bytes become media, prose stays prose.
+		src, _ := part["source"].(map[string]any)
+		switch st, _ := src["type"].(string); st {
+		case "text":
+			s, _ := src["data"].(string)
+			return []core.ContentBlock{{Type: core.ContentText, Text: s}}
+		case "content":
+			// A nested block array — recurse so nested images keep their own
+			// locators and nested text stays scannable.
+			//
+			// Recursion walks the ALREADY-PARSED value. Re-marshalling and
+			// re-parsing at each level makes cost superlinear in body size,
+			// and this decode runs synchronously on the request path: a
+			// 120 KB deeply-nested body measured at 26 seconds that way.
+			// Depth is also capped — nesting beyond a couple of levels is
+			// not a shape any provider documents, and an unbounded walk on
+			// caller-controlled input is a denial-of-service surface.
+			return anthropicNestedBlocks(src["content"], locator.JoinSuffix(path, "source.content"), depth)
+		default:
+			modality := ""
+			if t == "image" {
+				// media_type is documented only on the base64 variant, so a
+				// url/file-id image has no mime to infer from. Saying
+				// "file" would render the wrong card and, worse, drop the
+				// vision requirement in capability routing.
+				modality = core.ModalityImage
 			}
-			if data, _ := src["data"].(string); data != "" {
-				ref.SHA256 = stableHashHint(data)
-				ref.Size = int64(len(data))
-			}
+			return []core.ContentBlock{mediaBlock(anthropicSourceMedia(part, path, modality))}
 		}
-		return core.ContentBlock{Type: core.ContentImageRef, ImageRef: &ref}
+	case "container_upload":
+		id, _ := part["file_id"].(string)
+		return []core.ContentBlock{mediaBlock(providerRefMedia("", id, core.ModalityFile))}
 	case "tool_use":
 		tu := core.ToolUse{}
 		tu.CallID, _ = part["id"].(string)
@@ -294,17 +367,28 @@ func anthropicContentPart(part map[string]any) core.ContentBlock {
 		if in, ok := part["input"].(map[string]any); ok {
 			tu.Input = in
 		}
-		return core.ContentBlock{Type: core.ContentToolUse, ToolUse: &tu}
+		return []core.ContentBlock{{Type: core.ContentToolUse, ToolUse: &tu}}
 	case "tool_result":
 		tr := core.ToolResult{}
 		tr.CallID, _ = part["tool_use_id"].(string)
+		var nested []core.ContentBlock
 		// Anthropic's tool_result.content may be string or content-block array.
 		if s, ok := part["content"].(string); ok {
 			tr.Output = s
 		} else if arr, ok := part["content"].([]any); ok {
 			var b strings.Builder
-			for _, it := range arr {
-				if m, ok := it.(map[string]any); ok {
+			for i, it := range arr {
+				m, ok := it.(map[string]any)
+				if !ok {
+					continue
+				}
+				// A tool that returns a screenshot puts an image block here.
+				// Only text was ever read, so those images vanished.
+				switch mt, _ := m["type"].(string); mt {
+				case "image", "document":
+					nested = append(nested, anthropicPartAtDepth(
+						m, locator.JoinPath(locator.JoinSuffix(path, "content"), i), depth+1)...)
+				default:
 					if txt, _ := m["text"].(string); txt != "" {
 						b.WriteString(txt)
 					}
@@ -312,23 +396,131 @@ func anthropicContentPart(part map[string]any) core.ContentBlock {
 			}
 			tr.Output = b.String()
 		}
-		return core.ContentBlock{Type: core.ContentToolResult, ToolResult: &tr}
+		return append([]core.ContentBlock{{Type: core.ContentToolResult, ToolResult: &tr}}, nested...)
 	default:
-		// Unknown — preserve as text serialization.
-		b, _ := json.Marshal(part)
-		return core.ContentBlock{Type: core.ContentText, Text: string(b)}
+		// Unknown — preserve as text so the reader sees what arrived. An
+		// unknown block may still carry a base64 source, so the rendering
+		// elides payloads rather than trusting that it cannot.
+		return []core.ContentBlock{{Type: core.ContentText, Text: payloadSafeJSON(part)}}
 	}
 }
 
-// stableHashHint returns a short prefix of the inline base64 so the
-// BinaryRef looks reasonable when the spill store wasn't engaged.
-// Real audit pipelines populate the spill key via the spill backend;
-// this hint is purely for inline-only test paths.
-func stableHashHint(s string) string {
-	if len(s) <= 16 {
-		return s
+// anthropicNestedBlocks projects an already-parsed nested content array.
+// depth guards against caller-controlled nesting; past the cap the content
+// is kept as text rather than walked, so nothing is dropped silently.
+func anthropicNestedBlocks(v any, base string, depth int) []core.ContentBlock {
+	// Levels walked, counting from the first nested array. Beyond this the
+	// content is described rather than projected.
+	const maxNestedDepth = 4
+	arr, ok := v.([]any)
+	if !ok || depth > maxNestedDepth {
+		// Never serialise the subtree: a document block's payload is base64,
+		// and marshalling it here would put megabytes of it into a text
+		// block that feeds compliance scanning — the exact defect this whole
+		// change removes, re-created behind a depth gate. Describe the shape
+		// instead, so nothing is silently dropped and no payload leaks.
+		return []core.ContentBlock{{Type: core.ContentText, Text: anthropicShapeSummary(v, depth)}}
 	}
-	return s[:16]
+	out := make([]core.ContentBlock, 0, len(arr))
+	for i, it := range arr {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, anthropicPartAtDepth(m, locator.JoinPath(base, i), depth+1)...)
+	}
+	return out
+}
+
+// anthropicShapeSummary names what a value contained without reproducing
+// any of it. Used where content is too deeply nested to project: the reader
+// learns that something was there and what kind, and no payload moves.
+func anthropicShapeSummary(v any, depth int) string {
+	switch t := v.(type) {
+	case []any:
+		kinds := map[string]int{}
+		for _, it := range t {
+			if m, ok := it.(map[string]any); ok {
+				k, _ := m["type"].(string)
+				if k == "" {
+					k = "untyped"
+				}
+				kinds[k]++
+			} else {
+				kinds["non-object"]++
+			}
+		}
+		names := make([]string, 0, len(kinds))
+		for k, n := range kinds {
+			names = append(names, fmt.Sprintf("%s x%d", k, n))
+		}
+		sort.Strings(names)
+		return payloadSafeText(
+			fmt.Sprintf("[nested content beyond depth %d not projected: ", depth),
+			strings.Join(names, ", ")+"]")
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return payloadSafeText("[nested content not projected: object with keys ", strings.Join(keys, ", ")+"]")
+	case nil:
+		return "[nested content absent]"
+	default:
+		return fmt.Sprintf("[nested content not projected: %T]", v)
+	}
+}
+
+// anthropicSourceMedia reads the `source` envelope shared by image and
+// document parts. locator is the gjson path of this part; the data field
+// hangs one level below it.
+//
+// The three byte-bearing source variants map onto three custody states:
+// base64 bytes are captured, a url is external, a file_id is provider-held.
+// The two text-bearing document variants never reach here — the caller
+// renders those as text so they stay scannable.
+//
+// modality, when non-empty, overrides mime-derived inference. It is set for
+// image parts, whose url and file-id variants document no media_type: with
+// nothing to infer from, an image would otherwise be classified as a file,
+// which renders the wrong card and drops the vision requirement that
+// capability routing keys off.
+func anthropicSourceMedia(part map[string]any, path, modality string) *core.MediaRef {
+	src, _ := part["source"].(map[string]any)
+	if src == nil {
+		m := modality
+		if m == "" {
+			m = core.ModalityFile
+		}
+		return &core.MediaRef{Modality: m, Source: core.MediaAbsent}
+	}
+	mime, _ := src["media_type"].(string)
+	switch st, _ := src["type"].(string); st {
+	case "base64":
+		data, _ := src["data"].(string)
+		ref := capturedMedia(mime, data, locator.JSON(locator.JoinSuffix(path, "source.data")))
+		if modality != "" {
+			// The block type is the authority on modality: an `image` block
+			// is an image whatever its media_type claims. Deferring to the
+			// mime here let an odd declared type drop the vision
+			// requirement that capability routing keys off.
+			ref.Modality = modality
+		}
+		return ref
+	case "url":
+		u, _ := src["url"].(string)
+		return externalMedia(mime, u, modality)
+	case "file":
+		id, _ := src["file_id"].(string)
+		return providerRefMedia(mime, id, modality)
+	default:
+		m := modality
+		if m == "" {
+			m = modalityFromMime(mime)
+		}
+		return &core.MediaRef{Modality: m, Mime: mime, Source: core.MediaAbsent}
+	}
 }
 
 // Non-streaming response
@@ -345,6 +537,11 @@ type anthropicUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	// OutputTokensDetails carries the wire's own thinking-token count; when
+	// present it beats any character-length estimate.
+	OutputTokensDetails struct {
+		ThinkingTokens int `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 func (n *AnthropicMessagesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
@@ -359,7 +556,7 @@ func (n *AnthropicMessagesNormalizer) normalizeResponse(raw []byte, meta core.Me
 		Model:            firstNonEmpty(resp.Model, meta.Model),
 		FinishReason:     resp.StopReason,
 	}
-	blocks := anthropicDecodeContent(resp.Content)
+	blocks := anthropicDecodeContent(resp.Content, "content")
 	out.Messages = []core.Message{{
 		Role:         core.RoleAssistant,
 		Content:      blocks,
@@ -397,12 +594,13 @@ func (n *AnthropicMessagesNormalizer) normalizeResponse(raw []byte, meta core.Me
 // cache_creation, so cost calculation stays uniform across providers
 // (UncachedInput = PromptTokens − CacheReadTokens − CacheCreationTokens).
 //
-// Anthropic counts thinking tokens inside output_tokens but never breaks down how
-// many are thinking vs visible text, so ReasoningTokens is a heuristic:
-// reasoningChars × 2/7 (chars/3.5, the estimator's default Anthropic tokenizer).
-// Approximate (±15%) but lets the reasoning_ratio widget show a non-zero signal
-// instead of misclassifying every Claude row as "no reasoning". It does not affect
-// the billed total — output_tokens already includes the thinking tokens.
+// Anthropic counts thinking tokens inside output_tokens; responses that carry
+// usage.output_tokens_details.thinking_tokens report the exact split and that
+// value is used as-is. Responses without it fall back to a heuristic:
+// reasoningChars × 2/7 (chars/3.5, the estimator's default Anthropic tokenizer) —
+// approximate (±15%) but a non-zero signal beats misclassifying every Claude row
+// as "no reasoning". Neither affects the billed total — output_tokens already
+// includes the thinking tokens.
 func anthropicUsageToCanonical(raw *anthropicUsage, reasoningChars int) *core.Usage {
 	uncached := raw.InputTokens
 	cacheRead := raw.CacheReadInputTokens
@@ -432,7 +630,10 @@ func anthropicUsageToCanonical(raw *anthropicUsage, reasoningChars int) *core.Us
 		tot += output
 		u.TotalTokens = &tot
 	}
-	if reasoningChars > 0 {
+	if raw.OutputTokensDetails.ThinkingTokens > 0 {
+		v := raw.OutputTokensDetails.ThinkingTokens
+		u.ReasoningTokens = &v
+	} else if reasoningChars > 0 {
 		est := reasoningChars * 2 / 7
 		if est < 1 {
 			est = 1
@@ -516,6 +717,16 @@ func mergeAnthropicUsage(prev *core.Usage, raw map[string]any) *core.Usage {
 	if v, ok := raw["output_tokens"]; ok {
 		if i := intFromAny(v); i != 0 {
 			output = i
+			touched = true
+		}
+	}
+	// The wire's own thinking split rides output_tokens_details on the same
+	// events; the non-streaming decode already prefers it, and a stream that
+	// dropped it reported reasoning turns as unreasoned.
+	if det, ok := raw["output_tokens_details"].(map[string]any); ok {
+		if i := intFromAny(det["thinking_tokens"]); i > 0 {
+			v := i
+			prev.ReasoningTokens = &v
 			touched = true
 		}
 	}

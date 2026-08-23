@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/estimator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/realtimeproxy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
@@ -129,17 +127,24 @@ func (s *realtimeSession) meterResponseDone(frame []byte, now time.Time) (sever 
 	return s.settleQuota(cost.Total)
 }
 
-// buildResponseRecord assembles one response row. A FRESH UUID per row — the
-// hub insert is ON CONFLICT (id) DO NOTHING, so a reused id would be
-// silently dropped; grouping rides the server-minted TraceID instead.
+// buildResponseRecord assembles one response row. Each row gets its own
+// traffic_event id from the audit writer, so RequestID carries the upgrade
+// request's real correlation value rather than a synthetic one; grouping
+// rides the server-minted TraceID.
 func (s *realtimeSession) buildResponseRecord(usage realtimeproxy.Usage, costUsd float64, latencyMs int, now time.Time) *audit.Record {
 	rec := &audit.Record{
-		RequestID: uuid.NewString(),
-		TraceID:   s.sessionID,
-		Timestamp: now.UTC(),
-		Method:    s.rec.Method,
-		Path:      s.rec.Path,
-		SourceIP:  s.rec.SourceIP,
+		// Carried from the session record rather than re-read from a header
+		// this function does not have. Every per-exchange row belongs to the
+		// same caller as the upgrade that opened the session.
+		EndUserID:  s.rec.EndUserID,
+		SessionID:  s.rec.SessionID,
+		ClientTags: s.rec.ClientTags,
+		RequestID:  s.rec.RequestID,
+		TraceID:    s.sessionID,
+		Timestamp:  now.UTC(),
+		Method:     s.rec.Method,
+		Path:       s.rec.Path,
+		SourceIP:   s.rec.SourceIP,
 		// The exchange completed on a live provider stream.
 		StatusCode:    200,
 		IngressFormat: string(s.in.BodyFormat),

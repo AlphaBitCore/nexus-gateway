@@ -53,6 +53,10 @@ func newOpenAIBillSource(adminKey, apiKeyID, baseURL string, hc *http.Client) *o
 
 func (s *openaiBillSource) ProviderKey() string { return openaiProviderKey }
 
+// BillingHost is the host the Costs endpoint is read from — the identity a
+// Provider row's baseUrl must match to be billed against this source.
+func (s *openaiBillSource) BillingHost() string { return hostOf(s.baseURL) }
+
 type openaiCostsPage struct {
 	Data []struct {
 		StartTime int64 `json:"start_time"`
@@ -104,6 +108,17 @@ func (s *openaiBillSource) FetchDailyBill(ctx context.Context, from, to time.Tim
 			return nil, fmt.Errorf("openai costs: %w", err)
 		}
 		for _, b := range pg.Data {
+			// The bucket EXISTING is the vendor's statement about the day, so
+			// the key is created before any result is read. A day the gateway
+			// sent no traffic on comes back as a bucket with an empty results
+			// array — the vendor saying "you were charged nothing" — and
+			// dropping it because nothing summed would report that day exactly
+			// like a day the vendor has not finalized. Downstream those two
+			// are opposite: one deserves a $0 row, the other must be left for a
+			// later run. Days genuinely absent from the response stay absent.
+			if _, seen := perDay[b.StartTime]; !seen {
+				perDay[b.StartTime] = 0
+			}
 			for _, r := range b.Results {
 				if r.Amount.Currency != "" && !strings.EqualFold(r.Amount.Currency, "usd") {
 					return nil, fmt.Errorf("openai costs: non-USD currency %q", r.Amount.Currency)

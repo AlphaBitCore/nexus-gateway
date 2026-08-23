@@ -15,9 +15,11 @@ package proxy
 //
 // The endpoint ALWAYS returns 200 with the verdict — a block/redact disposition
 // is DATA in the body (action=block), not an HTTP error, matching the
-// ApplyGuardrail / Moderations category. The raw evaluated text is NEVER
-// captured to the payload store (the input is the caller's sensitive material);
-// the audit row records only the decision, tags, coverage, and reason.
+// ApplyGuardrail / Moderations category. The evaluated text and the verdict are
+// captured to the payload store under the deployment's payload_capture switch,
+// masked by the pipeline's own redaction spans on a redact or block verdict —
+// the same three answers (store / mask / who may read) every other endpoint
+// gives. See guardrail_capture.go for why this is not a privacy regression.
 
 import (
 	"bytes"
@@ -67,6 +69,7 @@ func (h *Handler) ServeGuardrail() http.HandlerFunc {
 			SourceIP:        middleware.ClientIP(r),
 			EndpointType:    string(typology.EndpointKindGuardrail),
 		}
+		stampCallerAttribution(rec, r.Header)
 
 		// Owned, panic-safe audit tail: the generative-caps slot release and the
 		// audit enqueue run on EVERY exit path (success, error, panic-unwind).
@@ -132,6 +135,9 @@ func (h *Handler) ServeGuardrail() http.HandlerFunc {
 				"could not read the request body", "Retry the request")
 			return
 		}
+		// Capture before parsing, so a body rejected as malformed is still
+		// reconstructable — the 400 says the JSON was bad, the row says how.
+		h.captureGuardrailRequest(rec, raw)
 
 		// Parse + validate (DisallowUnknownFields so a typo'd field 400s loudly).
 		var req guardrail.Request
@@ -196,12 +202,23 @@ func (h *Handler) ServeGuardrail() http.HandlerFunc {
 		coverage := guardrail.DeriveCoverage(result)
 		resp := guardrail.MapResult(result, segs, coverage, req.WantRedactedContent(), latencyMs)
 
-		// Stamp the audit row (decision / tags / coverage only — the raw evaluated
-		// text is NEVER captured). StatusCode is 200: a block/redact verdict is a
-		// successful evaluation, not an HTTP error.
+		// Stamp the audit row. StatusCode is 200: a block/redact verdict is a
+		// successful evaluation, not an HTTP error. The stamp sets RequestAction,
+		// which decides whether the raw text or only the masked copy may be
+		// stored — so it must run before the masked copy is attached.
 		stampGuardrailAudit(rec, result, coverage, pipelineStage)
+		h.redactGuardrailRequest(rec, &req, result)
 
-		writeGuardrailJSON(w, http.StatusOK, resp)
+		// Marshal once: the bytes the caller receives are the bytes the audit row
+		// records, so the stored verdict can never differ from the delivered one.
+		body, marshalErr := json.Marshal(resp)
+		if marshalErr != nil {
+			h.writeDetailedErr(w, rec, http.StatusInternalServerError, "GUARDRAIL_ENCODE_ERROR",
+				"failed to encode the guardrail verdict", "Retry; contact an operator if it persists")
+			return
+		}
+		h.captureGuardrailResponse(rec, body)
+		writeGuardrailJSON(w, http.StatusOK, body)
 	}
 }
 
@@ -227,9 +244,12 @@ func stampGuardrailAudit(rec *audit.Record, result *hookcore.CompliancePipelineR
 	rec.RequestAction = hookcore.ActionFromDecision(result.Decision)
 }
 
-// writeGuardrailJSON writes a JSON body with the given status.
-func writeGuardrailJSON(w http.ResponseWriter, status int, body any) {
+// writeGuardrailJSON writes an already-encoded JSON body with the given status.
+// It takes bytes rather than a value so the caller can hand the identical slice
+// to the audit row — a verdict that was delivered but recorded differently would
+// make the row unusable as evidence of what the caller was told.
+func writeGuardrailJSON(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	_, _ = w.Write(body)
 }

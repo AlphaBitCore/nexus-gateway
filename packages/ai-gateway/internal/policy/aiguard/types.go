@@ -92,6 +92,27 @@ type Metadata struct {
 	PromptTokens     int     `json:"prompt_tokens,omitempty"`
 	CompletionTokens int     `json:"completion_tokens,omitempty"`
 	CostUsd          float64 `json:"cost_usd,omitempty"`
+
+	// CacheReadTokens / CacheCreationTokens are the provider-cached share of
+	// PromptTokens, which is the TOTAL input on every adapter (see
+	// costing.Tokens). The judge prompt is a fixed template, so on a warm
+	// provider cache most of the input lands in these buckets and bills at a
+	// fraction of the input rate; CostUsd above is computed with that split.
+	// The sink writes them to traffic_event.{cache_read_tokens,
+	// cache_creation_tokens} on the classifier's own row.
+	CacheReadTokens     int `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
+
+	// ProviderID / ProviderName identify the provider that actually served
+	// this classify call, stamped by AdapterBackend from the resolved
+	// provtarget.Resolver call target (never inferred from the model id or
+	// a caller-supplied string). Empty when the backend has no provider
+	// concept (e.g. ExternalBackend, which hits an operator-owned URL, not
+	// a Nexus-configured provider). classifyImpl copies these onto
+	// TrafficEvent so the classifier's cost can be attributed to a
+	// provider dimension in the traffic_event rollup.
+	ProviderID   string `json:"provider_id,omitempty"`
+	ProviderName string `json:"provider_name,omitempty"`
 }
 
 // ErrorBody is the JSON shape of 4xx/5xx responses.

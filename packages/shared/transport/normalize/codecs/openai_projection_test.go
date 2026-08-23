@@ -160,6 +160,35 @@ func TestProject_ToolCalls_SynthID(t *testing.T) {
 	}
 }
 
+func TestProject_ToolCalls_SameNameAndArgsUseDistinctCoordinates(t *testing.T) {
+	p := payloadWithAssistant(
+		core.ContentBlock{Type: core.ContentToolUse, ToolUse: &core.ToolUse{Name: "lookup", Input: map[string]any{"q": "same"}, ThoughtSignature: "sig-a"}},
+		core.ContentBlock{Type: core.ContentToolUse, ToolUse: &core.ToolUse{Name: "lookup", Input: map[string]any{"q": "same"}, ThoughtSignature: "sig-b"}},
+	)
+	body, err := ProjectToOpenAIChatCompletion(p, ProjectionWireMetadata{Model: "gemini-2.5-pro"})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	first := gjson.GetBytes(body, "choices.0.message.tool_calls.0.id").String()
+	second := gjson.GetBytes(body, "choices.0.message.tool_calls.1.id").String()
+	if first == "" || second == "" || first == second {
+		t.Fatalf("same-name/same-args calls collided: %q, %q; body=%s", first, second, body)
+	}
+	if got := gjson.GetBytes(body, "choices.0.message.tool_calls.0.function.thought_signature").String(); got != "sig-a" {
+		t.Fatalf("first signature=%q, want sig-a; body=%s", got, body)
+	}
+	if got := gjson.GetBytes(body, "choices.0.message.tool_calls.1.function.thought_signature").String(); got != "sig-b" {
+		t.Fatalf("second signature=%q, want sig-b; body=%s", got, body)
+	}
+	body2, err := ProjectToOpenAIChatCompletion(p, ProjectionWireMetadata{Model: "gemini-2.5-pro"})
+	if err != nil {
+		t.Fatalf("project replay: %v", err)
+	}
+	if got := gjson.GetBytes(body2, "choices.0.message.tool_calls.0.id").String(); got != first {
+		t.Fatalf("replay changed first synthetic ID: %q vs %q", got, first)
+	}
+}
+
 // TestProject_EmptyAssistant covers the dry-run / refused / abstained
 // case: no assistant message in payload → empty choice with finish_reason
 // fallback.

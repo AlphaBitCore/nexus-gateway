@@ -97,8 +97,14 @@ func (j *VendorBillDriftAlertsJob) Run(ctx context.Context) error {
 
 	// Only `scoped` rows are alert-eligible; org_only / fetch_failed /
 	// priority_tier_undercount rows are display-only and filtered out here.
+	// our_vendor_spend_usd is the basis diff_usd / diff_pct are computed from, so
+	// it — not our_billed_usd — is the "ours" side the alert must quote; quoting
+	// the quota figure would print a percentage that does not follow from the two
+	// numbers beside it. our_billed_usd is still carried so the alert payload's
+	// shipped `ourBilledUsd` field keeps its original meaning.
 	rows, err := j.pool.Query(ctx, `
-		SELECT r.provider_id, r.day, r.our_billed_usd, r.vendor_reported_usd, r.diff_usd, r.diff_pct,
+		SELECT r.provider_id, r.day, r.our_billed_usd, r.our_vendor_spend_usd,
+		       r.vendor_reported_usd, r.diff_usd, r.diff_pct,
 		       COALESCE(p."displayName", p.name, r.provider_id) AS display_name
 		FROM vendor_bill_reconciliation r
 		LEFT JOIN "Provider" p ON p.id = r.provider_id
@@ -113,6 +119,7 @@ func (j *VendorBillDriftAlertsJob) Run(ctx context.Context) error {
 		providerID  string
 		day         time.Time
 		our         float64
+		spend       float64
 		vendor      float64
 		diffUSD     float64
 		diffPct     float64
@@ -121,7 +128,7 @@ func (j *VendorBillDriftAlertsJob) Run(ctx context.Context) error {
 	var candidates []driftRow
 	for rows.Next() {
 		var r driftRow
-		if err := rows.Scan(&r.providerID, &r.day, &r.our, &r.vendor, &r.diffUSD, &r.diffPct, &r.displayName); err != nil {
+		if err := rows.Scan(&r.providerID, &r.day, &r.our, &r.spend, &r.vendor, &r.diffUSD, &r.diffPct, &r.displayName); err != nil {
 			return fmt.Errorf("scan row: %w", err)
 		}
 		candidates = append(candidates, r)
@@ -133,7 +140,29 @@ func (j *VendorBillDriftAlertsJob) Run(ctx context.Context) error {
 	var errs []error
 	for _, r := range candidates {
 		targetKey := driftTargetPfx + r.providerID + ":" + r.day.Format("2006-01-02")
-		breach := math.Abs(r.diffPct) > thresholdPctFrac && math.Abs(r.diffUSD) > thresholdUsd
+		// A row carrying a difference but no recorded vendor spend is a
+		// pre-cutover row whose diff came from the old basis: the scan reaches
+		// back 7 days while the reconcile job only rewrites [today-5, today-2],
+		// so today-6 / today-7 keep their old numbers, and a day the reconcile
+		// job skipped keeps them permanently. Its diffPct does not follow from
+		// its (zero) spend, so alerting on it would print "vendor $25.00 vs ours
+		// $0.00 (28.0%)" and demand action on a number that cannot be acted on.
+		//
+		// Treated as non-breaching rather than filtered out of the scan on
+		// purpose: falling into the Resolve branch below also clears an alert
+		// already raised on the old basis, which a filter would leave firing
+		// forever. This mirrors the report's isPreCutover condition
+		// (VendorBillReconciliationPage.tsx) — the two must agree, or the UI
+		// annotates a row the alert still shouts about.
+		//
+		// An idle day — vendor 0, ours 0, diff 0 — also lands on spend == 0 and
+		// is likewise non-breaching, by both this test and its own zero diff.
+		// The report does NOT annotate it as pre-cutover (its isPreCutover is
+		// narrower: a real difference beside an absent basis), and the two
+		// still agree, because agreement is about neither party making a claim
+		// on the row, not about them computing the same predicate.
+		comparable := r.spend != 0
+		breach := comparable && math.Abs(r.diffPct) > thresholdPctFrac && math.Abs(r.diffUSD) > thresholdUsd
 		if !breach {
 			// Self-heal: a row that once breached but no longer does (e.g. a
 			// late vendor revision) gets resolved. Idempotent when not firing.
@@ -143,7 +172,7 @@ func (j *VendorBillDriftAlertsJob) Run(ctx context.Context) error {
 			continue
 		}
 		msg := fmt.Sprintf("Vendor bill drift for %s on %s: vendor $%.2f vs ours $%.2f (%.1f%%)",
-			r.displayName, r.day.Format("2006-01-02"), r.vendor, r.our, r.diffPct*100)
+			r.displayName, r.day.Format("2006-01-02"), r.vendor, r.spend, r.diffPct*100)
 		if err := j.raiser.Raise(ctx, alerting.RaiseInput{
 			RuleID:      driftRuleID,
 			TargetKey:   targetKey,
@@ -151,9 +180,12 @@ func (j *VendorBillDriftAlertsJob) Run(ctx context.Context) error {
 			Severity:    rule.DefaultSeverity,
 			Message:     msg,
 			Details: map[string]any{
-				"providerId":        r.providerID,
-				"day":               r.day.Format("2006-01-02"),
-				"ourBilledUsd":      r.our,
+				"providerId": r.providerID,
+				"day":        r.day.Format("2006-01-02"),
+				// Shipped field, unchanged meaning: the customer-quota basis.
+				"ourBilledUsd": r.our,
+				// The basis the diff below is actually computed from.
+				"ourVendorSpendUsd": r.spend,
 				"vendorReportedUsd": r.vendor,
 				"diffUsd":           r.diffUSD,
 				"diffPct":           r.diffPct,

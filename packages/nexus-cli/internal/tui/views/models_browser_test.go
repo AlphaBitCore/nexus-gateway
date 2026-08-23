@@ -53,7 +53,7 @@ func TestModels_CatalogBrowser(t *testing.T) {
 // short viewport) and the enter → detail drawer surfacing type/status.
 func TestModels_CursorScrollAndDrill(t *testing.T) {
 	var models []core.Model
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		models = append(models, core.Model{
 			Code: fmt.Sprintf("m-%d", i), Name: fmt.Sprintf("Model %d", i),
 			Type: "chat", Status: "active", Enabled: true, MaxContextTokens: 128000,
@@ -72,7 +72,7 @@ func TestModels_CursorScrollAndDrill(t *testing.T) {
 		t.Fatalf("up at the top should stay at row 0, got %d", mv.cursor)
 	}
 	// drive the cursor to the bottom; the view auto-scrolls to keep it visible.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		mv.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if mv.cursor != len(models)-1 {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/freshness"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/costing"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -174,12 +175,17 @@ func stampReasoningCost(rec *audit.Record, outPricePM float64) {
 // cost/savings fields using the Model row's four price-per-million columns
 // (input, output, cachedInputRead, cachedInputWrite) assembled by CachePricing.
 //
-// Token-bucket semantics differ by provider wire format:
-//   - Anthropic: input_tokens (→ PromptTokens) are NON-cached only; cache-read
-//     and cache-write tokens are separate billing buckets in CacheReadTokens /
-//     CacheCreationTokens.
-//   - OpenAI / Gemini: prompt_tokens (→ PromptTokens) is the TOTAL input
-//     including any cached subset; CacheReadTokens is a sub-count of PromptTokens.
+// Token-bucket semantics are uniform by the time counts reach here, even though
+// the wires differ. Anthropic reports input_tokens as the NON-cached share with
+// cache-read and cache-write as separate buckets, while OpenAI and Gemini report
+// prompt_tokens as the TOTAL input including any cached subset. The shared
+// normalizer erases that difference at codec time by summing Anthropic's three
+// buckets into PromptTokens, so on EVERY adapter PromptTokens is the total and
+// CacheReadTokens / CacheCreationTokens are sub-counts of it. An earlier version
+// of this comment claimed Anthropic's PromptTokens excluded the cache buckets,
+// contradicting the recompute below; 2,421 sampled cache-bearing Anthropic rows
+// had prompt_tokens >= cache_read + cache_creation without exception, so the
+// recompute is what is right and this comment is what was wrong.
 //
 // EstimatedCostUsd is recomputed from scratch using the Model row's four price
 // columns so the result is internally consistent: the cache cost/savings fields
@@ -194,7 +200,7 @@ func (h *Handler) computeCacheCosts(rec *audit.Record, target routingcore.Routin
 	if rec.CacheCreationTokens == 0 && rec.CacheReadTokens == 0 {
 		return
 	}
-	p := h.deps.CachePricing.LookupCachePricing(target.ModelCode)
+	p := h.deps.CachePricing.LookupCachePricing(target.ModelID)
 	if p == nil {
 		return
 	}
@@ -209,20 +215,15 @@ func (h *Handler) computeCacheCosts(rec *audit.Record, target routingcore.Routin
 	}
 	rec.CacheNetSavingsUsd = rec.CacheReadSavingsUsd - rec.CacheWriteCostUsd
 
-	// Recompute EstimatedCostUsd from scratch.
-	//
-	// PromptTokens is always "total input including cached" across every
-	// adapter (the normalizer sums input_tokens + cache_read + cache_creation
-	// into it at codec time). computeCacheCosts subtracts both cache buckets
-	// to get the uncached remainder, then bills each bucket at its own rate.
-	// Without this, cached tokens would be charged at full input price AND
-	// again at the cache rate.
-	regularInput := rec.PromptTokens - rec.CacheReadTokens - rec.CacheCreationTokens
-	if regularInput < 0 {
-		regularInput = 0
-	}
-	rec.EstimatedCostUsd = float64(regularInput)*p.InputUSDPerM/million +
-		float64(rec.CacheReadTokens)*p.CacheReadUSDPerM/million +
-		float64(rec.CacheCreationTokens)*p.CacheWriteUSDPerM/million +
-		float64(rec.CompletionTokens)*p.OutputUSDPerM/million
+	// Recompute EstimatedCostUsd from scratch through the shared formula, which
+	// subtracts both cache buckets from the total prompt count and bills each
+	// bucket at its own rate. The smart router and the AI Guard classifier price
+	// their own calls through the same function, so an internal-operations call
+	// and a customer call against the same model can no longer disagree.
+	rec.EstimatedCostUsd = p.EstimateUSD(costing.Tokens{
+		Prompt:        rec.PromptTokens,
+		Completion:    rec.CompletionTokens,
+		CacheRead:     rec.CacheReadTokens,
+		CacheCreation: rec.CacheCreationTokens,
+	})
 }

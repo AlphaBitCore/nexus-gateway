@@ -61,8 +61,11 @@ const (
 type ContentType string
 
 const (
-	ContentText       ContentType = "text"
-	ContentImageRef   ContentType = "image_ref"
+	ContentText ContentType = "text"
+	// ContentMedia covers image, audio, video and file alike — modality is
+	// a field on MediaRef, not a block type. It replaces the former
+	// "image_ref", which forced audio and documents to masquerade as images.
+	ContentMedia      ContentType = "media"
 	ContentToolUse    ContentType = "tool_use"
 	ContentToolResult ContentType = "tool_result"
 	ContentReasoning  ContentType = "reasoning"
@@ -170,19 +173,9 @@ func (m Message) MarshalJSON() ([]byte, error) {
 type ContentBlock struct {
 	Type       ContentType `json:"type"`
 	Text       string      `json:"text,omitempty"`
-	ImageRef   *BinaryRef  `json:"imageRef,omitempty"`
+	MediaRef   *MediaRef   `json:"mediaRef,omitempty"`
 	ToolUse    *ToolUse    `json:"toolUse,omitempty"`
 	ToolResult *ToolResult `json:"toolResult,omitempty"`
-}
-
-// BinaryRef references a binary blob (image, audio, file) by hash and
-// size without inlining bytes. The blob itself may live in the spill
-// store; SpillKey, when non-empty, addresses it.
-type BinaryRef struct {
-	Size        int64  `json:"size"`
-	ContentType string `json:"contentType"`
-	SHA256      string `json:"sha256"`
-	SpillKey    string `json:"spillKey,omitempty"`
 }
 
 // ToolDef declares one tool exposed to the model.
@@ -197,6 +190,9 @@ type ToolUse struct {
 	CallID string         `json:"callId,omitempty"`
 	Name   string         `json:"name"`
 	Input  map[string]any `json:"input,omitempty"`
+	// ThoughtSignature is an opaque Gemini Part-level signature preserved only
+	// beside the corresponding functionCall for exact replay.
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 }
 
 // ToolResult is the user/system response to a previous tool_use.
@@ -212,6 +208,53 @@ type SamplingParam struct {
 	TopK        *int     `json:"topK,omitempty"`
 	MaxTokens   *int     `json:"maxTokens,omitempty"`
 	Stop        []string `json:"stop,omitempty"`
+	// Reasoning is what the caller asked for about thinking-before-answering.
+	// Nil when they asked for nothing.
+	Reasoning *Reasoning `json:"reasoning,omitempty"`
+}
+
+// Reasoning records WHAT THE CALLER SAID about reasoning, in their own terms.
+//
+// The three vendors express it three ways and they are not losslessly
+// interconvertible: OpenAI takes a LEVEL (`reasoning_effort`), Anthropic takes
+// a BUDGET (`thinking.budget_tokens`), Gemini takes a budget plus a visibility
+// flag (`thinkingConfig`). Converting between them is a judgement about one
+// wire's model, which is why it belongs to that wire's codec and not here —
+// the same split provider-adapter-architecture.md §3a already applies to every
+// other cross-vendor difference in this gateway.
+//
+// So this struct never derives the field the caller did not give. Both halves
+// present is legal — the caller said one, the other stays nil — and a codec
+// that needs the missing one computes it, reports it through `x-nexus-coerced`
+// like every other field we coerce, and does not write it back here.
+//
+// The response side settled this vocabulary already: thinking blocks, thought
+// parts and reasoning items all decode to ContentReasoning, and the token
+// counts unify as Usage.ReasoningTokens. Without the request side, a caller
+// posting Anthropic-shaped `thinking` whose `auto` picks an OpenAI model loses
+// the intent entirely — each vendor's parameter reaches only its own wire.
+type Reasoning struct {
+	// Effort as the caller wrote it, when they expressed a level.
+	Effort string `json:"effort,omitempty"`
+	// BudgetTokens as the caller wrote it, when they expressed a budget.
+	BudgetTokens *int `json:"budgetTokens,omitempty"`
+	// IncludeThoughts: whether the reasoning text should come back. Only Gemini
+	// states it on the request today; nil means the caller did not say.
+	IncludeThoughts *bool `json:"includeThoughts,omitempty"`
+}
+
+// Asked reports whether the caller expressed any reasoning intent at all.
+//
+// The routing constraint reads this: "does this model support reasoning" can
+// only narrow a candidate pool for a request that ASKED to reason, and an empty
+// struct is not an ask. Callers must not test the struct for nil alone — a
+// decoder that allocates it before finding nothing to put in it would then look
+// like a request that asked.
+func (r *Reasoning) Asked() bool {
+	if r == nil {
+		return false
+	}
+	return r.Effort != "" || r.BudgetTokens != nil || r.IncludeThoughts != nil
 }
 
 // Usage carries token-count metadata.
@@ -228,6 +271,10 @@ type Usage struct {
 	// consumed the whole `max_tokens` budget the visible content is
 	// empty — surfacing the count lets audit readers explain it.
 	ReasoningTokens *int `json:"reasoningTokens,omitempty"`
+	// AudioTokens is the audio share of the counts above on audio-capable
+	// models, which price audio far above text. Without it an audio turn
+	// looks like an ordinary text turn that cost surprisingly much.
+	AudioTokens *int `json:"audioTokens,omitempty"`
 }
 
 // HTTPPayload is the non-AI HTTP representation.
@@ -239,14 +286,15 @@ type HTTPPayload struct {
 }
 
 // HTTPBodyView carries the decoded body in the form most useful for the
-// kind. Exactly one of Text / JSON / Form / SSEFrames / BinaryRef is
+// kind. Exactly one of Text / JSON / Form / SSEFrames / MediaRef is
 // typically set per HTTPBodyView; producers may set Text alongside JSON
 // to provide a pretty-printed projection for text-only consumers.
 type HTTPBodyView struct {
-	Text      string            `json:"text,omitempty"`
-	JSON      any               `json:"json,omitempty"`
-	Form      map[string]string `json:"form,omitempty"`
-	BinaryRef *BinaryRef        `json:"binaryRef,omitempty"`
+	Text string            `json:"text,omitempty"`
+	JSON any               `json:"json,omitempty"`
+	Form map[string]string `json:"form,omitempty"`
+	// MediaRef describes a whole-body binary. Its locator is "body".
+	MediaRef *MediaRef `json:"mediaRef,omitempty"`
 
 	// SSEFrames is the structured frame list for KindHTTPSSE payloads.
 	// SSETruncated is true when the producer hit its frame cap and

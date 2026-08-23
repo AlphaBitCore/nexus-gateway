@@ -28,15 +28,40 @@ func isRerankBody(body []byte) bool {
 		gjson.GetBytes(body, "documents").IsArray()
 }
 
-// extractRerankRequest emits the query followed by every string document as
-// scannable segments, in a fixed order the rewrite mirrors exactly.
+// rerankDocText reports the scannable text of one `documents[i]` element and
+// the JSON path to write a redaction back to.
+//
+// Cohere accepts both spellings — a bare string, and an object whose `text`
+// carries the document — and scores them alike. Extraction and rewrite MUST
+// agree on which elements are scannable and in what order, because a segment's
+// position is the only thing tying it back to the slot it came from; they
+// therefore share this one decision rather than each testing the shape.
+//
+// Elements with no text at all (a number, a bool, null, an object without a
+// string `text`) are not scannable and are skipped by both. Skipping them is
+// right — there is nothing to read — where skipping an object that DOES carry
+// text would forward it unscanned.
+func rerankDocText(idx int, d gjson.Result) (path, text string, ok bool) {
+	switch {
+	case d.Type == gjson.String:
+		return fmt.Sprintf("documents.%d", idx), d.Str, true
+	case d.IsObject():
+		if t := d.Get("text"); t.Type == gjson.String {
+			return fmt.Sprintf("documents.%d.text", idx), t.Str, true
+		}
+	}
+	return "", "", false
+}
+
+// extractRerankRequest emits the query followed by every document that
+// carries text, in a fixed order the rewrite mirrors exactly.
 func extractRerankRequest(body []byte) traffic.NormalizedContent {
 	docs := gjson.GetBytes(body, "documents").Array()
 	segments := make([]string, 0, 1+len(docs))
 	segments = append(segments, gjson.GetBytes(body, "query").Str)
-	for _, d := range docs {
-		if d.Type == gjson.String {
-			segments = append(segments, d.Str)
+	for i, d := range docs {
+		if _, text, ok := rerankDocText(i, d); ok {
+			segments = append(segments, text)
 		}
 	}
 	meta := map[string]string{}
@@ -47,7 +72,7 @@ func extractRerankRequest(body []byte) traffic.NormalizedContent {
 }
 
 // rewriteRerankRequest writes redacted segments back to `query` and each
-// string `documents[i]`, mirroring extractRerankRequest's iteration order
+// text-carrying `documents[i]`, mirroring extractRerankRequest's iteration order
 // (query first, then string documents in array order) so index i always maps
 // to the segment scanned from that slot. Extra/short segments are handled
 // guard-and-continue like the chat rewriter.
@@ -71,13 +96,13 @@ func rewriteRerankRequest(body []byte, content traffic.NormalizedContent) ([]byt
 
 	docs := gjson.GetBytes(out, "documents").Array()
 	for i := range docs {
-		if docs[i].Type != gjson.String {
+		p, _, ok := rerankDocText(i, docs[i])
+		if !ok {
 			continue
 		}
 		if segIdx >= len(content.Segments) {
 			break
 		}
-		p := fmt.Sprintf("documents.%d", i)
 		out, err = sjson.SetBytes(out, p, content.Segments[segIdx])
 		if err != nil {
 			return nil, written, fmt.Errorf("cohere: rewrite %s: %w", p, err)

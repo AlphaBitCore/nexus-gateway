@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -59,16 +60,17 @@ func (c *freezeConn) Read(b []byte) (int, error) {
 		// never answers — but keep polling the socket with a short deadline so that when
 		// the peer finally closes the connection this goroutine unblocks and exits
 		// (otherwise the test server's graceful Close would hang forever).
-		_ = c.Conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+		_ = c.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
 		if _, err := c.Conn.Read(b); err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				continue
 			}
 			return 0, err // underlying closed → unblock the serve goroutine
 		}
 		// bytes read are intentionally discarded (blackholed)
 	}
-	_ = c.Conn.SetReadDeadline(time.Time{})
+	_ = c.SetReadDeadline(time.Time{})
 	return c.Conn.Read(b)
 }
 

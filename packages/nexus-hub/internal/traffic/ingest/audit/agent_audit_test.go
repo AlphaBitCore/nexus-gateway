@@ -15,6 +15,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"time"
 )
 
 // mockProducer records Enqueue payloads and can fail after N successful calls.
@@ -363,5 +364,75 @@ func TestUploadAgentAudit_GovernedCopyOneDirectionOnly(t *testing.T) {
 	}
 	if env["normalizeVersion"] != normcore.SchemaVersion {
 		t.Errorf("normalizeVersion = %v, want %q", env["normalizeVersion"], normcore.SchemaVersion)
+	}
+}
+
+// An id the agent does not have must reach the column as NULL, not as ”.
+//
+// The consumer's fields are *string with omitempty, so a key present-but-empty
+// becomes a pointer to an empty string and the column gets ”. Three things in
+// this repo assume the opposite: the ops-metrics writers say in as many words
+// that they write NULL "so admin queries can filter WHERE trace_id IS NULL
+// cleanly"; the ai-gateway producer's message uses omitempty and yields NULL;
+// and the traffic_event trace index is PARTIAL on `WHERE trace_id IS NOT NULL`,
+// so ” rows enter an index they can never be found through.
+//
+// A column that is NULL from one producer and ” from another makes IS NULL
+// disagree by source — for two fields whose entire purpose is joining across
+// systems.
+func TestUploadAgentAudit_AbsentIdsAreOmittedNotEmptied(t *testing.T) {
+	mp := &mockProducer{}
+	h := &AgentAuditAPI{MQProducer: mp}
+
+	evs := []AgentAuditEvent{{
+		ID:         "no-ids",
+		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		TargetHost: "api.openai.com",
+		Action:     "inspect",
+	}}
+	if rec := post(t, h, mustEvents(t, evs), true, ""); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(mp.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueue, got %d", len(mp.enqueued))
+	}
+	var env map[string]any
+	if err := json.Unmarshal(mp.enqueued[0], &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	for _, k := range []string{"traceId", "externalRequestId"} {
+		if v, present := env[k]; present {
+			t.Errorf("%s is present as %#v; an id the agent does not have must be omitted so the column is NULL", k, v)
+		}
+	}
+}
+
+// The converse: an id the agent DOES have still rides the envelope, and the two
+// stay apart. Deliberately distinguishable values — they are adjacent keys
+// carrying similar-looking ids.
+func TestUploadAgentAudit_PresentIdsRideTheEnvelope(t *testing.T) {
+	mp := &mockProducer{}
+	h := &AgentAuditAPI{MQProducer: mp}
+
+	evs := []AgentAuditEvent{{
+		ID:                "with-ids",
+		Timestamp:         time.Now().UTC().Format(time.RFC3339Nano),
+		TargetHost:        "api.openai.com",
+		Action:            "inspect",
+		TraceID:           "trace-from-nexus",
+		ExternalRequestID: "caller-own-id",
+	}}
+	if rec := post(t, h, mustEvents(t, evs), true, ""); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var env map[string]any
+	if err := json.Unmarshal(mp.enqueued[0], &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env["traceId"] != "trace-from-nexus" {
+		t.Errorf("traceId = %#v, want trace-from-nexus", env["traceId"])
+	}
+	if env["externalRequestId"] != "caller-own-id" {
+		t.Errorf("externalRequestId = %#v, want caller-own-id", env["externalRequestId"])
 	}
 }

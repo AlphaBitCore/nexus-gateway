@@ -65,7 +65,8 @@ type SubmitRequest struct {
 	// Size is the requested frame size ("" when absent; provider validates).
 	Size string
 	// InputRef is the input_reference fingerprint (zero value when the
-	// optional file part is absent). Reference only, never the bytes.
+	// optional file part is absent). Recorded whether or not the bytes are
+	// captured, so an event proves WHICH reference image was submitted.
 	InputRef ArtifactRef
 	// HasInputRef reports whether a file part was present.
 	HasInputRef bool
@@ -251,4 +252,19 @@ func (s *SubmitRequest) ArtifactRefsJSON() string {
 	}
 	return fmt.Sprintf(`[{"sha256":%q,"sizeBytes":%d,"mime":%q}]`,
 		s.InputRef.Sha256, s.InputRef.SizeBytes, s.InputRef.Mime)
+}
+
+// InputBytes returns the input_reference bytes for capture, with the mime the
+// fingerprint recorded, or nil when no file part was sent.
+//
+// Handed over rather than copied. The parser has already materialised these
+// bytes and ReEmit only reads them, so capture costs a slice assignment on
+// the request path instead of a copy proportional to the upload — the same
+// reason the STT audio path hands over rather than copies. The caller must
+// treat the slice as read-only: capture must never change what is forwarded.
+func (r *SubmitRequest) InputBytes() ([]byte, string) {
+	if r.file == nil {
+		return nil, ""
+	}
+	return r.file.Bytes, r.InputRef.Mime
 }

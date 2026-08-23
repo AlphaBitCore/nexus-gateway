@@ -26,6 +26,11 @@ type streamChoiceState struct {
 	finishReason string
 	toolCalls    map[int]*openAIToolCall
 	toolOrder    []int
+	// audioSeen records that audio bytes arrived across the stream. They
+	// span frame boundaries, so no single-span locator addresses them and
+	// the element is reported as present-but-unreachable rather than as a
+	// download the endpoint could not serve.
+	audioSeen bool
 }
 
 func (n *OpenAIChatNormalizer) normalizeStreamResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
@@ -140,6 +145,20 @@ func (n *OpenAIChatNormalizer) normalizeStreamResponse(raw []byte, meta core.Met
 					st.reasoning.WriteString(r)
 					sawAny = true
 				}
+				// Streamed audio out. The transcript is text and stitches
+				// like any other delta; the bytes arrive across frames, so
+				// per the SSE contract they are reported as present without
+				// a locator rather than as a download that cannot be served.
+				if ch.Delta.Audio != nil {
+					if ch.Delta.Audio.Transcript != "" {
+						st.text.WriteString(ch.Delta.Audio.Transcript)
+						sawAny = true
+					}
+					if ch.Delta.Audio.Data != "" {
+						st.audioSeen = true
+						sawAny = true
+					}
+				}
 				for pos, tc := range ch.Delta.ToolCalls {
 					idx := indexOfToolCall(tc, pos)
 					existing, ok := st.toolCalls[idx]
@@ -201,6 +220,16 @@ func (n *OpenAIChatNormalizer) normalizeStreamResponse(raw []byte, meta core.Met
 		}
 		if t := st.text.String(); t != "" {
 			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentText, Text: t})
+		}
+		if st.audioSeen {
+			// Not "fingerprint": nothing is hashed, so promising a
+			// digest-only record would be untrue. The honest statement is
+			// that audio was present and its bytes are not addressable.
+			msg.Content = append(msg.Content, mediaBlock(&core.MediaRef{
+				Modality: core.ModalityAudio,
+				Source:   core.MediaAbsent,
+				Cause:    "streamed-across-frames",
+			}))
 		}
 		for _, tidx := range st.toolOrder {
 			// toolOrder indices are appended exactly when the map entry

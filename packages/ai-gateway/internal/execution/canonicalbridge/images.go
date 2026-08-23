@@ -15,6 +15,7 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
+	"net/http"
 )
 
 // imagesMaxN bounds the canonical `n` on the cross-format image lane
@@ -142,4 +143,48 @@ func (b *Bridge) IngressImagesToWire(ingress, target provcore.Format, body []byt
 		return nil, nil, err
 	}
 	return encRes.Body, encRes.Rewrites, nil
+}
+
+// ValidateImagesIngressGuards applies the SPEND guard to an images body that
+// stays on its own wire, so the same-format leg is bounded by the same rule as
+// the cross-format one.
+//
+// The two ceilings on this endpoint answer different questions, and only one of
+// them belongs to us. What a given upstream will accept is a wire fact the
+// codec owns — Gemini refuses more than one candidate, and its codec says so
+// with the probe that established it. How much spend one request may multiply
+// is our decision, and it was applied on the cross-format lane only: a native
+// OpenAI image request with n up to 10 reached the upstream ungated, and
+// measurement confirms it — n=11 came back as OpenAI's own "Expected a value
+// <= 10", which is the upstream refusing, not us. A billing guard that covers
+// one of two legs is not a billing guard.
+//
+// Deliberately NOT enforced here: the canonical shape rules. Those exist so the
+// cross-format codec has something it can translate; on a passthrough leg the
+// provider's own opinion of its body is the one that counts, and rejecting a
+// body it would have served is a regression rather than a guard. This mirrors
+// the rerank passthrough guard, which draws the same line.
+func (b *Bridge) ValidateImagesIngressGuards(ingress provcore.Format, body []byte, ct provcore.CallTarget) error {
+	if !openAILike(ingress) {
+		return fmt.Errorf("canonicalbridge: ingress format %q has no images canonical (the image ingress is OpenAI-shaped only)", ingress)
+	}
+	n := gjson.GetBytes(body, "n")
+	if !n.Exists() {
+		return nil
+	}
+	f := n.Float()
+	v := int(f)
+	if n.Type != gjson.Number || float64(v) != f || v < 1 || v > imagesMaxN {
+		// Typed, so writeCodecErr keeps the code instead of flattening this to
+		// CODEC_ENCODE_FAILED with a "canonicalize ingress body:" prefix — on a
+		// leg where no canonicalization happens. Nothing failed to encode; a
+		// ceiling was enforced, and the row's error_code should say so.
+		return &provcore.ProviderError{
+			Status: http.StatusBadRequest,
+			Code:   provcore.CodeSpendLimitExceeded,
+			Message: fmt.Sprintf("field %q must be an integer in [1, %d] for the resolved image provider %s (%s)",
+				"n", imagesMaxN, ct.Format, ct.ProviderModelID),
+		}
+	}
+	return nil
 }

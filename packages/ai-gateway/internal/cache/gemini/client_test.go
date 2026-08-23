@@ -59,17 +59,63 @@ func (c *captureResolver) Resolve(_ context.Context, _, _ string) (string, strin
 	return c.apiKey, c.baseURL, nil
 }
 
-// waitForCalls polls until n calls happened or timeout. Used to await async goroutines.
-func (c *captureResolver) waitForCalls(t *testing.T, n int64, d time.Duration) {
+// asyncBackstop bounds a wait that should end on a signal, so it only ever
+// fires for a goroutine that is genuinely stuck rather than merely slow. It is
+// deliberately generous: a budget tight enough to catch "late" is a budget that
+// fails under load, and spreading that guess across every call site turns one
+// scheduling problem into ten flaky tests.
+const asyncBackstop = 30 * time.Second
+
+// waitForKey blocks until the async create has written rk, and FAILS if it never
+// does. The distinction matters: every call site here polled a 2s wall clock and
+// then carried on regardless of whether the key had appeared, which turns "the
+// write was slow" into "the write did not happen" without saying so.
+//
+// TestAsyncCreate_CollapseReleasesKeyAfterCompletion showed what that costs. It
+// deleted the key immediately after the poll to simulate a Gemini-side eviction.
+// When the create took longer than 2s — routine under -race on a shared runner —
+// the delete ran BEFORE the write, the goroutine then wrote the key, the next
+// Inject found a cache hit, Resolve was never called again, and the wait for the
+// second call hung until its own deadline. It read as a timing flake in the
+// outer wait. It was this race.
+func waitForKey(t *testing.T, rdb redis.UniversalClient, key string) {
 	t.Helper()
-	deadline := time.Now().Add(d)
+	deadline := time.Now().Add(asyncBackstop)
 	for time.Now().Before(deadline) {
-		if c.calls.Load() >= n {
+		if _, err := rdb.Get(context.Background(), key).Result(); err == nil {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("waitForCalls: wanted %d, got %d after %s", n, c.calls.Load(), d)
+	t.Fatalf("the async create never wrote %s within %s — proceeding would delete a key "+
+		"that is about to be written, which turns the next lookup into a false cache hit",
+		key, asyncBackstop)
+}
+
+// waitForCalls blocks until n calls have happened.
+//
+// It waits on the signal Resolve already fires. That channel existed and had no
+// reader: every call site polled a 2s wall clock instead, which is a guess about
+// scheduling rather than a statement about the code. Under -race, which runs
+// 5-20x slower, on a shared CI runner, that guess failed —
+// TestAsyncCreate_CollapseReleasesKeyAfterCompletion reported "wanted 2, got 1
+// after 2s" in CI while the same package passed locally in 43s of -race. The
+// assertion is that the work COMPLETES, not that it completes within an
+// arbitrary interval.
+//
+// A dropped signal costs nothing: `done` is best-effort and buffered, so it only
+// drops when sends are already pending, and the count is re-read on every wake.
+func (c *captureResolver) waitForCalls(t *testing.T, n int64) {
+	t.Helper()
+	backstop := time.After(asyncBackstop)
+	for c.calls.Load() < n {
+		select {
+		case <-c.done:
+		case <-backstop:
+			t.Fatalf("waitForCalls: wanted %d, got %d after %s — the goroutine never ran, "+
+				"which is a hang rather than a slow machine", n, c.calls.Load(), asyncBackstop)
+		}
+	}
 }
 
 // config.go — exercise zero-value fallback branches
@@ -467,7 +513,7 @@ func TestAsyncCreate_FullPath_WritesToRedis(t *testing.T) {
 	if _, _, err := m.Inject(context.Background(), "p1", "gemini-2.0-flash", body); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-	res.waitForCalls(t, 1, 2*time.Second)
+	res.waitForCalls(t, 1)
 	// Wait briefly for the Redis SET to land after the HTTP call.
 	rk := contentHash("p1", "gemini-2.0-flash", `{"parts":[{"text":"some big system"}]}`, "", "")
 	deadline := time.Now().Add(2 * time.Second)
@@ -598,14 +644,9 @@ func TestAsyncCreate_CollapseReleasesKeyAfterCompletion(t *testing.T) {
 		if _, _, err := m.Inject(context.Background(), "p1", "gemini-2.0-flash", body); err != nil {
 			t.Fatalf("Inject %d: %v", i, err)
 		}
-		res.waitForCalls(t, int64(i), 2*time.Second)
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := rdb.Get(context.Background(), rk).Result(); err == nil {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
+		res.waitForCalls(t, int64(i))
+		// The eviction below must not race the write it is evicting.
+		waitForKey(t, rdb, rk)
 		// Simulate a Gemini-side eviction so the next request misses again.
 		rdb.Del(context.Background(), rk)
 	}
@@ -631,7 +672,7 @@ func TestAsyncCreate_TTLFloorAt60s(t *testing.T) {
 	if _, _, err := m.Inject(context.Background(), "p", "m", body); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-	res.waitForCalls(t, 1, 2*time.Second)
+	res.waitForCalls(t, 1)
 	// Wait for the SET.
 	rk := contentHash("p", "m", `{"parts":[{"text":"x"}]}`, "", "")
 	deadline := time.Now().Add(2 * time.Second)
@@ -656,20 +697,29 @@ func TestAsyncCreate_ResolverError_RecordsFailure(t *testing.T) {
 	res := newCaptureResolver("", "", errors.New("resolve boom"))
 	cfg := Config{Enabled: true, MinSystemChars: 1, CircuitBreakerThreshold: 2, CircuitBreakerOpenSecs: 60}
 	m := New(rdb, res, NewMetrics(prometheus.NewRegistry()), cfg, nil)
-	body := []byte(`{"systemInstruction":{"parts":[{"text":"x"}]},"contents":[]}`)
-	if _, _, err := m.Inject(context.Background(), "p", "m", body); err != nil {
+	// Two DISTINCT bodies on purpose. asyncCreate runs inside a singleflight
+	// group keyed by the content hash, and waitForCalls returns as soon as
+	// Resolve is CALLED — the attempt is still in flight, still holding the
+	// group key. A second Inject with the same body arriving in that window is
+	// deduplicated, never calls Resolve, and the wait for a second call hangs
+	// until its deadline. That is what CI kept reporting. The subject here is
+	// the circuit-breaker threshold, not key identity, so two failing attempts
+	// on two keys exercise it exactly as well and cannot collapse.
+	body1 := []byte(`{"systemInstruction":{"parts":[{"text":"x"}]},"contents":[]}`)
+	body2 := []byte(`{"systemInstruction":{"parts":[{"text":"y"}]},"contents":[]}`)
+	if _, _, err := m.Inject(context.Background(), "p", "m", body1); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-	res.waitForCalls(t, 1, 2*time.Second)
+	res.waitForCalls(t, 1)
 	// One failure — not yet open.
 	if m.cbOpenUntil.Load() != 0 {
 		t.Errorf("CB should not be open after 1 failure, threshold=2")
 	}
 	// Second call — should open the CB.
-	if _, _, err := m.Inject(context.Background(), "p", "m", body); err != nil {
+	if _, _, err := m.Inject(context.Background(), "p", "m", body2); err != nil {
 		t.Fatalf("Inject 2: %v", err)
 	}
-	res.waitForCalls(t, 2, 2*time.Second)
+	res.waitForCalls(t, 2)
 	// Allow recordFailure to land.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -697,7 +747,7 @@ func TestAsyncCreate_APIError_RecordsFailure(t *testing.T) {
 	if _, _, err := m.Inject(context.Background(), "p", "m", body); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-	res.waitForCalls(t, 1, 2*time.Second)
+	res.waitForCalls(t, 1)
 	// give the goroutine a beat to record the failure
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -724,7 +774,7 @@ func TestAsyncCreate_DefaultBaseURL_WhenResolverReturnsEmpty(t *testing.T) {
 	if _, _, err := m.Inject(context.Background(), "p", "gemini-2.0-flash", body); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-	res.waitForCalls(t, 1, 2*time.Second)
+	res.waitForCalls(t, 1)
 	// The HTTP call will fail (network or DNS) and record a failure.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -763,36 +813,13 @@ func TestAsyncCreate_CircuitOpen_Skips(t *testing.T) {
 	}
 }
 
-// manager.go — rewriteBody error path
-
-func TestRewriteBody_RemovesSystemInstructionAndSetsCachedContent(t *testing.T) {
-	body := []byte(`{"systemInstruction":{"parts":[{"text":"x"}]},"contents":[{"role":"user","parts":[{"text":"q"}]}]}`)
-	out, err := rewriteBody(body, "cachedContents/abc")
-	if err != nil {
-		t.Fatalf("rewriteBody: %v", err)
-	}
-	// systemInstruction must be removed.
-	var parsed map[string]any
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		t.Fatalf("output not valid JSON: %v\n%s", err, out)
-	}
-	if _, ok := parsed["systemInstruction"]; ok {
-		t.Errorf("systemInstruction should have been removed: %s", out)
-	}
-	if got, _ := parsed["cachedContent"].(string); got != "cachedContents/abc" {
-		t.Errorf("cachedContent = %q, want cachedContents/abc; out=%s", got, out)
-	}
-	if _, ok := parsed["contents"]; !ok {
-		t.Errorf("contents must be preserved: %s", out)
-	}
-}
-
-// Note: the rewrite-failure-on-hit branch in Inject (manager.go ~L128-132) is
-// defensive — gjson can read `systemInstruction` from inputs that sjson then
-// rejects only when the broader body is malformed in ways gjson tolerates but
-// sjson does not. We cover the rewriteBody error path directly above via
-// TestRewriteBody_DeleteError; the Inject-side wrapper that logs and falls
-// through is acknowledged unreachable from any valid Gemini wire body.
+// The body-rewrite wire shape (strip systemInstruction/tools/toolConfig, set
+// cachedContent) now lives in the Gemini codec as InjectCachedContentRef and is
+// tested there (specs/gemini/codec/cachedcontent_request_test.go). The
+// rewrite-failure-on-hit branch in Inject is defensive — gjson can read
+// `systemInstruction` from inputs that sjson then rejects only when the broader
+// body is malformed in ways gjson tolerates but sjson does not — and is
+// acknowledged unreachable from any valid Gemini wire body.
 
 // manager.go — New nil-handling
 

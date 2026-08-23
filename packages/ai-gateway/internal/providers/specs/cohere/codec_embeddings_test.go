@@ -128,16 +128,25 @@ func TestCohereCodec_EncodeRequest_embeddings_multilingualV3_defaultsInputType(t
 	}
 }
 
-func TestCohereCodec_EncodeRequest_embeddings_base64EncodingFormat_returns400(t *testing.T) {
-	// base64 encoding_format has no Cohere wire equivalent.
+func TestCohereCodec_EncodeRequest_embeddings_base64AsksWireForFloat(t *testing.T) {
+	// base64 has no Cohere wire equivalent, so the wire asks for float and the
+	// ingress response layer re-encodes to base64 for the caller
+	// (honorEmbeddingEncodingFormat). This used to be a hard 400, which broke a
+	// stock `embeddings.create(model="embed-english-v3.0", input=…)` outright:
+	// the OpenAI SDKs send encoding_format="base64" IMPLICITLY when the caller
+	// omits it (AP-3, observed on staging 2026-07-27).
 	c := newCohereCodec()
 	body := []byte(`{"model":"embed-english-light-v2.0","input":"hello","encoding_format":"base64"}`)
-	_, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{})
-	if err == nil {
-		t.Fatal("expected error for base64 encoding_format")
+	encRes, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{})
+	if err != nil {
+		t.Fatalf("base64 must no longer be rejected: %v", err)
 	}
-	if !strings.Contains(err.Error(), "base64") {
-		t.Errorf("error should mention base64: %v", err)
+	types := gjson.GetBytes(encRes.Body, "embedding_types").Array()
+	if len(types) != 1 || types[0].Str != "float" {
+		t.Errorf("embedding_types = %v, want [float]; wire=%s", types, encRes.Body)
+	}
+	if gjson.GetBytes(encRes.Body, "encoding_format").Exists() {
+		t.Errorf("encoding_format must not reach the Cohere wire: %s", encRes.Body)
 	}
 }
 
@@ -408,14 +417,18 @@ func TestCohereCodec_DecodeResponse_embeddings_indexPreserved(t *testing.T) {
 	}
 }
 
-// Fix #9: returned_embedding_type metadata stamping
+// Multi-type embedding-object selection.
+//
+// Cohere may answer with an object keyed by embedding type instead of a flat
+// array. Which type the codec picks is observable in the vectors that land in
+// data[] — that is the assertion, rather than a metadata label describing the
+// choice. The canonical body carries no record of the choice: the gateway's
+// nexus namespace is an internal carrier that a codec must not put into a
+// response body, because the OpenAI-wire egress is the identity and would hand
+// it straight to the caller.
 
-// TestCohereEmbed_MultiType_StampsReturnedType verifies that when Cohere returns
-// a multi-type embeddings object (float + int8 keys), the canonical response
-// carries nexus.ext.cohere.returned_embedding_type="float" (the preferred type).
-// The field is audit/metadata only and must NOT appear in the data[] or usage
-// objects of the canonical body.
-func TestCohereEmbed_MultiType_StampsReturnedType(t *testing.T) {
+// TestCohereEmbed_MultiType_PrefersFloat: float and int8 both present, float wins.
+func TestCohereEmbed_MultiType_PrefersFloat(t *testing.T) {
 	c := newCohereCodec()
 	body := []byte(`{
 		"embeddings":{
@@ -428,29 +441,22 @@ func TestCohereEmbed_MultiType_StampsReturnedType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
-	typ := gjson.GetBytes(decRes.CanonicalBody, "nexus.ext.cohere.returned_embedding_type")
-	if !typ.Exists() {
-		t.Fatalf("nexus.ext.cohere.returned_embedding_type missing from canonical: %s", decRes.CanonicalBody)
-	}
-	if typ.Str != "float" {
-		t.Errorf("returned_embedding_type = %q, want float", typ.Str)
-	}
-	// Verify it does NOT pollute the data[].embedding entries (data[] must still
-	// carry float vectors from the float key, not the metadata string).
 	data := gjson.GetBytes(decRes.CanonicalBody, "data")
 	if !data.IsArray() || len(data.Array()) != 2 {
 		t.Fatalf("data must be 2-element array: %s", decRes.CanonicalBody)
 	}
-	emb0 := data.Array()[0].Get("embedding.0")
-	if emb0.Float() != 0.1 {
-		t.Errorf("float embedding should be preferred: got %f, want 0.1", emb0.Float())
+	if got := data.Array()[0].Get("embedding.0").Float(); got != 0.1 {
+		t.Errorf("float embedding should be preferred: data[0].embedding[0] = %v, want 0.1", got)
 	}
+	if got := data.Array()[1].Get("embedding.0").Float(); got != 0.3 {
+		t.Errorf("second row came from the wrong type: data[1].embedding[0] = %v, want 0.3", got)
+	}
+	assertNoNexusNamespace(t, decRes.CanonicalBody)
 }
 
-// TestCohereEmbed_MultiType_FirstKeyFallback_StampsReturnedType verifies that
-// when the multi-type object has no "float" key, the first available key is
-// selected and its name is stamped as returned_embedding_type.
-func TestCohereEmbed_MultiType_FirstKeyFallback_StampsReturnedType(t *testing.T) {
+// TestCohereEmbed_MultiType_FirstKeyFallback: no float key, the first array-valued
+// key is used.
+func TestCohereEmbed_MultiType_FirstKeyFallback(t *testing.T) {
 	c := newCohereCodec()
 	body := []byte(`{
 		"embeddings":{
@@ -462,19 +468,31 @@ func TestCohereEmbed_MultiType_FirstKeyFallback_StampsReturnedType(t *testing.T)
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
-	typ := gjson.GetBytes(decRes.CanonicalBody, "nexus.ext.cohere.returned_embedding_type")
-	if !typ.Exists() {
-		t.Fatalf("nexus.ext.cohere.returned_embedding_type missing from canonical: %s", decRes.CanonicalBody)
+	data := gjson.GetBytes(decRes.CanonicalBody, "data")
+	if !data.IsArray() || len(data.Array()) != 2 {
+		t.Fatalf("data must be 2-element array: %s", decRes.CanonicalBody)
 	}
-	if typ.Str != "int8" {
-		t.Errorf("returned_embedding_type = %q, want int8", typ.Str)
+	if got := data.Array()[0].Get("embedding.0").Float(); got != 10 {
+		t.Errorf("int8 rows should be used when float is absent: data[0].embedding[0] = %v, want 10", got)
+	}
+	assertNoNexusNamespace(t, decRes.CanonicalBody)
+}
+
+// assertNoNexusNamespace fails when a decoded canonical response carries the
+// gateway's internal namespace. A response body reaches an OpenAI-wire caller
+// through an identity egress, so anything a codec writes here is something the
+// caller receives.
+func assertNoNexusNamespace(t *testing.T, canonical []byte) {
+	t.Helper()
+	if gjson.GetBytes(canonical, "nexus").Exists() {
+		t.Errorf("decoded canonical carries the internal nexus namespace, which an "+
+			"OpenAI-wire caller would receive verbatim: %s", canonical)
 	}
 }
 
-// TestCohereEmbed_FlatArray_NoReturnedTypeField verifies that a flat embeddings
-// array (Case 1 — single type) does NOT stamp returned_embedding_type because
-// the type is not ambiguous in the flat-array shape.
-func TestCohereEmbed_FlatArray_NoReturnedTypeField(t *testing.T) {
+// TestCohereEmbed_FlatArray is the unambiguous shape: a flat array of vectors,
+// no type keys to choose between.
+func TestCohereEmbed_FlatArray(t *testing.T) {
 	c := newCohereCodec()
 	body := []byte(`{
 		"embeddings":[[0.1,0.2],[0.3,0.4]],
@@ -484,10 +502,14 @@ func TestCohereEmbed_FlatArray_NoReturnedTypeField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
-	typ := gjson.GetBytes(decRes.CanonicalBody, "nexus.ext.cohere.returned_embedding_type")
-	if typ.Exists() {
-		t.Errorf("returned_embedding_type must NOT be present for flat-array responses, got %q", typ.Str)
+	data := gjson.GetBytes(decRes.CanonicalBody, "data")
+	if !data.IsArray() || len(data.Array()) != 2 {
+		t.Fatalf("data must be 2-element array: %s", decRes.CanonicalBody)
 	}
+	if got := data.Array()[1].Get("embedding.1").Float(); got != 0.4 {
+		t.Errorf("data[1].embedding[1] = %v, want 0.4", got)
+	}
+	assertNoNexusNamespace(t, decRes.CanonicalBody)
 }
 
 func TestCohereSpec_RequestShapesContainsEmbeddings(t *testing.T) {
@@ -501,4 +523,32 @@ func TestCohereSpec_RequestShapesContainsEmbeddings(t *testing.T) {
 	if !has {
 		t.Errorf("RequestShapes must contain 'embeddings', got %v", spec.RequestShapes)
 	}
+}
+
+// The fallback must SKIP a non-array member and keep looking. With a single
+// key the loop matches on its first step and never exercises "keep going",
+// which is the branch that decides whether a response whose first member is
+// metadata rather than vectors is read correctly.
+func TestCohereEmbed_MultiType_SkipsANonArrayMemberBeforeFindingTheVectors(t *testing.T) {
+	c := newCohereCodec()
+	body := []byte(`{
+		"embeddings":{
+			"note":"vectors follow",
+			"int8":[[10,20],[30,40]]
+		},
+		"meta":{"billed_units":{"input_tokens":3}}
+	}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	data := gjson.GetBytes(decRes.CanonicalBody, "data")
+	if !data.IsArray() || len(data.Array()) != 2 {
+		t.Fatalf("data must be 2-element array — the non-array member was treated as the "+
+			"vectors instead of being skipped: %s", decRes.CanonicalBody)
+	}
+	if got := data.Array()[0].Get("embedding.0").Float(); got != 10 {
+		t.Errorf("data[0].embedding[0] = %v, want 10", got)
+	}
+	assertNoNexusNamespace(t, decRes.CanonicalBody)
 }

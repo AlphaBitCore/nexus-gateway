@@ -97,14 +97,13 @@ func NewQueue(dbPath string, encryptionKey []byte) (*Queue, error) {
 		}
 	}
 
-	// Pre-GA + greenfield (CLAUDE.md "no data-migration code for dev-phase
-	// records") — the agent's local SQLite queue is rebuilt from scratch on
-	// every install; old "tolerant ALTER TABLE ADD COLUMN" chains were a
-	// migration tax we no longer pay. The full schema lives in one CREATE
-	// TABLE; new columns ship by editing this literal, not by appending a
-	// new ALTER line. Existing dev DBs that predate a column will pick it
-	// up via fresh install — agents are local-only state and we recreate
-	// the SQLite file when needed.
+	// The full schema lives in this one CREATE TABLE, and a new column is
+	// added by editing the literal. It is ALSO appended to the tolerant
+	// ALTER list further down, which is what upgrades a SQLite file that
+	// already exists: CREATE TABLE IF NOT EXISTS does not add columns to an
+	// existing table, so without the ALTER an agent that has been running
+	// would keep reading a table missing the column and fail every scan.
+	// Both are required; neither is redundant.
 	if _, err := db.ExecContext(context.Background(), `
 		CREATE TABLE IF NOT EXISTS audit_events (
 			id TEXT PRIMARY KEY,
@@ -140,6 +139,11 @@ func NewQueue(dbPath string, encryptionKey []byte) (*Queue, error) {
 			-- agent.audit_events trace_id stayed empty and the wire
 			-- envelope shipped traceId='' → cp-ui Detail showed empty.
 			trace_id TEXT,
+			-- The CALLER's own request id (x-request-id), read off the
+			-- intercepted request by tlsbump. Adjacent to trace_id and
+			-- easily confused with it: that one is ours and groups a unit
+			-- of work, this one is theirs and is never rewritten.
+			external_request_id TEXT,
 			provider_name TEXT,
 			model_name TEXT,
 			api_key_class TEXT,
@@ -321,6 +325,9 @@ func NewQueue(dbPath string, encryptionKey []byte) (*Queue, error) {
 		`ALTER TABLE audit_events ADD COLUMN normalized_response TEXT`,
 		// Cross-service correlation id threaded from agent → ai-gateway.
 		`ALTER TABLE audit_events ADD COLUMN trace_id TEXT`,
+		// The caller's own request id, so an external system can join agent
+		// rows to its own logs the way it already can for gateway rows.
+		`ALTER TABLE audit_events ADD COLUMN external_request_id TEXT`,
 		// Out-of-band spill refs (JSON audit.SpillRef) for oversize bodies.
 		`ALTER TABLE audit_events ADD COLUMN request_spill_ref TEXT`,
 		`ALTER TABLE audit_events ADD COLUMN response_spill_ref TEXT`,
@@ -462,9 +469,9 @@ func (q *Queue) Record(e event.Event) error {
 		 upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 		 latency_breakdown, hooks_pipeline,
 		 domain_rule_id, path_action,
-		 trace_id,
+		 trace_id, external_request_id,
 		 synced)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		e.ID, e.Timestamp.UTC().Format(time.RFC3339Nano),
 		e.SourceProcess, e.OSUser, e.TargetHost, e.DestIP, e.DestPort,
 		nullableString(e.Method), nullableString(e.Path), nullableStatusCode(e.StatusCode),
@@ -481,8 +488,10 @@ func (q *Queue) Record(e event.Event) error {
 		nullableInt(e.RequestHooksMs), nullableInt(e.ResponseHooksMs),
 		encodeBreakdown(e.LatencyBreakdown), nullableJSONString(e.HooksPipeline),
 		nullableString(e.DomainRuleID), nullableString(e.PathAction),
-		// Cross-service correlation id.
-		nullableString(e.TraceID),
+		// Cross-service correlation id, then the caller's own id. Bound by
+		// POSITION — these two are adjacent and interchangeable-looking, so a
+		// misplaced one swaps them silently.
+		nullableString(e.TraceID), nullableString(e.ExternalRequestID),
 	)
 	return err
 }
@@ -525,9 +534,9 @@ func (q *Queue) RecordBatch(events []event.Event) error {
 		 upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 		 latency_breakdown, hooks_pipeline,
 		 domain_rule_id, path_action,
-		 trace_id,
+		 trace_id, external_request_id,
 		 synced)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
 	for _, e := range events {
 		if _, err := tx.ExecContext(ctx, insertSQL,
 			e.ID, e.Timestamp.UTC().Format(time.RFC3339Nano),
@@ -546,7 +555,7 @@ func (q *Queue) RecordBatch(events []event.Event) error {
 			nullableInt(e.RequestHooksMs), nullableInt(e.ResponseHooksMs),
 			encodeBreakdown(e.LatencyBreakdown), nullableJSONString(e.HooksPipeline),
 			nullableString(e.DomainRuleID), nullableString(e.PathAction),
-			nullableString(e.TraceID),
+			nullableString(e.TraceID), nullableString(e.ExternalRequestID),
 		); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("batch insert event %s: %w", e.ID, err)
@@ -691,7 +700,7 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 		       normalized_request, normalized_response,
 		       request_redaction_spans, response_redaction_spans,
 		       domain_rule_id, path_action,
-		       trace_id
+		       trace_id, external_request_id
 		FROM audit_events
 		WHERE synced = 0
 		ORDER BY created_at ASC
@@ -714,7 +723,7 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 		var requestSpillRef, responseSpillRef sql.NullString
 		var normalizedRequest, normalizedResponse sql.NullString
 		var requestRedactionSpans, responseRedactionSpans sql.NullString
-		var domainRuleID, pathAction, traceID, ingressFormat sql.NullString
+		var domainRuleID, pathAction, traceID, externalRequestID, ingressFormat sql.NullString
 		err := rows.Scan(&e.ID, &ts, &e.SourceProcess, &e.OSUser,
 			&e.TargetHost, &e.DestIP, &e.DestPort,
 			&method, &path, &statusCode,
@@ -728,7 +737,7 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 			&requestSpillRef, &responseSpillRef,
 			&normalizedRequest, &normalizedResponse,
 			&requestRedactionSpans, &responseRedactionSpans,
-			&domainRuleID, &pathAction, &traceID)
+			&domainRuleID, &pathAction, &traceID, &externalRequestID)
 		if err != nil {
 			return nil, err
 		}
@@ -751,6 +760,9 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 		}
 		if traceID.Valid {
 			e.TraceID = traceID.String
+		}
+		if externalRequestID.Valid {
+			e.ExternalRequestID = externalRequestID.String
 		}
 		if method.Valid {
 			e.Method = method.String
@@ -985,7 +997,7 @@ func (q *Queue) QueryEventsFiltered(f QueryEventsFilter) ([]event.Event, int, er
 	// payloads are NOT projected here (they can be large and the table never
 	// renders them). The agent UI's detail drawer fetches those on demand via
 	// EventByID. Spill refs are likewise omitted from the list.
-	query := "SELECT id, timestamp, source_process, source_user, dest_host, dest_ip, dest_port, method, path, status_code, action, policy_rule_id, bump_status, bytes_in, bytes_out, duration_ms, hook_decision, hook_reason, hook_reason_code, compliance_tags, provider_name, model_name, api_key_class, api_key_fingerprint, prompt_tokens, completion_tokens, usage_extraction_status, upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms, latency_breakdown, hooks_pipeline, domain_rule_id, path_action, trace_id FROM audit_events WHERE " + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	query := "SELECT id, timestamp, source_process, source_user, dest_host, dest_ip, dest_port, method, path, status_code, action, policy_rule_id, bump_status, bytes_in, bytes_out, duration_ms, hook_decision, hook_reason, hook_reason_code, compliance_tags, provider_name, model_name, api_key_class, api_key_fingerprint, prompt_tokens, completion_tokens, usage_extraction_status, upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms, latency_breakdown, hooks_pipeline, domain_rule_id, path_action, trace_id, external_request_id FROM audit_events WHERE " + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 	rows, err := q.db.QueryContext(context.Background(), query, args...)
 	if err != nil {
@@ -1006,7 +1018,7 @@ func (q *Queue) QueryEventsFiltered(f QueryEventsFilter) ([]event.Event, int, er
 		var latencyBreakdown, hooksPipeline sql.NullString
 		var domainRuleID, pathAction sql.NullString
 		// Cross-service correlation id.
-		var traceID sql.NullString
+		var traceID, externalRequestID sql.NullString
 		// Body + normalized columns are intentionally NOT scanned here — the
 		// list is metadata-only; the detail drawer fetches them via EventByID.
 		if err := rows.Scan(&e.ID, &ts, &e.SourceProcess, &e.OSUser,
@@ -1019,11 +1031,14 @@ func (q *Queue) QueryEventsFiltered(f QueryEventsFilter) ([]event.Event, int, er
 			&promptTokens, &completionTokens, &usageStatus,
 			&upstreamTtfb, &upstreamTotal, &requestHooks, &responseHooks,
 			&latencyBreakdown, &hooksPipeline,
-			&domainRuleID, &pathAction, &traceID); err != nil {
+			&domainRuleID, &pathAction, &traceID, &externalRequestID); err != nil {
 			return nil, 0, err
 		}
 		if traceID.Valid {
 			e.TraceID = traceID.String
+		}
+		if externalRequestID.Valid {
+			e.ExternalRequestID = externalRequestID.String
 		}
 		if method.Valid {
 			e.Method = method.String
@@ -1115,7 +1130,7 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 		       request_redaction_spans, response_redaction_spans,
 		       upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 		       latency_breakdown, hooks_pipeline,
-		       domain_rule_id, path_action, trace_id
+		       domain_rule_id, path_action, trace_id, external_request_id
 		FROM audit_events WHERE id = ?`, id)
 
 	var e event.Event
@@ -1131,7 +1146,7 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 	var requestRedactionSpans, responseRedactionSpans sql.NullString
 	var upstreamTtfb, upstreamTotal, requestHooks, responseHooks sql.NullInt64
 	var latencyBreakdown, hooksPipeline sql.NullString
-	var domainRuleID, pathAction, traceID, ingressFormat sql.NullString
+	var domainRuleID, pathAction, traceID, externalRequestID, ingressFormat sql.NullString
 	err := row.Scan(&e.ID, &ts, &e.SourceProcess, &e.OSUser,
 		&e.TargetHost, &e.DestIP, &e.DestPort,
 		&method, &path, &statusCode,
@@ -1147,7 +1162,7 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 		&requestRedactionSpans, &responseRedactionSpans,
 		&upstreamTtfb, &upstreamTotal, &requestHooks, &responseHooks,
 		&latencyBreakdown, &hooksPipeline,
-		&domainRuleID, &pathAction, &traceID)
+		&domainRuleID, &pathAction, &traceID, &externalRequestID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1176,6 +1191,9 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 	}
 	if traceID.Valid {
 		e.TraceID = traceID.String
+	}
+	if externalRequestID.Valid {
+		e.ExternalRequestID = externalRequestID.String
 	}
 	if method.Valid {
 		e.Method = method.String

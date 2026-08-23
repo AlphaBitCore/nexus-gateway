@@ -90,7 +90,7 @@ func splitLines(b []byte) [][]byte {
 
 func newFrameTestRecord(id string, bodyKB int) *Record {
 	body := bytes.Repeat([]byte(`{"k":"vvvvvvvvvvvvvvvv"}`), bodyKB*1024/24)
-	return &Record{RequestID: id, Timestamp: time.Unix(1700000000, 0).UTC(), RequestBody: body, StatusCode: 200, Path: "/v1/x"}
+	return &Record{RequestID: id, TraceID: id, Timestamp: time.Unix(1700000000, 0).UTC(), RequestBody: body, StatusCode: 200, Path: "/v1/x"}
 }
 
 // With framing enabled, many records collapse into ONE publish per frame (the
@@ -180,7 +180,7 @@ func TestFlushBatchAsync_BufferHoldRoundTripsAcrossReuse(t *testing.T) {
 	w := NewWriter(prod, "q", nil, slog.Default()) // framing OFF → non-framed buffer-hold path
 	mk := func(id, model string) *Record {
 		return &Record{
-			RequestID: id, Timestamp: time.Unix(1700000000, 0).UTC(),
+			RequestID: id, TraceID: id, Timestamp: time.Unix(1700000000, 0).UTC(),
 			RequestBody: []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hi"}]}`),
 			ModelName:   model, StatusCode: 200, Path: "/v1/x",
 		}
@@ -203,7 +203,7 @@ func TestFlushBatchAsync_BufferHoldRoundTripsAcrossReuse(t *testing.T) {
 					if err := json.Unmarshal(line, &msg); err != nil {
 						t.Fatalf("round %d: published bytes do not decode: %v\nbytes=%s", round, err, line)
 					}
-					seen[msg.ID] = msg.ModelName
+					seen[msg.TraceID] = msg.ModelName
 				}
 			}
 		}
@@ -248,10 +248,10 @@ func TestPublishFramed_PooledFrameReuse_NoStaleBytes(t *testing.T) {
 				if err := json.Unmarshal(line, &msg); err != nil {
 					t.Fatalf("batch-B frame line not valid JSON (stale-byte contamination): %v", err)
 				}
-				if len(msg.ID) > 0 && msg.ID[0] == 'A' {
-					t.Fatalf("batch-A record %q leaked into a batch-B frame (pooled-buffer stale bytes)", msg.ID)
+				if len(msg.TraceID) > 0 && msg.TraceID[0] == 'A' {
+					t.Fatalf("batch-A record %q leaked into a batch-B frame (pooled-buffer stale bytes)", msg.TraceID)
 				}
-				seen[msg.ID] = true
+				seen[msg.TraceID] = true
 			}
 		}
 	}

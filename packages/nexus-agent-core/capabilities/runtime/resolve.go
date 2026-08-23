@@ -107,7 +107,6 @@ func resolveRevocableVK(ctx context.Context, gw Gateway, ref string) (string, st
 	ref = strings.TrimSpace(ref)
 	cands := make([]resolveCandidate, 0, len(vks))
 	for _, v := range vks {
-		v := v
 		label := v.Name
 		if label == "" {
 			label = v.KeyPrefix

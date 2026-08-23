@@ -2,9 +2,11 @@ package resource
 
 import (
 	"errors"
-	"github.com/goccy/go-json"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -153,7 +155,7 @@ func TestResourceNoListKindMenu(t *testing.T) {
 // TestResourcePagination covers the table pager (n/p) over a >1-page collection.
 func TestResourcePagination(t *testing.T) {
 	var items []string
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		items = append(items, `{"id":"k`+string(rune('a'+i%26))+`"}`)
 	}
 	gw := &fakeGateway{adminRaw: json.RawMessage(`[` + strings.Join(items, ",") + `]`)}
@@ -346,7 +348,7 @@ func TestResourceHelpers(t *testing.T) {
 		t.Fatal("virtual-keys record must have child ops")
 	}
 	for _, op := range ops {
-		if op.Path == "/api/admin/virtual-keys/{id}" && op.Method == "GET" {
+		if op.Path == "/api/admin/virtual-keys/{id}" && op.Method == http.MethodGet {
 			t.Fatal("childOps must exclude the record's own GET")
 		}
 	}

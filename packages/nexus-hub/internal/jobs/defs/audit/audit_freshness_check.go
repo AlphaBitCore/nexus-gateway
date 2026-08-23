@@ -49,6 +49,19 @@ type AuditFreshnessCheck struct {
 	logger    *slog.Logger
 	age       *opsmetrics.Gauge
 	fires     *opsmetrics.Counter
+	// lastReceived, when set, reports when the Hub last received a data-plane
+	// traffic-event message off NATS. It is the "were there events to persist?"
+	// denominator that separates a STALLED pipeline (events arriving but rows
+	// not advancing) from an IDLE deployment (no events at all). Nil preserves
+	// the original age-only behaviour (alarm on any stale table).
+	lastReceived func() time.Time
+}
+
+// WithLastReceived wires the traffic-event writer's receipt clock so the check
+// only alarms when events are actually arriving. Call before scheduling.
+func (j *AuditFreshnessCheck) WithLastReceived(fn func() time.Time) *AuditFreshnessCheck {
+	j.lastReceived = fn
+	return j
 }
 
 // NewAuditFreshnessCheck wires the job. interval = how often Run executes
@@ -126,6 +139,23 @@ func (j *AuditFreshnessCheck) Run(ctx context.Context) error {
 	if lagSec <= j.threshold.Seconds() {
 		// Healthy.
 		return nil
+	}
+
+	// Idle vs stalled. A stale table is only a FAILURE when there were events to
+	// persist. If we know when the Hub last received a data-plane traffic-event
+	// message and it was longer ago than the threshold, the deployment is simply
+	// idle — nothing arrived, nothing to write — so this is not the stalled
+	// pipeline the check exists to catch, and alarming would train operators to
+	// ignore the very ERROR that matters (the 2026-05-14 silent-loss incident had
+	// events ARRIVING but every INSERT failing — recent receipt, stale table).
+	// The age gauge above still carries the real staleness for the dashboard; we
+	// just do not raise an ERROR on an idle box. Nil clock keeps the original
+	// age-only behaviour.
+	if j.lastReceived != nil {
+		last := j.lastReceived()
+		if last.IsZero() || time.Since(last) > j.threshold {
+			return nil
+		}
 	}
 
 	if j.fires != nil {

@@ -64,10 +64,10 @@ func TestScheduleL2Write_AgenticBypass(t *testing.T) {
 	h := &Handler{deps: &Deps{SemanticWriter: wtr, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 
 	recStamped := &audit.Record{GatewayCacheSkipReason: audit.GatewayCacheSkipReasonAgenticToolUse}
-	h.scheduleL2Write(recStamped, routingcore.RoutingTarget{}, sampleMsgs(), []byte(`{"ok":true}`), nil, false, Ingress{}, noopLogger())
+	h.scheduleL2Write(recStamped, routingcore.RoutingTarget{}, l2Canonical{msgs: sampleMsgs()}, []byte(`{"ok":true}`), nil, false, Ingress{}, noopLogger())
 
 	msgs := append(sampleMsgs(), normcore.Message{Role: normcore.RoleTool})
-	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{}, msgs, []byte(`{"ok":true}`), nil, false, Ingress{}, noopLogger())
+	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{}, l2Canonical{msgs: msgs}, []byte(`{"ok":true}`), nil, false, Ingress{}, noopLogger())
 
 	if n := wtr.called.Load(); n != 0 {
 		t.Fatalf("agentic turns must never reach the semantic writer, got %d writes", n)

@@ -5,7 +5,7 @@
 // Public surface:
 //
 //   - Estimate(ctx, EstimateInput) (EstimateResult, error)
-//   - ReadReasoningSignal(rawBody []byte, ingressFormat) ReasoningSignal
+//   - ReadReasoningSignal(rawBody []byte) ReasoningSignal
 //
 // Tokenization: a character-ratio heuristic is used for every adapter
 // family (OpenAI/Azure/DeepSeek/...: chars/3.5; Anthropic: chars/3.5;
@@ -42,6 +42,12 @@ type EstimateInput struct {
 	IngressFormat    provcore.Format
 	Target           ResolvedTarget
 	Prices           metrics.ModelPrices
+	// ReasoningEffortOverride answers "what would this cost at effort X"
+	// without rewriting the body. Empty means the body decides. The compare
+	// endpoint offers the override per target, and had nowhere to put it: the
+	// effort was read from the request only, so the whole point of asking —
+	// the same prompt priced at two efforts — produced two identical answers.
+	ReasoningEffortOverride string
 }
 
 // ResolvedTarget describes the (Provider, Model) the request would route
@@ -131,8 +137,13 @@ func Estimate(ctx context.Context, in EstimateInput) (EstimateResult, error) {
 				in.Target.AdapterType, tk.Divisor()))
 	}
 
-	// Step 2 — read reasoning effort signal.
-	reasoning := ReadReasoningSignal(in.CanonicalRequest, in.IngressFormat)
+	// Step 2 — read reasoning effort signal. An explicit override outranks the
+	// body: the caller is asking about an effort the body does not carry.
+	reasoning := ReadReasoningSignal(in.CanonicalRequest)
+	if in.ReasoningEffortOverride != "" {
+		reasoning.Effort = in.ReasoningEffortOverride
+		reasoning.Source = "override"
+	}
 
 	// Step 3 — output budget anchor.
 	expectedOutput, supports := lookupOutputBudget(in.Target.ModelCode, reasoning.Effort)

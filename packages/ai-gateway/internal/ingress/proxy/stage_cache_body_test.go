@@ -246,3 +246,38 @@ func TestBodyPrepCallTarget_WireFieldsInert(t *testing.T) {
 		t.Errorf("wire fields changed the rewrites: lean=%v full=%v", leanRw, fullRw)
 	}
 }
+
+// TestBodyPrepCallTarget_CarriesTheFieldsACodecReads.
+//
+// Two legs build a CallTarget for the same request: this one, for cache-prep,
+// and the executor's. The file's own comment says a field omitted here makes
+// the two legs triage the same request differently — a body prepared without a
+// fact the executor's leg has is a body shaped for a different model.
+//
+// `Reasons` is the newest such fact and the one with no other source: a codec
+// cannot ask the catalogue, only the target it is handed. A projection that
+// drops it means the cache-prep leg builds a body as though every model
+// reasoned, or none did.
+func TestBodyPrepCallTarget_CarriesTheFieldsACodecReads(t *testing.T) {
+	src := routingcore.RoutingTarget{
+		ProviderID: "p-openai", ProviderName: "openai", AdapterType: "openai",
+		ProviderModelID: "o3", BaseURL: "https://api.openai.com",
+		MaxOutputTokens: 100000, Reasons: true,
+	}
+	got := bodyPrepCallTarget(src)
+
+	if !got.Reasons {
+		t.Error("Reasons was dropped in the projection; the cache-prep leg would then shape a " +
+			"body for a model that does not reason while the executor's leg shapes one that does")
+	}
+	if got.MaxOutputTokens != 100000 || got.ProviderModelID != "o3" {
+		t.Errorf("the projection lost an existing field too: %+v", got)
+	}
+
+	// The negative: a model that does not reason must not arrive as one that
+	// does, or the flag carries no information.
+	src.Reasons = false
+	if bodyPrepCallTarget(src).Reasons {
+		t.Error("a non-reasoning model projected as reasoning")
+	}
+}

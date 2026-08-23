@@ -1,6 +1,6 @@
 {
   "kind": "ai-chat",
-  "normalizeVersion": "2",
+  "normalizeVersion": "3",
   "protocol": "gemini-generate",
   "model": "gemini-2.5-flash-lite",
   "stream": true,

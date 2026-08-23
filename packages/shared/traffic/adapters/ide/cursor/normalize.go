@@ -18,7 +18,7 @@ import (
 // adapterID is stamped onto the result for precise Tier 1 audit
 // attribution.
 //
-// Protobuf bodies are not text — the BodyView is overridden with a BinaryRef
+// Protobuf bodies are not text — the BodyView is overridden with a MediaRef
 // so the UI's Raw tab shows size + Content-Type metadata only.
 func (a *Adapter) Normalize(ctx context.Context, raw []byte, meta normalize.Meta) (normalize.NormalizedPayload, error) {
 	if len(raw) == 0 {
@@ -66,13 +66,16 @@ func (a *Adapter) Normalize(ctx context.Context, raw []byte, meta normalize.Meta
 	payload := extract.BuildPayload(det, raw, "")
 
 	// Protobuf bodies aren't text — override the auto-set BodyView.Text
-	// with a BinaryRef so the UI's Raw tab shows size + Content-Type
+	// with a MediaRef so the UI's Raw tab shows size + Content-Type
 	// metadata instead of dumping unreadable bytes.
 	payload.HTTP = &normalize.HTTPPayload{
 		BodyView: &normalize.HTTPBodyView{
-			BinaryRef: &normalize.BinaryRef{
-				Size:        int64(len(raw)),
-				ContentType: "application/connect+proto",
+			MediaRef: &normalize.MediaRef{
+				Modality:  normalize.ModalityFile,
+				Mime:      "application/connect+proto",
+				SizeBytes: int64(len(raw)),
+				Source:    normalize.MediaCaptured,
+				Locator:   "body",
 			},
 		},
 	}
@@ -81,7 +84,7 @@ func (a *Adapter) Normalize(ctx context.Context, raw []byte, meta normalize.Meta
 
 // buildAgentRunPayload turns a decoded agent-service conversation into a
 // Tier-1 ai-chat payload. The structured messages come from the embedded JSON;
-// the BodyView stays a BinaryRef because the wire body is gzip-compressed
+// the BodyView stays a MediaRef because the wire body is gzip-compressed
 // protobuf, not text. Direction selects request vs response framing so the
 // audit row reads correctly on both sides.
 func buildAgentRunPayload(conv agentRunConversation, raw []byte, meta normalize.Meta) normalize.NormalizedPayload {
@@ -98,9 +101,12 @@ func buildAgentRunPayload(conv agentRunConversation, raw []byte, meta normalize.
 	payload.DetectedSpec = adapterID
 	payload.HTTP = &normalize.HTTPPayload{
 		BodyView: &normalize.HTTPBodyView{
-			BinaryRef: &normalize.BinaryRef{
-				Size:        int64(len(raw)),
-				ContentType: "application/connect+proto",
+			MediaRef: &normalize.MediaRef{
+				Modality:  normalize.ModalityFile,
+				Mime:      "application/connect+proto",
+				SizeBytes: int64(len(raw)),
+				Source:    normalize.MediaCaptured,
+				Locator:   "body",
 			},
 		},
 	}

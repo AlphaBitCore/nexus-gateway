@@ -192,7 +192,7 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 	d.HookConfigCache = InitHookConfigCache(d.DB, d.GwHookRegistry, logger)
 	d.HealthTracker = store.NewHealthTracker()
 	d.PtResolver = NewResolver(d.CacheLayer, d.CredManager, d.Rdb)
-	_, _, d.RouterResolver, d.CapCache = InitRouter(d.CacheLayer, d.HealthTracker, d.PtResolver, d.AdapterReg, logger)
+	_, _, d.RouterResolver, d.CapCache = InitRouter(ctx, d.CacheLayer, d.HealthTracker, d.PtResolver, d.AdapterReg, logger, d.Cfg.Routing.EnforceNamedModelModality)
 
 	// Seed the capability cache from the models already loaded by
 	// InitCacheLayer.Start above. Subsequent reloads are handled by the

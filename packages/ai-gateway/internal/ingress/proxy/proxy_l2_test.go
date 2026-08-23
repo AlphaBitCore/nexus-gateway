@@ -289,7 +289,7 @@ func TestJoinTextBlocksL2_Empty(t *testing.T) {
 
 func TestJoinTextBlocksL2_NonTextOnly(t *testing.T) {
 	blocks := []normcore.ContentBlock{
-		{Type: normcore.ContentImageRef, Text: "ignored"},
+		{Type: normcore.ContentMedia, Text: "ignored"},
 	}
 	got := joinTextBlocksL2(blocks)
 	if got != "" {
@@ -310,7 +310,7 @@ func TestJoinTextBlocksL2_SingleText(t *testing.T) {
 func TestJoinTextBlocksL2_MultipleTextBlocks(t *testing.T) {
 	blocks := []normcore.ContentBlock{
 		{Type: normcore.ContentText, Text: "part one"},
-		{Type: normcore.ContentImageRef, Text: "skip"},
+		{Type: normcore.ContentMedia, Text: "skip"},
 		{Type: normcore.ContentText, Text: "part two"},
 	}
 	got := joinTextBlocksL2(blocks)
@@ -341,7 +341,7 @@ func TestCanonicalMsgsToInputStaging_Nil(t *testing.T) {
 func TestCanonicalMsgsToInputStaging_AllNonText(t *testing.T) {
 	msgs := []normcore.Message{
 		{Role: "user", Content: []normcore.ContentBlock{
-			{Type: normcore.ContentImageRef, Text: "img"},
+			{Type: normcore.ContentMedia, Text: "img"},
 		}},
 	}
 	got := canonicalMsgsToInputStaging(msgs)
@@ -382,7 +382,7 @@ func TestBuildEmbeddingInput_EmptyMessages(t *testing.T) {
 func TestBuildEmbeddingInput_AllNonText(t *testing.T) {
 	msgs := []normcore.Message{
 		{Role: "user", Content: []normcore.ContentBlock{
-			{Type: normcore.ContentImageRef, Text: "img"},
+			{Type: normcore.ContentMedia, Text: "img"},
 		}},
 	}
 	_, ok := buildEmbeddingInput(msgs, inputstaging.StrategySystemPlusLastUser, 0)
@@ -437,7 +437,7 @@ func TestNormMessagesToFreshness_Nil(t *testing.T) {
 func TestNormMessagesToFreshness_AllNonText(t *testing.T) {
 	msgs := []normcore.Message{
 		{Role: "user", Content: []normcore.ContentBlock{
-			{Type: normcore.ContentImageRef, Text: "img"},
+			{Type: normcore.ContentMedia, Text: "img"},
 		}},
 	}
 	got := normMessagesToFreshness(msgs)
@@ -468,7 +468,7 @@ func TestNormMessagesToFreshness_MultipleBlocks(t *testing.T) {
 	msgs := []normcore.Message{
 		{Role: "user", Content: []normcore.ContentBlock{
 			{Type: normcore.ContentText, Text: "Today's weather"},
-			{Type: normcore.ContentImageRef, Text: "skipped"},
+			{Type: normcore.ContentMedia, Text: "skipped"},
 			{Type: normcore.ContentText, Text: "in Paris?"},
 		}},
 	}
@@ -482,120 +482,8 @@ func TestNormMessagesToFreshness_MultipleBlocks(t *testing.T) {
 	}
 }
 
-// tryL2Lookup — branch matrix with fleet-gated policy
-
-func TestTryL2Lookup_NilReader(t *testing.T) {
-	h := &Handler{deps: &Deps{SemanticConfigCache: enabledFleetCache()}}
-	if h.tryL2Lookup(makeTryParams(t)) {
-		t.Error("want false when SemanticReader nil")
-	}
-}
-
-// TestTryL2Lookup_NilCredManager covers the defensive guard at the read
-// path's credential lookup: SemanticReader is wired and the fleet policy
-// resolves, but CredManager is absent (boot-time wiring would always
-// supply one; this guards hand-constructed Handler test doubles). Must
-// return false without invoking the reader.
-func TestTryL2Lookup_NilCredManager(t *testing.T) {
-	rdr := &stubSemanticReader{}
-	h := &Handler{deps: &Deps{SemanticReader: rdr, SemanticConfigCache: enabledFleetCache()}}
-	if h.tryL2Lookup(makeTryParams(t)) {
-		t.Error("want false when CredManager nil")
-	}
-	if rdr.called.Load() != 0 {
-		t.Error("reader must not be called when CredManager nil")
-	}
-}
-
-func TestTryL2Lookup_FleetDisabled(t *testing.T) {
-	rdr := &stubSemanticReader{}
-	h := &Handler{deps: &Deps{SemanticReader: rdr, SemanticConfigCache: semantic.NewConfigCache()}}
-	if h.tryL2Lookup(makeTryParams(t)) {
-		t.Error("want false when fleet config disabled")
-	}
-	if rdr.called.Load() != 0 {
-		t.Error("reader should not be called when fleet disabled")
-	}
-}
-
-func TestTryL2Lookup_NoCanonicalMsgs(t *testing.T) {
-	rdr := &stubSemanticReader{}
-	h := &Handler{deps: &Deps{SemanticReader: rdr, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	p := makeTryParams(t)
-	p.canonicalMsgs = nil
-	if h.tryL2Lookup(p) {
-		t.Error("want false when no canonical messages")
-	}
-	if rdr.called.Load() != 0 {
-		t.Error("reader should not be called on empty embedding input")
-	}
-	// no canonical messages → no text to embed, which must stamp
-	// the accurate no_embeddable_text reason, NOT the oversize reason (the
-	// input was never oversize — there was simply nothing to embed).
-	if p.rec.GatewayCacheSkipReason != audit.GatewayCacheSkipReasonNoEmbeddableText {
-		t.Errorf("skip reason: got %q, want %q",
-			p.rec.GatewayCacheSkipReason, audit.GatewayCacheSkipReasonNoEmbeddableText)
-	}
-}
-
-func TestTryL2Lookup_ReaderError(t *testing.T) {
-	rdr := &stubSemanticReader{err: errors.New("read failed")}
-	h := &Handler{deps: &Deps{SemanticReader: rdr, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	if h.tryL2Lookup(makeTryParams(t)) {
-		t.Error("want false on reader error")
-	}
-}
-
-func TestTryL2Lookup_ReaderMiss(t *testing.T) {
-	rdr := &stubSemanticReader{result: semantic.ReadResult{Outcome: "miss"}}
-	h := &Handler{deps: &Deps{SemanticReader: rdr, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	if h.tryL2Lookup(makeTryParams(t)) {
-		t.Error("want false on reader miss")
-	}
-}
-
-func TestTryL2Lookup_ReaderSkip_StampsReason(t *testing.T) {
-	rdr := &stubSemanticReader{result: semantic.ReadResult{
-		SkipReason: audit.GatewayCacheSkipReasonEmbeddingTimeout,
-	}}
-	h := &Handler{deps: &Deps{SemanticReader: rdr, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	p := makeTryParams(t)
-	if h.tryL2Lookup(p) {
-		t.Error("want false on reader skip")
-	}
-	if p.rec.GatewayCacheSkipReason != audit.GatewayCacheSkipReasonEmbeddingTimeout {
-		t.Errorf("skip reason not propagated: got %q", p.rec.GatewayCacheSkipReason)
-	}
-}
-
-func TestTryL2Lookup_HitStream_ConversionError(t *testing.T) {
-	// Stream HIT with malformed chunk array → ToCacheStreamEntry returns error
-	// → handler resets stamps and returns false so broker dispatch can retry.
-	rdr := &stubSemanticReader{result: semantic.ReadResult{
-		Entry: &semantic.Entry{
-			ResponseBody: []byte(`{not a valid chunk array}`),
-			EntryKey:     "nexus:semantic-cache:v1:1234567890abcdef",
-		},
-	}}
-	h := &Handler{deps: &Deps{SemanticReader: rdr, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	p := makeTryParams(t)
-	p.isStream = true
-	if h.tryL2Lookup(p) {
-		t.Error("want false on stream conversion error")
-	}
-	if p.rec.GatewayCacheStatus != "" {
-		t.Errorf("status should be reset; got %q", p.rec.GatewayCacheStatus)
-	}
-	if p.rec.GatewayCacheKind != "" {
-		t.Errorf("kind should be reset; got %q", p.rec.GatewayCacheKind)
-	}
-	// GatewayCacheL2EntryKey must also be reset on the stream-conversion
-	// fallback path so the broker re-stamps it cleanly (otherwise the
-	// failing partial stamp would leak into the audit row).
-	if p.rec.GatewayCacheL2EntryKey != "" {
-		t.Errorf("L2 entry key should be reset; got %q", p.rec.GatewayCacheL2EntryKey)
-	}
-}
+// tryL2Lookup branch matrix relocated to proxy_l2_trylookup_test.go
+// (split-on-touch policy).
 
 // scheduleL2Write — branch matrix
 
@@ -603,14 +491,14 @@ func TestScheduleL2Write_NilWriter(t *testing.T) {
 	h := &Handler{deps: &Deps{SemanticConfigCache: enabledFleetCache()}}
 	// No panic, no goroutine — just early return.
 	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
-		sampleMsgs(), []byte(`{}`), nil, false, Ingress{}, noopLogger())
+		l2Canonical{msgs: sampleMsgs()}, []byte(`{}`), nil, false, Ingress{}, noopLogger())
 }
 
 func TestScheduleL2Write_EmptyBody(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
-		sampleMsgs(), nil, nil, false, Ingress{}, noopLogger())
+		l2Canonical{msgs: sampleMsgs()}, nil, nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer should not be called with empty body")
 	}
@@ -624,7 +512,7 @@ func TestScheduleL2Write_IsStreamWritesStreamKind(t *testing.T) {
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 	h.scheduleL2Write(&audit.Record{},
 		routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
-		sampleMsgs(), []byte(`[{"delta":"hi","done":true}]`), nil, true, Ingress{}, noopLogger())
+		l2Canonical{msgs: sampleMsgs()}, []byte(`[{"delta":"hi","done":true}]`), nil, true, Ingress{}, noopLogger())
 	select {
 	case <-w.writeDone:
 	case <-time.After(3 * time.Second):
@@ -642,7 +530,7 @@ func TestScheduleL2Write_FleetDisabled(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: semantic.NewConfigCache()}}
 	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
-		sampleMsgs(), []byte(`{}`), nil, false, Ingress{}, noopLogger())
+		l2Canonical{msgs: sampleMsgs()}, []byte(`{}`), nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer should not be called when fleet disabled")
 	}
@@ -652,7 +540,7 @@ func TestScheduleL2Write_NoTextMsgs(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
-		nil, []byte(`{}`), nil, false, Ingress{}, noopLogger())
+		l2Canonical{}, []byte(`{}`), nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer should not be called when no text content")
 	}
@@ -665,7 +553,7 @@ func TestScheduleL2Write_GoroutineLogsOnError(t *testing.T) {
 	h.scheduleL2Write(
 		&audit.Record{VirtualKeyID: "vk-scope"},
 		routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
-		sampleMsgs(),
+		l2Canonical{msgs: sampleMsgs()},
 		[]byte(`{"id":"r"}`),
 		nil, false, Ingress{}, noopLogger(),
 	)
@@ -685,7 +573,7 @@ func TestScheduleL2Write_FiresGoroutine(t *testing.T) {
 	h.scheduleL2Write(
 		&audit.Record{VirtualKeyID: "vk-scope"},
 		routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
-		sampleMsgs(),
+		l2Canonical{msgs: sampleMsgs()},
 		[]byte(`{"id":"r","choices":[{"message":{"content":"Paris."}}]}`),
 		nil, false, Ingress{}, noopLogger(),
 	)
@@ -733,7 +621,7 @@ func TestScheduleL2Write_VaryByResolvesScope(t *testing.T) {
 			h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: cc, CredManager: &stubCredManager{}}}
 			h.scheduleL2Write(rec,
 				routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
-				sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+				l2Canonical{msgs: sampleMsgs()}, []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
 			select {
 			case <-w.writeDone:
 			case <-time.After(3 * time.Second):
@@ -793,20 +681,44 @@ func TestScheduleL2Write_ShedsBeyondInflightCap(t *testing.T) {
 	for range burst {
 		h.scheduleL2Write(&audit.Record{VirtualKeyID: "vk"},
 			routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
-			sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+			l2Canonical{msgs: sampleMsgs()}, []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for w.called.Load() < capacity && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-	// Give any write that escaped the cap time to land before asserting.
-	time.Sleep(50 * time.Millisecond)
-	if got := w.called.Load(); got != capacity {
-		t.Fatalf("writes admitted = %d; want exactly the cap %d", got, capacity)
+	// Admission is observed where it happens, not through the goroutines it
+	// starts. acquireL2WriteSlot increments l2WriteInflight and
+	// l2WriteShedTotal in the CALLER, synchronously, so both are exact the
+	// moment the burst loop returns — no waiting, nothing to race.
+	//
+	// This used to poll w.called, which a writer increments from inside its own
+	// goroutine. That measures whether the runtime got round to scheduling the
+	// write, which is not the property the test is named for and is not
+	// guaranteed on a loaded machine: CI observed 3 of 4 admitted writes having
+	// started after five seconds and failed the run, while admission had been
+	// correct all along. A test that reports a scheduler delay as a capacity
+	// defect teaches the reader to re-run reds.
+	if got := l2WriteInflight.Load(); got != capacity {
+		t.Fatalf("slots held after the burst = %d; want exactly the cap %d — the gate admitted "+
+			"the wrong number", got, capacity)
 	}
 	if got := testutil.ToFloat64(l2WriteShedTotal) - shedBefore; got != float64(burst-capacity) {
 		t.Errorf("shed counter delta = %v; want %d", got, burst-capacity)
+	}
+
+	// Liveness, kept separate from admission: an admitted write must actually
+	// run. Its failure means the runtime never scheduled the goroutine, which is
+	// a different statement from "the cap was wrong". This is a "does it ever
+	// happen" check, not a "does it happen fast" one, so the budget is generous:
+	// a loaded CI box running many test binaries in parallel can take seconds
+	// just to schedule four goroutines, and a 5 s budget turned that scheduler
+	// delay into a spurious red (observed on the release CI). 30 s still trips
+	// promptly on a genuine never-scheduled hang.
+	deadline := time.Now().Add(30 * time.Second)
+	for w.called.Load() < capacity && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := w.called.Load(); got != capacity {
+		t.Fatalf("admitted writes that actually started = %d of %d after 5s; the gate admitted "+
+			"the right number, so this is the runtime not scheduling them", got, capacity)
 	}
 
 	// Slots must come back when the stalled writes drain, otherwise one slow
@@ -814,10 +726,14 @@ func TestScheduleL2Write_ShedsBeyondInflightCap(t *testing.T) {
 	close(w.release)
 	fresh := newStubWriter()
 	h2 := &Handler{deps: &Deps{SemanticWriter: fresh, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
+	// Fresh budget: the liveness poll above may have consumed part of its own
+	// window, and the drain-then-readmit check is a separate liveness statement
+	// that deserves its full timeout rather than whatever was left over.
+	deadline = time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		h2.scheduleL2Write(&audit.Record{VirtualKeyID: "vk"},
 			routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
-			sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+			l2Canonical{msgs: sampleMsgs()}, []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
 		select {
 		case <-fresh.writeDone:
 			return

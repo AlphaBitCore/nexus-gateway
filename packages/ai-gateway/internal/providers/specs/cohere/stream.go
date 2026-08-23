@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
+	"net/http"
 
+	"github.com/goccy/go-json"
 	"github.com/tidwall/gjson"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -142,10 +143,25 @@ func (s *streamSession) Next(ctx context.Context) (provcore.Chunk, error) {
 		})
 	case "message-end":
 		s.done = true
-		finishReason := gjson.GetBytes(ev.Data, "delta.finish_reason").Str
-		// Cohere finish_reason values: COMPLETE, MAX_TOKENS, STOP_SEQUENCE,
-		// TOOL_CALL, ERROR. Normalise to OpenAI lowercase strings.
-		finishReason = mapFinishReason(finishReason)
+		rawFinish := gjson.GetBytes(ev.Data, "delta.finish_reason").Str
+		// ERROR is Cohere telling us the generation failed. It used to map
+		// to the string "error", which is not a member of OpenAI's
+		// finish_reason enum — so the stream still ended cleanly, no client
+		// SDK raised, and the caller kept whatever partial text had already
+		// arrived (§3a Rule 10). Raise it instead, pinned to upstream_error
+		// because bytes are already committed at HTTP 200.
+		if rawFinish == "ERROR" {
+			return provcore.Chunk{}, &provcore.ProviderError{
+				Status:  http.StatusBadGateway,
+				Code:    provcore.CodeUpstreamError,
+				Type:    "cohere_stream_error",
+				Message: "cohere ended the stream with finish_reason ERROR",
+				Raw:     ev.Data,
+			}
+		}
+		// Remaining Cohere finish_reason values: COMPLETE, MAX_TOKENS,
+		// STOP_SEQUENCE, TOOL_CALL. Normalise to OpenAI lowercase strings.
+		finishReason := mapFinishReason(rawFinish)
 		// Surface on the canonical Chunk so a re-encoder (buffer mode) preserves
 		// the real finish_reason instead of collapsing to "stop".
 		if finishReason != "" {
@@ -162,6 +178,13 @@ func (s *streamSession) Next(ctx context.Context) (provcore.Chunk, error) {
 			if ct := usagePayload.Get("tokens.output_tokens"); ct.Exists() && ct.Type == gjson.Number {
 				v := int(ct.Int())
 				u.CompletionTokens = &v
+			}
+			// usage.cached_tokens is a sibling of tokens / billed_units, not
+			// a member of either. It was dropped on every streaming turn, so
+			// a Cohere stream reported no cache benefit at all.
+			if cr := usagePayload.Get("cached_tokens"); cr.Exists() && cr.Type == gjson.Number {
+				v := int(cr.Int())
+				u.CacheReadTokens = &v
 			}
 			if u.PromptTokens != nil && u.CompletionTokens != nil {
 				total := *u.PromptTokens + *u.CompletionTokens
@@ -233,8 +256,8 @@ func mapFinishReason(cohere string) string {
 		return "stop"
 	case "TOOL_CALL":
 		return "tool_calls"
-	case "ERROR":
-		return "error"
 	}
+	// ERROR never reaches here — the stream session raises it as a
+	// ProviderError rather than naming a finish_reason for a failure.
 	return cohere
 }

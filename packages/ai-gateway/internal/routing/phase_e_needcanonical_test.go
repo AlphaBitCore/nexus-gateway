@@ -71,3 +71,51 @@ func TestResolver_RequestNeedsCanonical(t *testing.T) {
 		t.Fatal("memoized RequestNeedsCanonical should stay true on both the cold and cached call")
 	}
 }
+
+// TestResolver_RequestNeedsCanonical_AgreesWithTheMatcherOnGlobLiterals.
+//
+// Two places answer "does this literal cover this model": this gate, which
+// decides whether the canonical payload is BUILT, and the matcher, which
+// decides whether the rule FIRES. A gate stricter than the matcher produces the
+// worst combination — the rule matches with no payload to read, `smart` sees a
+// nil request, traces "not normalizable", and silently serves its default
+// model. The gate's own doc comment names that false negative as the thing it
+// must never do.
+//
+// It was live: the matcher learned to glob and this gate kept comparing
+// exactly, so every rule written in the shape the admin form advertises
+// (`gpt-4-*`) routed every request to its default model with a misleading
+// reason on the trace.
+func TestResolver_RequestNeedsCanonical_AgreesWithTheMatcherOnGlobLiterals(t *testing.T) {
+	smartCfg, err := json.Marshal(core.StrategyNode{Type: "smart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	globScoped, err := json.Marshal(core.MatchConditions{RequestedModelLiterals: []string{"gpt-4-*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newResolverFixture()
+	f.addRule(store.RoutingRule{
+		ID: "r-smart-glob", Name: "smart on the gpt-4 family", StrategyType: "smart",
+		PipelineStage: 1, Priority: 100, Config: smartCfg, MatchConditions: globScoped,
+	})
+
+	for _, tc := range []struct {
+		model string
+		want  bool
+		why   string
+	}{
+		{"gpt-4-turbo", true, "the rule matches this model, so the strategy will be asked to read " +
+			"a payload nobody built — it falls back to its default model and says the request was " +
+			"not normalizable"},
+		{"claude-sonnet-4-5", false, "the rule cannot match this model, so building the canonical " +
+			"taxes every request the rule was scoped away from"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			if got := f.resolver.RequestNeedsCanonical(context.Background(), tc.model); got != tc.want {
+				t.Fatalf("RequestNeedsCanonical(%q) = %v, want %v — %s", tc.model, got, tc.want, tc.why)
+			}
+		})
+	}
+}

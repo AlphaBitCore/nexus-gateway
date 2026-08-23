@@ -44,7 +44,7 @@ func loadControlPlane(dir string, patterns, env []string) (*loaded, error) {
 			// analysis unreliable, so we fail loudly rather than emit a partial
 			// spec that silently misses routes.
 			if loadErr == nil {
-				loadErr = fmt.Errorf("package %s: %s", p.PkgPath, e)
+				loadErr = fmt.Errorf("package %s: %w", p.PkgPath, e)
 			}
 		}
 	})

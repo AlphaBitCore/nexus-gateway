@@ -16,7 +16,8 @@ import (
 )
 
 var vendorBillReconCols = []string{
-	"provider_id", "provider_name", "day", "our_billed_usd", "vendor_reported_usd",
+	"provider_id", "provider_name", "day", "our_billed_usd", "our_vendor_spend_usd",
+	"our_internal_ops_usd", "vendor_reported_usd",
 	"diff_usd", "diff_pct", "scope_kind", "coverage", "status", "reviewed_by", "note", "updated_at",
 }
 
@@ -24,15 +25,24 @@ func vbDay(y int, m time.Month, d int) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
+// expectVendorBillCount queues the window-wide COUNT the handler issues before
+// the page query, so `total` describes the whole window rather than the page.
+func expectVendorBillCount(mock pgxmock.PgxPoolIface, total int) {
+	mock.ExpectQuery(`COUNT\(\*\) FROM vendor_bill_reconciliation`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(total))
+}
+
 func TestVendorBillReconciliation_ReturnsRowsWithNullsPreserved(t *testing.T) {
 	mock, h := newMockHandler(t)
 	ts := vbDay(2026, 7, 17)
 	f := func(v float64) *float64 { return &v }
+	expectVendorBillCount(mock, 2)
 	mock.ExpectQuery(`FROM vendor_bill_reconciliation`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(vendorBillReconCols).
-			AddRow("prov1", "OpenAI", ts, 9.0, f(10.0), f(1.0), f(0.1), "project", "scoped", "open", nil, nil, ts).
-			AddRow("prov2", "Anthropic", ts, 5.0, nil, nil, nil, "org", "fetch_failed", "open", nil, nil, ts))
+			AddRow("prov1", "OpenAI", ts, 9.0, 13.5, 4.5, f(14.0), f(0.5), f(0.0357142857), "project", "scoped", "open", nil, nil, ts).
+			AddRow("prov2", "Anthropic", ts, 5.0, 0.0, 0.0, nil, nil, nil, "org", "fetch_failed", "open", nil, nil, ts))
 
 	c, rec := echoCtx(http.MethodGet, "/analytics/vendor-bill-reconciliation")
 	if err := h.VendorBillReconciliation(c); err != nil {
@@ -50,8 +60,27 @@ func TestVendorBillReconciliation_ReturnsRowsWithNullsPreserved(t *testing.T) {
 	if len(resp.Rows) != 2 {
 		t.Fatalf("want 2 rows, got %d", len(resp.Rows))
 	}
-	if resp.Rows[0].Coverage != "scoped" || resp.Rows[0].VendorReportedUSD == nil || *resp.Rows[0].VendorReportedUSD != 10 {
+	if resp.Rows[0].Coverage != "scoped" || resp.Rows[0].VendorReportedUSD == nil || *resp.Rows[0].VendorReportedUSD != 14 {
 		t.Fatalf("scoped row wrong: %+v", resp.Rows[0])
+	}
+	// The three money bases must land on distinct fields: the quota figure, the
+	// reconciliation basis the diff is computed from, and its internal-ops
+	// subset. A positional drift in the SELECT/Scan pair would swap them
+	// silently, and every one of them is a dollar figure, so only distinct
+	// values catch it.
+	if resp.Rows[0].OurBilledUSD != 9 {
+		t.Errorf("ourBilledUsd = %v, want 9 (quota basis)", resp.Rows[0].OurBilledUSD)
+	}
+	if resp.Rows[0].OurVendorSpendUSD != 13.5 {
+		t.Errorf("ourVendorSpendUsd = %v, want 13.5 (reconciliation basis)", resp.Rows[0].OurVendorSpendUSD)
+	}
+	if resp.Rows[0].OurInternalOpsUSD != 4.5 {
+		t.Errorf("ourInternalOpsUsd = %v, want 4.5 (internal-ops subset)", resp.Rows[0].OurInternalOpsUSD)
+	}
+	// JSON contract: the UI reads lowerCamelCase keys.
+	if !strings.Contains(rec.Body.String(), `"ourVendorSpendUsd":13.5`) ||
+		!strings.Contains(rec.Body.String(), `"ourInternalOpsUsd":4.5`) {
+		t.Errorf("response missing the decomposition fields: %s", rec.Body.String())
 	}
 	if resp.Rows[0].Day != "2026-07-17" {
 		t.Errorf("day format = %q", resp.Rows[0].Day)
@@ -73,8 +102,9 @@ func TestVendorBillReconciliation_NilPool(t *testing.T) {
 
 func TestVendorBillReconciliation_QueryError(t *testing.T) {
 	mock, h := newMockHandler(t)
+	expectVendorBillCount(mock, 0)
 	mock.ExpectQuery(`FROM vendor_bill_reconciliation`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(echo.ErrInternalServerError)
 	c, rec := echoCtx(http.MethodGet, "/analytics/vendor-bill-reconciliation?from=2026-07-01&to=2026-07-18")
 	_ = h.VendorBillReconciliation(c)
@@ -83,13 +113,112 @@ func TestVendorBillReconciliation_QueryError(t *testing.T) {
 	}
 }
 
+// TestVendorBillReconciliation_CountError: the pager's total comes from its own
+// query, so it has its own failure mode. It must 500 rather than fall through
+// to a page with a fabricated total of 0, which would render as "no results"
+// over a window that has rows.
+func TestVendorBillReconciliation_CountError(t *testing.T) {
+	mock, h := newMockHandler(t)
+	mock.ExpectQuery(`COUNT\(\*\) FROM vendor_bill_reconciliation`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnError(echo.ErrInternalServerError)
+	c, rec := echoCtx(http.MethodGet, "/analytics/vendor-bill-reconciliation")
+	_ = h.VendorBillReconciliation(c)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("count error must 500, got %d", rec.Code)
+	}
+}
+
+// TestVendorBillReconciliation_Paging pins the three things a pager depends on:
+// the page arguments actually reach SQL, `total` describes the whole window
+// rather than the page, and an over-large limit is capped instead of becoming
+// an unbounded scan.
+func TestVendorBillReconciliation_Paging(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantLimit any
+		wantOff   int
+	}{
+		{
+			name:      "limit and offset reach the query",
+			query:     "?limit=10&offset=20",
+			wantLimit: 10,
+			wantOff:   20,
+		},
+		{
+			name: "no paging params keeps the unpaged contract this endpoint shipped with",
+			// LIMIT NULL is Postgres for "no limit", so the pre-paging response
+			// shape is preserved exactly for callers that never opted in.
+			query:     "",
+			wantLimit: nil,
+			wantOff:   0,
+		},
+		{
+			name:      "an over-large limit is capped, not honoured",
+			query:     "?limit=100000",
+			wantLimit: vendorBillReconMaxLimit,
+			wantOff:   0,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, h := newMockHandler(t)
+			expectVendorBillCount(mock, 137)
+			mock.ExpectQuery(`FROM vendor_bill_reconciliation`).
+				WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), tc.wantLimit, tc.wantOff).
+				WillReturnRows(pgxmock.NewRows(vendorBillReconCols))
+
+			c, rec := echoCtx(http.MethodGet, "/analytics/vendor-bill-reconciliation"+tc.query)
+			if err := h.VendorBillReconciliation(c); err != nil {
+				t.Fatalf("handler: %v", err)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Rows  []vendorBillReconRow `json:"rows"`
+				Total int                  `json:"total"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			// The window holds 137 rows whatever this page returned; a pager that
+			// sized itself from len(rows) would show one page and hide the rest.
+			if resp.Total != 137 {
+				t.Fatalf("total = %d, want the window-wide 137", resp.Total)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("expectations: %v", err)
+			}
+		})
+	}
+}
+
+// TestVendorBillReconciliation_RejectsUnusablePageParams: a misread limit or
+// offset would return the wrong slice of data while looking entirely normal, so
+// unlike from/to these do not silently fall back to a default.
+func TestVendorBillReconciliation_RejectsUnusablePageParams(t *testing.T) {
+	for _, q := range []string{"?limit=0", "?limit=-5", "?limit=abc", "?offset=-1", "?offset=xyz"} {
+		t.Run(q, func(t *testing.T) {
+			_, h := newMockHandler(t)
+			c, rec := echoCtx(http.MethodGet, "/analytics/vendor-bill-reconciliation"+q)
+			_ = h.VendorBillReconciliation(c)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s must 400, got %d (%s)", q, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestVendorBillReconciliation_ScanError(t *testing.T) {
 	mock, h := newMockHandler(t)
 	// our_billed_usd delivered as a non-numeric string → Scan into float64 fails.
+	expectVendorBillCount(mock, 1)
 	mock.ExpectQuery(`FROM vendor_bill_reconciliation`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(vendorBillReconCols).
-			AddRow("prov1", "OpenAI", vbDay(2026, 7, 17), "not-a-number", nil, nil, nil, "org", "fetch_failed", "open", nil, nil, vbDay(2026, 7, 17)))
+			AddRow("prov1", "OpenAI", vbDay(2026, 7, 17), "not-a-number", 0.0, 0.0, nil, nil, nil, "org", "fetch_failed", "open", nil, nil, vbDay(2026, 7, 17)))
 	c, rec := echoCtx(http.MethodGet, "/analytics/vendor-bill-reconciliation")
 	_ = h.VendorBillReconciliation(c)
 	if rec.Code != http.StatusInternalServerError {

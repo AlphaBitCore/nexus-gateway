@@ -357,8 +357,9 @@ func cmdRun(args []string) int {
 	openAndRestoreConfigCache(ctx, auditQueue.DB(), &configCache, cfgRestoreMap, logger)
 
 	staticInfo := metricsplatform.CaptureStaticInfo(metricsplatform.BuildInfo{
-		ServiceVersion: "nexus-agent/" + version,
-		StartTime:      processStartTime.Format(time.RFC3339),
+		Service:      "nexus-agent",
+		BuildVersion: version,
+		StartTime:    processStartTime.Format(time.RFC3339),
 	})
 
 	// Thingclient callbacks (disconnect/reconnect/heartbeat).

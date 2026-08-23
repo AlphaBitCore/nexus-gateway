@@ -362,7 +362,9 @@ func TestErrorNormalizer_StatusMatrix(t *testing.T) {
 		{http.StatusUnprocessableEntity, provcore.CodeInvalidRequest},
 		{http.StatusUnauthorized, provcore.CodeAuthFailed},
 		{http.StatusForbidden, provcore.CodeAuthFailed},
-		{http.StatusPaymentRequired, provcore.CodeAuthFailed},
+		// 402 is a billing problem, not a credential one — rotating a key never
+		// fixed it, and the taxonomy now names the case.
+		{http.StatusPaymentRequired, provcore.CodeProviderQuotaExhausted},
 		{http.StatusRequestTimeout, provcore.CodeTimeout},
 		{http.StatusGatewayTimeout, provcore.CodeTimeout},
 		{http.StatusTooManyRequests, provcore.CodeRateLimited},

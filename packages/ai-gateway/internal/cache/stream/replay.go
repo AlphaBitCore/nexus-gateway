@@ -46,6 +46,7 @@ func (r *replaySub) Next(ctx context.Context) (provcore.Chunk, error) {
 		Delta:          rec.Delta,
 		ReasoningDelta: rec.ReasoningDelta,
 		ToolCallDeltas: rec.ToolCallDeltas,
+		NexusThinking:  rec.NexusThinking,
 		Usage:          rec.Usage,
 		Done:           rec.Done,
 		NativeEvent:    rec.NativeEvent,

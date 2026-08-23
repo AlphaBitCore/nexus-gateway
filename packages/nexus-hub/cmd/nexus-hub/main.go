@@ -90,7 +90,7 @@ func run() int {
 	// not fail boot — orphans may exist transiently during multi-PR
 	// configuration refactors.
 	wiring.RunConfigKeyAudit(ctx, dbPool, logger)
-	consumerMgr := wiring.InitConsumerManager(cfg, dbPool, mqRes.Consumer, opsReg, logger)
+	consumerMgr, lastTrafficReceived := wiring.InitConsumerManager(cfg, dbPool, mqRes.Consumer, opsReg, logger)
 	if consumerMgr != nil {
 		consumerMgr.Start(ctx)
 		defer consumerMgr.Stop()
@@ -129,7 +129,7 @@ func run() int {
 	}
 	siemBridge := wiring.InitSIEMBridge(ctx, dbPool, logger)
 	sched, err := wiring.InitScheduler(ctx, cfg, dbPool, redisClient, mqRes.Consumer, mqRes.Producer,
-		storageRes.Store, tmRes.Mgr, storageRes.SpillStore, opsReg, alertsRes.Store, alertsRes.Raiser, siemBridge, logger)
+		storageRes.Store, tmRes.Mgr, storageRes.SpillStore, opsReg, alertsRes.Store, alertsRes.Raiser, siemBridge, lastTrafficReceived, logger)
 	if err != nil {
 		logger.Error("scheduler init failed", "error", err)
 		return 1

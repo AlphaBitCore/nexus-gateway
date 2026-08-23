@@ -225,7 +225,7 @@ func (s stubBridgeForDebug) EndpointRoutable(ep typology.WireShape, ingress, pro
 	return s.routable
 }
 
-func (s stubBridgeForDebug) ServesResponses(target provcore.Format, override *bool) bool {
+func (s stubBridgeForDebug) ServesResponses(target provcore.Format, override *bool, _ []byte) bool {
 	return false
 }
 
@@ -296,6 +296,14 @@ func (s stubBridgeForDebug) RerankWireShapeForTarget(target provcore.Format) typ
 		return typology.WireShapeVoyageRerank
 	}
 	return typology.WireShapeNone
+}
+
+func (s stubBridgeForDebug) ValidateRerankIngressGuards(_ provcore.Format, _ []byte, _ provcore.CallTarget) error {
+	return nil
+}
+
+func (s stubBridgeForDebug) ValidateImagesIngressGuards(_ provcore.Format, _ []byte, _ provcore.CallTarget) error {
+	return nil
 }
 
 func (s stubBridgeForDebug) IngressRerankToCanonical(_ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, error) {

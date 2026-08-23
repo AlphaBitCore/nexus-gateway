@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/goccy/go-json"
-	"strings"
 )
 
 // ReplicateNormalizer handles Replicate's prediction-result response
@@ -176,64 +175,28 @@ func (n *ReplicateNormalizer) normalizeResponse(raw []byte, meta core.Meta) (cor
 	if resp.Metrics != nil && (resp.Metrics.InputTokenCount != 0 || resp.Metrics.OutputTokenCount != 0) {
 		out.Usage = replicateUsageToCanonical(resp.Metrics)
 	}
-	content := replicateExtractOutputText(resp.Output)
+	blocks := replicateOutputBlocks(resp.Output)
 	finishReason := "stop"
 	switch resp.Status {
 	case "failed", "canceled":
 		finishReason = "error"
 	}
 	if resp.Error != "" {
-		if content == "" {
-			content = resp.Error
+		if len(blocks) == 0 {
+			blocks = []core.ContentBlock{{Type: core.ContentText, Text: resp.Error}}
 		}
 		finishReason = "error"
 	}
 	out.FinishReason = finishReason
-	if content == "" {
+	if len(blocks) == 0 {
 		return out, fmt.Errorf("replicate: no output content: %w", core.ErrUnsupported)
 	}
 	out.Messages = []core.Message{{
 		Role:         core.RoleAssistant,
-		Content:      []core.ContentBlock{{Type: core.ContentText, Text: content}},
+		Content:      blocks,
 		FinishReason: finishReason,
 	}}
 	return out, nil
-}
-
-// replicateExtractOutputText pulls assistant text from Replicate's
-// polymorphic `output` field (string / array of strings / object with
-// known string keys).
-func replicateExtractOutputText(out json.RawMessage) string {
-	if len(out) == 0 || string(out) == "null" {
-		return ""
-	}
-	// String.
-	var s string
-	if err := json.Unmarshal(out, &s); err == nil {
-		return s
-	}
-	// Array of strings.
-	var arr []json.RawMessage
-	if err := json.Unmarshal(out, &arr); err == nil {
-		var b strings.Builder
-		for _, item := range arr {
-			var s string
-			if err := json.Unmarshal(item, &s); err == nil {
-				b.WriteString(s)
-			}
-		}
-		return b.String()
-	}
-	// Object with known keys.
-	var obj map[string]any
-	if err := json.Unmarshal(out, &obj); err == nil {
-		for _, key := range []string{"text", "answer", "completion", "message"} {
-			if v, ok := obj[key].(string); ok && v != "" {
-				return v
-			}
-		}
-	}
-	return ""
 }
 
 func replicateUsageToCanonical(m *replicateMetrics) *core.Usage {

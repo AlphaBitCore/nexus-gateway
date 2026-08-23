@@ -2261,7 +2261,7 @@ func TestServeProxy_NonStream_RateLimited(t *testing.T) {
 type stubRouterEmpty struct{}
 
 func (stubRouterEmpty) ResolveTargets(_ context.Context, _ *routingcore.RoutingContext) (*routingcore.RouteResult, error) {
-	return &routingcore.RouteResult{Targets: nil, RuleID: "empty"}, nil
+	return &routingcore.RouteResult{Dispatch: nil, RuleID: "empty"}, nil
 }
 
 // stubRouterErr returns an error so the routing-error branch fires.

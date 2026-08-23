@@ -29,6 +29,7 @@ func InitExecutor(
 		panic(err)
 	}
 
-	targetExecutor := executor.New(adapterReg, ptResolver, healthTracker, formatBridge).WithStats(credStatsBuf)
+	targetExecutor := executor.New(adapterReg, ptResolver, healthTracker, formatBridge).
+		WithStats(credStatsBuf).WithLogger(logger)
 	return formatBridge, targetExecutor
 }

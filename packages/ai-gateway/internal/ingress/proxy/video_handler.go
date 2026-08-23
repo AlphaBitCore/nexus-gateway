@@ -110,6 +110,7 @@ func (h *Handler) ServeVideoSubmit(in Ingress) http.HandlerFunc {
 			IngressFormat:   string(in.BodyFormat),
 			EndpointType:    string(typology.EndpointKindVideoGeneration),
 		}
+		stampCallerAttribution(rec, r.Header)
 
 		// Owned, panic-safe audit tail: the generative-caps slot release and
 		// the audit enqueue run on EVERY exit path (success, error,
@@ -213,10 +214,22 @@ func (h *Handler) ServeVideoSubmit(in Ingress) http.HandlerFunc {
 			return
 		}
 
-		// The input_reference fingerprint is the INPUT artifact (reference
-		// only, never the bytes; the image content is NOT scanned — binary).
+		// The input_reference fingerprint is the INPUT artifact; the image
+		// content is NOT scanned (binary).
 		if refs := req.ArtifactRefsJSON(); refs != "" {
 			rec.ArtifactRefs = refs
+		}
+
+		// Capture the reference image itself, under the same operator switch
+		// that governs every other request body, and by handover rather than
+		// copy — the bytes are already parsed and ReEmit only reads them, so
+		// the request path pays a slice assignment. Without this the
+		// generation was auditable and the image it was generated FROM was
+		// not, which is the same gap the STT audio path had.
+		if h.payloadCaptureConfig().StoreRequestBody {
+			if img, mime := req.InputBytes(); len(img) > 0 {
+				rec.AttachOwnedRequestBody(img, mime)
+			}
 		}
 
 		// Prompt scan (D-V7): build the hook input DIRECTLY from the parsed
@@ -233,7 +246,7 @@ func (h *Handler) ServeVideoSubmit(in Ingress) http.HandlerFunc {
 		// router (metadata-only; the prompt is not a routable text leaf here).
 		rctx := h.buildRequestContext(r, vkMeta, nil, in.BodyFormat, req.Model, string(typology.EndpointKindVideoGeneration))
 		routeRes, routeErr := h.resolveRouteOrPassthrough(r.Context(), rctx, in, req.Model, typology.EndpointKindVideoGeneration)
-		if routeErr != nil || routeRes == nil || len(routeRes.Targets) == 0 {
+		if routeErr != nil || routeRes == nil || len(routeRes.AllTargets()) == 0 {
 			// 404, NOT 5xx: an unknown / unconfigured / not-allowed model is
 			// client-correctable; a 5xx would make an SDK retry forever.
 			h.writeDetailedErr(w, rec, http.StatusNotFound, "NO_COMPATIBLE_PROVIDER",
@@ -241,7 +254,7 @@ func (h *Handler) ServeVideoSubmit(in Ingress) http.HandlerFunc {
 				"Check the model name, or add a provider + model mapping for it")
 			return
 		}
-		target0 := routeRes.Targets[0]
+		target0 := routeRes.Primary()
 		rec.ModelID = target0.ModelID
 		rec.ModelName = target0.ModelName
 		rec.RoutedModelID = target0.ModelID

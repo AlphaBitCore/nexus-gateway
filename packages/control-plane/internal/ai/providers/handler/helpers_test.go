@@ -198,7 +198,7 @@ func makeProviderRow(now time.Time) []any {
 
 // modelCols mirrors the 28-column modelColumns projection (includes 4
 // capability matrix columns: inputModalities, outputModalities,
-// lifecycle, capabilityJson; 2 cached price columns
+// requiredModalities, lifecycle, capabilityJson; 2 cached price columns
 // cachedInputReadPricePerMillion + cachedInputWritePricePerMillion; and
 // 3 realtime audio price columns audioInputPricePerMillion +
 // audioOutputPricePerMillion + cachedAudioInputReadPricePerMillion).
@@ -209,7 +209,7 @@ var modelCols = []string{
 	"audioInputPricePerMillion", "audioOutputPricePerMillion", "cachedAudioInputReadPricePerMillion",
 	"maxContextTokens", "maxOutputTokens", "status", "deprecationDate",
 	"replacedBy", "aliases",
-	"inputModalities", "outputModalities", "lifecycle", "capabilityJson",
+	"inputModalities", "outputModalities", "requiredModalities", "lifecycle", "capabilityJson",
 	"enabled", "createdAt", "updatedAt",
 }
 
@@ -218,14 +218,14 @@ func makeModelRow(now time.Time) []any {
 	replacedBy := "gpt-5"
 	return []any{
 		"model-1", "gpt-4o", "GPT-4o", &desc, "prov-1", "gpt-4o-2024-08-06",
-		"chat", []string{"vision", "tools"},
+		"chat", []string{"function_calling", "tools"},
 		f64Ptr(2.5), f64Ptr(10.0),
 		f64Ptr(0.3), f64Ptr(3.75),
 		f64Ptr(32.0), f64Ptr(64.0), f64Ptr(0.4),
 		intPtr(128000), intPtr(16384),
 		"active", &now,
 		&replacedBy, []string{"gpt4o"},
-		[]string{"text"}, []string{"text"}, "ga", jsonRawPtr(`{}`),
+		[]string{"text"}, []string{"text"}, []string{}, "ga", jsonRawPtr(`{}`),
 		true, now, now,
 	}
 }

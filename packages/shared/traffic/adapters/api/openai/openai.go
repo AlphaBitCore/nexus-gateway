@@ -30,6 +30,24 @@ func (a *Adapter) Configure(_ map[string]any) error { return nil }
 func (a *Adapter) MasksToolCallArgs() bool { return true }
 
 // ExtractRequest routes to the appropriate extractor based on path.
+// partCarriesScannableText reports whether a chat content part holds prose the
+// compliance pipeline must see.
+//
+// The rule is "it has a string `text` of its own", NOT "its type is text". The
+// normalize codec's fallback already serialises any unrecognised part into a
+// text block so an audit reader can see what arrived; a scan side that keyed
+// on the type instead let prose under any other spelling — the Responses
+// vocabulary's `input_text`, a vendor extension, a future part — be persisted
+// and forwarded without a policy ever reading it.
+//
+// It stays narrow because media parts keep their payload one level down:
+// image_url, input_audio and file all carry no top-level `text`, so none of
+// them is pulled in. Extraction and rewrite share this one decision, because a
+// segment's position is the only thing tying it back to the part it came from.
+func partCarriesScannableText(part gjson.Result) bool {
+	return part.Get("text").Type == gjson.String
+}
+
 func (a *Adapter) ExtractRequest(_ context.Context, body []byte, path string) (traffic.NormalizedContent, error) {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
@@ -88,7 +106,7 @@ func extractChatRequest(body []byte) (traffic.NormalizedContent, error) {
 		} else if content.IsArray() {
 			// Array of content parts (vision, etc.)
 			content.ForEach(func(_, part gjson.Result) bool {
-				if part.Get("type").Str == "text" {
+				if partCarriesScannableText(part) {
 					segments = append(segments, part.Get("text").Str)
 				}
 				return true

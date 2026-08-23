@@ -187,6 +187,41 @@ routing:
 	}
 }
 
+func TestLoad_EnforceNamedModelModality_DefaultsFalseAndParses(t *testing.T) {
+	// #297: the flag is fail-open by default (named-model modality verdicts go
+	// to the upstream), so an absent field MUST read false — a silent true here
+	// would start rejecting named requests our catalogue mislabels.
+	t.Run("absent defaults false", func(t *testing.T) {
+		p := writeYAML(t, `
+routing:
+  defaultRetryPolicy:
+    maxAttemptsPerTarget: 2
+`)
+		setRequiredEnvBaseline(t)
+		cfg, err := Load(p)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Routing.EnforceNamedModelModality {
+			t.Error("EnforceNamedModelModality defaulted true — the fail-open default must be false")
+		}
+	})
+	t.Run("explicit true parses", func(t *testing.T) {
+		p := writeYAML(t, `
+routing:
+  enforceNamedModelModality: true
+`)
+		setRequiredEnvBaseline(t)
+		cfg, err := Load(p)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Routing.EnforceNamedModelModality {
+			t.Error("EnforceNamedModelModality = false, want true from explicit YAML")
+		}
+	})
+}
+
 func TestLoad_DefaultRetryPolicy_FillsMissingFromDefault(t *testing.T) {
 	p := writeYAML(t, `
 routing:

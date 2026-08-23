@@ -125,8 +125,8 @@ func anthropicReqFor(body []byte) Request {
 	}
 }
 
-// TestA2_FastPath_SetsModelAndStripsNexus: non-stream, no rewrite → fast path.
-func TestA2_FastPath_SetsModelAndStripsNexus(t *testing.T) {
+// TestA2_FastPath_SetsModel: non-stream, no rewrite → fast path.
+func TestA2_FastPath_SetsModel(t *testing.T) {
 	body := chatBody(`"nexus":{"ext":{"x":1}},"temperature":0.5`)
 	out, rewrites, err := rpm(reqFor(body, false))
 	if err != nil {
@@ -142,9 +142,10 @@ func TestA2_FastPath_SetsModelAndStripsNexus(t *testing.T) {
 	if m["model"] != "provider-real-model" {
 		t.Errorf("model = %v, want provider-real-model", m["model"])
 	}
-	if _, ok := m["nexus"]; ok {
-		t.Error("nexus namespace must be stripped on the fast path")
-	}
+	// `nexus` is deliberately still present here. The carrier is removed at the
+	// transport frame, not on a leg: removing it before the codec would kill
+	// nexus.ext.<provider>.<key>, which the codec has to READ. Asserted end to
+	// end by TestEgress_NoInternalCarrierReachesTheTransport, on both legs.
 	if m["temperature"] != 0.5 {
 		t.Errorf("temperature lost: %v", m["temperature"])
 	}
@@ -456,9 +457,8 @@ func TestModelInBody_Anthropic_AliasRewritten(t *testing.T) {
 	if m["model"] != "claude-opus-4-8" {
 		t.Errorf("model = %v, want claude-opus-4-8 (alias resolved to ProviderModelID)", m["model"])
 	}
-	if _, ok := m["nexus"]; ok {
-		t.Error("nexus namespace must be stripped before upstream send")
-	}
+	// See TestEgress_NoInternalCarrierReachesTheTransport — the carrier leaves at
+	// the transport frame, after the codec has consumed the extension.
 	// The messages payload must survive untouched.
 	if _, ok := m["messages"]; !ok {
 		t.Error("messages array lost during model rewrite")

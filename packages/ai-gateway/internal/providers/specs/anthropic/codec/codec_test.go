@@ -368,9 +368,6 @@ func hasRewrite(rewrites []string, want string) bool {
 	return false
 }
 
-// TestCodec_EncodeRequest_jsonSchemaUnsupported pins SDD §2.5 hard rule:
-// unmappable canonical fields surface as a structured *provcore.ProviderError
-// with type=nexus_field_unsupported, not as a generic fmt.Errorf string.
 // TestCodec_EncodeRequest_thinkingPassthrough: an OpenAI-spec
 // request carrying nexus.ext.anthropic.thinking has that object forwarded
 // verbatim as the outgoing `thinking` field. Malformed extensions are
@@ -383,9 +380,13 @@ func TestCodec_EncodeRequest_thinkingPassthrough(t *testing.T) {
 		wantType  string // expected value of thinking.type if present
 	}{
 		{
+			// An ENABLED-contract model: verbatim forwarding is only true
+			// where the wire still speaks this shape. On adaptive-contract
+			// models the same block is coerced (TestThinkingContract_
+			// ExtInjectedEnabledCoercedOnAdaptiveModel).
 			name: "valid_object_injected_verbatim",
 			canon: `{
-				"model": "claude-opus-4-7",
+				"model": "claude-opus-4-6",
 				"max_tokens": 2000,
 				"messages": [{"role": "user", "content": "Reason carefully."}],
 				"nexus": {"ext": {"anthropic": {"thinking": {"type": "enabled", "budget_tokens": 4096}}}}
@@ -446,12 +447,24 @@ func TestCodec_EncodeRequest_thinkingPassthrough(t *testing.T) {
 	}
 }
 
-func TestCodec_EncodeRequest_jsonSchemaUnsupported(t *testing.T) {
+func TestCodec_EncodeRequest_unmappableFieldIsStructured(t *testing.T) {
+	// Re-pointed 2026-08-19. The rule this test protects — an unmappable field
+	// surfaces as a structured ProviderError, never a bare fmt.Errorf — is
+	// unchanged; only its EXAMPLE moved. json_schema stopped being unmappable
+	// once the codec learned Anthropic's own output_config.format (probed: all
+	// four provider wires serve structured outputs).
+	//
+	// The example is a `file` part carrying no file_id, no data: URL and no
+	// file_url. That one is unmappable by construction rather than by a wire
+	// limitation that could quietly lapse — there are no bytes and no handle to
+	// send. A remote image URL was the first candidate and was already wrong:
+	// the codec maps it to source.type=url today.
 	canon := []byte(`{
 		"model":"claude-3-5-haiku-20240307",
 		"max_tokens":32,
-		"messages":[{"role":"user","content":"json me"}],
-		"response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}}
+		"messages":[{"role":"user","content":[
+			{"type":"file","file":{"filename":"report.pdf"}}
+		]}]
 	}`)
 	var codec Codec
 	_, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
@@ -471,7 +484,9 @@ func TestCodec_EncodeRequest_jsonSchemaUnsupported(t *testing.T) {
 	if pe.Status != http.StatusBadRequest {
 		t.Errorf("status=%d want 400", pe.Status)
 	}
-	if !strings.Contains(pe.Message, "response_format.json_schema") {
+	// The message must name the field, so a caller can act on it rather than
+	// go hunting for which part of their request we could not carry.
+	if !strings.Contains(pe.Message, "file") {
 		t.Errorf("message missing field name: %q", pe.Message)
 	}
 }
@@ -948,8 +963,8 @@ func TestStreamDecoder_ThinkingDelta(t *testing.T) {
 	if !strings.Contains(reasoning, "Let me think") {
 		t.Errorf("ReasoningDelta missing thinking_delta text: %q", reasoning)
 	}
-	if !strings.Contains(reasoning, "sig_abc") {
-		t.Errorf("ReasoningDelta missing signature_delta: %q", reasoning)
+	if strings.Contains(reasoning, "sig_abc") {
+		t.Errorf("signature_delta must not be mixed into ReasoningDelta: %q", reasoning)
 	}
 }
 
@@ -1010,8 +1025,12 @@ func TestDecodeResponse_PromptCacheUsage(t *testing.T) {
 	if got := gjson.GetBytes(canon, "usage.prompt_tokens_details.cached_tokens").Int(); got != 384 {
 		t.Errorf("cached_tokens=%d want 384", got)
 	}
-	if got := gjson.GetBytes(canon, "nexus.ext.anthropic.cache_creation_input_tokens").Int(); got != 1024 {
-		t.Errorf("nexus.ext.anthropic.cache_creation_input_tokens=%d want 1024", got)
+	if got := gjson.GetBytes(canon, "usage.prompt_tokens_details.cache_creation_tokens").Int(); got != 1024 {
+		t.Errorf("cache_creation_tokens=%d want 1024", got)
+	}
+	if gjson.GetBytes(canon, "nexus").Exists() {
+		t.Errorf("decoded canonical carries the internal nexus namespace, which an "+
+			"OpenAI-wire caller receives verbatim through the identity egress: %s", canon)
 	}
 	if usage.CacheReadTokens == nil || *usage.CacheReadTokens != 384 {
 		t.Errorf("typed Usage.CacheReadTokens=%v want 384", usage.CacheReadTokens)
@@ -1441,9 +1460,8 @@ func TestCodec_EncodeRequest_reconstructsThinkingOnToolCallsTurn(t *testing.T) {
 }
 
 // TestCodec_EncodeRequest_crossFormatReasoning_unsignedBlock pins the
-// cross-format case: an upstream that emitted reasoning_content but no
-// signature (DeepSeek / OpenAI) yields an unsigned thinking block, which
-// Anthropic accepts on a request body it did not itself sign.
+// cross-format case: reasoning_content without nexus_thinking is not a
+// provider-native signed block and must not be fabricated into one.
 func TestCodec_EncodeRequest_crossFormatReasoning_unsignedBlock(t *testing.T) {
 	canon := []byte(`{
 		"model":"claude-opus-4-8",
@@ -1455,11 +1473,40 @@ func TestCodec_EncodeRequest_crossFormatReasoning_unsignedBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := gjson.GetBytes(encRes.Body, "messages.0.content.0")
-	if first.Get("type").String() != "thinking" || first.Get("thinking").String() != "thought about it" {
-		t.Fatalf("cross-format reasoning must still reconstruct: %s", encRes.Body)
+	for _, block := range gjson.GetBytes(encRes.Body, "messages.0.content").Array() {
+		if block.Get("type").String() == "thinking" {
+			t.Fatalf("cross-format reasoning must not reconstruct unsigned thinking: %s", encRes.Body)
+		}
 	}
-	if first.Get("signature").Exists() {
-		t.Fatalf("no signature available → unsigned block: %s", encRes.Body)
+}
+
+func TestCodec_EncodeRequest_unsignedThinkingCarrierIsIgnored(t *testing.T) {
+	canon := []byte(`{"model":"claude-opus-4-8","max_tokens":64,"messages":[{"role":"assistant","content":"done","nexus_thinking":[{"thinking":"unsigned"}]}]}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range gjson.GetBytes(encRes.Body, "messages.0.content").Array() {
+		if block.Get("type").String() == "thinking" {
+			t.Fatalf("unsigned carrier must not reconstruct Anthropic thinking: %s", encRes.Body)
+		}
+	}
+}
+
+func TestCodec_DecodeResponse_preservesOrderedThinkingReplayState(t *testing.T) {
+	native := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[` +
+		`{"type":"thinking","thinking":"first","signature":"sig-a"},` +
+		`{"type":"redacted_thinking","data":"opaque"},` +
+		`{"type":"thinking","thinking":"second","signature":"sig-b"},` +
+		`{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`)
+	var codec Codec
+	decoded, err := codec.DecodeResponse(typology.WireShapeAnthropicMessages, native, "", provcore.DecodeContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := gjson.GetBytes(decoded.CanonicalBody, "choices.0.message.nexus_thinking").Array()
+	if len(blocks) != 3 || blocks[0].Get("signature").String() != "sig-a" || blocks[1].Get("redacted_data").String() != "opaque" || blocks[2].Get("signature").String() != "sig-b" {
+		t.Fatalf("ordered replay carrier changed: %s", decoded.CanonicalBody)
 	}
 }

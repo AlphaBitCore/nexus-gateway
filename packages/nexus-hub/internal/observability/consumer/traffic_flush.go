@@ -20,6 +20,9 @@ import (
 // mq.ErrDeferAck if the message is buffered and will be acked after the batch
 // flush; returns a non-sentinel error to trigger auto-nak by the MQ driver.
 func (w *TrafficEventWriter) handleMessage(queue string, batch *BatchAccumulator[pendingTrafficMessage], msg *mq.Message) error {
+	// Stamp receipt BEFORE any flush so the audit-freshness check can see that
+	// events are arriving even when the flush that would persist them is failing.
+	w.markReceived()
 	if w.consumedTotal != nil {
 		w.consumedTotal.With(queue).Inc()
 	}
@@ -148,23 +151,6 @@ func (w *TrafficEventWriter) flushBatch(ctx context.Context, items []pendingTraf
 		return fmt.Errorf("insert traffic_event_payload: %w", err)
 	}
 
-	// Normalized payloads are an independent sidecar. Each sidecar row runs
-	// inside its OWN savepoint (see insertNormalizedPayloads), so a failure
-	// here — including a jsonb encoding error (22P05) — rolls back only that
-	// savepoint and leaves the outer tx committable. The raw traffic_event +
-	// traffic_event_payload rows therefore survive even when normalization
-	// fails. A returned error is a non-poison sidecar failure: it is logged +
-	// counted but never rolls the raw batch — the control plane recomputes the
-	// normalized projection at view time from the surviving raw body, so a
-	// missing sidecar row does not lose the normalized view.
-	if err := w.insertNormalizedPayloads(ctx, tx, items); err != nil {
-		w.logger.Warn("flush: insert traffic_event_normalized failed (raw rows still committed)",
-			"error", err, "count", len(items))
-		if w.errorsTotal != nil {
-			w.errorsTotal.With("db_insert_normalized").Inc()
-		}
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		w.countFlushErr("db_commit")
 		return fmt.Errorf("commit tx: %w", err)
@@ -204,14 +190,6 @@ func (w *TrafficEventWriter) flushItem(ctx context.Context, pm pendingTrafficMes
 		w.countFlushErr("db_insert_payload")
 		w.resolveItemInsertErr(ctx, single, fmt.Errorf("insert traffic_event_payload: %w", err))
 		return
-	}
-
-	if err := w.insertNormalizedPayloads(ctx, tx, single); err != nil {
-		w.logger.Warn("flush: insert traffic_event_normalized failed (raw row still committed)",
-			"error", err, "id", pm.event.ID)
-		if w.errorsTotal != nil {
-			w.errorsTotal.With("db_insert_normalized").Inc()
-		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

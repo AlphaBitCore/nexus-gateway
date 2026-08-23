@@ -124,8 +124,16 @@ func TestRealtimeMetering_TwoResponseRows(t *testing.T) {
 	}
 
 	sess := sessions[0]
-	if sess.ID != "rid-client-123" {
-		t.Errorf("session row id = %q, want the upgrade request's own id", sess.ID)
+	// The primary key is minted per row. It is the hub's ON CONFLICT (id)
+	// idempotency key, so it must not be the client's X-Nexus-Request-Id —
+	// a client reusing one across calls would collapse two events into one
+	// row — nor the session trace, which every row in the session shares.
+	if sess.ID == "" || sess.ID == "rid-client-123" || sess.ID == sess.TraceID {
+		t.Errorf("session row id = %q, want a minted id distinct from the client header and the session trace", sess.ID)
+	}
+	if rA.ID == rB.ID || rA.ID == sess.ID {
+		t.Errorf("rows share an id (%q / %q / %q); ON CONFLICT (id) DO NOTHING would drop all but one",
+			sess.ID, rA.ID, rB.ID)
 	}
 	if sess.TraceID == "" || sess.TraceID == "rid-client-123" {
 		t.Errorf("session trace id %q must be server-minted, never the client header", sess.TraceID)
@@ -360,7 +368,7 @@ func newMeterTestSession(t *testing.T, q realtimeQuota) (*realtimeSession, *capt
 	deps, prod := realtimeDeps(t, "http://127.0.0.1:0")
 	s := &realtimeSession{
 		h:      NewHandler(deps),
-		rec:    &audit.Record{Method: http.MethodGet, Path: "/v1/realtime"},
+		rec:    &audit.Record{RequestID: "rid-upgrade-1", Method: http.MethodGet, Path: "/v1/realtime"},
 		in:     rtIngress(),
 		vkMeta: entitledVKMeta("vk-1"),
 		quota:  q,

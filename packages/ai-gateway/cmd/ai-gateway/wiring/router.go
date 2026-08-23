@@ -28,23 +28,35 @@ var _ interface {
 // InitRouter builds the strategy registry, health ranker, and resolver.
 // Returns (strategyReg, healthRanker, resolver, capCache).
 func InitRouter(
+	ctx context.Context,
 	cacheLayer *cachelayer.Layer,
 	healthTracker *store.HealthTracker,
 	ptResolver *provtarget.PgResolver,
 	adapterReg *provcore.Registry,
 	logger *slog.Logger,
+	enforceNamedModelModality bool,
 ) (*strategies.StrategyRegistry, *routingcore.HealthRanker, *routing.Resolver, *capability.Cache) {
 	capCache := capability.NewCache()
 	strategyReg := strategies.NewStrategyRegistry()
 	healthRanker := routingcore.NewHealthRanker(healthTracker)
-	routerResolver := routing.NewResolver(cacheLayer, strategyReg, healthRanker, logger, capCache)
+	routerResolver := routing.NewResolver(cacheLayer, strategyReg, healthRanker, logger, capCache, enforceNamedModelModality)
+
+	// One catalogue source, read once per request when the routing context is
+	// prepared. The smart strategy still receives it as a dependency so it can
+	// fall back for callers that prepare no context, but the prepared pool is
+	// what it reads on the live path — the same snapshot, narrowed once.
+	var smartStore routingcore.SmartStore
+	if cacheLayer != nil {
+		smartStore = routingcore.NewSmartStoreDB(cacheLayer)
+		routerResolver = routerResolver.WithModelPool(smartStore)
+	}
 
 	var smartDeps *strategies.SmartDeps
 	if cacheLayer != nil && ptResolver != nil {
 		smartDeps = &strategies.SmartDeps{
-			Store:     routingcore.NewSmartStoreDB(cacheLayer),
+			Store:     smartStore,
 			Lookup:    routerResolver.LookupTargetFunc(),
-			RouterLLM: llm.NewAdapterDecider(ptResolver, adapterReg, logger),
+			RouterLLM: newRouterDecider(ctx, ptResolver, adapterReg, cacheLayer, logger),
 			Logger:    logger,
 		}
 	}
@@ -59,4 +71,27 @@ func InitRouter(
 	strategyReg.Freeze()
 
 	return strategyReg, healthRanker, routerResolver, capCache
+}
+
+// newRouterDecider builds the production router-LLM decider with catalog
+// pricing attached, so the router call's cost lands on the request's
+// traffic_event row. Reuses the SAME price source as the AI Guard wiring
+// (AIGuardModelLookup, satisfied by *cachelayer.Layer — in-memory snapshot
+// reads, no DB roundtrip) via the shared newModelPriceLookup helper (see
+// aiguard.go), which returns (0,0) on lookup failure or an unpriced model —
+// so an unpriced router model leaves the cost zero rather than failing the
+// request — and logs a Warn naming the model id either way.
+func newRouterDecider(
+	ctx context.Context,
+	resolver provtarget.Resolver,
+	adapters llm.AdapterLookup,
+	models AIGuardModelLookup,
+	logger *slog.Logger,
+) *llm.AdapterDecider {
+	d := llm.NewAdapterDecider(resolver, adapters, logger)
+	if models == nil {
+		return d
+	}
+	d.PriceLookup = newModelPriceLookup(ctx, models, logger, "router")
+	return d
 }

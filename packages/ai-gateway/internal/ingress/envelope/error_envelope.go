@@ -152,10 +152,13 @@ func openaiErrorType(pe *provcore.ProviderError) string {
 		return "api_error"
 	case provcore.CodeEndpointUnsupported, provcore.CodeNotImplemented:
 		return "invalid_request_error"
-	case provcore.CodeNoCompatibleProvider:
+	case provcore.CodeNoCompatibleProvider, provcore.CodeProviderQuotaExhausted:
 		return "api_error"
 	}
-	return "api_error"
+	// A code outside the canonical set — every gateway-generated error carries a
+	// Nexus UPPER_SNAKE one — still has a status, and the status is what the
+	// vocabulary tracks. Defaulting to api_error typed a 404 as a server fault.
+	return OpenAIErrorTypeForStatus(pe.Status)
 }
 
 // responsesAPIErrorType maps provcore.ProviderError.Code to the OpenAI
@@ -177,12 +180,14 @@ func responsesAPIErrorType(pe *provcore.ProviderError) string {
 		return "api_error"
 	case provcore.CodeEndpointUnsupported, provcore.CodeNotImplemented:
 		return "invalid_request_error"
-	case provcore.CodeNoCompatibleProvider:
+	case provcore.CodeNoCompatibleProvider, provcore.CodeProviderQuotaExhausted:
 		return "api_error"
 	case "feature_requires_native_responses_target":
 		return "unsupported_feature"
 	}
-	return "api_error"
+	// Same fallback as the sibling mappers: an unrecognised code still has a
+	// status, and defaulting to api_error typed a 404 as a server fault.
+	return OpenAIErrorTypeForStatus(pe.Status)
 }
 
 // anthropicErrorType maps a normalised provider error to the Anthropic
@@ -196,12 +201,13 @@ func anthropicErrorType(pe *provcore.ProviderError) string {
 		return "authentication_error"
 	case provcore.CodeRateLimited:
 		return "rate_limit_error"
-	case provcore.CodeUpstreamError:
-		return "api_error"
-	case provcore.CodeTimeout:
+	case provcore.CodeUpstreamError, provcore.CodeTimeout, provcore.CodeProviderQuotaExhausted:
 		return "api_error"
 	}
-	return "api_error"
+	// A code outside the canonical set — every gateway-generated error carries a
+	// Nexus UPPER_SNAKE one — still has a status, and the status is what both
+	// vocabularies track. Defaulting to api_error typed a 404 as a server fault.
+	return OpenAIErrorTypeForStatus(pe.Status)
 }
 
 // synthesizeSSEErrorFrame produces an SSE-formatted terminal error
@@ -284,7 +290,11 @@ func encodeErrorEnvelopeForIngressForStream(ingress provcore.Format, pe *provcor
 // gRPC UNKNOWN string so the client at least sees a defined value.
 func geminiStatusForHTTPCode(code int) string {
 	switch code {
-	case 400:
+	// 405 is absent from Google's documented HTTP-to-gRPC table, so it used to
+	// fall through to UNKNOWN — a shrug at a case we know exactly, and the one
+	// the method-not-allowed fallback produces on every /v1beta wrong-method
+	// call. INVALID_ARGUMENT is the same read the OpenAI shape gives it.
+	case 400, 405:
 		return "INVALID_ARGUMENT"
 	case 401:
 		return "UNAUTHENTICATED"

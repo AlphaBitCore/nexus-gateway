@@ -111,6 +111,8 @@ type fakeBridge struct {
 	responseAcrossFormats            func(from typology.WireShape, to typology.WireShape, body []byte) ([]byte, error)
 	newStreamTranscoder              func(ingress, target provcore.Format, model string) canonicalbridge.StreamTranscoder
 	stripInternalCarriers            func(canon []byte, target provcore.Format) []byte
+	validateImagesIngressGuards      func(ingress provcore.Format, body []byte, ct provcore.CallTarget) error
+	validateRerankIngressGuards      func(ingress provcore.Format, body []byte, ct provcore.CallTarget) error
 }
 
 func (b *fakeBridge) EndpointRoutable(ep typology.WireShape, ingress, target provcore.Format) bool {
@@ -123,7 +125,7 @@ func (b *fakeBridge) EndpointRoutable(ep typology.WireShape, ingress, target pro
 	return ingress.Valid() && target.Valid()
 }
 
-func (b *fakeBridge) ServesResponses(target provcore.Format, override *bool) bool {
+func (b *fakeBridge) ServesResponses(target provcore.Format, override *bool, _ []byte) bool {
 	if override != nil && !*override {
 		return false
 	}
@@ -244,6 +246,20 @@ func (b *fakeBridge) RerankWireShapeForTarget(target provcore.Format) typology.W
 	return typology.WireShapeNone
 }
 
+func (b *fakeBridge) ValidateRerankIngressGuards(ingress provcore.Format, body []byte, ct provcore.CallTarget) error {
+	if b.validateRerankIngressGuards != nil {
+		return b.validateRerankIngressGuards(ingress, body, ct)
+	}
+	return nil
+}
+
+func (b *fakeBridge) ValidateImagesIngressGuards(ingress provcore.Format, body []byte, ct provcore.CallTarget) error {
+	if b.validateImagesIngressGuards != nil {
+		return b.validateImagesIngressGuards(ingress, body, ct)
+	}
+	return nil
+}
+
 func (b *fakeBridge) IngressRerankToCanonical(_ provcore.Format, body []byte, _ provcore.CallTarget) ([]byte, error) {
 	return body, nil
 }
@@ -361,6 +377,53 @@ func TestServeProxy_Fake_AllTargetsExhausted_NonRate(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "PROVIDER_UNAVAILABLE") {
 		t.Errorf("body=%s want PROVIDER_UNAVAILABLE", w.Body.String())
+	}
+}
+
+// TestServeProxy_Fake_NoTargetDispatchable_NotAnOutage pins the business
+// outcome of a request that never reached a provider: every target failed in
+// local preparation (an undecryptable credential, a missing credential row),
+// so the caller must NOT be told the upstream is unavailable.
+//
+// This is the exact production shape observed on 2026-08-19: 1,195 of 1,235
+// 5xx events across two deployments had no upstream round trip at all —
+// moonshot credentials failing AES-GCM authentication after a key change, and
+// a cohere provider with no credential row — and every one was served as
+// 502 "all upstream providers failed", which points operators at a provider
+// status page and invites SDKs to retry a fault no retry can clear.
+func TestServeProxy_Fake_NoTargetDispatchable_NotAnOutage(t *testing.T) {
+	fexec := &fakeExecutor{Result: &executor.ExecutionResult{
+		Error: executor.ErrNoTargetDispatchable,
+		Attempts: []executor.Attempt{
+			// Dispatched is false on both: nothing left the process.
+			{Error: `resolve: provtarget: credential: credentials: decryption failed: cipher: message authentication failed`},
+			{Error: `resolve: provtarget: credential: cachelayer: credential for provider "f8a5": no rows in result set`},
+		},
+	}}
+	deps := makeFakeDeps(t, fexec, &fakeBridge{})
+
+	h := NewHandler(deps).ServeProxy(Ingress{
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+	})
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	w := httptest.NewRecorder()
+	h(w, freshChatRequest(t, body))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d want 500; body=%s", w.Code, w.Body.String())
+	}
+	if w.Code == http.StatusBadGateway {
+		t.Error("a fault in our own configuration must not be served as a gateway/upstream failure")
+	}
+	if !strings.Contains(w.Body.String(), "PROVIDER_TARGET_UNAVAILABLE") {
+		t.Errorf("body=%s want PROVIDER_TARGET_UNAVAILABLE", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "PROVIDER_UNAVAILABLE") {
+		t.Errorf("must not claim the provider was unavailable when it was never called: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "all upstream providers failed") {
+		t.Errorf("no upstream was asked, so nothing upstream failed: %s", w.Body.String())
 	}
 }
 
@@ -1033,7 +1096,7 @@ func TestServeProxy_Fake_ResponsesGuard_Rejects(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "previous_response_id") {
 		t.Errorf("body=%s want rejection param=previous_response_id", w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "feature_requires_native_responses_target") {
+	if !strings.Contains(w.Body.String(), "FEATURE_REQUIRES_NATIVE_RESPONSES_TARGET") {
 		t.Errorf("body=%s want stable error.code", w.Body.String())
 	}
 	if fexec.Calls != 0 || fexec.PreparedCalls != 0 {
@@ -1070,7 +1133,7 @@ func TestServeProxy_Fake_StreamCrossFormatBedrockRejected(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400; body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "cross_format_stream_unsupported") {
+	if !strings.Contains(w.Body.String(), "CROSS_FORMAT_STREAM_UNSUPPORTED") {
 		t.Errorf("body=%s want cross_format_stream_unsupported envelope", w.Body.String())
 	}
 	if fexec.Calls != 0 || fexec.PreparedCalls != 0 {
@@ -1167,7 +1230,7 @@ func TestServeProxy_Fake_RouterError(t *testing.T) {
 type emptyRouter struct{}
 
 func (emptyRouter) ResolveTargets(_ context.Context, _ *routingcore.RoutingContext) (*routingcore.RouteResult, error) {
-	return &routingcore.RouteResult{Targets: nil}, nil
+	return &routingcore.RouteResult{Dispatch: nil}, nil
 }
 
 func TestServeProxy_Fake_NoTargets_FallbackFails(t *testing.T) {

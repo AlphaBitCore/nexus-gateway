@@ -271,7 +271,7 @@ func TestResourceInvokeNoBodyAndStdinAnd403(t *testing.T) {
 	}
 	// a 403 from the server maps to exit 4 (read path surfaces the transport error).
 	srv403 := newResourceServer(t, "")
-	srv403.Server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv403.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, `{"error":{"message":"denied"}}`)
 	})

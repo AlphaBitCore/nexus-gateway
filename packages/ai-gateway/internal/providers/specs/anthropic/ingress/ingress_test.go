@@ -13,6 +13,7 @@
 package ingress_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/ingress"
@@ -469,7 +470,20 @@ func TestOpenAIToMessages_reasoningContent_thinkingBlock(t *testing.T) {
 	}
 }
 
-func TestOpenAIToMessages_usageConversion(t *testing.T) {
+// Anthropic's usage counters are ADDITIVE — input_tokens counts only what was
+// neither read from nor written to the cache, and the two cache counters stand
+// beside it as separate components a client sums. Canonical follows OpenAI,
+// where prompt_tokens is the TOTAL and cached_tokens is a subset already inside
+// it. The conversion has to subtract, or the three overlap.
+//
+// This test previously asserted input_tokens == prompt_tokens == 10 with
+// cache_read == 8, i.e. it PINNED the overlap: 10 + 8 = 18 for a 10-token
+// request. Measured in production before the fix, on a real cached prefix,
+// input_tokens came back 12936 beside cache_creation_input_tokens 12924, which
+// an Anthropic SDK adds to 25860. Cache-creation bills at a premium and
+// cache-read at a discount, so the error was largest on exactly the requests
+// caching was used for.
+func TestOpenAIToMessages_usageIsAdditiveLikeAnthropicsOwnWire(t *testing.T) {
 	openai := []byte(`{
 		"id":"chatcmpl-4",
 		"model":"claude-sonnet-4-6",
@@ -480,25 +494,108 @@ func TestOpenAIToMessages_usageConversion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gjson.GetBytes(out, "usage.input_tokens").Int() != 10 {
-		t.Errorf("usage.input_tokens: %s", string(out))
+	in := gjson.GetBytes(out, "usage.input_tokens").Int()
+	read := gjson.GetBytes(out, "usage.cache_read_input_tokens").Int()
+	create := gjson.GetBytes(out, "usage.cache_creation_input_tokens").Int()
+	if in != 2 {
+		t.Errorf("usage.input_tokens = %d, want 2 (10 total − 8 cached): %s", in, out)
+	}
+	if read != 8 {
+		t.Errorf("usage.cache_read_input_tokens = %d, want 8: %s", read, out)
+	}
+	// The identity is the assertion that cannot be tuned away: the three
+	// counters must compose back to the canonical total.
+	if in+read+create != 10 {
+		t.Errorf("counters do not compose: %d + %d + %d != 10 — a client summing them "+
+			"per Anthropic's own documentation would misprice the request: %s",
+			in, read, create, out)
 	}
 	if gjson.GetBytes(out, "usage.output_tokens").Int() != 5 {
 		t.Errorf("usage.output_tokens: %s", string(out))
 	}
-	if gjson.GetBytes(out, "usage.cache_read_input_tokens").Int() != 8 {
-		t.Errorf("usage.cache_read_input_tokens: %s", string(out))
+}
+
+// Both counters at once, which is the shape the production defect appeared in.
+func TestOpenAIToMessages_bothCacheCountersCompose(t *testing.T) {
+	openai := []byte(`{
+		"id":"chatcmpl-9","model":"claude-haiku-4-5",
+		"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":12936,"completion_tokens":8,
+			"prompt_tokens_details":{"cached_tokens":0,"cache_creation_tokens":12924}}
+	}`)
+	out, err := ingress.OpenAIChatCompletionToMessagesResponse(openai)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	in := gjson.GetBytes(out, "usage.input_tokens").Int()
+	create := gjson.GetBytes(out, "usage.cache_creation_input_tokens").Int()
+	if in != 12 {
+		t.Errorf("usage.input_tokens = %d, want 12 — this is the exact production case: %s", in, out)
+	}
+	if in+create != 12936 {
+		t.Errorf("counters do not compose: %d + %d != 12936: %s", in, create, out)
+	}
+}
+
+// A provider whose cache counters exceed its own total contradicts itself. Report
+// zero rather than a negative, which no client can interpret.
+// An upstream reporting cache counters larger than the total it also reported
+// has contradicted itself, and no additive triple represents that. Clamping the
+// uncached side to zero and emitting the counters anyway summed to MORE than the
+// provider's own total — the exact over-count this conversion exists to end.
+//
+// So the billable quantity is preserved and the detail that cannot be reconciled
+// is dropped: input_tokens carries the total, the cache counters are omitted
+// rather than invented, and their absence is the signal.
+func TestOpenAIToMessages_contradictoryCountersKeepTheTotalAndDropTheDetail(t *testing.T) {
+	for _, tc := range []struct {
+		name                             string
+		prompt, cacheRead, cacheCreation int64
+	}{
+		{"read exceeds the total", 5, 90, 0},
+		{"creation exceeds the total", 10, 0, 1000},
+		{"together they exceed it", 100, 60, 60},
+		// A negative counter makes the subtraction ADD: prompt 10 with
+		// cached -5 produced input_tokens 15, above the reported total.
+		{"a negative counter", 10, -5, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			openai := []byte(fmt.Sprintf(`{
+				"id":"chatcmpl-x","model":"claude-haiku-4-5",
+				"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
+				"usage":{"prompt_tokens":%d,"completion_tokens":1,
+					"prompt_tokens_details":{"cached_tokens":%d,"cache_creation_tokens":%d}}
+			}`, tc.prompt, tc.cacheRead, tc.cacheCreation))
+			out, err := ingress.OpenAIChatCompletionToMessagesResponse(openai)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			u := gjson.GetBytes(out, "usage")
+			got := u.Get("input_tokens").Int()
+			sum := got + u.Get("cache_read_input_tokens").Int() + u.Get("cache_creation_input_tokens").Int()
+			if sum > tc.prompt {
+				t.Errorf("the emitted counters sum to %d, above the %d the provider reported: %s",
+					sum, tc.prompt, u.Raw)
+			}
+			if got < 0 {
+				t.Errorf("input_tokens = %d; a negative count is not a number a client can bill", got)
+			}
+		})
 	}
 }
 
 func TestOpenAIToMessages_cacheCreationRestored(t *testing.T) {
-	// cache_creation_input_tokens from nexus.ext.anthropic should be restored to Anthropic usage.
+	// The Anthropic-wire caller's cache_creation_input_tokens comes back from the
+	// canonical usage object — the same place cached_tokens comes from — not from
+	// the gateway's internal namespace. Reading a canonical field here is what
+	// lets the codec stop writing a second copy that an OpenAI-wire caller would
+	// have received.
 	openai := []byte(`{
 		"id":"chatcmpl-5",
 		"model":"claude-sonnet-4-6",
 		"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
-		"usage":{"prompt_tokens":10,"completion_tokens":5},
-		"nexus":{"ext":{"anthropic":{"cache_creation_input_tokens":1000}}}
+		"usage":{"prompt_tokens":1010,"completion_tokens":5,
+			"prompt_tokens_details":{"cache_creation_tokens":1000}}
 	}`)
 	out, err := ingress.OpenAIChatCompletionToMessagesResponse(openai)
 	if err != nil {
@@ -516,7 +613,7 @@ func TestOpenAIToMessages_finishReasonMapping(t *testing.T) {
 		{"stop", "end_turn"},
 		{"length", "max_tokens"},
 		{"tool_calls", "tool_use"},
-		{"content_filter", "stop_sequence"},
+		{"content_filter", "refusal"},
 		{"", "end_turn"},
 		{"unknown_reason", "unknown_reason"},
 	}
@@ -544,7 +641,7 @@ func TestMapOpenAIFinishToStopReason_allVariants(t *testing.T) {
 		{"stop", "end_turn"},
 		{"length", "max_tokens"},
 		{"tool_calls", "tool_use"},
-		{"content_filter", "stop_sequence"},
+		{"content_filter", "refusal"},
 		{"", "end_turn"},
 		{"unknown_value", "unknown_value"},
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/tidwall/gjson"
 )
 
@@ -65,6 +66,14 @@ func (ErrorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 		// over to a larger-context target.
 		if code == provcore.CodeInvalidRequest && strings.Contains(pe.Message, "prompt is too long") {
 			pe.Code = provcore.CodeContextOverflow
+		}
+		// A spent account budget arrives the same way — invalid_request_error
+		// with HTTP 400, indistinguishable by type or status from a malformed
+		// body. Left as invalid_request it reads as the caller's fault, which
+		// aborts the request instead of moving it to another provider; the
+		// account is out of budget, not the request wrong.
+		if code == provcore.CodeInvalidRequest && specutil.IsQuotaExhaustedMessage(pe.Message) {
+			pe.Code = provcore.CodeProviderQuotaExhausted
 		}
 		if code == provcore.CodeRateLimited {
 			if ra := ParseRetryAfter(headers.Get("retry-after")); ra != nil {

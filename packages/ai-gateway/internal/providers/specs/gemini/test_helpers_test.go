@@ -12,6 +12,7 @@ import (
 	gcodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/codec"
 	specerrors "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/errors"
 	gstream "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/stream"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -28,11 +29,11 @@ func parseRetryAfter(v string) *time.Duration {
 }
 
 func parseDataURL(dataURL string) (mediaType, b64 string, ok bool) {
-	return gcodec.ParseDataURL(dataURL)
+	return specutil.ParseDataURL(dataURL)
 }
 
 func guessMimeFromURL(u string) string {
-	return gcodec.GuessMimeFromURL(u)
+	return gcodec.GuessMimeFromURL(u, "image/jpeg")
 }
 
 func mapFinishReason(r string) string {

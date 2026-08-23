@@ -154,12 +154,12 @@ func TestNormalize_AgentRunResponse_RealWireShape(t *testing.T) {
 	if got := joined(2); !strings.Contains(got, "**Output:**") || !strings.Contains(got, "curosr app BBBB") {
 		t.Errorf("msg2 = %q, want assistant reply", got)
 	}
-	// Protobuf body is not text — the Raw view must be a BinaryRef.
-	if p.HTTP == nil || p.HTTP.BodyView == nil || p.HTTP.BodyView.BinaryRef == nil {
-		t.Fatalf("expected BinaryRef bodyView for protobuf body")
+	// Protobuf body is not text — the Raw view must be a MediaRef.
+	if p.HTTP == nil || p.HTTP.BodyView == nil || p.HTTP.BodyView.MediaRef == nil {
+		t.Fatalf("expected MediaRef bodyView for protobuf body")
 	}
-	if p.HTTP.BodyView.BinaryRef.Size != int64(body.Len()) {
-		t.Errorf("binaryRef size = %d, want %d", p.HTTP.BodyView.BinaryRef.Size, body.Len())
+	if p.HTTP.BodyView.MediaRef.SizeBytes != int64(body.Len()) {
+		t.Errorf("mediaRef sizeBytes = %d, want %d", p.HTTP.BodyView.MediaRef.SizeBytes, body.Len())
 	}
 }
 

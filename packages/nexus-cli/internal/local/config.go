@@ -8,7 +8,9 @@
 package local
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -119,13 +121,59 @@ func (c *Config) Save() error {
 	if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	f, err := os.OpenFile(c.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("open config for write: %w", err)
+	// Follow a symlinked config to the file it points at. O_TRUNC wrote THROUGH
+	// a symlink; rename would replace the link itself, so an operator whose
+	// config is managed by stow / chezmoi / home-manager would silently lose the
+	// link and every later edit to the real file. A path that does not exist yet
+	// is the normal first-save case and stays as given.
+	target := c.path
+	if resolved, err := filepath.EvalSymlinks(c.path); err == nil {
+		target = resolved
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("resolve config path: %w", err)
 	}
-	defer f.Close()
-	if err := toml.NewEncoder(f).Encode(c); err != nil {
+	dir := filepath.Dir(target)
+	// Write a sibling temp file and rename it over the target, rather than
+	// opening the target with O_TRUNC. The truncate destroyed the existing
+	// config BEFORE the replacement existed, so anything that went wrong after
+	// it — a disk that filled, a close that failed, the process dying — left the
+	// operator with no environments at all rather than the ones they had.
+	// rename(2) within a directory is atomic, so a concurrent reader sees either
+	// the old file or the new one and never a half-written one.
+	tmp, err := os.CreateTemp(dir, ".config-*.toml")
+	if err != nil {
+		// Replacing atomically needs to create a sibling, so the DIRECTORY must
+		// be writable — the old in-place write only needed the file to be. That
+		// is a real behaviour change and deserves an actionable message rather
+		// than a bare errno.
+		return fmt.Errorf("create temp config in %s (the config directory must be writable "+
+			"to replace the config atomically): %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	// Every path out of here except the successful rename must clean up. After
+	// the rename the name is gone, so this is a no-op then.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	// No explicit Chmod: os.CreateTemp already creates with 0600, and the mode is
+	// pinned where it belongs — TestSaveLoad_RoundTrip asserts the saved file is
+	// 0600. An extra syscall to restate it would only add an error path nothing
+	// can reach.
+	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("encode config: %w", err)
+	}
+	// Sync before rename: rename orders the directory entry, not the file's
+	// contents. Without this a crash just after the rename can leave the config
+	// name pointing at an empty file — the exact outcome this change removes.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("flush temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		return fmt.Errorf("replace config: %w", err)
 	}
 	return nil
 }

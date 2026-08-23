@@ -13,8 +13,9 @@
 //     unknown content-part normalization; encode-side content-array
 //     path; tool_choice + response_format on encode.
 //   - codec_responses_response.go: refusal content part on decode;
-//     incomplete (content_filter) finish_reason; failed status →
-//     finish_reason stop; mapFinishReasonToResponsesStatus unknown +
+//     incomplete (content_filter) finish_reason; failed and queued
+//     statuses raised as ProviderError rather than decoded to a success
+//     envelope; mapFinishReasonToResponsesStatus unknown +
 //     max_tokens; mapFinishReasonToResponsesIncompleteReason
 //     unknown branch; buildCanonicalUsage returns nil when usage absent;
 //     buildResponsesUsage returns nil when usage absent; firstNonEmpty
@@ -487,13 +488,13 @@ func TestNormalizeInputContentPart_AllKinds(t *testing.T) {
 			},
 		},
 		{
-			name:     "input_file_preserved_as_text",
-			part:     `{"type":"input_file","filename":"report.pdf"}`,
-			wantType: "text",
+			name:     "input_file_becomes_a_file_part",
+			part:     `{"type":"input_file","filename":"report.pdf","file_data":"data:application/pdf;base64,JVBERi0x"}`,
+			wantType: "file",
 			check: func(t *testing.T, out []byte) {
-				txt := gjson.GetBytes(out, "messages.0.content.0.text").String()
-				if !strings.Contains(txt, "report.pdf") {
-					t.Errorf("input_file text marker missing filename; got %q", txt)
+				got := gjson.GetBytes(out, "messages.0.content.0.file.file_data").String()
+				if got != "data:application/pdf;base64,JVBERi0x" {
+					t.Errorf("the document bytes must survive canonicalization; got %q", got)
 				}
 			},
 		},
@@ -808,34 +809,76 @@ func TestDecodeResponsesResponse_IncompleteUnknownReason(t *testing.T) {
 	}
 }
 
-// TestDecodeResponsesResponse_FailedStatus pins status:failed → stop.
+// TestDecodeResponsesResponse_FailedStatus pins that status:failed is
+// raised as an upstream error carrying the provider's own message, never
+// decoded into a success envelope. Previously it decoded to
+// finish_reason:"stop", which the caller could not distinguish from a
+// short but successful answer.
 func TestDecodeResponsesResponse_FailedStatus(t *testing.T) {
 	in := []byte(`{
 		"id":"r","status":"failed","model":"gpt-5",
-		"output":[],"error":{"message":"boom"}
+		"output":[],"error":{"code":"server_error","message":"boom"}
 	}`)
 	out, _, err := openai.DecodeResponsesResponse(in)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
+	if err == nil {
+		t.Fatalf("status:failed decoded to a success body: %s", out)
 	}
-	if got := gjson.GetBytes(out, "choices.0.finish_reason").String(); got != "stop" {
-		t.Errorf("failed status must map to stop, got %q", got)
+	var pe *provcore.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want *provcore.ProviderError so the executor can attribute it upstream, got %T: %v", err, err)
+	}
+	if pe.Code != provcore.CodeUpstreamError {
+		t.Errorf("Code=%q want %q", pe.Code, provcore.CodeUpstreamError)
+	}
+	if pe.Message != "boom" {
+		t.Errorf("Message=%q want the upstream's own message %q", pe.Message, "boom")
+	}
+	if pe.Type != "server_error" {
+		t.Errorf("Type=%q want the upstream's error.code %q", pe.Type, "server_error")
 	}
 }
 
-// TestDecodeResponsesResponse_UnknownStatusDefaultArm pins the default
-// arm of mapResponsesStatusToFinishReason.
-func TestDecodeResponsesResponse_UnknownStatusDefaultArm(t *testing.T) {
+// TestDecodeResponsesResponse_QueuedIsNotAnAnswer pins that a body still
+// in a non-terminal status is raised rather than decoded. The gateway
+// never sends background:true, so a queued body on a synchronous call is
+// not an answer however much partial output it carries — decoding it
+// would hand the caller "partial" marked finish_reason:"stop".
+func TestDecodeResponsesResponse_QueuedIsNotAnAnswer(t *testing.T) {
 	in := []byte(`{
 		"id":"r","status":"queued","model":"gpt-5",
 		"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]
 	}`)
 	out, _, err := openai.DecodeResponsesResponse(in)
+	if err == nil {
+		t.Fatalf("status:queued decoded to a success body: %s", out)
+	}
+	var pe *provcore.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want *provcore.ProviderError, got %T: %v", err, err)
+	}
+	if !strings.Contains(pe.Message, "queued") {
+		t.Errorf("Message=%q must name the status the upstream was still in", pe.Message)
+	}
+}
+
+// TestDecodeResponsesResponse_UnshippedStatusDecodes pins the default
+// arm: a status OpenAI has not shipped yet degrades to a decoded answer
+// rather than a hard failure, so a new terminal status does not take the
+// endpoint down.
+func TestDecodeResponsesResponse_UnshippedStatusDecodes(t *testing.T) {
+	in := []byte(`{
+		"id":"r","status":"finalised_v2","model":"gpt-5",
+		"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}]
+	}`)
+	out, _, err := openai.DecodeResponsesResponse(in)
 	if err != nil {
-		t.Fatalf("decode: %v", err)
+		t.Fatalf("an unshipped status must still decode: %v", err)
+	}
+	if got := gjson.GetBytes(out, "choices.0.message.content").String(); got != "hi" {
+		t.Errorf("content=%q want hi", got)
 	}
 	if got := gjson.GetBytes(out, "choices.0.finish_reason").String(); got != "stop" {
-		t.Errorf("queued (defensive) must map to stop, got %q", got)
+		t.Errorf("finish_reason=%q want stop", got)
 	}
 }
 

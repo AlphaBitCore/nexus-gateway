@@ -13,6 +13,7 @@ import (
 	specerrors "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/errors"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/ingress"
 	gstream "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/stream"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
 
 // NewSpec returns the Gemini [provcore.AdapterSpec].
@@ -21,9 +22,11 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		log = slog.Default()
 	}
 	return provcore.AdapterSpec{
-		Format:          provcore.FormatGemini,
-		Transport:       NewTransport(log),
-		SchemaCodec:     gcodec.NewCodec(),
+		Format:    provcore.FormatGemini,
+		Transport: NewTransport(log),
+		// Gated so an undeclared attachment type is named before the wire sees
+		// it; the wire's own answer is "Unsupported MIME type" and nothing more.
+		SchemaCodec:     specutil.GateContent(gcodec.NewCodec(), contentPolicyFor),
 		StreamDecoder:   gstream.NewStreamDecoder(log),
 		ErrorNormalizer: specerrors.ErrorNormalizer{},
 		// Gemini natively serves both the chat-completions shape

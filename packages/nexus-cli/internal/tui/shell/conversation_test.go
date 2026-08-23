@@ -128,7 +128,7 @@ func TestTypewriter_RevealsGradually(t *testing.T) {
 	if got := c.visibleAssistant(); len([]rune(got)) >= len([]rune("hello world from nexus")) {
 		t.Fatalf("text must not be fully revealed before any tick, got %q", got)
 	}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		c.revealStep()
 	}
 	if got := c.visibleAssistant(); got != "hello world from nexus" {
@@ -472,7 +472,7 @@ func TestConversationRendersMarkdownOnFinalAnswer(t *testing.T) {
 
 func TestConversationScrollback(t *testing.T) {
 	c := newConversation(testSessionLocal(), nil)
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		c.appendLine("sys", fmt.Sprintf("line-%02d", i))
 	}
 	// Default render shows the newest tail, not the oldest line.
@@ -480,7 +480,7 @@ func TestConversationScrollback(t *testing.T) {
 		t.Fatalf("default view must show the newest tail:\n%s", out)
 	}
 	// PgUp scrolls toward older content until the top is visible.
-	for i := 0; i < 25; i++ {
+	for range 25 {
 		c.handleKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
 		c.View(50, 12) // re-render so geometry/clamp track each step
 	}
@@ -495,7 +495,7 @@ func TestConversationScrollback(t *testing.T) {
 		t.Fatalf("scroll must clamp at the oldest line, got %d want %d", c.scroll, prev)
 	}
 	// PgDn returns to the bottom (scroll 0).
-	for i := 0; i < 25; i++ {
+	for range 25 {
 		c.handleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 		c.View(50, 12)
 	}
@@ -508,7 +508,7 @@ func TestConversationScrollback(t *testing.T) {
 // status line, and the help-string variants (scrolled / running / idle).
 func TestConversationScrollKeysAndStatus(t *testing.T) {
 	c := newConversation(testSessionLocal(), nil)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		c.appendLine("sys", fmt.Sprintf("l%02d", i))
 	}
 	c.View(50, 10) // establish geometry
@@ -521,7 +521,7 @@ func TestConversationScrollKeysAndStatus(t *testing.T) {
 		t.Fatalf("scrolled help wrong: %q", c.Help())
 	}
 	// ↓ returns toward the bottom.
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		c.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 		c.View(50, 10)
 	}

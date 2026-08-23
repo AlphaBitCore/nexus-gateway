@@ -1,0 +1,44 @@
+{
+ "id": "chatcmpl-E9Dn7LY56iHnVAvA5lmRXrvH6IyIY",
+ "object": "chat.completion",
+ "created": 1785866673,
+ "model": "gpt-audio-2025-08-28",
+ "choices": [
+  {
+   "index": 0,
+   "message": {
+    "role": "assistant",
+    "content": null,
+    "refusal": null,
+    "audio": {
+     "id": "audio_6a7229b1d04481918c66622085bb9bb7",
+     "data": "UklGRv////9XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0Yf////8EAAEA",
+     "expires_at": 1785870273,
+     "transcript": "Hi there! It's great to"
+    },
+    "annotations": []
+   },
+   "finish_reason": "length"
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 9,
+  "completion_tokens": 40,
+  "total_tokens": 49,
+  "prompt_tokens_details": {
+   "cached_tokens": 0,
+   "audio_tokens": 0,
+   "text_tokens": 9,
+   "image_tokens": 0
+  },
+  "completion_tokens_details": {
+   "reasoning_tokens": 0,
+   "audio_tokens": 29,
+   "accepted_prediction_tokens": 0,
+   "rejected_prediction_tokens": 0,
+   "text_tokens": 11
+  }
+ },
+ "service_tier": "default",
+ "system_fingerprint": "fp_903bdd4fa4"
+}

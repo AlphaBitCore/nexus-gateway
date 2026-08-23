@@ -71,8 +71,8 @@ func sqlInsertColumns(t *testing.T, sql string) []string {
 // not here (or vice versa) fails the build's tests, not silently in production.
 func TestTrafficEventColumnsParity(t *testing.T) {
 	want := sqlInsertColumns(t, insertTrafficEventSQL)
-	if len(want) != 97 {
-		t.Fatalf("parsed %d columns from insertTrafficEventSQL, want 97", len(want))
+	if len(want) != 100 {
+		t.Fatalf("parsed %d columns from insertTrafficEventSQL, want 100", len(want))
 	}
 	if len(trafficEventColumns) != len(want) {
 		t.Fatalf("trafficEventColumns has %d, SQL has %d", len(trafficEventColumns), len(want))
@@ -128,12 +128,16 @@ func TestPayloadRowValues_AbsentSkips(t *testing.T) {
 // and asserts the business outcome: a NUL in a tag is stripped, and a present
 // embedding model id / L2 key is emitted (not nil-coalesced).
 func TestTrafficEventRowValues_RichBranches(t *testing.T) {
+	routerCost := 0.0066
 	e := TrafficEventMessage{
 		ID: "evt-1", Source: "ai-gateway", Timestamp: time.Now().UTC(),
 		ComplianceTags:         []string{"pii\x00leak", "ok"},
 		EmbeddingModelID:       "text-embedding-3-small",
 		GatewayCacheL2EntryKey: "l2:abc",
 		Identity:               []byte(`{"sub":"u1"}`),
+		RouterCostUsd:          &routerCost,
+		RouterProviderID:       "prov-openai\x00",
+		EmbeddingProviderID:    "prov-openai-embed",
 	}
 	vals := trafficEventRowValues(e)
 	if len(vals) != len(trafficEventColumns) {
@@ -151,11 +155,23 @@ func TestTrafficEventRowValues_RichBranches(t *testing.T) {
 	if vals[88] != "l2:abc" {
 		t.Errorf("l2_entry_key = %#v, want l2:abc", vals[88])
 	}
+	// router_cost_usd (index 97), router_provider_id (index 98, NUL-stripped),
+	// embedding_provider_id (index 99) — the three trailing vendor-spend columns.
+	if p, ok := vals[97].(*float64); !ok || p == nil || *p != routerCost {
+		t.Errorf("router_cost_usd = %#v, want pointer to %v", vals[97], routerCost)
+	}
+	if vals[98] != "prov-openai" {
+		t.Errorf("router_provider_id = %#v, want prov-openai (NUL stripped)", vals[98])
+	}
+	if vals[99] != "prov-openai-embed" {
+		t.Errorf("embedding_provider_id = %#v, want prov-openai-embed", vals[99])
+	}
 }
 
 // TestTrafficEventRowValues_EmptyStringsCoalesceToNil confirms the ""→NULL arms:
-// an absent embedding model / L2 key bind SQL NULL, not an empty string (so
-// `WHERE embedding_model_id IS NOT NULL` filters correctly).
+// an absent embedding model / L2 key / router or embedding provider id bind
+// SQL NULL, not an empty string (so `WHERE embedding_model_id IS NOT NULL`
+// filters correctly).
 func TestTrafficEventRowValues_EmptyStringsCoalesceToNil(t *testing.T) {
 	vals := trafficEventRowValues(TrafficEventMessage{ID: "x"})
 	if vals[85] != nil {
@@ -163,6 +179,15 @@ func TestTrafficEventRowValues_EmptyStringsCoalesceToNil(t *testing.T) {
 	}
 	if vals[88] != nil {
 		t.Errorf("empty l2_entry_key should coalesce to nil, got %#v", vals[88])
+	}
+	if vals[97] != (*float64)(nil) {
+		t.Errorf("absent router_cost_usd should be a nil *float64, got %#v", vals[97])
+	}
+	if vals[98] != nil {
+		t.Errorf("empty router_provider_id should coalesce to nil, got %#v", vals[98])
+	}
+	if vals[99] != nil {
+		t.Errorf("empty embedding_provider_id should coalesce to nil, got %#v", vals[99])
 	}
 }
 

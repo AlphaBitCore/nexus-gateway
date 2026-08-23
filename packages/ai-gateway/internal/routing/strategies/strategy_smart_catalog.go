@@ -18,14 +18,36 @@ type smartCatalogProvider struct {
 // smartCatalogRow is one routable model. JSON key i is Model.code only
 // (the UUID Model.id and providerModelId are intentionally omitted from
 // the catalog JSON — the router LLM is shown the short customer-facing code).
-// ip/op USD per 1M tokens, f = feature tags, mx/mo = context and output limits.
+// ip/op USD per 1M tokens, f = feature tags, in = non-text input modalities,
+// mx/mo = context and output limits.
 type smartCatalogRow struct {
-	ID       string   `json:"i"`
-	InPM     *float64 `json:"ip,omitempty"`
-	OutPM    *float64 `json:"op,omitempty"`
+	ID    string   `json:"i"`
+	InPM  *float64 `json:"ip,omitempty"`
+	OutPM *float64 `json:"op,omitempty"`
+	// Features carries the non-modality capabilities. The image question used
+	// to ride here as the `vision` tag; it moved to InMod when `vision`
+	// stopped being stored, and without that move the router LLM would have
+	// been asked to match on a tag no model advertises any more.
 	Features []string `json:"f,omitempty"`
-	MaxCtx   *int     `json:"mx,omitempty"`
-	MaxOut   *int     `json:"mo,omitempty"`
+	// InMod lists the input modalities BEYOND text — the whole catalog accepts
+	// text, so spelling it out on every row would spend prompt budget on a
+	// constant. Omitted for the text-only majority, which is why this costs
+	// bytes only where it carries information.
+	InMod  []string `json:"in,omitempty"`
+	MaxCtx *int     `json:"mx,omitempty"`
+	MaxOut *int     `json:"mo,omitempty"`
+}
+
+// beyondText returns the input modalities other than text, or nil when there
+// are none.
+func beyondText(in []string) []string {
+	var out []string
+	for _, m := range in {
+		if m != "text" {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // buildModelCatalog converts candidate rows into compact JSON for the system
@@ -52,6 +74,7 @@ func buildModelCatalog(candidates []core.SmartModelRow) string {
 		if len(c.Features) > 0 {
 			row.Features = c.Features
 		}
+		row.InMod = beyondText(c.InputModalities)
 		if c.MaxContextTokens != nil {
 			row.MaxCtx = c.MaxContextTokens
 		}

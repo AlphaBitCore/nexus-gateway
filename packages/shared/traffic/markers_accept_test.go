@@ -24,6 +24,7 @@ func TestAcceptHeaders_CarriesEveryGatewayReadHeader(t *testing.T) {
 		"X-Request-Id",
 		"X-Nexus-End-User-Id",
 		"X-Nexus-Session-Id",
+		"X-Nexus-Client-Tags",
 		// Cache opt-out, canonical + deprecated alias (dual-read window).
 		"X-Nexus-No-Cache",
 		"X-Nexus-Aigw-No-Cache",

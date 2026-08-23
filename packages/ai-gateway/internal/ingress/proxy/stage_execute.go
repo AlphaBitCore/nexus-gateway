@@ -11,7 +11,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // executeStage dispatches the request to the live upstream.
@@ -34,7 +33,7 @@ func (st executeStage) run() bool {
 	// defensive adapter-missing path, and this block no-ops.
 	if h.deps.Normaliser != nil && len(s.cachePreparedBody) > 0 {
 		normStart := time.Now()
-		primary := s.routeResult.Targets[0]
+		primary := s.routeResult.Primary()
 		normBody, normResult := h.deps.Normaliser.NormalizeUpstream(
 			primary.AdapterType, primary.ProviderID, s.cachePreparedBody)
 		if !normResult.DryRun {
@@ -59,7 +58,7 @@ func (st executeStage) run() bool {
 	// found"). Nil on miss so the call site can `if … != nil` cheaply.
 	var geminicacheInvalidate func()
 	if h.deps.GeminiCacheMgrSet != nil && len(s.cachePreparedBody) > 0 {
-		primary := s.routeResult.Targets[0]
+		primary := s.routeResult.Primary()
 		if provcore.Format(primary.AdapterType) == provcore.FormatGemini {
 			if mgr := h.deps.GeminiCacheMgrSet.Get(primary.ProviderID); mgr != nil {
 				injected, injectResult, injectErr := mgr.Inject(
@@ -89,15 +88,13 @@ func (st executeStage) run() bool {
 	// is built whenever the cache core is wired (stage_cache); if it is still
 	// empty here (cache core not wired) go direct with no dedup.
 	if s.gatewayCacheStatus == audit.GatewayCacheMiss && s.cacheKey != "" && h.deps.BrokerRegistry != nil {
-		// canonicalMsgs feeds the broker-path L2 write-back —
+		// The canonical bundle feeds the broker-path L2 write-back —
 		// without this thread-through the broker leg silently
 		// skipped scheduleL2Write and L2 stayed empty. Post-rewrite
-		// requests read the renormalized (redacted) canonical.
-		var brokerCanonMsgs []normcore.Message
-		if np := s.cacheNormalized(); np != nil {
-			brokerCanonMsgs = np.Messages
-		}
-		h.runViaBroker(s.r, s.w, s.rec, s.routeResult, s.body, s.isStream, s.resolved, s.reqHookResult, s.cacheKey, s.cachePreparedBody, s.cachePreparedRewrites, s.cachePreparedURLOverride, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger, brokerCanonMsgs)
+		// requests read the renormalized (redacted) canonical, and the
+		// answer key rides with the messages so the broker leg cannot
+		// write entries the reader will never find.
+		h.runViaBroker(s.r, s.w, s.rec, s.routeResult, s.body, s.isStream, s.resolved, s.reqHookResult, s.cacheKey, s.cachePreparedBody, s.cachePreparedRewrites, s.cachePreparedURLOverride, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger, l2CanonicalFrom(s.cacheNormalized()))
 		return false
 	}
 

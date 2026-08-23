@@ -2,6 +2,7 @@ package matcher
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
@@ -168,6 +169,39 @@ func TestMatchGlob(t *testing.T) {
 		if got := MatchGlob(tt.pattern, tt.value); got != tt.want {
 			t.Errorf("MatchGlob(%q, %q) = %v, want %v", tt.pattern, tt.value, got, tt.want)
 		}
+	}
+}
+
+// TestMatchGlob_BoundsThePatternItCompiles.
+//
+// The patterns reaching here come from admin configuration — a virtual-key
+// name glob, a request-model keyword — so the length that reaches the regex
+// compiler and the shared cache is attacker-adjacent input. `evalRegex` bounded
+// its own raw input and `MatchGlob` bounded nothing, so the bound now lives in
+// `getCachedRegex`, which is the only place that sees the COMPILED expression
+// and therefore the only place that can bound the thing that actually costs.
+//
+// A duplicate of this function in `routing/core` had the bound and no
+// production caller; deleting it without moving the property would have removed
+// a check from the only copy that runs.
+func TestMatchGlob_BoundsThePatternItCompiles(t *testing.T) {
+	// All wildcards, so the compiled expression matches ANY value — without the
+	// bound this returns true. A pattern like "a*a*a*…" would return false for
+	// its own reason (it demands 110 a's), and the assertion would pass while
+	// the bound was gone.
+	long := strings.Repeat("*", 210)
+	if MatchGlob(long, "aaa") {
+		t.Error("an over-long glob compiled and matched; admin-supplied patterns reach the " +
+			"regex compiler and the shared cache unbounded")
+	}
+	// Still bounded through the operator path, which is the other caller.
+	if evalRegex("aaa", long) {
+		t.Error("an over-long $regex compiled; the bound moved into getCachedRegex and must " +
+			"still cover this caller")
+	}
+	// And a pattern that cannot compile is a non-match, not a panic.
+	if getCachedRegex("(invalid[") != nil {
+		t.Error("a malformed expression produced a usable regex")
 	}
 }
 

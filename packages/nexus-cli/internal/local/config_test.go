@@ -1,9 +1,12 @@
 package local
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -103,6 +106,180 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	}
 	if reloaded.Envs["prod"].LastModel != "gpt-4" || reloaded.Envs["prod"].LastVKName != "research" {
 		t.Fatalf("env fields lost on round-trip: %+v", reloaded.Envs["prod"])
+	}
+}
+
+// TestSave_AConcurrentReaderNeverSeesAPartialConfig pins the property the
+// truncate destroyed.
+//
+// Save used to open the real path with O_CREATE|O_TRUNC|O_WRONLY and encode
+// into it. That empties the file BEFORE the replacement exists, so for the
+// duration of the encode the config on disk is short or empty — and anything
+// that goes wrong in that window (a full disk, a failing close, the process
+// dying) leaves the operator with no environments rather than the ones they
+// had. A reader that arrives mid-write sees the same emptiness.
+//
+// The assertion is not "Save works" — the round-trip test covers that. It is
+// that the file is ALWAYS complete when observed, which is what temp-then-
+// rename buys and what O_TRUNC cannot provide at any speed.
+func TestSave_AConcurrentReaderNeverSeesAPartialConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cfg", "config.toml")
+	c := sampleConfig(path)
+	// Enough environments that the encode is not a single small write.
+	for i := range 40 {
+		name := fmt.Sprintf("env-%02d", i)
+		c.Envs[name] = core.Env{
+			Name:      name,
+			CPBaseURL: "https://cp-" + name + ".example.com/a/reasonably/long/path",
+			LastModel: "some-model-identifier-" + name,
+		}
+	}
+	if err := c.Save(); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+	full, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("seed read: %v", err)
+	}
+	wantLen := len(full)
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	var short atomic.Int64
+	var reads atomic.Int64
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			reads.Add(1)
+			b, err := os.ReadFile(path)
+			if err != nil {
+				// ENOENT means the config briefly did not exist at all — the
+				// worst form of the same defect, so it counts as an observation
+				// AND as a failure. Counting it only as a failure would let an
+				// always-missing file trip the "asserts nothing" guard below and
+				// misreport a real break as an inconclusive test.
+				short.Add(1)
+				continue
+			}
+			if len(b) != wantLen {
+				short.Add(1)
+			}
+		}
+	}()
+
+	for range 50 {
+		if err := c.Save(); err != nil {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("save: %v", err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	if reads.Load() == 0 {
+		t.Fatal("the reader never observed the file, so this asserts nothing")
+	}
+	if n := short.Load(); n != 0 {
+		t.Errorf("%d of %d reads saw an incomplete or missing config; Save must replace it "+
+			"atomically, not truncate it and refill", n, reads.Load())
+	}
+}
+
+// TestSave_TempCreationFails covers the path where the replacement file cannot
+// be created at all. The guarantee under test is that the EXISTING config
+// survives: the whole point of writing a sibling and renaming is that a failure
+// before the rename leaves the operator's environments exactly where they were.
+func TestSave_TempCreationFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	c := sampleConfig(path)
+	if err := c.Save(); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("seed read: %v", err)
+	}
+
+	// Read+execute only: MkdirAll on an existing dir succeeds, and CreateTemp
+	// then fails for want of write permission. Root bypasses that check
+	// entirely, so the premise of this test does not hold there — chmod
+	// succeeds, the save succeeds, and the failure would be reported as a
+	// missing error rather than as an environment that cannot express the case.
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions, so an unwritable directory cannot be simulated")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Skipf("cannot drop write permission on %s: %v", dir, err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	c.DefaultEnv = "changed"
+	err = c.Save()
+	if err == nil {
+		t.Fatal("Save into an unwritable directory must fail")
+	}
+	if !strings.Contains(err.Error(), "temp config") {
+		t.Errorf("error should name the step that failed, got %v", err)
+	}
+
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("the previous config must still be readable after a failed save: %v", readErr)
+	}
+	if string(after) != string(before) {
+		t.Errorf("a failed save changed the config on disk;\nbefore: %q\nafter:  %q", before, after)
+	}
+}
+
+// TestSave_FollowsASymlinkedConfig pins what temp-then-rename would otherwise
+// break. O_TRUNC wrote THROUGH a symlink, so a config managed by a dotfile tool
+// (stow, chezmoi, home-manager) kept its link and its real file was updated.
+// A bare rename replaces the LINK with a regular file: the link is gone, the
+// real file is frozen at its old contents, and Save reports success. Save
+// resolves the path first so the file the operator actually manages is the one
+// that changes.
+func TestSave_FollowsASymlinkedConfig(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.toml")
+	link := filepath.Join(dir, "config.toml")
+
+	seed := sampleConfig(real)
+	if err := seed.Save(); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+
+	c := sampleConfig(link)
+	c.DefaultEnv = "through-the-link"
+	if err := c.Save(); err != nil {
+		t.Fatalf("save through symlink: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat link: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Error("Save replaced the symlink with a regular file; a dotfile-managed config " +
+			"would lose its link and every later edit to the real file")
+	}
+	reloaded, err := Load(real)
+	if err != nil {
+		t.Fatalf("reload the real file: %v", err)
+	}
+	if reloaded.DefaultEnv != "through-the-link" {
+		t.Errorf("the real file was not updated: DefaultEnv = %q", reloaded.DefaultEnv)
 	}
 }
 

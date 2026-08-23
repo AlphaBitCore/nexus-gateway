@@ -45,9 +45,16 @@ type ThingRollup5mJob struct {
 // NewThingRollup5m constructs the job. interval defaults to 1 minute.
 // enableAgentRollup gates whether source=agent rows from traffic_event are
 // aggregated (defaults to false at fleet scale; see config.SchedulerConfig).
-// excludeInternalOpsFromBilled mirrors fleet rollup — when false (default),
-// L2 embedding + ai-guard classifier costs roll into MetricBilledCostUSD.
-// When true, they stay on the dedicated metric series only.
+// excludeInternalOpsFromBilled is accepted for parity with the fleet rollup's
+// constructor signature but is not read: L2 embedding, ai-guard classifier,
+// and smart-router costs are NEVER folded into MetricBilledCostUSD, in either
+// state of the flag — see the isSuccess block in this file's
+// emitThingEventMetrics, where the billed accumulation passes through only
+// estimatedCost.
+// The AI Gateway's live quota counter charges rec.EstimatedCostUsd and
+// nothing else, and its boot Backfill re-seeds that counter from this metric,
+// so folding anything else in would make the counter jump on restart. See
+// rollup_5m.go's identical invariant.
 func NewThingRollup5m(pool *pgxpool.Pool, interval time.Duration, logger *slog.Logger, enableAgentRollup, excludeInternalOpsFromBilled bool) *ThingRollup5mJob {
 	if interval <= 0 {
 		interval = time.Minute

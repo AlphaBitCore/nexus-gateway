@@ -139,7 +139,7 @@ func SanitizeTerminal(s string) string {
 			switch rb[i] {
 			case '[': // CSI: ESC [ params/intermediates... final byte (0x40–0x7e)
 				i++
-				for i < len(rb) && !(rb[i] >= 0x40 && rb[i] <= 0x7e) {
+				for i < len(rb) && (rb[i] < 0x40 || rb[i] > 0x7e) {
 					i++
 				}
 				if i < len(rb) {

@@ -494,6 +494,33 @@ func TestCanonicalStreamAccumulator_BuildsCanonicalBody(t *testing.T) {
 	}
 }
 
+func TestCanonicalStreamAccumulator_PreservesProviderCarriers(t *testing.T) {
+	acc := newCanonicalStreamAccumulator("claude-opus")
+	acc.add(provcore.Chunk{ReasoningDelta: "step ", NexusThinking: []provcore.NexusThinkingBlock{{Index: 3, Thinking: "step one", Signature: "sig-1"}}})
+	acc.add(provcore.Chunk{ReasoningDelta: "one", ToolCallDeltas: []provcore.ToolCallDelta{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"x"}`, ThoughtSignature: "sig-gem"}}})
+	body := acc.canonicalBody()
+	if gjson.GetBytes(body, "choices.0.message.nexus_thinking.0.signature").String() != "sig-1" || gjson.GetBytes(body, "choices.0.message.tool_calls.0.function.thought_signature").String() != "sig-gem" {
+		t.Fatalf("provider carriers lost: %s", body)
+	}
+	if gjson.GetBytes(body, "choices.0.message.nexus_thinking.0.index").Exists() {
+		t.Fatalf("stream-local index leaked into canonical carrier: %s", body)
+	}
+	ch := syntheticChunkFromCanonical(body, acc.reasoning.String())
+	if len(ch.NexusThinking) != 1 || ch.NexusThinking[0].Signature != "sig-1" || len(ch.ToolCallDeltas) != 1 || ch.ToolCallDeltas[0].ThoughtSignature != "sig-gem" {
+		t.Fatalf("synthetic replay lost carriers: %+v %+v", ch.NexusThinking, ch.ToolCallDeltas)
+	}
+}
+
+func TestCanonicalChunkSizeIncludesProviderCarriers(t *testing.T) {
+	size := canonicalChunkSize(provcore.Chunk{
+		NexusThinking:  []provcore.NexusThinkingBlock{{Thinking: "think", Signature: "sig", RedactedData: "redacted"}},
+		ToolCallDeltas: []provcore.ToolCallDelta{{ID: "id", Name: "name", Arguments: "args", ThoughtSignature: "tool-sig"}},
+	})
+	if size != len("think")+len("sig")+len("redacted")+len("id")+len("name")+len("args")+len("tool-sig") {
+		t.Fatalf("canonicalChunkSize=%d omitted provider carrier bytes", size)
+	}
+}
+
 // TestStreamRelayStage_BufferMode_RedactsAndStores proves the relay stage routes
 // buffer mode to the canonical buffer (NOT the wire dispatch): the client gets
 // the masked stream and the redacted transcript is stamped onto the audit record

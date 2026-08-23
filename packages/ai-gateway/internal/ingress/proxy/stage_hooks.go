@@ -15,6 +15,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -31,11 +32,11 @@ func (st requestHooksStage) run() bool {
 	// Phase 5: Request hooks.
 	// Pass the (post-quota) primary target so hook inputs carry
 	// ProviderRegion for data-residency evaluation. Quota downgrade
-	// ran in the quota stage, so routeResult.Targets[0] already
+	// ran in the quota stage, so the plan's primary already
 	// reflects the real upstream that will be dispatched.
 	var requestHookTarget routingcore.RoutingTarget
-	if len(s.routeResult.Targets) > 0 {
-		requestHookTarget = s.routeResult.Targets[0]
+	if len(s.routeResult.AllTargets()) > 0 {
+		requestHookTarget = s.routeResult.Primary()
 	}
 	// bypassHooks: skip the request-stage hooks pipeline entirely
 	// when emergency passthrough is active for the routed provider.
@@ -119,7 +120,7 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	}
 	if err != nil {
 		logger.Error("failed to build request hook pipeline", "error", err)
-		h.writeError(w, rec, http.StatusInternalServerError, "hook pipeline error")
+		h.writeError(w, rec, http.StatusInternalServerError, "HOOK_PIPELINE_ERROR", "hook pipeline error")
 		return nil, nil, true
 	}
 	if pipeline == nil {
@@ -243,7 +244,7 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		w.Header().Set("X-Nexus-Hook", traffic.FormatHookOutcome(aigwHookOutcomeFromResult(hookResult)))
 		w.Header().Set("X-Nexus-Mode", "")
 		traffic.SetExposeHeaders(w.Header())
-		h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
+		h.writeError(w, rec, http.StatusForbidden, "HOOK_BLOCKED", hookResult.Reason)
 		return nil, hookResult, true
 	}
 
@@ -271,6 +272,10 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		if rErr == nil {
 			rErr = traffic.GuardToolArgMasking(trafficAdapter, rewriteContent)
 		}
+		if rErr == nil && !signedGeminiRequestToolCallsPreserved(body, rewritten) {
+			logger.Error("request redaction modified signed Gemini tool call — failing closed")
+			rErr = errors.New("request rewrite modified signed Gemini tool call")
+		}
 		switch {
 		case errors.Is(rErr, traffic.ErrRewriteUnsupported):
 			// Redaction was required (Modify) but this adapter cannot reverse-
@@ -288,7 +293,8 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 			w.Header().Set("X-Nexus-Hook", traffic.FormatHookOutcome(aigwHookOutcomeFromResult(hookResult)))
 			w.Header().Set("X-Nexus-Mode", "")
 			traffic.SetExposeHeaders(w.Header())
-			h.writeError(w, rec, http.StatusForbidden, "redaction required but not supported for this provider")
+			h.writeError(w, rec, http.StatusForbidden, decision.ReasonRedactInflightUnsupported,
+				"redaction required but not supported for this provider")
 			return nil, hookResult, true
 		case rErr != nil:
 			logger.Error("hook request rewrite failed",
@@ -296,7 +302,7 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 				slog.String("path", r.URL.Path),
 				slog.String("error", rErr.Error()),
 			)
-			h.writeError(w, rec, http.StatusInternalServerError, "request rewrite failed")
+			h.writeError(w, rec, http.StatusInternalServerError, "REQUEST_REWRITE_FAILED", "request rewrite failed")
 			return nil, hookResult, true
 		default:
 			rec.HookRewriteCount = n

@@ -2,23 +2,6 @@ package codecs
 
 import "testing"
 
-func TestStableHashHint(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"", ""},                                 // empty
-		{"short", "short"},                       // under cap
-		{"0123456789012345", "0123456789012345"}, // exactly 16
-		{"0123456789012345EXTRA", "0123456789012345"}, // truncated to 16
-	}
-	for _, c := range cases {
-		if got := stableHashHint(c.in); got != c.want {
-			t.Errorf("stableHashHint(%q): got %q want %q", c.in, got, c.want)
-		}
-	}
-}
-
 func TestIntFromAny_AllTypes(t *testing.T) {
 	// JSON decoders deliver numeric values as float64, but Go callers
 	// may pass int / int64 directly. The helper centralizes the cast

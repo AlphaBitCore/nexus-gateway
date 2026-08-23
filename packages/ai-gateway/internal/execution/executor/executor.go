@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
@@ -21,6 +22,19 @@ import (
 // ErrAllTargetsExhausted is returned when every target in the list has
 // been tried and none produced a usable response.
 var ErrAllTargetsExhausted = errors.New("executor: all targets exhausted")
+
+// ErrNoTargetDispatchable is returned when the walk ended without a single
+// attempt reaching a provider: every target failed while being prepared
+// locally. It is deliberately distinct from [ErrAllTargetsExhausted], which
+// means providers were called and all of them failed. The two look identical
+// in a log and are opposite in what they ask an operator to do — one is an
+// upstream incident, the other is a credential or catalog row on our side.
+//
+// Observed on 2026-08-19 across two deployments: 1,195 of 1,235 5xx events had
+// no upstream round trip at all (moonshot credentials failing AES-GCM
+// authentication after a key change, a cohere provider with no credential row)
+// and every one of them was reported as "all upstream providers failed".
+var ErrNoTargetDispatchable = errors.New("executor: no target could be dispatched")
 
 // StatsRecorder is an optional hook the executor calls after each upstream
 // attempt with the resolved credential and outcome. Implementations must be
@@ -57,12 +71,21 @@ type TargetExecutor struct {
 	health   *store.HealthTracker
 	bridge   *canonicalbridge.Bridge
 	stats    StatsRecorder // optional; nil disables credential stat recording
+	logger   *slog.Logger  // optional; nil disables the dispatch-order invariant
 }
 
 // New creates a TargetExecutor. health and stats may be nil.
 // bridge may be nil to preserve the legacy adapter-only translation path.
 func New(adapters *provcore.Registry, resolver provtarget.Resolver, health *store.HealthTracker, bridge *canonicalbridge.Bridge) *TargetExecutor {
 	return &TargetExecutor{adapters: adapters, resolver: resolver, health: health, bridge: bridge}
+}
+
+// WithLogger attaches the logger the dispatch-order invariant reports through.
+// Nil (the default) disables the check entirely — it is an observation, never a
+// behaviour, and a caller that wires no logger must not pay for it.
+func (e *TargetExecutor) WithLogger(l *slog.Logger) *TargetExecutor {
+	e.logger = l
+	return e
 }
 
 // WithStats attaches a StatsRecorder that is called after each upstream attempt.
@@ -104,27 +127,10 @@ func inRetryOn(set map[cfgpolicy.ErrorClass]struct{}, retryNothing bool, class c
 	return ok
 }
 
-// Execute walks targets using base as the client-originated request,
-// honoring the supplied RetryPolicy. The handler is expected to compute
-// `policy = yamlDefault.MergedWith(rulePolicy)` before calling so the
-// executor stays purely policy-driven.
-//
-// Algorithm (per spec §5.1):
-//
-//	for each target:
-//	  for tryIdx := 1..ClampMaxAttempts(policy.MaxAttemptsPerTarget):
-//	    dispatch
-//	    on classSuccess           -> return
-//	    on classNoFailoverNoRetry -> return (4xx surfaced; no L3)
-//	    on class not in RetryOn   -> emit "failover_class_excluded", L3 failover
-//	    on tryIdx == max          -> emit "exhausted", L3 failover
-//	    else                      -> backoff (skip if ctx deadline imminent), retry
-//
-// On retried success at tryIdx > 1 emits "retried_succeeded".
-//
-// When bridge is configured, base.Body is in the ingress wire format
-// (base.BodyFormat) and is translated to each target's wire format before
-// dispatch; when bridge is nil, base is passed to adapters unchanged.
+// Execute walks targets under the supplied RetryPolicy, already merged by the
+// handler. Which target comes next is selectNext's decision, made from the
+// class of the failure that just happened; see classify.go. With a bridge
+// configured, base.Body is translated per target.
 func (e *TargetExecutor) Execute(
 	ctx context.Context,
 	targets []routingcore.RoutingTarget,
@@ -134,25 +140,11 @@ func (e *TargetExecutor) Execute(
 	return e.executeInner(ctx, targets, base, policy, nil)
 }
 
-// ExecuteWithPreparedBody is Execute with the body for targets[0]'s
-// first attempt already produced by Adapter.PrepareBody. The cache
-// layer calls this on a MISS so PrepareBody runs exactly once per
-// request — once for cache key computation, then reused as the wire
-// body sent upstream.
-//
-// Every attempt of targets[0] — including retries — resends the
-// prepared body via Adapter.ExecuteWithBody, keeping the prepare
-// stage's side channels (coercion rewrites → x-nexus-coerced, the
-// codec's URLOverride) intact across transient-failure retries.
-// Failover to targets[1+] goes through the regular per-target
-// translation path. PrepareBody is idempotent, so resending the
-// prepared bytes is byte-equivalent to re-preparing.
-//
-// preparedBody MUST be the bytes Adapter.PrepareBody would produce for
-// targets[0]; preparedRewrites MUST be the rewrites slice from the same
-// call; preparedURLOverride MUST be the URLOverride from the same call (so
-// a shape-driven action URL — Gemini :batchEmbedContents — reaches the
-// dispatch). Pass nil/nil/"" to fall back to Execute.
+// ExecuteWithPreparedBody is Execute with targets[0]'s body already produced by
+// PrepareBody, so a cache MISS prepares once. Every attempt of that target
+// resends those bytes, keeping the prepare stage's side channels intact across
+// retries. The three prepared arguments MUST come from one call; nil/nil/""
+// falls back to Execute.
 func (e *TargetExecutor) ExecuteWithPreparedBody(
 	ctx context.Context,
 	targets []routingcore.RoutingTarget,
@@ -197,70 +189,149 @@ func (e *TargetExecutor) executeInner(
 
 	attemptCounter := 0
 
-	// lastAttemptedClass is the terminal class of the most recent target
-	// we actually attempted (not one skipped/continue'd). attemptedAny
-	// distinguishes "nothing has run yet" from "a prior target ran".
-	// Together they gate ContextUpgradeOnly targets: skip one only when a
-	// real prior target ran and did NOT overflow. When nothing ran yet —
-	// the flagged target was reordered to the front or is the only
-	// survivor of a downstream filter (health rank, narrowing,
-	// cross-format), all of which can orphan the ordering the smart
-	// strategy emitted — treat it as an ordinary target rather than
-	// silently dropping it (which would be a dead feature or a spurious
-	// all-targets-exhausted 502).
+	// These gate ContextUpgradeOnly targets: skip one only when a real prior
+	// target ran and did NOT overflow. Reordered to the front, or the only
+	// survivor of a downstream filter, it is treated as ordinary rather than
+	// dropped into a dead feature or a spurious 502.
 	var lastAttemptedClass errClass
 	attemptedAny := false
 
-	for tIdx, target := range targets {
+	// Position carries meaning — capability, health and the strategy all express
+	// themselves as order — so every target passed over must have been passed
+	// over for a reason this loop can name. WARN only: a check that refused
+	// would take down routing to report a logging gap.
+	walk := newWalk(targets, maxPerTarget)
+
+	// eliminatedProviders holds providers whose credential the upstream
+	// rejected. The rejection is a property of the provider, not of the
+	// request, so every later target sitting on it would spend a call to be
+	// told the same thing.
+	eliminatedProviders := map[string]struct{}{}
+
+	// When nothing served, the LAST attempt's outcome is the answer. Keeping the
+	// last TERMINAL failure instead returns an early target's envelope (an
+	// overflow 400 surfacing over a rate limit, which no SDK retries) and pairs
+	// it with another attempt's credential on the audit row.
+	var lastDispatched attemptOutcome
+
+	// Two ceilings, checked before every dispatch: spend in upstream calls and
+	// patience in wall-clock. Expensive targets exhaust the first, unresponsive
+	// ones the second, so neither substitutes for the other.
+	callBudget := cfgpolicy.EffectiveCallBudget(policy, len(targets))
+	callsSpent := 0
+	var walkDeadline time.Time
+	if policy.MaxWalkDuration > 0 {
+		walkDeadline = time.Now().Add(policy.MaxWalkDuration)
+	}
+	outOfRoom := func() string {
+		if callsSpent >= callBudget {
+			return "upstream call budget spent"
+		}
+		if !walkDeadline.IsZero() && !time.Now().Before(walkDeadline) {
+			return "walk deadline reached"
+		}
+		return ""
+	}
+
+	// The walk is driven by selectNext rather than by position, so the reason
+	// the last attempt failed decides which target comes next. selectionReason
+	// records that decision on the attempt: without it, a jump that skipped
+	// three entries is indistinguishable from a bug.
+	var lastClass errClass
+	lastProviderID := ""
+
+	for {
+		tIdx, selectionReason := selectNext(walk, lastClass, lastProviderID)
+		if tIdx < 0 {
+			break
+		}
+		// Coming round to a target that already failed means resting it was
+		// the point, so the rest has to be real: without a pause the walk
+		// ping-pongs between two struggling providers at full speed, adding
+		// load to exactly the upstreams that asked to be left alone.
+		if walk[tIdx].attempts > 0 && outOfRoom() == "" {
+			proceed, cerr := waitOut(ctx, &walk[tIdx], policy)
+			if cerr != nil {
+				return &ExecutionResult{Error: cerr, Attempts: attempts}
+			}
+			if !proceed {
+				attempts = append(attempts, ceilingStopEntries(walk, targets, tIdx, selectionReason,
+					"the caller's deadline arrives before this target could rest")...)
+				break
+			}
+		}
+		walk[tIdx].attempts++
+		target := targets[tIdx]
+
+		if reason := outOfRoom(); reason != "" {
+			// BREAK, not continue: out of room does not make the next candidate
+			// eligible, and continuing spun forever.
+			walk[tIdx].attempts--
+			attempts = append(attempts, ceilingStopEntries(walk, targets, tIdx, selectionReason, reason)...)
+			break
+		}
+		if _, dead := eliminatedProviders[target.ProviderID]; dead {
+			walk[tIdx].explained = true
+			attempts = append(attempts, Attempt{
+				Target:          target,
+				SelectionReason: selectionReason,
+				Error:           "skipped: this provider already refused this request at the account level (credentials or budget)",
+			})
+			continue
+		}
 		if target.ContextUpgradeOnly && attemptedAny && lastAttemptedClass != classContextOverflow {
+			// The one skip that records no Attempt, so it records here — else
+			// it reads as a target that vanished.
+			walk[tIdx].explained = true
+			walk[tIdx].eliminated = true
 			continue
 		}
 		callTarget, err := e.resolver.Resolve(ctx, target.ProviderID, target.ModelID, provtarget.ResolveHints{StickyKey: base.StickyKey})
 		if err != nil {
-			attempts = append(attempts, Attempt{Target: target, Error: fmt.Sprintf("resolve: %v", err)})
+			walk[tIdx].explained = true
+			attempts = append(attempts, Attempt{Target: target, SelectionReason: selectionReason, Error: fmt.Sprintf("resolve: %v", err)})
+			walk[tIdx].eliminated = true
 			continue
 		}
 		if !callTarget.Format.Valid() {
-			attempts = append(attempts, Attempt{Target: target, Error: "invalid adapter_type on provider: " + target.ProviderName})
+			walk[tIdx].explained = true
+			attempts = append(attempts, Attempt{Target: target, SelectionReason: selectionReason, Error: "invalid adapter_type on provider: " + target.ProviderName})
+			walk[tIdx].eliminated = true
 			continue
 		}
 		adapter, ok := e.adapters.Get(callTarget.Format)
 		if !ok {
-			attempts = append(attempts, Attempt{Target: target, Error: "no adapter registered for format: " + string(callTarget.Format)})
+			walk[tIdx].explained = true
+			attempts = append(attempts, Attempt{Target: target, SelectionReason: selectionReason, Error: "no adapter registered for format: " + string(callTarget.Format)})
+			walk[tIdx].eliminated = true
 			continue
 		}
+
+		// Only meaningful when selection was positional: once it follows the
+		// failure, skipping is the mechanism rather than the anomaly, and an
+		// invariant that cries on healthy requests stops being read.
+		if selectionReason == "next-in-list" {
+			e.checkDispatchOrder(walk, tIdx)
+		}
+		walk[tIdx].explained = true
 
 		req := base
 		req.Target = callTarget
 
-		// The call-time wire shape is the TARGET adapter's native shape for
-		// this endpoint kind, NOT the caller's ingress shape. The ingress
-		// shape (base.WireShape) is an internal detail once we dispatch
-		// upstream — it only drives the conversion decision below and the
-		// egress reshape (which reads the immutable context ingress, not this
-		// req). Setting it here makes BuildURL + the codec target the right
-		// wire for both the primary and every failover target, across all
-		// chat-kind ingresses (openai-chat, anthropic /v1/messages, gemini).
+		// The call-time wire shape is the TARGET's native shape for this
+		// endpoint kind, not the caller's ingress shape — that one only drives
+		// the conversion decision below and the egress reshape. Setting it here
+		// makes BuildURL and the codec target the right wire for the primary
+		// and every failover, across all chat-kind ingresses.
 		ingressKind := typology.KindFromWireShape(base.WireShape)
-		// Native /v1/responses passthrough: when the TARGET itself serves the
-		// Responses API, the request stays Responses-shape end-to-end. Responses
-		// is chat-kind (KindFromWireShape→Chat), so without this guard the rewrite
-		// below would flip req.WireShape to openai-chat → BuildURL targets
-		// /v1/chat/completions and the verbatim Responses body (input, no messages)
-		// 400s with "Missing required parameter: messages". This mirrors the
-		// proxy-level needsCanonicalization=false rule and the egress
-		// native-passthrough skip — all three sites must agree.
-		// Detect /v1/responses ingress by BodyFormat, NOT WireShape. The
-		// cache-prep leg downgrades resolved.WireShape to chat when the PRIMARY
-		// target cannot serve the Responses wire (so the executor treats a
-		// canonicalized primary as chat-kind), but resolved.BodyFormat stays
-		// FormatOpenAIResponses. Keying nativeResponses on WireShape made a
-		// responses-serving FAILOVER target (mixed target list: non-responses
-		// primary, responses-serving secondary) unrecognisable — its verbatim
-		// Responses body was posted to the chat URL and 400'd. BodyFormat is
-		// per-request-stable, so each target decides its own passthrough.
+		// A target that serves the Responses API keeps that shape end to end.
+		// Responses is chat-kind, so without this the rewrite below flips the
+		// wire to chat and the verbatim body 400s on "Missing required
+		// parameter: messages". Keyed on BodyFormat, not WireShape: the
+		// cache-prep leg downgrades WireShape when the PRIMARY cannot serve
+		// Responses, which made a responses-serving FAILOVER unrecognisable.
 		nativeResponses := base.BodyFormat == provcore.FormatOpenAIResponses &&
-			e.bridge != nil && e.bridge.ServesResponses(callTarget.Format, callTarget.ServesResponsesAPI)
+			e.bridge != nil && e.bridge.ServesResponses(callTarget.Format, callTarget.ServesResponsesAPI, base.Body)
 		if e.bridge != nil {
 			switch {
 			case nativeResponses:
@@ -279,23 +350,14 @@ func (e *TargetExecutor) executeInner(
 			}
 		}
 
-		// On targets[0] when a prepared body was supplied, the prepared
-		// bytes are already in callTarget.Format (PrepareBody did the
-		// codec encode), so skip the bridge translation — for every
-		// attempt of that target, retries included (the prepared side
-		// channels must survive a transient-failure retry). Subsequent
-		// targets go through the normal translation path — chat,
-		// embeddings, and images each have their own canonical→
-		// target-wire hub codec.
+		// Prepared bytes are already in the target's format, so the bridge is
+		// skipped for every attempt of targets[0] — its side channels must
+		// survive a retry. Later targets take the normal translation path.
 		usePrepared := tIdx == 0 && prepared != nil && !prepared.consumed && prepared.body != nil
 		var bridgeURLOverride string
-		// bridgeRewrites carries the per-model coercions the bridge's codec
-		// encode applied (contract rules on the target codec). They must be
-		// merged into the winning attempt's Coerced: the adapter's own
-		// PrepareBody runs the idempotent re-entry differential on the bridged
-		// body and finds nothing left to apply, so without this the
-		// x-nexus-coerced signal is silently lost on every bridge-translated
-		// attempt.
+		// The bridge codec's per-model coercions. Uncarried, the adapter's own
+		// PrepareBody re-runs its differential on the already-bridged body,
+		// finds nothing, and x-nexus-coerced is lost on every bridged attempt.
 		var bridgeRewrites []string
 		switch {
 		case usePrepared:
@@ -313,7 +375,10 @@ func (e *TargetExecutor) executeInner(
 			// (embeddings endpoint suffix) and rewrites (per-model coercions).
 			tr, terr := e.bridgeTranslateForTarget(ingressKind, base, callTarget)
 			if terr != nil {
+				// Deterministic for this request: the same body fails the
+				// same translation every time.
 				attempts = append(attempts, translateAttempt(target, terr))
+				walk[tIdx].eliminated = true
 				continue
 			}
 			if tr != nil {
@@ -327,7 +392,31 @@ func (e *TargetExecutor) executeInner(
 		// L2 — per-target retry loop.
 		var lastErrCl cfgpolicy.ErrorClass
 	attemptLoop:
-		for tryIdx := 1; tryIdx <= maxPerTarget; tryIdx++ {
+		// The loop draws from the target's REQUEST-level allowance, so a turn
+		// the walk grants later cannot hand it a fresh one.
+		for tryIdx := 1; walk[tIdx].dispatchesLeft > 0; tryIdx++ {
+			// Same-target attempts count against the budget too. Exempting
+			// them would let a budget of 1 permit five billed generations,
+			// which defeats the only number that claims to bound spend.
+			if reason := outOfRoom(); reason != "" {
+				// lastErrCl is empty on the FIRST pass: nothing has failed yet,
+				// the ceiling simply arrived first. Empty is a legal Prometheus
+				// label value and a useless one — it reads as a class the
+				// classifier forgot to set rather than as a stop that had no
+				// failure behind it, and it does not group with anything.
+				class := string(lastErrCl)
+				if class == "" {
+					class = "none"
+				}
+				metricsRecord(target.ProviderName, class, "exhausted")
+				attempts = append(attempts, Attempt{
+					Target: target, SelectionReason: selectionReason,
+					Error: "stopped: " + reason,
+				})
+				break attemptLoop
+			}
+			callsSpent++
+			walk[tIdx].dispatchesLeft--
 			// A retry must not reuse the credential whose circuit the previous
 			// attempt may have just opened — see reResolveForRetry. A prepared
 			// body carries the resolved model stamp, so it stays valid across a
@@ -337,7 +426,13 @@ func (e *TargetExecutor) executeInner(
 			if tryIdx > 1 {
 				retryTarget, rerr := e.reResolveForRetry(ctx, target, base.StickyKey)
 				if rerr != nil {
+					// No credential means this target cannot be dispatched to,
+					// and the failure that sent us here often closed that door:
+					// one 429 opens the circuit, so the target that just
+					// rate-limited is the one whose resolve now fails. Left
+					// deprioritised it came round forever, spending no budget.
 					attempts = append(attempts, Attempt{Target: target, Error: fmt.Sprintf("resolve (retry %d): %v", tryIdx, rerr)})
+					walk[tIdx].eliminated = true
 					metricsRecord(target.ProviderName, string(lastErrCl), "failover_no_credential")
 					break attemptLoop
 				}
@@ -350,38 +445,24 @@ func (e *TargetExecutor) executeInner(
 			var outcome attemptOutcome
 			switch {
 			case usePrepared:
-				// Every attempt of the primary target with a prepared body —
-				// including retries — calls adapter.ExecuteWithBody so the
-				// adapter's internal PrepareBody is skipped AND the prepare
-				// stage's side channels survive: the rewrites feed the
-				// x-nexus-coerced header (a coerced image request retried
-				// after a transient failure must not lose its markers) and
-				// the urlOverride feeds the dispatched URL (an embeddings
-				// batch retry must not fall back to the single-embed URL).
+				// ExecuteWithBody so the prepare stage's side channels survive
+				// a retry: rewrites feed x-nexus-coerced, urlOverride feeds the
+				// dispatched URL (an embeddings batch retry must not fall back
+				// to the single-embed endpoint).
 				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, prepared.body, prepared.rewrites, prepared.urlOverride)
 				prepared.consumed = true
 			case bridgeURLOverride != "" || len(bridgeRewrites) > 0:
-				// Cross-format bodies translated by the bridge whose codec
-				// emitted side-channel output that only exists here: the
-				// embeddings endpoint-selection override (Gemini
-				// :batchEmbedContents) and/or the image codec's coercion
-				// rewrites. Hand the prepared body + side channels straight
-				// to ExecuteWithBody so they reach the dispatched URL /
-				// x-nexus-coerced header — adapter.Execute would passthrough
-				// the same-format body and emit neither.
+				// The bridge's codec emitted side channels that exist only here
+				// — an endpoint override (Gemini :batchEmbedContents) or image
+				// coercion rewrites. adapter.Execute would passthrough the
+				// same-format body and emit neither.
 				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, req.Body, bridgeRewrites, bridgeURLOverride)
 			default:
 				outcome = e.attempt(attemptCtx, adapter, req, target)
 			}
-			// Coercion markers reach the winning attempt's Coerced directly
-			// from the dispatch path: both the bridge leg and every prepared
-			// attempt (first attempt and retry alike) hand their rewrites to
-			// attemptWithBody → adapter.ExecuteWithBody, which stamps them onto
-			// the response. The default leg (adapter.Execute) re-derives its own
-			// Coerced from PrepareBody's idempotent differential and carries no
-			// pre-applied rewrites. A post-attempt re-merge here would therefore
-			// DOUBLE the x-nexus-coerced markers on the common cross-format and
-			// prepared-retry paths, so there is deliberately none.
+			// Coercion markers already reach the attempt from the dispatch path,
+			// so a re-merge here would DOUBLE x-nexus-coerced on the
+			// cross-format and prepared-retry paths.
 			outcome.attempt.CredentialID = callTarget.CredentialID
 			outcome.attempt.CredentialName = callTarget.CredentialName
 			e.recordCredentialStats(callTarget.CredentialID, &outcome)
@@ -391,25 +472,89 @@ func (e *TargetExecutor) executeInner(
 			// adapter continue paths never corrupt it.
 			lastAttemptedClass = outcome.class
 			attemptedAny = true
+			lastClass = outcome.class
+			lastProviderID = target.ProviderID
+			walk[tIdx].restable = inRetryOn(retrySet, retryNothing, outcome.errCl)
+			if outcome.class != classSuccess {
+				walk[tIdx].lastFailure = outcome.errCl
+			}
+			// Elimination is decided by the class, in one place. The arms below
+			// each act on their own class, and each used to set this flag for
+			// itself — so a class added to eliminatesTarget() would surface the
+			// upstream envelope (which reads the predicate) and never be
+			// eliminated, leaving selectNext free to pick it again until the
+			// budget ran out.
+			if outcome.class.eliminatesTarget() {
+				walk[tIdx].eliminated = true
+			}
+			lastDispatched = outcome
+			if n := len(attempts); n > 0 {
+				attempts[n-1].SelectionReason = selectionReason
+			}
 
-			switch outcome.class {
-			case classSuccess:
-				if tryIdx > 1 {
-					metricsRecord(target.ProviderName, string(lastErrCl), "retried_succeeded")
+			switch {
+			case outcome.class == classSuccess:
+				// Counted from the target's own dispatch history, not from the
+				// position within this turn: with a rate limit handed back to
+				// the walk, the retry that succeeds is usually a LATER TURN, and
+				// a per-turn index cannot see it.
+				if walk[tIdx].dispatchedBefore() {
+					metricsRecord(target.ProviderName, string(walk[tIdx].lastFailure), "retried_succeeded")
 				}
 				outcome.execResult.Attempts = attempts
 				return outcome.execResult
-			case classNoFailoverNoRetry:
+
+			case outcome.class.abortsRequest():
+				// The request itself is what failed. Another target would
+				// reject it identically, so trying one buys a second
+				// upstream charge and the same answer.
 				outcome.execResult.Attempts = attempts
 				return outcome.execResult
-			case classContextOverflow:
-				// Never retry the same target — the same model always
-				// overflows. Fail over when another target exists (the
-				// smart strategy arms a larger-context upgrade target);
-				// on the last target return the provider's own error so
-				// the client sees the upstream context error, not a
-				// generic all-targets-exhausted.
-				if tIdx == len(targets)-1 {
+
+			case outcome.class == classLocalProcessing:
+				// The upstream answered and charged; the failure is ours. Never
+				// retried in place, and for endpoints producing fresh output
+				// the walk stops entirely — an image the caller never receives
+				// is still one they pay for, and a flaky decode would buy one
+				// from every target.
+				metricsRecord(target.ProviderName, outcome.attempt.Code, "local_processing_failed")
+				if generatesFreshOutput(typology.KindFromWireShape(base.WireShape)) {
+					outcome.execResult.Attempts = attempts
+					return outcome.execResult
+				}
+				break attemptLoop
+
+			case outcome.class == classAuthFailed ||
+				outcome.class == classPermissionDenied ||
+				outcome.class == classTargetUnsupported ||
+				outcome.class == classProviderQuotaExhausted:
+				// Permanent for this request and scoped to this target — or,
+				// for a rejected credential and a spent account budget, to
+				// their provider. The old grouping ended the whole request on
+				// an expired key while healthy targets waited behind it. The
+				// upstream's envelope is kept, so if nothing else serves the
+				// caller still sees what it said — which for an exhausted
+				// budget is the only message naming when access returns.
+				if outcome.class == classAuthFailed ||
+					outcome.class == classProviderQuotaExhausted {
+					// Both are ACCOUNT-scoped, not target-scoped: every model
+					// behind that provider shares the key and the budget, so
+					// dispatching a sibling spends an upstream call to be told
+					// the same thing.
+					eliminatedProviders[target.ProviderID] = struct{}{}
+				}
+				metricsRecord(target.ProviderName, outcome.attempt.Code, "eliminated_target")
+				break attemptLoop
+
+			case outcome.class == classContextOverflow:
+				// The same prompt overflows the same model every time, so the
+				// target is out and selectNext reaches for the largest window
+				// left. With nothing left the provider's own error reaches the
+				// caller, naming the real limit. "Nothing left" is eligibility,
+				// not position — an index test surfaces the wrong error when
+				// the overflow lands on the final entry of a list with untried
+				// members ahead of it.
+				if next, _ := selectNext(walk, outcome.class, target.ProviderID); next < 0 {
 					outcome.execResult.Attempts = attempts
 					return outcome.execResult
 				}
@@ -424,8 +569,17 @@ func (e *TargetExecutor) executeInner(
 				metricsRecord(target.ProviderName, string(outcome.errCl), "failover_class_excluded")
 				break
 			}
-			if tryIdx == maxPerTarget {
-				// L2 budget exhausted on this target.
+			if outcome.errCl == cfgpolicy.ErrorClassRate429 && outcome.class.wantsElapsedTime() {
+				// Hand back to the walk rather than retry in place. Another
+				// dispatch milliseconds from now meets the same exhausted quota;
+				// coming back after two other providers have been tried does
+				// not. The allowance this target did not spend is what lets the
+				// walk return to it.
+				metricsRecord(target.ProviderName, string(outcome.errCl), "failover_wants_elapsed_time")
+				break
+			}
+			if walk[tIdx].dispatchesLeft <= 0 {
+				// This target has spent its allowance for the whole request.
 				metricsRecord(target.ProviderName, string(outcome.errCl), "exhausted")
 				break
 			}
@@ -433,7 +587,7 @@ func (e *TargetExecutor) executeInner(
 			// Compute backoff. Bail to L3 if the parent context deadline is
 			// imminent — sleeping past it would hand the client a context
 			// error rather than the next-target attempt.
-			backoff := computeBackoff(tryIdx, policy)
+			backoff := walk[tIdx].nextBackoff(policy)
 			if dl, ok := ctx.Deadline(); ok {
 				if time.Until(dl) <= backoff {
 					metricsRecord(target.ProviderName, string(outcome.errCl), "exhausted")
@@ -448,7 +602,28 @@ func (e *TargetExecutor) executeInner(
 		}
 	}
 
-	return &ExecutionResult{Error: ErrAllTargetsExhausted, Attempts: attempts}
+	// Nothing served. When the last attempt to run carried an upstream
+	// envelope, that envelope is the honest answer: a rejected credential
+	// surfaced as "all upstream providers failed" reads as an outage, and SDKs
+	// retry outages while they never retry an authentication error.
+	if lastDispatched.execResult != nil {
+		lastDispatched.execResult.Attempts = attempts
+		return lastDispatched.execResult
+	}
+	// Nothing was ever dispatched, so no provider was asked and none can be
+	// blamed. Every attempt died in local preparation — an undecryptable or
+	// absent credential, an unusable adapter, a target that would not resolve
+	// — and reporting that as an exhausted upstream is the same misattribution
+	// the branch above exists to prevent, just one step earlier. It sends
+	// operators to a provider status page for a fault that lives in our own
+	// configuration, and it hands SDKs a retryable class for a condition that
+	// no retry can clear.
+	for i := range attempts {
+		if attempts[i].Dispatched {
+			return &ExecutionResult{Error: ErrAllTargetsExhausted, Attempts: attempts}
+		}
+	}
+	return &ExecutionResult{Error: ErrNoTargetDispatchable, Attempts: attempts}
 }
 
 // attemptOutcome captures one call attempt and the executor's classification.

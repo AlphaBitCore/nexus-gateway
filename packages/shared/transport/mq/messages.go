@@ -151,6 +151,23 @@ type TrafficEventMessage struct {
 	// internal_purpose='ai-guard'; NULL on user-traffic rows.
 	AIGuardCostUsd *float64 `json:"aiGuardCostUsd,omitempty"`
 
+	// RouterCostUsd is the cost of the smart-router LLM call that chose this
+	// request's model. RouterProviderID is the provider that SERVED that call,
+	// which is frequently NOT the provider that served the request: on
+	// 2026-07-30 production made 2,020 router calls while only 1,258 requests
+	// were served by OpenAI. Attributing this cost to routed_provider_id would
+	// book roughly 38% of it against the wrong vendor. Both are absent when
+	// smart routing did not run or the router call failed.
+	RouterCostUsd    *float64 `json:"routerCostUsd,omitempty"`
+	RouterProviderID string   `json:"routerProviderId,omitempty"`
+
+	// EmbeddingProviderID is the provider that served the L2 semantic-cache
+	// embedding call whose cost is in EmbeddingCostUsd. Sibling of
+	// EmbeddingModelID; needed separately because the cost sits on the user's
+	// own row, whose routed provider is the provider that served the REQUEST,
+	// not the one that served the embedding.
+	EmbeddingProviderID string `json:"embeddingProviderId,omitempty"`
+
 	// InternalOpsBreakdown is a catch-all for hook-type internal model calls
 	// (prompt-shield, custom hooks invoking an LLM). Persisted to
 	// traffic_event.internal_ops_breakdown JSONB. The producer decides the shape;
