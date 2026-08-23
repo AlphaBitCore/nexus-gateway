@@ -145,9 +145,40 @@ if echo "$staged" | grep -qE '\.json$'; then
   run_hard "JSON dup-key" node scripts/check-json-dupkeys.mjs
 fi
 
-# 6. i18n parity (only when locale files staged).
+# 6. i18n parity + served-locale sync (only when locale files staged).
+#
+# The two answer different questions and neither substitutes for the other.
+# Parity compares LANGUAGES against each other and never compares the source
+# tree against the served one — so a key added to src/i18n/locales and not
+# synced to public/locales leaves every language internally consistent and
+# every gate green, while Spanish and Chinese users read raw i18n key paths.
+# English hides it: it is bundled from the source tree, and only the other
+# languages are fetched at runtime from the served copy.
+#
+# CI runs the sync check too, and that is where this was eventually caught —
+# one merge after the commit that broke it. A hook that answers in 0.2 s while
+# the author still has the change in their head is worth the duplication.
+# The CLI embeds a copy of docs/users/api/openapi/control-plane/**; catalog_test.go
+# is the gate that keeps the two identical, and the doc-lockstep config leaves
+# the mirror out on purpose because that test already owns it. But the coverage
+# hook only runs the packages a commit STAGES, and a commit that edits the spec
+# stages a yaml, not Go — so editing a contract and forgetting the regenerate
+# passed every hook and shipped a CLI describing the pre-edit API. Run the one
+# test that can see it, on the edit that can cause it.
+if echo "$staged" | grep -qE '^docs/users/api/openapi/control-plane/.*\.yaml$'; then
+  run_hard "embedded OpenAPI mirror" bash -c 'cd packages/nexus-agent-core && go test ./capabilities/resource/ -run TestResourceEmbedMatchesDocsSource -count=1'
+fi
+
+# The test harness's own self-tests. They are free (no network, no provider) and
+# they guard checks that can only fail against a real deployment — which is
+# exactly when nobody is watching a unit test.
+if echo "$staged" | grep -qE '^tests/(lib/|smoke/|scripts/(smoke-gateway\.py|test_smoke_assertions\.py))|^tests/\.env\..*\.example$'; then
+  run_hard "test-harness self-tests" npm run --silent check:test-harness
+fi
+
 if echo "$staged" | grep -qE '/locales/'; then
   run_hard "i18n parity" node scripts/check-i18n-parity.mjs
+  run_hard "served locales in sync" node scripts/sync-locales.mjs --check
 fi
 
 # 7. Workspace-replace contract (binding; protects sibling Go modules from
@@ -189,6 +220,15 @@ fi
 # rules). Scoped to packages with staged Go files — including deletions and
 # renames, which lower coverage without leaving an ACM entry. Allowlist:
 # scripts/.coverage-allowlist (entries require user approval + category).
+# 9a. CI's Go linter, on the modules this commit touches. It is the only gate
+# that sees an unexported function lose its last caller — go build, go vet,
+# go test -race and every check above are silent on it — and until this ran
+# locally it ran ONLY in CI, so a branch met its violations a round-trip late.
+# Skips cleanly when the pinned binary is absent; CI still enforces.
+if echo "$staged_cov" | grep -qE '\.go$'; then
+  run_hard "go lint (CI parity)" bash scripts/check-go-lint.sh --staged
+fi
+
 if echo "$staged_cov" | grep -qE '\.go$'; then
   run_hard "go coverage ≥95%" bash scripts/check-go-coverage.sh --staged
 fi

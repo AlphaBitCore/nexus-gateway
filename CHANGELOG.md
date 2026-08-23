@@ -8,6 +8,479 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **`error.code` is a string on every error the gateway itself produces.** A
+  whole class of them sent the numeric HTTP status in that field — `"code": 429`
+  next to `"type": "rate_limit_error"` — so a client branching on `error.code`
+  saw a number from one route and an UPPER_SNAKE string from the next. Every
+  gateway-originated error now goes through one builder: `code` is an
+  UPPER_SNAKE string or is absent, never the status restated, and `type` is
+  derived from the status rather than fixed at `api_error`. Migration: branch on
+  `error.code` as a string, and on `response.status` for the numeric status.
+  Provider errors are untouched — they keep the upstream's own words inside your
+  dialect's envelope.
+
+- **One error envelope across the gateway's own routes.** Five shapes were in
+  service — the proxy's, the estimate endpoint's, the not-supported handler's,
+  and two more — differing in whether `code` was present, whether a hint was
+  inline, and which `type` they claimed. They are one shape now. The estimate
+  endpoint no longer has an envelope of its own.
+
+- **One 429, with the headers to act on it.** Rate-limit refusals differed by
+  route family and some carried nothing to back off with. Every 429 now carries
+  `Retry-After` and `X-RateLimit-Limit`, the compare endpoint (`/v1/estimate`)
+  included — it has its own per-key ceiling and used to answer with neither.
+
+- **A path this gateway does not serve answers in JSON, and a wrong method
+  answers 405.** A miss outside `/v1` returned a text/plain 404 from the mux; a
+  wrong method on a served path returned 404 with no `Allow`. Both now return
+  the dialect's JSON envelope, and a wrong method returns 405 with `Allow`
+  listing the methods that path does serve.
+
+- **The response carries one `x-request-id`, not two.** When a caller sent their
+  own, the gateway appended its own value beside it and clients read whichever
+  their HTTP library happened to surface first. The caller's value is echoed
+  back unchanged when they send one, and the gateway's own is used when they do
+  not.
+
+- **`traffic_event.id` is minted by the gateway and is no longer the same value
+  as `trace_id`.** They were equal for every row, so anything that had the
+  `X-Nexus-Request-Id` response header could pass it to a row-keyed endpoint and
+  it worked by coincidence. `trace_id` is the enclosing unit of work and is
+  non-unique by design — retries, a realtime session's exchanges, an agent flow
+  across services all share one; `id` is the per-row primary key and the
+  idempotency key on the audit path. The header carries the TRACE id, which is
+  the only handle a caller ever holds. Migration: to reach the rows behind a
+  header value, filter the admin traffic list by `requestId` (it matches
+  `trace_id`, and is what the drawer's trace pivot uses); `GET
+  /api/admin/traffic/{id}` continues to take the row's own id.
+
+- **A Gemini-dialect wrong-method answers `status: INVALID_ARGUMENT`.** 405 is
+  absent from Google's documented HTTP-to-gRPC table so it fell through to
+  `UNKNOWN`, which is the one thing that does not tell a Gemini client the
+  method was wrong.
+
+- **An image `n` above the resolved provider's ceiling is refused before
+  dispatch**, with `SPEND_LIMIT_EXCEEDED` naming the field, the bound and the
+  provider. Routing can send one request to providers with different ceilings,
+  and the request used to reach the upstream and bill for whatever it produced.
+
+- **A quota-exhausted provider is the provider's fault, not the caller's.** Nine
+  provider adapters classified an exhausted account budget as an invalid
+  request, so `model: auto` returned the caller a 400 instead of failing over to
+  a provider that could serve them.
+
+- **`/v1/estimate` honours the parameters it accepts.** Three of them were
+  parsed and then ignored.
+
+- **The rerank document ceiling applies on the native Cohere target too**, where
+  the validation had been skipped, leaving the 1000-document guard inert on the
+  one path that reaches Cohere directly. And the TTS `instructions` field is
+  scanned by the content policy — it is caller-supplied text and was not.
+
+- **`external_request_id` survives the agent's local audit queue**, and an id
+  the agent does not have reaches the column as SQL NULL rather than the empty
+  string, matching what gateway-written rows have always stored.
+
+- **`platform.BuildInfo` takes two fields instead of three (Go API, internal).**
+  `ServiceVersion` / `BuildSHA` / `BuildTime` are replaced by `Service` and
+  `BuildVersion`; `CaptureStaticInfo` resolves all three itself. No migration
+  window is offered because the type has no consumer outside this repository —
+  it is not part of any published Go module surface, and every in-repo call site
+  moved in the same commit. Callers passing the old fields will not compile,
+  which is the intent: when callers computed the three fields themselves, three
+  of the five services reported a hardcoded `"<service>/0.1.0"` and all five
+  reported an empty `buildSha`, so no node could be tied to a build at all.
+
+- **`Model.features` no longer carries two names for one capability.** GET
+  /v1/models publishes this array verbatim, so this is a contract change.
+  `thinking` is now `reasoning`: the two described the same capability and the
+  vendor sets were disjoint — Anthropic and Gemini rows said the first, thirteen
+  other providers said the second, and no row said both — so a rule, a picker,
+  or a query keyed on either one saw a partial answer with nothing to say so.
+  The canonical layer had already chosen `reasoning` for the response content
+  type and the token counter. `tool_use` is removed: it sat on four rows, every
+  one of which also carried `function_calling`, and distinguished nothing.
+  **Consumers keying on `thinking` or `tool_use` must switch to `reasoning` and
+  `function_calling`.** Stored rows are migrated by
+  `dedupe_model_feature_vocabulary` in `tools/db-migrate/manual-scripts/`; the
+  admin picker keeps rendering an unmigrated value so such a row stays editable
+  rather than losing it on the next save.
+
+- **`requestedModelLiterals` matches as globs, which is what the form has always
+  said it does.** The admin form offers `gpt-4-*` as its example for this field
+  while the comparison was exact equality, so a rule written from that example
+  matched nothing and left nothing to read. The raw `model` string is where
+  version suffixes live (`gpt-4o-2024-11-20`), so a pattern is the only way to
+  write a rule that survives the next model release. A value with no `*` still
+  compares exactly, so `auto` — which every smart rule is required to pin — is
+  unaffected. **A stored value containing a `*` starts matching after this
+  ships**; review any rule that carries one.
+
+- **A rule scoped to a provider no longer fires according to catalogue row
+  order.** `matchConditions.providers` compared the first candidate the
+  catalogue returned for the named model code, and the query resolving a code
+  states no order — so for a code two providers both serve, the same request
+  could match on one day and not the next. It now compares against every
+  provider serving that code, the same shape `matchConditions.models` already
+  used. The requested-side provider fields stay empty for an ambiguous code
+  rather than naming one arbitrarily.
+
+- **A request a routing rule redirected is refused rather than served by the
+  model the caller named.** When every rule that matched resolved no target, the
+  gateway fell through to the requested-model passthrough — so a compliance rule
+  redirecting `gpt-4o` elsewhere, whose targets were all unavailable, answered
+  with `gpt-4o` and a 200. Such a request now returns 503
+  `ROUTING_RULES_RESOLVED_NOTHING`, and the routing trace records why each rule
+  yielded. A request no rule matched still passes through unchanged.
+
+- **Smart routing carries two more of its own candidates.** `model: auto`
+  returned a single target and discarded the pool the router had just chosen
+  from, so one transient failure sent the request out of the rule entirely. Two
+  other members of that pool now follow the pick — a provider not already in the
+  plan first, then the cheaper model. This raises the maximum upstream calls one
+  auto-routed request may make, since the call budget is derived from the plan's
+  length.
+
+- **`stickyOn` / `stickyTtlMs` are removed from the loadbalance strategy.** No
+  gateway code ever read them, while the rule form described Redis-backed
+  session affinity across replicas that did not exist. A payload still carrying
+  the keys keeps validating; they are ignored, as they always were.
+
+- **The traffic row records the class of each failed attempt.** The dispatch
+  walk stamped the `retryOn` bucket, which spells an unrecognised provider error
+  and a genuine network fault identically, and the audit projection dropped even
+  that. Attempts now carry `errorClass` in `routing_trace`, in the same
+  vocabulary the neighbouring `code` field uses — three classes have names of
+  their own (`permission_denied`, `network`, `unknown_provider_code`) because
+  they draw distinctions a canonical code cannot.
+
+- **Routing rules now match on the endpoint and on the request, not on whatever
+  model the caller happened to name.** Two match conditions read facts that do
+  not exist for a request that names no model, which made the rules carrying
+  them silently inert for exactly the traffic they were written for. Both
+  changes alter which rule serves existing traffic; neither is silent, and
+  neither needs a data migration.
+
+  `modelTypes` is compared against the endpoint the request arrived on. Stored
+  values are unchanged — an existing `embedding` keeps meaning the embeddings
+  endpoint, and the audio sub-types keep their coarse-`audio` compatibility,
+  because the comparison goes through the same catalogue-type-to-endpoint
+  translation the rest of the gateway uses. What changes: a rule with a
+  `modelTypes` condition now matches `model: "auto"` requests on that endpoint.
+  Previously it could not match them at all, because `auto` names no model and
+  the condition was reading the named model's catalogue row.
+
+  `providers` is now INAPPLICABLE when the caller named no model, instead of
+  failing to match. An admin who scopes a rule to one provider means "route
+  within this provider", and `auto` is the case where the gateway does the
+  routing. A request that DID name a model is still compared, so a rule scoped
+  to one provider still leaves another provider's model alone.
+
+  **Review any rule that carries a `modelTypes` or `providers` condition and
+  sits above a catch-all.** Such a rule may now capture `auto` traffic that
+  reaches a lower-priority rule today.
+
+- **A virtual key is refused a model it names but is not allowed**, rather than
+  being served whatever a routing rule would have redirected it to. A key
+  restricted to one model, with a rule redirecting everything to that model,
+  previously answered a client pinned to a different model with a 200 — the
+  client's configuration silently overridden and every response attributed to a
+  model the key cannot use. The refusal is a `403 MODEL_NOT_ALLOWED` naming the
+  model the caller sent.
+
+  This applies only when the caller named exactly one catalogue model. `auto`
+  is not a catalogue model and can never appear on an allow list, and a code
+  that fans out to several providers has no single reference to match; requiring
+  either would refuse every routed request from every restricted key.
+
+- **A routing rule that matches but produces nothing now says so** on
+  `traffic_event.routing_trace`, naming the rule and which of the four reasons
+  applied: its configuration does not parse, its strategy could not be
+  evaluated, it resolved no target, or every target it resolved is outside the
+  calling key's allowed models. Every trace entry also carries the rule that
+  produced it, so a losing rule's reasoning is no longer read as the winner's.
+
+- **A routing rule's entries name a provider and a model; a nested strategy is
+  refused.** The gateway resolves an entry inside a strategy as a leaf and does
+  not evaluate one strategy inside another. The admin API previously accepted
+  nesting ten levels deep, and such a rule was persisted, broadcast fleet-wide,
+  and then routed nothing while showing as enabled. It is now refused at the
+  write boundary, where the admin can be told what a child must be.
+
+  The simulate walker agrees rather than descending. A stored nested entry is
+  reported as unreachable with the reason, instead of contributing a
+  probability to a distribution no live request can produce.
+
+  **Migration, unconditional:**
+  `tools/db-migrate/manual-scripts/disable_nested_routing_configs_2026_08_08.sql`
+  disables such rules and appends the reason to the description. Configurations
+  are preserved, not flattened — which branch an admin meant to keep is not
+  something a migration can know.
+
+- **A rule that backs up other rules is an ordinary rule at lower priority.**
+  `strategyType: "fallback"` no longer marks a separate species of rule that was
+  collected apart from the others and appended to every plan as recovery,
+  whatever it matched. The walk now advances between rules on its own, so a rule
+  an admin ranked below another IS the alternative for when that one cannot
+  serve the request — and a `fallback` rule no longer backs up rules it has
+  nothing to do with while its own match conditions go half-read.
+
+  The `fallback` STRATEGY is unchanged: a chain of provider+model entries inside
+  one rule is a different thing from a rule that backs up other rules, and only
+  the second is gone. A rule's own chain is still tried before any lower rule.
+
+  **Review every rule whose strategy type is `fallback`.** Such a rule
+  previously could not win the primary slot whatever its priority, and backed up
+  every other rule regardless of its own match conditions. It is now an ordinary
+  rule: a high-priority one with broad match conditions will START serving
+  traffic as the primary, and a narrowly-matching one will STOP backing up the
+  rules it used to cover. Set its priority below the rules it is meant to back
+  up, and check that its match conditions cover the traffic it should catch.
+
+- **The structured embeddings 400 is for requests the gateway routed.** It lists
+  what each candidate would have accepted — dimensions, batch size, encoding
+  formats — which answers "you asked us to pick and none of ours fit". A caller
+  who NAMED a model asked a different question: that model's limits are its own,
+  and the upstream states them in its own terms. They now receive the provider's
+  refusal instead of a catalogue of models they did not choose, which also stops
+  publishing the shape of a deployment's model list to a caller who wanted one
+  model.
+
+### Removed
+
+- **`POST /v1/audio/translations` is withdrawn.** No catalogue model served it,
+  so every call reached a routing failure; the route now answers as an endpoint
+  this gateway does not serve. Migration: transcribe with
+  `POST /v1/audio/transcriptions` and translate the text with a chat model.
+
+- **The `policy` strategy type is gone from the admin API and the published
+  schema.** It never had an implementation. A rule carrying it was accepted,
+  broadcast fleet-wide, and then held the primary slot at stage 1 while
+  returning no targets and no error — locking out every lower-priority rule
+  with nothing surfaced. `POST`/`PATCH` now reject the value, at the top level
+  and as a nested node.
+
+  **Migration, unconditional:**
+  `tools/db-migrate/manual-scripts/disable_policy_routing_rules_2026_08_08.sql`
+  disables stored `policy` rules and appends the reason. The row and its config
+  are kept and NOT rewritten to another strategy — a `policy` node names no
+  provider or model to convert, and silently reinterpreting an admin's
+  configuration is what this release stops doing.
+
+  The admin UI previously mapped an unrecognised stored strategy onto `single`
+  when opening the edit form, so saving any field — even the name — persisted a
+  single-shaped rule over the original configuration, while the detail page
+  still displayed `policy`. The form now refuses to load such a rule and says
+  why.
+
+### Added
+
+- **`Model.features` gains `structured_outputs`, and GET /v1/models publishes
+  it.** The array is a shipped contract, so this is an additive contract change:
+  existing values are untouched and a consumer reading only the older tags is
+  unaffected. It answers a question no existing tag answered — will this model
+  hold its answer to a caller-supplied JSON Schema — which is NOT what
+  `json_mode` says. `json_mode` describes the weaker
+  `response_format: {type: json_object}`, and the two disagree on exactly the
+  rows that matter: probed per model against each provider's own wire on
+  2026-08-19, `gpt-4-turbo` carries `json_mode` and answers 400 to a schema,
+  while every `claude-*`, every `command-*` and the whole o-series carry no
+  `json_mode` and serve one correctly.
+
+  The tag is an ELIGIBILITY constraint, not a preference: `auto` will not choose
+  a model whose row lacks it for a request carrying a `json_schema`. One
+  catalogued model is the reason — `kimi-k2.5` accepts the field and answers
+  with HTTP 200, `finish_reason: stop`, and prose, so nothing downstream can
+  turn it into an error and the caller's own parse is the first thing that
+  notices. A model the caller NAMES is unaffected; their model's limits are
+  theirs.
+
+  **A row that declares other features and not this one is excluded from
+  structured-output routing.** 44 rows on the six providers a key exists for are
+  tagged from measurement; rows on the thirteen template-only adapters
+  (`azure-openai`, `bedrock`, `vertex`, `fireworks`, `together`, `groq`,
+  `mistral`, `xai`, `glm`, `minimax`, `perplexity`, `huggingface`, `replicate`)
+  are untagged and therefore not selected for such requests. Operators running
+  those providers who want them eligible should probe the wire and tag the rows;
+  inferring the answer from a direct-provider twin is what this tag exists to
+  avoid.
+
+- **`capability_matrix` on GET /v1/models gains `reasoning` and
+  `structured_outputs`.** Both are hard routing filters, so a client could not
+  observe from the public catalogue the two facts `auto` actually acts on.
+  Additive: the five existing keys are unchanged.
+
+- **Media is one shape, with one grammar and one resolver.** Every binary a
+  request or response carries — image, audio, video, document — is now a
+  single `MediaRef` naming what the bytes are, proving which bytes they were
+  (`sha256`), and, when they are recoverable, saying where to find them. It
+  replaces two `BinaryRef` families, six divergent per-codec behaviours and a
+  parallel `image_ref` summary.
+
+  The locator grammar has five containers, each resolvable from the stored
+  bytes alone: `body`, `json:<path>`, `datauri:<path>`, `sse:<frame>:<path>`,
+  `multipart:<part>`. Grammar, predicates and resolver live in one package
+  (`transport/normalize/locator`), because a locator is a promise, and a
+  promise made in one place and kept in another drifts — the codecs and the
+  admin artifact endpoint previously disagreed about what counted as
+  decodable.
+
+- **`GET /api/admin/traffic/{id}/artifact` resolves any locator**, on either
+  direction, through the same package that built it:
+  `?locator=<locator>&direction=request|response`. Request-side media — an
+  uploaded image, transcribed audio, a submitted document — is reachable for
+  the first time. Omitting `locator` keeps the endpoint's original behaviour
+  for image generations and TTS; those derive the locator the caller did not
+  send and take the same path rather than being a second implementation.
+
+  The served `Content-Type` is sniffed from the bytes, never taken from what
+  the wire declared. Types outside a frozen inline-renderable set still serve;
+  they download instead of rendering. Every response carries `nosniff`, a
+  `default-src 'none'; sandbox` CSP, `Cross-Origin-Resource-Policy:
+  same-origin`, `Cache-Control: private, no-store`, an `ETag` over the bytes
+  (`If-None-Match` yields 304), and a filename built from the event id and the
+  sniffed type. New statuses: `400` (unreadable locator), `422` (the bytes are
+  there and are not decodable).
+
+- **Large binary request inputs are captured.** STT audio and video input
+  references were fingerprinted and released; the transcription was auditable
+  and the thing transcribed was not. They are now captured by handing over the
+  buffer the request already holds rather than copying it — measured at the
+  26 MiB STT ceiling, 3.3 ns and zero allocations against 1.36 ms and 27 MB
+  across four allocations for the copy path. The size lands off-heap on the
+  async audit side through the existing spill. Capture never changes what is
+  forwarded upstream, and both paths pin that with a test that re-emits the
+  forward after capture has taken its reference.
+
+  With payload capture off, the fingerprint alone is surfaced as a
+  `fingerprint` media element, so the file is still identifiable by digest.
+
+- **Published multi-architecture container images and a `docker compose`
+  quickstart.** `nexus-hub`, `control-plane`, `ai-gateway`,
+  `compliance-proxy`, `control-plane-ui`, and `db-migrator` are now built and
+  published to `ghcr.io/alphabitcore` and `docker.io/alphabitcore` for
+  `linux/amd64` and `linux/arm64`, plus an amd64-only `-avx2` tag variant for
+  the four Go services. `deploy/docker-compose.yml` brings up a working
+  instance from those images in two commands (`./init-secrets.sh` then
+  `docker compose up -d`); see
+  `docs/developers/architecture/cross-cutting/deployment/container-image-architecture.md`
+  and `docs/operators/ops/container-deployment.md`.
+
+- **Self-contained Linux tarballs.** `scripts/release/build-tarball.sh`
+  produces `nexus-gateway-<version>-linux-<arch>.tar.gz` with statically
+  linked service binaries, the built UI, and systemd units, for operators
+  who deploy without containers.
+
+- **Vendor-spend reconciliation: `traffic_event` now records the smart-router
+  LLM call's own cost and the provider that served it, closing the gap that
+  under-reported OpenAI spend by 28.2% ($39.46 over eleven days of production
+  traffic) while Anthropic reconciled to -0.07%.** Three additive
+  `traffic_event` columns — `router_cost_usd`, `router_provider_id`,
+  `embedding_provider_id` — carried over new binwire field ids `109`-`111`,
+  plus two new rollup series (`vendor_spend_usd`, `vendor_spend_internal_usd`)
+  that attribute each cost component (customer traffic, router call, L2
+  embedding, AI-Guard classifier) to the provider that was **actually
+  charged** for it — which is frequently not the provider that served the
+  request. One `traffic_event` row can therefore contribute to several
+  providers' vendor-spend totals at once. The vendor-bill reconciliation job's
+  diff basis moves to this series via two additive
+  `vendor_bill_reconciliation` columns, `our_vendor_spend_usd` and
+  `our_internal_ops_usd`; the existing `our_billed_usd` column and customer
+  quota/billing are untouched. The reconciliation report's read and
+  review-ack endpoints gain two additive response fields, `ourVendorSpendUsd`
+  and `ourInternalOpsUsd`, and a `no_basis` coverage value for days the
+  vendor billed but the gateway recorded no comparable vendor spend for.
+  Rows written before this change are not comparable — router cost was never
+  recorded in any form historically, so no backfill can reconstruct it — and
+  the report marks them as such. See
+  `docs/superpowers/specs/2026-08-04-vendor-spend-reconciliation-design.md`
+  for the full analysis and
+  `docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md`
+  for the cost-attribution detail. One side effect: the AI-Guard classifier's
+  own `traffic_event` row now carries a `routed_provider` dimension (it
+  previously carried none), so an operator who enables AI-Guard will see that
+  provider's per-provider request count and token totals step up in
+  Analytics → By Provider with no other config change — `billed_cost_usd` is
+  unaffected. Dormant today: production has zero ai-guard rows.
+
+  **Deploy order is mandatory: schema → Hub → producers.** The new binwire
+  field ids are FORWARD-INCOMPATIBLE — a producer (ai-gateway,
+  compliance-proxy, agent) emitting field id 109, 110, or 111 to a Hub that
+  does not yet know them has that field silently dropped, not queued or
+  errored. Apply the schema migration first, deploy the Hub second, and only
+  then deploy/restart the producers.
+
+  **Operator impact — expect one `vendor.bill_sync_failed` alert per
+  reconciled provider on first deploy, and it is not a regression.** The
+  reconcile job's trailing window is `[today-5, today-2]` (UTC); on its first
+  run after this deploy, days in that window predate the vendor-spend series
+  and get `coverage='no_basis'` placeholder rows — an honest "we have no
+  comparable basis for this day" signal, not a computed 100% drift. Once a
+  `no_basis` (or `fetch_failed`) row stays unhealed past the ~25-hour
+  staleness threshold it raises `vendor.bill_sync_failed`, so expect exactly
+  one such alert per covered provider shortly after deploy. It auto-resolves
+  as those pre-cutover days age out of the bounded trailing window — no
+  action needed. See
+  `docs/operators/ops/runbooks/vendor-bill-reconciliation.md` (the `no_basis`
+  row in the coverage table) and `docs/operators/ops/runbooks/alerts.md`
+  (the `vendor.bill_sync_failed` section) for the full alert semantics.
+
+### Changed
+
+- **Vendor-bill reconciliation's `diff_usd` / `diff_pct` are now computed from
+  the vendor amount and our recorded vendor spend rounded to cents**, since
+  the vendor's own cost APIs (e.g. Anthropic's `cost_report`) are only
+  cent-denominated — comparing them against our unrounded 6-to-10-decimal-place
+  estimate reported the vendor's own rounding as drift. A day where the two
+  figures agree to the cent now reconciles to exactly `diff_usd = 0` /
+  `diff_pct = 0` instead of a spurious nonzero percentage. **Stored amounts are
+  unchanged**: `our_billed_usd`, `our_vendor_spend_usd`, `our_internal_ops_usd`
+  and `vendor_reported_usd` keep their full unrounded precision in their
+  existing `Decimal(20,10)` columns; only the two diff figures are quantised.
+  Rows written before this change keep their old, unrounded-basis diff until
+  the trailing `[today-5, today-2]` re-reconcile window recomputes them. See
+  `docs/operators/ops/runbooks/vendor-bill-reconciliation.md` ("Diff basis is
+  rounded to the cent").
+
+### Added
+
+- **The `audio` model type is retired.** It was minted by model discovery for
+  any id containing "audio", and the models that received it — `gpt-audio-*` —
+  are served by the provider on chat completions, so the routing guard
+  rejected every one of their requests with `MODEL_MODALITY_MISMATCH`. `type`
+  answers *which endpoint serves this model*; which modalities it handles is
+  what `inputModalities` / `outputModalities` are for, and one scalar cannot
+  answer both. Discovery no longer mints it, the two affected rows are typed
+  `chat`, and `EndpointKindAcceptsModelType` no longer accepts it for tts,
+  stt or realtime.
+
+  **Migration:** none for callers. Any catalogue row still carrying
+  `type: "audio"` should be retyped to the endpoint that actually serves it;
+  a standing test fails if one appears.
+
+- **Catalogue modality data corrected.** 94 models advertised `vision` while
+  declaring text-only input, 33 contradicted their own type (embeddings
+  emitting text, transcribe models taking no audio), and 188 carried no
+  modality arrays at all. Nothing broke only because the routing guard reads
+  `type` and ignores those fields — which made the drift latent rather than
+  harmless. A standing check now asserts the three descriptions agree, so the
+  next model sync cannot reintroduce it.
+
+- **Media custody has six states, each with a producer.** `aged-out` gained
+  one: when the Control Plane serves a stored normalized sidecar after
+  establishing that no body is recoverable, captured references in it are
+  rewritten — locator cleared so no control is offered, digest kept so the
+  file is still identifiable. Previously such a row offered a Download that
+  resolved to 404. `redacted` was removed; nothing produced it, and a custody
+  value nothing can reach is a distinction the system claims to make and does
+  not.
+
+- **Cohere catalogue completed.** `command-a-vision-07-2025` (verified against
+  the live API) and the `rerank-v3.5` / `rerank-english-v3.0` /
+  `rerank-multilingual-v3.0` family are catalogued. Rerank rows record no
+  per-token price — Cohere bills per search unit, and a zero would render as
+  "free" where absent renders as "not priced".
+
 - **`traffic_event.end_user_id` is stamped from `X-Nexus-End-User-Id` only.**
   The tag correlates traffic to the same end user across the Nexus product
   family, so it is something a caller declares to Nexus. The gateway no longer
@@ -25,24 +498,195 @@ All notable changes to this project are documented here. The format follows
   27 microseconds for a 64 KiB body and 105 microseconds at 256 KiB, against
   32 nanoseconds when the header is present.
 
-### Added
+### Fixed
 
-- **Published multi-architecture container images and a `docker compose`
-  quickstart.** `nexus-hub`, `control-plane`, `ai-gateway`,
-  `compliance-proxy`, `control-plane-ui`, and `db-migrator` are now built and
-  published to `ghcr.io/alphabitcore` and `docker.io/alphabitcore` for
-  `linux/amd64` and `linux/arm64`, plus an amd64-only `-avx2` tag variant for
-  the four Go services. `deploy/docker-compose.yml` brings up a working
-  instance from those images in two commands (`./init-secrets.sh` then
-  `docker compose up -d`); see
-  `docs/developers/architecture/cross-cutting/deployment/container-image-architecture.md`
-  and `docs/operators/ops/container-deployment.md`.
-- **Self-contained Linux tarballs.** `scripts/release/build-tarball.sh`
-  produces `nexus-gateway-<version>-linux-<arch>.tar.gz` with statically
-  linked service binaries, the built UI, and systemd units, for operators
-  who deploy without containers.
+- **`/v1/messages` usage counters now compose the way Anthropic's own do.** The
+  two conventions differ: canonical follows OpenAI, where `prompt_tokens` is the
+  total and `cached_tokens` is a subset inside it, while Anthropic's wire is
+  additive — `input_tokens` counts only what was neither read from nor written
+  to the cache, and the two cache counters stand beside it. The egress wrote the
+  canonical total into `input_tokens` while also emitting both cache counters,
+  so the three overlapped and a client summing them as Anthropic documents
+  over-counted by the whole cached prefix. Observed on a real cached request:
+  `input_tokens 12936` beside `cache_creation_input_tokens 12924`, where the
+  real uncached input was 12.
+
+  **This changes numbers an Anthropic-wire client may be reconciling against.**
+  A client that summed the three counters was over-counting and will now see the
+  correct total; a client that read `input_tokens` alone as "everything" will now
+  see only the uncached part and should add the cache counters, which is what
+  Anthropic's own API requires. Cache-creation tokens bill at a premium and
+  cache-read at a discount, so the correction matters most on requests that used
+  prompt caching. The Gemini egress is unaffected and unchanged — its
+  `promptTokenCount` is a total with `cachedContentTokenCount` as a subset,
+  already the canonical convention.
+
+- **A caller's `cache_control` reaches the wire from every ingress**, not only
+  from `/v1/messages`. The gateway already promised to respect a caller-set
+  marker — the marker injector stands down when it finds one — but on any other
+  ingress the canonical→Anthropic projection rebuilt each content part and the
+  marker was gone before the injector could look. Measured: the same marker
+  cached on `/v1/messages` and did nothing on `/v1/chat/completions`. Anthropic
+  prompt caching is roughly a tenth of the input price, so the silent version
+  cost the caller money on every repeated prefix.
+
+- **The gateway's internal namespace no longer reaches the caller.** A response
+  from an Anthropic-backed model arrived at an OpenAI-wire client carrying
+  `"nexus":{"ext":{"anthropic":{"cache_creation_input_tokens":N}}}`. The
+  Anthropic, Gemini and Responses egress converters are projections and drop
+  unknown keys as a side effect of rebuilding the body from named fields; the
+  OpenAI-family egress is the identity, so whatever a codec left in the
+  namespace was delivered verbatim.
+
+  Four of the five response-side writers are deleted rather than filtered.
+  Three had no reader anywhere (`nexus.ext.bedrock.model`,
+  `nexus.ext.voyage.model`, `nexus.ext.cohere.returned_embedding_type`), and
+  the fourth wrote a number the canonical body already carried two lines above
+  it — Anthropic's cache-creation count now has one home,
+  `usage.prompt_tokens_details.cache_creation_tokens`, beside the
+  `cached_tokens` OpenAI defines. An Anthropic-wire caller still receives
+  `cache_creation_input_tokens` unchanged. Only `nexus.ext.openai.responses.*`
+  remains as a genuine carrier between a decode and the Responses egress
+  encoder, so only that one is removed at egress.
+
+- **Audio sent to `/v1/responses` is served instead of refused.** The Responses
+  wire has no audio content part — its own rejection enumerates what it takes:
+  text, image and file — while the same model accepts audio on
+  `/v1/chat/completions`. A request carrying content that wire cannot express
+  now takes the wire that can and comes back in the Responses shape the caller
+  asked for. A request that ALSO uses a Responses-only feature (a built-in
+  tool, `previous_response_id`, `store`, a non-disabled `truncation`) still
+  gets the existing refusal naming that feature, because it cannot be served
+  either way.
+
+- **Smart routing no longer picks a model that cannot take the request's
+  content.** Its capability filter asked about images only, so a request
+  carrying audio, video or a document was routed without anyone checking
+  whether the selected model accepts it — and the router produced the upstream
+  400 itself. It now asks once per modality the request actually carries. A
+  refusal the caller's own model choice caused is the model's; a refusal our
+  pick caused is ours.
+
+- **Every sampling rule now fails safe inside its vendor namespace.** Each
+  vendor's rule is an ACCEPTS list — a family the list does not name has its
+  `temperature` / `top_p` stripped rather than forwarded. Anthropic already
+  read this way; OpenAI and Moonshot were denylists, and a denylist over a
+  catalog that gains models without a code change goes stale in the direction
+  that hurts.
+
+  The reason it must be strip is routing. A rule or the smart router sends the
+  request to a model the caller never named, so the parameters that arrive were
+  chosen for a different one. If the unknown direction forwards, routing itself
+  becomes the cause of a 400 — the caller asked for something that worked and
+  got a failure the redirect created. Stripping costs sampling control on that
+  request, reported on `X-Nexus-Coerced`; forwarding costs the request.
+
+  The namespaces are version-aware rather than string prefixes, so a generation
+  nobody has probed yet lands inside the rule instead of outside it. Models
+  below the rejecting generation — `gpt-4o` and earlier, `moonshot-v1-*` — stay
+  outside deliberately: they accept sampling, and stripping there would forfeit
+  caller intent without averting anything. The DeepSeek thinking-mode structural
+  fixes carry forward the same way.
+
+- **The catalog sync compared nine of the sixteen fields the template carries.**
+  The three modality lists and the three audio prices were never offered as
+  corrections, so a provider row could drift on exactly the fields that decide
+  whether a request is routable and what it costs. Fields are now classified at
+  compile time, so one added to the template cannot reach the diff without a
+  decision about it.
+
+- **Adding a model with no required modality answered 500.** The create path
+  left `requiredModalities` nil, which reaches Postgres as SQL NULL; an explicit
+  NULL beats the column DEFAULT and the column is NOT NULL. Almost no catalog
+  entry declares a modality floor, so this was nearly every manual model
+  addition.
+
+- **Output ceilings take the minimum of a live probe and the vendor's
+  documentation.** A ceiling published on `/v1/models` is one callers echo back,
+  so a number the wire rejects turns the gateway's own advertisement into a 400.
+  The o-series carried the probe's 100003 against a documented 100,000.
+
+- **A media card could offer a control that failed on click.** Three separate
+  causes, each closed: the frame walker behind `sse:` locators split on a
+  literal `"\n\n"` while the codec's own fold and the browser resolver both
+  handled CRLF, so a captured reference pointed at a frame the resolver could
+  not see; the aged-out sidecar case above; and a `datauri:` payload with
+  leading whitespace or a format character that one side trimmed and the other
+  did not.
+
+- **HEIC, HEIF and AVIF were served as `video/mp4`.** The admin endpoint and
+  the browser held two sniffers that disagreed about the same bytes — an
+  iPhone photo submitted as a video input reference downloaded as `.mp4` from
+  one and read as `image/heic` in the other. They now share a vector table
+  that both assert against.
+
+- **A whole `data:` URI could be stored in `MediaRef.URL`.** A prefix test
+  against a client-controlled string is not a guard: a leading space, a
+  zero-width character, or an uppercase `DATA:` scheme walked a 20 KB payload
+  into a reference field. Normalisation now covers whitespace and the Unicode
+  format category, the scheme test folds case per RFC 3986 §3.1, and a length
+  bound catches whatever a future classifier misses.
+
+- **A base64 payload could reach the compliance scanner as prose.** Media
+  elements contribute nothing to the text projection hooks scan, and the text
+  beside them still does; both halves are pinned.
+
+- **Replicate array outputs.** Captions kept their position relative to
+  artifacts, each artifact addresses its own index, and a non-string element
+  is named rather than silently dropped — the drop fused the text either side
+  into one utterance that was never sent.
+
+||||||| 8d850e575
+- **Vendor-bill reconciliation no longer reports a day the rollup correction
+  pass has not rebuilt yet.** The reconciliation basis (`metric_rollup_1d`
+  `vendor_spend_usd`) is produced for historical days by `rollup-correction`,
+  and both jobs run on the same 24-hour tick: the reconcile pass finished in
+  ~3 seconds while the correction pass took ~100 seconds to write the very
+  rows it reads. Every run therefore read the tier before it was rebuilt and
+  stamped `coverage = 'no_basis'` on days whose figures landed a minute later,
+  which `vendor.bill_sync_failed` then escalated 25 hours after the fact. The
+  correction job now publishes a `rollup-correction` watermark naming the
+  newest UTC day it rebuilt, and the reconcile job defers any day past it —
+  writing nothing rather than a placeholder, and reconciling the day on a
+  later run. The same gate stops a *partially* aggregated day (the live
+  rollup covered only the hours after a deploy) from being compared at all,
+  which would have fired `vendor.bill_drift` with a fabricated under-record.
+  Days already reconciled are untouched.
+
+- **A single rate-limited vendor cost-API response no longer costs a provider
+  its whole reconcile window.** OpenAI meters its admin API at 30 requests per
+  minute across the entire organization, so the costs endpoint answers 429 for
+  traffic the reconcile job never issued; any non-200 was terminal, so all four
+  days of the window became `fetch_failed` placeholders. Rate-limited and 5xx
+  responses (and transport failures) are now retried up to four attempts with
+  exponential backoff — 0.5s, 1s, 2s — honouring `Retry-After` when the vendor
+  sends it. Standing failures (400/401/403/404) are still reported on the first
+  response, so a revoked or unscoped admin key surfaces as promptly as before.
+
+- **An expired virtual key can be brought back.** Extending a key's
+  `expiresAt` left `vkStatus` reading `expired`, and the renew endpoint
+  matched only `active` keys, so it returned 404 on exactly the keys it
+  exists to rescue. Because the gateway refuses admission on any non-`active`
+  status as well as on a past date, the stale status alone kept a renewed key
+  rejected. `expiresAt` is now the source of truth and `vkStatus = 'expired'`
+  is derived from it: writing the column re-derives the status (a future or
+  cleared date returns the key to `active`, a past date marks it `expired`
+  immediately rather than at the next hourly job run), and renew accepts an
+  expired key. `revoked`, `rejected` and `pending` keys are unaffected by an
+  expiry edit — those are administrative decisions, not clock positions.
 
 ### Removed
+
+- **`traffic_event_normalized` is dropped.** It held a second stored copy of a
+  request's captured text; the normalized projection is recomputed at view time
+  from the captured body instead. The erasure path is the reason — a second copy
+  is a second thing a subject-erasure request can miss, and one surface is the
+  stronger position. `normalizedScrubbed` stays in the DSAR response pinned at
+  `0`, deprecated in the OpenAPI spec with a removal window rather than
+  vanishing from a shipped contract. The deploy destroys the table and its rows;
+  `docs/operators/ops/runbooks/prod-deploy-data-changes.md` carries the pre-drop
+  dump, the ordering (binaries first, schema second) and what rollback can and
+  cannot restore.
 
 - The four per-package Dockerfiles
   (`packages/{nexus-hub,control-plane,ai-gateway,compliance-proxy}/Dockerfile`)

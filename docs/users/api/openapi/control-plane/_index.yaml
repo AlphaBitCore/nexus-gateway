@@ -300,6 +300,16 @@ kinds:
           operationId: analyticsUsage
           tier: auto
           iamAction: iam.ResourceAnalytics.Action(iam.VerbRead)
+        - method: GET
+          path: /api/admin/analytics/vendor-bill-reconciliation
+          operationId: vendorBillReconciliation
+          tier: auto
+          iamAction: iam.ResourceAnalytics.Action(iam.VerbRead)
+        - method: POST
+          path: /api/admin/analytics/vendor-bill-reconciliation/{providerId}/{day}/review
+          operationId: vendorBillReconciliationReview
+          tier: auto
+          iamAction: iam.ResourceAnalytics.Action(iam.VerbRead)
     - kind: api-keys
       file: api-keys.yaml
       operations:

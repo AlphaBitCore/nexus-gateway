@@ -51,7 +51,12 @@ model RoutingRule {
   id              String   @id @default(uuid())
   name            String   @unique
   description     String?
-  strategyType    String // single | fallback | loadbalance | conditional | ab_split | smart | policy
+  /// single | fallback | loadbalance | conditional | ab_split | latency | smart.
+  /// The admin API refuses anything else. `policy` was accepted once and no
+  /// strategy ever implemented it, so such a rule was broadcast fleet-wide and
+  /// then yielded the primary slot on every gateway; stored rows are disabled
+  /// by disable_policy_routing_rules in tools/db-migrate/manual-scripts/.
+  strategyType    String
   config          Json // StrategyNode tree
   matchConditions Json? // MatchConditions — sole rule-matching truth source (see docs/developers/specs/e20/e20-s2-routing-rule-modelid-removal.md).
   priority        Int      @default(0)

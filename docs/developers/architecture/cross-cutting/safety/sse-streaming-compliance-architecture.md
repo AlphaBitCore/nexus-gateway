@@ -84,6 +84,12 @@ design boundary: ai-gateway's streaming mode is a boot-time service
 configuration, not a live admin-tunable, because live stream-mode
 changes on the ai-gateway path would be lossy for in-flight requests.
 
+The gateway's other appliers in the same `configdispatch.go` — `providers`
+(which reloads the provider **and** model snapshots so a disabled provider
+leaves the servable catalog immediately), `models`, `credentials`, `hooks` —
+never touch `streampolicy.Store`. A change to one of them cannot move the
+streaming policy, and a change to the streaming policy cannot move them.
+
 The admin's `streamingMode` policy (`agent_settings.streamingMode` /
 per-domain override on `interception_domain`) resolves to one of
 three modes via `shared/transport/streaming/policy.Resolve`. A fourth

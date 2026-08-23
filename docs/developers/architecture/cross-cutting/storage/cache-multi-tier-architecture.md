@@ -98,14 +98,32 @@ SCHEMA
 
 `response_body`, `usage`, and `origin_wire_shape` are payload-only HASH fields — written but NOT indexed. The reader retrieves them via `FT.SEARCH ... RETURN`, which works against unindexed fields.
 
-**Per-entry key**: `<indexName>:<sha256(EmbeddingInput | vk_scope | response_kind [| upstream_provider | upstream_model])[:16]>` — 16 hex chars from a SHA-256 over the embedding text **plus** the entry's scope, response kind, and (unless `AllowCrossModel` is set) its provider + model, NUL-delimited. Folding these in keeps logically-distinct entries that share embedding text on separate HASH keys, so the same prompt written under different tenants, models, or response kinds does not mutually evict via HSET overwrite. Reads never reconstruct the key — `FT.SEARCH` locates the entry by vector + tag filter and returns the stored key — so the composition is purely a write-side uniqueness concern. The returned key drives the L2 entry's poison-list key (see § Poisoning). When `AllowCrossModel` is true the model is interchangeable for retrieval, so provider+model are dropped from the key and the newest response for a given (input, scope, kind) supersedes the prior one.
+**Per-entry key**: `<indexName>:<sha256(EmbeddingInput | vk_scope | response_kind [| answer_key] [| upstream_provider | upstream_model])[:16]>` — 16 hex chars from a SHA-256 over the embedding text **plus** the entry's scope, response kind, and (unless `AllowCrossModel` is set) its provider + model, NUL-delimited. Folding these in keeps logically-distinct entries that share embedding text on separate HASH keys, so the same prompt written under different tenants, models, or response kinds does not mutually evict via HSET overwrite. Reads never reconstruct the key — `FT.SEARCH` locates the entry by vector + tag filter and returns the stored key — so the composition is purely a write-side uniqueness concern. The returned key drives the L2 entry's poison-list key (see § Poisoning). When `AllowCrossModel` is true the model is interchangeable for retrieval, so provider+model are dropped from the key and the newest response for a given (input, scope, kind) supersedes the prior one.
+
+### Answer key — the request parameters that decide which entry a lookup may reach
+
+L2 retrieves by vector similarity over the message text. Nothing else about the request reached either the entry key or the tag filter, so two calls with identical text and different sampling settings — one pinned to `temperature: 0` for determinism, one at `2` for variety — landed on the same entry and were served each other's answer. The same held for `top_p`, `top_k`, `max_tokens`, `stop`, and the presence of a tools array, which changes the answer even when no tool is invoked.
+
+The gateway digests those inputs from the canonical payload into an **answer key** and folds it into the entry's validity conditions. A caller who pins `temperature: 0` still hits their own earlier `temperature: 0` answers — keying only by "has any sampling parameter", or skipping L2 for such requests, would have taken that away.
+
+Two properties make it safe:
+
+- **One computation, both paths.** The key is derived once per request and travels to the write path and the read path as a single bundled value. A writer and a reader that each derived it from their own inputs could drift, and the failure mode of drift is a permanent 100% L2 miss — quieter than the wrong-answer bug it replaces.
+- **No schema change.** `EnsureIndex` is idempotent and never alters a live index, so a new TAG field would be absent from every already-deployed index and a query naming it would fail outright. The answer key is composed into the existing `fingerprint` TAG instead, whose meaning is exactly "the conditions under which this cached answer is valid" — the config fingerprint is one such condition, the caller's answer-affecting parameters are another. The two are hashed together rather than joined by a separator: a printable separator is ambiguous (`("a~b", "c")` and `("a", "b~c")` both render `a~b~c`), which would reintroduce the collision.
+
+A request carrying no answer-affecting parameters produces an empty key, leaving both the entry key and the tag unchanged. That is the bulk of the corpus, so the fix does not cold-start the cache.
+
+**Known residual**: the canonical carries no `response_format`, so JSON mode and free text still share a key. That is a gap in the canonical rather than in the digest.
 
 **Lookup query**:
 
 ```
-(@vk_scope:{<vk>} @response_kind:{<kind>} @fingerprint:{<fp>}
+(@vk_scope:{<vk>} @response_kind:{<kind>} @fingerprint:{<validity_tag>}
  [@upstream_provider:{<p>} @upstream_model:{<m>}])
  =>[KNN 1 @vector $vec AS __vector_score]
+
+where validity_tag = fp                                  (no answer-affecting params)
+                   = "k" + sha256(fp | NUL | answer_key)  (otherwise)
 ```
 
 The `upstream_provider` / `upstream_model` clauses are dropped when the caller sets `AllowCrossModel`. Tag values are escaped for `,` and `|` (the search module's TAG separator and OR operator); `-` is intentionally NOT escaped because Valkey-search's TAG dialect treats it as a literal — escaping breaks UUID-shaped scopes.
@@ -114,7 +132,7 @@ The `upstream_provider` / `upstream_model` clauses are dropped when the caller s
 
 **Per-search hard timeout**: 20 ms. On timeout the reader returns nil and the caller stamps `gateway_cache_skip_reason = semantic_search_timeout`.
 
-**Embedding cost stamp**: every L2 lookup that issues an embedding call records the embedding USD cost into `traffic_event.embedding_cost_usd` and the embedding model id into `traffic_event.embedding_model_id`, regardless of whether the lookup hit, missed, or skipped. The L2 read path uses an `EmbeddingSingleflight` so concurrent identical inputs share one embedding call.
+**Embedding cost stamp**: every L2 lookup that issues an embedding call records the embedding USD cost into `traffic_event.embedding_cost_usd`, the embedding model id into `traffic_event.embedding_model_id`, and — since 2026-08-04 — the provider that served that embedding call into `traffic_event.embedding_provider_id`, regardless of whether the lookup hit, missed, or skipped. `Reader.Read` reads `EmbeddingProviderID` off `snap.EmbeddingProviderID` (the config snapshot's resolved provider, never inferred from the model id or a display name) and stamps it on every `ReadResult` outcome alongside `EmbeddingModelID`. The attribution exists because the embedding model's provider is frequently not the provider that served the request it was computed for — folding the cost into the request's own `routed_provider` would misattribute vendor spend in the `vendor_spend_usd` rollup series (see [cost-estimation-architecture.md](../../services/ai-gateway/cost-estimation-architecture.md)). The L2 read path uses an `EmbeddingSingleflight` so concurrent identical inputs share one embedding call.
 
 **Eligibility — `EffectiveEnabled()`**: the L2 cache is only consulted when the runtime fleet-wide enabled flag is on AND the embedding provider id, embedding model id, and embedding dimension are all populated. A missing embedding model produces `skip_disabled` and falls through to the broker.
 

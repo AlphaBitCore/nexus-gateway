@@ -25,6 +25,7 @@
     "outputModalities": [
       "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": {
       "embeddings": {
@@ -36,6 +37,8 @@
           1536,
           3072
         ],
+        "min_dimension": 1,
+        "max_dimension": 3072,
         "supported_task_types": [
           "RETRIEVAL_QUERY",
           "RETRIEVAL_DOCUMENT",
@@ -43,13 +46,18 @@
           "CLASSIFICATION",
           "CLUSTERING",
           "QUESTION_ANSWERING",
-          "FACT_VERIFICATION"
+          "FACT_VERIFICATION",
+          "CODE_RETRIEVAL_QUERY"
         ],
         "supported_encoding_formats": [
           "float"
         ]
       }
     },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gemini-embedding",
     "createdAt": "2026-05-08T14:45:14.962+00:00",
     "updatedAt": "2026-05-10T16:40:56.389+00:00"
   },
@@ -62,10 +70,10 @@
     "providerModelId": "gpt-4o",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2.5,
     "outputPricePerMillion": 10,
@@ -79,13 +87,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4o",
     "createdAt": "2026-05-08T14:45:04.678+00:00",
     "updatedAt": "2026-05-10T16:40:49.056+00:00"
   },
@@ -115,8 +130,13 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4o-mini-transcribe",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -128,9 +148,7 @@
     "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
     "providerModelId": "chatgpt-image-latest",
     "type": "image",
-    "features": [
-      "vision"
-    ],
+    "features": [],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 32,
     "cachedInputReadPricePerMillion": 1.25,
@@ -143,13 +161,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "chatgpt-image-latest",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -162,11 +186,11 @@
     "providerModelId": "gemini-3.1-flash-lite",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
       "json_mode",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.25,
     "outputPricePerMillion": 1.5,
@@ -180,15 +204,81 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "audio",
+      "file",
+      "video"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gemini-3.1-flash-lite",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "176575f0-3d3d-4dec-abb8-da1da93d00bd",
+    "code": "embed-v4.0",
+    "name": "Embed v4",
+    "description": "Cohere Embed v4 — 128k context, multimodal retrieval.",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "embed-v4.0",
+    "type": "embedding",
+    "features": [],
+    "inputPricePerMillion": 0.12,
+    "outputPricePerMillion": 0,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 128000,
+    "maxOutputTokens": null,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "embedding"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": {
+      "embeddings": {
+        "max_batch_size": 96,
+        "default_dimension": 1536,
+        "supported_dimensions": [
+          256,
+          512,
+          1024,
+          1536
+        ],
+        "supported_input_types": [
+          "search_document",
+          "search_query",
+          "classification",
+          "clustering",
+          "image"
+        ],
+        "supported_encoding_formats": [
+          "float"
+        ]
+      }
+    },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-04T15:50:30.593+00:00",
+    "updatedAt": "2026-08-06T07:02:37+00:00"
   },
   {
     "id": "18fe13bc-c14a-4f55-ae9e-1a9da78edbd5",
@@ -201,7 +291,8 @@
     "features": [
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning"
     ],
     "inputPricePerMillion": 0.435,
     "outputPricePerMillion": 0.87,
@@ -220,10 +311,58 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "deepseek-v4-pro",
     "createdAt": "2026-05-08T14:45:15.972+00:00",
     "updatedAt": "2026-05-10T16:40:57.159+00:00"
+  },
+  {
+    "id": "1b45e3ae-0ed9-49bb-876c-d7705212f71c",
+    "code": "o1",
+    "name": "o1",
+    "description": "Advanced reasoning model for complex math, science, and coding tasks.",
+    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
+    "providerModelId": "o1",
+    "type": "chat",
+    "features": [
+      "streaming",
+      "function_calling",
+      "reasoning",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 15,
+    "outputPricePerMillion": 60,
+    "cachedInputReadPricePerMillion": 7.5,
+    "cachedInputWritePricePerMillion": 0,
+    "maxContextTokens": 200000,
+    "maxOutputTokens": 100000,
+    "status": "deprecated",
+    "deprecationDate": "2025-07-28T00:00:00+00:00",
+    "replacedBy": "o3",
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "o1",
+    "createdAt": "2026-05-08T14:45:05.485+00:00",
+    "updatedAt": "2026-05-10T16:40:49.813+00:00"
   },
   {
     "id": "1d5f88f6-ff4c-4422-9623-4d1a0f5e127e",
@@ -251,6 +390,7 @@
     "outputModalities": [
       "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": {
       "embeddings": {
@@ -260,15 +400,24 @@
         "supported_dimensions": [
           256,
           512,
+          768,
           1024,
+          1536,
+          2048,
           3072
         ],
+        "min_dimension": 1,
+        "max_dimension": 3072,
         "supported_encoding_formats": [
           "float",
           "base64"
         ]
       }
     },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "text-embedding-3-large",
     "createdAt": "2026-05-08T14:45:09.55+00:00",
     "updatedAt": "2026-05-10T16:40:52.523+00:00"
   },
@@ -283,7 +432,7 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision"
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.2,
     "outputPricePerMillion": 2,
@@ -297,13 +446,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "moonshot-v1-8k-vision-preview",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -318,8 +473,8 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision",
-      "prompt_caching"
+      "prompt_caching",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 1.9,
     "outputPricePerMillion": 8,
@@ -333,13 +488,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "kimi-k2.7-code-highspeed",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -354,7 +515,6 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision",
       "prompt_caching",
       "reasoning"
     ],
@@ -370,13 +530,19 @@
     "aliases": [],
     "enabled": false,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "kimi-k2-thinking",
     "createdAt": "2026-05-08T14:45:17.244+00:00",
     "updatedAt": "2026-05-10T16:40:57.964+00:00"
   },
@@ -389,8 +555,8 @@
     "providerModelId": "dall-e-3",
     "type": "image",
     "features": [],
-    "inputPricePerMillion": 0,
-    "outputPricePerMillion": 0,
+    "inputPricePerMillion": 40000,
+    "outputPricePerMillion": null,
     "cachedInputReadPricePerMillion": null,
     "cachedInputWritePricePerMillion": null,
     "maxContextTokens": null,
@@ -404,12 +570,101 @@
       "text"
     ],
     "outputModalities": [
-      "text"
+      "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "dall-e-3",
     "createdAt": "2026-05-08T14:45:09.816+00:00",
     "updatedAt": "2026-05-10T16:40:52.765+00:00"
+  },
+  {
+    "id": "2461265b-53ac-4dc6-b617-fa0df2b9f665",
+    "code": "command-a-vision-07-2025",
+    "name": "Command A Vision",
+    "description": "Cohere Command A with image understanding — chat v2 with image_url content parts.",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "command-a-vision-07-2025",
+    "type": "chat",
+    "features": [
+      "streaming",
+      "function_calling",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 2.5,
+    "outputPricePerMillion": 10,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 128000,
+    "maxOutputTokens": 8192,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "image",
+      "file"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-05T04:17:43.211+00:00",
+    "updatedAt": "2026-08-07T03:56:39.972+00:00"
+  },
+  {
+    "id": "247a8922-546c-4238-8eef-927b66bd4d7c",
+    "code": "kimi-k3",
+    "name": "Kimi K3",
+    "description": "Moonshot's K3 generation. 1M context with flat pricing across the window and a 10x cheaper cache-hit tier.",
+    "providerId": "64119a02-f3e4-4ff3-a023-e2289bc3135c",
+    "providerModelId": "kimi-k3",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "prompt_caching",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 3,
+    "outputPricePerMillion": 15,
+    "cachedInputReadPricePerMillion": 0.3,
+    "cachedInputWritePricePerMillion": 0,
+    "maxContextTokens": 1048576,
+    "maxOutputTokens": null,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-06T00:00:00+00:00",
+    "updatedAt": "2026-08-06T00:00:00+00:00"
   },
   {
     "id": "27464292-efde-42e2-b9f2-81a17d350096",
@@ -437,8 +692,13 @@
     "outputModalities": [
       "video"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "sora-2",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -468,6 +728,7 @@
     "outputModalities": [
       "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": {
       "embeddings": {
@@ -492,6 +753,10 @@
         ]
       }
     },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "embed-english",
     "createdAt": "2026-05-20T00:00:00+00:00",
     "updatedAt": "2026-05-20T00:00:00+00:00"
   },
@@ -525,8 +790,13 @@
       "text",
       "audio"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-realtime-whisper",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -539,10 +809,10 @@
     "providerModelId": "gpt-4.1-nano",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.1,
     "outputPricePerMillion": 0.4,
@@ -556,13 +826,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4.1-nano",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -575,10 +852,10 @@
     "providerModelId": "gpt-4.1",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2,
     "outputPricePerMillion": 8,
@@ -592,13 +869,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4.1",
     "createdAt": "2026-05-08T14:45:08.355+00:00",
     "updatedAt": "2026-05-10T16:40:51.981+00:00"
   },
@@ -611,10 +895,11 @@
     "providerModelId": "gemini-2.5-flash-lite",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.1,
     "outputPricePerMillion": 0.4,
@@ -628,13 +913,22 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "audio",
+      "file",
+      "video"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gemini-2.5-flash-lite",
     "createdAt": "2026-05-08T14:45:12.994+00:00",
     "updatedAt": "2026-05-10T16:40:55.342+00:00"
   },
@@ -664,6 +958,7 @@
     "outputModalities": [
       "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": {
       "embeddings": {
@@ -688,41 +983,58 @@
         ]
       }
     },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "embed-multilingual",
     "createdAt": "2026-05-20T00:00:00+00:00",
     "updatedAt": "2026-05-20T00:00:00+00:00"
   },
   {
-    "id": "336c5475-8c81-4e9e-9a29-a1c26517bce0",
-    "code": "o4-mini",
-    "name": "o4 Mini",
-    "description": "Compact reasoning model in the o-series family.",
-    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
-    "providerModelId": "o4-mini",
+    "id": "3295a6f8-b0b2-478d-ad46-6ed2a0879e7b",
+    "code": "gemini-3.6-flash",
+    "name": "Gemini 3.6 Flash",
+    "description": "Google's current balanced Flash tier. Same input rate as 3.5 Flash with a lower output rate.",
+    "providerId": "c6e3b252-303a-45fd-b5dd-f9467eeba669",
+    "providerModelId": "gemini-3.6-flash",
     "type": "chat",
     "features": [
-      "streaming"
+      "function_calling",
+      "streaming",
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
-    "inputPricePerMillion": 1.1,
-    "outputPricePerMillion": 4.4,
-    "cachedInputReadPricePerMillion": 0.275,
+    "inputPricePerMillion": 1.5,
+    "outputPricePerMillion": 7.5,
+    "cachedInputReadPricePerMillion": 0.15,
     "cachedInputWritePricePerMillion": 0,
-    "maxContextTokens": 200000,
-    "maxOutputTokens": 100003,
-    "status": "deprecated",
-    "deprecationDate": "2026-10-23T00:00:00+00:00",
-    "replacedBy": "gpt-5.4-mini",
+    "maxContextTokens": 1048576,
+    "maxOutputTokens": 65536,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "audio",
+      "file",
+      "video"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
-    "createdAt": "2026-05-08T14:45:06.724+00:00",
-    "updatedAt": "2026-05-10T16:40:50.621+00:00"
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-06T00:00:00+00:00",
+    "updatedAt": "2026-08-06T00:00:00+00:00"
   },
   {
     "id": "3860bede-219a-4a06-a956-0664ea665284",
@@ -750,8 +1062,13 @@
     "outputModalities": [
       "audio"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4o-mini-tts",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -764,10 +1081,10 @@
     "providerModelId": "gpt-4o-mini",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.15,
     "outputPricePerMillion": 0.6,
@@ -781,15 +1098,65 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4o-mini",
     "createdAt": "2026-05-08T14:45:04.947+00:00",
     "updatedAt": "2026-05-10T16:40:49.304+00:00"
+  },
+  {
+    "id": "3f4b6047-2c4c-41d4-8f2c-dad0ebf5ac08",
+    "code": "claude-opus-4-8",
+    "name": "Claude Opus 4.8",
+    "description": "Top-tier Claude 4. Strong reasoning, agentic, and coding capability.",
+    "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450",
+    "providerModelId": "claude-opus-4-8",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "reasoning",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 5,
+    "outputPricePerMillion": 25,
+    "cachedInputReadPricePerMillion": 0.5,
+    "cachedInputWritePricePerMillion": 6.25,
+    "maxContextTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "image",
+      "file"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-opus-4-8",
+    "createdAt": "2026-07-15T00:00:00+00:00",
+    "updatedAt": "2026-07-15T00:00:00+00:00"
   },
   {
     "id": "4124695a-1790-4d14-a651-3202a0d6acce",
@@ -817,10 +1184,93 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4o-transcribe-diarize",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "44a06d50-34f6-41c4-aa81-3fbfaa8b8f36",
+    "code": "rerank-english-v3.0",
+    "name": "Rerank English v3.0",
+    "description": "Cohere Rerank v3.0, English. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "rerank-english-v3.0",
+    "type": "rerank",
+    "features": [],
+    "inputPricePerMillion": 2000,
+    "outputPricePerMillion": null,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 4096,
+    "maxOutputTokens": null,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-05T04:17:43.794+00:00",
+    "updatedAt": "2026-08-05T04:17:43.794+00:00"
+  },
+  {
+    "id": "46c7e650-ea5c-4726-a9a4-7aa39cf73aa7",
+    "code": "gpt-4-turbo",
+    "name": "GPT-4 Turbo",
+    "description": "Previous generation GPT-4. Good balance of capability and cost. Deprecated — prefer GPT-4o. Text-only: the gpt-4-turbo endpoint rejects image_url content (\"only supported by certain models\").",
+    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
+    "providerModelId": "gpt-4-turbo",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "json_mode"
+    ],
+    "inputPricePerMillion": 10,
+    "outputPricePerMillion": 30,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": 0,
+    "maxContextTokens": 128000,
+    "maxOutputTokens": 4096,
+    "status": "deprecated",
+    "deprecationDate": "2026-10-23T00:00:00+00:00",
+    "replacedBy": "gpt-5.5",
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4-turbo",
+    "createdAt": "2026-05-08T14:45:05.215+00:00",
+    "updatedAt": "2026-05-10T16:40:49.574+00:00"
   },
   {
     "id": "4a88b4b0-dd5f-4511-8f43-19b85c2fed49",
@@ -833,7 +1283,7 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision"
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2,
     "outputPricePerMillion": 5,
@@ -847,13 +1297,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "moonshot-v1-128k-vision-preview",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -884,8 +1340,32 @@
     "outputModalities": [
       "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
-    "capabilityJson": null,
+    "capabilityJson": {
+      "embeddings": {
+        "default_dimension": 3072,
+        "min_dimension": 1,
+        "max_dimension": 3072,
+        "supported_task_types": [
+          "RETRIEVAL_QUERY",
+          "RETRIEVAL_DOCUMENT",
+          "SEMANTIC_SIMILARITY",
+          "CLASSIFICATION",
+          "CLUSTERING",
+          "QUESTION_ANSWERING",
+          "FACT_VERIFICATION",
+          "CODE_RETRIEVAL_QUERY"
+        ],
+        "supported_encoding_formats": [
+          "float"
+        ]
+      }
+    },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gemini-embedding-2",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -915,6 +1395,7 @@
     "outputModalities": [
       "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": {
       "embeddings": {
@@ -938,8 +1419,53 @@
         ]
       }
     },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "text-embedding",
     "createdAt": "2026-05-08T14:45:15.443+00:00",
     "updatedAt": "2026-05-10T16:40:56.627+00:00"
+  },
+  {
+    "id": "56336206-8f8a-4d45-9472-8e0883717f4e",
+    "code": "o3-mini",
+    "name": "o3 Mini",
+    "description": "Reasoning model optimized for STEM and agentic workflows.",
+    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
+    "providerModelId": "o3-mini",
+    "type": "chat",
+    "features": [
+      "streaming",
+      "reasoning",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 1.1,
+    "outputPricePerMillion": 4.4,
+    "cachedInputReadPricePerMillion": 0.55,
+    "cachedInputWritePricePerMillion": 0,
+    "maxContextTokens": 200000,
+    "maxOutputTokens": 100000,
+    "status": "deprecated",
+    "deprecationDate": "2026-10-23T00:00:00+00:00",
+    "replacedBy": "gpt-5.5",
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "o3-mini",
+    "createdAt": "2026-05-08T14:45:05.752+00:00",
+    "updatedAt": "2026-05-10T16:40:50.098+00:00"
   },
   {
     "id": "5686a34b-147a-47db-a210-75a9e5f93f52",
@@ -950,10 +1476,10 @@
     "providerModelId": "claude-sonnet-4-5",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 3,
     "outputPricePerMillion": 15,
@@ -969,13 +1495,20 @@
     ],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-sonnet-4-5",
     "createdAt": "2026-05-08T14:45:11.131+00:00",
     "updatedAt": "2026-05-10T16:40:54.011+00:00"
   },
@@ -1005,8 +1538,13 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4o-transcribe",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1019,10 +1557,10 @@
     "providerModelId": "claude-opus-4-6",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 25,
@@ -1036,13 +1574,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-opus-4-6",
     "createdAt": "2026-05-08T14:45:10.604+00:00",
     "updatedAt": "2026-05-10T16:40:53.484+00:00"
   },
@@ -1055,10 +1600,10 @@
     "providerModelId": "claude-sonnet-5",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2,
     "outputPricePerMillion": 10,
@@ -1072,13 +1617,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-sonnet-5",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1091,8 +1643,7 @@
     "providerModelId": "gpt-realtime-2.1-mini",
     "type": "realtime",
     "features": [
-      "streaming",
-      "vision"
+      "streaming"
     ],
     "inputPricePerMillion": 10,
     "outputPricePerMillion": 20,
@@ -1107,16 +1658,104 @@
     "enabled": true,
     "inputModalities": [
       "text",
-      "audio"
+      "audio",
+      "image"
     ],
     "outputModalities": [
       "text",
       "audio"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-realtime-2.1-mini",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "633a6266-820f-48aa-b8b3-a119f5d9ddce",
+    "code": "gemini-3.5-flash-lite",
+    "name": "Gemini 3.5 Flash-Lite",
+    "description": "Cheapest Gemini tier for high-volume classification, extraction and routing.",
+    "providerId": "c6e3b252-303a-45fd-b5dd-f9467eeba669",
+    "providerModelId": "gemini-3.5-flash-lite",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 0.3,
+    "outputPricePerMillion": 2.5,
+    "cachedInputReadPricePerMillion": 0.03,
+    "cachedInputWritePricePerMillion": 0,
+    "maxContextTokens": 1048576,
+    "maxOutputTokens": 65536,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "file",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-06T00:00:00+00:00",
+    "updatedAt": "2026-08-06T00:00:00+00:00"
+  },
+  {
+    "id": "647bd951-1839-4104-af92-b62e4794b732",
+    "code": "rerank-multilingual-v3.0",
+    "name": "Rerank Multilingual v3.0",
+    "description": "Cohere Rerank v3.0, multilingual. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "rerank-multilingual-v3.0",
+    "type": "rerank",
+    "features": [],
+    "inputPricePerMillion": 2000,
+    "outputPricePerMillion": null,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 4096,
+    "maxOutputTokens": null,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-05T04:17:44.068+00:00",
+    "updatedAt": "2026-08-05T04:17:44.068+00:00"
   },
   {
     "id": "6bf24832-0b9a-4175-b5e3-e0de4c9ed387",
@@ -1127,10 +1766,11 @@
     "providerModelId": "gpt-5.5",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 30,
@@ -1144,13 +1784,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-5.5",
     "createdAt": "2026-05-08T14:45:06.99+00:00",
     "updatedAt": "2026-05-10T16:40:50.861+00:00"
   },
@@ -1164,7 +1811,8 @@
     "type": "chat",
     "features": [
       "function_calling",
-      "streaming"
+      "streaming",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 1,
     "outputPricePerMillion": 3,
@@ -1183,8 +1831,13 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "moonshot-v1-32k",
     "createdAt": "2026-05-08T14:45:17.772+00:00",
     "updatedAt": "2026-05-10T16:40:58.488+00:00"
   },
@@ -1197,7 +1850,6 @@
     "providerModelId": "gemini-2.5-flash-image",
     "type": "image",
     "features": [
-      "vision",
       "streaming"
     ],
     "inputPricePerMillion": 0.3,
@@ -1218,10 +1870,51 @@
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gemini-2.5-flash-image",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "74a9fe53-58bf-4092-b377-482008a75c9d",
+    "code": "rerank-v3.5",
+    "name": "Rerank v3.5",
+    "description": "Cohere Rerank v3.5 — multilingual relevance reranking. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "rerank-v3.5",
+    "type": "rerank",
+    "features": [],
+    "inputPricePerMillion": 2000,
+    "outputPricePerMillion": null,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 4096,
+    "maxOutputTokens": null,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-05T04:17:43.522+00:00",
+    "updatedAt": "2026-08-05T04:17:43.522+00:00"
   },
   {
     "id": "755531b0-871b-4527-954d-7c4cac6f1ca4",
@@ -1232,10 +1925,11 @@
     "providerModelId": "gpt-5.6-luna",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 1,
     "outputPricePerMillion": 6,
@@ -1249,13 +1943,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-5.6-luna",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1270,7 +1971,8 @@
     "features": [
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning"
     ],
     "inputPricePerMillion": 0.14,
     "outputPricePerMillion": 0.28,
@@ -1289,8 +1991,13 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "deepseek-v4-flash",
     "createdAt": "2026-05-08T14:45:15.707+00:00",
     "updatedAt": "2026-05-10T16:40:56.916+00:00"
   },
@@ -1301,7 +2008,7 @@
     "description": "Flagship audio-in / audio-out chat model.",
     "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
     "providerModelId": "gpt-audio-1.5",
-    "type": "audio",
+    "type": "chat",
     "features": [
       "streaming",
       "function_calling"
@@ -1325,8 +2032,15 @@
       "text",
       "audio"
     ],
+    "requiredModalities": [
+      "audio"
+    ],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-audio-1.5",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1339,10 +2053,11 @@
     "providerModelId": "gpt-5.4-mini",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.75,
     "outputPricePerMillion": 4.5,
@@ -1356,13 +2071,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-5.4-mini",
     "createdAt": "2026-05-08T14:45:07.519+00:00",
     "updatedAt": "2026-05-10T16:40:51.5+00:00"
   },
@@ -1376,7 +2098,8 @@
     "type": "chat",
     "features": [
       "function_calling",
-      "streaming"
+      "streaming",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.2,
     "outputPricePerMillion": 2,
@@ -1395,8 +2118,13 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "moonshot-v1-8k",
     "createdAt": "2026-05-08T14:45:18.639+00:00",
     "updatedAt": "2026-05-10T16:40:58.728+00:00"
   },
@@ -1409,10 +2137,10 @@
     "providerModelId": "claude-sonnet-4-6",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 3,
     "outputPricePerMillion": 15,
@@ -1426,13 +2154,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-sonnet-4-6",
     "createdAt": "2026-05-08T14:45:10.868+00:00",
     "updatedAt": "2026-05-10T16:40:53.772+00:00"
   },
@@ -1447,7 +2182,6 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision",
       "prompt_caching"
     ],
     "inputPricePerMillion": 0.6,
@@ -1462,13 +2196,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "kimi-k2.5",
     "createdAt": "2026-05-08T14:45:16.979+00:00",
     "updatedAt": "2026-05-10T16:40:57.68+00:00"
   },
@@ -1480,9 +2220,7 @@
     "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
     "providerModelId": "gpt-image-2",
     "type": "image",
-    "features": [
-      "vision"
-    ],
+    "features": [],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 30,
     "cachedInputReadPricePerMillion": 1.25,
@@ -1495,13 +2233,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gpt-image-2",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1514,10 +2258,10 @@
     "providerModelId": "claude-opus-4-5",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 25,
@@ -1533,13 +2277,20 @@
     ],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-opus-4-5",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1569,45 +2320,15 @@
     "outputModalities": [
       "video"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "sora-2-pro",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
-  },
-  {
-    "id": "9e180605-9630-404c-9b3a-aac49f4cd767",
-    "code": "gpt-4-turbo",
-    "name": "GPT-4 Turbo",
-    "description": "Previous generation GPT-4. Good balance of capability and cost. Deprecated — prefer GPT-4o. Text-only: the gpt-4-turbo endpoint rejects image_url content (\"only supported by certain models\").",
-    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
-    "providerModelId": "gpt-4-turbo",
-    "type": "chat",
-    "features": [
-      "function_calling",
-      "streaming",
-      "json_mode"
-    ],
-    "inputPricePerMillion": 10,
-    "outputPricePerMillion": 30,
-    "cachedInputReadPricePerMillion": null,
-    "cachedInputWritePricePerMillion": 0,
-    "maxContextTokens": 128000,
-    "maxOutputTokens": 4096,
-    "status": "deprecated",
-    "deprecationDate": "2026-10-23T00:00:00+00:00",
-    "replacedBy": "gpt-5.5",
-    "aliases": [],
-    "enabled": true,
-    "inputModalities": [
-      "text"
-    ],
-    "outputModalities": [
-      "text"
-    ],
-    "lifecycle": "ga",
-    "capabilityJson": null,
-    "createdAt": "2026-05-08T14:45:05.215+00:00",
-    "updatedAt": "2026-05-10T16:40:49.574+00:00"
   },
   {
     "id": "a546c0eb-a6a5-490a-a1c0-00cec727053e",
@@ -1618,11 +2339,11 @@
     "providerModelId": "gemini-2.5-pro",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
       "json_mode",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 1.25,
     "outputPricePerMillion": 10,
@@ -1636,13 +2357,22 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "audio",
+      "file",
+      "video"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gemini-2.5-pro",
     "createdAt": "2026-05-08T14:45:12.239+00:00",
     "updatedAt": "2026-05-10T16:40:54.82+00:00"
   },
@@ -1672,6 +2402,7 @@
     "outputModalities": [
       "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": {
       "embeddings": {
@@ -1679,16 +2410,24 @@
         "max_input_tokens": 8191,
         "default_dimension": 1536,
         "supported_dimensions": [
+          256,
           512,
+          768,
           1024,
           1536
         ],
+        "min_dimension": 1,
+        "max_dimension": 1536,
         "supported_encoding_formats": [
           "float",
           "base64"
         ]
       }
     },
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "text-embedding-3-small",
     "createdAt": "2026-05-08T14:45:08.62+00:00",
     "updatedAt": "2026-05-10T16:40:52.222+00:00"
   },
@@ -1703,7 +2442,7 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision"
+      "structured_outputs"
     ],
     "inputPricePerMillion": 1,
     "outputPricePerMillion": 3,
@@ -1717,13 +2456,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "moonshot-v1-32k-vision-preview",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1736,7 +2481,6 @@
     "providerModelId": "gemini-3.1-flash-lite-image",
     "type": "image",
     "features": [
-      "vision",
       "streaming"
     ],
     "inputPricePerMillion": 0.25,
@@ -1757,43 +2501,15 @@
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gemini-3.1-flash-lite-image",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
-  },
-  {
-    "id": "af53ba68-7c04-4fa0-84f6-d06f6c15ec9c",
-    "code": "o3-mini",
-    "name": "o3 Mini",
-    "description": "Reasoning model optimized for STEM and agentic workflows.",
-    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
-    "providerModelId": "o3-mini",
-    "type": "chat",
-    "features": [
-      "streaming"
-    ],
-    "inputPricePerMillion": 1.1,
-    "outputPricePerMillion": 4.4,
-    "cachedInputReadPricePerMillion": 0.55,
-    "cachedInputWritePricePerMillion": 0,
-    "maxContextTokens": 200000,
-    "maxOutputTokens": 100003,
-    "status": "deprecated",
-    "deprecationDate": "2026-10-23T00:00:00+00:00",
-    "replacedBy": "gpt-5.5",
-    "aliases": [],
-    "enabled": true,
-    "inputModalities": [
-      "text"
-    ],
-    "outputModalities": [
-      "text"
-    ],
-    "lifecycle": "ga",
-    "capabilityJson": null,
-    "createdAt": "2026-05-08T14:45:05.752+00:00",
-    "updatedAt": "2026-05-10T16:40:50.098+00:00"
   },
   {
     "id": "b0412b60-b33e-4225-8be7-299810158cac",
@@ -1804,11 +2520,11 @@
     "providerModelId": "gemini-3.5-flash",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
       "json_mode",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 1.5,
     "outputPricePerMillion": 9,
@@ -1822,13 +2538,22 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "audio",
+      "file",
+      "video"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gemini-3.5-flash",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -1843,8 +2568,8 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision",
-      "prompt_caching"
+      "prompt_caching",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.95,
     "outputPricePerMillion": 4,
@@ -1858,13 +2583,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "kimi-k2.6",
     "createdAt": "2026-05-08T14:45:16.236+00:00",
     "updatedAt": "2026-05-10T16:40:57.439+00:00"
   },
@@ -1878,7 +2609,9 @@
     "type": "chat",
     "features": [
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.2,
     "outputPricePerMillion": 1.25,
@@ -1892,13 +2625,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "file",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-5.4-nano",
     "createdAt": "2026-05-08T14:45:08.088+00:00",
     "updatedAt": "2026-05-10T16:40:51.741+00:00"
   },
@@ -1911,10 +2651,11 @@
     "providerModelId": "gpt-5.4",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2.5,
     "outputPricePerMillion": 15,
@@ -1928,13 +2669,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-5.4",
     "createdAt": "2026-05-08T14:45:07.255+00:00",
     "updatedAt": "2026-05-10T16:40:51.151+00:00"
   },
@@ -1947,7 +2695,6 @@
     "providerModelId": "gemini-3-pro-image",
     "type": "image",
     "features": [
-      "vision",
       "streaming"
     ],
     "inputPricePerMillion": 2,
@@ -1968,10 +2715,56 @@
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gemini-3-pro-image",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "b5224146-0a1f-4708-b336-86001d5fcfaa",
+    "code": "command-r7b-12-2024",
+    "name": "Command R7B (2024-12)",
+    "description": "Compact 7B Command model. Low-latency retrieval and summarisation.",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "command-r7b-12-2024",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 0.0375,
+    "outputPricePerMillion": 0.15,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 128000,
+    "maxOutputTokens": 4096,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-04T15:50:15.91+00:00",
+    "updatedAt": "2026-08-08T13:37:19.809+00:00"
   },
   {
     "id": "bf9f8254-4eff-4c55-9e29-72dc6e85904c",
@@ -1981,9 +2774,7 @@
     "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
     "providerModelId": "gpt-image-1.5",
     "type": "image",
-    "features": [
-      "vision"
-    ],
+    "features": [],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 32,
     "cachedInputReadPricePerMillion": 1.25,
@@ -1996,13 +2787,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gpt-image-1.5",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -2015,10 +2812,9 @@
     "providerModelId": "claude-opus-4-7",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "structured_outputs"
     ],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 25,
@@ -2032,51 +2828,22 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-opus-4-7",
     "createdAt": "2026-05-08T14:45:10.34+00:00",
     "updatedAt": "2026-05-10T16:40:53.243+00:00"
-  },
-  {
-    "id": "ca338705-f3e1-4590-9159-02d74fec6813",
-    "code": "claude-opus-4-8",
-    "name": "Claude Opus 4.8",
-    "description": "Top-tier Claude 4. Strong reasoning, agentic, and coding capability.",
-    "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450",
-    "providerModelId": "claude-opus-4-8",
-    "type": "chat",
-    "features": [
-      "vision",
-      "function_calling",
-      "streaming",
-      "thinking"
-    ],
-    "inputPricePerMillion": 5,
-    "outputPricePerMillion": 25,
-    "cachedInputReadPricePerMillion": 0.5,
-    "cachedInputWritePricePerMillion": 6.25,
-    "maxContextTokens": 1000000,
-    "maxOutputTokens": 128000,
-    "status": "active",
-    "deprecationDate": null,
-    "replacedBy": null,
-    "aliases": [],
-    "enabled": true,
-    "inputModalities": [
-      "text"
-    ],
-    "outputModalities": [
-      "text"
-    ],
-    "lifecycle": "ga",
-    "capabilityJson": null,
-    "createdAt": "2026-07-15T00:00:00+00:00",
-    "updatedAt": "2026-07-15T00:00:00+00:00"
   },
   {
     "id": "ca94f1a2-8a03-499b-b7b8-433621e8504a",
@@ -2088,7 +2855,8 @@
     "type": "chat",
     "features": [
       "function_calling",
-      "streaming"
+      "streaming",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2,
     "outputPricePerMillion": 5,
@@ -2107,10 +2875,56 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "moonshot-v1-128k",
     "createdAt": "2026-05-08T14:45:17.509+00:00",
     "updatedAt": "2026-05-10T16:40:58.205+00:00"
+  },
+  {
+    "id": "cc684c1b-f740-4718-b124-86dcb7770002",
+    "code": "command-r-08-2024",
+    "name": "Command R (2024-08)",
+    "description": "Pinned 2024-08 snapshot of Command R for reproducible deployments.",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "command-r-08-2024",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 0.15,
+    "outputPricePerMillion": 0.6,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 128000,
+    "maxOutputTokens": 4096,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-04T15:50:16.435+00:00",
+    "updatedAt": "2026-08-08T13:37:19.283+00:00"
   },
   {
     "id": "ccafa321-7d90-418b-862c-282acf57364a",
@@ -2142,8 +2956,13 @@
       "text",
       "audio"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-realtime-translate",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -2156,10 +2975,11 @@
     "providerModelId": "gpt-5.6-terra",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2.5,
     "outputPricePerMillion": 15,
@@ -2173,13 +2993,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-5.6-terra",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -2192,10 +3019,10 @@
     "providerModelId": "gpt-4.1-mini",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.4,
     "outputPricePerMillion": 1.6,
@@ -2209,15 +3036,63 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-4.1-mini",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "d1bc1f53-1873-4b63-9900-f1c08c6c5e46",
+    "code": "command-a-03-2025",
+    "name": "Command A (2025-03)",
+    "description": "Cohere's current flagship. Excels at tool use, agentic tasks, and RAG — 256k context.",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "command-a-03-2025",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 2.5,
+    "outputPricePerMillion": 10,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 256000,
+    "maxOutputTokens": 8000,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-04T15:50:15.575+00:00",
+    "updatedAt": "2026-08-08T13:37:18.982+00:00"
   },
   {
     "id": "d21483ca-7ff2-4acd-94a0-4023b0a7574f",
@@ -2228,10 +3103,11 @@
     "providerModelId": "gpt-5.6-sol",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 5,
     "outputPricePerMillion": 30,
@@ -2245,13 +3121,20 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-5.6-sol",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -2279,10 +3162,15 @@
       "text"
     ],
     "outputModalities": [
-      "text"
+      "embedding"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "local-bge-small",
     "createdAt": "2026-06-13T06:35:32.837+00:00",
     "updatedAt": "2026-06-13T06:35:32.837+00:00"
   },
@@ -2295,7 +3183,6 @@
     "providerModelId": "gemini-3.1-flash-image",
     "type": "image",
     "features": [
-      "vision",
       "streaming"
     ],
     "inputPricePerMillion": 0.5,
@@ -2316,8 +3203,13 @@
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gemini-3.1-flash-image",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -2329,9 +3221,7 @@
     "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
     "providerModelId": "gpt-image-1-mini",
     "type": "image",
-    "features": [
-      "vision"
-    ],
+    "features": [],
     "inputPricePerMillion": 2,
     "outputPricePerMillion": 8,
     "cachedInputReadPricePerMillion": 0.2,
@@ -2344,13 +3234,19 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "image"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "gpt-image-1-mini",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -2365,8 +3261,8 @@
     "features": [
       "function_calling",
       "streaming",
-      "vision",
-      "prompt_caching"
+      "prompt_caching",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.95,
     "outputPricePerMillion": 4,
@@ -2380,15 +3276,63 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "kimi-k2.7-code",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "dc954ece-7c6e-4aa8-920a-e3b176eaef76",
+    "code": "o4-mini",
+    "name": "o4 Mini",
+    "description": "Compact reasoning model in the o-series family.",
+    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
+    "providerModelId": "o4-mini",
+    "type": "chat",
+    "features": [
+      "streaming",
+      "reasoning",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 1.1,
+    "outputPricePerMillion": 4.4,
+    "cachedInputReadPricePerMillion": 0.275,
+    "cachedInputWritePricePerMillion": 0,
+    "maxContextTokens": 200000,
+    "maxOutputTokens": 100000,
+    "status": "deprecated",
+    "deprecationDate": "2026-10-23T00:00:00+00:00",
+    "replacedBy": "gpt-5.4-mini",
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "o4-mini",
+    "createdAt": "2026-05-08T14:45:06.724+00:00",
+    "updatedAt": "2026-05-10T16:40:50.621+00:00"
   },
   {
     "id": "e65623cf-60e8-489f-a91f-6e4869216d15",
@@ -2399,10 +3343,10 @@
     "providerModelId": "claude-haiku-4-5",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 1,
     "outputPricePerMillion": 5,
@@ -2418,13 +3362,20 @@
     ],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-haiku-4-5",
     "createdAt": "2026-05-08T14:45:11.396+00:00",
     "updatedAt": "2026-05-10T16:40:54.291+00:00"
   },
@@ -2437,8 +3388,7 @@
     "providerModelId": "gpt-realtime-2.1",
     "type": "realtime",
     "features": [
-      "streaming",
-      "vision"
+      "streaming"
     ],
     "inputPricePerMillion": 32,
     "outputPricePerMillion": 64,
@@ -2453,88 +3403,64 @@
     "enabled": true,
     "inputModalities": [
       "text",
-      "audio"
+      "audio",
+      "image"
     ],
     "outputModalities": [
       "text",
       "audio"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-realtime-2.1",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
   {
-    "id": "e94494db-5076-422c-a30b-5e35e0bea13a",
-    "code": "claude-opus-4-1",
-    "name": "Claude Opus 4.1",
-    "description": "Earlier Claude Opus generation. Deprecated by the vendor; migrate to claude-opus-4-8.",
+    "id": "eec0a940-b01d-4d41-8ad2-83d26850acfb",
+    "code": "claude-opus-5",
+    "name": "Claude Opus 5",
+    "description": "Most capable Claude 5. Highest-reasoning tier for complex work.",
     "providerId": "dee77e2b-fbe8-4281-9d87-cd8886f90450",
-    "providerModelId": "claude-opus-4-1",
+    "providerModelId": "claude-opus-5",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
-    "inputPricePerMillion": 15,
-    "outputPricePerMillion": 75,
-    "cachedInputReadPricePerMillion": 1.5,
-    "cachedInputWritePricePerMillion": 18.75,
-    "maxContextTokens": 200000,
-    "maxOutputTokens": 32000,
-    "status": "deprecated",
-    "deprecationDate": "2026-06-05T00:00:00+00:00",
-    "replacedBy": "claude-opus-4-8",
-    "aliases": [
-      "claude-opus-4-1-20250805"
-    ],
-    "enabled": true,
-    "inputModalities": [
-      "text"
-    ],
-    "outputModalities": [
-      "text"
-    ],
-    "lifecycle": "ga",
-    "capabilityJson": null,
-    "createdAt": "2026-05-08T14:45:11.663+00:00",
-    "updatedAt": "2026-05-10T16:40:54.532+00:00"
-  },
-  {
-    "id": "eb00781a-9eb5-467c-ada6-535a53eb50c0",
-    "code": "o1",
-    "name": "o1",
-    "description": "Advanced reasoning model for complex math, science, and coding tasks.",
-    "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
-    "providerModelId": "o1",
-    "type": "chat",
-    "features": [
-      "streaming",
-      "function_calling"
-    ],
-    "inputPricePerMillion": 15,
-    "outputPricePerMillion": 60,
-    "cachedInputReadPricePerMillion": 7.5,
-    "cachedInputWritePricePerMillion": 0,
-    "maxContextTokens": 200000,
-    "maxOutputTokens": 100003,
-    "status": "deprecated",
-    "deprecationDate": "2025-07-28T00:00:00+00:00",
-    "replacedBy": "o3",
+    "inputPricePerMillion": 5,
+    "outputPricePerMillion": 25,
+    "cachedInputReadPricePerMillion": 0.5,
+    "cachedInputWritePricePerMillion": 6.25,
+    "maxContextTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
-    "createdAt": "2026-05-08T14:45:05.485+00:00",
-    "updatedAt": "2026-05-10T16:40:49.813+00:00"
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-06T00:00:00+00:00",
+    "updatedAt": "2026-08-06T00:00:00+00:00"
   },
   {
     "id": "f2b78c3c-fd1d-4297-916c-6ae75418c7f7",
@@ -2545,10 +3471,11 @@
     "providerModelId": "gemini-2.5-flash",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "json_mode"
+      "json_mode",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 0.3,
     "outputPricePerMillion": 2.5,
@@ -2562,13 +3489,22 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "audio",
+      "file",
+      "video"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gemini-2.5-flash",
     "createdAt": "2026-05-08T14:45:12.506+00:00",
     "updatedAt": "2026-05-10T16:40:55.064+00:00"
   },
@@ -2579,7 +3515,7 @@
     "description": "Cost-efficient audio-in / audio-out chat model.",
     "providerId": "6b6d307f-a80b-4dcb-801b-1ffa07e25cab",
     "providerModelId": "gpt-audio-mini",
-    "type": "audio",
+    "type": "chat",
     "features": [
       "streaming",
       "function_calling"
@@ -2603,8 +3539,15 @@
       "text",
       "audio"
     ],
+    "requiredModalities": [
+      "audio"
+    ],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "gpt-audio-mini",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
   },
@@ -2634,8 +3577,13 @@
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 2,
+    "family": "whisper-1",
     "createdAt": "2026-05-08T14:45:10.078+00:00",
     "updatedAt": "2026-05-10T16:40:53.004+00:00"
   },
@@ -2648,10 +3596,10 @@
     "providerModelId": "claude-fable-5",
     "type": "chat",
     "features": [
-      "vision",
       "function_calling",
       "streaming",
-      "thinking"
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 10,
     "outputPricePerMillion": 50,
@@ -2665,15 +3613,63 @@
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "image",
+      "file"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": 0,
+    "temperatureMax": 1,
+    "family": "claude-fable-5",
     "createdAt": "2026-07-15T00:00:00+00:00",
     "updatedAt": "2026-07-15T00:00:00+00:00"
+  },
+  {
+    "id": "f89810ee-edea-4e77-b85d-8b0a7bdd7b56",
+    "code": "command-r-plus-08-2024",
+    "name": "Command R+ (2024-08)",
+    "description": "Pinned 2024-08 snapshot of Command R+ for reproducible deployments.",
+    "providerId": "f8a55245-c860-46dd-a3f8-8626af8e7735",
+    "providerModelId": "command-r-plus-08-2024",
+    "type": "chat",
+    "features": [
+      "function_calling",
+      "streaming",
+      "structured_outputs"
+    ],
+    "inputPricePerMillion": 2.5,
+    "outputPricePerMillion": 10,
+    "cachedInputReadPricePerMillion": null,
+    "cachedInputWritePricePerMillion": null,
+    "maxContextTokens": 128000,
+    "maxOutputTokens": 4096,
+    "status": "active",
+    "deprecationDate": null,
+    "replacedBy": null,
+    "aliases": [],
+    "enabled": true,
+    "inputModalities": [
+      "text",
+      "file"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "requiredModalities": [],
+    "lifecycle": "ga",
+    "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": null,
+    "createdAt": "2026-08-04T15:50:16.168+00:00",
+    "updatedAt": "2026-08-08T13:37:19.546+00:00"
   },
   {
     "id": "fa8b2162-2a72-48a3-be86-956c29d9f6b1",
@@ -2684,27 +3680,36 @@
     "providerModelId": "o3",
     "type": "chat",
     "features": [
-      "streaming"
+      "streaming",
+      "reasoning",
+      "structured_outputs"
     ],
     "inputPricePerMillion": 2,
     "outputPricePerMillion": 8,
     "cachedInputReadPricePerMillion": 0.5,
     "cachedInputWritePricePerMillion": 0,
     "maxContextTokens": 200000,
-    "maxOutputTokens": 100003,
+    "maxOutputTokens": 100000,
     "status": "active",
     "deprecationDate": null,
     "replacedBy": null,
     "aliases": [],
     "enabled": true,
     "inputModalities": [
-      "text"
+      "text",
+      "file",
+      "image"
     ],
     "outputModalities": [
       "text"
     ],
+    "requiredModalities": [],
     "lifecycle": "ga",
     "capabilityJson": null,
+    "minOutputTokens": null,
+    "temperatureMin": null,
+    "temperatureMax": null,
+    "family": "o3",
     "createdAt": "2026-05-08T14:45:06.019+00:00",
     "updatedAt": "2026-05-10T16:40:50.338+00:00"
   }

@@ -118,6 +118,14 @@ CREATE INDEX IF NOT EXISTS idx_ops_5m_thing_time ON public.metric_ops_rollup_5m 
 CREATE INDEX IF NOT EXISTS idx_tco_expires ON public.thing_config_override USING btree (expires_at) WHERE (expires_at IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_traffic_event_api_key_fingerprint_timestamp ON public.traffic_event USING btree (api_key_fingerprint, "timestamp") WHERE (api_key_fingerprint IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_traffic_event_attestation_verified ON public.traffic_event USING btree (created_at DESC) WHERE (attestation_verified = true);
+-- The traffic drawer's trace pivot and the admin list's requestId filter both
+-- key on trace_id: it is the value the gateway hands back in the
+-- X-Nexus-Request-Id response header, so it is the only id an operator or a
+-- support ticket ever holds. Without this the filter is a sequential scan over
+-- the whole retention window, run twice per page (COUNT + rows), on a table the
+-- UI queries with no default time bound. Partial: compliance-proxy passthrough
+-- rows carry no trace, and there is no reason to index their NULLs.
+CREATE INDEX IF NOT EXISTS idx_traffic_event_trace_id ON public.traffic_event USING btree (trace_id) WHERE (trace_id IS NOT NULL);
 CREATE INDEX IF NOT EXISTS thing_primary_ip_idx ON public.thing USING btree (primary_ip) WHERE (primary_ip IS NOT NULL);
 CREATE INDEX IF NOT EXISTS thing_tags_gin_idx ON public.thing USING gin (tags);
 CREATE INDEX IF NOT EXISTS traffic_event_credential_health_rollup_idx ON public.traffic_event USING btree ("timestamp" DESC, credential_id) WHERE ((source = 'ai-gateway'::text) AND (credential_id IS NOT NULL));

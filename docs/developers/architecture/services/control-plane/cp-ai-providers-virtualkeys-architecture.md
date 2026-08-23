@@ -91,6 +91,21 @@ distance is **not** bounded — `requireApplicationExpiry` checks presence and
 future-ness only, and no ceiling exists on any path. **Personal** keys are
 exempt and may clear their expiry to never-expire.
 
+`expiresAt` is the source of truth for expiry; `vkStatus = 'expired'` only
+caches it so the admin list can filter without a date comparison. Because the
+cache is derived, every path that writes `expiresAt` re-derives it: the `PUT`
+update recomputes the status inline (future or cleared date → `active`, past
+date → `expired`), and renew sets `active` outright since it validates
+future-ness first. Only `active` and `expired` participate — `revoked`,
+`rejected` and `pending` are administrative decisions rather than clock
+positions, and a date edit carries them through untouched, so changing an
+expiry can never resurrect a revoked key or approve a pending one. The
+`vk-expiry` job supplies only the forward edge (`active → expired` once the
+date passes); the reverse edge lives entirely on these write paths, and
+without it `expired` would be terminal — a renewed key would keep reading as
+expired in the list and stay rejected by the gateway, whose admission check
+fails both on a past `expiresAt` and on any non-`active` status.
+
 The two write paths read `expiresAt` differently. Create and renew bind it into
 a Go `time.Time`, so they take RFC3339 and nothing else — a bare date fails the
 decode with a 400. The general `PUT` reads it with `extractNullableTimeFromBody`,

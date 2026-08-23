@@ -1,3 +1,8 @@
+---
+name: doc-write
+description: "Write a single architecture, feature, or runbook doc end-to-end against the code-anchored protocol — a forward-looking description of current state with every claim grounded in code on disk right now. Covers docs/developers/architecture/, docs/users/features/, docs/operators/, docs/developers/workflow/. Output MUST pass doc-review before commit. Trigger keywords: write doc, rewrite doc, backfill doc, architecture doc, runbook, /doc-write."
+---
+
 # doc-write
 
 Write a single architecture / feature / runbook doc end-to-end against the **code-anchored protocol**. The doc is a forward-looking description of current state, every claim grounded in code that exists on disk right now.

@@ -34,7 +34,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { families, CATALOG_PATH, SMOKE_PATH } from './quirk-coverage.config.mjs';
+import { families, reasoningFamilies, CATALOG_PATH, SMOKE_PATH } from './quirk-coverage.config.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -46,6 +46,21 @@ export function chatModels(catalog) {
   for (const p of catalog.providers ?? []) {
     for (const m of p.models ?? []) {
       if (m.type !== 'chat') continue;
+      out.push({ provider: p.key, id: m.providerModelId, code: m.code, seeded: Boolean(m.seed) });
+    }
+  }
+  return out;
+}
+
+/** Chat models the catalog tags as reasoning-capable: the only ones that can
+ * be sent a reasoning request parameter, and therefore the only ones a
+ * reasoning decision has to cover. */
+export function reasoningModels(catalog) {
+  const out = [];
+  for (const p of catalog.providers ?? []) {
+    for (const m of p.models ?? []) {
+      if (m.type !== 'chat') continue;
+      if (!(m.features ?? []).includes('reasoning')) continue;
       out.push({ provider: p.key, id: m.providerModelId, code: m.code, seeded: Boolean(m.seed) });
     }
   }
@@ -80,6 +95,27 @@ export function checkCatalogCoverage(catalog, rows) {
       errors.push(
         `no sampling-quirk decision for ${m.provider}:${m.id} — probe the family ` +
         `(send it a temperature), then record the decision in scripts/quirk-coverage.config.mjs`,
+      );
+    }
+  }
+  return errors;
+}
+
+/** Check — every reasoning-capable model has a recorded reasoning decision.
+ *
+ * Separate from the sampling coverage check because it asks about a different
+ * parameter over a different subset. A model the catalog tags `reasoning` is
+ * one a caller may ask to think, so what we do with that intent has to be a
+ * recorded decision rather than whatever the identity codec happens to do. */
+export function checkReasoningCoverage(catalog, rows) {
+  const errors = [];
+  for (const m of reasoningModels(catalog)) {
+    if (rowsFor(m, rows).length === 0) {
+      errors.push(
+        `no reasoning decision for ${m.provider}:${m.id} — the catalog says this model reasons, ` +
+        `so record what its wire does with a reasoning parameter in ` +
+        `scripts/quirk-coverage.config.mjs (reasoningFamilies). 'forward-unprobed' is the ` +
+        `honest answer when nobody has probed it; a guessed budget range is an upstream 400`,
       );
     }
   }
@@ -252,10 +288,12 @@ export function checkSendTemperatureGuard(smokeSource) {
   return errors;
 }
 
-export function runChecks(catalog, rows, smokeSource, readFile) {
+export function runChecks(catalog, rows, smokeSource, readFile, reasoningRows = []) {
   return [
     ...checkCatalogCoverage(catalog, rows),
     ...checkAnchors(catalog, rows, readFile),
+    ...checkReasoningCoverage(catalog, reasoningRows),
+    ...checkAnchors(catalog, reasoningRows.filter((r) => r.goFile), readFile),
     ...checkSmokeSetFresh(catalog, smokeSource),
     ...checkRegistryRowsFresh(catalog, rows),
     ...checkAnthropicNativeSetParity(catalog, rows, smokeSource),
@@ -313,6 +351,30 @@ function selfTest() {
       runChecks(catalog, [stripsRow], smoke, reader({ 'fake.go': goSrc })).length === 0],
     ['uncovered chat family fails', () =>
       checkCatalogCoverage(catalog, []).length === 1],
+    ['a reasoning-capable model with no reasoning decision fails', () => {
+      const cat = { providers: [{ key: 'acme', models: [
+        { providerModelId: 'acme-think-1', code: 'acme-think-1', type: 'chat', features: ['reasoning'] },
+      ] }] };
+      return checkReasoningCoverage(cat, []).length === 1;
+    }],
+    ['a model that does NOT reason needs no reasoning decision', () => {
+      const cat = { providers: [{ key: 'acme', models: [
+        { providerModelId: 'acme-plain-1', code: 'acme-plain-1', type: 'chat', features: ['function_calling'] },
+      ] }] };
+      return checkReasoningCoverage(cat, []).length === 0;
+    }],
+    ['a provider catch-all row covers its reasoning models', () => {
+      const cat = { providers: [{ key: 'acme', models: [
+        { providerModelId: 'acme-think-1', code: 'acme-think-1', type: 'chat', features: ['reasoning'] },
+      ] }] };
+      return checkReasoningCoverage(cat, [
+        { provider: 'acme', prefix: '', decision: 'forward-unprobed', evidence: 'Unprobed.' },
+      ]).length === 0;
+    }],
+    ['a translates row whose adapter code is gone fails', () =>
+      checkAnchors(catalog, [{ provider: 'acme', prefix: 'acme-chat', decision: 'translates',
+        goFile: 'fake.go', goMatch: 'thinking', evidence: 'x' }], reader({ 'fake.go': 'no translation here' }))
+        .length === 1],
     ['prefix must anchor at the id start, not mid-string', () =>
       checkCatalogCoverage(catalog, [{ ...stripsRow, prefix: 'chat-1' }]).length === 1],
     ['prefix matches only at a version boundary (gpt-5.40 must not inherit gpt-5.4)', () => {
@@ -429,7 +491,7 @@ function main() {
     const abs = resolve(REPO_ROOT, p);
     return existsSync(abs) ? readFileSync(abs, 'utf8') : null;
   };
-  const errors = runChecks(catalog, families, smokeSource, readFile);
+  const errors = runChecks(catalog, families, smokeSource, readFile, reasoningFamilies);
   if (errors.length) {
     console.error('✗ quirk-coverage lint failed:\n');
     for (const e of errors) console.error(`  - ${e}`);

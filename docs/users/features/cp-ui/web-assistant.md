@@ -86,7 +86,9 @@ which model answers; the best available model is pre-selected and you can switch
 mid-conversation. By default the
 dropdown offers **every active chat model the assistant's backend key can route** (the
 reachable models filtered to the catalog's enabled chat models) — no operator list to
-maintain — and the pre-selected default automatically falls back to the best available
+maintain. Disabling a provider removes its models from the dropdown immediately, along
+with every other model surface: an out-of-service provider must never be offered as a
+choice. The pre-selected default automatically falls back to the best available
 model if the configured one is not routable. An operator can still pin a narrower list if
 they want to constrain the choice. The dropdown is hidden when only one model is
 available.

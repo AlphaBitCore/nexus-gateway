@@ -1,3 +1,8 @@
+---
+name: doc-review
+description: "Audit a doc claim-by-claim against the codebase. Pre-commit gate for the doc-write skill — every doc must pass this audit CLEAN before commit — and usable standalone for retroactive drift audits of existing docs after a refactor. Trigger keywords: doc review, audit doc, doc drift, verify doc against code, doc gate, /doc-review."
+---
+
 # doc-review
 
 Audit a doc claim-by-claim against the codebase. Pre-commit gate for the `doc-write` skill — every doc must pass this audit CLEAN before commit. Also usable standalone for retroactive drift audits of existing docs.
@@ -19,7 +24,7 @@ A doc is CLEAN only if it satisfies ALL of:
 1. **Code-anchored.** Every factual claim is backed by code that exists on disk right now.
 2. **Forward-looking present-state.** No archaeology language.
 3. **No line numbers in body.** Paths only.
-4. **No dates.** Timeless.
+4. **No dates.** Timeless. **One carve-out, and it is written down in the doc it applies to:** the observation record for an adapter quirk (`provider-adapter-architecture.md` §3a Rule 7 / §5) keeps the date its upstream 400 was probed, because vendor behaviour changes and "when was this last true" is what makes such a rule checkable rather than folklore. The carve-out covers the evidence line only — the vendor's message, the model family, the probe date. Prose around it follows the rule.
 5. **No Epic / SDD / bug / incident references.** Describes the system, not the program that built it.
 6. **`## References` section exists** and lists canonical paths (no line numbers).
 7. **Audit surfaces system issues, not just doc issues.** When per-claim verification finds a product / architecture / technical issue — half-built feature with no producer, dual code paths doing the same thing, wire semantic inversion across services, dead constant the UI anticipates, anything the doc would have to soften / hedge to remain accurate — output it explicitly in the report. For each issue give: (a) concrete finding, (b) code evidence, (c) brainstormed best-product / best-architecture recommendation, (d) suggested next action (rewire / delete / new epic). The audit pass is the cheapest checkpoint to catch architectural smells; issues that survive into the published wiki become permanent debt.

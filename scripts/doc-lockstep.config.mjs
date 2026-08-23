@@ -19,13 +19,74 @@ export default [
     {
         name: 'resource-catalog-engine',
         code: [
-            'packages/nexus-agent-core/capabilities/resource/**',
+            // The engine, not the specs it embeds. Everything under
+            // capabilities/resource/openapi/ is a mirror of
+            // docs/users/api/openapi/control-plane/, kept in lockstep by
+            // catalog_test.go — a value added to one of those contracts is a
+            // change to the CONTRACT, already carried by its own entry, and
+            // says nothing about the catalog/search/distill/cards engine this
+            // doc describes. Triggering on it asked for an update to a doc
+            // with nothing to update, which is how a lockstep gate teaches
+            // people to waive it.
+            'packages/nexus-agent-core/capabilities/resource/*.go',
             'packages/nexus-agent-core/capabilities/runtime/tools_resource.go',
         ],
         docs: [
             'docs/developers/architecture/nexus-operator-toolkit-architecture.md',
         ],
         waiverHint: 'The resource engine (catalog/search/distill/cards) and the resource_* agent tools are documented in nexus-operator-toolkit-architecture.md — update its operation-model / tools sections in the same PR.',
+    },
+    {
+        // Routing had NO entry, which is how a branch that changed the strategy
+        // set, the matching semantics, the plan's shape and the refusal
+        // behaviour reached review with four architecture docs describing the
+        // system it replaced. CI could not see any of it.
+        //
+        name: 'ai-gateway-routing',
+        // Directory anchors rather than file-name patterns: the checker requires
+        // a glob's pre-wildcard prefix to exist, which is what stops a glob from
+        // going stale when a file is renamed — and these files have been split
+        // three times for the size ratchet already. The three routing
+        // directories named here hold nothing BUT routing behaviour; the
+        // executor's two files are listed literally because the rest of that
+        // package is dispatch mechanics the routing docs do not describe.
+        code: [
+            'packages/ai-gateway/internal/routing/*.go',
+            'packages/ai-gateway/internal/routing/core/*.go',
+            'packages/ai-gateway/internal/routing/matcher/*.go',
+            'packages/ai-gateway/internal/routing/strategies/*.go',
+            'packages/ai-gateway/internal/execution/executor/classify.go',
+            'packages/ai-gateway/internal/execution/executor/select_next.go',
+            // The recovery engine's knobs. Their EFFECT is stated in
+            // smart-routing-architecture.md (the call budget bounds what one
+            // auto-routed request may spend) and in the routing-rules OpenAPI.
+            'packages/shared/schemas/configtypes/policy/retry_policy.go',
+        ],
+        docs: [
+            'docs/developers/architecture/services/ai-gateway/routing-architecture.md',
+            'docs/developers/architecture/services/ai-gateway/smart-routing-architecture.md',
+            'docs/developers/architecture/services/ai-gateway/recovery-engine-architecture.md',
+        ],
+        waiverHint: 'Routing behaviour is stated in routing-architecture.md (rule selection, the plan, the passthrough precondition, the trace) and smart-routing-architecture.md (the decision pipeline, the re-selection pool, context-upgrade arming). A change to which rule wins, what the plan holds, when a request is refused, or what the trace records must update the matching doc in the same PR.',
+    },
+    {
+        // The configuration KEYS themselves, whose 4-layer model and R1-R5
+        // invariants configuration-architecture.md states. Adding, renaming or
+        // removing one without touching the per-key catalogue there leaves the
+        // key undocumented at exactly the moment an operator needs to find it.
+        name: 'config-key-schemas',
+        // configkey is the registry itself; interception holds the killswitch
+        // shape the §7 table names. configtypes/policy is deliberately NOT here
+        // — retry and quota policies ride inside other payloads rather than
+        // being config keys, and the routing entry above carries the retry one.
+        code: [
+            'packages/shared/schemas/configkey/**',
+            'packages/shared/schemas/configtypes/interception/**',
+        ],
+        docs: [
+            'docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md',
+        ],
+        waiverHint: 'A new / renamed / removed config key must update the §7 per-key catalogue in configuration-architecture.md in the same PR, alongside the constants and ValidByThingType registration.',
     },
     {
         name: 'vendor-bill-reconciliation',
@@ -59,6 +120,21 @@ export default [
         code: [
             'packages/nexus-cli/internal/cli/**',
             'packages/nexus-cli/internal/tui/**',
+            // The two files under internal/local the docs actually describe —
+            // and only those. The doc names local.Config, Config.Resolve and
+            // Config.Save by behaviour, and cites internal/local/secretstore.go
+            // for the keychain seam; the glob stopped at cli/ and tui/, so a
+            // rewrite of Save's write strategy left the doc describing an
+            // O_TRUNC the code no longer performs.
+            //
+            // Deliberately NOT internal/local/** — that also binds h2health,
+            // httplog, logging, retry, validate and paths, which neither doc
+            // mentions. A PR touching only retry.go would have to edit an
+            // architecture doc that says nothing about retries, or take a
+            // waiver, and a gate that asks for impossible edits is a gate
+            // people learn to waive.
+            'packages/nexus-cli/internal/local/config.go',
+            'packages/nexus-cli/internal/local/secretstore.go',
             'packages/nexus-agent-core/agent/**',
         ],
         docs: [
@@ -101,6 +177,20 @@ export default [
         waiverHint: 'Cost stamp / pricing path changes require cost-estimation-architecture.md update; if historical data is recomputed in the same PR, also touch the prod-deploy runbook.',
     },
     {
+        // The client-facing API surface. This doc is what an integrator reads,
+        // and it is the only place the ingress dialects are described together
+        // with runnable requests — a route added or removed without it leaves
+        // integrators reading a surface that no longer matches.
+        name: 'gateway-client-api',
+        code: [
+            'packages/ai-gateway/cmd/ai-gateway/wiring/routes.go',
+        ],
+        docs: [
+            'docs/users/api/gateway-api.md',
+        ],
+        waiverHint: 'Only needed when a CLIENT-facing route is added, removed or renamed. Internal /internal/* and ops routes can waive with NEXUS_DOC_LOCKSTEP_WAIVE=1.',
+    },
+    {
         name: 'provider-adapter',
         code: [
             'packages/ai-gateway/internal/providers/specs/**',
@@ -121,6 +211,7 @@ export default [
             'packages/shared/transport/normalize/codecs/**',
             'packages/shared/transport/normalize/extract/**',
             'packages/shared/transport/normalize/core/**',
+            'packages/shared/transport/normalize/locator/**',
         ],
         docs: [
             'docs/developers/architecture/services/ai-gateway/normalization-architecture.md',
@@ -205,6 +296,12 @@ export default [
         // trees, to avoid false lockstep failures on unrelated handler edits.
         name: 'error-envelope-service',
         code: [
+            // The AI Gateway's own error writers. §4 catalogs each one with the
+            // audit code it stamps, and that table is the only place the
+            // error_code vocabulary is written down — a writer added or renamed
+            // without it leaves an error class nothing can be grouped by.
+            'packages/ai-gateway/internal/ingress/proxy/proxy_errors.go',
+            'packages/ai-gateway/internal/ingress/proxy/cross_format.go',
             'packages/shared/transport/httperr/**',
             'packages/nexus-hub/internal/alerts/engine/handlers_admin.go',
             'packages/nexus-hub/internal/alerts/engine/handlers_internal.go',

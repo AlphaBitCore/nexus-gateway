@@ -238,6 +238,290 @@ curl -s "$GW/v1/models" -H "Authorization: Bearer $VK" | grep -c omni-moderation
 
 **Rollback.** `UPDATE "Model" SET enabled = true WHERE code = 'omni-moderation-latest';` restores the row — and with it the 400 on every call. There is nothing to roll back to that works; the row only ever produced errors.
 
+### `fix/image-ref-metadata` — `traffic_event_normalized` is dropped at deploy
+
+**Scope.** Schema change, and the only **irreversible** one on this branch. The `traffic_event_normalized` model is gone from `tools/db-migrate/schema/traffic.prisma`, along with the `traffic_event` back-reference. `prisma db push` makes the database match the schema, so the pre-binary schema step **drops the table and every row in it**. Production carried 15 rows at the time of writing (newest 2026-06-26).
+
+The table was a second stored copy of the captured text; the normalized projection is now recomputed at view time from the captured body. The erasure path is the reason: a second copy is a second thing a subject-erasure request can miss, and one surface is the stronger position. `normalizedScrubbed` stays in the DSAR response pinned at `0` — it ships in the admin API contract, so it is deprecated in `dsar.yaml` with a removal window rather than vanishing.
+
+**Tables + paths.** `traffic_event_normalized` — the whole table. `traffic_event` — no column change; only the Prisma-side relation is removed.
+
+**Value rule.** Destroyed, not migrated. Nothing reads the table after step 2 of the drop, and the projection it held is derivable from `traffic_event_payload.inline_request_body`, which is retained.
+
+**Order.** **Deploy the binaries FIRST, then push the schema.** The gateway and Hub stop writing the table in step 1 and stop reading it in step 2; a schema push against binaries that still read it would take the table out from under them. If the schema step runs first by accident, redeploy the binaries before serving traffic.
+
+**Before you push the schema**, if those 15 rows have any retention value, take them — there is no second chance:
+
+```bash
+pg_dump -h localhost -U "$PGUSER" -d "$PGDB" -t traffic_event_normalized \
+  > "traffic_event_normalized-$(date +%F).sql"
+```
+
+**Smoke after deploy.**
+
+```sql
+-- Expect NULL: the table is gone.
+SELECT to_regclass('public.traffic_event_normalized');
+```
+
+```bash
+# The normalized projection still answers, recomputed at view time.
+# Expect a body with normalized text, not a 500.
+curl -s "$CP_URL/api/admin/traffic/$SOME_EVENT_ID" -H "authorization: Bearer $TOKEN" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(bool(d.get('requestBody')))"
+```
+
+**Rollback.** Re-creating the table restores the schema shape but not the rows, and nothing writes it any more — a restored table stays empty and inert. If the deploy reverts to a binary that still READS the sidecar, that read must find the table: re-create it from the dump above, or from the pre-drop schema, before serving traffic.
+
+### `fix/image-ref-metadata` — routing rules the gateway can no longer dispatch
+
+**Scope.** Two strategy shapes stopped being dispatchable, and the admin API now
+refuses both on write. Stored rows carrying them are not refused — they are
+inert, and left enabled they occupy a rule slot forever while showing green in
+the UI.
+
+**Tables.** `"RoutingRule"` — `enabled`, `description`. Config is never rewritten.
+
+**Value rule.**
+
+- `strategyType = 'policy'` — the strategy never had an implementation. Disable
+  and append the reason.
+- a config whose entries are ALL nested strategies — an entry inside a strategy
+  is resolved as a provider+model leaf, so such a rule produces no target at
+  all. Disable and append the reason.
+
+  A PARTIALLY nested rule is deliberately left alone: a fallback chain with four
+  leaf links and one nested link still serves the four, and disabling it would
+  take working routing offline. Its dead entry is already visible — the resolver
+  records the skip on the routing trace and simulate marks the entry
+  unreachable.
+
+**Order. Binaries FIRST, then the scripts.**
+
+Running the scripts against the OLD binary disables rules that were routing
+correctly, because the old evaluator followed nested entries. Running the new
+binary before the scripts leaves the inert rules enabled for that window: they
+yield the primary slot and record why, so the rules below them serve the
+request — degraded, explained, and not an outage. That asymmetry is why the
+order is binaries first.
+
+**Run BOTH, in this order.** They overlap by design: the policy script matches
+only a top-level `strategyType='policy'`, and a NESTED `{"type":"policy"}` node
+is caught only by the nesting script's predicate. Running one alone leaves
+enabled, inert rules behind.
+
+```bash
+HOST=${NEXUS_SSH_HOST}
+for f in disable_policy_routing_rules_2026_08_08.sql \
+         disable_nested_routing_configs_2026_08_08.sql; do
+  scp -q -o StrictHostKeyChecking=no "tools/db-migrate/manual-scripts/$f" "$HOST:/tmp/$f"
+  ssh -o StrictHostKeyChecking=no "$HOST" \
+    "PGPASSWORD=$NEXUS_SSH_PGPASSWORD psql -h localhost -U $NEXUS_SSH_PGUSER \
+       -d $NEXUS_SSH_PGDB -v ON_ERROR_STOP=1 -f /tmp/$f; rm -f /tmp/$f"
+done
+```
+
+Both are idempotent: the marker in `description` guards re-runs, so a second
+pass changes nothing and does not duplicate the note. Each ends with a SELECT
+listing the matching rules, so the operator sees what was touched rather than
+inferring it from a row count.
+
+**Smoke.** Every remaining enabled rule carries a dispatchable strategy:
+
+```sql
+SELECT id, name, "strategyType"
+  FROM "RoutingRule"
+ WHERE "enabled"
+   AND "strategyType" NOT IN
+       ('single','fallback','loadbalance','conditional','ab_split','smart','latency');
+-- expect zero rows
+```
+
+**Rollback.** Re-enable by hand: `UPDATE "RoutingRule" SET enabled = true WHERE
+id = '...'`. The rule will still route nothing — the binary decides that, not
+the flag — so a rollback of the DATA is only useful alongside a rollback of the
+binaries. The configuration itself was never modified, so nothing is lost.
+
+### `fix/image-ref-metadata` — three matchConditions keys change meaning, no data change
+
+**Scope.** Behaviour only. No migration and no rows to touch; the entry exists
+because a rule an operator wrote and has been watching may start or stop
+matching after the binaries roll, and finding that out from traffic is the
+expensive way.
+
+**Value rules.**
+
+- `requestedModelLiterals` now matches as GLOBS. The admin form has always
+  offered `gpt-4-*` as its example while the comparison was exact, so a rule
+  written from that example matched nothing. A pattern with no `*` still
+  compares exactly, so `auto` — which every smart rule is required to pin — is
+  unaffected. A stored value CONTAINING a `*` starts matching after the roll:
+  that is the rule finally doing what its author asked, but it is a change.
+- `providers` now compares against every provider serving the named model code,
+  not the first catalogue row. A rule scoped to one provider previously fired or
+  did not according to row order for any code two providers both serve.
+- `modelTypes` matches the ENDPOINT the request arrived on rather than the named
+  model's catalogue type. A stored `audio` keeps working and reaches the TTS,
+  STT and realtime endpoints; nothing is migrated, because splitting one
+  deprecated value into three means guessing which the admin meant.
+
+**Order.** Binaries only. Nothing to run before or after.
+
+**Exposure check** — run BEFORE the deploy, on each environment:
+
+```sql
+SELECT id, name, "matchConditions"
+  FROM "RoutingRule"
+ WHERE enabled
+   AND ("matchConditions"::text LIKE '%*%'
+     OR "matchConditions" ? 'providers'
+     OR "matchConditions" ? 'modelTypes');
+-- Each row is a rule whose matching may change. Zero rows = nothing to watch.
+-- Production carried zero at the time of writing (5 enabled rules, none using
+-- any of the three keys).
+```
+
+**Smoke.** For each row the check returned, send one request the rule is meant
+to catch and confirm `routing_trace` names that rule:
+
+```sql
+SELECT timestamp, routed_model_id, routing_trace->'trace'
+  FROM traffic_event ORDER BY timestamp DESC LIMIT 1;
+```
+
+**Rollback.** Roll the binaries back. There is no data change to undo.
+
+### `fix/image-ref-metadata` — Model.features loses two names for one capability
+
+**Scope.** In-place value change on `"Model".features`, a published array: GET
+/v1/models emits it verbatim. Two edits, both de-duplication rather than loss.
+
+`thinking` and `reasoning` describe one capability and the vendor sets were
+DISJOINT — Anthropic and Gemini rows said the first, thirteen other providers
+said the second, no row said both. So anything keyed on either saw a partial
+answer with nothing to say so. The canonical layer had already settled it
+(`ContentReasoning`, `Usage.ReasoningTokens`); the catalogue never followed.
+`tool_use` sat on four Cohere rows, every one of which also carried
+`function_calling`, so it distinguished nothing.
+
+**Tables + paths.** `"Model".features` only. `tools/db-migrate/model-catalog.json`,
+`seed/fixtures/Model.json` and the three affected provider templates carry the
+new vocabulary, so a fresh install and a migrated one agree.
+
+**Order.** Either side of the binaries. Nothing reads `thinking` or `tool_use`
+in code — the admin picker offered `thinking` and now offers `reasoning`, and
+`mergeModelFeatureOptions` keeps rendering an unmigrated value so a row stays
+editable rather than silently losing it on the next save.
+
+```bash
+HOST=${NEXUS_SSH_HOST}
+f=dedupe_model_feature_vocabulary_2026_08_08.sql
+scp -q -o StrictHostKeyChecking=no "tools/db-migrate/manual-scripts/$f" "$HOST:/tmp/$f"
+ssh -o StrictHostKeyChecking=no "$HOST" \
+  "PGPASSWORD=$NEXUS_SSH_PGPASSWORD psql -h localhost -U $NEXUS_SSH_PGUSER \
+     -d $NEXUS_SSH_PGDB -v ON_ERROR_STOP=1 -f /tmp/$f; rm -f /tmp/$f"
+```
+
+Idempotent by construction — replacing an absent value or removing an absent one
+changes nothing — and it REFUSES to run if any row carries `tool_use` without
+`function_calling`, because then the value is the only record that the model
+takes tools. It ends with the whole vocabulary and its counts, so a leftover is
+visible rather than inferred.
+
+**Smoke.** No row carries either retired name, and the count moved rather than
+vanished:
+
+```sql
+SELECT count(*) FILTER (WHERE 'thinking' = ANY(features))  AS thinking,
+       count(*) FILTER (WHERE 'tool_use' = ANY(features))  AS tool_use,
+       count(*) FILTER (WHERE 'reasoning' = ANY(features)) AS reasoning
+  FROM "Model";
+-- expect thinking = 0, tool_use = 0, reasoning = (previous reasoning + previous thinking)
+```
+
+Proven on prod rows in a temp table under ROLLBACK before shipping: 13 →
+`reasoning`, 4 `tool_use` removed, 83 rows total unchanged, and every other
+feature's count identical.
+
+**Rollback.** `UPDATE "Model" SET features = array_append(array_remove(features,
+'reasoning'), 'thinking') WHERE provider is Anthropic or Gemini` restores the
+old spelling for the rows that had it. `tool_use` is not restorable from the
+row itself and does not need to be: `function_calling` beside it carried the
+same fact.
+
+### `fix/bugfix-20260819` — Model.features gains `structured_outputs`
+
+**Scope.** Additive value change on `"Model".features`, a published array: GET
+/v1/models emits it verbatim and `capability_matrix` now derives a key from it.
+No column, no table, no row count changes.
+
+The value is what makes a model ELIGIBLE for a request carrying a
+`response_format` of type `json_schema` (and its `/v1/responses`,
+Anthropic-Messages and Gemini spellings). One catalogued model is the reason it
+has to be a routing constraint rather than a hint: `kimi-k2.5` accepts the field
+and answers HTTP 200 with `finish_reason: stop` and prose, so nothing downstream
+can turn it into an error and the caller's own parse is the first thing that
+notices.
+
+**Tables + paths.** `"Model".features` only. `tools/db-migrate/model-catalog.json`,
+`seed/fixtures/Model.json` and five `packages/control-plane-ui/public/provider-templates/*.json`
+carry the value, so a fresh install and a synced one agree. 48 chat rows:
+openai 16, anthropic 10, moonshot 10, gemini 7, cohere 5.
+
+**Order — the sync is the switch, not the binary.** Deploy the binaries first,
+then sync. While NO row carries the tag the router's pool-level fail-open skips
+the dimension entirely, so the filter is inert; the first sync that lands the
+value is what starts enforcing it. Deploying in the other order would enforce a
+dimension against a catalogue that cannot satisfy it.
+
+There is no SQL script for this one. The mechanism is the **Sync button on the
+CP UI provider-detail → Model tab**, which diffs `"Model"` rows against
+`provider-templates/*.json`; `features` is classified `'set'`, so a new value
+MERGES into an existing array rather than replacing it. Sync each of the five
+providers above.
+
+Prod was synced once at 44 rows on 2026-08-19, before the four moonshot rows
+below were measured. **Sync moonshot again** or those four stay excluded:
+`moonshot-v1-8k-vision-preview`, `moonshot-v1-32k-vision-preview`,
+`moonshot-v1-128k-vision-preview`, `kimi-k2.7-code-highspeed`.
+
+**Smoke.** The count matches the catalogue, and the two models the wire refuses
+are still untagged:
+
+```sql
+SELECT count(*) FILTER (WHERE 'structured_outputs' = ANY(features)) AS tagged,
+       count(*) FILTER (WHERE code IN ('kimi-k2.5','gpt-4-turbo','deepseek-v4-pro',
+                                       'deepseek-v4-flash','gpt-audio-1.5','gpt-audio-mini')
+                          AND 'structured_outputs' = ANY(features))  AS wrongly_tagged
+  FROM "Model" WHERE type = 'chat';
+-- expect tagged = 48, wrongly_tagged = 0
+```
+
+Then one live request per direction, against a model the router chose rather
+than one the caller named:
+
+```bash
+# must come back as a JSON object matching the schema
+curl -s "$NEXUS_GW_URL/v1/chat/completions" -H "authorization: Bearer $VK" \
+  -H 'content-type: application/json' -d '{"model":"auto","messages":[
+    {"role":"user","content":"answer the schema"}],"response_format":{"type":"json_schema",
+    "json_schema":{"name":"v","strict":true,"schema":{"type":"object",
+    "properties":{"respond":{"type":"boolean"}},"required":["respond"],
+    "additionalProperties":false}}}}' | jq -r '.choices[0].message.content'
+```
+
+**Rollback.** The value is additive and nothing else reads it, so removing it
+restores the previous behaviour exactly — every model becomes eligible again and
+the dimension fails open on an empty pool:
+
+```sql
+UPDATE "Model" SET features = array_remove(features, 'structured_outputs')
+ WHERE 'structured_outputs' = ANY(features);
+```
+
+A re-sync re-applies it, so the rollback is not durable against the next sync —
+roll the binaries back too if the dimension itself is the problem.
+
 ## How to add a new entry
 
 When a branch lands DB-shape changes (schema change in `tools/db-migrate/schema/` applied via `prisma db push`, or in-place JSON-key flip, or computed-column re-population), append a new entry to this file with the same Scope / Tables / Value rule / Order / Smoke / Rollback shape. Commit the entry as part of the same PR. If the PR lands without an entry here, the operator running the deploy will not know what to flip and the runtime will drift from the binary's expectations.

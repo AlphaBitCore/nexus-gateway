@@ -38,6 +38,50 @@ former `provider_pricing` table is retired; `cache/layer/pricing.go::LookupCache
 assembles the cache-cost rates from the in-memory Model snapshot, and the quota
 engine resolves the same rows via `store.GetModel` / `store.FetchModelPricing`.
 
+### One formula, one NULL rule
+
+The four rates and the arithmetic that turns tokens into dollars live in
+`internal/platform/costing` and nowhere else. `store.CachePricing` is a type
+alias of `costing.Rates`, so the customer request path, the smart router, and
+the AI-Guard classifier all read the same struct through the same function:
+
+- **`costing.RatesFromModel`** is the single interpretation of a NULL price
+  column. A NULL **input** price means the model is *unpriced* (`ok=false`) —
+  distinct from a model priced explicitly at `0`, which is genuinely free. A
+  NULL **cache-read / cache-write** price means "no discount and no surcharge
+  configured" and falls back to the input rate, making the cache decomposition
+  a no-op that sums back to the flat input rate.
+- **`costing.Rates.EstimateUSD`** is the single cost formula:
+  `(prompt − cacheRead − cacheWrite) × input + cacheRead × cacheReadRate +
+  cacheWrite × cacheWriteRate + completion × output`, all per 1M, with the
+  uncached remainder floored at zero.
+
+**`PromptTokens` is the TOTAL input including the cached subset on every
+adapter.** Anthropic's wire reports `input_tokens` as the non-cached share with
+the cache buckets separate, but the shared normalizer sums all three into
+`PromptTokens` at codec time, so by the time counts reach any pricing code the
+OpenAI/Gemini convention holds universally. Every caller must therefore
+*subtract* the cache buckets, never *add* them.
+
+This consolidation exists because it was previously violated. The two
+internal-operations callers each had their own hand-written two-rate formula
+that read `prompt_tokens` and billed all of it at the full input rate. Both
+replay a near-identical prompt on every call (the router: a fixed system prompt
+plus the model catalog; AI Guard: a fixed judge template), so their
+provider-side cache hit rate is high and the cached share bills at 0.25–0.5x —
+producing an over-estimate of internal spend proportional to internal call
+volume, visible only against the vendor bill.
+
+**Every price lookup is keyed by `Model.id`, never by model code.** The
+code-keyed index holds only *servable* models — a model is withdrawn from it the
+moment its provider is disabled or its status is set to `disabled` — while
+pricing must survive exactly that event: a response that completes after an
+operator takes the provider out of service still has to be costed, or its cached
+tokens are billed at the full input rate and the cache decomposition silently
+reads zero. Resolving prices by UUID against the full snapshot keeps costing
+independent of servability, and it is the same key the quota engine already
+uses, so one model can never be priced two ways.
+
 The per-request cost is computed **once**, cache-aware (prompt-cache read/write
 tokens decomposed at their own rates in `computeCacheCosts`), into
 `rec.EstimatedCostUsd`. That single value is the one number that flows everywhere:
@@ -58,7 +102,17 @@ given model — including across a gateway reboot (audit F-0163).
 
 ## Cost stamp / per-record fields
 
-The per-traffic-event cost is stamped onto `traffic_event` rows at audit-emit time and again on cache-hit short-circuits (cache HIT serves bypass the upstream call but still record a billable event at the cached cost). The five stamp sites in the AI Gateway hot path are documented inline in `packages/ai-gateway/internal/ingress/proxy/proxy.go` and `proxy_cache.go`.
+The per-traffic-event cost is stamped onto `traffic_event` rows at audit-emit time and again on cache-hit short-circuits (cache HIT serves bypass the upstream call but still record a billable event at the cached cost). Every stamp writes `rec.EstimatedCostUsd`, and they sit with the path that priced them rather than in one place — grep that field to enumerate them:
+
+| Path | File |
+|---|---|
+| Non-streaming upstream response | `proxy_upstream.go` |
+| Streaming finalisation, including the zeroing when the stream yielded no usable usage | `stream_accounting.go` |
+| `/v1/responses` | `proxy_responses.go` |
+| Cache HIT — the cost the request would have incurred | `proxy_cache_hits.go` |
+| Transcription | `stt_handler.go` |
+| Async video submit and poll | `video_veo.go`, `video_handler.go` |
+| Realtime session metering | `realtime_metering.go` |
 
 ### `reasoning_cost_usd` breakdown
 
@@ -82,6 +136,59 @@ Embedding cost is `prompt_tokens × input price` (embeddings have no completion 
 - The fallback runs on every non-stream embeddings cost site — the live path (`handleNonStream`) and the broker-subscription path. There is no cache-HIT site for embeddings: the response cache is endpoint-scoped and the pre-lookup classifier short-circuits the embeddings endpoint with `gateway_cache_skip_reason = embeddings_endpoint` (F-0222), so embeddings always reach an upstream cost site.
 
 The estimate is a heuristic count; for cheap providers with short inputs the resulting cost can be below the `estimated_cost_usd` column's six-decimal scale and round to zero, which is expected (a few embedding tokens cost sub-micro-dollar).
+
+**Ordering invariant — cost/usage stamping runs BEFORE the response is re-encoded.** `honorEmbeddingEncodingFormat` (`packages/ai-gateway/internal/ingress/proxy/embedding_encoding.go`) rewrites `data[].embedding` from a float array into base64 when the caller asked for `encoding_format: "base64"`, and it must run **after** `updateEmbeddingDimension` on every embeddings response site. `updateEmbeddingDimension` derives `metadata.embedding.dimension` from the vector, and it reads a float array as `data.0.embedding.#` (a cheap gjson count) but a base64 string by decoding and dividing the byte length by 4. Both yield the same number today, so the two orderings are not distinguishable by the current assertions — which is exactly why the invariant is written down rather than left to be rediscovered: swapping the order makes the analytics dimension depend on a wire-encoding detail, and any future change to the packing width (float64, quantised int8) would silently move the recorded dimension without touching a cost formula. Cost itself is token-based and unaffected either way.
+
+### Internal-ops cost attribution (`router_cost_usd`, `router_provider_id`, `embedding_provider_id`)
+
+Three internal calls made on a request's behalf can be charged by a **different vendor** than the one that ultimately serves the request: the smart-router LLM call that picks the model, the L2 semantic-cache embedding call, and the AI-Guard classifier call. Production measurement found ~38% of smart-router calls landed on a different vendor than eventually served the request, so attributing any of the three to `routed_provider_id` (the request's own provider) would misattribute real vendor spend.
+
+- **Smart router.** `stage_routing.go`'s `drainRouterCost` sums `RouterCostUsd` across every router-LLM call recorded on the request's routing trace onto `rec.RouterCostUsd`, and takes `rec.RouterProviderID` first-write-wins from `decision.ServedProviderID` — the vendor that **answered** the router call, never `decision.ProviderID`, which is the vendor of the model the router *picked*. The cost is priced from the model catalog via `AdapterDecider.PriceLookup` (mirrors `aiguard/backend_provider.go`'s pattern). Both fields are zero when smart routing did not run or the router call failed — the strategy fails open, and a failed call is not billed. **Known limitation:** a request that made two router calls served by different vendors (e.g. a primary rule plus a smart fallback rule) books the combined `RouterCostUsd` against the first-observed vendor alone, since `traffic_event` carries one `router_provider_id` column; the mis-split is logged as a WARN naming both vendors and amounts rather than silently absorbed, and the per-call `internal_ops_breakdown` entries below keep the true split.
+- **Token source.** Both the router decider and the AI-Guard backend read `provcore.Response.Usage` — the counts the adapter already decoded through the provider's own usage alias chain — never a local re-parse of the response body. A hand-rolled `usage` struct at either call site sees only `prompt_tokens` / `completion_tokens` and silently drops the cache buckets the adapter had already recovered, which is what made both callers bill their cached prompt at the full input rate.
+- **L2 embedding.** `embedding_provider_id` is the sibling of the existing `embedding_cost_usd` / `embedding_model_id` pair, stamped on every L2 lookup outcome (hit, miss, or skip) — see [cache-multi-tier-architecture.md](../../cross-cutting/storage/cache-multi-tier-architecture.md).
+- **AI-Guard classifier.** The classifier's own `traffic_event` row (`internal_purpose='ai-guard'`) stamps `RoutedProviderID` from the classifier's resolved call target, so `ai_guard_cost_usd` carries a real provider dimension instead of none.
+
+These three fields — plus the existing `estimated_cost_usd` — feed two Hub rollup series, `vendor_spend_usd` and `vendor_spend_internal_usd`, each cost **component** emitted under its own charged provider's dimension rather than the row's single dimension set, so one `traffic_event` row can contribute to several providers' vendor-spend totals at once. See [metrics-rollup-architecture.md § Vendor-spend series](../../cross-cutting/observability/metrics-rollup-architecture.md) for the full per-component inclusion-rule table (customer traffic gated on non-cache-hit + tokens produced, status-agnostic; the three internal components included whenever non-zero with no gate — an L2-hit row still paid for the embedding that produced its lookup vector, so a cache-hit gate would silently drop real money).
+
+### `internal_ops_breakdown` — the basis behind the amount
+
+Each internal-ops cost column stores an amount and nothing else, which makes a
+mis-priced internal call unauditable after the fact: while router calls were
+billing cached prompt tokens at the full input rate, no stored row could show
+it, and no row written in that period can be recomputed now. `traffic_event.internal_ops_breakdown`
+(JSONB, present since 2026-05-21 and previously never written by any producer)
+now carries one entry per internal model call:
+
+```json
+[{ "type": "smart-router", "model": "<Nexus model id>", "providerId": "<serving provider>",
+   "promptTokens": 5120, "completionTokens": 18,
+   "cacheReadTokens": 4864, "cacheCreationTokens": 0, "costUsd": 0.0031 }]
+```
+
+Rules:
+
+- **Keys are camelCase.** The column is passed through verbatim — `trafficstore`
+  reads it as `json.RawMessage` and the CP traffic drawer indexes the parsed
+  objects directly (`CostBreakdown.tsx` reads `b.costUsd`). No layer rewrites
+  the casing, so snake_case keys would render every internal-ops line as $0.00.
+- `promptTokens` is the TOTAL input; the two cache counts are sub-counts of it.
+- Entries are gated on **usage**, not on cost. An unpriced router model produces
+  real tokens and a zero amount, and that is exactly the call whose spend the
+  cost column cannot show, so it is the one that most needs a record.
+- `providerId` is per-entry, so the multi-vendor case the single
+  `router_provider_id` column cannot represent stays recoverable.
+- Summing `costUsd` across `type: "smart-router"` entries reproduces
+  `router_cost_usd`.
+- The AI-Guard classifier needs no entry: it writes its own `traffic_event` row
+  (`internal_purpose='ai-guard'`), which now also fills `cache_read_tokens` /
+  `cache_creation_tokens` alongside `prompt_tokens`. `total_tokens` on that row
+  stays `prompt + completion` — the cache buckets are a sub-count, not an
+  addition.
+
+Keys are a persisted contract read by the CP traffic drawer: additive only,
+never renamed. The Go type is `audit.InternalOpsEntry`.
+
+**`billed_cost_usd` is deliberately unaffected by all of this.** The AI Gateway's live quota counter charges `rec.EstimatedCostUsd` and nothing else, and `usage_cache_backfill.go` re-seeds that counter from `billed_cost_usd` on gateway boot — folding router, embedding, or ai-guard cost into it would make the counter jump on restart (the same passthrough invariant as "Single canonical price source" above). Customer quota and billing read `billed_cost_usd` exclusively and are untouched; `vendor_spend_usd` / `vendor_spend_internal_usd` exist solely as the vendor-bill reconciliation basis (`docs/superpowers/specs/2026-07-19-vendor-bill-reconciliation-design.md`).
 
 ## Streaming mode × cost stamping interaction
 
@@ -125,6 +232,16 @@ field-neutral, and the audit path carries no normalize compute on the request
 goroutine. The usage extractor and pricing path above are untouched.
 See [`normalization-architecture.md`](normalization-architecture.md) §5.2 and
 [`audit-pipeline-architecture.md`](../../cross-cutting/observability/audit-pipeline-architecture.md) §10.2.
+
+## The compare endpoint's inputs
+
+`POST /v1/estimate` prices one request body against up to ten `(providerId, modelId)` targets. Three of its inputs decide the answer, and each is honoured where a caller would expect:
+
+| Input | Effect |
+|---|---|
+| `compareTargets[].providerId` | Resolves the target together with `modelId`. Two providers can serve one model code, and pricing them apart is the endpoint's purpose, so the provider is consulted before the by-code lookups — which remain the fallback for a caller that names only the model. |
+| `compareTargets[].reasoningEffort` | Overrides the effort the body carries, per target, so the same prompt can be priced at two efforts in one call. Reaches the estimator as `EstimateInput.ReasoningEffortOverride`, which outranks `ReadReasoningSignal`'s reading of the body. Validated against `{minimal, low, medium, high}` or a positive integer budget. |
+| `options.ingressFormat` | Telemetry only — it labels the `estimate_compare` counters. It cannot change a number: `ReadReasoningSignal` tries every dialect's reasoning keys unconditionally, so the estimate is dialect-agnostic by construction. It is validated against the wire formats the gateway speaks, because a label value taken from a request body is otherwise unbounded in cardinality. |
 
 ## Token-estimate classes
 

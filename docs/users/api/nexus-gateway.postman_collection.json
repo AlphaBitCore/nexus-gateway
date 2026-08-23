@@ -1,0 +1,627 @@
+{
+  "info": {
+    "name": "Nexus AI Gateway",
+    "description": "Every endpoint of the Nexus AI Gateway data plane. Set the environment's virtualKey before sending. See gateway-api-reference.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{virtualKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "OpenAI dialect",
+      "item": [
+        {
+          "name": "Create chat completion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "description": "Generates a model response for a conversation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{chatModel}}\",\n  \"max_tokens\": 8,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with only: ok\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create chat completion (streaming)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "description": "Server-sent events. Terminates with 'data: [DONE]'.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{chatModel}}\",\n  \"max_tokens\": 8,\n  \"stream\": true,\n  \"stream_options\": {\n    \"include_usage\": true\n  },\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with only: ok\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create response",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/responses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "responses"
+              ]
+            },
+            "description": "OpenAI Responses API shape.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{chatModel}}\",\n  \"max_output_tokens\": 16,\n  \"input\": \"Reply with only: ok\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create embeddings",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/embeddings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "embeddings"
+              ]
+            },
+            "description": "Returns one embedding vector per input.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{embeddingModel}}\",\n  \"input\": \"hello nexus\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/images/generations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "images",
+                "generations"
+              ]
+            },
+            "description": "Returns base64 image data.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{imageModel}}\",\n  \"prompt\": \"a single red circle on white background\",\n  \"n\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create speech",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/audio/speech",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "audio",
+                "speech"
+              ]
+            },
+            "description": "Returns raw audio bytes, not JSON.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{ttsModel}}\",\n  \"voice\": \"alloy\",\n  \"input\": \"ok\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create transcription",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/audio/transcriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "audio",
+                "transcriptions"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select a local audio file before sending."
+                },
+                {
+                  "key": "model",
+                  "value": "{{sttModel}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "multipart/form-data. Postman cannot carry file contents inside a collection, so select the audio file before sending."
+          }
+        },
+        {
+          "name": "List models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "models"
+              ]
+            },
+            "description": "Models this key can reach."
+          }
+        },
+        {
+          "name": "Retrieve model",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/models/{{chatModel}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "models",
+                "{{chatModel}}"
+              ]
+            },
+            "description": "One catalog entry, unwrapped."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Anthropic dialect",
+      "item": [
+        {
+          "name": "Create message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{virtualKey}}"
+              },
+              {
+                "key": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "messages"
+              ]
+            },
+            "description": "Anthropic Messages API. Authenticates with x-api-key to show the dialect-native header.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{chatModel}}\",\n  \"max_tokens\": 8,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with only: ok\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gemini dialect",
+      "item": [
+        {
+          "name": "Generate content",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-goog-api-key",
+                "value": "{{virtualKey}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1beta/models/{{chatModel}}:generateContent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1beta",
+                "models",
+                "{{chatModel}}:generateContent"
+              ]
+            },
+            "description": "Gemini generateContent. Authenticates with x-goog-api-key.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": \"Reply with only: ok\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"maxOutputTokens\": 8\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Stream generate content",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-goog-api-key",
+                "value": "{{virtualKey}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1beta/models/{{chatModel}}:streamGenerateContent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1beta",
+                "models",
+                "{{chatModel}}:streamGenerateContent"
+              ]
+            },
+            "description": "Streaming is chosen by the path action, not a body field.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": \"Reply with only: ok\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"maxOutputTokens\": 8\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gateway endpoints",
+      "item": [
+        {
+          "name": "Rerank documents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/rerank",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "rerank"
+              ]
+            },
+            "description": "Cohere-shaped rerank.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{rerankModel}}\",\n  \"query\": \"capital of France\",\n  \"documents\": [\n    \"Paris is the capital of France.\",\n    \"Bananas are yellow.\"\n  ],\n  \"top_n\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Estimate and compare cost",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/estimate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "estimate"
+              ]
+            },
+            "description": "Prices a request before you send it, across up to 10 targets. `request` is the body you would have posted; each entry in `compareTargets` names a model and may override the reasoning effort, so the same prompt can be priced at two efforts in one call. `options.ingressFormat` labels the telemetry and is validated against the wire formats this gateway speaks. This endpoint has its own per-key rate limit, separate from the data plane's; on 429 it returns Retry-After and X-RateLimit-Limit like every other route.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": {\n    \"model\": \"{{chatModel}}\",\n    \"messages\": [\n      { \"role\": \"user\", \"content\": \"Summarise the Treaty of Westphalia.\" }\n    ]\n  },\n  \"compareTargets\": [\n    { \"modelId\": \"{{chatModel}}\", \"reasoningEffort\": \"low\" },\n    { \"modelId\": \"{{chatModel}}\", \"reasoningEffort\": \"high\" }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Evaluate content policy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/guardrail",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "guardrail"
+              ]
+            },
+            "description": "Runs the compliance pipeline over text. A block verdict is still HTTP 200.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"My email is alice@example.com and my card is 4111 1111 1111 1111\",\n  \"stage\": \"input\",\n  \"include_redacted_content\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get usage",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/usage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "usage"
+              ]
+            },
+            "description": "Spend for the current period."
+          }
+        },
+        {
+          "name": "Get daily usage",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/usage/daily",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "usage",
+                "daily"
+              ]
+            },
+            "description": "Per-day spend broken out by model."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Public catalog (no key)",
+      "item": [
+        {
+          "name": "List public models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/open/models?limit=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "open",
+                "models"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Public catalog. No key required.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Retrieve public model",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/open/models/{{publicModelId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "open",
+                "models",
+                "{{publicModelId}}"
+              ]
+            },
+            "description": "Public detail for one model. Ids are provider-prefixed.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.example.com"
+    }
+  ]
+}

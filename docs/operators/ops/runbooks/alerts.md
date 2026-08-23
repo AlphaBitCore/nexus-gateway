@@ -92,33 +92,58 @@ GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
 
 ### `vendor.bill_drift` — our estimate disagrees with the provider's bill
 
-Our per-request cost estimate for a provider on a given UTC day drifted from what the provider's own billing API reported for that day, past **both** floors (`thresholdPct` **and** `thresholdUsd` — default 5% and $1). This means our pricing table, tokenizer, or cache accounting may be wrong, or the provider changed prices.
+Our recorded vendor spend for a provider on a given UTC day drifted from what the provider's own billing API reported for that day, past **both** floors (`thresholdPct` **and** `thresholdUsd` — default 5% and $1). This means our pricing table, tokenizer, or cache accounting may be wrong, or the provider changed prices.
+
+The "ours" figure in the alert message and the `ourVendorSpendUsd` detail is `our_vendor_spend_usd` — all spend we caused the vendor to charge, internal ops included. The payload also carries `ourBilledUsd` (the customer-quota basis, unchanged in meaning); the two differ by the gateway's own overhead, so do not compare the percentage against it.
 
 **Do:** look at the row the `vendor-bill-reconcile` job wrote.
 ```sql
-SELECT provider_id, day, our_billed_usd, vendor_reported_usd, diff_usd, diff_pct, coverage
+SELECT provider_id, day, our_vendor_spend_usd, our_internal_ops_usd, our_billed_usd,
+       vendor_reported_usd, diff_usd, diff_pct, coverage
 FROM vendor_bill_reconciliation
 WHERE coverage = 'scoped' AND day > now() - interval '7 days'
 ORDER BY abs(diff_pct) DESC;
 ```
+
+If `diff_usd` is close to `our_internal_ops_usd`, the overhead is being billed but not attributed — check the rollout state of the vendor-spend series before suspecting the pricing table.
 Then open **Overview → Bill Reconciliation** in the UI to review/ack the row.
 
-**Careful:** the drift alert **only fires on `coverage = 'scoped'` rows.** `org_only` (the provider reported an org-wide total we couldn't narrow to the gateway) and `fetch_failed` (the vendor lookup failed) are display-only for *drift* and never raise `vendor.bill_drift` — a difference there is expected, not a defect. A *persistently* failing sync is caught separately by `vendor.bill_sync_failed` below, not here. Only OpenAI and Anthropic are reconciled; a drift on any other provider will never appear here. A late vendor revision self-resolves on the next daily run.
+**Note:** `diff_usd` / `diff_pct` are computed from `vendor_reported_usd` and
+`our_vendor_spend_usd` rounded to the cent, not their raw values — see "Diff
+basis is rounded to the cent" in
+[vendor-bill-reconciliation.md](./vendor-bill-reconciliation.md). One
+consequence: a day where the vendor amount rounds to $0.00 while
+`our_vendor_spend_usd` rounds to a non-zero figure reports `diff_pct = -1.0`
+(-100%). That is expected, not a pricing bug — the `thresholdUsd` floor keeps
+such a sub-cent day from firing this alert.
+
+**Careful:** the drift alert **only fires on `coverage = 'scoped'` rows.** `org_only` (the provider reported an org-wide total we couldn't narrow to the gateway), `fetch_failed` (the vendor lookup failed), and `no_basis` (no vendor spend recorded for the day) are display-only for *drift* and never raise `vendor.bill_drift` — a difference there is expected, not a defect. A *persistently* failing sync is caught separately by `vendor.bill_sync_failed` below, not here. Only OpenAI and Anthropic are reconciled; a drift on any other provider will never appear here. A late vendor revision self-resolves on the next daily run. A day with no `vendor_spend_usd` rollup rows has no comparable basis, so the job does not compute a difference for it and the drift alert never fires on it — it lands as `coverage = 'no_basis'` and is caught by `vendor.bill_sync_failed` below instead. A day the `rollup-correction` pass has not re-aggregated yet produces no row at all: its rollup rows may still be partial, and a difference computed from a partial basis would fire this alert with a fabricated under-record. Such a day is reconciled by a later run, so neither alert fires on it in the meantime. A row that still carries an old-basis difference beside `our_vendor_spend_usd = 0` (today−6 / today−7, outside the 4-day rewrite window) is likewise treated as non-breaching and **resolved**, so an alert raised on the old basis clears rather than firing forever on "ours $0.00".
 
 ### `vendor.bill_sync_failed` — vendor cost-API sync persistently failing
 
-The `vendor-bill-reconcile` job could not fetch a provider's bill from its cost API, and the failure has persisted past a full run cycle (`staleHours`, default 25). Unlike a one-off transient error — which the next successful run overwrites — this means the sync is **broken**: a revoked or wrong-type admin key, a missing scope, or blocked egress. While it persists, that provider gets **no** drift detection at all, so this alert exists to make the silent gap loud. It fires **per provider** (severity `medium`) and auto-resolves once the sync recovers.
+The `vendor-bill-reconcile` job could not produce a comparable figure for a provider, and the gap has persisted past a full run cycle (`staleHours`, default 25). Two coverages count toward it:
+
+- **`fetch_failed`** — the **vendor** side is broken: a revoked or wrong-type admin key, a missing scope, or blocked egress.
+- **`no_basis`** — **our** side is broken: the vendor billed the day, but no `vendor_spend_usd` rollup rows exist for it, so nothing could be compared. On a recent day that means the cost-stamping path recorded nothing — 100% of that day's vendor spend went unrecorded.
+
+Unlike a one-off transient — which the next successful run overwrites — a persisting gap means the reconciliation is broken. While it persists, that provider gets **no** drift detection at all, so this alert exists to make the silent gap loud. It fires **per provider** (severity `medium`) and auto-resolves once reconciliation recovers.
+
+A `fetch_failed` placeholder heals on a day the gateway sent **no** traffic too, because the vendor's reported zero for such a day is reconciled into a `scoped` $0 row rather than skipped. Before 2026-08-21 it was skipped, and a placeholder landing on an idle day could therefore never be overwritten by anything: it aged out of the trailing re-reconcile window frozen at `fetch_failed` and kept this alert firing on a day with nothing wrong with it (production OpenAI / 2026-08-16, raised 2026-08-20). An alert that will not clear on an idle day is the symptom of a build predating that fix.
+
+Placeholder rows are inserted `ON CONFLICT DO NOTHING`, so an existing placeholder is never re-stamped and its `updated_at` age keeps accumulating — without that, every daily run would reset the staleness clock and this alert could never fire.
 
 **Do:** find which provider, and how long it has been failing.
 ```sql
-SELECT provider_id, day, updated_at
+SELECT provider_id, day, coverage, updated_at
 FROM vendor_bill_reconciliation
-WHERE coverage = 'fetch_failed'
+WHERE coverage IN ('fetch_failed', 'no_basis')
 ORDER BY updated_at;
 ```
-Then read the underlying error from the Hub log:
+Then read the underlying reason from the Hub log — `fetch_failed` and `no_basis`
+log different lines, and which one you get tells you which side is broken:
 ```bash
-sudo journalctl -u nexus-hub --since '2 days ago' --no-pager | grep -i 'vendor fetch failed'
+sudo journalctl -u nexus-hub --since '2 days ago' --no-pager \
+  | grep -iE 'vendor fetch failed|no recorded vendor spend'
 ```
 
 **Fix**, by the logged error:

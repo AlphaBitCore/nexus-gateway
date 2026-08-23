@@ -1,3 +1,8 @@
+---
+name: ne-fail-open-audit
+description: "Run the 5-rule safety audit before merging any change to the macOS Network Extension TransparentProxyProvider. SAFETY-CRITICAL — a misbehaving NE provider takes down the entire Mac network (DNS, DHCP, mDNS, NTP, Apple Push, VPN) and needs manual launchctl unload to recover. Covers NexusAgentExtension, the agent daemon config appliers, and the QUIC-fallback platform shim. Trigger keywords: NE audit, fail-open audit, TransparentProxyProvider, network extension safety, /ne-fail-open-audit."
+---
+
 # ne-fail-open-audit
 
 Run the 5-rule safety audit before merging any change to the macOS Network Extension `TransparentProxyProvider`.
