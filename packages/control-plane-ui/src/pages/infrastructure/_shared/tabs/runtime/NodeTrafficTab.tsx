@@ -27,6 +27,7 @@ import { DataTable, ErrorBanner, Skeleton } from '@/components/ui';
 import type { TrafficEvent } from '@/api/types';
 import { getColumnsForSource, type TrafficSourceFilter } from '@/pages/traffic/list/TrafficTab';
 import { TrafficEventDrawer, DRAWER_MS } from '@/pages/traffic/audit-drawer/trafficAuditDrawer';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 interface Props {
   nodeId: string;
@@ -88,10 +89,13 @@ export function NodeTrafficTab({ nodeId, nodeType, nodeName }: Props) {
   const [selectedEntry, setSelectedEntry] = useState<TrafficEvent | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
 
+  // The drawer clears its row only after the close animation; without
+  // cancellation that timer outlives an unmount and updates a dead tree.
+  const armTimeout = useTimeouts();
   const closeDrawer = useCallback(() => {
     setDrawerVisible(false);
-    window.setTimeout(() => setSelectedEntry(null), DRAWER_MS);
-  }, []);
+    armTimeout(() => setSelectedEntry(null), DRAWER_MS);
+  }, [armTimeout]);
 
   useLayoutEffect(() => {
     if (!selectedEntry) {

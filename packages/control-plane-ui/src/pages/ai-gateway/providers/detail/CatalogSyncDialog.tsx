@@ -35,7 +35,15 @@ type LoadState =
   | { kind: 'error' }
   | { kind: 'ready'; diff: CatalogSyncDiff };
 
-/** Field labels reuse the strings the models tab already shows for the same values. */
+/**
+ * Field labels reuse the strings the models tab already shows for the same
+ * values. Typed against every template field, so a field added to the catalog
+ * cannot reach the diff without a label — the diff would otherwise render a
+ * raw property name at an admin.
+ *
+ * The identity fields carry a label too: they are excluded from the diff, not
+ * from the type, and a label costs nothing next to a lookup that throws.
+ */
 const FIELD_LABEL_KEYS: Record<CatalogField, string> = {
   name: 'pages:providers.tableHeaderName',
   description: 'pages:providers.modelDescriptionLabel',
@@ -45,8 +53,17 @@ const FIELD_LABEL_KEYS: Record<CatalogField, string> = {
   outputPricePerMillion: 'pages:providers.modelTableOutputPrice',
   cachedInputReadPricePerMillion: 'pages:providers.modelTableCachedInputReadPrice',
   cachedInputWritePricePerMillion: 'pages:providers.modelTableCachedInputWritePrice',
+  audioInputPricePerMillion: 'pages:providers.audioInputPricePerM',
+  audioOutputPricePerMillion: 'pages:providers.audioOutputPricePerM',
+  cachedAudioInputReadPricePerMillion: 'pages:providers.cachedAudioReadPricePerM',
   maxContextTokens: 'pages:providers.modelTableContext',
   maxOutputTokens: 'pages:providers.modelTableOutput',
+  inputModalities: 'pages:providers.capabilities.modalitiesInput',
+  outputModalities: 'pages:providers.capabilities.modalitiesOutput',
+  requiredModalities: 'pages:providers.capabilities.modalitiesRequired',
+  code: 'pages:providers.modelCodeLabel',
+  providerModelId: 'pages:providers.providerModelIdLabel',
+  aliases: 'pages:providers.modelAliasesLabel',
 };
 
 const formatValue = (v: CatalogValue | undefined, emptyLabel: string): string => {

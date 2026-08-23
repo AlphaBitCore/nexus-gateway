@@ -29,7 +29,11 @@ auto-skip with a clear message.
 |-----------|---------|-------|
 | `ai_judge/` | Tests that consult Kimi 128k via Nexus VK as an oracle | 4 |
 | `protocol/` | Drop-in compatibility tests for `openai` / `anthropic` SDKs | 5 |
+| `sdk_compat/` | AP-3: full OpenAI SDK drop-in matrix, 60 cases across chat / tools / structured / vision / reasoning / embeddings / errors / divergences | 5c |
 | `conftest.py` | Shared fixtures: `nexus_env`, `nexus_judge`, `nexus_db` | — |
+
+`sdk_compat/` carries its own self-contained `conftest.py` and does **not** use
+the root `nexus_env` fixture — see the note in `sdk_compat/conftest.py` for why.
 
 ## Running
 

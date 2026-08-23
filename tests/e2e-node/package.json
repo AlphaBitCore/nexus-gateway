@@ -1,0 +1,16 @@
+{
+  "name": "nexus-tests-e2e-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AP-3 OpenAI Node SDK drop-in compatibility suite for the Nexus AI Gateway.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "openai": "^6.49.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
+}

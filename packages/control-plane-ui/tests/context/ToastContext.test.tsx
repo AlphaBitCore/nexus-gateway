@@ -32,6 +32,34 @@ describe('ToastProvider', () => {
     vi.restoreAllMocks();
   });
 
+  // addToast arms a safety-fallback timer. If it outlives the provider, it fires
+  // into a torn-down tree: React reaches for `window` during the state update and
+  // throws ReferenceError. Under vitest that surfaces as an UNHANDLED ERROR
+  // attributed to whichever test file happened to be running — every test passes
+  // and the run still fails, which is how this reached CI while 2057 local tests
+  // stayed green (CI is ~9x slower, so its timers outlive the environment).
+  //
+  // The assertion is on pending timers rather than on the crash, because the
+  // crash needs the jsdom environment to be gone — something a test inside that
+  // environment cannot stage.
+  it('leaves no timer running after the provider unmounts', async () => {
+    vi.useFakeTimers();
+    const { unmount } = render(
+      <ToastProvider>
+        <Trigger />
+      </ToastProvider>,
+    );
+    act(() => {
+      screen.getByText('ok').click();
+      screen.getByText('err').click();
+    });
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    unmount();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('renders a toast with its message when addToast is called', async () => {
     const user = userEvent.setup();
     render(

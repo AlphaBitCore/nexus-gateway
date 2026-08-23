@@ -67,28 +67,49 @@ export function SearchableCombobox({
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  // Reset highlight when options change
+  // The highlight belongs to the user, so it moves only when WHICH choices are
+  // on offer changes. Keying this on the array itself would reset it on every
+  // fetch, because each one hands back a fresh array — including a refetch that
+  // came back with the very same rows.
+  // Joined on a separator an id cannot hold, so two different lists of ids
+  // cannot collapse to one key.
+  const optionKey = options.map((o) => o.id).join('\u0000');
   useEffect(() => {
     setHighlightIndex(-1);
-  }, [options]);
+  }, [optionKey]);
+
+  // Held in a ref so a parent that builds `fetchOptions` inline cannot turn its
+  // own re-render into another round trip. Every call site does build it
+  // inline, and some of them sit on pages that poll.
+  const fetchRef = useRef(fetchOptions);
+  useEffect(() => {
+    fetchRef.current = fetchOptions;
+  });
+
+  // Responses land out of order. Only the newest request may write, so a slow
+  // answer for an abandoned query cannot replace the list the user is looking
+  // at now.
+  const fetchSeqRef = useRef(0);
 
   const runFetch = useCallback(
     async (q: string) => {
+      const seq = ++fetchSeqRef.current;
+      const isCurrent = () => seq === fetchSeqRef.current;
       if (!allowEmptyQueryFetch && !q.trim()) {
         setOptions([]);
         return;
       }
       setLoading(true);
       try {
-        const rows = await fetchOptions(q.trim());
-        setOptions(rows);
+        const rows = await fetchRef.current(q.trim());
+        if (isCurrent()) setOptions(rows);
       } catch {
-        setOptions([]);
+        if (isCurrent()) setOptions([]);
       } finally {
-        setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     },
-    [fetchOptions, allowEmptyQueryFetch],
+    [allowEmptyQueryFetch],
   );
 
   useEffect(() => {

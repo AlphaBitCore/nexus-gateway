@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { getColumnsForSource, modalityOfEndpointKind } from './trafficColumns';
+import { formatUsdSci } from '@/lib/format';
 import type { TrafficEvent } from '../../../api/types';
 import en from '@/i18n/locales/en/pages.json';
 import es from '@/i18n/locales/es/pages.json';
@@ -110,5 +111,55 @@ describe('traffic Modality column', () => {
       const orphan = Object.keys(map).filter((m) => !modalities.includes(m));
       expect(orphan, `${locale.name} labels modalities nothing maps to: ${orphan.join(', ')}`).toEqual([]);
     }
+  });
+});
+
+// The Cost column recomputes from tokens × the price snapshot so it tracks
+// current catalog prices. Modality rows (image / tts / rerank) carry no
+// prompt/completion tokens, so that recompute is 0 and the cell used to show a
+// dash even though the gateway stamped a real per-unit cost. It now falls back
+// to estimated_cost_usd for exactly those rows.
+function renderCost(row: Partial<TrafficEvent>): string {
+  const col = getColumnsForSource('vk', t).find((c: any) => c.key === 'upstreamCostUsd');
+  if (!col) throw new Error('the vk traffic table has no cost column');
+  const { container } = render(<>{(col as any).render(row as TrafficEvent)}</>);
+  return container.textContent ?? '';
+}
+
+describe('traffic Cost column — modality fallback', () => {
+  it('shows the stamped per-unit cost for a rerank row that has no tokens', () => {
+    // A Cohere rerank row: priced per search unit, zero prompt/completion
+    // tokens, so the token recompute is 0. The cell must show the stamped
+    // $0.002, not a dash.
+    const cell = renderCost({
+      endpointType: 'rerank',
+      promptTokens: 0,
+      completionTokens: 0,
+      estimatedCostUsd: 0.002,
+    });
+    expect(cell).toBe(formatUsdSci(0.002));
+    expect(cell).not.toBe('-');
+  });
+
+  it('still shows a dash when there are no tokens AND no stamped cost', () => {
+    // The dash must remain meaningful: genuinely unpriced / cost-less rows.
+    expect(renderCost({ endpointType: 'rerank', promptTokens: 0, estimatedCostUsd: 0 })).toBe('-');
+    expect(renderCost({ endpointType: 'rerank', promptTokens: 0 })).toBe('-');
+  });
+
+  it('prefers the token recompute over the stamped cost when tokens exist', () => {
+    // A chat row with tokens must keep tracking current catalog prices, not the
+    // historical stamp. 1000 prompt × $5/M + 500 completion × $15/M = $0.0125;
+    // the bogus stamped value below must be ignored.
+    const cell = renderCost({
+      endpointType: 'chat',
+      promptTokens: 1000,
+      completionTokens: 500,
+      modelInputPricePerMillion: 5,
+      modelOutputPricePerMillion: 15,
+      estimatedCostUsd: 999,
+    });
+    expect(cell).toBe(formatUsdSci(0.0125));
+    expect(cell).not.toBe(formatUsdSci(999));
   });
 });

@@ -604,6 +604,14 @@
   margin: calc(var(--g-space-2) * -1) 0 var(--g-space-3);
 }
 
+.simWarning {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger);
+  border-left: var(--g-space-1) solid var(--color-danger);
+  padding-left: var(--g-space-2);
+  margin: 0 0 var(--g-space-3);
+}
+
 /* Simulation input row */
 .simInputRow {
   margin-bottom: var(--g-space-3);
@@ -735,4 +743,14 @@
   .threeColumnInputGrid {
     grid-template-columns: 1fr;
   }
+}
+
+.simEndpointSelect {
+  min-width: var(--g-space-14);
+  padding: var(--g-space-2) var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
 }

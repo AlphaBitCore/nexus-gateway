@@ -26,18 +26,6 @@ describe('match-conditions form helpers', () => {
   });
 });
 
-describe('policy config helpers', () => {
-  it('policyConfigToFormLines extracts the four id arrays (empty for non-policy)', () => {
-    expect(policyConfigToFormLines({ type: 'policy', allowModelIds: ['m1'], denyProviderIds: ['p2'] }))
-      .toEqual({ allowM: ['m1'], denyM: [], allowP: [], denyP: ['p2'] });
-    expect(policyConfigToFormLines({ type: 'single' })).toEqual({ allowM: [], denyM: [], allowP: [], denyP: [] });
-  });
-  it('buildPolicyApiConfig builds from non-empty arrays + errors when all empty', () => {
-    expect(buildPolicyApiConfig(['m1'], [], [], ['p2'])).toEqual({ ok: true, config: { type: 'policy', allowModelIds: ['m1'], denyProviderIds: ['p2'] } });
-    expect(buildPolicyApiConfig([''], [], [], []).ok).toBe(false);
-  });
-});
-
 describe('conditional builders', () => {
   const formWithBranch = () => ({
     ...emptyConditionalFormState(),

@@ -1,6 +1,7 @@
 import { useState, useCallback, useLayoutEffect, useEffect } from 'react';
 import type { TrafficEvent } from '../../../api/types';
 import { DRAWER_MS } from '../audit-drawer/trafficAuditDrawer';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 /**
  * useTrafficNav — drawer selection + animate-in/Escape lifecycle for the
@@ -11,10 +12,13 @@ export function useTrafficNav() {
   const [selectedEntry, setSelectedEntry] = useState<TrafficEvent | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
 
+  // The drawer clears its row only after the close animation; without
+  // cancellation that timer outlives an unmount and updates a dead tree.
+  const armTimeout = useTimeouts();
   const closeDrawer = useCallback(() => {
     setDrawerVisible(false);
-    window.setTimeout(() => setSelectedEntry(null), DRAWER_MS);
-  }, []);
+    armTimeout(() => setSelectedEntry(null), DRAWER_MS);
+  }, [armTimeout]);
 
   useLayoutEffect(() => {
     if (!selectedEntry) {

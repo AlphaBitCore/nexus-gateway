@@ -38,7 +38,15 @@ export function RoutingRuleForm({ rule, onClose, onSaved }: RoutingRuleFormProps
       size="lg"
     >
       <Stack gap="md">
-        {form.pipelineStage === '1' && <RoutingPrimaryWinnerCallout />}
+        <RoutingPrimaryWinnerCallout />
+
+        {form.unsupportedStrategy && (
+          <div role="alert" data-testid="unsupported-strategy-notice">
+            {t('pages:routing.unsupportedStrategyNotice', {
+              strategyType: form.unsupportedStrategy,
+            })}
+          </div>
+        )}
 
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>
@@ -61,7 +69,7 @@ export function RoutingRuleForm({ rule, onClose, onSaved }: RoutingRuleFormProps
           />
         </div>
 
-        {form.pipelineStage === '1' && (
+        {(
           <div>
             <div className={styles.labelRow}>
               <label htmlFor="strategyType" className={styles.fieldLabel}>
@@ -111,17 +119,8 @@ export function RoutingRuleForm({ rule, onClose, onSaved }: RoutingRuleFormProps
         </div>
 
         <StrategyConfigSection
-          pipelineStage={form.pipelineStage}
           strategyType={form.strategyType}
           providerGroups={form.providerGroups}
-          policyAllowM={form.policyAllowM}
-          setPolicyAllowM={form.setPolicyAllowM}
-          policyDenyM={form.policyDenyM}
-          setPolicyDenyM={form.setPolicyDenyM}
-          policyAllowP={form.policyAllowP}
-          setPolicyAllowP={form.setPolicyAllowP}
-          policyDenyP={form.policyDenyP}
-          setPolicyDenyP={form.setPolicyDenyP}
           singleProvider={form.singleProvider}
           setSingleProvider={form.setSingleProvider}
           singleModel={form.singleModel}
@@ -137,7 +136,7 @@ export function RoutingRuleForm({ rule, onClose, onSaved }: RoutingRuleFormProps
           showWeightColumn={form.showWeightColumn}
         />
 
-        {form.pipelineStage !== '0' && (
+        {(
           <FallbackChainSection
             fallbackEntries={form.fallbackEntries}
             addFallback={form.addFallback}
@@ -147,7 +146,7 @@ export function RoutingRuleForm({ rule, onClose, onSaved }: RoutingRuleFormProps
           />
         )}
 
-        {form.pipelineStage !== '0' && (
+        {(
           <RetryPolicySection
             mode={form.retryPolicyMode}
             onModeChange={form.setRetryPolicyMode}

@@ -1,0 +1,22 @@
+{
+  "document": "migration runbook",
+  "referenceNumber": "61074",
+  "note": "This document is a test fixture for media comprehension.",
+  "migrations": [
+    {
+      "database": "PostgreSQL",
+      "file": "schema/widget-pg.sql",
+      "idempotent": true
+    },
+    {
+      "database": "MySQL",
+      "file": "schema/widget-my.sql",
+      "idempotent": true
+    },
+    {
+      "database": "SQLite",
+      "file": "schema/widget-lt.sql",
+      "idempotent": false
+    }
+  ]
+}

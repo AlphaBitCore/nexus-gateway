@@ -155,3 +155,96 @@ describe('VirtualKeyCreate', () => {
     await waitFor(() => expect(screen.getByText('nx_secret_plain')).toBeInTheDocument());
   });
 });
+
+/**
+ * Bulk selection in the model-access picker.
+ *
+ * The rule these pin: a bulk action may only touch what the admin can SEE.
+ * "Select all" used to grant every model in the catalogue regardless of the
+ * search box — filter to "claude", click it, and the key silently gained every
+ * OpenAI model too. That makes a key's real permissions differ from the list
+ * being looked at, which is the same defect that made glob refs unacceptable,
+ * one layer up.
+ */
+describe('VirtualKeyCreate — model-access bulk selection', () => {
+  const GROUPS = [
+    {
+      provider: { id: 'prov-anthropic', name: 'anthropic', displayName: 'ANTHROPIC' },
+      models: [
+        { id: 'm-haiku', name: 'Claude Haiku 4.5', code: 'claude-haiku-4-5' },
+        { id: 'm-opus', name: 'Claude Opus 4.5', code: 'claude-opus-4-5' },
+      ],
+    },
+    {
+      provider: { id: 'prov-openai', name: 'openai', displayName: 'OPENAI' },
+      models: [{ id: 'm-gpt', name: 'GPT 5', code: 'gpt-5' }],
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(FROZEN_NOW));
+    setDisplayTZ(DISPLAY_TZ);
+    apiByKey.models = ok({ data: GROUPS });
+    apiByKey.projects = ok({ data: [{ id: 'p1', name: 'Proj', organization: { id: 'o1', name: 'OrgA' } }] });
+    svc.virtualKeyApi.create.mockResolvedValue({ key: 'nx_secret_plain', id: 'vk1' });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    setDisplayTZ(null);
+  });
+
+  const checkedCodes = () =>
+    (screen.getAllByRole('checkbox') as HTMLInputElement[])
+      .filter(c => c.checked)
+      .length;
+
+  it('select all with a search filter active grants only the visible models', async () => {
+    wrap();
+    fireEvent.change(screen.getByPlaceholderText(i18n.t('pages:virtualKeys.searchModels')), {
+      target: { value: 'claude' },
+    });
+    // Only the two Anthropic rows are rendered now.
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByText(i18n.t('pages:virtualKeys.selectAll'))[0]);
+
+    // Clearing the filter must not reveal a third, invisibly-granted model.
+    fireEvent.change(screen.getByPlaceholderText(i18n.t('pages:virtualKeys.searchModels')), {
+      target: { value: '' },
+    });
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(3));
+    expect(checkedCodes()).toBe(2);
+  });
+
+  it('deselect all with a filter active leaves hidden selections alone', async () => {
+    wrap();
+    // Tick the OpenAI model while everything is visible.
+    fireEvent.click(screen.getByLabelText(/GPT 5/i));
+    expect(checkedCodes()).toBe(1);
+
+    fireEvent.change(screen.getByPlaceholderText(i18n.t('pages:virtualKeys.searchModels')), {
+      target: { value: 'claude' },
+    });
+    fireEvent.click(screen.getAllByText(i18n.t('pages:virtualKeys.deselectAll'))[0]);
+
+    fireEvent.change(screen.getByPlaceholderText(i18n.t('pages:virtualKeys.searchModels')), {
+      target: { value: '' },
+    });
+    // The hidden GPT selection survives a bulk action aimed at Anthropic.
+    await waitFor(() => expect(checkedCodes()).toBe(1));
+  });
+
+  it('the per-provider control selects that provider only, then clears it', async () => {
+    wrap();
+    // The first per-provider button belongs to ANTHROPIC (2 models).
+    const perProvider = screen.getAllByText(i18n.t('pages:virtualKeys.selectAll'));
+    fireEvent.click(perProvider[1]);
+    await waitFor(() => expect(checkedCodes()).toBe(2));
+
+    // It is a toggle: fully-selected flips to deselect.
+    fireEvent.click(screen.getAllByText(i18n.t('pages:virtualKeys.deselectAll'))[1]);
+    await waitFor(() => expect(checkedCodes()).toBe(0));
+  });
+});

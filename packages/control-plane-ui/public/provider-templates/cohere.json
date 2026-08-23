@@ -14,7 +14,14 @@
       "features": [
         "function_calling",
         "streaming",
-        "tool_use"
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2.5,
       "outputPricePerMillion": 10,
@@ -30,7 +37,14 @@
       "features": [
         "function_calling",
         "streaming",
-        "tool_use"
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.0375,
       "outputPricePerMillion": 0.15,
@@ -46,7 +60,14 @@
       "features": [
         "function_calling",
         "streaming",
-        "tool_use"
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2.5,
       "outputPricePerMillion": 10,
@@ -62,7 +83,14 @@
       "features": [
         "function_calling",
         "streaming",
-        "tool_use"
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.15,
       "outputPricePerMillion": 0.6,
@@ -76,9 +104,87 @@
       "providerModelId": "embed-v4.0",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.12,
       "outputPricePerMillion": 0,
       "maxContextTokens": 128000
+    },
+    {
+      "code": "command-a-vision-07-2025",
+      "name": "Command A Vision",
+      "description": "Cohere Command A with image understanding — chat v2 with image_url content parts.",
+      "providerModelId": "command-a-vision-07-2025",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "function_calling",
+        "structured_outputs"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 10,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 8192
+    },
+    {
+      "code": "rerank-v3.5",
+      "name": "Rerank v3.5",
+      "description": "Cohere Rerank v3.5 — multilingual relevance reranking. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+      "providerModelId": "rerank-v3.5",
+      "type": "rerank",
+      "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "inputPricePerMillion": 2000,
+      "maxContextTokens": 4096
+    },
+    {
+      "code": "rerank-english-v3.0",
+      "name": "Rerank English v3.0",
+      "description": "Cohere Rerank v3.0, English. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+      "providerModelId": "rerank-english-v3.0",
+      "type": "rerank",
+      "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "inputPricePerMillion": 2000,
+      "maxContextTokens": 4096
+    },
+    {
+      "code": "rerank-multilingual-v3.0",
+      "name": "Rerank Multilingual v3.0",
+      "description": "Cohere Rerank v3.0, multilingual. Billed per search unit at $2.00 / 1,000 searches (a search = 1 query + up to 100 documents). Under the unified pricing semantic, inputPricePerMillion is USD per 1M billable input units — here search units — so 2000 = $2.00/1k. No per-output billing (outputPricePerMillion null).",
+      "providerModelId": "rerank-multilingual-v3.0",
+      "type": "rerank",
+      "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "inputPricePerMillion": 2000,
+      "maxContextTokens": 4096
     }
   ]
 }

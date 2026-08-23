@@ -6,6 +6,7 @@ import { useMutation } from '@/hooks/useMutation';
 import { devicesApi } from '@/api/services';
 import { useZodForm, FormInput } from '@/lib/forms';
 import { z } from 'zod';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 const schema = z.object({ hostname: z.string().optional().default('') });
 
@@ -29,13 +30,14 @@ export function EnrollTokenDialog({ open, onOpenChange }: { open: boolean; onOpe
     onOpenChange(false);
   }, [form, onOpenChange]);
 
+  const armTimeout = useTimeouts();
   const copyToken = useCallback(async () => {
     if (token) {
       await navigator.clipboard.writeText(token);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      armTimeout(() => setCopied(false), 2000);
     }
-  }, [token]);
+  }, [token, armTimeout]);
 
   return (
     <Dialog open={open} onOpenChange={handleClose} title={t('pages:devices.enrollDevice')} size="md" className={styles.enrollDialog}>

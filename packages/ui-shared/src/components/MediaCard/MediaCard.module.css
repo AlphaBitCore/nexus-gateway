@@ -1,0 +1,75 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  padding: var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: var(--color-surface);
+}
+
+/* A card with no reachable bytes reads as informational rather than
+   interactive, so nothing about it invites a click. */
+.inert {
+  background: var(--color-bg-subtle);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  align-items: baseline;
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.modality {
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-text);
+  text-transform: uppercase;
+  letter-spacing: var(--g-letter-spacing-wide);
+}
+
+.mime,
+.size {
+  font-family: var(--g-font-mono);
+}
+
+.explain {
+  margin: var(--g-space-0);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.preview {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.image {
+  max-width: 100%;
+  max-height: var(--g-size-preview-max);
+  border-radius: var(--g-radius-sm);
+  object-fit: contain;
+}
+
+.player {
+  width: 100%;
+}
+
+.download {
+  align-self: flex-start;
+  padding: var(--g-space-1) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.download:hover {
+  background: var(--color-bg-hover);
+}

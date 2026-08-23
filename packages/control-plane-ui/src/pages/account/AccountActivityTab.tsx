@@ -16,6 +16,7 @@ import {
   AdminAuditLogTable,
 } from '../governance/adminAuditLogShared';
 import styles from './Account.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 export function AccountActivityTab() {
   const { t } = useTranslation();
@@ -32,10 +33,13 @@ export function AccountActivityTab() {
   const [selectedEntry, setSelectedEntry] = useState<AdminAuditEntry | null>(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
 
+  // The drawer clears its row only after the close animation; without
+  // cancellation that timer outlives an unmount and updates a dead tree.
+  const armTimeout = useTimeouts();
   const closeDrawer = useCallback(() => {
     setDrawerVisible(false);
-    window.setTimeout(() => setSelectedEntry(null), DRAWER_MS);
-  }, []);
+    armTimeout(() => setSelectedEntry(null), DRAWER_MS);
+  }, [armTimeout]);
 
   useLayoutEffect(() => {
     if (!selectedEntry) {

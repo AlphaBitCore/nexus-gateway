@@ -22,13 +22,13 @@ import (
 // for every node admins click into. Two failure modes the smoke needs
 // to catch:
 //
-//   1. Bad request (empty id) returns 400, not 500. Defensive routing
-//      check — a 500 here means an unguarded h.Hub.GetThingRuntime
-//      with empty input.
-//   2. A live Thing id returns 200 with the documented envelope
-//      `{snapshot: {...}, meta: {...}}`. The CP handler is a Blob
-//      passthrough, so any rename/reshape upstream MUST propagate
-//      unchanged — the UI binds to the snapshot.* fields directly.
+//  1. Bad request (empty id) returns 400, not 500. Defensive routing
+//     check — a 500 here means an unguarded h.Hub.GetThingRuntime
+//     with empty input.
+//  2. A live Thing id returns 200 with the documented envelope
+//     `{snapshot: {...}, meta: {...}}`. The CP handler is a Blob
+//     passthrough, so any rename/reshape upstream MUST propagate
+//     unchanged — the UI binds to the snapshot.* fields directly.
 //
 // Cross-service: CP admin → Hub /api/hub/things/:id/runtime → Thing's
 // /runtime endpoint via the Hub WebSocket bridge. The Thing has to be
@@ -37,11 +37,11 @@ import (
 // hitting the offline-Thing 503 path.
 //
 // Assertions:
-//   1. POST/PUT/DELETE 405 / 404 — only GET is wired.
-//   2. With a non-existent id, status >= 400 (404 or 502 acceptable).
-//   3. With a live AI Gateway id, status 200 + body contains
-//      "snapshot" key OR status is a documented upstream pass-through
-//      (200/404/503), never 500.
+//  1. POST/PUT/DELETE 405 / 404 — only GET is wired.
+//  2. With a non-existent id, status >= 400 (404 or 502 acceptable).
+//  3. With a live AI Gateway id, status 200 + body contains
+//     "snapshot" key OR status is a documented upstream pass-through
+//     (200/404/503), never 500.
 func TestS144_NodeRuntimeIntrospection(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -94,7 +94,7 @@ func TestS144_NodeRuntimeIntrospection(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if liveID == "" {
-		t.Skip("no live ai-gateway Thing in the last 5 minutes — skipping live-runtime assertion")
+		requireLiveGateway(t, sc.DB, "the live-runtime assertion")
 	}
 
 	liveStatus, liveBody, err := helpers.CPDoJSON(ctx, sc.Env, token,

@@ -31,6 +31,15 @@ export interface WizardModel {
   maxContextTokens: string;
   maxOutputTokens: string;
   features: string[];
+  /** Carried from the template, not edited here. The wizard is a 20-row
+      table and a chip editor per row would make it a control panel; what
+      matters is that a template's explicit value survives to the create
+      call. Dropping it would let the server derive a default over a model
+      whose real modalities the catalog already knew — gpt-audio would come
+      out text-only. Edit after creation in the model drawer. */
+  inputModalities?: string[];
+  outputModalities?: string[];
+  requiredModalities?: string[];
   selected: boolean;
 }
 

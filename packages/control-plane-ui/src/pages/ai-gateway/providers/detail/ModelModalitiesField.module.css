@@ -1,0 +1,100 @@
+/* Chip styling mirrors ProviderModelCapabilitiesPanel deliberately: this
+   renders in the same Capabilities section, and a second chip look inside one
+   section would be a visible version of the duplication this whole change is
+   removing. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.summaryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+}
+
+.summary {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.toggle {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  text-decoration: underline;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+  padding-top: var(--g-space-2);
+}
+
+.label {
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text-secondary);
+  margin-top: var(--g-space-2);
+}
+
+.hint {
+  margin: var(--g-space-2) 0 0;
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  margin-top: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+  user-select: none;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.chipActive {
+  composes: chip;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-bg);
+}
+
+.chipActive:disabled {
+  opacity: 0.85;
+}

@@ -17,6 +17,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 1.74,
       "outputPricePerMillion": 3.48,
       "cachedInputReadPricePerMillion": 0.145,
@@ -34,6 +40,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.14,
       "outputPricePerMillion": 0.28,
@@ -53,6 +65,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 1.4,
       "outputPricePerMillion": 4.4,
       "cachedInputReadPricePerMillion": 0.26,
@@ -70,6 +88,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.4,
       "outputPricePerMillion": 4.4,
@@ -89,6 +113,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.6,
       "outputPricePerMillion": 2.2,
       "cachedInputReadPricePerMillion": 0.3,
@@ -105,6 +135,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.95,
       "outputPricePerMillion": 4,
@@ -123,6 +159,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.95,
       "outputPricePerMillion": 4,
       "cachedInputReadPricePerMillion": 0.16,
@@ -139,6 +181,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.4,
       "outputPricePerMillion": 1.6,
@@ -157,6 +205,12 @@
         "streaming",
         "json_mode"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.45,
       "outputPricePerMillion": 1.8,
       "maxContextTokens": 262144
@@ -173,6 +227,12 @@
         "reasoning",
         "prompt_caching"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 1.2,
       "cachedInputReadPricePerMillion": 0.06,
@@ -185,9 +245,15 @@
       "providerModelId": "accounts/fireworks/models/llama4-maverick-instruct-basic",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.22,
       "outputPricePerMillion": 0.88,
@@ -200,9 +266,15 @@
       "providerModelId": "accounts/fireworks/models/llama4-scout-instruct-basic",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.15,
       "outputPricePerMillion": 0.6,
@@ -219,6 +291,12 @@
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.15,
       "outputPricePerMillion": 0.6,

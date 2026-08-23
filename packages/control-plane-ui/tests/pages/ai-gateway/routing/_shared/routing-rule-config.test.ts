@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildConditionalApiConfig,
   buildRoutingApiConfig,
-  buildPolicyApiConfig,
-  policyConfigToFormLines,
   isValidConditionalConfig,
   parseRoutingConfigForForm,
   resolveProviderModelIds,
@@ -165,24 +163,6 @@ describe('routing-rule-config', () => {
     );
     expect(p.singleProvider).toBe('anthropic');
     expect(p.singleModel).toBe('claude-haiku-4-5-20251001');
-  });
-
-  it('builds policy config from id arrays', () => {
-    const out = buildPolicyApiConfig(['a', 'b'], [], ['p1'], []);
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    expect(out.config).toEqual({ type: 'policy', allowModelIds: ['a', 'b'], allowProviderIds: ['p1'] });
-  });
-
-  it('rejects empty policy config', () => {
-    const out = buildPolicyApiConfig([], [], [], []);
-    expect(out.ok).toBe(false);
-  });
-
-  it('round-trips policy lines for form', () => {
-    const cfg = { type: 'policy', denyModelIds: ['x', 'y'] };
-    const lines = policyConfigToFormLines(cfg);
-    expect(lines.denyM).toEqual(['x', 'y']);
   });
 
   it('parseMatchConditionsForm returns empty arrays for nullish input', () => {

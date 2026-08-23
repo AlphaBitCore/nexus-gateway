@@ -16,8 +16,6 @@ import {
   mapLegacyStrategy,
   parseRoutingConfigForForm,
   buildRoutingApiConfig,
-  buildPolicyApiConfig,
-  policyConfigToFormLines,
   configuredInternalModelIds,
   emptyConditionalFormState,
   hydrateConditionalEditorState,
@@ -52,17 +50,17 @@ export function useRoutingRuleForm({ rule, onClose, onSaved }: UseRoutingRuleFor
   const [name, setName] = useState(rule?.name ?? '');
   const [description, setDescription] = useState(rule?.description ?? '');
   const [strategyType, setStrategyType] = useState<StrategyType>(
-    mapLegacyStrategy(rule?.strategyType ?? 'single'),
+    mapLegacyStrategy(rule?.strategyType ?? 'single') ?? 'single',
   );
+  // A stored strategy the gateway no longer dispatches. The form refuses to
+  // hydrate from it and the page shows why: mapping it onto the nearest
+  // editable type would render the picker as something else, and saving any
+  // field would then persist that shape over the admin's configuration.
+  const unsupportedStrategy =
+    rule != null && mapLegacyStrategy(rule.strategyType) === null ? rule.strategyType : null;
   const [priority, setPriority] = useState(String(rule?.priority ?? 0));
-  const [pipelineStage, setPipelineStage] = useState(String(rule?.pipelineStage ?? 1));
   const [enabled, setEnabled] = useState(rule?.enabled ?? true);
 
-  // ── Policy fields ─────────────────────────────────────────────────
-  const [policyAllowM, setPolicyAllowM] = useState<string[]>([]);
-  const [policyDenyM, setPolicyDenyM] = useState<string[]>([]);
-  const [policyAllowP, setPolicyAllowP] = useState<string[]>([]);
-  const [policyDenyP, setPolicyDenyP] = useState<string[]>([]);
 
   // ── Single-provider fields ────────────────────────────────────────
   const [singleProvider, setSingleProvider] = useState('');
@@ -131,26 +129,9 @@ export function useRoutingRuleForm({ rule, onClose, onSaved }: UseRoutingRuleFor
   // ── Hydrate form from existing rule ───────────────────────────────
   useEffect(() => {
     if (!rule || providerGroups.length === 0) return;
-    const stage = rule.pipelineStage ?? 1;
-    setPipelineStage(String(stage));
-    if (stage === 0 || rule.strategyType === 'policy') {
-      const lines = policyConfigToFormLines(rule.config);
-      setPolicyAllowM(lines.allowM);
-      setPolicyDenyM(lines.denyM);
-      setPolicyAllowP(lines.allowP);
-      setPolicyDenyP(lines.denyP);
-      setStrategyType('single');
-      setConditionalUi({ mode: 'form', form: emptyConditionalFormState() });
-      const p = parseRoutingConfigForForm('policy', rule.config, providerGroups);
-      setSingleProvider(p.singleProvider);
-      setSingleModel(p.singleModel);
-      setEntries(p.entries.length > 0 ? p.entries : [{ provider: '', model: '', weight: '50' }]);
-    } else {
-      setPolicyAllowM([]);
-      setPolicyDenyM([]);
-      setPolicyAllowP([]);
-      setPolicyDenyP([]);
+    {
       const mapped = mapLegacyStrategy(rule.strategyType);
+      if (mapped === null) return;
       const p = parseRoutingConfigForForm(mapped, rule.config, providerGroups);
       setStrategyType(mapped);
       if (mapped === 'conditional') {
@@ -241,35 +222,6 @@ export function useRoutingRuleForm({ rule, onClose, onSaved }: UseRoutingRuleFor
       ? { retryPolicy: rpResolved.value }
       : {};
 
-    const stageNum = pipelineStage === '0' ? 0 : 1;
-    if (stageNum === 0) {
-      const built = buildPolicyApiConfig(policyAllowM, policyDenyM, policyAllowP, policyDenyP);
-      if (!built.ok) {
-        addToast(built.message, 'error');
-        return;
-      }
-      const matchConditions = buildMatchConditionsPayload({
-        models,
-        requestedModelLiterals: matchRequestedModelLiterals,
-        modelTypes: matchModelTypes,
-        providers: matchProviders,
-        projects: matchProjectIds,
-        virtualKeys: matchVirtualKeys,
-      });
-      mutate({
-        name,
-        description,
-        strategyType: 'policy',
-        priority: Number(priority),
-        enabled,
-        pipelineStage: 0,
-        config: built.config,
-        matchConditions,
-        ...retryPolicyPatch,
-      });
-      return;
-    }
-
     const built =
       strategyType === 'conditional'
         ? resolveConditionalConfigFromEditor(conditionalUi, providerGroups)
@@ -319,7 +271,7 @@ export function useRoutingRuleForm({ rule, onClose, onSaved }: UseRoutingRuleFor
 
   const configModelIds = configuredInternalModelIds(
     providerGroups,
-    pipelineStage === '0' ? 'policy' : strategyType,
+    strategyType,
     singleProvider,
     singleModel,
     entries,
@@ -327,19 +279,15 @@ export function useRoutingRuleForm({ rule, onClose, onSaved }: UseRoutingRuleFor
   );
 
   return {
+    unsupportedStrategy,
     // Basic fields
     name, setName,
     description, setDescription,
     strategyType, handleStrategyChange,
     priority, setPriority,
-    pipelineStage,
     enabled, setEnabled,
 
     // Policy fields
-    policyAllowM, setPolicyAllowM,
-    policyDenyM, setPolicyDenyM,
-    policyAllowP, setPolicyAllowP,
-    policyDenyP, setPolicyDenyP,
 
     // Single-provider
     singleProvider, setSingleProvider,

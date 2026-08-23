@@ -22,7 +22,7 @@ import (
 // Cross-service: AI Gw (hook engine runs the request-stage chain) -> MQ ->
 // traffic_event (request_hook_decision + request_hooks_pipeline). For a clean
 // prompt on each ingress the decision is set (APPROVE) and the pipeline lists
-// the hooks that ran. The invariant: decision != '' AND pipeline length >= 1.
+// the hooks that ran. The invariant: decision != ” AND pipeline length >= 1.
 //
 // Messages SKIPs when no Anthropic credential is seeded locally.
 func TestS154_HookPipelineAlwaysFires(t *testing.T) {
@@ -99,7 +99,7 @@ func TestS154_HookPipelineAlwaysFires(t *testing.T) {
 			if status != 200 {
 				rb := string(respBody)
 				if a.skipOnNoMatch && (strings.Contains(rb, "ROUTING_NO_MATCH") || strings.Contains(rb, "no available provider")) {
-					t.Skipf("%s: no provider seeded locally for this ingress (ROUTING_NO_MATCH); body=%q", a.name, truncate(respBody, 160))
+					requireProviderSeeded(t, a.name, truncate(respBody, 160))
 				}
 				t.Fatalf("%s: expected 200, got %d (%q)", a.name, status, truncate(respBody, 200))
 			}

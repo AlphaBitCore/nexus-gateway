@@ -22,7 +22,7 @@
       "description": "Google Gemini API — Gemini 2.5 and embedding models.",
       "baseUrl": "https://generativelanguage.googleapis.com",
       "adapterType": "gemini",
-      "modelCount": 11
+      "modelCount": 13
     },
     {
       "name": "azure-openai",
@@ -62,7 +62,7 @@
       "description": "Moonshot OpenAI-compatible API — Kimi models.",
       "baseUrl": "https://api.moonshot.cn",
       "adapterType": "moonshot",
-      "modelCount": 10
+      "modelCount": 11
     },
     {
       "name": "xai",
@@ -118,7 +118,7 @@
       "description": "Cohere Chat v2 — Command A/R family with native tool use, RAG citations, and multilingual support.",
       "baseUrl": "https://api.cohere.com",
       "adapterType": "cohere",
-      "modelCount": 5
+      "modelCount": 9
     },
     {
       "name": "huggingface",

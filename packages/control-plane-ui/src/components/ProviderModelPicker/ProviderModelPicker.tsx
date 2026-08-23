@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select, FormField, Stack } from '@/components/ui';
-import type { AdminModelsByProvider } from '@/api/types';
+import type { AdminModelsByProvider, Model } from '@/api/types';
 
 /**
  * Cascading Provider → Model selector keyed by UUID identifiers.
@@ -61,6 +61,20 @@ export interface ProviderModelPickerProps {
 }
 
 /**
+ * A model may be pinned as a runtime backend only while it can actually serve:
+ * its own enabled flag on, its provider's enabled flag on, and its status not
+ * `disabled`. This mirrors the gateway's own rule — pinning a withdrawn model
+ * configures a backend whose every call fails upstream.
+ *
+ * The currently-pinned pair is exempt: an admin looking at a configuration that
+ * has since gone out of service must still see what is set, otherwise the field
+ * silently reads as empty and they cannot tell a broken pin from no pin.
+ */
+function isSelectableModel(m: Model, selectedModelId: string | null): boolean {
+  return m.id === selectedModelId || (m.enabled && m.status !== 'disabled');
+}
+
+/**
  * Convenience for the standalone case: AI-Guard wants only providers
  * that have at least one configured model so the cascading picker is
  * always completable. Exported so the unit test can exercise the
@@ -69,10 +83,14 @@ export interface ProviderModelPickerProps {
 export function filterCompletableProviders(
   groups: AdminModelsByProvider[],
   endpointType: string | undefined,
+  selected?: { providerId: string | null; modelId: string | null },
 ): AdminModelsByProvider[] {
+  const selectedProviderId = selected?.providerId ?? null;
+  const selectedModelId = selected?.modelId ?? null;
   return groups.filter((g) => {
     if (!g.provider) return false;
-    const models = g.models ?? [];
+    if (!g.provider.enabled && g.provider.id !== selectedProviderId) return false;
+    const models = (g.models ?? []).filter((m) => isSelectableModel(m, selectedModelId));
     if (models.length === 0) return false;
     if (endpointType) {
       return models.some((m) => m.type === endpointType);
@@ -97,8 +115,8 @@ export function ProviderModelPicker({
   const { t } = useTranslation();
 
   const visibleGroups = useMemo(
-    () => filterCompletableProviders(providerGroups, endpointType),
-    [providerGroups, endpointType],
+    () => filterCompletableProviders(providerGroups, endpointType, { providerId, modelId }),
+    [providerGroups, endpointType, providerId, modelId],
   );
 
   const providerOptions = useMemo(
@@ -120,13 +138,13 @@ export function ProviderModelPicker({
   const modelOptions = useMemo(
     () =>
       (selectedGroup?.models ?? [])
-        .filter((m) => !endpointType || m.type === endpointType)
+        .filter((m) => (!endpointType || m.type === endpointType) && isSelectableModel(m, modelId))
         .map((m) => ({
           value: m.id,
           label: `${m.name} (${m.providerModelId})`,
         }))
         .sort((a, b) => a.label.localeCompare(b.label)),
-    [selectedGroup, endpointType],
+    [selectedGroup, endpointType, modelId],
   );
 
   const noProvider = !providerId;

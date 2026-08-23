@@ -22,6 +22,24 @@
   border-color: var(--color-primary);
 }
 
+/* A control that carries `data-state` owns its own hover/active fill: the global
+   wash in ui-shared/global.css skips `[data-state]` precisely so these can be
+   stated here. They are also written above the global selectors' (0,2,1) so the
+   checked fill survives even if another bare-button rule appears later — that
+   collision is what turned a checked box grey under the cursor. */
+.root:hover:not([data-disabled]),
+.root:active:not([data-disabled]) {
+  background: var(--color-bg-hover);
+}
+
+.root[data-state='checked']:hover:not([data-disabled]),
+.root[data-state='checked']:active:not([data-disabled]),
+.root[data-state='indeterminate']:hover:not([data-disabled]),
+.root[data-state='indeterminate']:active:not([data-disabled]) {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
 .root:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;

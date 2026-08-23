@@ -29,6 +29,21 @@ var (
 	tokenMu     sync.RWMutex
 	cachedTok   string
 	cachedTokAt time.Time // expiry — refresh 60 s before this
+	// loginErr latches the first login failure for the rest of the process.
+	//
+	// Without it one bad login costs the suite 57 more. Every scenario calls
+	// CPLogin, the success cache only fills on success, so a failure sends
+	// every later scenario down the slow path to issue its own request. The CP
+	// allows ten attempts per (ip, email) inside a FIVE-MINUTE SLIDING window,
+	// so attempt eleven onward is 429 — and because the window slides, the
+	// retries keep feeding it and the lockout outlives the run. One root cause
+	// became 62 red tests and a suite that could not be re-run for five
+	// minutes.
+	//
+	// Latching turns that into one real error reported 57 times with its
+	// original message, no extra requests, and a suite that is runnable again
+	// as soon as the cause is fixed.
+	loginErr error
 )
 
 // ResetTokenCache invalidates the process-wide token cache so the next
@@ -39,6 +54,9 @@ func ResetTokenCache() {
 	defer tokenMu.Unlock()
 	cachedTok = ""
 	cachedTokAt = time.Time{}
+	// A scenario that deliberately invalidates the token is asking for a fresh
+	// attempt, so the latch clears with it.
+	loginErr = nil
 }
 
 // CPLogin returns a bearer access_token for the seeded super-admin.
@@ -67,8 +85,14 @@ func CPLogin(ctx context.Context, env *intg.Env) (string, error) {
 	if cachedTok != "" && time.Now().Add(60*time.Second).Before(cachedTokAt) {
 		return cachedTok, nil
 	}
+	// A login that already failed will fail the same way, and asking again
+	// only deepens the rate-limit hole the first failure dug.
+	if loginErr != nil {
+		return "", fmt.Errorf("CP login already failed in this run, not retrying: %w", loginErr)
+	}
 	tok, exp, err := doCPLogin(ctx, env)
 	if err != nil {
+		loginErr = err
 		return "", err
 	}
 	cachedTok = tok

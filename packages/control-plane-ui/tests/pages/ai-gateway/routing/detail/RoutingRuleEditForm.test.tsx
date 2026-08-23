@@ -111,15 +111,4 @@ describe('RoutingRuleEditForm', () => {
     expect(screen.queryByText(i18n.t('pages:routing.noFallbackModels'))).toBeNull();
   });
 
-  it('stage-0 policy renders the allow/deny model + provider selectors and adds a model', () => {
-    rule = { ...rule, pipelineStage: 0, strategyType: 'policy', config: { type: 'policy', allowModelIds: [] } };
-    renderEditing();
-    expect(screen.getByText(i18n.t('pages:routing.allowModelIds'))).toBeInTheDocument();
-    expect(screen.getByText(i18n.t('pages:routing.allowProviderIds'))).toBeInTheDocument();
-    // the first "add model to policy" select adds a model → a removable tag appears
-    const addOptions = screen.getAllByText(i18n.t('pages:routing.addModelToPolicy'));
-    const firstSelect = addOptions[0].closest('select')!;
-    fireEvent.change(firstSelect, { target: { value: 'm1' } });
-    expect(screen.getByText('OpenAI / GPT-4o')).toBeInTheDocument();
-  });
 });

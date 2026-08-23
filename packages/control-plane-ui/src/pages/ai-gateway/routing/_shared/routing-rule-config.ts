@@ -11,17 +11,15 @@ export type StrategyType =
   | 'conditional'
   | 'ab_split'
   | 'smart'
-  | 'latency'
-  | 'policy';
+  | 'latency';
 
 /**
  * The user-selectable routing strategy types, in canonical display order. This is
  * the single source of truth for every strategy picker and filter in the UI (the
  * Strategy Type dropdown on create/edit and the strategy filter on the list page),
- * so they never drift. `policy` is intentionally excluded: it is the stage-0
- * pipeline type, chosen via the pipeline-stage control, not a routing strategy.
+ * so they never drift.
  */
-export const STRATEGY_TYPES: readonly Exclude<StrategyType, 'policy'>[] = [
+export const STRATEGY_TYPES: readonly StrategyType[] = [
   'single',
   'fallback',
   'loadbalance',
@@ -79,7 +77,18 @@ export function validateSplitWeights(entries: ProviderModelEntry[]): { valid: bo
   return { valid: allInRange && total === 100, total };
 }
 
-export function mapLegacyStrategy(s: string): StrategyType {
+/**
+ * Map a stored strategyType onto one the editor can render, or `null` when the
+ * gateway no longer dispatches it.
+ *
+ * The `null` is the point. This used to fall back to `'single'`, so opening a
+ * rule whose type the gateway had dropped — `policy` — rendered the picker as
+ * "Single" and saving ANY field persisted a single-shaped rule over the
+ * admin's configuration, with no warning and no way back. The read view mean-
+ * while printed the stored value, so the detail page said `policy` and the edit
+ * page said Single.
+ */
+export function mapLegacyStrategy(s: string): StrategyType | null {
   const map: Record<string, StrategyType> = {
     priority: 'single',
     'round-robin': 'loadbalance',
@@ -92,9 +101,20 @@ export function mapLegacyStrategy(s: string): StrategyType {
     conditional: 'conditional',
     ab_split: 'ab_split',
     smart: 'smart',
-    policy: 'policy',
   };
-  return map[s] ?? 'single';
+  return map[s] ?? null;
+}
+
+/**
+ * The editable form of a stored type: the mapping when it is dispatchable, and
+ * `'single'` as a rendering placeholder when it is not.
+ *
+ * Callers that DISPLAY a rule use this so the page still renders; callers that
+ * WRITE one must use mapLegacyStrategy and refuse on `null`, or they overwrite
+ * an admin's configuration with the placeholder.
+ */
+export function displayStrategy(s: string): StrategyType {
+  return mapLegacyStrategy(s) ?? 'single';
 }
 
 /** Split comma- or whitespace-separated gateway IDs from a text field. */
@@ -166,47 +186,6 @@ export function buildMatchConditionsPayload(state: MatchConditionsFormState): Re
   };
 }
 
-export function policyConfigToFormLines(config: unknown): {
-  allowM: string[];
-  denyM: string[];
-  allowP: string[];
-  denyP: string[];
-} {
-  const o = config as Record<string, unknown>;
-  if (!o || o.type !== 'policy') return { allowM: [], denyM: [], allowP: [], denyP: [] };
-  const arr = (a: unknown) => (Array.isArray(a) ? (a as string[]) : []);
-  return {
-    allowM: arr(o.allowModelIds),
-    denyM: arr(o.denyModelIds),
-    allowP: arr(o.allowProviderIds),
-    denyP: arr(o.denyProviderIds),
-  };
-}
-
-export function buildPolicyApiConfig(
-  allowM: string[],
-  denyM: string[],
-  allowP: string[],
-  denyP: string[],
-): { ok: true; config: Record<string, unknown> } | { ok: false; message: string } {
-  const allowModelIds = allowM.filter(s => s.length > 0);
-  const denyModelIds = denyM.filter(s => s.length > 0);
-  const allowProviderIds = allowP.filter(s => s.length > 0);
-  const denyProviderIds = denyP.filter(s => s.length > 0);
-  const has =
-    allowModelIds.length > 0 ||
-    denyModelIds.length > 0 ||
-    allowProviderIds.length > 0 ||
-    denyProviderIds.length > 0;
-  if (!has) return { ok: false, message: 'Add at least one allow or deny model or provider ID.' };
-  const config: Record<string, unknown> = { type: 'policy' };
-  if (allowModelIds.length > 0) config.allowModelIds = allowModelIds;
-  if (denyModelIds.length > 0) config.denyModelIds = denyModelIds;
-  if (allowProviderIds.length > 0) config.allowProviderIds = allowProviderIds;
-  if (denyProviderIds.length > 0) config.denyProviderIds = denyProviderIds;
-  return { ok: true, config };
-}
-
 export function resolveProviderModelIds(
   groups: AdminModelsByProvider[],
   providerName: string,
@@ -241,10 +220,12 @@ function findPlanByModelId(
   return null;
 }
 
+// Pre-fills a rule's default target; an unservable pick would silently never route.
 function findFirstEnabledPlan(groups: AdminModelsByProvider[]): { providerId: string; modelId: string } | null {
   for (const g of groups) {
-    const m = g?.models?.find((mod) => mod.enabled);
-    if (m) return { providerId: g.provider?.id, modelId: m.id };
+    if (!g.provider?.enabled) continue;
+    const m = g?.models?.find((mod) => mod.enabled && mod.status !== 'disabled');
+    if (m) return { providerId: g.provider.id, modelId: m.id };
   }
   return null;
 }
@@ -541,10 +522,6 @@ export function parseRoutingConfigForForm(
   const empty: ProviderModelEntry = { provider: '', model: '', weight: '50' };
   const emptyState = { entries: [empty], singleProvider: '', singleModel: '' };
 
-  if (strategyType === 'policy') {
-    return emptyState;
-  }
-
   if (!config || typeof config !== 'object') return emptyState;
   const cfg = config as Record<string, unknown>;
 
@@ -665,9 +642,6 @@ export function configuredInternalModelIds(
   conditionalForm?: ConditionalFormState | null,
 ): Set<string> {
   const ids = new Set<string>();
-  if (strategyType === 'policy') {
-    return ids;
-  }
   if (strategyType === 'conditional' && conditionalForm) {
     return conditionalFormInternalModelIds(providerGroups, conditionalForm);
   }
@@ -839,13 +813,20 @@ export const DEFAULT_SMART_SYSTEM_PROMPT = `You are an AI model router for an en
 
 ## Selection Rules
 1. Analyze the task: coding, analysis, creative writing, Q&A, translation, math, reasoning
-2. Match capabilities: images → vision, tools → function_calling, long text → large context
+2. Match capabilities: images → in contains image, audio → in contains audio, tools → function_calling, long text → large context
 3. Cost: simple tasks → cheapest capable model; complex tasks → most capable
 4. If uncertain, prefer the most capable model
 
 ## Output Format
 Return ONLY valid JSON: {"modelId": "<exact ID from list>", "reason": "<brief explanation>"}`;
 
+// The three numeric defaults below mirror the gateway's, which are the ones a
+// rule created outside this form gets: smartConfig.temperature, maxTokens() and
+// timeoutMs() in packages/ai-gateway/internal/routing/strategies. A form that
+// ships its own number means an admin who never touches the field gets a
+// different value depending on where the rule was created — which is what
+// happened to timeoutMs, at more than three times the gateway's budget on a
+// call that sits on the request hot path.
 export function parseSmartConfig(
   config: unknown,
   groups: AdminModelsByProvider[],
@@ -856,7 +837,7 @@ export function parseSmartConfig(
     systemPrompt: DEFAULT_SMART_SYSTEM_PROMPT,
     temperature: '0',
     maxTokens: '1024',
-    timeoutMs: '10000',
+    timeoutMs: '3000',
     defaultProvider: '',
     defaultModel: '',
   };
@@ -880,7 +861,7 @@ export function parseSmartConfig(
     systemPrompt: typeof cfg.systemPrompt === 'string' ? cfg.systemPrompt : DEFAULT_SMART_SYSTEM_PROMPT,
     temperature: String(cfg.temperature ?? '0'),
     maxTokens: String(cfg.maxTokens ?? '1024'),
-    timeoutMs: String(cfg.timeoutMs ?? '10000'),
+    timeoutMs: String(cfg.timeoutMs ?? '3000'),
     defaultProvider: defaultUi?.provider ?? '',
     defaultModel: defaultUi?.model ?? '',
   };
@@ -914,7 +895,7 @@ export function buildSmartConfig(
       systemPrompt: state.systemPrompt,
       temperature: Number(state.temperature) || 0,
       maxTokens: Number(state.maxTokens) || 1024,
-      timeoutMs: Number(state.timeoutMs) || 10000,
+      timeoutMs: Number(state.timeoutMs) || 3000,
       ...(defaultProviderId && defaultModelId ? { defaultProviderId, defaultModelId } : {}),
     },
   };
@@ -957,3 +938,24 @@ export function buildFallbackChainApi(
     .map(e => resolveProviderModelIds(groups, e.provider.trim(), e.model.trim()))
     .filter((r): r is { providerId: string; modelId: string } => r !== null);
 }
+
+// SIMULATABLE_ENDPOINT_KINDS are the endpoint kinds a routing rule's outcome
+// actually depends on — the ones typology.EndpointKindAcceptsModelType
+// constrains. The four it leaves unconstrained (batch, job, models, guardrail)
+// accept any model type, so simulating them teaches nothing.
+//
+// The list is here because a <select> needs one, and it is held to the Go
+// predicate by TestSimulate_TheFormOffersEveryConstrainedEndpointKind: a second
+// vocabulary that can drift from the first is the defect this file already
+// produced once, with the router timeout.
+export const SIMULATABLE_ENDPOINT_KINDS = [
+  'chat',
+  'responses',
+  'embeddings',
+  'image_generation',
+  'tts',
+  'stt',
+  'realtime',
+  'video_generation',
+  'rerank',
+] as const;

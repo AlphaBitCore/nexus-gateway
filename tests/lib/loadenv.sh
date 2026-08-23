@@ -14,7 +14,7 @@
 #      scenarios-isolation binding (no silent target defaults in automation).
 #
 # After this returns:
-#   - $NEXUS_TEST_TARGET is one of local | dev | prod.
+#   - $NEXUS_TEST_TARGET is one of local | dev | stg | prod.
 #   - $NEXUS_TEST_ROOT points at the tests/ directory.
 #   - Every key from tests/.env.<target>.example is loaded as a default.
 #   - tests/.env.<target> (gitignored, operator-customised) values override
@@ -54,16 +54,16 @@ elif [[ -z "${NEXUS_TEST_TARGET:-}" ]]; then
     NEXUS_TEST_TARGET="local"
   else
     echo "loadenv.sh: refusing to default to 'local' for non-TTY run." >&2
-    echo "  Set NEXUS_TEST_TARGET=local|dev|prod explicitly, or pass it as the first arg." >&2
+    echo "  Set NEXUS_TEST_TARGET=local|dev|stg|prod explicitly, or pass it as the first arg." >&2
     return 1 2>/dev/null || exit 1
   fi
 fi
 export NEXUS_TEST_TARGET
 
 case "$NEXUS_TEST_TARGET" in
-  local|dev|prod) ;;
+  local|dev|stg|prod) ;;
   *)
-    echo "loadenv.sh: unknown target '$NEXUS_TEST_TARGET' (allowed: local|dev|prod)" >&2
+    echo "loadenv.sh: unknown target '$NEXUS_TEST_TARGET' (allowed: local|dev|stg|prod)" >&2
     return 1 2>/dev/null || exit 1
     ;;
 esac

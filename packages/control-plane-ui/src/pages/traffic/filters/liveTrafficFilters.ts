@@ -4,6 +4,7 @@
  */
 
 import { formatDateTime, localInputToUTC } from '@/lib/format';
+import { endpointKindsForModality } from '../list/trafficColumns';
 
 export type TrafficSourceFilter = '' | 'vk' | 'proxy' | 'agent';
 
@@ -56,6 +57,9 @@ export interface LiveTrafficFiltersState {
   statusRange: LiveTrafficStatusRange;
   statusCode: string;
   cacheStatus: LiveTrafficCacheStatus;
+  /** Request modality (e.g. 'chat', 'image_generation'); expands to the
+   *  endpoint_type(s) that share it via endpointKindsForModality. '' = any. */
+  modality: string;
   startTime: string;
   endTime: string;
   // Source-specific filters
@@ -105,6 +109,7 @@ export const EMPTY_LIVE_TRAFFIC_FILTERS: LiveTrafficFiltersState = {
   statusRange: '',
   statusCode: '',
   cacheStatus: '',
+  modality: '',
   startTime: '',
   endTime: '',
   source: '',
@@ -171,6 +176,13 @@ export function buildTrafficAuditLogQueryParams(
   setIf('hookDecision', t(filters.requestHookDecision));
   setIf('responseHookDecision', t(filters.responseHookDecision));
   if (filters.cacheStatus) params.set('cacheStatus', filters.cacheStatus);
+  if (filters.modality) {
+    // One modality → the endpoint_type(s) that share it; the backend filter
+    // accepts a comma-separated list (endpoint_type = ANY). "chat" therefore
+    // covers both chat and responses rows.
+    const kinds = endpointKindsForModality(filters.modality);
+    if (kinds.length > 0) params.set('endpointType', kinds.join(','));
+  }
   if (t(filters.startTime)) {
     const start = toRFC3339WithOffset(filters.startTime);
     if (start) params.set('startTime', start);
@@ -219,6 +231,7 @@ const LABELS: Partial<Record<keyof LiveTrafficFiltersState, string>> = {
   statusRange: 'HTTP status class',
   statusCode: 'HTTP status code',
   cacheStatus: 'Cache',
+  modality: 'Modality',
   startTime: 'From',
   endTime: 'To',
   targetHost: 'Target',
@@ -281,6 +294,7 @@ export function describeLiveTrafficFilters(filters: LiveTrafficFiltersState): st
     lines.push(`HTTP: ${STATUS_RANGE_LABEL[filters.statusRange]}`);
   }
   if (filters.cacheStatus) lines.push(`Cache: ${filters.cacheStatus}`);
+  if (filters.modality) lines.push(`${LABELS.modality}: ${filters.modality}`);
   if (t(filters.startTime)) {
     try {
       lines.push(`${LABELS.startTime}: ${formatDateTime(filters.startTime)}`);

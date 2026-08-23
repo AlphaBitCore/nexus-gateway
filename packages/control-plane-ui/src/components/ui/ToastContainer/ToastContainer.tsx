@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import styles from './ToastContainer.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 export interface ToastItem {
   id: number;
@@ -28,10 +29,11 @@ function SingleToast({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: n
   const [progress, setProgress] = useState(100);
   const icon = TYPE_ICON[toast.type] ?? TYPE_ICON.info;
 
+  const armTimeout = useTimeouts();
   const handleDismiss = useCallback(() => {
     setExiting(true);
-    setTimeout(() => onDismiss(toast.id), 250);
-  }, [onDismiss, toast.id]);
+    armTimeout(() => onDismiss(toast.id), 250);
+  }, [onDismiss, toast.id, armTimeout]);
 
   useEffect(() => {
     const start = Date.now();

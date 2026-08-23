@@ -33,6 +33,8 @@ The runner writes a unified markdown report to
 | L1 smoke (Bash + curl + psql) | `tests/smoke/` | `bash tests/smoke/run-all.sh` |
 | L1 Go integration | `tests/integration-go/` | `cd tests/integration-go && go test ./...` |
 | L2 protocol (Python + openai/anthropic SDK) | `tests/e2e-python/protocol/` | `cd tests/e2e-python && uv run pytest protocol/` |
+| L2 OpenAI SDK drop-in (Python, 60 cases — AP-3) | `tests/e2e-python/sdk_compat/` | `cd tests/e2e-python && NEXUS_TEST_TARGET=stg uv run pytest sdk_compat/ -m 'not slow'` |
+| L2 OpenAI SDK drop-in (Node mirror, 22 cases) | `tests/e2e-node/` | `cd tests/e2e-node && npm install && NEXUS_TEST_TARGET=stg npx vitest run` |
 | L3 AI-judge (Python + Kimi 128k via Nexus VK) | `tests/e2e-python/ai_judge/` | `cd tests/e2e-python && uv run pytest ai_judge/` |
 | L4 UI E2E (Playwright) | `tests/e2e-ui/` | `cd tests/e2e-ui && npx playwright test` |
 

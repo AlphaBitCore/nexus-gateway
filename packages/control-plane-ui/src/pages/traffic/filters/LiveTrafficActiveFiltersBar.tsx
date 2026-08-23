@@ -45,6 +45,7 @@ function buildRemovableChips(applied: LiveTrafficFiltersState, fallbackLines: st
   add('statusCode', v(applied.statusCode) ? `${lbl('http')} ${v(applied.statusCode)}` : '', { statusCode: '' });
   add('statusRange', !v(applied.statusCode) && applied.statusRange ? `${lbl('http')}: ${lbl(statusRangeLabelKey(applied.statusRange))}` : '', { statusRange: '' });
   add('cacheStatus', applied.cacheStatus ? `${lbl('cache')}: ${applied.cacheStatus}` : '', { cacheStatus: '' });
+  add('modality', applied.modality ? `${lbl('modality')}: ${tr(`pages:traffic.modality.${applied.modality}`)}` : '', { modality: '' });
   if (v(applied.startTime) || v(applied.endTime)) {
     const any = lbl('any');
     const from = fallbackLines.find((line) => line.startsWith('From:'))?.replace(/^From:\s*/, '') || v(applied.startTime);

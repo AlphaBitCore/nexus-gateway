@@ -18,6 +18,7 @@ import type { DataTableColumn } from '@/components/ui';
 import type { Organization, Project, AdminUser } from '../../../api/types';
 import { formatDate } from '@/lib/format';
 import styles from './OrganizationDetail.module.css';
+import { useTimeouts } from '@/hooks/useTimeouts';
 
 /* ── Schema ────────────────────────────────────────────────────────────── */
 
@@ -72,11 +73,12 @@ export function OrganizationDetail() {
   const [membersOffset, setMembersOffset] = useState(0);
   const [membersLimit, setMembersLimit] = useState<AdminListPageSize>(DEFAULT_ADMIN_LIST_PAGE_SIZE as AdminListPageSize);
 
+  const armTimeout = useTimeouts();
   const showTip = useCallback((text: string, e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setTip({ text, x: rect.left, y: rect.top - 6 });
-    setTimeout(() => setTip(null), 3000);
-  }, []);
+    armTimeout(() => setTip(null), 3000);
+  }, [armTimeout]);
 
   const form = useZodForm<OrgEditValues>({
     schema: orgEditSchema,

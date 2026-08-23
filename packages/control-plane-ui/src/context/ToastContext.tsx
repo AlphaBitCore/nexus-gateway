@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback } from 'react';
+import { useTimeouts } from '@/hooks/useTimeouts';
 import { ToastContainer } from '../components/ui/ToastContainer';
 import type { ToastItem } from '../components/ui/ToastContainer';
 
@@ -12,6 +13,10 @@ let toastIdCounter = 0;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  // The safety-fallback timers below must not outlive the provider: one that
+  // fires into an unmounted tree updates state on it, and with the surrounding
+  // environment already gone React reaches for `window` and throws.
+  const armTimeout = useTimeouts();
 
   const dismiss = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -21,8 +26,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const id = ++toastIdCounter;
     setToasts((prev) => [...prev, { id, message, type }]);
     const dismissMs = type === 'success' ? 3000 : type === 'info' ? 4000 : 5000;
-    setTimeout(() => dismiss(id), dismissMs + 500); // safety fallback after ToastContainer auto-dismiss
-  }, [dismiss]);
+    // Safety fallback after ToastContainer auto-dismiss.
+    armTimeout(() => dismiss(id), dismissMs + 500);
+  }, [dismiss, armTimeout]);
 
   return (
     <ToastContext.Provider value={{ addToast }}>

@@ -12,11 +12,17 @@
       "providerModelId": "gemini-3-pro-preview",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 12,
@@ -31,11 +37,17 @@
       "providerModelId": "gemini-3.5-flash",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.5,
       "outputPricePerMillion": 9,
@@ -50,11 +62,17 @@
       "providerModelId": "gemini-3-flash-preview",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.5,
       "outputPricePerMillion": 3,
@@ -69,11 +87,17 @@
       "providerModelId": "gemini-3.1-flash-lite",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.25,
       "outputPricePerMillion": 1.5,
@@ -88,11 +112,17 @@
       "providerModelId": "gemini-2.5-pro",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 1.25,
       "outputPricePerMillion": 10,
@@ -107,11 +137,17 @@
       "providerModelId": "gemini-2.5-flash",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 0.3,
       "outputPricePerMillion": 2.5,
@@ -126,11 +162,17 @@
       "providerModelId": "claude-sonnet-5",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 2,
       "outputPricePerMillion": 10,
@@ -146,11 +188,17 @@
       "providerModelId": "claude-opus-4-8",
       "type": "chat",
       "features": [
-        "vision",
         "function_calling",
         "streaming",
         "reasoning",
         "prompt_caching"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "inputPricePerMillion": 5,
       "outputPricePerMillion": 25,
@@ -166,6 +214,12 @@
       "providerModelId": "gemini-embedding-2",
       "type": "embedding",
       "features": [],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
       "inputPricePerMillion": 0.2,
       "outputPricePerMillion": 0,
       "maxContextTokens": 8192

@@ -82,10 +82,20 @@
   color: var(--color-primary-foreground);
 }
 
+/* The "not comparable" annotation and no_basis coverage reuse the org_only
+   treatment on purpose: all three say "this number is display-only, do not act
+   on it". no_basis is not styled as an error like fetch_failed — the vendor call
+   worked; it is our side that has nothing to compare. */
 .badge[data-coverage='org_only'],
-.badge[data-coverage='priority_tier_undercount'] {
+.badge[data-coverage='priority_tier_undercount'],
+.badge[data-coverage='no_basis'],
+.badge[data-note='not_comparable'] {
   background: var(--color-warning);
   color: var(--color-primary-foreground);
+}
+
+.badge[data-note='not_comparable'] {
+  margin-left: var(--g-space-2);
 }
 
 .reviewCell {

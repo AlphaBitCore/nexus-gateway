@@ -15,6 +15,12 @@
         "function_calling",
         "streaming"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "maxContextTokens": 131072
     },
     {
@@ -25,6 +31,12 @@
       "type": "chat",
       "features": [
         "streaming"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "maxContextTokens": 131072
     },
@@ -38,6 +50,12 @@
         "function_calling",
         "streaming"
       ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
       "maxContextTokens": 131072
     },
     {
@@ -48,6 +66,12 @@
       "type": "chat",
       "features": [
         "streaming"
+      ],
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
       ],
       "maxContextTokens": 32768
     }
