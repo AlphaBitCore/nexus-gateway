@@ -8,6 +8,212 @@ All notable changes to this project are documented here. The format follows
 
 ## [1.6.0] — 2026-08-23
 
+### Added
+
+- **`Model.features` gains `structured_outputs`, and GET /v1/models publishes
+  it.** The array is a shipped contract, so this is an additive contract change:
+  existing values are untouched and a consumer reading only the older tags is
+  unaffected. It answers a question no existing tag answered — will this model
+  hold its answer to a caller-supplied JSON Schema — which is NOT what
+  `json_mode` says. `json_mode` describes the weaker
+  `response_format: {type: json_object}`, and the two disagree on exactly the
+  rows that matter: probed per model against each provider's own wire on
+  2026-08-19, `gpt-4-turbo` carries `json_mode` and answers 400 to a schema,
+  while every `claude-*`, every `command-*` and the whole o-series carry no
+  `json_mode` and serve one correctly.
+
+  The tag is an ELIGIBILITY constraint, not a preference: `auto` will not choose
+  a model whose row lacks it for a request carrying a `json_schema`. One
+  catalogued model is the reason — `kimi-k2.5` accepts the field and answers
+  with HTTP 200, `finish_reason: stop`, and prose, so nothing downstream can
+  turn it into an error and the caller's own parse is the first thing that
+  notices. A model the caller NAMES is unaffected; their model's limits are
+  theirs.
+
+  **A row that declares other features and not this one is excluded from
+  structured-output routing.** 44 rows on the six providers a key exists for are
+  tagged from measurement; rows on the thirteen template-only adapters
+  (`azure-openai`, `bedrock`, `vertex`, `fireworks`, `together`, `groq`,
+  `mistral`, `xai`, `glm`, `minimax`, `perplexity`, `huggingface`, `replicate`)
+  are untagged and therefore not selected for such requests. Operators running
+  those providers who want them eligible should probe the wire and tag the rows;
+  inferring the answer from a direct-provider twin is what this tag exists to
+  avoid.
+
+- **`capability_matrix` on GET /v1/models gains `reasoning` and
+  `structured_outputs`.** Both are hard routing filters, so a client could not
+  observe from the public catalogue the two facts `auto` actually acts on.
+  Additive: the five existing keys are unchanged.
+
+- **Media is one shape, with one grammar and one resolver.** Every binary a
+  request or response carries — image, audio, video, document — is now a
+  single `MediaRef` naming what the bytes are, proving which bytes they were
+  (`sha256`), and, when they are recoverable, saying where to find them. It
+  replaces two `BinaryRef` families, six divergent per-codec behaviours and a
+  parallel `image_ref` summary.
+
+  The locator grammar has five containers, each resolvable from the stored
+  bytes alone: `body`, `json:<path>`, `datauri:<path>`, `sse:<frame>:<path>`,
+  `multipart:<part>`. Grammar, predicates and resolver live in one package
+  (`transport/normalize/locator`), because a locator is a promise, and a
+  promise made in one place and kept in another drifts — the codecs and the
+  admin artifact endpoint previously disagreed about what counted as
+  decodable.
+
+- **`GET /api/admin/traffic/{id}/artifact` resolves any locator**, on either
+  direction, through the same package that built it:
+  `?locator=<locator>&direction=request|response`. Request-side media — an
+  uploaded image, transcribed audio, a submitted document — is reachable for
+  the first time. Omitting `locator` keeps the endpoint's original behaviour
+  for image generations and TTS; those derive the locator the caller did not
+  send and take the same path rather than being a second implementation.
+
+  The served `Content-Type` is sniffed from the bytes, never taken from what
+  the wire declared. Types outside a frozen inline-renderable set still serve;
+  they download instead of rendering. Every response carries `nosniff`, a
+  `default-src 'none'; sandbox` CSP, `Cross-Origin-Resource-Policy:
+  same-origin`, `Cache-Control: private, no-store`, an `ETag` over the bytes
+  (`If-None-Match` yields 304), and a filename built from the event id and the
+  sniffed type. New statuses: `400` (unreadable locator), `422` (the bytes are
+  there and are not decodable).
+
+- **Large binary request inputs are captured.** STT audio and video input
+  references were fingerprinted and released; the transcription was auditable
+  and the thing transcribed was not. They are now captured by handing over the
+  buffer the request already holds rather than copying it — measured at the
+  26 MiB STT ceiling, 3.3 ns and zero allocations against 1.36 ms and 27 MB
+  across four allocations for the copy path. The size lands off-heap on the
+  async audit side through the existing spill. Capture never changes what is
+  forwarded upstream, and both paths pin that with a test that re-emits the
+  forward after capture has taken its reference.
+
+  With payload capture off, the fingerprint alone is surfaced as a
+  `fingerprint` media element, so the file is still identifiable by digest.
+
+- **Published multi-architecture container images and a `docker compose`
+  quickstart.** `nexus-hub`, `control-plane`, `ai-gateway`,
+  `compliance-proxy`, `control-plane-ui`, and `db-migrator` are now built and
+  published to `ghcr.io/alphabitcore` and `docker.io/alphabitcore` for
+  `linux/amd64` and `linux/arm64`, plus an amd64-only `-avx2` tag variant for
+  the four Go services. `deploy/docker-compose.yml` brings up a working
+  instance from those images in two commands (`./init-secrets.sh` then
+  `docker compose up -d`); see
+  `docs/developers/architecture/cross-cutting/deployment/container-image-architecture.md`
+  and `docs/operators/ops/container-deployment.md`.
+
+- **Self-contained Linux tarballs.** `scripts/release/build-tarball.sh`
+  produces `nexus-gateway-<version>-linux-<arch>.tar.gz` with statically
+  linked service binaries, the built UI, and systemd units, for operators
+  who deploy without containers.
+
+- **Vendor-spend reconciliation: `traffic_event` now records the smart-router
+  LLM call's own cost and the provider that served it, closing the gap that
+  under-reported OpenAI spend by 28.2% ($39.46 over eleven days of production
+  traffic) while Anthropic reconciled to -0.07%.** Three additive
+  `traffic_event` columns — `router_cost_usd`, `router_provider_id`,
+  `embedding_provider_id` — carried over new binwire field ids `109`-`111`,
+  plus two new rollup series (`vendor_spend_usd`, `vendor_spend_internal_usd`)
+  that attribute each cost component (customer traffic, router call, L2
+  embedding, AI-Guard classifier) to the provider that was **actually
+  charged** for it — which is frequently not the provider that served the
+  request. One `traffic_event` row can therefore contribute to several
+  providers' vendor-spend totals at once. The vendor-bill reconciliation job's
+  diff basis moves to this series via two additive
+  `vendor_bill_reconciliation` columns, `our_vendor_spend_usd` and
+  `our_internal_ops_usd`; the existing `our_billed_usd` column and customer
+  quota/billing are untouched. The reconciliation report's read and
+  review-ack endpoints gain two additive response fields, `ourVendorSpendUsd`
+  and `ourInternalOpsUsd`, and a `no_basis` coverage value for days the
+  vendor billed but the gateway recorded no comparable vendor spend for.
+  Rows written before this change are not comparable — router cost was never
+  recorded in any form historically, so no backfill can reconstruct it — and
+  the report marks them as such. See
+  `docs/superpowers/specs/2026-08-04-vendor-spend-reconciliation-design.md`
+  for the full analysis and
+  `docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md`
+  for the cost-attribution detail. One side effect: the AI-Guard classifier's
+  own `traffic_event` row now carries a `routed_provider` dimension (it
+  previously carried none), so an operator who enables AI-Guard will see that
+  provider's per-provider request count and token totals step up in
+  Analytics → By Provider with no other config change — `billed_cost_usd` is
+  unaffected. Dormant today: production has zero ai-guard rows.
+
+  **Deploy order is mandatory: schema → Hub → producers.** The new binwire
+  field ids are FORWARD-INCOMPATIBLE — a producer (ai-gateway,
+  compliance-proxy, agent) emitting field id 109, 110, or 111 to a Hub that
+  does not yet know them has that field silently dropped, not queued or
+  errored. Apply the schema migration first, deploy the Hub second, and only
+  then deploy/restart the producers.
+
+  **Operator impact — expect one `vendor.bill_sync_failed` alert per
+  reconciled provider on first deploy, and it is not a regression.** The
+  reconcile job's trailing window is `[today-5, today-2]` (UTC); on its first
+  run after this deploy, days in that window predate the vendor-spend series
+  and get `coverage='no_basis'` placeholder rows — an honest "we have no
+  comparable basis for this day" signal, not a computed 100% drift. Once a
+  `no_basis` (or `fetch_failed`) row stays unhealed past the ~25-hour
+  staleness threshold it raises `vendor.bill_sync_failed`, so expect exactly
+  one such alert per covered provider shortly after deploy. It auto-resolves
+  as those pre-cutover days age out of the bounded trailing window — no
+  action needed. See
+  `docs/operators/ops/runbooks/vendor-bill-reconciliation.md` (the `no_basis`
+  row in the coverage table) and `docs/operators/ops/runbooks/alerts.md`
+  (the `vendor.bill_sync_failed` section) for the full alert semantics.
+
+- **The `audio` model type is retired.** It was minted by model discovery for
+  any id containing "audio", and the models that received it — `gpt-audio-*` —
+  are served by the provider on chat completions, so the routing guard
+  rejected every one of their requests with `MODEL_MODALITY_MISMATCH`. `type`
+  answers *which endpoint serves this model*; which modalities it handles is
+  what `inputModalities` / `outputModalities` are for, and one scalar cannot
+  answer both. Discovery no longer mints it, the two affected rows are typed
+  `chat`, and `EndpointKindAcceptsModelType` no longer accepts it for tts,
+  stt or realtime.
+
+  **Migration:** none for callers. Any catalogue row still carrying
+  `type: "audio"` should be retyped to the endpoint that actually serves it;
+  a standing test fails if one appears.
+
+- **Catalogue modality data corrected.** 94 models advertised `vision` while
+  declaring text-only input, 33 contradicted their own type (embeddings
+  emitting text, transcribe models taking no audio), and 188 carried no
+  modality arrays at all. Nothing broke only because the routing guard reads
+  `type` and ignores those fields — which made the drift latent rather than
+  harmless. A standing check now asserts the three descriptions agree, so the
+  next model sync cannot reintroduce it.
+
+- **Media custody has six states, each with a producer.** `aged-out` gained
+  one: when the Control Plane serves a stored normalized sidecar after
+  establishing that no body is recoverable, captured references in it are
+  rewritten — locator cleared so no control is offered, digest kept so the
+  file is still identifiable. Previously such a row offered a Download that
+  resolved to 404. `redacted` was removed; nothing produced it, and a custody
+  value nothing can reach is a distinction the system claims to make and does
+  not.
+
+- **Cohere catalogue completed.** `command-a-vision-07-2025` (verified against
+  the live API) and the `rerank-v3.5` / `rerank-english-v3.0` /
+  `rerank-multilingual-v3.0` family are catalogued. Rerank rows record no
+  per-token price — Cohere bills per search unit, and a zero would render as
+  "free" where absent renders as "not priced".
+
+- **`traffic_event.end_user_id` is stamped from `X-Nexus-End-User-Id` only.**
+  The tag correlates traffic to the same end user across the Nexus product
+  family, so it is something a caller declares to Nexus. The gateway no longer
+  falls back to a provider's own end-user field — the OpenAI shape's top-level
+  `user` / `safety_identifier` and the Anthropic shape's `metadata.user_id`
+  identify the caller's end user *to that provider* and answer a different
+  question, so filing traffic under them attributed rows to an identifier
+  nobody chose for the purpose.
+
+  **Migration:** callers relying on the fallback must send the header;
+  otherwise `end_user_id` is NULL for their rows from this release on and
+  existing rows are untouched. Attribution now behaves identically on every
+  ingress shape rather than depending on which protocol a caller speaks, and
+  the request path no longer scans request bodies for the field — measured at
+  27 microseconds for a 64 KiB body and 105 microseconds at 256 KiB, against
+  32 nanoseconds when the header is present.
+
 ### Changed
 
 - **`error.code` is a string on every error the gateway itself produces.** A
@@ -248,187 +454,6 @@ All notable changes to this project are documented here. The format follows
   publishing the shape of a deployment's model list to a caller who wanted one
   model.
 
-### Removed
-
-- **`POST /v1/audio/translations` is withdrawn.** No catalogue model served it,
-  so every call reached a routing failure; the route now answers as an endpoint
-  this gateway does not serve. Migration: transcribe with
-  `POST /v1/audio/transcriptions` and translate the text with a chat model.
-
-- **The `policy` strategy type is gone from the admin API and the published
-  schema.** It never had an implementation. A rule carrying it was accepted,
-  broadcast fleet-wide, and then held the primary slot at stage 1 while
-  returning no targets and no error — locking out every lower-priority rule
-  with nothing surfaced. `POST`/`PATCH` now reject the value, at the top level
-  and as a nested node.
-
-  **Migration, unconditional:**
-  `tools/db-migrate/manual-scripts/disable_policy_routing_rules_2026_08_08.sql`
-  disables stored `policy` rules and appends the reason. The row and its config
-  are kept and NOT rewritten to another strategy — a `policy` node names no
-  provider or model to convert, and silently reinterpreting an admin's
-  configuration is what this release stops doing.
-
-  The admin UI previously mapped an unrecognised stored strategy onto `single`
-  when opening the edit form, so saving any field — even the name — persisted a
-  single-shaped rule over the original configuration, while the detail page
-  still displayed `policy`. The form now refuses to load such a rule and says
-  why.
-
-### Added
-
-- **`Model.features` gains `structured_outputs`, and GET /v1/models publishes
-  it.** The array is a shipped contract, so this is an additive contract change:
-  existing values are untouched and a consumer reading only the older tags is
-  unaffected. It answers a question no existing tag answered — will this model
-  hold its answer to a caller-supplied JSON Schema — which is NOT what
-  `json_mode` says. `json_mode` describes the weaker
-  `response_format: {type: json_object}`, and the two disagree on exactly the
-  rows that matter: probed per model against each provider's own wire on
-  2026-08-19, `gpt-4-turbo` carries `json_mode` and answers 400 to a schema,
-  while every `claude-*`, every `command-*` and the whole o-series carry no
-  `json_mode` and serve one correctly.
-
-  The tag is an ELIGIBILITY constraint, not a preference: `auto` will not choose
-  a model whose row lacks it for a request carrying a `json_schema`. One
-  catalogued model is the reason — `kimi-k2.5` accepts the field and answers
-  with HTTP 200, `finish_reason: stop`, and prose, so nothing downstream can
-  turn it into an error and the caller's own parse is the first thing that
-  notices. A model the caller NAMES is unaffected; their model's limits are
-  theirs.
-
-  **A row that declares other features and not this one is excluded from
-  structured-output routing.** 44 rows on the six providers a key exists for are
-  tagged from measurement; rows on the thirteen template-only adapters
-  (`azure-openai`, `bedrock`, `vertex`, `fireworks`, `together`, `groq`,
-  `mistral`, `xai`, `glm`, `minimax`, `perplexity`, `huggingface`, `replicate`)
-  are untagged and therefore not selected for such requests. Operators running
-  those providers who want them eligible should probe the wire and tag the rows;
-  inferring the answer from a direct-provider twin is what this tag exists to
-  avoid.
-
-- **`capability_matrix` on GET /v1/models gains `reasoning` and
-  `structured_outputs`.** Both are hard routing filters, so a client could not
-  observe from the public catalogue the two facts `auto` actually acts on.
-  Additive: the five existing keys are unchanged.
-
-- **Media is one shape, with one grammar and one resolver.** Every binary a
-  request or response carries — image, audio, video, document — is now a
-  single `MediaRef` naming what the bytes are, proving which bytes they were
-  (`sha256`), and, when they are recoverable, saying where to find them. It
-  replaces two `BinaryRef` families, six divergent per-codec behaviours and a
-  parallel `image_ref` summary.
-
-  The locator grammar has five containers, each resolvable from the stored
-  bytes alone: `body`, `json:<path>`, `datauri:<path>`, `sse:<frame>:<path>`,
-  `multipart:<part>`. Grammar, predicates and resolver live in one package
-  (`transport/normalize/locator`), because a locator is a promise, and a
-  promise made in one place and kept in another drifts — the codecs and the
-  admin artifact endpoint previously disagreed about what counted as
-  decodable.
-
-- **`GET /api/admin/traffic/{id}/artifact` resolves any locator**, on either
-  direction, through the same package that built it:
-  `?locator=<locator>&direction=request|response`. Request-side media — an
-  uploaded image, transcribed audio, a submitted document — is reachable for
-  the first time. Omitting `locator` keeps the endpoint's original behaviour
-  for image generations and TTS; those derive the locator the caller did not
-  send and take the same path rather than being a second implementation.
-
-  The served `Content-Type` is sniffed from the bytes, never taken from what
-  the wire declared. Types outside a frozen inline-renderable set still serve;
-  they download instead of rendering. Every response carries `nosniff`, a
-  `default-src 'none'; sandbox` CSP, `Cross-Origin-Resource-Policy:
-  same-origin`, `Cache-Control: private, no-store`, an `ETag` over the bytes
-  (`If-None-Match` yields 304), and a filename built from the event id and the
-  sniffed type. New statuses: `400` (unreadable locator), `422` (the bytes are
-  there and are not decodable).
-
-- **Large binary request inputs are captured.** STT audio and video input
-  references were fingerprinted and released; the transcription was auditable
-  and the thing transcribed was not. They are now captured by handing over the
-  buffer the request already holds rather than copying it — measured at the
-  26 MiB STT ceiling, 3.3 ns and zero allocations against 1.36 ms and 27 MB
-  across four allocations for the copy path. The size lands off-heap on the
-  async audit side through the existing spill. Capture never changes what is
-  forwarded upstream, and both paths pin that with a test that re-emits the
-  forward after capture has taken its reference.
-
-  With payload capture off, the fingerprint alone is surfaced as a
-  `fingerprint` media element, so the file is still identifiable by digest.
-
-- **Published multi-architecture container images and a `docker compose`
-  quickstart.** `nexus-hub`, `control-plane`, `ai-gateway`,
-  `compliance-proxy`, `control-plane-ui`, and `db-migrator` are now built and
-  published to `ghcr.io/alphabitcore` and `docker.io/alphabitcore` for
-  `linux/amd64` and `linux/arm64`, plus an amd64-only `-avx2` tag variant for
-  the four Go services. `deploy/docker-compose.yml` brings up a working
-  instance from those images in two commands (`./init-secrets.sh` then
-  `docker compose up -d`); see
-  `docs/developers/architecture/cross-cutting/deployment/container-image-architecture.md`
-  and `docs/operators/ops/container-deployment.md`.
-
-- **Self-contained Linux tarballs.** `scripts/release/build-tarball.sh`
-  produces `nexus-gateway-<version>-linux-<arch>.tar.gz` with statically
-  linked service binaries, the built UI, and systemd units, for operators
-  who deploy without containers.
-
-- **Vendor-spend reconciliation: `traffic_event` now records the smart-router
-  LLM call's own cost and the provider that served it, closing the gap that
-  under-reported OpenAI spend by 28.2% ($39.46 over eleven days of production
-  traffic) while Anthropic reconciled to -0.07%.** Three additive
-  `traffic_event` columns — `router_cost_usd`, `router_provider_id`,
-  `embedding_provider_id` — carried over new binwire field ids `109`-`111`,
-  plus two new rollup series (`vendor_spend_usd`, `vendor_spend_internal_usd`)
-  that attribute each cost component (customer traffic, router call, L2
-  embedding, AI-Guard classifier) to the provider that was **actually
-  charged** for it — which is frequently not the provider that served the
-  request. One `traffic_event` row can therefore contribute to several
-  providers' vendor-spend totals at once. The vendor-bill reconciliation job's
-  diff basis moves to this series via two additive
-  `vendor_bill_reconciliation` columns, `our_vendor_spend_usd` and
-  `our_internal_ops_usd`; the existing `our_billed_usd` column and customer
-  quota/billing are untouched. The reconciliation report's read and
-  review-ack endpoints gain two additive response fields, `ourVendorSpendUsd`
-  and `ourInternalOpsUsd`, and a `no_basis` coverage value for days the
-  vendor billed but the gateway recorded no comparable vendor spend for.
-  Rows written before this change are not comparable — router cost was never
-  recorded in any form historically, so no backfill can reconstruct it — and
-  the report marks them as such. See
-  `docs/superpowers/specs/2026-08-04-vendor-spend-reconciliation-design.md`
-  for the full analysis and
-  `docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md`
-  for the cost-attribution detail. One side effect: the AI-Guard classifier's
-  own `traffic_event` row now carries a `routed_provider` dimension (it
-  previously carried none), so an operator who enables AI-Guard will see that
-  provider's per-provider request count and token totals step up in
-  Analytics → By Provider with no other config change — `billed_cost_usd` is
-  unaffected. Dormant today: production has zero ai-guard rows.
-
-  **Deploy order is mandatory: schema → Hub → producers.** The new binwire
-  field ids are FORWARD-INCOMPATIBLE — a producer (ai-gateway,
-  compliance-proxy, agent) emitting field id 109, 110, or 111 to a Hub that
-  does not yet know them has that field silently dropped, not queued or
-  errored. Apply the schema migration first, deploy the Hub second, and only
-  then deploy/restart the producers.
-
-  **Operator impact — expect one `vendor.bill_sync_failed` alert per
-  reconciled provider on first deploy, and it is not a regression.** The
-  reconcile job's trailing window is `[today-5, today-2]` (UTC); on its first
-  run after this deploy, days in that window predate the vendor-spend series
-  and get `coverage='no_basis'` placeholder rows — an honest "we have no
-  comparable basis for this day" signal, not a computed 100% drift. Once a
-  `no_basis` (or `fetch_failed`) row stays unhealed past the ~25-hour
-  staleness threshold it raises `vendor.bill_sync_failed`, so expect exactly
-  one such alert per covered provider shortly after deploy. It auto-resolves
-  as those pre-cutover days age out of the bounded trailing window — no
-  action needed. See
-  `docs/operators/ops/runbooks/vendor-bill-reconciliation.md` (the `no_basis`
-  row in the coverage table) and `docs/operators/ops/runbooks/alerts.md`
-  (the `vendor.bill_sync_failed` section) for the full alert semantics.
-
-### Changed
-
 - **Vendor-bill reconciliation's `diff_usd` / `diff_pct` are now computed from
   the vendor amount and our recorded vendor spend rounded to cents**, since
   the vendor's own cost APIs (e.g. Anthropic's `cost_report`) are only
@@ -443,62 +468,6 @@ All notable changes to this project are documented here. The format follows
   the trailing `[today-5, today-2]` re-reconcile window recomputes them. See
   `docs/operators/ops/runbooks/vendor-bill-reconciliation.md` ("Diff basis is
   rounded to the cent").
-
-### Added
-
-- **The `audio` model type is retired.** It was minted by model discovery for
-  any id containing "audio", and the models that received it — `gpt-audio-*` —
-  are served by the provider on chat completions, so the routing guard
-  rejected every one of their requests with `MODEL_MODALITY_MISMATCH`. `type`
-  answers *which endpoint serves this model*; which modalities it handles is
-  what `inputModalities` / `outputModalities` are for, and one scalar cannot
-  answer both. Discovery no longer mints it, the two affected rows are typed
-  `chat`, and `EndpointKindAcceptsModelType` no longer accepts it for tts,
-  stt or realtime.
-
-  **Migration:** none for callers. Any catalogue row still carrying
-  `type: "audio"` should be retyped to the endpoint that actually serves it;
-  a standing test fails if one appears.
-
-- **Catalogue modality data corrected.** 94 models advertised `vision` while
-  declaring text-only input, 33 contradicted their own type (embeddings
-  emitting text, transcribe models taking no audio), and 188 carried no
-  modality arrays at all. Nothing broke only because the routing guard reads
-  `type` and ignores those fields — which made the drift latent rather than
-  harmless. A standing check now asserts the three descriptions agree, so the
-  next model sync cannot reintroduce it.
-
-- **Media custody has six states, each with a producer.** `aged-out` gained
-  one: when the Control Plane serves a stored normalized sidecar after
-  establishing that no body is recoverable, captured references in it are
-  rewritten — locator cleared so no control is offered, digest kept so the
-  file is still identifiable. Previously such a row offered a Download that
-  resolved to 404. `redacted` was removed; nothing produced it, and a custody
-  value nothing can reach is a distinction the system claims to make and does
-  not.
-
-- **Cohere catalogue completed.** `command-a-vision-07-2025` (verified against
-  the live API) and the `rerank-v3.5` / `rerank-english-v3.0` /
-  `rerank-multilingual-v3.0` family are catalogued. Rerank rows record no
-  per-token price — Cohere bills per search unit, and a zero would render as
-  "free" where absent renders as "not priced".
-
-- **`traffic_event.end_user_id` is stamped from `X-Nexus-End-User-Id` only.**
-  The tag correlates traffic to the same end user across the Nexus product
-  family, so it is something a caller declares to Nexus. The gateway no longer
-  falls back to a provider's own end-user field — the OpenAI shape's top-level
-  `user` / `safety_identifier` and the Anthropic shape's `metadata.user_id`
-  identify the caller's end user *to that provider* and answer a different
-  question, so filing traffic under them attributed rows to an identifier
-  nobody chose for the purpose.
-
-  **Migration:** callers relying on the fallback must send the header;
-  otherwise `end_user_id` is NULL for their rows from this release on and
-  existing rows are untouched. Attribution now behaves identically on every
-  ingress shape rather than depending on which protocol a caller speaks, and
-  the request path no longer scans request bodies for the field — measured at
-  27 microseconds for a 64 KiB body and 105 microseconds at 256 KiB, against
-  32 nanoseconds when the header is present.
 
 ### Fixed
 
@@ -638,6 +607,7 @@ All notable changes to this project are documented here. The format follows
   is named rather than silently dropped — the drop fused the text either side
   into one utterance that was never sent.
 
+||||||| 8d850e575
 - **Vendor-bill reconciliation no longer reports a day the rollup correction
   pass has not rebuilt yet.** The reconciliation basis (`metric_rollup_1d`
   `vendor_spend_usd`) is produced for historical days by `rollup-correction`,
@@ -677,6 +647,31 @@ All notable changes to this project are documented here. The format follows
   expiry edit — those are administrative decisions, not clock positions.
 
 ### Removed
+
+- **`POST /v1/audio/translations` is withdrawn.** No catalogue model served it,
+  so every call reached a routing failure; the route now answers as an endpoint
+  this gateway does not serve. Migration: transcribe with
+  `POST /v1/audio/transcriptions` and translate the text with a chat model.
+
+- **The `policy` strategy type is gone from the admin API and the published
+  schema.** It never had an implementation. A rule carrying it was accepted,
+  broadcast fleet-wide, and then held the primary slot at stage 1 while
+  returning no targets and no error — locking out every lower-priority rule
+  with nothing surfaced. `POST`/`PATCH` now reject the value, at the top level
+  and as a nested node.
+
+  **Migration, unconditional:**
+  `tools/db-migrate/manual-scripts/disable_policy_routing_rules_2026_08_08.sql`
+  disables stored `policy` rules and appends the reason. The row and its config
+  are kept and NOT rewritten to another strategy — a `policy` node names no
+  provider or model to convert, and silently reinterpreting an admin's
+  configuration is what this release stops doing.
+
+  The admin UI previously mapped an unrecognised stored strategy onto `single`
+  when opening the edit form, so saving any field — even the name — persisted a
+  single-shaped rule over the original configuration, while the detail page
+  still displayed `policy`. The form now refuses to load such a rule and says
+  why.
 
 - **`traffic_event_normalized` is dropped.** It held a second stored copy of a
   request's captured text; the normalized projection is recomputed at view time

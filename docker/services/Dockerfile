@@ -16,7 +16,10 @@ FROM ${BUILDBASE} AS builder
 ARG BUILD_VERSION=dev
 
 WORKDIR /src
-COPY go.work go.work.sum ./
+# go.work only. go.work.sum is gitignored, so it is absent from a fresh clone
+# and COPYing it would fail the build there. The workspace does not need it:
+# every dependency's checksum is covered by its own module's go.sum.
+COPY go.work ./
 COPY packages/ packages/
 # go.work's `use` list includes tests/integration-go alongside every
 # packages/* module; `go build` validates the whole workspace before it will

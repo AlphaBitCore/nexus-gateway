@@ -105,33 +105,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Builds the four services and runs the Vectorscan firing self-test inside
-      # the builder. The ISA gate runs once per leg, on the buildbase — that is
-      # where libhs's instruction set is fixed, and every service image inherits
-      # it (see build-images.sh for why measuring the linked binaries instead
-      # would reject correct images).
-      - name: Build service images
+      # Builds every image this release publishes and runs the Vectorscan firing
+      # self-test inside the builder. The ISA gate runs once per leg, on the
+      # buildbase — that is where libhs's instruction set is fixed, and every
+      # service image inherits it (see build-images.sh for why measuring the
+      # linked binaries instead would reject correct images). The two Node
+      # images have no instruction-set variant, so the script builds them on the
+      # baseline leg only. No build logic lives in this workflow: what CI
+      # publishes is what a maintainer reproduces by running the same script.
+      - name: Build images
         run: |
           scripts/release/build-images.sh \
             --config ${{ matrix.config }} \
             --version "$VERSION" \
             --registry ghcr.io/alphabitcore \
             --push
-
-      - name: Build UI and migrator images
-        if: matrix.config == 'baseline'
-        run: |
-          set -euo pipefail
-          v="$VERSION"; a="${{ matrix.arch }}"
-          revision="$(git rev-parse HEAD)"
-          for img in control-plane-ui db-migrator; do
-            ref="ghcr.io/alphabitcore/${img}:${v}-baseline-${a}"
-            docker build \
-              --label "org.opencontainers.image.revision=${revision}" \
-              --label "org.opencontainers.image.version=${v}" \
-              -f "docker/${img}/Dockerfile" -t "$ref" .
-            docker push "$ref"
-          done
 
       # build-tarball.sh runs `make control-plane-ui-build` (tsc + vite build)
       # directly on this runner, not inside a container — the npm workspace

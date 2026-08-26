@@ -164,6 +164,23 @@ services:
       NEXUS_HUB_URL: http://nexus-hub:3060
       AUTH_SERVER_URL: http://control-plane:3001
       AUTH_SERVER_ISSUER: ${CONTROL_PLANE_PUBLIC_URL:-http://localhost:${NEXUS_UI_PORT:-8080}}
+      # An identity and an address are different things, and here they are
+      # different values. AUTH_SERVER_ISSUER above is the `iss` claim, which
+      # must be the origin a BROWSER uses, so it is the published host origin.
+      # The three vars below are things a CONTAINER dials, and that origin does
+      # not resolve to the control plane from inside this network — it is the
+      # host's published port, which inside a container is a port nothing is
+      # bound to.
+      #
+      # Left to their issuer-derived defaults they are silently wrong in a way
+      # that looks like neither: the control plane cannot fetch its own signing
+      # keys, so every admin API call answers 401 while the token it rejected
+      # is perfectly valid, sign-in "succeeds" and the console bounces straight
+      # back to the login form. Revocation catchup fails the same way, which
+      # only logs a warning and quietly stops reconciling revoked tokens.
+      AUTH_SERVER_JWKS_URL: http://control-plane:3001/.well-known/jwks.json
+      AUTH_SERVER_REVOCATION_INTROSPECT_URL: http://control-plane:3001/oauth/introspect
+      AUTH_SERVER_REVOCATION_REPLAY_URL: http://control-plane:3001/api/internal/revocations
       # Each service's config validation refuses to start without its own
       # PublicURL (reported to the Hub registry as staticInfo; the admin UI
       # renders it, and it is what an external client — an agent, a browser —

@@ -71,6 +71,16 @@ if ! grep -q '^AUTH_SERVER_ISSUER=' /etc/nexus/control-plane.env; then
   echo "[nexus-first-boot] /etc/nexus/control-plane.env <- AUTH_SERVER_ISSUER=https://${IP}/"
 fi
 
+# Hub needs the SAME issuer: it pins jwt.WithIssuer(cfg.AuthServer.Issuer)
+# when verifying CP-minted enrollment JWTs (enrollment_handler.go). Without
+# this override the Hub keeps the yaml's loopback issuer while CP mints
+# tokens with iss=https://<IP>/ — every remote agent enrollment through
+# :443 fails with an issuer-mismatch 401.
+if ! grep -q '^AUTH_SERVER_ISSUER=' /etc/nexus/nexus-hub.env; then
+  echo "AUTH_SERVER_ISSUER=https://${IP}/" >> /etc/nexus/nexus-hub.env
+  echo "[nexus-first-boot] /etc/nexus/nexus-hub.env <- AUTH_SERVER_ISSUER=https://${IP}/"
+fi
+
 "$SCRIPT_DIR/nexus-first-boot-db"
 
 # Register this instance's redirect URI on the cp-ui OAuth client. The seed
@@ -103,6 +113,53 @@ chmod 0644 "$MARKER"
 # instance reaches a fully healthy state on first boot. --no-block because
 # we are a Type=oneshot unit and must not wait on these long-running
 # dependents.
+# ─── High-concurrency runtime tuning (RAM-relative; computed here, not at
+# build time, because the build instance RAM differs from the runtime one) ──
+MEM_MB=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)
+
+# GOMEMLIMIT: a Go soft memory cap so the GC defends a ceiling before the
+# kernel OOM-kills a service under a burst of large request/response bodies.
+# Total Go budget ~40% of RAM (Postgres shared_buffers ~25%, Valkey ~15%),
+# split by working-set size — the AI Gateway (largest bodies + caches) gets
+# the biggest share. Idempotent: only stamped if not already present.
+GO_BUDGET=$(( MEM_MB * 40 / 100 ))
+set_gomemlimit() {  # $1 = env file, $2 = share percent of the Go budget
+  local f=$1 pct=$2 mib
+  [ -f "$f" ] || { echo "[nexus-first-boot] WARN: $f missing, skipping GOMEMLIMIT"; return; }
+  mib=$(( GO_BUDGET * pct / 100 )); [ "$mib" -lt 256 ] && mib=256
+  if ! grep -q '^GOMEMLIMIT=' "$f"; then
+    echo "GOMEMLIMIT=${mib}MiB" >> "$f"
+    echo "[nexus-first-boot] $f <- GOMEMLIMIT=${mib}MiB"
+  fi
+}
+set_gomemlimit /etc/nexus/ai-gateway.env       35
+set_gomemlimit /etc/nexus/nexus-hub.env        30
+set_gomemlimit /etc/nexus/control-plane.env    20
+set_gomemlimit /etc/nexus/compliance-proxy.env 15
+
+# NEXUS_EVENTS storage tier: pin DURABLE FILE storage on the appliance. The code
+# default is in-memory (the perf rig's disk-bandwidth lever — it frees the data
+# disk for throughput), but on this single-box, single-broker compliance appliance
+# a NATS restart with an in-memory stream would drop published-but-undrained audit
+# events, violating the no-loss audit promise. Durability outranks the disk-write
+# saving here. Idempotent: only stamped if not already present. The Hub owns the
+# stream config (it calls EnsureStreams), so this lives in nexus-hub.env.
+if [ -f /etc/nexus/nexus-hub.env ] && ! grep -q '^NEXUS_EVENTS_STORAGE=' /etc/nexus/nexus-hub.env; then
+  echo "NEXUS_EVENTS_STORAGE=file" >> /etc/nexus/nexus-hub.env
+  echo "[nexus-first-boot] /etc/nexus/nexus-hub.env <- NEXUS_EVENTS_STORAGE=file"
+fi
+
+# Valkey maxmemory: cap the cache so response-cache growth cannot OOM the
+# co-located box. ~15% of RAM; the allkeys-lru policy is already in
+# valkey.conf. Stamped idempotently, then restart so it takes effect before
+# the Go services begin filling the cache.
+VK_MB=$(( MEM_MB * 15 / 100 )); [ "$VK_MB" -lt 256 ] && VK_MB=256
+if [ -f /etc/valkey/valkey.conf ] && ! grep -q '^maxmemory ' /etc/valkey/valkey.conf; then
+  echo "maxmemory ${VK_MB}mb" >> /etc/valkey/valkey.conf
+  echo "[nexus-first-boot] /etc/valkey/valkey.conf <- maxmemory ${VK_MB}mb"
+  systemctl restart valkey 2>/dev/null || true
+fi
+
 echo "[nexus-first-boot] kicking downstream services (cleared sticky Dependency failed from boot race)..."
 # nginx is kicked too — it tries to start before first-boot-ca.sh has written
 # /etc/nexus/tls.crt and fails with "cannot load certificate ... No such file".

@@ -7,6 +7,7 @@
 
 server:
   port: 3060
+  host: "127.0.0.1"            # loopback-only; nginx (same host) fronts agent traffic via :443
   readTimeout: 30s
   writeTimeout: 30s
   shutdownTimeout: 15s
@@ -69,12 +70,15 @@ scheduler:
   identityEnrichInterval: 5m
   enableAgentRollup: false
 
-auth:
-  internalServiceToken: ""     # env INTERNAL_SERVICE_TOKEN
+# auth.internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN from
+# /etc/nexus/nexus-hub.env) — yaml carries no secret fields.
 
 authServer:
   url: "http://127.0.0.1:3001"
   jwksURL: "http://127.0.0.1:3001/.well-known/jwks.json"
+  # issuer is overridden by env AUTH_SERVER_ISSUER (first-boot stamps
+  # https://<instance-ip>/ into nexus-hub.env to match the issuer the CP
+  # mints into enrollment JWTs — Hub pins it via jwt.WithIssuer).
   issuer: "http://127.0.0.1:3001"
 
 agentCA:
@@ -95,3 +99,17 @@ hub:
   id: "hub-appliance-1"
   advertiseAddr: "http://127.0.0.1:3060"
   allowedOrigins: []
+
+# Out-of-band body storage (agent_audit large payloads). The appliance has
+# no S3 dependency by design — localfs backend on the shared data volume.
+# All four services MUST point at the same root so any service can resolve
+# refs produced by any other. Defaults would allow 50 GiB total — explicit
+# caps because the appliance root volume is only 30 GB.
+spill:
+  enabled: true
+  backend: "localfs"
+  localfs:
+    root: "/var/lib/nexus/spill"
+    perObjectCap: 33554432     # 32 MiB — aligned with nginx global client_max_body_size (spilled bodies are AI prompts/responses, rarely larger)
+    totalSizeCap: 5368709120   # 5 GiB
+    retentionDays: 7

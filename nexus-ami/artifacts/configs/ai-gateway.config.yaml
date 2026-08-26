@@ -4,6 +4,9 @@
 
 server:
   port: 3050
+  host: "127.0.0.1"            # loopback-only; nginx fronts /v1 via :443. Critically keeps the
+                               # unauthenticated /internal/* debug surface (incl. credential probe)
+                               # off every interface but loopback.
   readTimeout: "30s"
   writeTimeout: "360s"
 
@@ -39,11 +42,9 @@ redis:
   writeTimeout: 3s
   poolTimeout: 4s
 
-auth:
-  hmacSecret: ""               # env ADMIN_KEY_HMAC_SECRET
-  credentialMasterKey: ""      # env CREDENTIAL_ENCRYPTION_KEY (64 hex chars)
-  credentialKeyMap: ""
-  internalServiceToken: ""     # env INTERNAL_SERVICE_TOKEN
+# Secrets are env-only (loaded from /etc/nexus/ai-gateway.env):
+#   INTERNAL_SERVICE_TOKEN, ADMIN_KEY_HMAC_SECRET, CREDENTIAL_ENCRYPTION_KEY,
+#   AI_GATEWAY_API_TOKEN — yaml carries no secret fields.
 
 log:
   level: "info"
@@ -62,7 +63,10 @@ cors:
   enabled: false
   allowedOrigins: []
   allowedMethods: ["GET", "POST", "OPTIONS"]
-  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  # Extra request headers on top of the built-in always-allowed set
+  # (gateway auth/correlation/feature headers + the forward-header
+  # allowlist). Extends, never replaces.
+  allowedHeaders: []
   maxAgeSec: 600
 
 cache:
@@ -80,8 +84,20 @@ observability:
 
 routing:
   defaultRetryPolicy:
-    maxAttemptsPerTarget: 1
+    # 2 = one same-target retry on a transient fault before L3 failover.
+    maxAttemptsPerTarget: 2
     retryOn: ["network", "timeout", "429", "5xx"]
     backoffInitial: 250ms
     backoffMax: 5s
     backoffJitter: 0.2
+
+# Out-of-band body storage. localfs (no S3 in the appliance); same root +
+# caps as the other three services — see nexus-hub.config.yaml for the why.
+spill:
+  enabled: true
+  backend: "localfs"
+  localfs:
+    root: "/var/lib/nexus/spill"
+    perObjectCap: 33554432     # 32 MiB — aligned with nginx global client_max_body_size (spilled bodies are AI prompts/responses, rarely larger)
+    totalSizeCap: 5368709120   # 5 GiB
+    retentionDays: 7

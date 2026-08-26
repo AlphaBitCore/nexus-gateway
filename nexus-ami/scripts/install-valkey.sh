@@ -18,13 +18,29 @@ set -euo pipefail
 # and aborted boot. Bumping to 9.0.4 (the latest in the 9.0.x line) restores
 # compatibility while staying on the 9.0 series (avoiding 9.1.x feature drift).
 VALKEY_VERSION=9.0.4
+# sha256 of the GitHub source tarball for VALKEY_VERSION, verified
+# out-of-band when the version was pinned. `sha256sum -c` fails the build on any
+# mismatch (substituted tarball / build-time MITM). Re-record on every version
+# bump: curl -fsSL .../archive/refs/tags/<v>.tar.gz | sha256sum.
+VALKEY_SHA256=8d65e12cc9edb14d117b56fd33300e7b8cde2c087356de3f055d44689667670b
 # valkey-search GitHub tags do NOT use a `v` prefix (e.g. `1.2.0`, not
 # `v1.2.0`). Verified via GitHub API 2026-05-28; 1.2.0 is the latest stable
 # release. Bumping requires re-checking the API:
 #   curl -fsSL https://api.github.com/repos/valkey-io/valkey-search/tags
 VALKEY_SEARCH_VERSION=1.2.0
+# immutable commit the 1.2.0 tag pointed at when pinned (a
+# lightweight tag can be MOVED upstream to attacker code). The build clones the
+# tag for convenience, then verify_git_commit asserts HEAD == this SHA and
+# fails the build on drift. Submodule gitlinks (gRPC/Protobuf/Abseil) live in
+# this commit's tree, so pinning the top commit transitively pins them all.
+# Re-record on bump: curl -fsSL \
+#   https://api.github.com/repos/valkey-io/valkey-search/git/refs/tags/<v>
+VALKEY_SEARCH_COMMIT=85b829470df17e870bc175fbb48a622b0ce2082b
 BUILD_DIR=/tmp/valkey-build
 INSTALL_PREFIX=/usr/local
+
+# shellcheck source=lib-verify.sh
+source "$(dirname "$0")/lib-verify.sh"
 
 echo "==> [install-valkey] installing build dependencies..."
 # valkey-search 1.x switched to ninja + cmake + submodules (gRPC, Protobuf,
@@ -101,6 +117,8 @@ echo "==> [install-valkey] downloading Valkey $VALKEY_VERSION source..."
 mkdir -p "$BUILD_DIR" && cd "$BUILD_DIR"
 curl -fsSL "https://github.com/valkey-io/valkey/archive/refs/tags/$VALKEY_VERSION.tar.gz" \
   -o "valkey-$VALKEY_VERSION.tar.gz"
+# fail-closed integrity check before we trust/compile these bytes.
+verify_sha256 "$VALKEY_SHA256" "valkey-$VALKEY_VERSION.tar.gz"
 tar xzf "valkey-$VALKEY_VERSION.tar.gz"
 cd "valkey-$VALKEY_VERSION"
 
@@ -123,6 +141,10 @@ cd "$BUILD_DIR"
 git clone --recurse-submodules --depth 1 --shallow-submodules \
   --branch "$VALKEY_SEARCH_VERSION" \
   https://github.com/valkey-io/valkey-search.git
+# assert the tag still resolves to the pinned immutable commit before
+# we compile it into libsearch.so (which Valkey dlopen()s in-process). A moved
+# tag or a repointed vendored submodule fails the build here.
+verify_git_commit "$BUILD_DIR/valkey-search" "$VALKEY_SEARCH_COMMIT"
 cd valkey-search
 
 # ─── Patch: Linux x86_64 + clang duplicate-overload in type_conversions.h ───

@@ -231,6 +231,8 @@ func clearAllEnv(t *testing.T) {
 		"ADMIN_KEY_HMAC_SECRET", "INTERNAL_SERVICE_TOKEN", "HUB_CONFIG_TOKEN",
 		"CONTROL_PLANE_CRYPTO_PRODUCTION",
 		"AUTH_SERVER_ISSUER", "AUTH_SERVER_KEYSTORE_DIR",
+		"AUTH_SERVER_JWKS_URL",
+		"AUTH_SERVER_REVOCATION_INTROSPECT_URL", "AUTH_SERVER_REVOCATION_REPLAY_URL",
 	} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
@@ -800,5 +802,45 @@ func TestValidate_RequiredFields(t *testing.T) {
 				t.Errorf("error should mention %q; got %q", c.wantInErr, err.Error())
 			}
 		})
+	}
+}
+
+// A container configures itself through env: its yaml is baked into the image
+// and cannot be edited at deploy time. A yaml field with no env binding is
+// therefore unreachable there — and it fails silently, because the field keeps
+// its issuer-derived default and nothing reports that the value an operator
+// set was never read. These three address THIS auth server, so leaving them at
+// an issuer derived from the browser-facing origin is what makes the control
+// plane unable to fetch its own signing keys.
+func TestLoad_AuthServerSelfAddressesComeFromEnv(t *testing.T) {
+	clearAllEnv(t)
+	setRequiredEnvBaseline(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte("server:\n  port: 3001\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("AUTH_SERVER_ISSUER", "http://localhost:18080")
+	t.Setenv("AUTH_SERVER_JWKS_URL", "http://control-plane:3001/.well-known/jwks.json")
+	t.Setenv("AUTH_SERVER_REVOCATION_INTROSPECT_URL", "http://control-plane:3001/oauth/introspect")
+	t.Setenv("AUTH_SERVER_REVOCATION_REPLAY_URL", "http://control-plane:3001/api/internal/revocations")
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	for _, tc := range []struct{ name, got, want string }{
+		{"JWKSURL", cfg.AuthServer.JWKSURL, "http://control-plane:3001/.well-known/jwks.json"},
+		{"RevocationIntrospectURL", cfg.AuthServer.RevocationIntrospectURL, "http://control-plane:3001/oauth/introspect"},
+		{"RevocationReplayURL", cfg.AuthServer.RevocationReplayURL, "http://control-plane:3001/api/internal/revocations"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("AuthServer.%s = %q, want %q — the env var is not bound, so a container cannot set it at all", tc.name, tc.got, tc.want)
+		}
+	}
+	if cfg.AuthServer.Issuer != "http://localhost:18080" {
+		t.Errorf("Issuer = %q — the identity claim must stay the browser-facing origin", cfg.AuthServer.Issuer)
 	}
 }

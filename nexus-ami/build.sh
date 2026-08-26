@@ -37,21 +37,26 @@ ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 
 echo "==> [build] cleaning previous staging dirs..."
 rm -rf "$ARTIFACTS_DIR/bin" "$ARTIFACTS_DIR/ui-dist" "$ARTIFACTS_DIR/prisma" "$ARTIFACTS_DIR/scripts"
-rm -f  "$SCRIPT_DIR/artifacts.tar.gz"
-mkdir -p "$ARTIFACTS_DIR/bin" "$ARTIFACTS_DIR/ui-dist" "$ARTIFACTS_DIR/prisma"
+rm -f  "$SCRIPT_DIR/artifacts.tar.gz" "$ARTIFACTS_DIR/nexus-src.tar.gz" "$ARTIFACTS_DIR/NEXUS_VERSION"
+mkdir -p "$ARTIFACTS_DIR/ui-dist" "$ARTIFACTS_DIR/prisma"
 
-# ─── 1. Build Go binaries ──────────────────────────────────────────────────
+# ─── 1. Stage Go source (compiled ON the build instance) ───────────────────
+# The Go services link libhs (Vectorscan) via cgo, so they are built natively on
+# the linux/amd64 Packer instance by scripts/build-binaries.sh — NOT
+# cross-compiled here. A CGO_ENABLED=0 cross-compile silently selects the pure-Go
+# RE2 fallback matcher; the gateway's content-scanning engine is the Vectorscan
+# cgo path, and libhs is C++ that can't cross-compile from a macOS arm64 control
+# host. We ship the committed source tree (git archive HEAD) so the build is
+# reproducible from a tagged commit — commit your changes before building.
 
-echo "==> [build] compiling Nexus Go binaries (make build-all)..."
+echo "==> [build] staging Go source (git archive HEAD)..."
 cd "$REPO_ROOT"
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 make \
-  nexus-hub-build control-plane-build ai-gateway-build compliance-proxy-build
-
-for svc in nexus-hub control-plane ai-gateway compliance-proxy; do
-  src="$REPO_ROOT/dist/bin/$svc/$svc"
-  [ -x "$src" ] || { echo "ERROR: missing $src" >&2; exit 1; }
-  cp "$src" "$ARTIFACTS_DIR/bin/$svc"
-done
+if ! git diff --quiet HEAD 2>/dev/null; then
+  echo "WARN: working tree has uncommitted changes — the AMI builds from HEAD, so they will NOT be included." >&2
+fi
+git archive --format=tar.gz -o "$ARTIFACTS_DIR/nexus-src.tar.gz" HEAD
+git rev-parse HEAD > "$ARTIFACTS_DIR/NEXUS_VERSION"
+echo "==> [build] source: $(du -h "$ARTIFACTS_DIR/nexus-src.tar.gz" | awk '{print $1}') @ $(cat "$ARTIFACTS_DIR/NEXUS_VERSION")"
 
 # ─── 2. Build Control Plane UI Vite dist ───────────────────────────────────
 
@@ -67,15 +72,18 @@ cp -r "$ui_dist"/. "$ARTIFACTS_DIR/ui-dist/"
 
 echo "==> [build] bundling Prisma schema + seed..."
 cd "$REPO_ROOT/tools/db-migrate"
-# Prisma schema is a directory of split *.prisma files (prisma.config.ts points
-# `schema: 'schema'` at it). No package-lock.json — the appliance runs
-# `npm install` (install-node-prisma.sh), not `npm ci`. No migrations/ dir —
-# 1.0 applies the schema with `prisma db push`.
+# 1.0 uses a multi-file schema/ folder applied via `prisma db push` (no
+# migration history) plus schema-extras.sql for the PostgreSQL-native objects
+# db push can't express. prisma.config.ts points Prisma at the schema/ folder.
 cp -r schema                      "$ARTIFACTS_DIR/prisma/schema"
-cp package.json                   "$ARTIFACTS_DIR/prisma/"
-cp -r seed                        "$ARTIFACTS_DIR/prisma/seed"
+cp schema-extras.sql              "$ARTIFACTS_DIR/prisma/"
 cp prisma.config.ts               "$ARTIFACTS_DIR/prisma/"
-cp -r migrations                  "$ARTIFACTS_DIR/prisma/migrations" 2>/dev/null || true
+cp package.json                   "$ARTIFACTS_DIR/prisma/"
+# The lockfile is hoisted to the npm workspace root; copy it only if a local one
+# exists. install-node-prisma.sh runs `npm install` (not `npm ci`) on the
+# appliance, so the lockfile is not required for a successful install.
+[ -f package-lock.json ] && cp package-lock.json "$ARTIFACTS_DIR/prisma/" || true
+cp -r seed                        "$ARTIFACTS_DIR/prisma/seed"
 
 # ─── 3b. Bundle scripts/ into artifacts/scripts/ ───────────────────────────
 # Packer's file provisioner needs the destination dir to exist before scp can
