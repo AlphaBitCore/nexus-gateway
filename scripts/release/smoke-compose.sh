@@ -85,7 +85,14 @@ cleanup() {
 trap cleanup EXIT
 
 rm -f .env
-ADMIN_PASSWORD=smoke-password-not-a-secret ./init-secrets.sh >/dev/null
+# A script variable, not just a prefix on the call below: three checks read it
+# back (the rotated password authenticates, the token exchange, the admin API
+# call). A prefix assignment is scoped to that one command, so anything reading
+# $ADMIN_PASSWORD afterwards would silently send an empty password — and the
+# checks that matter most here would be asserting nothing.
+ADMIN_PASSWORD=smoke-password-not-a-secret
+export ADMIN_PASSWORD
+./init-secrets.sh >/dev/null
 # Point the stack at the registry and version under test. The compose file
 # reads both from .env, so rewriting them here is what makes --registry local
 # actually run the locally-built images.
@@ -279,12 +286,89 @@ echo "==> [smoke] checking the generated admin password works..."
 fresh_code="$(curl -s -o /dev/null -w '%{http_code}' \
   -X POST ${UI}/authserver/password \
   -H 'Content-Type: application/json' \
-  -d "{\"authctx\":\"${authctx}\",\"email\":\"admin@nexus.ai\",\"password\":\"smoke-password-not-a-secret\"}")"
+  -d "{\"authctx\":\"${authctx}\",\"email\":\"admin@nexus.ai\",\"password\":\"${ADMIN_PASSWORD}\"}")"
 if [ "$fresh_code" != "200" ]; then
   echo "ERROR: the generated admin password does not authenticate ($fresh_code) — the deployment would be unusable." >&2
   exit 1
 fi
 echo "    generated admin password accepted"
+
+echo "==> [smoke] checking the issued token is ACCEPTED by the admin API..."
+# The password check above proves a credential, not a usable console. Between
+# them sit two steps a browser takes and this script did not: exchanging the
+# authorization code for an access token, and calling the admin API with it.
+#
+# Everything in that gap can fail while every assertion above still passes. The
+# control plane verifies admin tokens against a JWKS it FETCHES, and the
+# address it fetches from defaults to the issuer — the origin a browser uses,
+# which in a container deployment need not resolve to the control plane at all.
+# When it does not, tokens are minted correctly and rejected on arrival: sign-in
+# succeeds, /api/admin/me answers 401, the SPA restarts the flow, and the
+# console cannot be signed into by anyone. Asserting only the password step
+# reports PASS on exactly that deployment.
+#
+# So finish the flow the way the SPA does and call one authenticated endpoint.
+#
+# On a FRESH authorize, not the authctx used above: unlike the rejected
+# attempt, the successful password login consumed that pending entry, and
+# reusing it answers authctx_expired — which would fail this check for a
+# reason that has nothing to do with what it is meant to prove. The code
+# verifier must be the one belonging to this authorize too, since /oauth/token
+# checks the PKCE challenge minted with it.
+flow_verifier="$(openssl rand -hex 32)"
+flow_challenge="$(printf '%s' "$flow_verifier" | openssl dgst -sha256 -binary | openssl base64 | tr '+/' '-_' | tr -d '=')"
+flow_headers="$(curl -sS -D - -o /dev/null -G "${UI}/oauth/authorize" \
+  --data-urlencode "response_type=code" \
+  --data-urlencode "client_id=${CLIENT_ID}" \
+  --data-urlencode "redirect_uri=${REDIRECT_URI}" \
+  --data-urlencode "code_challenge=${flow_challenge}" \
+  --data-urlencode "code_challenge_method=S256" \
+  --data-urlencode "state=$(openssl rand -hex 16)")"
+flow_authctx="$(printf '%s' "$flow_headers" | grep -i '^location:' | grep -oE 'authctx=[^&[:space:]]+' | head -1 | cut -d= -f2 || true)"
+if [ -z "$flow_authctx" ]; then
+  echo "ERROR: /oauth/authorize did not hand back an authctx for the token-acceptance check." >&2
+  exit 1
+fi
+login_body="$(curl -sS -X POST ${UI}/authserver/password \
+  -H 'Content-Type: application/json' \
+  -d "{\"authctx\":\"${flow_authctx}\",\"email\":\"admin@nexus.ai\",\"password\":\"${ADMIN_PASSWORD}\"}")"
+# The code arrives in a JSON redirectUri, not a Location header — the SPA
+# performs the redirect itself. Match the code's own character set rather than
+# "everything up to the next &": the JSON escapes that separator as \u0026,
+# whose own characters are all alphanumeric, so a negated-& class runs straight
+# past it and carries "\u0026state=..." into the code. That corruption does not
+# surface here — it surfaces one step later as an invalid_grant from
+# /oauth/token, which reads like a broken authorization server.
+auth_code="$(printf '%s' "$login_body" | sed -n 's/.*[?&]code=\([A-Za-z0-9_-]*\).*/\1/p')"
+if [ -z "$auth_code" ]; then
+  echo "ERROR: no authorization code in the password response; body was: $login_body" >&2
+  exit 1
+fi
+token_body="$(curl -sS -X POST ${UI}/oauth/token \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode "grant_type=authorization_code" \
+  --data-urlencode "code=${auth_code}" \
+  --data-urlencode "redirect_uri=${REDIRECT_URI}" \
+  --data-urlencode "client_id=${CLIENT_ID}" \
+  --data-urlencode "code_verifier=${flow_verifier}")"
+access_token="$(printf '%s' "$token_body" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
+if [ -z "$access_token" ]; then
+  echo "ERROR: /oauth/token issued no access_token; body was: $token_body" >&2
+  echo "       The code it was given: '${auth_code}' (an invalid_grant here usually" >&2
+  echo "       means that value is not exactly what the password response returned)." >&2
+  exit 1
+fi
+me_code="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${access_token}" ${UI}/api/admin/me)"
+if [ "$me_code" != "200" ]; then
+  echo "ERROR: /api/admin/me answered ${me_code} for a token this deployment just issued." >&2
+  echo "       Sign-in works and the console is still unusable: the SPA reads this 401 as" >&2
+  echo "       'not signed in' and returns to the login form. Check that the control plane" >&2
+  echo "       can reach its own JWKS address (AUTH_SERVER_JWKS_URL) from inside its" >&2
+  echo "       container — the issuer-derived default is the browser's origin." >&2
+  exit 1
+fi
+echo "    admin API accepted the issued token (${me_code})"
 
 echo "==> [smoke] checking the gateway answers on its published port..."
 code="$(curl -s -o /dev/null -w '%{http_code}' ${GW}/v1/models)"

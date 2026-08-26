@@ -15,7 +15,7 @@ packer {
 
 variable "nexus_version" {
   type    = string
-  default = "0.3.0"
+  default = "0.2.0"
 }
 
 variable "aws_region" {

@@ -397,4 +397,39 @@ if [ "$seed_failed" = 1 ]; then
   exit 1
 fi
 
+# The guards at the top of this script catch an UNSET admin password. They
+# cannot catch an operator who sets it to the seed's own published value:
+# set-admin-password.js rejects only passwords under 8 characters, and the
+# seeded default is longer than that, so such a run rotates "successfully" into
+# a deployment whose super-admin password is published in this repository.
+#
+# The value is read out of the seed source that defines it (this image carries
+# the whole tools/db-migrate tree) rather than repeated here, so the check
+# cannot drift away from the password it is meant to recognise. If the constant
+# is ever renamed the extraction yields nothing and the check goes quiet, which
+# is the right failure direction for a warning.
+#
+# A warning, not a refusal: a local quickstart may legitimately choose the
+# memorable value, and refusing would break `ADMIN_PASSWORD=<seed default>
+# ./init-secrets.sh`.
+SEED_PASSWORD="$(sed -n "s/^export const BOOTSTRAP_PASSWORD = '\\(.*\\)'\\r*$/\\1/p" \
+  /app/tools/db-migrate/seed/bootstrap/index.ts 2>/dev/null || true)"
+if [ -n "$SEED_PASSWORD" ] && [ "$NEXUS_ADMIN_PASSWORD" = "$SEED_PASSWORD" ]; then
+  echo "==> [migrator] WARNING: NEXUS_ADMIN_PASSWORD is the seed's published default." >&2
+  echo "    admin@nexus.ai now logs in with a password anyone can read in this" >&2
+  echo "    repository. Fine for a local quickstart; do NOT expose this deployment." >&2
+  echo "    To fix: rm deploy/.env && ./init-secrets.sh (it generates a random one)." >&2
+fi
+
+# Where an operator finds the console credentials. init-secrets.sh prints the
+# password once, at generation time, which is several hundred lines of `up`
+# output before anyone tries to sign in; this line runs on every `up` and is
+# what `docker compose logs db-migrator` shows them.
+#
+# The email, not the password: this output lands in whatever collects the
+# deployment's container logs, and a super-admin password does not belong
+# there. The pointer is enough — the value is in .env on the host.
+echo "==> [migrator] console sign-in: ${NEXUS_ADMIN_EMAIL:-admin@nexus.ai}"
+echo "    password: the NEXUS_ADMIN_PASSWORD line in deploy/.env on the host"
+
 echo "==> [migrator] done."

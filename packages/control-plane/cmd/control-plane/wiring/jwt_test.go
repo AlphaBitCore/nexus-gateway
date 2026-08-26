@@ -140,3 +140,58 @@ func TestDeriveThingID(t *testing.T) {
 		t.Errorf("hostname-fallback shape wrong: %q (want cp-<hostname>-3001)", got)
 	}
 }
+
+// The verifier fetches signing keys from an ADDRESS, while the issuer is an
+// IDENTITY, and the two are the same string only when the issuer's origin is
+// reachable from this process. When it is not — a console published on a host
+// port while the control plane listens inside a container — deriving the one
+// from the other yields a URL that dials nothing, the verifier can never load
+// a key, and every admin request answers 401 holding a valid token.
+func TestAdminJWKSURL_ExplicitAddressWins(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.AuthServer.Issuer = "http://localhost:18080"
+	cfg.AuthServer.JWKSURL = "http://control-plane:3001/.well-known/jwks.json"
+
+	got := adminJWKSURL(cfg)
+	if got != "http://control-plane:3001/.well-known/jwks.json" {
+		t.Fatalf("configured JWKS address not used: got %q", got)
+	}
+	if strings.Contains(got, "localhost:18080") {
+		t.Fatalf("resolved back to the issuer origin, which is the browser's address and not dialable here: %q", got)
+	}
+}
+
+// Every deployment that predates the field leaves it empty, and must keep
+// resolving to exactly the URL it resolved to before — including an external
+// IdP, whose publicly reachable issuer makes the derivation correct.
+func TestAdminJWKSURL_UnsetKeepsIssuerDerivation(t *testing.T) {
+	for _, tc := range []struct{ name, issuer, jwks, want string }{
+		{"external idp", "https://tenant.okta.com", "", "https://tenant.okta.com/.well-known/jwks.json"},
+		{"trailing slash is not doubled", "https://idp.example.com/", "", "https://idp.example.com/.well-known/jwks.json"},
+		{"whitespace is not an address", "https://idp.example.com", "   ", "https://idp.example.com/.well-known/jwks.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.AuthServer.Issuer = tc.issuer
+			cfg.AuthServer.JWKSURL = tc.jwks
+			if got := adminJWKSURL(cfg); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// InitJWT is what actually hands the address to the verifier; a resolver that
+// is correct but unwired would leave the 401 in place.
+func TestInitJWT_UsesConfiguredJWKSAddress(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.AuthServer.Issuer = "http://localhost:18080"
+	cfg.AuthServer.JWKSURL = "http://control-plane:3001/.well-known/jwks.json"
+
+	if v := InitJWT(context.Background(), cfg, nil, "cp-test", silentLogger()); v == nil {
+		t.Fatal("expected a verifier")
+	}
+	if got := adminJWKSURL(cfg); got != cfg.AuthServer.JWKSURL {
+		t.Fatalf("InitJWT would fetch keys from %q, not the configured %q", got, cfg.AuthServer.JWKSURL)
+	}
+}

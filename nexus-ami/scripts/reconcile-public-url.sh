@@ -5,11 +5,14 @@
 # first-boot marker), and runnable by hand after an address change.
 #
 # Why this exists: first-boot.sh / first-boot-ca.sh capture the public IP
-# exactly ONCE (gated by /etc/nexus/.initialized) and bake it into FOUR places —
+# exactly ONCE (gated by /etc/nexus/.initialized) and bake it into FIVE places —
 #   1. publicURL: in the four service yamls,
 #   2. AUTH_SERVER_ISSUER= in control-plane.env,
-#   3. the cp-ui OAuthClient.redirectUris row in Postgres,
-#   4. the nginx TLS cert SAN (/etc/nexus/tls.crt).
+#   3. AUTH_SERVER_ISSUER= in nexus-hub.env (the Hub pins the same issuer via
+#      jwt.WithIssuer when verifying CP-minted enrollment JWTs — a stale value
+#      here 401s every remote agent enrollment),
+#   4. the cp-ui OAuthClient.redirectUris row in Postgres,
+#   5. the nginx TLS cert SAN (/etc/nexus/tls.crt).
 # EC2 hands out a NEW public IPv4 on stop/start (and when an Elastic IP is
 # later attached). After such a change the baked values are stale and admin UI
 # login breaks in two stages: first /oauth/authorize rejects the new redirect
@@ -17,8 +20,8 @@
 # registered"} (1+3); then, once that is fixed, the password submit appears to
 # succeed but the SPA bounces back to /login because the control-plane's JWKS
 # fetch over the new publicURL fails cert verification (x509: valid for <old>,
-# not <new>) so /api/admin/me returns 401 (2+4). This script reconciles all
-# four to the current IP and restarts the affected services.
+# not <new>) so /api/admin/me returns 401 (2+5). This script reconciles all
+# five to the current IP and restarts the affected services.
 #
 # Design notes:
 #   - Fail-safe: if the current address cannot be resolved, or resolves only to
@@ -38,6 +41,7 @@ MARKER=/etc/nexus/.initialized
 CONFIG_DIR=/etc/nexus
 CP_YAML="$CONFIG_DIR/control-plane.config.yaml"
 CP_ENV="$CONFIG_DIR/control-plane.env"
+HUB_ENV="$CONFIG_DIR/nexus-hub.env"
 DB_NAME=nexus_gateway
 
 FORCE=false
@@ -131,17 +135,19 @@ fi
 
 log "reconciling (public_changed=$PUBLIC_CHANGED cert_stale=$CERT_STALE force=$FORCE): publicURL ${OLD:-<none>} -> $NEW"
 
-# ─── 1+2. Public-facing config (only when the PUBLIC IP changed) ──────────────
+# ─── 1+2+3. Public-facing config (only when the PUBLIC IP changed) ────────────
 # publicURL / AUTH_SERVER_ISSUER / cp-ui redirect are public-facing only — the
 # inner IP is irrelevant to them, so they are reconciled solely on a public-IP
 # change (or --force).
 if [ "$PUBLIC_CHANGED" = true ] || [ "$FORCE" = true ]; then
-  # 1. publicURL in the four service yamls + AUTH_SERVER_ISSUER in env. Replace
-  # the old IP everywhere it appears; if OLD is unknown, stamp canonical shapes.
+  # 1-3. publicURL in the four service yamls + AUTH_SERVER_ISSUER in the CP and
+  # Hub env files (both MUST carry the same issuer — the Hub pins it via
+  # jwt.WithIssuer when verifying CP-minted enrollment JWTs). Replace the old IP
+  # everywhere it appears; if OLD is unknown, stamp canonical shapes.
   if [ -n "$OLD" ]; then
     for f in "$CONFIG_DIR/nexus-hub.config.yaml" "$CP_YAML" \
              "$CONFIG_DIR/ai-gateway.config.yaml" "$CONFIG_DIR/compliance-proxy.config.yaml" \
-             "$CP_ENV"; do
+             "$CP_ENV" "$HUB_ENV"; do
       [ -f "$f" ] && sed -i "s/${OLD}/${NEW}/g" "$f"
     done
   else
@@ -149,15 +155,17 @@ if [ "$PUBLIC_CHANGED" = true ] || [ "$FORCE" = true ]; then
     sed -i "s#^publicURL:.*#publicURL: \"https://${NEW}/\"#"     "$CP_YAML" 2>/dev/null || true
     sed -i "s#^publicURL:.*#publicURL: \"https://${NEW}/v1\"#"   "$CONFIG_DIR/ai-gateway.config.yaml" 2>/dev/null || true
     sed -i "s#^publicURL:.*#publicURL: \"http://${NEW}:3128\"#"  "$CONFIG_DIR/compliance-proxy.config.yaml" 2>/dev/null || true
-    if grep -q '^AUTH_SERVER_ISSUER=' "$CP_ENV" 2>/dev/null; then
-      sed -i "s#^AUTH_SERVER_ISSUER=.*#AUTH_SERVER_ISSUER=https://${NEW}/#" "$CP_ENV"
-    else
-      echo "AUTH_SERVER_ISSUER=https://${NEW}/" >> "$CP_ENV"
-    fi
+    for envf in "$CP_ENV" "$HUB_ENV"; do
+      if grep -q '^AUTH_SERVER_ISSUER=' "$envf" 2>/dev/null; then
+        sed -i "s#^AUTH_SERVER_ISSUER=.*#AUTH_SERVER_ISSUER=https://${NEW}/#" "$envf"
+      else
+        echo "AUTH_SERVER_ISSUER=https://${NEW}/" >> "$envf"
+      fi
+    done
   fi
-  log "updated publicURL + AUTH_SERVER_ISSUER"
+  log "updated publicURL + AUTH_SERVER_ISSUER (CP + Hub)"
 
-  # 2. cp-ui OAuthClient.redirectUris. Swap the stale per-instance redirect for
+  # 4. cp-ui OAuthClient.redirectUris. Swap the stale per-instance redirect for
   # the current one, then guarantee the current one is present. Wait briefly for
   # Postgres readiness so an early-boot run does not silently skip the update.
   for _ in $(seq 1 30); do
@@ -179,7 +187,7 @@ SQL
   log "registered cp-ui redirect_uri $NEW_URI"
 fi
 
-# ─── 3. Regenerate the nginx TLS cert (when its SAN no longer covers a current IP) ─
+# ─── 5. Regenerate the nginx TLS cert (when its SAN no longer covers a current IP) ─
 # The control-plane's JWT verifier fetches JWKS over the publicURL with Go's
 # default (cert-verifying) HTTP client. If the cert SAN does not name the IP the
 # request targets, that fetch fails with `x509: certificate is valid for <old>,
@@ -209,7 +217,7 @@ if [ "$CERT_STALE" = true ] || [ "$PUBLIC_CHANGED" = true ] || [ "$FORCE" = true
   update-ca-trust
 fi
 
-# ─── 4. Reload nginx + restart services that read publicURL / verify tokens ───
+# ─── Reload nginx + restart services that read publicURL / verify tokens ─────
 log "reloading nginx + restarting nexus services..."
 systemctl reload nginx || systemctl restart nginx
 systemctl restart nexus-hub nexus-control-plane nexus-gateway nexus-proxy

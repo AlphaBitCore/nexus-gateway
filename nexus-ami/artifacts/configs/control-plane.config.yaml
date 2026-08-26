@@ -4,6 +4,7 @@
 
 server:
   port: 3001
+  host: "127.0.0.1"            # loopback-only; nginx (same host) fronts /api, /oauth, /scim via :443
   shutdownTimeout: "10s"
 
 database:
@@ -46,30 +47,18 @@ log:
   format: "json"
   file: "/var/log/nexus/control-plane.log"
 
-bff:
-  complianceProxyUrl: "http://127.0.0.1:3040"
-  aiGatewayUrl: "http://127.0.0.1:3050"
-  complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
-  complianceProxyApiToken: ""  # env COMPLIANCE_PROXY_API_TOKEN
+# Peer service URLs (ai-gateway, compliance-proxy) are NOT configured here:
+# each peer reports its address to the Hub and CP resolves it at request
+# time (shared/transport/peerurl).
 
 registry:
   nexusHubUrl: "http://127.0.0.1:3060"
 
-auth:
-  internalServiceToken: ""     # env INTERNAL_SERVICE_TOKEN
-
+# Secrets are env-only (loaded from /etc/nexus/control-plane.env):
+#   INTERNAL_SERVICE_TOKEN, ADMIN_KEY_HMAC_SECRET, CREDENTIAL_ENCRYPTION_KEY,
+#   COMPLIANCE_PROXY_API_TOKEN — yaml carries no secret fields.
 crypto:
-  encryptionKey: ""            # env CREDENTIAL_ENCRYPTION_KEY (64 hex chars)
-  encryptionPassphrase: ""
-  encryptionSalt: ""
-  credentialKeyMap: ""
   production: true
-
-retention:
-  auditLogDays: 90
-  adminAuditLogDays: 365
-  metricRollupDays: 365
-  agentAuditDays: 90
 
 agent:
   caDir: "/var/lib/nexus/agentca"
@@ -77,9 +66,6 @@ agent:
 otel:
   endpoint: ""
   serviceName: "nexus-control-plane"
-
-scheduler:
-  enabled: true
 
 mq:
   driver: "nats"
@@ -95,3 +81,14 @@ mq:
 authServer:
   issuer: ""                   # env AUTH_SERVER_ISSUER
   keystoreDir: "/var/lib/nexus/authkeys"
+
+# Out-of-band body storage. localfs (no S3 in the appliance); same root +
+# caps as the other three services — see nexus-hub.config.yaml for the why.
+spill:
+  enabled: true
+  backend: "localfs"
+  localfs:
+    root: "/var/lib/nexus/spill"
+    perObjectCap: 33554432     # 32 MiB — aligned with nginx global client_max_body_size (spilled bodies are AI prompts/responses, rarely larger)
+    totalSizeCap: 5368709120   # 5 GiB
+    retentionDays: 7

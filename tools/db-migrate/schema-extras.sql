@@ -1,8 +1,20 @@
 -- Post-push schema extras: PostgreSQL-native DDL that `prisma db push` cannot
 -- express from schema.prisma's model graph. Apply AFTER `prisma db push` and
--- BEFORE seeding. Re-runnable (DROP ... IF EXISTS + CREATE ... IF NOT EXISTS),
--- but note the metric_ops_raw block is destructive to that table's rows — ops
--- telemetry is disposable, so re-applying on an existing DB is acceptable.
+-- BEFORE seeding.
+--
+-- RE-RUNNABLE ONLY ON A DATABASE YOU ARE WILLING TO LOSE. The metric_ops_raw
+-- block below opens with `DROP TABLE ... CASCADE` and recreates the table
+-- EMPTY, taking every daily partition with it. On a fresh or local database
+-- that is fine — ops telemetry is disposable there. On a deployed environment
+-- it is not: measured on production 2026-08-23, metric_ops_raw held 13,485,220
+-- rows across 199 partitions (10.2 GB, essentially the whole database), and no
+-- backfill reconstructs it. metric_ops_rollup_5m survives; the raw series does
+-- not.
+--
+-- Against a live database, NEVER pipe this file. Diff it across the deploy range
+-- (`git diff <deployed-sha>..<release-sha> -- tools/db-migrate/schema-extras.sql`)
+-- and apply only the added statements, one at a time — see the binding guard in
+-- `.claude/skills/prod-deploy/SKILL.md` Step 0.
 --
 -- Currently the only entry is the metric_ops_raw RANGE partitioning: schema.prisma
 -- declares MetricOpsRaw as a plain table (Prisma has no partition representation);

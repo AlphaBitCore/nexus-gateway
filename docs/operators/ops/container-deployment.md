@@ -90,6 +90,49 @@ admin@nexus.ai / <the password init-secrets.sh printed>
 
 The administrator email is fixed by the seed and is not configurable.
 
+**If that password has scrolled away.** `init-secrets.sh` prints it exactly
+once, at the moment it creates `.env`, which is several hundred lines of
+`docker compose up` output before anyone reaches a login form. It is also
+written to the file it generated, so read it back from there:
+
+```bash
+grep NEXUS_ADMIN_PASSWORD deploy/.env
+```
+
+`deploy/.env` is mode `600` and owner-only; treat it as the credential file it
+is. Every `docker compose up` also leaves a pointer in the migrator's log —
+
+```
+==> [migrator] console sign-in: admin@nexus.ai
+    password: the NEXUS_ADMIN_PASSWORD line in deploy/.env on the host
+```
+
+— readable with `docker compose logs db-migrator`. The password itself is
+deliberately absent from that line: container logs are collected, and a
+super-admin password does not belong in a log aggregator.
+
+**To choose the password yourself**, set `ADMIN_PASSWORD` on the run that
+creates `.env`, before the stack's first `up`:
+
+```bash
+ADMIN_PASSWORD=<your-password> ./init-secrets.sh
+```
+
+`init-secrets.sh` never overwrites an existing `.env` (see "Secret rotation"
+below), so doing this after the fact means deleting `.env` and regenerating
+every secret in it. If the value you choose is the seed's own published
+password, the migrator says so on every `up`:
+
+```
+==> [migrator] WARNING: NEXUS_ADMIN_PASSWORD is the seed's published default.
+```
+
+That is a warning rather than a refusal — a local quickstart may legitimately
+want the memorable value — but a deployment reachable by anyone else must not
+run with it. Nothing else catches this case: the rotation itself succeeds, so
+without the warning such a deployment looks identical to a correctly
+provisioned one.
+
 ### What the demo seed contains
 
 By default (`SEED_DEMO=true`, the image's default) `db-migrator` loads two
@@ -510,11 +553,54 @@ install.
    but starting `nexus-hub` first avoids an initial burst of reconnect
    attempts in the logs.
 
+## Issuer and JWKS address are different things
+
+`AUTH_SERVER_ISSUER` is an **identity**: the `iss` claim every token carries,
+and the origin a browser is sent to. It must be the published console origin.
+
+`AUTH_SERVER_JWKS_URL` is an **address**: where the control plane fetches the
+signing keys it verifies admin tokens against. Something has to dial it.
+
+They are the same string only when the issuer's origin resolves to the control
+plane from inside its own container, and under Compose it does not — the issuer
+is the host's published port, which inside a container is a port nothing is
+bound to. The quickstart therefore sets:
+
+```yaml
+AUTH_SERVER_ISSUER: http://localhost:8080                                # browser
+AUTH_SERVER_JWKS_URL: http://control-plane:3001/.well-known/jwks.json    # container
+AUTH_SERVER_REVOCATION_INTROSPECT_URL: http://control-plane:3001/oauth/introspect
+AUTH_SERVER_REVOCATION_REPLAY_URL: http://control-plane:3001/api/internal/revocations
+```
+
+Getting this wrong does not look like a configuration error. Tokens are minted
+correctly and rejected on arrival: the password check passes, `/oauth/token`
+returns 200, and the first authenticated request answers 401 — which the
+console reads as "not signed in", so it restarts the login flow. The deployment
+looks like it has a broken password rather than an unreachable key endpoint.
+The revocation URLs fail more quietly still: a warning in the log, and revoked
+tokens silently stop being reconciled.
+
+**Never point `AUTH_SERVER_JWKS_URL` at an external IdP.** It addresses *this
+deployment's own* auth server and nothing else. Federating logins to Okta,
+Auth0 or Entra does not change who signs an admin token: the IdP authenticates
+the person, and the control plane then mints and signs its own token. So the
+verifier this variable configures only ever checks the control plane's own
+signature, and aiming it at a third party makes every admin request 401 —
+precisely the failure this section exists to prevent.
+
+An upstream IdP's signing keys are a different setting on a different object:
+`jwksUri` in the `config` of that provider's `IdentityProvider` record, set
+per-IdP when the provider is onboarded, alongside its `issuer`, `authorizeUrl`
+and `tokenUrl`. That is where an IdP publishing keys off the conventional path
+is accommodated — Microsoft Entra, for one, uses `/{tenant}/discovery/v2.0/keys`.
+
 ## Common failure modes
 
 | Symptom | Root cause | Fix |
 |---|---|---|
 | `db-migrator` exits immediately, every other service stays `Created` forever | `NEXUS_ADMIN_PASSWORD` / `NEXUS_ASSISTANT_SYSTEM_VK` / `ADMIN_KEY_HMAC_SECRET` missing from a hand-written `.env` | Set all three (`docker compose logs db-migrator` names which one) |
+| Sign-in succeeds and the console returns to the login form; every `/api/admin/*` call answers 401 | `AUTH_SERVER_JWKS_URL` unset or not reachable from inside the control-plane container, so it cannot fetch its own signing keys and rejects tokens it just issued | Point it at an internally reachable address — `http://control-plane:3001/.well-known/jwks.json` under Compose. `docker compose logs control-plane \| grep jwks` shows the refused dial |
 | `Illegal instruction` / container exits with SIGILL on first request | Pulled a `-avx2` tag on a pre-AVX2 CPU | Switch `NEXUS_VERSION` back to the default (non-`-avx2`) tag |
 | `compliance-proxy` restarts in a crash loop under Compose | `deploy/compliance-ca/{ca.crt,ca.key}` missing or unreadable to the container's uid — usually because `.env` (and thus the CA) was created before this pair existed, or the directory was deleted | Rerun `./init-secrets.sh`. It is idempotent: it backfills whatever is missing (the CA and/or `.env`), renormalises the CA's permissions on every run, and leaves key material untouched, exiting `0` either way. If exactly one of `ca.crt` / `ca.key` is present it refuses instead, rather than replacing the survivor with a new pair — restore the missing half, or move the remaining one aside and rerun |
 | `compliance-proxy` exits immediately under systemd | Missing `/etc/compliance-proxy/ca.crt` / `ca.key` | Run the tarball install's step 4 (CA generation) |

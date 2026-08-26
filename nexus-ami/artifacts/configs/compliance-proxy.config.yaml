@@ -10,6 +10,11 @@ ca:
   certPath: "/etc/compliance-proxy/ca.crt"
   keyPath: "/etc/compliance-proxy/ca.key"
 
+# Writable dir for durable non-DB state (break-glass JSONL event log,
+# pending-report buffer). Empty here would make the break-glass PUT surface
+# (/runtime/config/{key}) return 503. install.sh creates this dir (nexus:nexus).
+dataDir: "/var/lib/nexus/cproxy"
+
 database:
   url: ""                      # env DATABASE_URL
 
@@ -84,7 +89,10 @@ log:
   file: "/var/log/nexus/compliance-proxy.log"
 
 metrics:
-  address: ":9090"
+  address: "127.0.0.1:9090"     # loopback-only; Prometheus is scraped locally, not exposed.
+                                # NOTE: listener.address (:3128, the MITM CONNECT proxy) stays
+                                # on all interfaces — agents connect to it directly; do NOT
+                                # bind it loopback.
 
 runtimeApi:
   listenAddress: "127.0.0.1:3040"
@@ -100,8 +108,8 @@ mq:
 registry:
   nexusHubUrl: "http://127.0.0.1:3060"
 
-auth:
-  internalServiceToken: ""     # env INTERNAL_SERVICE_TOKEN (set by first-boot-secrets; [MUST MATCH] across services)
+# auth.internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN from
+# /etc/nexus/compliance-proxy.env; [MUST MATCH] across all four services).
 
 compliance:
   enabled: true
@@ -109,7 +117,6 @@ compliance:
   totalTimeoutMs: 15000
   parallelHooks: false
   checkpointChars: 500
-  redactionRulesPath: ""
   rejectResponse:
     defaultLevel: 1
     contactInfo: "Contact administrator"
@@ -140,14 +147,9 @@ compliance:
 alerting:
   enabled: true
   evalIntervalSec: 30
-  webhook:
-    url: ""
-    headers: {}
-    timeoutSec: 10
   cooldown:
     fireMinutes: 5
     resolveMinutes: 5
-  persistenceDir: "/var/lib/nexus/alerting"
 
 audit:
   enabled: true
@@ -155,12 +157,6 @@ audit:
     size: 10
     flushIntervalMs: 500
     channelBufferSize: 1000
-    adaptiveFlush: false
-    flushIntervalMinMs: 500
-    flushIntervalMaxMs: 10000
-    adaptiveBatchSize: false
-    batchSizeMin: 10
-    batchSizeMax: 500
   ndjson:
     enabled: true
     dir: "/var/lib/nexus/audit-spool"
@@ -173,3 +169,14 @@ audit:
       failureThreshold: 3
       windowSeconds: 3600
       exemptionDurationSeconds: 86400
+
+# Out-of-band body storage. localfs (no S3 in the appliance); same root +
+# caps as the other three services — see nexus-hub.config.yaml for the why.
+spill:
+  enabled: true
+  backend: "localfs"
+  localfs:
+    root: "/var/lib/nexus/spill"
+    perObjectCap: 33554432     # 32 MiB — aligned with nginx global client_max_body_size (spilled bodies are AI prompts/responses, rarely larger)
+    totalSizeCap: 5368709120   # 5 GiB
+    retentionDays: 7

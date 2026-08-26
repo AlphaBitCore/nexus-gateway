@@ -98,4 +98,30 @@ for svc in nexus-hub control-plane ai-gateway compliance-proxy; do
   fi
 done
 
+# The two Node images. Neither links libhs, so neither has an instruction-set
+# variant: they are built once, on the baseline leg, and the AVX2 leg leaves
+# them alone. Both take the repository root as their build context — the UI
+# builds against the packages/ui-shared workspace, the migrator carries the
+# whole tools/db-migrate tree — which is why neither can be built from inside
+# its own directory.
+if [ "$CONFIG" = baseline ]; then
+  for svc in control-plane-ui db-migrator; do
+    tag="${REGISTRY}/${svc}:${VERSION}-${CONFIG}-${ARCH}"
+    echo "==> [build-images] $svc -> $tag"
+    docker build \
+      --label "org.opencontainers.image.revision=${REVISION}" \
+      --label "org.opencontainers.image.version=${VERSION}" \
+      -f "docker/${svc}/Dockerfile" \
+      -t "$tag" \
+      .
+    if [ "$PUSH" = true ]; then
+      docker push "$tag"
+    else
+      # Same reasoning as the service loop above: give the compose file a tag
+      # it can actually interpolate a single NEXUS_VERSION into.
+      docker tag "$tag" "${REGISTRY}/${svc}:${VERSION}"
+    fi
+  done
+fi
+
 echo "==> [build-images] done ($CONFIG, $ARCH, $VERSION)"

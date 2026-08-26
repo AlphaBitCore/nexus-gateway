@@ -27,27 +27,26 @@ images come in two flavours: a `x86-64-v2` baseline that runs anywhere, and an
 
 ## Build, run, verify — the whole loop
 
-Three commands build every image, one runs the stack from them, one proves it
+One command builds every image, one runs the stack from them, one proves it
 works. All of them are run from the repository root.
 
 ### 1. Build
 
 ```bash
-# The four Go services. Compiles Vectorscan for THIS host's architecture, gates
-# it, then builds the services against it. First run takes ~10 minutes (the
-# libhs compile); later runs reuse the cached buildbase layer.
+# Every image, for THIS host's architecture. Compiles Vectorscan, gates it,
+# builds the four services against it, then the UI and the migrator — both of
+# which take the repository root as their build context because they need files
+# outside their own directory (the UI needs the packages/ui-shared workspace,
+# the migrator the whole tools/db-migrate/ tree). First run takes ~10 minutes
+# (the libhs compile); later runs reuse the cached buildbase layer.
 scripts/release/build-images.sh --config baseline --version dev
-
-# The other two. No wrapper script — each is a single `docker build`, run from
-# the repo root because both need files outside their own directory (the UI
-# needs the packages/ui-shared workspace, the migrator the whole
-# tools/db-migrate/ tree).
-docker build -f docker/control-plane-ui/Dockerfile -t local/control-plane-ui:dev .
-docker build -f docker/db-migrator/Dockerfile      -t local/db-migrator:dev      .
 ```
 
-The first command is not just a compile. It runs both release gates, and either
-one failing stops the build:
+This is the same script CI runs, with `--push --registry ghcr.io/alphabitcore`
+added — there is no second definition of how an image is built.
+
+It is not just a compile. It runs both release gates, and either one failing
+stops the build:
 
 - **the ISA gate** (`scripts/release/verify-image.sh`) disassembles `libhs.a`
   inside the buildbase and counts AVX2 (amd64) or SVE (arm64) instructions. A
@@ -58,7 +57,9 @@ one failing stops the build:
   returns zero matches forever, so "it compiled" is not evidence that content
   scanning works.
 
-`--config avx2` builds the amd64-only variant and refuses to run on arm64.
+`--config avx2` builds the amd64-only variant and refuses to run on arm64. It
+builds the four Go services only: neither Node image links libhs, so neither
+has an instruction-set variant to build.
 
 ### 2. Run what you just built
 
@@ -69,8 +70,53 @@ printf 'NEXUS_REGISTRY=local\nNEXUS_VERSION=dev\n' >> .env
 docker compose up -d                     # add --profile compliance for the MITM proxy
 ```
 
-Then open the UI on `http://localhost:8080` and sign in as `admin@nexus.ai` with
-the password `init-secrets.sh` printed.
+Then open the UI on `http://localhost:8080`.
+
+#### The console credentials
+
+The **username is always `admin@nexus.ai`** — the seed fixes the administrator
+identity, so it is not configurable.
+
+The **password is generated per install**. `init-secrets.sh` prints it once,
+when it creates `.env`:
+
+```
+  Admin sign-in: admin@nexus.ai
+  Password:      <generated>
+```
+
+That is the only time it is printed, and it is several hundred lines of
+`docker compose up` output before you get to a login form. It is also written
+to `deploy/.env` (mode `600`, owner-only), so read it back from there whenever
+you need it:
+
+```bash
+grep NEXUS_ADMIN_PASSWORD deploy/.env
+```
+
+To choose the password yourself instead, set `ADMIN_PASSWORD` on the run that
+creates `.env` — before the stack's first `up`:
+
+```bash
+ADMIN_PASSWORD=<your-password> ./init-secrets.sh
+```
+
+Two things to know about that: `init-secrets.sh` never overwrites an existing
+`.env`, so choosing a password after the fact means deleting `.env` and
+regenerating every secret in it; and the migrator prints a warning on every
+`up` if the value you chose is the seed's own published default, which is fine
+for a local quickstart and must never reach an exposed deployment.
+
+Every `docker compose up` also ends with a reminder of where to look, in
+`docker compose logs db-migrator`:
+
+```
+==> [migrator] console sign-in: admin@nexus.ai
+    password: the NEXUS_ADMIN_PASSWORD line in deploy/.env on the host
+```
+
+The password itself is deliberately not in that log line — container logs get
+collected, and a super-admin password does not belong in a log aggregator.
 
 If something else on your machine already owns 8080, 3050 or 3128, set
 `NEXUS_UI_PORT` / `NEXUS_GATEWAY_PORT` / `NEXUS_PROXY_PORT` in `.env` instead of

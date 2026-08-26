@@ -108,9 +108,33 @@ func InitJWT(
 
 	return jwtverifier.New(jwtverifier.Config{
 		Issuer:   cfg.AuthServer.Issuer,
-		JWKSURL:  strings.TrimRight(cfg.AuthServer.Issuer, "/") + "/.well-known/jwks.json",
+		JWKSURL:  adminJWKSURL(cfg),
 		Audience: token.AdminAudience,
 		RevCheck: adminRevCheck,
 		Logger:   logger,
 	})
+}
+
+// adminJWKSURL resolves where the verifier fetches signing keys.
+//
+// Issuer is an identity — the `iss` claim tokens carry — and deriving a dial
+// address from it holds only while the issuer's origin is reachable from this
+// process. It is not, whenever the console is published somewhere other than
+// where the control plane listens: under the compose quickstart the issuer is
+// the host origin the BROWSER uses, which inside this container resolves to a
+// port nothing is bound to. The verifier then cannot fetch a key, every admin
+// request answers 401 with a perfectly valid token, and the console bounces
+// back to the login form after a successful sign-in.
+//
+// So the address is configurable, and the derivation is only the default.
+//
+// The keys fetched here are always this control plane's own: it signs every
+// admin token itself, whichever IdP authenticated the person behind it. An
+// upstream IdP's signing keys belong to the login path instead, configured as
+// `jwksUri` on its IdentityProvider record.
+func adminJWKSURL(cfg *config.Config) string {
+	if u := strings.TrimSpace(cfg.AuthServer.JWKSURL); u != "" {
+		return u
+	}
+	return strings.TrimRight(cfg.AuthServer.Issuer, "/") + "/.well-known/jwks.json"
 }
