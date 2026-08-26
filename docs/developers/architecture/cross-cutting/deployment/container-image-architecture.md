@@ -217,6 +217,16 @@ exact-version tag (`<version>`, immutable per release) and asserts
 rotated (see the operator doc's "Credential rotation" section) — no
 provider credentials exist in CI, so the gate cannot exercise a full chat
 completion; the enforcement + rotation checks are what it actually proves.
+
+It also carries the sign-in flow to its end: authorization code → token →
+one authenticated `/api/admin/me`. That last hop is the point. A credential
+check stops at "the password is correct", and a console can be unusable well
+past that — the control plane verifies admin tokens against a JWKS it fetches,
+and if that address is unreachable from inside its container it rejects tokens
+it has just issued, so sign-in succeeds and the SPA bounces straight back to
+the login form. Asserting only the password step reports PASS on a deployment
+nobody can log into, which is the same shape of blind spot as authenticating
+over a `redirect_uri` no user of the deployment can produce.
 Ordering is load-bearing here: `release.yml`'s `publish` job composes only
 the immutable `<version>` tag before this gate runs. The mobile/rolling
 tags (`<major.minor>`, `latest`, `latest-avx2`) are composed, and the Docker
@@ -288,6 +298,17 @@ contains no build logic of its own: every step invokes
 any CI result is reproducible on a maintainer's laptop of a matching
 architecture (arm64 excepted — it needs arm64 hardware; there is no QEMU
 step in this pipeline).
+
+`build-images.sh` covers **all six** images, which is what makes that
+reproducibility claim hold: the buildbase, the four Go services against it,
+and then `control-plane-ui` and `db-migrator`. The two Node images link no
+`libhs` and therefore have no instruction-set variant, so the script builds
+them on the baseline leg only and the `avx2` leg leaves them alone — matching
+the tag contract in §5, where the `-avx2` tags exist for the four Go services
+alone. A second definition of how any image is built — an inline `docker
+build` in the workflow, or a command a maintainer is expected to type
+alongside the script — would be a copy free to drift from the one the release
+actually publishes.
 
 `nexus-buildbase` is versioned by what determines its contents, not by the
 service release version, and rebuilt only when the Vectorscan pin or the Go

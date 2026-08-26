@@ -50,7 +50,22 @@ dnf update -y
 # --connect-timeout / etc.).
 dnf install -y \
   firewalld \
-  nginx
+  nginx \
+  libstdc++
+# libstdc++ is the C++ runtime the Vectorscan-linked Go binaries need. libhs is
+# statically linked into the binaries (no libhs runtime dep), but its C++ stdlib
+# is dynamic. Installed here as an explicit TOP-LEVEL package so it is never
+# swept away as an orphaned dependency.
+
+# ─── 1b. Build Nexus Go binaries (Vectorscan, on-instance) ──────────────────
+# The Go services link libhs via cgo and are compiled here, natively, with the
+# Vectorscan engine (build-binaries.sh explains why a cross-compile can't). This
+# runs AFTER the base dnf install (so libstdc++ is already a kept top-level
+# package) and BEFORE the binary-install step below, which reads
+# $STAGING_DIR/bin/. build-binaries.sh strips its own toolchain + the source
+# tree afterwards, so neither ships in the AMI.
+echo "==> [install] building Nexus Go binaries (Vectorscan)..."
+bash "$STAGING_DIR/scripts/build-binaries.sh"
 
 # ─── 2. Create system user ──────────────────────────────────────────────────
 
@@ -67,7 +82,8 @@ install -d -o root          -g "$NEXUS_GROUP" -m 0750 "$CONFIG_DIR" /etc/complia
 install -d -o "$NEXUS_USER" -g "$NEXUS_GROUP" -m 0750 "$LOG_DIR" "$DATA_DIR" \
                                                        "$DATA_DIR/agentca" \
                                                        "$DATA_DIR/audit-spool" \
-                                                       "$DATA_DIR/alerting"
+                                                       "$DATA_DIR/spill" \
+                                                       "$DATA_DIR/cproxy"
 
 # ─── 4. Install Nexus Go binaries ───────────────────────────────────────────
 
@@ -89,6 +105,12 @@ if [ ! -d "$STAGING_DIR/ui-dist" ]; then
 fi
 rsync -a --delete "$STAGING_DIR/ui-dist/" "$UI_DIR/"
 chown -R root:root "$UI_DIR"
+# Installer-download directory served by nginx `location /downloads/`.
+# Created AFTER the rsync --delete so it survives. The signed macOS .pkg
+# / Windows .msi AGENT installers are dropped in out-of-band (notarization /
+# Authenticode can't run in the packer build) — the dir simply 404s for
+# those names until an operator adds them.
+install -d -o root -g root -m 0755 "$UI_DIR/downloads"
 
 # ─── 6. Install Prisma schema + seed + admin-password helper ────────────────
 
@@ -99,6 +121,7 @@ if [ ! -d "$STAGING_DIR/prisma" ]; then
 fi
 rsync -a --delete "$STAGING_DIR/prisma/" "$PRISMA_DIR/"
 install -o root -g root -m 0755 "$STAGING_DIR/scripts/set-admin-password.js" "$PRISMA_DIR/set-admin-password.js"
+install -o root -g root -m 0755 "$STAGING_DIR/scripts/mint-assistant-vk.js" "$PRISMA_DIR/mint-assistant-vk.js"
 chown -R root:root "$PRISMA_DIR"
 
 # ─── 7. Install service configs ─────────────────────────────────────────────
@@ -141,9 +164,14 @@ echo "==> [install] configuring firewalld..."
 systemctl enable firewalld
 systemctl start firewalld
 firewall-cmd --permanent --add-service=ssh
-firewall-cmd --permanent --add-port=443/tcp    # nginx (UI + /api/*)
+firewall-cmd --permanent --add-port=443/tcp    # nginx (UI + /api/* + /v1/* LLM ingress)
 firewall-cmd --permanent --add-port=80/tcp     # nginx (HTTP redirect to 443)
-firewall-cmd --permanent --add-port=3050/tcp   # AI Gateway (SDK direct)
+# 3050 (AI Gateway direct) is deliberately NOT opened: the same mux serves
+# the unauthenticated /internal/* debug endpoints (credential probe fires
+# real upstream calls with decrypted stored keys) and plaintext-HTTP /v1/*
+# (virtual keys would transit unencrypted). SDK clients use https://<host>/v1
+# via nginx instead. Operators that want VPC-internal direct access can
+# `firewall-cmd --permanent --add-port=3050/tcp --zone=internal`.
 firewall-cmd --permanent --add-port=3128/tcp   # Compliance Proxy CONNECT
 firewall-cmd --reload
 
@@ -182,6 +210,34 @@ cat > /etc/logrotate.d/nexus <<'EOF'
     endscript
 }
 EOF
+
+echo "==> [install] writing kernel sysctl tuning for high concurrency..."
+cat > /etc/sysctl.d/99-nexus.conf <<'EOF'
+# Nexus high-concurrency kernel tuning. The four Go services each hold many
+# concurrent client + upstream provider sockets plus DB/Redis/NATS pools; the
+# stock kernel defaults throttle connection setup and cap file descriptors
+# well below what a busy gateway needs.
+#
+# fs.nr_open is raised so the systemd LimitNOFILE=1048576 on each service is
+# actually grantable — LimitNOFILE cannot exceed nr_open (default ~1048576,
+# i.e. exactly at the edge).
+fs.nr_open = 2097152
+fs.file-max = 2097152
+# Accept-queue + SYN backlog: a burst of new connections must not be dropped
+# at the listen socket before the service can accept() them.
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+# Widen the ephemeral port range + recycle TIME_WAIT sockets so a high rate of
+# short-lived upstream connections does not exhaust local ports.
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_tw_reuse = 1
+EOF
+chmod 0644 /etc/sysctl.d/99-nexus.conf
+# systemd-sysctl.service re-applies this on every boot; load it now too so a
+# running build instance reflects it (best-effort, ignored if a key is absent
+# on the build kernel).
+sysctl --system >/dev/null 2>&1 || true
 
 echo "==> [install] cleaning staging directory..."
 rm -rf "$STAGING_DIR"

@@ -15,6 +15,17 @@ WorkingDirectory=/var/lib/nexus
 Restart=on-failure
 RestartSec=5
 
+# High-concurrency resource limits. The default systemd LimitNOFILE
+# (1024) is far too low for a transparent proxy holding thousands of
+# concurrent client + upstream sockets at once — under load it surfaces
+# as silent "too many open files". 1048576 stays within the fs.nr_open
+# ceiling raised in /etc/sysctl.d/99-nexus.conf.
+# GOMEMLIMIT (Go soft memory cap, prevents OOM-kill under burst) is set
+# per-instance in /etc/nexus/<svc>.env by first-boot.sh, sized to the
+# detected RAM so it scales across instance types.
+LimitNOFILE=1048576
+LimitNPROC=65535
+
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

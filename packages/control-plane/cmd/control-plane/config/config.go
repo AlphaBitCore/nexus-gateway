@@ -92,6 +92,31 @@ type AuthServerConfig struct {
 	// PEM per kid). Defaults to ".nexus/authkeys" when unset. Relative paths
 	// are resolved against the process working directory at startup.
 	KeystoreDir string `yaml:"keystoreDir"`
+	// JWKSURL is where the admin token verifier FETCHES signing keys. It is a
+	// network location, not an identity: Issuer above is the `iss` claim a
+	// token must carry, while this is an address something has to dial.
+	// Defaults to Issuer + "/.well-known/jwks.json", which is right whenever
+	// the issuer's own origin is reachable from this process.
+	//
+	// It is separate from Issuer because those two are not always the same
+	// address. Issuer is the origin a BROWSER uses, so behind a reverse proxy
+	// — the compose quickstart publishes the console on the host while the
+	// control plane runs in its own container — the issuer origin resolves
+	// inside this container to a port nothing listens on, and every admin
+	// request 401s with the token itself perfectly valid.
+	//
+	// Set it to this deployment's internally reachable auth-server address
+	// (`http://control-plane:<port>/.well-known/jwks.json` under Compose).
+	// Same field name and env var as the Hub's `authServer.jwksURL`, which
+	// solves the same problem for the same reason.
+	//
+	// Never an external IdP's endpoint. Federating logins to Okta, Auth0 or
+	// Entra does not change who signs an admin token — the IdP authenticates
+	// the person and this control plane then mints and signs its own — so the
+	// verifier this configures only ever checks our own signature. An upstream
+	// IdP's keys are `jwksUri` on that provider's IdentityProvider record,
+	// a different setting on a different object.
+	JWKSURL string `yaml:"jwksURL"`
 	// RevocationIntrospectURL overrides the introspect endpoint the admin
 	// revocation checker calls when the MQ stream is unavailable. Defaults to
 	// Issuer + "/oauth/introspect" when empty.
@@ -441,6 +466,20 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("AUTH_SERVER_KEYSTORE_DIR"); v != "" {
 		cfg.AuthServer.KeystoreDir = v
+	}
+	if v := os.Getenv("AUTH_SERVER_JWKS_URL"); v != "" {
+		cfg.AuthServer.JWKSURL = v
+	}
+	// Both endpoints below live on THIS auth server, so like JWKSURL they are
+	// addresses a container dials rather than the issuer identity. A container
+	// deployment configures itself through env — its yaml is baked into the
+	// image — so without these bindings the yaml fields are unreachable there
+	// and the issuer-derived defaults are the only thing that can apply.
+	if v := os.Getenv("AUTH_SERVER_REVOCATION_INTROSPECT_URL"); v != "" {
+		cfg.AuthServer.RevocationIntrospectURL = v
+	}
+	if v := os.Getenv("AUTH_SERVER_REVOCATION_REPLAY_URL"); v != "" {
+		cfg.AuthServer.RevocationReplayURL = v
 	}
 }
 

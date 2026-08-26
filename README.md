@@ -338,11 +338,11 @@ This has one consequence: if `go.work` is missing from the build context, Go fal
 
 Rules for every build environment:
 
-- **Fresh clone** — `git clone` already includes the committed `go.work` and `go.work.sum`. Run `go build` from inside the repo.
-- **Docker** — copy `go.work` + `go.work.sum` **and every `packages/<module>` directory the service transitively depends on**, not just the service's own folder. Minimum viable layout:
+- **Fresh clone** — `git clone` already includes the committed `go.work`. Run `go build` from inside the repo. (`go.work.sum` is gitignored and regenerated on demand; nothing needs it committed.)
+- **Docker** — copy `go.work` **and every `packages/<module>` directory the service transitively depends on**, not just the service's own folder. Minimum viable layout:
   ```dockerfile
   WORKDIR /build
-  COPY go.work go.work.sum ./
+  COPY go.work ./
   COPY packages/shared       packages/shared
   COPY packages/<svc>        packages/<svc>
   WORKDIR /build/packages/<svc>

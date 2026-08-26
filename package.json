@@ -30,6 +30,7 @@
     "check:json-dupkeys": "node scripts/check-json-dupkeys.mjs",
     "gen:model-catalog": "node tools/db-migrate/gen-model-catalog.mjs",
     "check:model-catalog": "node tools/db-migrate/gen-model-catalog.mjs --check",
+    "check:migrator-lockfile": "node scripts/check-migrator-lockfile.mjs",
     "gen:rulepacks": "tsx tools/db-migrate/seed/gen-rulepacks.ts",
     "check:rulepacks": "tsx tools/db-migrate/seed/gen-rulepacks.ts -- --check",
     "check:smoke-harness": "python3 scripts/check-smoke-harness.py",

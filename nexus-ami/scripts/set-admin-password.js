@@ -3,9 +3,12 @@
 // to stdout in "salt_hex:hash_hex" format.
 //
 // Parameters MUST match tools/db-migrate/seed/lib.ts hashPassword():
-//   N = 16384, r = 8, p = 1
+//   N = 2^17, r = 8, p = 1
 //   salt = 32 bytes (random)
 //   key  = 64 bytes
+// The stored "salt:hash" format omits N, so a hash produced under a different N
+// can never verify. maxmem is raised because Node's default 32 MiB cap is below
+// the ~128 MiB (128*N*r) working set scrypt needs at N=2^17.
 //
 // Used by first-boot-db.sh to replace the seeded admin@nexus.ai password
 // with a per-instance random one. This file is shipped to /opt/nexus/prisma/
@@ -17,7 +20,7 @@ const { scryptSync, randomBytes } = require('crypto');
 
 const SALT_LENGTH = 32;
 const KEY_LENGTH = 64;
-const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1 };
+const SCRYPT_OPTIONS = { N: 1 << 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 
 const password = process.env.NEW_PASSWORD;
 if (!password || password.length < 8) {
