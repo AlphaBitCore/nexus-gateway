@@ -326,7 +326,7 @@ jobs:
       # same filename. merge-multiple flattens same-named files into one
       # clobbering the other; downloading into per-artifact subdirectories
       # and concatenating below is what keeps both checksums.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist/release
           pattern: tarball-*
