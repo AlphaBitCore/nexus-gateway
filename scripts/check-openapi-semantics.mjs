@@ -3,8 +3,7 @@
 //
 // Semantic-quality gate for the Control Plane admin OpenAPI catalog
 // (docs/users/api/openapi/control-plane/*.yaml) — the source the resource
-// engine embeds and the AI search cards expose verbatim. Two checks
-// (design: docs/superpowers/specs/2026-06-05-resource-catalog-ai-first-design.md §3.4):
+// engine embeds and the AI search cards expose verbatim. Two checks:
 //
 //   1. Parameter-description coverage = 100%. Every path/query parameter of
 //      every operation carries a non-empty `description` — these are the

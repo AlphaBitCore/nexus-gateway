@@ -261,6 +261,27 @@ idempotent. The retention horizon comes from the backend's `retentionDays`
 runs alongside, not instead of, any backend-native lifecycle (an S3 bucket
 lifecycle rule remains a fine belt-and-suspenders for age-based expiry).
 
+**Age makes a blob a candidate; a live reference still saves it.** Before
+deleting, the sweep hands every age-eligible key to a `DBQuerier` and keeps the
+subset a row still points at. Deleting a referenced blob does not free anything
+an operator wanted freed — it leaves a capture in the Traffic drawer whose
+payload cannot be fetched, which reads as corruption rather than as retention.
+
+The references are not on the event row. They live on `traffic_event_payload`,
+in TWO JSONB columns — `request_spill_ref` and `response_spill_ref` — with the
+object key under each value's `key` field, alongside the size, sha256 and
+content type that make up the ref envelope. Both columns must be checked: either
+one alone leaves the other's blobs deletable while a live row still addresses
+them. `spillsweep.NewDBQuerier` is the one implementation, shared by every
+service that runs a sweep; the interface previously carried only a SQL sketch
+for each service to implement, the sketch named a table and a column that do not
+exist, and the result was that no service implemented it at all.
+
+The fail-safe is the direction of the error. `HasSpillRefs` returns an error
+rather than an empty map when the database cannot answer, and the sweep reads an
+error as *delete nothing*. An empty map means "none of these are referenced" —
+so answering a DB hiccup that way would delete every candidate blob at once.
+
 ## 7. Configuration ownership
 
 Two configs govern the spill subsystem, split by audience:
@@ -283,6 +304,7 @@ body travels inline without touching where spilled bytes are stored.
 - `packages/shared/storage/spillstore/s3/` — S3 backend + presign
 - `packages/shared/storage/spillstore/async/` — async upload wrapper
 - `packages/shared/storage/spillstore/spillsweep/` — per-service periodic sweep loop
+- `packages/shared/storage/spillstore/spillsweep/dbquerier.go` — the shared reference check that keeps the sweep from deleting a live blob
 - `packages/shared/audit/body.go` — `Body` / `SpillRef` shapes
 - `packages/control-plane/internal/traffic/handler/traffic/traffic_spill.go` — the shared fetch + integrity gate
 - `packages/control-plane/internal/traffic/handler/traffic/spill_diag.go` — read-failure cause classification

@@ -1,6 +1,6 @@
 # Observability architecture
 
-Umbrella for everything under `docs/developers/architecture/cross-cutting/observability/`. The Nexus Gateway runs five distinct observability surfaces, each with its own producer, transport, persistence, retention, and admin surface. They are deliberately separate — they answer different operator questions, decay on different timescales, and are queried by different consumers (admin UI, alert engine, external SIEM, ad-hoc operator debugging) — but they share one correlation key (`trace_id`) and one set of source services.
+Umbrella for everything under `docs/developers/architecture/cross-cutting/observability/`. The Nexus Gateway runs five distinct observability surfaces, each with its own producer, transport, persistence, retention, and admin surface. They are deliberately separate — they answer different operator questions, decay on different timescales, and are queried by different consumers (admin UI, alert engine, external SIEM, ad-hoc operator debugging) — but they share one correlation key (the request id) and one set of source services.
 
 This document is the entry point. Each surface gets its own detail doc; this page only states the shape of the system, the wire vocabulary, and the cross-surface invariants.
 
@@ -79,7 +79,7 @@ Diag is the runtime-error feed: any `slog` record at `Level >= ERROR` flows to H
 
 1. Maps the slog level via `mapLevel` — `≥ LevelError+4 → fatal`, `≥ LevelError → error`, `≥ LevelWarn → warn`, else `info`.
 2. Computes `messageHash = md5(level|source|message)` — the dedup key.
-3. Walks both the `WithAttrs` chain and the record's attrs; lifts a `trace_id` attr (key `TraceIDAttrKey`) into the typed `DiagEvent.TraceID` field so downstream queries hit a real column rather than probing the JSONB `Attrs` map. Remaining attrs flow into `Attrs` unchanged.
+3. Walks both the `WithAttrs` chain and the record's attrs; lifts an `external_request_id` attr (key `diag.ExternalRequestIDAttrKey`) into the typed `DiagEvent.ExternalRequestID` field so downstream queries hit a real column rather than probing the JSONB `Attrs` map. Remaining attrs flow into `Attrs` unchanged.
 4. Runs the event through `opsmetrics.Dedup` (`packages/shared/core/metrics/registry/dedup.go`). Dedup folds duplicates within a tick into a single emit with `repeatCount`. Every service (agent + all four server services) wires Dedup uniformly — agent constructs it manually so its `DiagBundle` can expose the handle for `Tick()` access; server services use the `SlogSinkConfig.OpsReg` auto-construct path which registers `nexus_diag_dedup_collapsed_total{thing_type, severity}` against the opsmetrics registry. The `thing_type` label is pinned to the sink's `Source` so per-service contribution stays separable in the Prometheus view.
 5. Routes the result: if the WebSocket transport is up, push directly via `thingclient.PushDiagEvent`; if it's down, queue in the in-process `ReconnectBuffer` (`packages/shared/core/diag/reconnect_buffer.go`) for replay on reconnect.
 6. For FATAL events, **also** persist to a `LocalBufferInserter` (when wired — the agent uses a SQLCipher-backed buffer) so a process crash before the next WS flush still recovers the event on next boot.
@@ -95,7 +95,7 @@ The crash recovery path is in `packages/shared/core/diag/recovery.go`: a recover
 
 **Persistence.** `tools/db-migrate/schema/nodes.prisma`:
 
-- `thing_diag_event` (model `ThingDiagEvent`) — id, thingId, thingType, occurredAt, receivedAt, level, eventType (`error | crash | watchdog | lifecycle`), source, message, messageHash, traceId (typed cross-service correlation column with `(thing_id, trace_id, occurred_at DESC)` btree index), attrs, stackTrace, repeatCount, agentVersion, osInfo.
+- `thing_diag_event` (model `ThingDiagEvent`) — id, thingId, thingType, occurredAt, receivedAt, level, eventType (`error | crash | watchdog | lifecycle`), source, message, messageHash, externalRequestId (typed cross-service correlation column with `(thing_id, external_request_id, occurred_at DESC)` btree index), attrs, stackTrace, repeatCount, agentVersion, osInfo.
 - `thing_diag_mode_window` (`ThingDiagModeWindow`) — per-Thing audit-history record of a diagnostic-mode window (started / ended / setBy / reason). The window is delivered to the agent as a `diag_mode` `thing_config_override` (state `{until}`, `expires_at` = window end) that raises the agent's local log level to debug for the duration; the generic `override-expiry` job clears it when the window ends.
 - `diag_silence` (`DiagSilence`) — `(messageHash, level)` silence registry so the admin Recent Errors page can collapse known-noise issues.
 
@@ -167,11 +167,13 @@ Detail in [siem-bridge-architecture.md](siem-bridge-architecture.md).
 
 ## 8. Cross-surface concerns
 
-### 8.1 Correlation via `trace_id`
+### 8.1 Correlation via the request id
 
-The DB-side surfaces share one correlation key: the `X-Nexus-Request-Id` request id. Every audit row (`traffic_event.trace_id`), every diag event (`thing_diag_event.trace_id` typed column populated via the SlogSink auto-extract path), and every SIEM payload carries it. Each service's request-ID middleware honors an inbound `X-Nexus-Request-Id` or generates a UUID; the audit emitter snapshots it onto `TrafficEventMessage.TraceID`, and request-scoped loggers stamp it via `logger.With(diag.TraceIDAttrKey, traceID)` so every diag emit through that scope picks it up. A `trace_id` lookup then resolves to one or more `traffic_event` rows (one per service the request crossed) and any `thing_diag_event` rows whose `trace_id` column matches. This is the cross-surface DB stitching strategy.
+The DB-side surfaces share one correlation key: the request id. Every audit row (`traffic_event.external_request_id`), every diag event (`thing_diag_event.external_request_id`, a typed column populated via the SlogSink auto-extract path), and every SIEM payload carries it. Each service's request-ID middleware honors an inbound `X-Nexus-Request-Id`, falls back to its `X-Request-Id` compatibility alias, and generates a UUID when neither arrived; the audit emitter carries it to the traffic row, and request-scoped loggers stamp it via `logger.With(diag.ExternalRequestIDAttrKey, requestID)` so every diag emit through that scope picks it up. A lookup on that value then resolves to one or more `traffic_event` rows (one per service the request crossed) and any `thing_diag_event` rows that match. This is the cross-surface DB stitching strategy.
 
-OTel spans carry the same value: the tracer's `IDGenerator` derives a root span's trace ID directly from the context `X-Nexus-Request-Id` (a UUID is exactly the sixteen bytes of a trace ID), and the registered W3C TraceContext propagator continues it across services. A trace ID seen in the collector therefore resolves to the matching `traffic_event` rows by the same value (modulo the UUID-vs-hex rendering). Detail in [otel-tracing-architecture.md](otel-tracing-architecture.md).
+`traffic_event.trace_id` is a different thing and is **not** the stitching key: it holds the caller's own W3C trace id when they sent a `traceparent`, so a traffic row can be found from the caller's APM. It is NULL for every request that arrived without one, which is most of them.
+
+OTel spans carry the same value when the caller runs no tracing of its own: the tracer's `IDGenerator` derives a root span's trace ID directly from the context request id (a UUID is exactly the sixteen bytes of a trace ID), so a trace ID seen in the collector resolves to the matching `traffic_event` rows by the same value (modulo the UUID-vs-hex rendering). When the caller does send a `traceparent`, the registered W3C TraceContext propagator continues the caller's trace instead, and that trace id is what lands in `traffic_event.trace_id`. Detail in [otel-tracing-architecture.md](otel-tracing-architecture.md).
 
 ### 8.2 Endpoint-type vocabulary
 

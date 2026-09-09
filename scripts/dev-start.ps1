@@ -95,7 +95,7 @@ foreach ($tool in @(
     @{ Name = 'docker'; Msg = 'Docker is not installed. Install Docker Desktop from https://docker.com' },
     @{ Name = 'node';   Msg = 'Node.js is not installed. Install v20+ from https://nodejs.org' },
     @{ Name = 'npm';    Msg = 'npm is not installed.' },
-    @{ Name = 'go';     Msg = 'Go is not installed. Install Go 1.25+ from https://go.dev/dl/' }
+    @{ Name = 'go';     Msg = 'Go is not installed. Install Go 1.26+ from https://go.dev/dl/' }
 )) {
     if (-not (Get-Command $tool.Name -ErrorAction SilentlyContinue)) { Write-Err $tool.Msg }
 }
@@ -107,8 +107,8 @@ $goVer = ((go version) -split '\s+')[2] -replace '^go', ''
 $goParts = $goVer -split '\.'
 $goMajor = [int]$goParts[0]
 $goMinor = [int]$goParts[1]
-if ($goMajor -lt 1 -or ($goMajor -eq 1 -and $goMinor -lt 25)) {
-    Write-Warn "Go 1.25+ recommended for this repo (found go$goVer)"
+if ($goMajor -lt 1 -or ($goMajor -eq 1 -and $goMinor -lt 26)) {
+    Write-Warn "Go 1.26+ required for this repo — go.work pins go 1.26.0 (found go$goVer)"
 }
 
 $hasOpenssl = [bool](Get-Command openssl -ErrorAction SilentlyContinue)

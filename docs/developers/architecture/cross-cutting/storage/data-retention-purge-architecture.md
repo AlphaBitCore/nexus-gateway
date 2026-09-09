@@ -103,8 +103,31 @@ A request is one of two types:
     second thing an erasure can miss;
   - nulls the identifying columns on the subject's `traffic_event` rows —
     `entity_id`, `entity_name`, the `identity` snapshot, and `source_ip` for
-    virtual-key traffic; `source_ip`, `source_process`, `entity_name`, and
-    `identity` for agent traffic within its assignment windows;
+    virtual-key traffic; `source_ip`, `source_process`, `entity_name`,
+    `identity`, and `thing_name` for agent traffic within its assignment
+    windows. Both legs also null the free-text columns that carry conversation
+    content past the storage gate: `error_reason` (a provider error message,
+    which quotes the offending input), the two `*_hook_reason` columns, and the
+    two `*_hooks_pipeline` JSONB blobs (which held the matched text a hook
+    decided on). `path` and `target_host` are deliberately RETAINED on the agent
+    leg — they are browsing history and personal data, but they are also the
+    only record of which destination a policy decision applied to, and erasing
+    them leaves a compliance record that cannot answer what it was a record of.
+    That is retention under the legal-obligation ground, not a claim that the
+    field is not personal data;
+  - deletes the subject's rows from `traffic_event_dlq`. A dead-lettered event
+    is a whole serialised `traffic_event` that never landed, carrying the same
+    free-text the scrub above clears — and no other stage reaches it, because
+    the DLQ stores the payload as an opaque blob with no entity column to key
+    on. Ownership is therefore decided in Go: each payload is decoded and
+    matched against the same two predicates (gateway `entityId`, or an agent
+    `thingId` inside one of the subject's assignment windows). Deleted rather
+    than scrubbed — a dead-lettered event backs no compliance record, so the
+    retention argument that keeps `path` has nothing to attach to. A payload
+    that fails to decode is LEFT IN PLACE: `goccy/go-json` populates every field
+    it read before returning the error, so a truncated event arrives already
+    comparing equal to the subject, and acting on it would delete a row on the
+    strength of a read that failed;
   - deletes the subject's assistant data — `AssistantMemory`, `AssistantSession`,
     `AssistantFile`, `AssistantPendingConfirm`, and `AssistantChatEvent` rows
     keyed by `userId` (the chat audit-chain rows carry digests + counts only,

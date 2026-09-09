@@ -44,7 +44,7 @@ Optimizations were applied in the following order (all changing only Nexus's own
 |---|---|---|---|
 | 1 | **freshness regex → substring** | `(?i)` regex (rune-by-rune NFA case folding) → pre-lowercased keywords + `strings.Contains`; candidate text lowercased only once per request | ~1000× on large bodies, verdicts fully identical (differential gate green) |
 | 2 | **Cache off by default, opt-in** | L1 exact-match / L2 semantic / freshness / gemini provider cache all default OFF (prisma + Go store fallback + seed fixtures) | Lean passthrough out of the box; removes the default cache lookup + freshness scan |
-| 3 | **Request-rewrite family off by default (demand-driven)** | The upstream rewrite engine has no global switch: at `Reload` it derives `hasWork` from "are there enabled strip rules / does any provider have marker injection on"; with no config the whole segment short-circuits; `marker_inject` / `marker_boundary3` default OFF; removed field-order normalization (the L0 cache-key's `NormalizeKey` always runs) | Removes ~27% alloc + the risk of tampering with forwarded requests — a win for both performance and correctness; one fewer "forgot to enable the global switch" trap |
+| 3 | **Request-rewrite family off by default (demand-driven)** | The upstream rewrite engine has no global switch: at `Reload` it derives `hasWork` from "are there enabled strip rules"; with no config the whole segment short-circuits; removed field-order normalization (the L0 cache-key's `NormalizeKey` always runs). Anthropic prompt-cache markers are not part of this engine — they are one root field written by the Anthropic codec, gated by `marker_inject_enabled` which defaults OFF | Removes ~27% alloc + the risk of tampering with forwarded requests — a win for both performance and correctness; one fewer "forgot to enable the global switch" trap |
 | 4 | **L1/L2 cache layer decoupling** | Cache stage changed to "works if **either** L1 **or** L2 is enabled", each gated independently; removes the confusion of L1 acting as a master switch | Fixes the defect where disabling L1 also disabled L2; pinned by the differential gate |
 | 5 | **CP-UI cache risk hints** | Added hints to the L1/L2/Provider cards: cache is optional, has per-request overhead, and a low hit rate drags performance | Lets admins understand the trade-offs and avoid pitfalls |
 
@@ -164,6 +164,29 @@ flowchart TD
 - This coordination (per-stream buffering/synchronization/teardown) introduces **waiting latency** — measured gw CPU samples are almost empty at this point (idle-waiting), proving the bottleneck is **blocking/coordination latency**, not compute.
 - At fixed concurrency, each stream takes longer → concurrency slots stay occupied → RPS drops sharply.
 - This is **structural**: you are comparing "inspecting every byte of the response chunk by chunk" vs "blindly forwarding bytes". Bifrost does nothing, so it is fast.
+
+### 4.5 Why hooks-ON can measure FASTER than hooks-OFF, and why that is not a bug report
+
+On the streaming fleet round of 2026-08-29 (1000 rps, 300 s, two 20 s steady-state pprof windows), hooks-ON burned **less** total CPU than hooks-OFF while doing strictly more work:
+
+| | hooks-ON | hooks-OFF |
+|---|---|---|
+| CPU busy | **70.00%** | **80.65%** |
+| `Syscall6` | 13.93% / 1.95 s | **18.23% / 2.94 s** |
+| `cgocall` (Vectorscan) | 8.79% / 1.23 s | — |
+| p50 / p90 / p99 (ms) | 1.428 / 2.616 / 3.464 | 1.452 / 2.424 / 3.272 |
+| max (ms) | 37.6 | 68.5 |
+
+This reads like "the hooks arm isn't running hooks". It has been checked twice and it is not that: the `cgocall` column IS the rule matcher, and `runModelAStream` is on the profile. The difference is **write amplification**, and the two arms differ by design:
+
+- **hooks-OFF** goes `chunkSSEReader.Read` → `streaming.Passthrough`. `Read` pulls exactly ONE canonical chunk per call, and `Passthrough` is a `Read → Write → Flush` loop. That is **one write syscall per frame**, which is what per-token delivery means.
+- **hooks-ON** goes through Model A, which HOLDS content in a bounded tail window and releases it in batches. Far fewer, larger writes — a side effect of the safety mechanism, not an optimisation anyone applied.
+
+**The obvious "fix" is not one.** Making the passthrough lane batch would mean delivering late, which is the opposite of what a real-time stream is for. The variant that is free of that trade — draining only frames ALREADY queued, never waiting — buys nothing at production token rates, because there is nothing queued: a model emits a token every few tens of milliseconds and the reader is always ahead.
+
+**The rig exaggerates it, and the rig's own numbers say so.** p50 for a COMPLETE streaming response is 1.428 ms. A real model streams the same response over seconds. The arena's mock emits every frame of a response in one burst, so the ring buffer always has backlog and Model A's batching always has something to batch. Optimising the passthrough lane against that number would be optimising for a workload no deployment has.
+
+So the ledger entry is: **inherent, expected, and not worth closing.** The one direction that would help both arms equally is fewer bytes per frame, not fewer syscalls per byte.
 
 ---
 

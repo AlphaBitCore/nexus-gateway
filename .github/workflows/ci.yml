@@ -35,6 +35,22 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # Built-CSS variable resolution. This one needs a BUILD, which is why it
+      # carries its own step instead of joining the source-tree checks: the
+      # defect it exists for lives only in the bundle. Tailwind v4 drops
+      # `@theme` variables no utility class references, so a token defined in
+      # source and reached only through hand-written var() disappears at build
+      # time. On prod that emptied --color-gray-50, which emptied
+      # --color-surface-2, and two surface tokens painted fully transparent
+      # while every source-tree guard stayed green.
+      #
+      # dist/ is gitignored, so without the build above this would exit 3 and
+      # report itself as unmeasured rather than passing — correct, but useless.
+      - name: Build control-plane UI (for the CSS gate below)
+        run: npm run build -w packages/control-plane-ui
+      - name: Built-CSS variable resolution
+        run: node scripts/check-css-var-resolution.mjs
+
       # Arch-doc trigger-map lockstep: every docs/developers/architecture/**/*-architecture.md
       # must have a row in architecture-doc-triggers.md (and vice versa).
       - name: Arch-doc triggers lockstep
@@ -46,9 +62,44 @@ jobs:
       # gate is run MANUALLY, post-release, under human control — not as an
       # automatic CI/CD gate. Invoke it on demand via tests/run-all.sh.
 
-      # i18n key parity across en/zh/es bundles.
+      # Every path the UI service layer calls must be a route a Go registrar
+      # registers. Neither tsc nor the UI suite can see this drift: the suite
+      # mocks `api.get` at the module boundary, so a client for an endpoint
+      # that 404s is indistinguishable from a live one until a user clicks.
+      - name: UI-to-route reachability
+        run: node scripts/check-ui-api-routes.mjs
+
+      # i18n key parity across en/zh/es bundles. Note what this does NOT
+      # cover: it compares the bundles against each other, so a string that
+      # never got a key is invisible to it. The a11y-label gate below covers
+      # the slice of that blind spot nobody sighted ever reviews.
       - name: i18n parity
         run: node scripts/check-i18n-parity.mjs
+
+      - name: Accessibility labels through t()
+        run: node scripts/check-a11y-label-i18n.mjs
+
+      # Echo concatenates a group's middleware with a route's own, so a route
+      # gated inside an already-gated group demands BOTH actions — and a
+      # principal holding exactly the action the route declares is refused.
+      - name: No double-gated IAM routes
+        run: node scripts/check-iam-double-gate.mjs
+
+      # No CI job compiles the vectorscan build tag, so the release image and
+      # the tarball builds are the only automated path that links libhs and
+      # proves it scans. Each carries its own copy of the anchored self-test
+      # list; `-run` is unanchored and `go test` exits 0 on "no tests to run",
+      # so a drifted or stale list selects nothing and stays green until a
+      # release is cut. This gate is the commit-time half of that guard.
+      - name: Vectorscan self-test lists agree and name real tests
+        run: node scripts/check-vectorscan-selftest-list.mjs
+
+      # var(--token) naming a property nothing defines is invalid at
+      # computed-value time: the declaration is DROPPED and the property
+      # inherits or takes its initial value, with no browser warning. The
+      # hex/rgba-literal gate cannot see it -- different question entirely.
+      - name: Design tokens resolve to a definition
+        run: node scripts/check-design-token-defined.mjs
 
       # Model catalog: Model.json + provider-templates/*.json + index.json are
       # generated from tools/db-migrate/model-catalog.json; fail if they drift.
@@ -63,6 +114,14 @@ jobs:
       # fixture silently downgrades enforcement while every test stays green.
       - name: Rule-pack generated fixtures in sync
         run: npm run check:rulepacks
+
+      # The factory applies the tuned transport — timeouts, pooling, SSRF guard,
+      # request-id propagation — so a client built around it silently opts out of
+      # all of them. The forbidigo pattern that claimed to ban this never matched
+      # anything, because forbidigo matches a selector and construction is a
+      # composite literal.
+      - name: No bare http.Client construction
+        run: npm run check:bare-http-client
 
       # The ai-gateway smoke is a mandatory pre-"done" gate, and a gate that
       # cannot fail is worse than no gate — it certifies. A fatal abort used to
@@ -185,7 +244,7 @@ jobs:
       - name: Prisma generate (schema/ folder)
         run: cd tools/db-migrate && npx prisma generate
         env:
-          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder?sslmode=disable
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder?sslmode=disable # nolint:yaml-secrets — literal "placeholder" for a codegen step that never connects; there is no credential here to move to env
       # Reference/bootstrap/demo re-stamp unit tests run here. DATABASE_URL is
       # intentionally NOT set so the *.integration arms self-skip (DB-backed,
       # covered by live runs); setting it would make them try to connect.

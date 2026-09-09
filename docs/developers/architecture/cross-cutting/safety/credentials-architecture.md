@@ -96,7 +96,7 @@ Two distinct probe surfaces exist; both delegate the actual upstream HTTP call t
 
 **Draft-credential probe (create wizard)** — `POST /providers/test-connection` (handler `ProviderTestConnection`) accepts `{name, adapterType, baseUrl, apiKey}` directly from the admin UI form, validates the adapter type against `IsValidAdapterType`, and forwards the same payload to `AI Gateway /internal/provider-test`. Plaintext lives only in: the operator's browser memory, the HTTPS request body, the CP handler's request-scoped variables, and the inter-service POST body to the gateway. It is never persisted, never logged, and never written to the DB. If the operator abandons the wizard, the plaintext is garbage-collected with the request scope.
 
-This path is gated on `provider:create` (the provider-config-write tier), **not** `provider:read`: it dials a caller-supplied base URL and relays the upstream status + error detail, which is a blind-SSRF / internal-endpoint fingerprinting oracle. Gating it on the write tier means only a caller who could already configure a provider (and thus set the base URL anyway) can run it, preserving the diagnostic detail for legitimate admins while closing the oracle for read-only viewers. The egress itself is guarded at the AI Gateway: the shared provider-probe client installs an SSRF dial guard (`shared/transport/http` `AdminEgressAllowPrivate`) that refuses the cloud-metadata / link-local range (169.254.169.254 et al.) at dial time while still permitting on-prem RFC-1918 / loopback provider endpoints (self-hosted vLLM/Ollama). The guard runs on the resolved address, defeating DNS-rebinding.
+This path is gated on `provider:create` (the provider-config-write tier), **not** `provider:read`: it dials a caller-supplied base URL and relays the upstream status + error detail, which is a blind-SSRF / internal-endpoint fingerprinting oracle. Gating it on the write tier means only a caller who could already configure a provider (and thus set the base URL anyway) can run it, preserving the diagnostic detail for legitimate admins while closing the oracle for read-only viewers. The egress itself is guarded at the AI Gateway: the shared provider-probe client installs an SSRF dial guard (`packages/httpclient` `AdminEgressAllowPrivate`) that refuses the cloud-metadata / link-local range (169.254.169.254 et al.) at dial time while still permitting on-prem RFC-1918 / loopback provider endpoints (self-hosted vLLM/Ollama). The guard runs on the resolved address, defeating DNS-rebinding.
 
 ## 6. Circuit breaker state & recovery
 
@@ -117,7 +117,9 @@ The per-credential circuit breaker has its state in **two stores that must stay 
 
 **Self-heal.** The flush job periodically (every `circuitReconcileInterval`, default 5m) reconciles **orphans** — durable rows that are non-closed but whose live Redis hash is absent — by force-closing them. This covers any path that can leave the stores divergent (a Redis eviction, or a cooldown-elapsed `rate_limit` that rehydrate did not re-arm). It only acts when Redis is genuinely absent (the live state is already closed), so it can never close a circuit that is legitimately open, and it skips in-flight members so it never races the flush writer.
 
-**Single-credential caveat.** Pool selection only consults the circuit when a provider has **more than one** credential (`resolveCredential` in `packages/ai-gateway/internal/providers/target/resolver.go`). A single-credential provider is never excluded — failing closed on the only key would guarantee an outage rather than fail over — so for such providers the circuit is advisory state surfaced in the UI and recovered via `RecordAttempt`, not an enforcement gate.
+**Single-credential caveat.** Pool selection only consults the circuit when a provider has **more than one** credential (`resolveCredential` in `packages/ai-gateway/internal/providers/target/resolver.go`). A single-credential provider is never excluded **by the circuit** — failing closed on the only key would guarantee an outage rather than fail over — so for such providers the circuit is advisory state surfaced in the UI and recovered via `RecordAttempt`, not an enforcement gate.
+
+This caveat is scoped to the circuit, and **`selectionWeight` is not covered by it**. Draining the only credential to `selectionWeight: 0` DOES take it out of service, single-credential provider or not: the usability predicate (`enabled`, `status = 'active'`, `selectionWeight > 0`) is applied identically by the credential list and by the single-credential lookup it falls back to — in the store (`internal/platform/store/credential.go`) and in the cache layer that production runs (`internal/cache/layer/loaders.go` builds the indexes, `internal/cache/layer/lookups_credential.go` reads them — the credential reads sit in their own file so a change to them is what triggers this doc, rather than every edit to the provider, model, virtual-key, routing-rule and pricing lookups that used to share `lookups.go` with them). Those two used to disagree about weight, which is why a drain silently did nothing; they are now one predicate in each layer, and a provider whose whole pool is drained answers `500 PROVIDER_TARGET_UNAVAILABLE`. That is the drain doing what the console's own help text promises ("Set to 0 to exclude from the pool without disabling") — a deliberate operator action, unlike the circuit, which trips on its own.
 
 ## 7. Redaction principles
 
@@ -154,3 +156,16 @@ Tracked for when an actual product driver appears, not built ahead of demand:
 - `packages/ai-gateway/internal/credentials/manager/manager.go` — JIT decrypt + plaintext cache + singleflight.
 - `packages/ai-gateway/internal/platform/store/credential.go` — gateway-side DB fallback read.
 - `packages/shared/identity/iam/catalog_data.go` — `ResourceCredential` IAM verb catalogue.
+
+## What else the target resolver carries
+
+`provtarget.PgResolver` assembles the `CallTarget` the executor dispatches on, so it
+resolves more than the credential: alongside the API key and credential identity it
+fills the body-shaping fields a codec may read, including
+`PromptCacheMarkers` (whether this provider wants upstream prompt-cache markers,
+read from the live cache config rather than a credential record).
+
+That field is body-shaping, which makes it subject to the same constraint as
+`ServesResponsesAPI`: the cache stage's `bodyPrepCallTarget` must resolve it from the
+same source, or the executor's re-prepared body on retry / failover would differ from
+the one whose cache key was built.

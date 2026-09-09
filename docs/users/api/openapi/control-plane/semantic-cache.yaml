@@ -221,7 +221,13 @@ components:
                     description: Fleet-wide cosine-similarity gate for an L2 hit. Range [0.0, 1.0]; default 0.96.
                 varyBy:
                     type: string
-                    description: L2 cache isolation scope.
+                    description: >-
+                        L2 cache isolation scope. Every value except `none` narrows to
+                        the virtual key when its own dimension is absent on a request:
+                        `user` has no value under an application key, and widening to
+                        fleet-wide there would turn a stricter-than-default choice into
+                        no isolation at all. Only `none` shares across tenants, because
+                        only `none` says so.
                     enum:
                         - none
                         - user

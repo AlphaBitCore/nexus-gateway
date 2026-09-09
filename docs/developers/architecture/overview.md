@@ -4,7 +4,7 @@ Nexus Gateway is an enterprise AI-traffic gateway: it governs, routes, caches, a
 
 ## The five services
 
-Each service is a Go process with its own `cmd/` entry point; they share libraries through `packages/shared/` over a `go.work` workspace.
+Each service is a Go process with its own `cmd/` entry point; they share libraries through `packages/shared/` over a `go.work` workspace, plus `packages/httpclient/` — a deliberately tiny module so that even the ones which avoid `packages/shared` can construct an HTTP client the same way.
 
 | Service | Package | Role |
 |---|---|---|
@@ -60,5 +60,9 @@ The five Go services run alongside PostgreSQL (persistent state, via Prisma-mana
 - `packages/compliance-proxy/cmd/compliance-proxy/` — Compliance Proxy entry point
 - `packages/agent/cmd/agent/` — Agent entry point
 - `packages/shared/transport/thingclient/` — the client every Thing uses to register with Hub
+- `packages/httpclient/` — the single source of outbound `*http.Client` construction, and
+  its own module: the dependency closure is the standard library plus `golang.org/x/net`,
+  which is what lets `nexus-agent-core` and the standalone test modules use it without
+  taking on `packages/shared`
 - `docs/developers/architecture/cross-cutting/foundation/thing-model.md` — the coordination kernel
 - `docs/developers/architecture/services/` — per-service architecture docs

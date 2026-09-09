@@ -26,6 +26,13 @@ Nexus is the service provider (SP) in any federation; "identity provider" here a
 
 **Key concepts.** A project belongs to exactly one organization. Virtual Keys attach at the project level.
 
+**Key status names every terminal state, including the ones that are not "disabled".**
+A key can be enabled, disabled, expired, rotating, or revoked, and the status badge
+distinguishes all five. It used to fall back to "Enabled" for any value it did not
+recognise, so a REVOKED key read as Enabled to the person who owned it — the one
+reader most likely to act on it. A status a surface cannot name should read as
+unknown, never as the healthiest value in the set.
+
 **Virtual-key revocation latency (acknowledged design decision).** When a Virtual Key is revoked, disabled, or expired, the AI Gateway stops honouring it within at most 30 seconds. The Gateway caches validated keys with a 30-second TTL to keep per-request authentication fast; on any key change the Hub pushes an invalidation that evicts the cached entry immediately, so in practice revocation takes effect right away. The 30-second bound is the worst-case fail-safe for the rare case where that invalidation push is missed — the cached entry then expires on its own and the key is re-validated against current state. This bounded window is intentional and is not configurable.
 
 **Where the data comes from.** `projectApi` — `list`, `get`, `create`, `update`, `delete`.

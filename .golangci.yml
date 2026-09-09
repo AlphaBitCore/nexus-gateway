@@ -56,22 +56,19 @@ linters:
       forbid:
         # ── Outbound HTTP discipline ──────────────────────────────
         # Every *http.Client must come from
-        # packages/shared/transport/http.New(...). See
-        # docs/developers/architecture/overview.md §Outbound HTTP. Allowlist
-        # (see exclusions.rules below): the factory itself, the agent
-        # raw-TLS relay path, the ai-gateway hot-swap singleton, the
-        # shared/transport/thingclient infrastructure, the agent
-        # warm-bootstrap path that needs system roots, and the CP
-        # AI-Guard simulator streaming-Timeout=0 path.
+        # packages/httpclient.New(...). CONSTRUCTION of a bare one is
+        # a composite literal, which forbidigo cannot see — it matches a
+        # rendered selector — so that half is enforced by
+        # TestNoBareHTTPClientConstruction in packages/httpclient,
+        # which also carries the allowlist and its reasons. DefaultClient IS a
+        # selector, so it stays here.
         - pattern: '^http\.DefaultClient$'
-          msg: "use packages/shared/transport/http.New instead of http.DefaultClient"
-        - pattern: '&http\.Client\{'
-          msg: "use packages/shared/transport/http.New instead of bare http.Client literals"
+          msg: "use packages/httpclient.New instead of http.DefaultClient"
         # http.Get/Post/Head/PostForm dispatch through DefaultClient,
         # so they bypass the timeout/transport policy enforced by
         # http.New. Same rationale as the DefaultClient ban.
         - pattern: '^http\.(Get|Post|Head|PostForm)$'
-          msg: "http.{Get,Post,Head,PostForm} use http.DefaultClient — build a client via packages/shared/transport/http.New and call client.Do"
+          msg: "http.{Get,Post,Head,PostForm} use http.DefaultClient — build a client via packages/httpclient.New and call client.Do"
 
         # ── Logging discipline ────────────────────────────────────
         # All structured logging must go through log/slog. The
@@ -135,14 +132,6 @@ linters:
     rules:
       # Tests may use bare http.Client / log.Fatalf / fmt.Print* /
       # os.Exit / println for fixtures, table-driven assertions, and
-      # debug helpers. The forbidigo bans are about production code
-      # only. noctx is also waived in tests: httptest.NewRequest /
-      # http.NewRequest in tests typically feed a handler directly
-      # rather than make a real network call, so the ctx-cancellation
-      # benefit does not apply (matches the policy used by k8s,
-      # prometheus, and other large Go projects).
-      # Tests may use bare http.Client / log.Fatalf / fmt.Print* /
-      # os.Exit / println for fixtures, table-driven assertions, and
       # debug helpers (forbidigo). httptest.NewRequest / http.NewRequest
       # in tests typically feed a handler directly rather than make a
       # real network call (noctx). And Go convention treats unchecked
@@ -156,45 +145,46 @@ linters:
       - path: _test\.go$
         linters: [forbidigo, noctx, errcheck, bodyclose]
 
+      # tests/scenarios is a test-only module and everything under its
+      # helpers/ package is fixture and harness code — the same category the
+      # rule above covers, missed only because the files do not carry the
+      # _test suffix. Path is relative to the module, per the per-module run
+      # convention (`cd tests/scenarios && golangci-lint run ./...`).
+      #
+      # The os.Exit calls this covers are the environment guard: it aborts the
+      # run when the target environment looks wrong. Returning an error instead
+      # would defeat it, because a caller that ignores the error proceeds
+      # against the wrong environment.
+      # errcheck for all four: the unchecked calls are resp.Body.Close().
+      - path: (^|/)helpers/(safety|admin|metrics|preflight)\.go$
+        linters: [errcheck]
+
+      # forbidigo for safety.go ONLY. Its os.Exit calls are the environment
+      # guard: it aborts the run when the target environment looks wrong, and
+      # returning an error there would let a caller that ignores it proceed
+      # against the wrong environment.
+      #
+      # Deliberately NOT extended to metrics.go and preflight.go, which build
+      # &http.Client{}. The ban on that is currently inert — its pattern never
+      # matches — so waiving those two here would pre-exempt them from a rule
+      # that is about to start working.
+      - path: (^|/)helpers/safety\.go$
+        linters: [forbidigo]
+
+      # tests/agent/gap_closure support binaries: a Markdown report renderer
+      # for `go test -v` output, and a raw-socket fixture client. Harness code
+      # in a test-only module — the category the _test.go rule above covers,
+      # missed for the same reason. The renderer's unchecked calls are
+      # fmt.Fprintf and defer f.Close; if that output is failing the tool is
+      # moot, and 31 `_ =` prefixes would say nothing.
+      - path: (^|/)(cmd/render_report|testfixtures/raw_socket_client)/main\.go$
+        linters: [forbidigo, errcheck, noctx, gocritic]
+
       # The httpclient factory is the one place allowed to construct
       # the underlying *http.Client; everywhere else must call into
       # it. Path uses the per-module run convention
       # (`cd packages/shared && golangci-lint run ./...`).
       - path: (^|/)transport/http/httpclient\.go$
-        linters: [forbidigo]
-
-      # The agent relay package owns the raw-TLS interception path
-      # (see docs/_archive/2026-q2/brainstorms/2026-04-26-agent-transport-rewrite-design.md §5.5).
-      # Bare http.Client construction is legitimate there because it
-      # backs httpclient.New for tests and helpers.
-      - path: (^|/)internal/network/relay/
-        linters: [forbidigo]
-
-      # ai-gateway upstream provider singleton uses a hot-swap
-      # liveTransport (atomic.Pointer reload on every config change).
-      # Cannot use httpclient.New because the transport MUST be
-      # liveTransport{}. See packages/ai-gateway/internal/providers/specutil/http.go.
-      - path: (^|/)internal/providers/specutil/http\.go$
-        linters: [forbidigo]
-
-      # shared/transport/thingclient/client.go IS the shared infrastructure
-      # the rest of the codebase routes through. Uses a custom dialer
-      # tuned for short connection holds (WS upgrade + occasional HTTP
-      # fallback). It cannot route through itself.
-      - path: (^|/)shared/transport/thingclient/client\.go$
-        linters: [forbidigo]
-
-      # agent warm-bootstrap intentionally uses SYSTEM roots (not the
-      # pinned shared client). The "unknown authority" stall was the
-      # original reason for this carve-out — see the comment in
-      # packages/agent/internal/lifecycle/bootstrap/bootstrap.go DefaultHTTPClient.
-      - path: (^|/)internal/lifecycle/bootstrap/bootstrap\.go$
-        linters: [forbidigo]
-
-      # CP admin AI-Guard simulator wraps httpclient.WrapTransport already
-      # but keeps Timeout=0 so streaming chat completions inherit the
-      # request lifetime from the operator's browser ctx.
-      - path: (^|/)handler/admin_ai_gateway_simulator\.go$
         linters: [forbidigo]
 
       # cmd/ packages are CLI entry points: they print usage strings,

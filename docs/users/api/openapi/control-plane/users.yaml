@@ -25,40 +25,52 @@ paths:
                   description: Free-text search; matched case-insensitively against displayName and email.
                   required: false
                   schema:
-                    type: string
+                      type: string
                 - name: organizationId
                   in: query
                   description: Restrict results to users in this organization.
                   required: false
                   schema:
-                    type: string
+                      type: string
                 - name: includeSubOrgs
                   in: query
                   description: When 'true', also include users in descendant organizations of organizationId.
                   required: false
                   schema:
-                    type: string
-                    enum:
-                        - "true"
-                        - "false"
+                      type: string
+                      enum:
+                          - "true"
+                          - "false"
                 - name: enabled
                   in: query
                   description: Filter by account state; 'true' selects active users, 'false' selects non-active users.
                   required: false
                   schema:
-                    type: string
-                    enum:
-                        - "true"
-                        - "false"
+                      type: string
+                      enum:
+                          - "true"
+                          - "false"
                 - name: canAccessControlPlane
                   in: query
                   description: Filter by whether the user may sign in to the Control Plane.
                   required: false
                   schema:
-                    type: string
-                    enum:
-                        - "true"
-                        - "false"
+                      type: string
+                      enum:
+                          - "true"
+                          - "false"
+                - name: limit
+                  in: query
+                  required: false
+                  description: Page size. Defaults to 50; a value that is negative, zero or unparseable falls back to 50 rather than being clamped.
+                  schema:
+                      type: integer
+                - name: offset
+                  in: query
+                  required: false
+                  description: Row offset. Defaults to 0; negative or unparseable values are ignored.
+                  schema:
+                      type: integer
             responses:
                 "500":
                     description: Internal Server Error
@@ -83,7 +95,7 @@ paths:
                                       canAccessControlPlane: true
                                       source: local
                                       roles:
-                                        - admin
+                                          - admin
                                       lastLoginAt: "2026-01-15T09:30:00Z"
                                       createdAt: "2026-01-01T00:00:00Z"
                                       updatedAt: "2026-01-15T09:30:00Z"
@@ -137,20 +149,6 @@ paths:
                             organizationId: org_01HZX
                             canAccessControlPlane: true
             responses:
-                "400":
-                    description: Invalid request body, or username/password missing.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "500":
-                    description: Internal Server Error
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "201":
                     description: The created user in safe form.
                     content:
@@ -164,11 +162,30 @@ paths:
                                 status: active
                                 canAccessControlPlane: true
                                 source: local
-                                lastLoginAt: null
-                                preferredTimezone: null
+                                lastLoginAt:
+                                preferredTimezone:
                                 createdAt: "2026-01-01T00:00:00Z"
                                 updatedAt: "2026-01-01T00:00:00Z"
-                                organizationId: org_01HZX
+                "400":
+                    description: 'Rejected before the row is written: a missing username or password, an organizationId that was omitted with no default organization to fall back on (NO_DEFAULT_ORGANIZATION), or a caller-tripped constraint (FIELD_REQUIRED, REFERENCE_NOT_FOUND).'
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '409':
+                    description: A user with those details already exists (code USER_EXISTS).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
     /api/admin/users/{id}:
         get:
             operationId: getUser
@@ -186,7 +203,7 @@ paths:
                   description: Identifier of the user to fetch.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
                 "500":
                     description: Internal Server Error
@@ -241,7 +258,7 @@ paths:
                   description: Identifier of the user to update.
                   required: true
                   schema:
-                    type: string
+                      type: string
             requestBody:
                 required: true
                 content:
@@ -285,20 +302,6 @@ paths:
                             enabled: true
                             canAccessControlPlane: true
             responses:
-                "400":
-                    description: Invalid request body.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "500":
-                    description: Internal Server Error
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "200":
                     description: The updated user in safe form.
                     content:
@@ -313,9 +316,47 @@ paths:
                                 canAccessControlPlane: true
                                 source: local
                                 lastLoginAt: "2026-01-15T09:30:00Z"
-                                preferredTimezone: null
+                                preferredTimezone:
                                 createdAt: "2026-01-01T00:00:00Z"
                                 updatedAt: "2026-01-16T11:00:00Z"
+                "400":
+                    description: 'Rejected before the row is written: an invalid body, a password change on an SSO-provisioned account (type sso_account), or a caller-tripped constraint (FIELD_REQUIRED, REFERENCE_NOT_FOUND).'
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '403':
+                    description: 'Refused by the grant ceiling: the caller does not hold every permission the target principal holds (code PRIVILEGE_ESCALATION_BLOCKED), or the request is unauthenticated.'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                '404':
+                    description: No record exists with the given id.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                '409':
+                    description: A user with those details already exists (code USER_EXISTS).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '503':
+                    description: The IAM engine is unavailable, so the grant ceiling cannot be evaluated and the write is refused rather than allowed through unchecked.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
         delete:
             operationId: deleteUser
             summary: Delete a Nexus user
@@ -328,8 +369,16 @@ paths:
                   description: Identifier of the user to delete.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
+                "204":
+                    description: User deleted; no response body.
+                '404':
+                    description: No record exists with the given id.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
                 "500":
                     description: Internal Server Error
                     content:
@@ -337,8 +386,6 @@ paths:
                             schema:
                                 type: object
                                 additionalProperties: {}
-                "204":
-                    description: User deleted; no response body.
     /api/admin/users/{id}/audit:
         get:
             operationId: getUserAudit
@@ -355,7 +402,19 @@ paths:
                   description: Identifier of the user whose audit events are listed.
                   required: true
                   schema:
-                    type: string
+                      type: string
+                - name: limit
+                  in: query
+                  required: false
+                  description: Page size. Defaults to 50; a value that is negative, zero or unparseable falls back to 50 rather than being clamped.
+                  schema:
+                      type: integer
+                - name: offset
+                  in: query
+                  required: false
+                  description: Row offset. Defaults to 0; negative or unparseable values are ignored.
+                  schema:
+                      type: integer
             responses:
                 "500":
                     description: Internal Server Error
@@ -390,7 +449,7 @@ paths:
                   description: Identifier of the user whose device assignments are listed.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
                 "500":
                     description: Internal Server Error
@@ -426,7 +485,7 @@ paths:
                   description: Identifier of the user to summarize.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
                 "500":
                     description: Internal Server Error
@@ -458,7 +517,7 @@ paths:
                                     canAccessControlPlane: true
                                     source: local
                                     lastLoginAt: "2026-01-15T09:30:00Z"
-                                    preferredTimezone: null
+                                    preferredTimezone:
                                     createdAt: "2026-01-01T00:00:00Z"
                                     updatedAt: "2026-01-15T09:30:00Z"
                                 virtualKeys: []
@@ -482,22 +541,8 @@ paths:
                   description: Identifier of the user whose access is revoked.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
-                "500":
-                    description: Internal Server Error
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "404":
-                    description: No user exists with the given id.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "200":
                     description: Summary of the revocation, with counts of keys disabled and devices revoked.
                     content:
@@ -510,6 +555,26 @@ paths:
                                 devicesRevoked: 2
                                 userSuspended: true
                                 userId: usr_01HZX
+                "404":
+                    description: No user exists with the given id.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '502':
+                    description: The virtual keys were disabled but the AI Gateway cache invalidation failed, so the revocation is only partially applied and must be retried (code INVALIDATE_FAILED).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
 components:
     schemas:
         userstore_NexusUserSafe:
@@ -539,6 +604,7 @@ components:
                     enum:
                         - local
                         - oidc
+                        - saml
                         - scim
                 lastLoginAt:
                     type:
@@ -577,3 +643,25 @@ components:
                 - source
                 - createdAt
                 - updatedAt
+        AdminError:
+            type: object
+            description: Error envelope returned by every admin handler.
+            properties:
+                error:
+                    type: object
+                    properties:
+                        message:
+                            type: string
+                            description: Human-readable failure reason.
+                        type:
+                            type: string
+                            description: Error class, such as validation_error, authorization_error, not_found or server_error.
+                        code:
+                            type: string
+                            description: Machine-readable code. An empty string when the handler supplies none.
+                    required:
+                        - message
+                        - type
+                        - code
+            required:
+                - error

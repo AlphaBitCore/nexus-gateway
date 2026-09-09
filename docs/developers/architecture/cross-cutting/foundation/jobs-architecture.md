@@ -160,7 +160,7 @@ Periodic purge and Redis-to-DB drain jobs.
 | `rollup-retention` | `defs/rollup/rollup_retention.go` | 24 hour | Purges aged rows from `metric_rollup_5m/1h/1d/1mo` based on per-tier retention days (`cfg.Scheduler.Retention.Rollup{5m,1h,1d,1mo}Days`). |
 | `job-retention` | `defs/retention/job_retention.go` | 24 hour | Prunes `job_run` rows, keeping the N most recent runs per job (default N=100). |
 | `credential-stats-flush` | `defs/retention/credential_stats_flush.go` | 60 sec | Drains per-credential usage counters and timestamps from Redis into the `Credential` table. Runs frequently to keep `lastUsedAt`, `lastSuccessAt`, `lastFailureAt`, and `totalUsageCount` up to date without high-frequency concurrent DB writes. |
-| `credential-circuit-flush` | `defs/retention/credential_circuit_flush.go` | 30 sec | Drains `cred:circuit:dirty` Redis set into `Credential.circuit*` columns. Uses an in-flight working set for at-least-once delivery; rehydrates Redis from DB on first run after restart. |
+| `credential-circuit-flush` | `defs/retention/credential_circuit_flush.go` | 30 sec | Drains `cred:circuit:dirty` Redis set into `Credential.circuit*` columns. Uses an in-flight working set for at-least-once delivery; rehydrates Redis from DB on first run after restart. **At-least-once delivery makes a write a poor proxy for a state change**: the transitions counter reads the stored state first and increments only when the destination actually differs. Two production paths re-write a state the row already holds — a credential sitting in the dirty set while only its `nextProbeAt` moved, and `nextProbeAt` advances on EVERY probe while a circuit stays open; and a partial-failure cycle replaying the whole in-flight set, which re-counts every entry that had already succeeded. Counting writes therefore reported a fresh transition every 30 s for a circuit that had not moved. |
 
 ### 5.4 State-poll alerts (7 jobs)
 
@@ -200,7 +200,7 @@ Reconciliation jobs that compare desired state vs reported state vs actual state
 | `config-drift-check` | `defs/drift/drift.go` | (cfg) | Detects Things whose reported config version differs from desired and triggers repair via the fleet manager. |
 | `stale-thing-sweep` | `defs/drift/stale_thing.go` | 30 sec | Marks Things offline when their `last_seen_at` exceeds the per-category threshold (default 90 s for service Things — 3x the 30 s ping interval so a single jittered ping cannot flap a healthy service offline). |
 | `smart-group-recompute` | `defs/drift/smart_group_recompute.go` | 60 sec | Re-evaluates every smart `DeviceGroup`'s `membership_query` against the current device fleet and replaces the `device_group_membership_cache` rows. Runs every 60 s as a safety net; heartbeat-driven recomputes handle the steady-state. |
-| `user-identity-enrichment` | `defs/drift/identity_enrichment.go` | (cfg) | Backfills user identity fields into recent `traffic_event` rows using IAM lookups. |
+| `user-identity-enrichment` | `defs/drift/identity_enrichment.go` | (cfg) | Backfills user identity fields into recent `traffic_event` rows using IAM lookups. Three legs, ordered so a fact beats a guess. The first asks which user the row's device was bound to when it was written — agent rows carry a `thing_id` the Hub stamped from the authenticated mTLS device token, so the question has one answer, and it must not lose to a heuristic that happens to run earlier. The second asks whether another row for the SAME request already resolved an identity — the gateway's row usually did, from the virtual key — and copies it onto the agent / compliance-proxy row that could not. That join is on `external_request_id`, the request id every service on the path stamps; it is deliberately not on `trace_id`, which holds the caller's own W3C trace and is NULL for every caller that runs no tracing, so joining there would match nothing and fail silently. Rows that leg cannot attribute fall to the IP leg, which asks which device held that client IP when the event happened. Agent rows reach these legs at all only because the ingest path stamps `identity` as `{"status":"pending"}` rather than blanking it along with the forgeable attribution fields — the job selects on that status, and a blanked identity carries none, so a blank would silently exclude every agent row from enrichment for good. That question is per-row but the answer set is not: one statement per PAGE prefetches every assignment window overlapping the page's IP set and time span (`FindAssignmentsByIPsOverlapping`, 200 IPs per chunk), and each row is then matched in Go against the windows for its own IP. The prefetch is capped at `maxAssignmentPrefetchRows` and REFUSES past it rather than silently truncating — a truncated window set would attribute events to the wrong device, which is worse than leaving them pending. A prefetch failure leaves the page's rows pending for the next run; it never marks them enriched-with-nothing. |
 | `exemption-gc` | `defs/drift/exemption_gc.go` | 5 min | Fires a Cat B invalidate signal when compliance exemption grants have recently expired so compliance-proxy refreshes its in-memory view without waiting for the next admin mutation. |
 
 ### 5.7 Audit (4 jobs)
@@ -341,3 +341,15 @@ SELECT * FROM job_run WHERE status = 'running' AND started_at < now() - interval
 ```
 
 A `status='error'` run's `error_message` is the formatted output of `err.Error()` from the Run; pair it with the Hub's `slog` ERROR line at the same timestamp for full context (stack trace, job-specific structured fields).
+
+## Cache-quality monitor: what counts as "normaliser-modified"
+
+The cache-quality monitor compares the error rate of normaliser-modified traffic
+against the rest, and reverts every enabled rule to `dry_run_always` when the ratio
+exceeds 3×. Its classification depends on the producer telling the truth: a dry-run rule
+forwards the body untouched, so the AI Gateway stamps zero strip counts for it
+(`stage_execute.go`) and those rows fall out of this filter on their own. When the
+producer instead recorded what the rule WOULD have stripped, dry-run rows counted
+as modified — so after the job flipped every rule to dry-run its measured
+population did not change, the error rate it watches could not respond, and it
+could never observe whether its own remediation worked.

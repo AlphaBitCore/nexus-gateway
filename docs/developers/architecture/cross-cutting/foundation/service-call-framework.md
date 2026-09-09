@@ -214,6 +214,42 @@ A service **never configures another Nexus service's URL**. Each server service 
 
 **What stays config** (not peer URLs): each service's OWN `publicURL` / `privateURL`, the bootstrap `registry.nexusHubUrl` (chicken-and-egg — you need the Hub to resolve anything), infrastructure URLs (DB / NATS / Redis), and external IdP URLs. One special case: compliance-proxy `onboarding.cpUIBaseURL` remains an optional override for the 407-page display link; its default is the Hub-resolved Control Plane `publicUrl` (a display link for end users, hence public, never private).
 
+## §6.6 — Outbound HTTP construction (`packages/httpclient`)
+
+Every outbound `*http.Client` in the repo is built by `nexushttp.New(Config{...})`.
+Constructing `&http.Client{}` directly is a lint failure — `scripts/check-bare-http-client.sh`
+runs an AST gate whose allowlist holds exactly one entry, the factory itself.
+
+`packages/httpclient` is its own Go module, and deliberately at the bottom of the
+dependency graph: its external closure is stdlib, `golang.org/x/net`, and the
+`golang.org/x/text` packages `x/net/idna` pulls in — nothing else, and nothing
+at all from `packages/shared`. That is what lets `peerurl`,
+`thingclient`, the Hub's vendor-bill fetchers, the CLI and the Control Plane
+assistant all reach it without a cycle.
+
+What the factory gives a caller that takes the defaults: a 30 s client deadline,
+`MinVersion: tls.VersionTLS12`, a tuned dialer and connection pool (including the
+process-wide dial control the Linux agent installs), and outbound debug logging.
+Request-id propagation is NOT in that set — `PropagateReqID` is opt-in and off by
+default, for calls to peer services.
+
+Read that list precisely: everything on it except the deadline and the logging
+lives on the TRANSPORT. A caller that uses the `Transport` seam below to replace
+the round-tripper keeps the deadline and the logging wrapper and gives up the TLS
+floor, the tuned dialer and the dial control, because it supplied its own.
+
+Two seams exist because two real callers cannot take the defaults, and both are
+explicit rather than inferred:
+
+| Seam | Why it cannot be inferred |
+|---|---|
+| `NoTimeout bool` | A zero `Timeout` cannot say "no deadline": zero is also what an unset field looks like. Six production callers take it, and provider streaming (`specutil`) is the busiest; the others bound the call some other way — the WebSocket dial by the 10 s context around it, the assistant because an in-process dispatch has no network deadline to enforce, the AI-Gateway simulator by `ResponseHeaderTimeout` on its transport. |
+| `Transport func(base *http.Transport) http.RoundTripper` | The caller receives the tuned transport and returns what the client should use, so a caller that must replace the round-tripper entirely — `selfdispatch` in the assistant, `RetryTransport` in the CLI — still gets the factory's wrappers around it. |
+
+A client that opts out of the deadline must be bounded somewhere else — on the
+transport, on the request context, or by the protocol — and every one of the six
+is.
+
 ## §7 — Failure modes + safety
 
 | Trigger | Behaviour |

@@ -12,15 +12,14 @@
  * So this runs as a standing check rather than a one-off repair, which is the
  * difference between fixing the data and fixing the way it goes bad.
  *
- * It reads the top-level fields, which is now the only place they live. They
- * used to sit under `seed` for a seeded row and at the top level for a
- * template-only one, so this file had to ask both — and an earlier version
- * asked only the top level, a key the generator did not consume, certifying
- * data the database never saw while 40 seeded rows carried vision with
- * text-only input. A check pointed at the wrong field is worse than no check:
- * it reports the property as held. The two-homes shape made that mistake
- * available, so the fields were moved to one home and the generator now
- * refuses a catalog that puts them back under `seed`.
+ * It reads the top-level fields, which is the only place they live. Split
+ * across two homes — under `seed` for a seeded row, at the top level for a
+ * template-only one — a check has to ask both, and asking only the top level
+ * reads a key the generator does not consume: it certifies data the database
+ * never saw while 40 seeded rows carry vision with text-only input. A check
+ * pointed at the wrong field is worse than no check, because it reports the
+ * property as held. So the fields have one home, and the generator refuses a
+ * catalog that puts them back under `seed`.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -96,9 +95,9 @@ for (const [type, field, modality, pick] of [
 }
 
 test('no model carries the retired "audio" type', () => {
-  // It used to be minted by the discovery heuristic for any id containing
-  // "audio", and the models that got it — gpt-audio-* — are served on chat
-  // completions, so the routing guard rejected every one of their requests.
+  // A discovery heuristic that mints it for any id containing "audio" catches
+  // gpt-audio-*, which are served on chat completions — so the routing guard
+  // rejects every one of their requests.
   const bad = models.filter(({ m }) => m.type === 'audio').map(({ provider, m }) => label(provider, m))
   assert.deepEqual(bad, [], `"audio" is not an endpoint kind:\n  ${bad.join('\n  ')}`)
 })

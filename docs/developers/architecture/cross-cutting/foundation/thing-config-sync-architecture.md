@@ -143,6 +143,8 @@ When a server Thing's WebSocket is down, it falls back to HTTP polling. Source: 
 
 The WARN naming the Thing is emitted once per stretch of rejections rather than once per attempt. A line every couple of seconds is how the previous one stayed invisible.
 
+**Two clients, and they are easy to mistake for one.** The fallback endpoints and the agent's audit-batch upload both ride `newHTTPClient` (`http.go`), which carries `Timeout: 10s` and `PropagateReqID: true`. `dialHTTPClient` (`client.go`) is a different client with a different job: it is handed to `websocket.Dial` and never used for a fallback request. It takes `NoTimeout` because a client-level deadline is meaningless there — coder/websocket turns a non-zero `HTTPClient.Timeout` into a handshake deadline and zeroes the client's own, so it never bounds the live connection, and the call site already wraps the dial in a 10 s context. Both are built by the factory, so both pick up the process-wide dial control (the Linux agent's `SO_MARK`) with no platform branch. See [[service-call-framework]] §6.6.
+
 Prometheus counter `httpFallbackReqs{type=...}` tracks each kind (`register`, `heartbeat`, `shadow`, `config_pull`).
 
 **Cross-Thing identity binding (HTTP fallback).** All `/api/internal/things/*` HTTP endpoints are gated by `DeviceOrServiceAuth`, which authenticates a device-token caller against its `X-Thing-Id` and attaches the validated `*store.Thing` to the request context. Every handler that operates on a thing id taken from the request body or query (`register`, `heartbeat`, `shadow`, `config?id=`, `deregister`, `:id/attestation-pubkey`, plus `audit`, `exemption`) enforces, via `requireThingMatch`, that a device-token caller's operated id equals its authenticated id — a device token cannot act on another Thing's row. Service-token callers (CP / Hub-internal) have no context Thing and bypass the check. This mirrors the WebSocket path, which already derives the acting identity from the validated connection rather than the frame payload. (Agents self-sign their device identity, so there is no cert-renewal handler.)
@@ -197,6 +199,41 @@ Admins can re-push the current desired config to a single Thing even when nothin
 - `drift` — set by `jobs/defs/drift/drift.go` `UpdateThingStatus(thingID, "drift")`, but only **after** repair is exhausted: the job scans `status IN ('online', 'drift')` for a version (or content) mismatch and re-pushes the desired config up to `driftMaxRetries` (3) times (Redis-counted, 5m TTL) before flipping the row to `drift`. See §11 for the retry/repair sequence.
 - `revoked` — written by admin-driven revocation flows (out of scope here; covered alongside enrollment in the agent identity & enrollment doc).
 
+## §13 — Trust boundary on the Thing→Hub internal API
+
+The same `/api/internal/things/*` surface a Thing uses to report config is also
+how it uploads audit events, and the two callers on it are **not** equally
+trusted:
+
+- A **device token** is bound to one Thing's own identity. It is the untrusted
+  side: the device is the subject the record is about, so anything it asserts
+  about who it is has to be established by Hub, not accepted from the payload.
+- A **service token** is fleet-shared and trusted. It may label its own
+  `source`, because it is speaking for the fleet rather than about itself.
+
+`ThingFromContext(c) != nil` is what distinguishes them, and the handler strips
+every key a device may not assert **before** stamping the authoritative ones
+(`audit_allowlist.go`). The order matters: forwarding the map verbatim let a
+device self-assert `entityId`, `orgId` and `identity`, and — because the
+downstream consumer's decoder matches field names case-insensitively and a
+lowercase `"thingid"` marshals after the canonical `"thingId"` — override the
+stamp itself on last-key-wins. Stripping is counted so a device probing the
+boundary is visible rather than silent.
+
+**Rejected events are named, not swallowed.** An event Hub cannot enqueue used
+to vanish while the response still reported `ack: true`, so the uploading Thing
+had no way to know a compliance record was lost. The response now carries the
+ids it could not take.
+
+That response shape is per-route, and conflating the two was its own defect.
+`POST /things/audit` answers `{ack, accepted: <count>, eventIds: […]}`;
+`POST /things/agent-audit` answers `{accepted: […]}` — the same field name
+carrying a count on one route and a list on the other. One struct cannot decode
+both: at least one route silently produces a zero value. `thingclient` therefore
+declares `AuditBatchResponse` and `AgentAuditBatchResponse` separately. The
+`rejected` field is additive and omitted when empty, so an older Hub that does
+not send it decodes to nil rather than to a wrong answer.
+
 ## References
 
 - CP admin → Hub bridge — `packages/control-plane/internal/platform/hub/client.go`
@@ -216,3 +253,22 @@ Admins can re-push the current desired config to a single Thing even when nothin
 - Override blacklist — `packages/shared/schemas/configtypes/policy/override_policy.go`
 - Periodic drift / offline-sweep jobs — `packages/nexus-hub/internal/jobs/defs/drift/`
 - Data model (Thing, shadow, template/override, Type A/B, callback contract, terminology) — `docs/developers/architecture/cross-cutting/foundation/thing-model.md`
+
+## Applier order is not guaranteed
+
+`configloader.Apply` iterates the desired-state map, and Go randomises map
+iteration, so two shadow keys applied in the same push arrive in an arbitrary
+order. An applier that reads state another key owns is therefore reading whatever
+that state happens to be at that moment — on a cold start, possibly nothing.
+
+This is not hypothetical. The `cache` key's applier used to project per-provider
+prompt-cache settings against `CacheLayer.ProvidersAll()`, which the `providers`
+key populates. A start that reached `cache` first projected against an empty
+provider list and left prompt-cache markers off for the whole process lifetime,
+while the admin UI still showed the toggle on.
+
+The fix is not to order the appliers — it is to make the consumer independent of
+arrival order. Hold the pushed blob and resolve on demand (as
+`internal/cache/promptcache` now does, and as the Gemini manager set already did by
+stashing the blob and re-deriving on provider reload) rather than projecting it
+once against another key's snapshot.

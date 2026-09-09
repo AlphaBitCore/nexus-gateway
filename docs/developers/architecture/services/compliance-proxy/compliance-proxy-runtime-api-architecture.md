@@ -38,10 +38,12 @@ warning is logged (dev mode).
 
 `runtime.killswitch.KillSwitch` (`packages/compliance-proxy/internal/runtime/killswitch`)
 is the local state behind the forward-path `IsEngaged` check, which is a
-lock-free `atomic.Bool` read on the hot path. `Toggle` sets the state and records
-bounded in-memory history; `ForceClose` disengages and closes all currently
-bumped connections (via a registered force-close func); `ApplyBreakGlass` applies
-a break-glass payload. State is driven by the Hub shadow — there is no local
+lock-free `atomic.Bool` read on the hot path. `Toggle` sets the state; `ApplyBreakGlass` applies
+a break-glass payload. There is no `ForceClose` and no in-memory history: the
+method, its registered callback and the ring were removed, none of them having
+a caller, a route or a UI affordance — and the callback shut the whole proxy
+down rather than closing bumped connections. Durable history lives on the Hub,
+which is what the console reads. State is driven by the Hub shadow — there is no local
 persistence and no cross-instance publisher.
 
 ## 3. Break-glass overrides
@@ -94,7 +96,7 @@ affected cache and re-applies derived state — for example
 
 - `packages/compliance-proxy/internal/runtime/server/` — runtime HTTP routes
 - `packages/compliance-proxy/internal/runtime/auth/` — bearer `COMPLIANCE_PROXY_API_TOKEN`, constant-time compare
-- `packages/compliance-proxy/internal/runtime/killswitch/` — local kill-switch state, force-close
+- `packages/compliance-proxy/internal/runtime/killswitch/` — local kill-switch state
 - `packages/compliance-proxy/internal/runtime/breakglass/` — break-glass PUT, version bump, event log, spool
 - `packages/compliance-proxy/internal/exemption/` — shadow-driven temporary hook exemptions
 - `packages/compliance-proxy/internal/config/` — PostgreSQL loaders + typed config cache

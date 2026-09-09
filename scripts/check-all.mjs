@@ -53,6 +53,10 @@ const limit = Math.max(2, Math.min(8, cpus().length - 1));
 const queue = [...light];
 const failed = [];
 const passed = [];
+// Exit 3 is the "did not run" contract (see scripts/check-go-lint.sh). Counting
+// a skip toward "all N gates passed" is what let a branch reach CI with lint
+// violations after a local sweep reported every gate green.
+const skipped = [];
 
 async function worker() {
   for (;;) {
@@ -64,6 +68,11 @@ async function worker() {
       process.stdout.write(`  ✓ ${name}\n`);
     } catch (err) {
       const out = `${err.stdout ?? ''}${err.stderr ?? ''}`.trimEnd();
+      if (err.code === 3) {
+        skipped.push({ name, out });
+        process.stdout.write(`  ⊘ ${name} (did not run)\n`);
+        continue;
+      }
       failed.push({ name, out });
       process.stdout.write(`  ✗ ${name}\n`);
     }
@@ -86,4 +95,14 @@ if (failed.length > 0) {
   process.exit(1);
 }
 
-console.log(`\ncheck:all: all ${passed.length} gates passed`);
+if (skipped.length > 0) {
+  for (const s of skipped) {
+    console.log(`\n─── ${s.name} — DID NOT RUN ───\n${s.out}`);
+  }
+  console.log(
+    `\ncheck:all: ${passed.length} gates passed, ${skipped.length} DID NOT RUN — ` +
+      `${skipped.map((s) => s.name).join(', ')}. These are unmeasured, not green.`,
+  );
+} else {
+  console.log(`\ncheck:all: all ${passed.length} gates passed`);
+}

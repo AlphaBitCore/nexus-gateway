@@ -20,6 +20,14 @@ This group of INFRASTRUCTURE leaves controls platform telemetry, how long diagno
 
 **Controls.** Edit any layer's retention, in days, within its bounds. Save submits only the layers you changed. Reset to defaults rolls every layer back to its built-in default, behind a confirmation dialog.
 
+**What the page shows before anything is configured.** The form shows the
+built-in defaults as *defaults*, not as settings in force. The distinction is the
+whole point of the page: an operator reading a populated form reasonably concludes
+those windows are what the platform is applying, and acting on that belief — "90
+days is already configured, nothing to do" — is how a retention requirement goes
+unmet while the screen looks correct. Values that have never been saved are
+presented as such.
+
 **Key concepts.** Each layer is a retention window in days bounded by a minimum and maximum. The four metric tiers (raw → 1-hour → 1-day → 1-month) keep progressively coarser rollups for progressively longer. Diagnostic retention is keyed by severity, so fatal events are kept longer than errors, and errors longer than warnings.
 
 **Where the data comes from.** `retentionApi.get` / `put` → `/api/admin/observability/retention`, gated on `observability.read` to view and `observability.write` to save.

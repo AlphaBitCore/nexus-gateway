@@ -9,7 +9,7 @@ Anchor packages:
 - `packages/shared/schemas/configkey/configkey.go` — registers the `killswitch` shadow key.
 - `packages/shared/schemas/configtypes/interception/killswitch.go` — the wire shape `{engaged: bool}`.
 - `packages/control-plane/internal/governance/killswitch/handler/` — admin API + Hub fan-out.
-- `packages/compliance-proxy/internal/runtime/killswitch/` — proxy-side receiver + history.
+- `packages/compliance-proxy/internal/runtime/killswitch/` — proxy-side receiver.
 - `packages/compliance-proxy/internal/proxy/forward/forward.go` — bump-bypass gate.
 - `packages/agent/internal/lifecycle/killswitch/` — agent-side receiver.
 - `packages/agent/cmd/agent/wiring/bridge.go` — agent connection bridge passthrough gate.
@@ -71,7 +71,7 @@ The receiver lives in `packages/compliance-proxy/internal/runtime/killswitch/kil
 
 Shadow application is wired through `configdispatch.registerKillSwitch`: the handler decodes the `{engaged}` JSON, calls `KillSwitch.Toggle(v.Engaged, "hub-shadow")` when the value differs from the live state, then reports the **live** snapshot back to Hub. Echoing the live state (rather than the desired one) is deliberate — a local rejection or a lagging shadow tick must surface the actually-applied state, otherwise the Nodes page would show a false "in sync".
 
-`Toggle` updates the atomic flag, stamps `lastChanged` + `changedBy`, and appends a `KillSwitchHistoryEntry` to a bounded in-memory ring (capacity 100, not persisted across restart — durable history lives on the Hub side). Two `changedBy` values are canonical: `"hub-shadow"` for normal Hub-driven flips and `"break-glass"` for the runtime API path.
+`Toggle` updates the atomic flag and stamps `lastChanged` + `changedBy`. It used to also append to a bounded in-memory ring; that ring is gone, because durable history lives on the Hub side and is what the console actually reads — the CP-UI kill-switch page loads `/api/admin/config-sync/history`, never a per-instance copy. Two `changedBy` values are canonical: `"hub-shadow"` for normal Hub-driven flips and `"break-glass"` for the runtime API path.
 
 Once engaged, the bump bypass fires inside `forward.Run`:
 
@@ -87,7 +87,7 @@ if cfg.KillSwitchChecker != nil && cfg.KillSwitchChecker() {
 
 The result is a raw TCP relay between client and origin: no certificate is minted, no compliance pipeline runs, no payload is captured, no normalization happens. The CONNECT still succeeds and the client sees a working HTTPS tunnel — it just isn't inspected. This is the entire point: a regression in a downstream hook cannot block traffic when the switch is engaged.
 
-`KillSwitch` also carries a `ForceClose(changedBy)` method that drops bumped connections currently in flight via a callback `forceCloseFn` wired in `main.go`. Engaging the switch via the shadow does **not** automatically force-close in-flight bumped connections — those drain naturally. Force-close is a separate operator action invoked from the runtime API for incidents that need an immediate cut.
+Engaging the switch does **not** touch in-flight bumped connections — they drain naturally, and there is no lever that cuts them. A `ForceClose(changedBy)` method and a `forceCloseFn` callback wired in `main.go` did exist, with no caller, no route and no UI affordance. Reading the callback settled what it actually was: it called `shutdownCoord.Shutdown()`, so "force-close the bumped connections" meant shutting the whole proxy down. Both are removed — see §8.
 
 ## 5. Agent receiver
 
@@ -161,7 +161,7 @@ Agent-side observability is intentionally lighter: the throttled INFO log carrie
 
 Disengage is symmetric: `POST /api/admin/compliance/killswitch` with `{engaged: false}`. Hub re-pushes the shadow, each receiver toggles back, `killswitch.active` drops to 0, and the next CONNECT runs the full pipeline again. There is no auto-revert timer — the kill switch stays engaged until an operator explicitly disengages it. (Emergency passthrough overrides on the AI Gateway side, in contrast, carry a mandatory `ExpiresAt ≤ 8h` — that's a per-provider compliance lever; the kill switch is a fleet-wide cutoff and the operator is on the hook for disengaging it when the incident is over.)
 
-In-flight bumped connections from before the disengage are unaffected; they continue under the policies that were live when they started. Force-closing them would punish active users for a state they didn't choose. Operators who want a clean cut can call `ForceClose` on each compliance-proxy node through the runtime API.
+In-flight bumped connections from before the disengage are unaffected; they continue under the policies that were live when they started. Force-closing them would punish active users for a state they did not choose, and that is the posture rather than a gap: there is no clean-cut lever, deliberately. If a drain-now capability is ever wanted it comes back designed — a UI affordance, an audit entry, a grace period — not as a callback nobody can reach.
 
 ## 9. Relation to emergency passthrough
 

@@ -4,7 +4,9 @@ Smart routing is one of the routing engine's strategies (see [routing-architectu
 
 ## 1. When smart routing runs
 
-A `smart` strategy node fires when an operator authors a rule whose strategy resolves to it — typically the rule matching `model: auto`. The strategy is registered only when its dependencies are wired (`cacheLayer` and the provider-target resolver both present); without them the smart strategy is absent and a rule referencing it resolves to no targets.
+A `smart` strategy node fires when an operator authors a rule whose strategy resolves to it. Which request strings reach it is the rule's own `matchConditions.requestedModelLiterals`, and the operator chooses them: `auto` is the OpenAI-side convention and the usual first entry, but a fleet publishing `fast` and `cheap` to its clients, or handing a whole family over with `gpt-4-*`, authors the same rule. The admin API requires that list to be non-empty and refuses only entries that reach every request — a blank string, or an entry made of nothing but `*` (see [routing-rule matchConditions audit](../../../../operators/ops/runbooks/r-routing-rule-matchconditions-audit.md)). The strategy is registered only when its dependencies are wired (`cacheLayer` and the provider-target resolver both present); without them the smart strategy is absent and a rule referencing it resolves to no targets.
+
+**Delegation spans every modality, and nothing at admission filters which keyword may ask for it.** `readBody` used to refuse `model: "auto"` on `/v1/embeddings` — a line from the commit that first added smart routing, when the strategy was a chat-only task-router and an embeddings payload had nothing to select from. Everything under it moved since, and the veto was deleted (2026-09-03) rather than generalized: it stopped one spelling while an operator's own keyword carried the identical request straight through. Measured on prod against one rule pinned to `[auto, janus:default]`, the keyword resolved `chat → command-r7b-12-2024`, `embeddings → text-embedding-3-small`, `rerank → rerank-english-v3.0`, `image_generation → gemini-3.1-flash-lite-image`, all on that single rule. If delegation should ever be restricted on an endpoint, the restriction belongs at the routing layer that knows which rule claimed the request — for ALL keywords — not at admission naming a string. The embeddings caveat worth telling callers is a different thing and lives in [gateway-api-reference.md](../../../../users/api/gateway-api-reference.md): two embedding models emit vectors in different spaces, so a delegated embeddings request whose vectors outlive it can be silently incomparable with the index it joins.
 
 **Chat vs. non-chat endpoints.** The LLM task-router below runs only for chat/responses endpoints. On a non-chat endpoint (`model: auto` against `/v1/images/generations`, `/v1/audio/*`, `/v1/rerank`, …) `SmartStrategy.Evaluate` short-circuits to `modalityAutoTargets` (`strategy_smart_modality.go`): it enumerates that endpoint modality's enabled models via `ListEnabledCandidates(kind)` and returns them in a deterministic cheapest-first order — no LLM call. Token sizing, catalog-JSON prompting, and recency ordering are chat concepts that don't apply to an image or audio request, and asking a router LLM to "pick an image model" adds latency and cost for no signal. The modality guard (see [routing-architecture.md](routing-architecture.md) §4) still runs afterward, so even this path can never emit a cross-modality target.
 
@@ -68,6 +70,87 @@ The router returns a code-like token. `resolveSelectedModelID` maps it to an int
 - It then tries an exact `Model.code` match (the canonical happy path), then a UUID match (for prompts that reference the internal id directly), then a unique `providerModelId` match (for outputs that lifted the upstream vendor name verbatim — accepted only when exactly one candidate matches).
 
 An ambiguous or absent match is treated as an unknown selection and falls back.
+
+## 4a. Session affinity — keeping a conversation on its cached model
+
+A provider's prompt cache is keyed on a per-model hash of the request prefix. A
+conversation that leaves a model and comes back finds a prefix that now contains
+an assistant turn produced by a different model, so the hash differs and the entry
+the gateway paid 1.25x to create is dead. Staging traffic measured **41% of
+consecutive chat requests from one caller switching model within 30 minutes**,
+while only 3.5% exceeded the five-minute cache TTL — the switching, not expiry,
+was what threw the cache away.
+
+Affinity is the smallest fix that can work: **after the router has chosen, if this
+conversation's previous model is still in the pool the router chose from, pick
+that instead.**
+
+**It only ever reorders inside the pool.** It never adds a candidate, never
+relaxes a filter, and never skips the router call — skipping the call would also
+skip building the pool, which is the very thing that proves the remembered model
+may still serve this request. Everything affinity must not break is therefore
+already enforced upstream of it:
+
+| concern | the filter that handles it | what affinity does |
+|---|---|---|
+| A turn adds an image and the remembered model is text-only | the modality filter (§2) drops it from the pool | not in the pool → stands down |
+| The conversation outgrows the remembered model's context | `filterByContextWindow`, on the CONSERVATIVE token estimate | not in the pool → stands down |
+| The key's allowlist or a capability requirement changed | the same pool construction | not in the pool → stands down |
+
+**Only chat participates.** Embeddings have no prompt-cache prefix to preserve.
+
+### The gate
+
+`affinityKey` is the single place that reads the header, the virtual key and the
+endpoint kind, and it returns `ok=false` for anything that must not participate:
+no virtual key, not a chat request, or **no `X-Nexus-Session-Id`** (absent, empty
+or whitespace). There is no key to pass to the store unless it returns ok, so a
+request without a session id cannot reach the store at all — the failure it
+prevents is every such request sharing one empty-string key and being pinned to
+whatever model the last unrelated conversation used.
+
+The session id is caller-asserted and never validated, the same trust model the
+header already carries as an audit tag. A caller that sends a wrong id pins its
+own conversations together and costs itself cache hits; the key is scoped by
+virtual key, so one caller's tag can never reach another's traffic.
+
+### The store, and why Redis cannot hurt traffic
+
+Two tiers. The **local in-process tier is always read first and written first**;
+Redis is the shared tier that lets consecutive turns landing on different gateway
+instances still find the entry. A Redis that is down, slow or hung therefore
+cannot hold up a request: the local answer is already in hand, and every Redis
+call carries its own 50 ms deadline. A nil Redis client is a supported
+configuration, not a degraded one — on a single-instance gateway every turn
+reaches the same process.
+
+The shape follows the one this gateway already uses for the same trade-off:
+quota's `UsageCache` is "Redis, with an in-memory fallback" on
+`redis.UniversalClient`. What is deliberately not copied is its write-behind
+aggregator — quota needs every increment eventually, affinity needs no particular
+entry at all, so there is nothing to retry and nothing to drain.
+
+### Expiry, on both tiers
+
+Session ids are caller-supplied, so unbounded retention is a cache-exhaustion
+vector the caller controls. Three mechanisms, each with a test that fails when it
+is removed:
+
+- **Redis:** every write carries the TTL and every turn refreshes it, so a key
+  cannot be left permanent. The TTL tracks the *provider's* cache lifetime (five
+  minutes), not the conversation's — once the upstream entry has expired there is
+  no cache left to protect and the router's judgement should win again.
+- **Memory:** each entry carries an expiry stamp, dropped lazily on read.
+- **Memory, hard cap:** 50 000 entries, then the map is dropped wholesale. A TTL
+  alone bounds the *eventual* size, not the *peak* — one client emitting a fresh
+  id per request would grow the map without limit between expiries. Wholesale
+  reset rather than per-entry eviction because this runs on the routing hot path,
+  and a dropped entry costs its conversation one cache miss and nothing else.
+
+Affinity is **best effort throughout**. Losing an entry means the router's own
+pick is used, which is a correct answer — just a more expensive one. Nothing in
+this path may fail a request. When the override fires it is recorded in the
+routing trace, so "did this help" is answerable afterwards.
 
 ## 5. The Decider and its production implementation
 

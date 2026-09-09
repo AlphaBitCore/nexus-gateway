@@ -2,7 +2,7 @@
 
 ## §1 — Scope
 
-Every config field in Nexus Gateway lives in exactly one of four layers. This document defines the four layers, the five invariants (R1-R5) that govern which layer a field belongs in and how it is read / written / renamed, the 14-layer rename sweep discipline that keeps a rename from leaving a half-renamed field somewhere in the system, and a per-key catalog (§7) listing every configKey and `system_metadata` key currently in use.
+Every config field in Nexus Gateway lives in exactly one of four layers. This document defines the four layers, the six invariants (R1-R6) that govern which layer a field belongs in and how it is read / written / renamed, the 14-layer rename sweep discipline that keeps a rename from leaving a half-renamed field somewhere in the system, and a per-key catalog (§7) listing every configKey and `system_metadata` key currently in use.
 
 CLAUDE.md's mandatory rule ("Configuration changes go through `configuration-architecture.md`") treats any PR that adds / removes / renames a yaml field, env variable, `thing_config_template` configKey, `system_metadata` key, or publisher / receiver wiring without conforming to this document as a binding violation that requires explicit user waiver.
 
@@ -157,9 +157,9 @@ The 14 layers (enforced verbatim by `scripts/check-rename.sh`):
 
 **`--plan` mode** scans `scripts/check-rename.manifest.tsv`, a tab-separated `old<TAB>new` file listing the renames committed in the current migration. The manifest is intended to be hand-maintained as the rename queue and emptied (or pruned) on PR merge. Pure deletes are written as `OLD<TAB>(deleted)` and still scan for leftover OLD references.
 
-## §6.6 — R1-R5: invariants the layer model rests on
+## §6.6 — R1-R6: invariants the layer model rests on
 
-These are the five rules every config PR has to obey. Each cites the exact check or code path that backs it:
+These are the six rules every config PR has to obey. Each cites the exact check or code path that backs it:
 
 **R1 — Single layer of authority per field.** A given config field lives in exactly one of L1 / L2 / L3 / L4. No double-write. Two layers writing the same field disagrees on truth the moment one diverges; the receiver can read either. The decision table in §2 picks the layer; once picked, every other layer's representation must point at it (e.g. yaml may reference an env var name; CP UI may surface a configKey label, but the value lives only in L3).
 
@@ -170,6 +170,104 @@ These are the five rules every config PR has to obey. Each cites the exact check
 **R4 — Push channels are versioned and idempotent.** L3 writes propagate through `thing_config_template.version` (monotonic per-(type, key), bumped per admin write) and `thing.desired_ver` (per-type monotonic for template writes; per-Thing `+= 1` for override writes). Thing-side apply uses the `desiredVer > reportedVer` predicate (A01 §7), `Force=true` is the explicit bypass for admin re-sync replays (A02 §10). Equal-version applies are skipped — so a stale message cannot re-apply over a fresher one.
 
 **R5 — Renames sweep all 14 layers in the same PR.** §6.5 is binding. `scripts/check-rename.sh` must report `ALL 14 LAYERS CLEAN` for every rename before the PR merges. The script is allowed to skip L9 + L10 only when `--skip-prod` is passed (no SSH); in that case the PR description must call out that the deployer will run the prod scan post-merge before traffic resumes.
+
+**R6 — Timeouts increase strictly from the inside out.** The request chain is
+client SDK → ALB → nginx → AI Gateway (server) → provider, and every hop has its
+own ceiling. Each ceiling MUST be strictly greater than the one it wraps, so the
+INNERMOST hop is always the one that expires. Only that hop knows what it was
+waiting for: it classifies the failure as a timeout (which is what feeds
+`routing.defaultRetryPolicy.retryOn`'s `timeout` class and the failover walk in
+`execution/executor/classify.go`), and it writes a complete `traffic_event` row.
+When an outer hop wins instead, the caller gets that hop's bare 504, our
+classifier never runs, and the audit row for the one failure an operator most
+needs to diagnose is the one that is incomplete.
+
+Equal values are NOT a tie to be shrugged at — they are a deterministic loss.
+nginx starts its `proxy_read_timeout` clock when the request arrives; the
+gateway's `upstream.timeoutSec` clock starts only after auth, hooks and routing
+have run. With equal values nginx therefore always expires first. This was the
+state found on prod 2026-08-28: nginx `300s` against `upstream.timeoutSec: 300`.
+
+The ladder as it now stands, and the reason for each gap:
+
+| hop | value | where | why this value |
+|---|---|---|---|
+| provider call | **360s** | `upstream.timeoutSec` | the anchor — what one inference may take |
+| gateway server | 360s | `server.writeTimeout` | binds only non-proxy responses; every proxy path re-arms the connection deadline at write time (`extendWriteDeadlineToUpstreamBudget`, `stream_preamble.go`, `proxy_responses.go`), and streaming re-arms per chunk from `streamIdleTimeoutSec` |
+| nginx | **480s** | `proxy_read_timeout` / `proxy_send_timeout` on the `/v1` blocks | strictly above the anchor so the gateway always cuts first |
+| ALB | **3000s** | `idle_timeout.timeout_seconds` | strictly above nginx, and deliberately above the client default too: this rung is an idle timeout, and its job is to never be the hop that expires |
+| client SDK | 600s | the caller's own default | NOT ours to set, and it is the ceiling the REQUEST BUDGET must fit under: the OpenAI and Anthropic SDKs both default to 600s, so an anchor or nginx rung above that could never be reached |
+
+That last row is why the anchor is 360 and not larger. A provider budget of 600s
+— which is what the repo's yaml carried before this — cannot be laddered at all:
+it leaves no room for any outer hop below a client that gives up at 600s.
+
+The websocket paths (`/v1/realtime`, hub `/ws`) sit at nginx `3600s` and are
+outside this ladder by design: they are long-lived connections, not request
+budgets.
+
+**The ALB rung was the one row nobody had read, and it was wrong.** Measured
+2026-08-28: `idle_timeout.timeout_seconds` was **300**. The outermost hop we
+control held the smallest budget in the ladder — under nginx's 480 and under the
+360 anchor itself. Two consequences, and the second is the one that does not
+look like a timeout bug at all:
+
+- Every request over 300s ended as the ALB's bare 504. `classify.go` never ran,
+  nothing fed the `timeout` retry class, and the traffic_event row for the
+  failure an operator most needs was the incomplete one — exactly what R6
+  exists to prevent.
+- The anchor was unreachable. `upstream.timeoutSec: 360` states what one
+  inference may take, but the real end-to-end ceiling was 300, so the last 60
+  seconds of the budget could not be spent. The ladder's own top row silently
+  overrode its bottom one.
+
+The WebSocket paths were not affected: `thingclient` heartbeats every 15s, so
+`/ws` and `/v1/realtime` carry traffic far inside any of these windows, and
+nginx's 3600s on those blocks is simply unreachable rather than contradicted.
+
+A second knob of the same class sits on the target group rather than the load
+balancer. `deregistration_delay.timeout_seconds` — how long a draining target
+may finish what it already accepted — read **300**, again under the 360s anchor.
+It had never fired: there is one target, and deploys restart the services rather
+than deregister the instance. That is precisely why it could sit wrong, and what
+it would have done the first time it fired is cut inference mid-generation with
+no record on our side that anything happened. Raised to 480, level with the
+nginx rung, since that is the longest a request behind this balancer can
+legitimately live.
+
+Read and corrected to 3000 with:
+
+    aws elbv2 describe-load-balancer-attributes --load-balancer-arn <arn> \
+      --query "Attributes[?Key=='idle_timeout.timeout_seconds']"
+
+These rungs are now checked rather than asserted:
+`tests/smoke/test-timeout-ladder.sh` reads each one off the thing that enforces
+it — the gateway's yaml over ssh, the `/v1` block of nginx.conf, and the load
+balancer and target group over the AWS API — and fails on any pair that is not
+strictly increasing. It reports SKIPPED, never PASS, when a rung cannot be
+reached, because "three of four rungs agree" is the reading that let this drift
+in the first place. Reading the repository instead would only prove the
+repository agrees with itself, which was never in doubt.
+
+Two earlier claims about why this row could not be read were both false, and
+both are worth keeping because each one is a shape that recurs:
+
+- *"No configured profile owns it."* The search never crossed an account
+  boundary. The listener lives in a member account of the AWS organisation, not
+  in the account the default profile resolves to; `aws organizations
+  list-accounts` from the management account names it, and
+  `OrganizationAccountAccessRole` reads it. Enumerating
+  each profile's own account answers a different question than the one asked.
+- *"It is not measurable black-box, because nginx's `keepalive_timeout 65` is
+  shorter."* That conflates two different connections. The ALB terminates TLS,
+  so 65s governs the ALB↔nginx hop while the idle timeout governs client↔ALB;
+  the ALB can hold the client connection long after closing its backend one and
+  open a fresh backend connection for the next request. One client TLS
+  connection, idled and then reused, bracketed the value to (180s, 400s) before
+  the API was ever consulted — and 300 sits inside that bracket.
+
+
+Changing any one of these means changing the ones outside it in the same PR.
 
 ## §7 — Per-key catalog
 
@@ -285,3 +383,14 @@ The factory that consumes this yaml lives at `packages/shared/storage/redisfacto
 - L3 data model + cascade — `docs/developers/architecture/cross-cutting/foundation/thing-model.md` (A01)
 - L3 sync flow — `docs/developers/architecture/cross-cutting/foundation/thing-config-sync-architecture.md` (A02)
 - yaml + bootstrap loader specifics — `docs/developers/architecture/cross-cutting/foundation/service-bootstrap-config-architecture.md` (A05)
+
+## Deprecated key: `marker_boundary3_enabled`
+
+`cache_adapter_config` / `cache_provider_config` still accept and store
+`marker_boundary3_enabled`, and it is read by nothing. It selected a second
+explicit Anthropic cache breakpoint; the gateway now uses the provider's automatic
+caching, which places and advances the breakpoint itself. The key remains so
+existing stored configurations round-trip unchanged and no PUT starts failing; both
+OpenAPI copies mark it `deprecated: true`, and its admin-UI toggle is removed —
+a control that changes nothing is worse than no control. Removal is a config
+migration and needs the §6.5 rename sweep plus a CHANGELOG note.
