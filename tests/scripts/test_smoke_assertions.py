@@ -12,10 +12,13 @@ network:
     python3 -m unittest discover -s tests/scripts -p 'test_*.py'
 """
 
+import ast
 import importlib.util
 import json
 import pathlib
 import re
+import socket
+import threading
 import unittest
 
 _SRC = pathlib.Path(__file__).with_name("smoke-gateway.py")
@@ -446,3 +449,189 @@ class ResultLabelsAreUnique(unittest.TestCase):
             f"these labels are produced twice: {collisions}. A dedicated comprehension case "
             f"and an ingress arm's derived half must not share a name — they run against "
             f"different models and answer different questions")
+
+
+class ClientBudgetHitsReachTheVerdict(unittest.TestCase):
+    """A request that never got a status must still be counted somewhere.
+
+    It fails no assertion on its own: the arm that issued it may retry, warn, or
+    treat it as one absent data point. So a run can give up on its own deadline
+    repeatedly and still print a clean verdict. One full-surface run hit the
+    90-second budget four times and reported one — the other three were absorbed
+    by a retry-once whose only trace was a log line, and finding them meant
+    reading the log by hand.
+
+    The retry is correct and stays. What these tests pin is that the hits reach
+    the structured output, and that the recording lives at the client rather than
+    at any one caller — a per-caller counter is how the fifth caller gets missed.
+    """
+
+    def setUp(self):
+        self._saved_failures = list(smoke._transport_failures)
+        self._saved_results = list(smoke._results)
+        smoke._transport_failures.clear()
+        smoke._results.clear()
+
+    def tearDown(self):
+        smoke._transport_failures.clear()
+        smoke._transport_failures.extend(self._saved_failures)
+        smoke._results.clear()
+        smoke._results.extend(self._saved_results)
+
+    @staticmethod
+    def _silent_server():
+        """A socket that accepts and then says nothing — the shape of a stall.
+
+        A closed port would give ECONNREFUSED, which is the OTHER class; to
+        exercise the read deadline the connection has to succeed first.
+        """
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+
+        held = []
+
+        def accept_and_hold():
+            try:
+                conn, _ = srv.accept()
+                held.append(conn)  # keep it open; never write a response
+            except OSError:
+                pass
+
+        t = threading.Thread(target=accept_and_hold, daemon=True)
+        t.start()
+        return srv, held
+
+    def test_a_stalled_request_is_recorded_as_a_budget_hit(self):
+        srv, held = self._silent_server()
+        try:
+            gw = smoke.GWClient(f"http://127.0.0.1:{srv.getsockname()[1]}", "vk-test")
+            r = gw.chat_sync("some-model", [{"role": "user", "content": "hi"}], timeout=1)
+            self.assertEqual(r["status"], 0, "the stall must surface as a status-0 result")
+
+            self.assertEqual(
+                len(smoke._transport_failures), 1,
+                "the client budget was hit and nothing recorded it — this is the defect")
+            f = smoke._transport_failures[0]
+            self.assertTrue(
+                f["timed_out"],
+                f"a read deadline must classify as a budget hit, got error={f['error']!r}")
+            self.assertEqual(f["model"], "some-model",
+                             "the model is what makes a hit actionable; a bare count is not")
+            self.assertEqual(f["budget"], 1, "the budget that was exceeded belongs in the record")
+            self.assertGreaterEqual(f["elapsed"], 0.5,
+                                    "elapsed must be the real wait, not zero")
+        finally:
+            for c in held:
+                c.close()
+            srv.close()
+
+    def test_a_refused_connection_is_recorded_but_not_as_a_budget_hit(self):
+        """Conflating the two classes would let an outage read as a tight budget."""
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.close()  # nothing is listening now
+
+        gw = smoke.GWClient(f"http://127.0.0.1:{port}", "vk-test")
+        r = gw.chat_sync("some-model", [{"role": "user", "content": "hi"}], timeout=5)
+        self.assertEqual(r["status"], 0)
+        self.assertEqual(len(smoke._transport_failures), 1,
+                         "every transport failure is recorded, not only the timeouts")
+        self.assertFalse(
+            smoke._transport_failures[0]["timed_out"],
+            "a refused connection is the server being absent, not the client giving up early")
+
+    def test_a_model_named_only_in_the_url_still_reaches_the_record(self):
+        """Gemini puts the model in the path, not the body.
+
+        Without this the whole ingress records an empty model and falls back to
+        the URL, so two hits on one model read as two keys — and the summary's
+        one instruction to the reader is to look for hits clustering on a model.
+        """
+        srv, held = self._silent_server()
+        try:
+            gw = smoke.GWClient(f"http://127.0.0.1:{srv.getsockname()[1]}", "vk-test")
+            gw.gemini_non_stream("gemini-2.5-flash", [{"role": "user", "parts": [{"text": "hi"}]}],
+                                 timeout=1)
+            self.assertEqual(len(smoke._transport_failures), 1)
+            self.assertEqual(
+                smoke._transport_failures[0]["model"], "gemini-2.5-flash",
+                "the model is in the URL for this ingress; recording it empty makes the "
+                "per-model breakdown unreadable exactly where it is needed")
+        finally:
+            for c in held:
+                c.close()
+            srv.close()
+
+    def test_every_status_zero_site_in_the_client_feeds_the_recorder(self):
+        """The structural half — the one that survives a new caller.
+
+        The behavioural tests above reach two of the client's four exception
+        handlers. A fifth POST helper added later would be invisible to them and
+        would silently stop feeding the count, which is the same failure shape
+        one layer up. Walked with ast rather than grepped: a regex over a
+        90-line method body cannot tell which handler a call sits in.
+        """
+        tree = ast.parse(_SRC.read_text())
+        cls = next((n for n in ast.walk(tree)
+                    if isinstance(n, ast.ClassDef) and n.name == "GWClient"), None)
+        self.assertIsNotNone(cls, "GWClient is gone or renamed; this gate guards nothing")
+
+        def own_nodes(node):
+            """Walk the handler without descending into a nested function.
+
+            A call written inside a lambda that nothing invokes is not a call the
+            handler makes, and a return inside a nested def is not the handler's
+            return. Counting either would let a handler look compliant while
+            doing nothing.
+            """
+            stack = list(ast.iter_child_nodes(node))
+            while stack:
+                n = stack.pop()
+                if isinstance(n, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                yield n
+                stack.extend(ast.iter_child_nodes(n))
+
+        # The predicate is "the handler produces a result for its caller", i.e.
+        # it returns. Asking instead whether it builds a status-0 dict LITERAL —
+        # which this test did first — misses the refactor most likely to happen
+        # next: folding four near-identical handlers into one envelope helper
+        # disarms that version silently while it stays green. It also missed
+        # dict(status=0), and a named constant. Returning is the property that
+        # actually matters and cannot be spelled around.
+        def returns_a_result(h) -> bool:
+            return any(isinstance(n, ast.Return) for n in own_nodes(h))
+
+        def records_or_reraises(h) -> bool:
+            for n in own_nodes(h):
+                if isinstance(n, ast.Raise):
+                    return True
+                if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                        and n.func.id == "_note_transport_failure"):
+                    return True
+            return False
+
+        offenders, checked = [], 0
+        for fn in cls.body:
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for handler in (h for n in ast.walk(fn) if isinstance(n, ast.Try)
+                            for h in n.handlers):
+                if not returns_a_result(handler):
+                    continue  # e.g. the JSON-parse fallback, which assigns and falls through
+                checked += 1
+                if not records_or_reraises(handler):
+                    offenders.append(f"{fn.name}:{handler.lineno}")
+
+        self.assertGreaterEqual(
+            checked, 4,
+            f"only found {checked} returning handlers in GWClient; the walk has drifted "
+            f"from the source and would pass on a client that records nothing")
+        self.assertEqual(
+            offenders, [],
+            f"these handlers return a result to the caller without recording the failure "
+            f"or re-raising: {offenders}. A caller that does not feed the count makes the "
+            f"run's budget hits invisible again, which is exactly the defect this records")

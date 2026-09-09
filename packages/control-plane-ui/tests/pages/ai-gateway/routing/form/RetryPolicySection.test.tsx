@@ -3,7 +3,7 @@
  *
  * Covers UX behavior (default vs custom mode, control disabling) plus the
  * pure helpers that the create + edit hooks call to serialize the wire
- * payload (per docs/users/api/openapi/admin/e34-s3-routing-retry-policy.yaml §6.3).
+ * payload.
  */
 import { useState } from 'react';
 import { describe, it, expect } from 'vitest';

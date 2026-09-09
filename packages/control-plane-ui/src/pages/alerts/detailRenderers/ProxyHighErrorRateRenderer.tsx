@@ -3,7 +3,7 @@
  * evidence (5xx response rate).
  *
  * Hub registers the rule with params `{ thresholdPct, windowSec, minSamples }`
- * (`packages/nexus-hub/internal/alerting/rules/builtin.go`). A dedicated
+ * (`packages/nexus-hub/internal/alerts/engine/rules/builtin.go`). A dedicated
  * producer for this rule is not in the tree yet — the expected details shape
  * mirrors the hook-rate producers' convention (`ratePct` + a sample total and
  * a failure total). The renderer is field-tolerant: it reads whatever numeric

@@ -42,7 +42,7 @@ export function JsonSection({ label, value }: { label: string; value: unknown })
 // shown verbatim (without surrounding JSON quotes); structured values
 // are pretty-printed; nullish / empty values are skipped silently.
 //
-// When `spillRef` is non-null the body was originally stored out-of-band
+// When `spillRef` is non-null the body was stored out-of-band
 // (large captured payload). The CP detail handler resolves the ref and
 // inlines the bytes onto `value`, but the ref metadata (backend, key,
 // size, sha256) is also threaded through so the drawer can show a
@@ -52,8 +52,8 @@ export function JsonSection({ label, value }: { label: string; value: unknown })
 // `truncated` / `sizeBytes` come from traffic_event_payload. They say the STORED
 // copy is a prefix and how many bytes were actually captured. This is the case
 // spillRef is the absence of: no spill backend configured, so an oversize body
-// was cut at the inline cutoff. Rendering that prefix without saying so is what
-// made a cut-off SSE stream look like a response the model never finished.
+// is cut at the inline cutoff. Rendering that prefix without saying so is what
+// makes a cut-off SSE stream look like a response the model never finished.
 export function PayloadSection({
   label,
   value,

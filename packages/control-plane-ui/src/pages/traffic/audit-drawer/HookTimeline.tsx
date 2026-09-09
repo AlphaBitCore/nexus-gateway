@@ -72,10 +72,13 @@ export function PipelineTimeline({
   label,
   rows,
   emptyLabel,
+  unnamedLabel,
 }: {
   label: string;
   rows: HookExecutionRecord[] | null | undefined;
   emptyLabel: string;
+  /** Shown when a record carries neither a name nor an id. */
+  unnamedLabel: string;
 }) {
   if (!rows || rows.length === 0) {
     return (
@@ -93,7 +96,7 @@ export function PipelineTimeline({
       <div className={css.detailLabel}>{label} ({ordered.length})</div>
       <Stack gap="xs">
         {ordered.map((r, idx) => {
-          const primary = r.name || r.id || 'hook';
+          const primary = r.name || r.id || unnamedLabel;
           const showId = !!r.name && r.id;
           const latency = formatLatency(r.latencyMsSum, r.latencyUsSum);
           return (

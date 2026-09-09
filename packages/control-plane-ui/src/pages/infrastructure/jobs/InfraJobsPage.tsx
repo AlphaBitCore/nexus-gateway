@@ -144,8 +144,13 @@ export default function InfraJobsPage() {
     {
       key: 'lastStatus',
       label: t('infrastructure.status', 'Status'),
+      // `?? '—'` did not catch the empty string the API COALESCEs
+      // last_status to for a job that has never run, so those rows rendered
+      // an empty badge. Say "Never run" instead: that is the fact.
       render: (row) => (
-        <Badge variant={jobStatusVariant(row.lastStatus)}>{row.lastStatus ?? '\u2014'}</Badge>
+        <Badge variant={jobStatusVariant(row.lastStatus)}>
+          {row.lastStatus || t('infrastructure.jobNeverRun')}
+        </Badge>
       ),
       sortable: true,
     },
@@ -175,10 +180,20 @@ export default function InfraJobsPage() {
       key: 'enabled',
       label: t('infrastructure.enabled', 'Enabled'),
       sortable: true,
+      // A row this Hub never registered is Enabled in the table and will
+      // still never run: SyncDefinitions upserts only what the running build
+      // registered and never deletes, so a row seeded for another mode
+      // outlives it. Say so rather than showing a bare "Enabled".
       render: (row) => (
-        <Badge variant={row.enabled ? 'success' : 'default'}>
-          {row.enabled ? t('infrastructure.enabled', 'Enabled') : t('infrastructure.disabled', 'Disabled')}
-        </Badge>
+        row.registered === false ? (
+          <Badge variant="warning" title={t('infrastructure.jobNotRegisteredHint')}>
+            {t('infrastructure.jobNotRegistered')}
+          </Badge>
+        ) : (
+          <Badge variant={row.enabled ? 'success' : 'default'}>
+            {row.enabled ? t('infrastructure.enabled', 'Enabled') : t('infrastructure.disabled', 'Disabled')}
+          </Badge>
+        )
       ),
     },
     {
@@ -193,9 +208,18 @@ export default function InfraJobsPage() {
           >
             <OpenActionIcon />
           </RowActionIconButton>
+          {/*
+            Trigger and Enable/Disable are both scheduler-owned and answer 404
+            for an id this process never registered -- which reads as a missing
+            record rather than the deployment fact the badge just stated. Carry
+            the badge's own explanation as the label. `=== false` so an older
+            Hub omitting the field leaves every job actionable.
+          */}
           <RowActionIconButton
-            label={t('infrastructure.triggerJob')}
-            disabled={busyJob === `trigger:${row.id}`}
+            label={row.registered === false
+              ? t('infrastructure.jobNotRegisteredHint')
+              : t('infrastructure.triggerJob')}
+            disabled={busyJob === `trigger:${row.id}` || row.registered === false}
             onAction={() => {
               setBusyJob(`trigger:${row.id}`);
               trigger.mutate(row.id).catch(() => setBusyJob(null));
@@ -204,8 +228,10 @@ export default function InfraJobsPage() {
             <TriggerJobIcon />
           </RowActionIconButton>
           <RowActionIconButton
-            label={row.enabled ? t('infrastructure.disable', 'Disable') : t('infrastructure.enable', 'Enable')}
-            disabled={busyJob === `toggle:${row.id}`}
+            label={row.registered === false
+              ? t('infrastructure.jobNotRegisteredHint')
+              : row.enabled ? t('infrastructure.disable', 'Disable') : t('infrastructure.enable', 'Enable')}
+            disabled={busyJob === `toggle:${row.id}` || row.registered === false}
             onAction={() => {
               setBusyJob(`toggle:${row.id}`);
               toggle.mutate({ id: row.id, enabled: !row.enabled }).catch(() => setBusyJob(null));

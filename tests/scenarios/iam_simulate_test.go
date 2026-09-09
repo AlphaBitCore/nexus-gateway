@@ -18,15 +18,15 @@ import (
 
 // TestS113_IAMSimulateParity — PM-grade e2e.
 //
-// BRAINSTORM (pre): two parity directions matter most.
+// Two parity directions matter most.
 //
-//   1. Allow parity: super-admin should be Allowed for read on the
-//      iam-policy resource (the simulate endpoint itself is gated by
-//      iam:policy.read). We confirm the simulator agrees AND that a
-//      real GET of the gated endpoint returns 200.
-//   2. Deny parity: super-admin should be Denied for a deliberately
-//      malformed action (`admin:nonexistent.action.fakeverb`). The
-//      simulator must say deny — and any iamMW would also reject.
+//  1. Allow parity: super-admin should be Allowed for read on the
+//     iam-policy resource (the simulate endpoint itself is gated by
+//     iam:policy.read). We confirm the simulator agrees AND that a
+//     real GET of the gated endpoint returns 200.
+//  2. Deny parity: super-admin should be Denied for a deliberately
+//     malformed action (`admin:nonexistent.action.fakeverb`). The
+//     simulator must say deny — and any iamMW would also reject.
 //
 // Cross-service: CP-only. No Hub. PM-grade because the alternative
 // (simulator only validates the bytes, not the semantics) means
@@ -34,12 +34,12 @@ import (
 // during policy authoring.
 //
 // Assertions:
-//   1. Simulate (user/super-admin, iam:policy.read, nrn:iam:policy/_)
-//      returns decision="Allow".
-//   2. Live GET /api/admin/iam/policies returns 200 (proves the
-//      simulator's allow is actually honoured by iamMW).
-//   3. Simulate with a bogus action returns decision="Deny" or
-//      empty (no policy matches).
+//  1. Simulate (user/super-admin, iam:policy.read, nrn:iam:policy/_)
+//     returns decision="Allow".
+//  2. Live GET /api/admin/iam/policies returns 200 (proves the
+//     simulator's allow is actually honoured by iamMW).
+//  3. Simulate with a bogus action returns decision="Deny" or
+//     empty (no policy matches).
 func TestS113_IAMSimulateParity(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()

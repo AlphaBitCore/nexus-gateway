@@ -39,8 +39,27 @@ func IsProdSafeE2E() bool { return prodSafeE2E }
 // any of these is refused at the choke point so a scenario cannot change live
 // prod policy/config (kill-switch, passthrough, settings, cache singletons,
 // node overrides, config-sync, alert rules). Own-object collections
-// (/api/admin/providers, /routing-rules, /my/virtual-keys, /hooks, …) are
-// intentionally absent: creating/modifying/deleting one's own object is safe.
+// (/api/admin/providers, /routing-rules, /my/virtual-keys, …) are intentionally
+// absent: creating/modifying/deleting one's own object is safe by construction.
+//
+// /api/admin/hooks is absent for a DIFFERENT reason, and the distinction is
+// load-bearing. A HookConfig row carries no owner and no organization: the hook
+// chain is one global policy surface every request resolves, so enabling a hook
+// against prod changes what live customer traffic is scanned for. It belongs on
+// this list by shape, and is permitted anyway because verifying the compliance
+// pipeline on prod is the one thing no other surface can stand in for.
+//
+// Be precise about what that permission does and does not buy. This guard bounds
+// NOTHING here — it is a path denylist, so every caller reaching /hooks with a
+// mutating method goes through untouched, restore or no restore.
+// helpers.EnsureHookEnabled restores what it changed and shouts on stderr when
+// the restore fails, but that is a property of THAT helper, not of this list:
+// rulepacks_test.go already mutates the seeded pii-outbound-scanner hook with no
+// restore at all, and nothing here stops it.
+//
+// So: do not read hooks' absence as evidence that hooks are own-object data, do
+// not add a genuinely global surface to that bucket by analogy, and do not
+// assume a caller of this path restores anything.
 var sharedStateMutationPrefixes = []string{
 	"/api/admin/settings/",
 	"/api/admin/passthrough/",
@@ -85,9 +104,9 @@ func GuardProdSafeE2E(method, path string) error {
 // resolve to. Anything else (production, staging, peer-developer's box)
 // causes MustBeLocalTarget to exit.
 var allowedHosts = map[string]struct{}{
-	"localhost":          {},
-	"127.0.0.1":          {},
-	"::1":                {},
+	"localhost":            {},
+	"127.0.0.1":            {},
+	"::1":                  {},
 	"host.docker.internal": {},
 }
 

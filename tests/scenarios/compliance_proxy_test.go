@@ -16,7 +16,7 @@ import (
 
 // TestS085_InterceptionDomainPropagates — PM-grade e2e.
 //
-// BRAINSTORM (pre): catalog §5.8 / §10 gap S-085 — a new interception
+// Catalog §5.8 / §10 gap S-085 — a new interception
 // domain must propagate from CP admin write → Hub broadcast →
 // compliance-proxy (and agent) hot-reload signal. The
 // interception_domains config_key per
@@ -30,11 +30,11 @@ import (
 // records the create.
 //
 // Assertions:
-//   1. POST /api/admin/interception-domains 201 + ID returned
-//   2. compliance-proxy hot-reload signal within 30 s
-//   3. GET round-trip preserves hostPattern + adapterId
-//   4. AdminAuditLog 'create' row for entityId == domain.ID
-//   5. Cleanup DELETE + second hot-reload signal
+//  1. POST /api/admin/interception-domains 201 + ID returned
+//  2. compliance-proxy hot-reload signal within 30 s
+//  3. GET round-trip preserves hostPattern + adapterId
+//  4. AdminAuditLog 'create' row for entityId == domain.ID
+//  5. Cleanup DELETE + second hot-reload signal
 func TestS085_InterceptionDomainPropagates(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()

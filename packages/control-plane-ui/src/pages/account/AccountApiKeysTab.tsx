@@ -11,7 +11,7 @@ import {
 } from '@/components/ui';
 import { useTheme } from '@/theme/useTheme';
 import type { DataTableColumn } from '@/components/ui';
-import type { AdminApiKey } from '@/api/types';
+import type { AdminApiKey, AdminApiKeyStatus } from '@/api/types';
 import styles from './AccountApiKeysTab.module.css';
 
 function RegenerateActionIcon() {
@@ -78,6 +78,22 @@ export function AccountApiKeysTab() {
 
   const keys = data?.data ?? [];
 
+  // Static, not t(`pages:account.keyStatus${x}`): a computed prefix makes
+  // every key under it unfalsifiable for the orphaned-key check, which can
+  // only follow literal keys.
+  const keyStatusLabel = (
+    translate: typeof t,
+    status: AdminApiKeyStatus,
+  ): string => {
+    switch (status) {
+      case 'active': return translate('pages:account.keyStatusActive');
+      case 'rotating': return translate('pages:account.keyStatusRotating');
+      case 'expired': return translate('pages:account.keyStatusExpired');
+      case 'unavailable': return translate('pages:account.keyStatusUnavailable');
+      default: return status;
+    }
+  };
+
   const fmtDate = (s?: string | null) => {
     if (!s) return '--';
     try { return new Date(s).toLocaleString(); } catch { return s; }
@@ -91,12 +107,18 @@ export function AccountApiKeysTab() {
       render: (r) => <code>{r.keyPrefix}...</code>,
     },
     {
-      key: 'enabled',
+      // Render the field the column is named after. Retiring a key writes
+      // `status` and never touches `enabled`; only the auth lookup folds the
+      // lifecycle back into the boolean (FindAPIKeyByHash zeroes Enabled for
+      // a past expiry and for any status outside active/rotating), and that
+      // fold is local to the auth path. Revocation does work -- the key stops
+      // authenticating -- but the list returns the raw row, so a key revoked
+      // after a compromise read "Enabled" to the person who owns it, and a
+      // key mid-rotation was invisible.
+      key: 'status',
       label: t('pages:account.keyStatus'),
       render: (r) => (
-        <Badge variant={statusToVariant(r.enabled ? 'enabled' : 'disabled')}>
-          {r.enabled ? t('common:enabled') : t('common:disabled')}
-        </Badge>
+        <Badge variant={statusToVariant(r.status)}>{keyStatusLabel(t, r.status)}</Badge>
       ),
     },
     {

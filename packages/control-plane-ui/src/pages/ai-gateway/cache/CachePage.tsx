@@ -261,7 +261,7 @@ export function CachePage() {
           {canReadSemantic && (
             <TabsTrigger value="gateway" className={trafficTabStyles.sourceTabsTrigger}>
               <span>{t('pages:aiGateway.cache.sectionGateway.title')}</span>
-              {dirty && <span className={styles.dirtyDot} aria-label="unsaved changes" />}
+              {dirty && <span className={styles.dirtyDot} aria-label={t('common:unsavedChanges')} />}
             </TabsTrigger>
           )}
           {canReadPromptCache && (

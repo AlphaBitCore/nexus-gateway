@@ -294,21 +294,30 @@ export const SHELL_ROUTES: ShellRouteConfig[] = [
     allowedActions: ['admin:alert.read'],
     nav: { sectionKey: 'alerts', labelKey: 'alertsInbox', to: '/alerts', allowedActions: ['admin:alert.read'], order: 0 },
   },
+  // Rules and channels are READ surfaces that happen to carry writes. Every
+  // GET behind them enforces alert.read (handler.go registers ListAlertRules /
+  // ListAlertChannels / GetAlertRule / GetAlertChannel on VerbRead); only the
+  // PUT/POST/DELETE inside enforce update/create/delete. Gating the route on
+  // alert.update was wrong in both directions: a read-only auditor could not
+  // reach a page they are allowed to read, and an update-only principal
+  // reached it to find every load refused. The write affordances on these
+  // pages are gated individually.
   {
     path: 'alerts/rules',
     LazyPage: L.LazyAlertRulesListPage,
-    allowedActions: ['admin:alert.update'],
-    nav: { sectionKey: 'alerts', labelKey: 'alertsRules', to: '/alerts/rules', allowedActions: ['admin:alert.update'], order: 1 },
+    allowedActions: ['admin:alert.read'],
+    nav: { sectionKey: 'alerts', labelKey: 'alertsRules', to: '/alerts/rules', allowedActions: ['admin:alert.read'], order: 1 },
   },
-  { path: 'alerts/rules/:id', LazyPage: L.LazyAlertRuleEditPage, allowedActions: ['admin:alert.update'] },
+  { path: 'alerts/rules/:id', LazyPage: L.LazyAlertRuleEditPage, allowedActions: ['admin:alert.read'] },
   {
     path: 'alerts/channels',
     LazyPage: L.LazyAlertChannelsListPage,
-    allowedActions: ['admin:alert.update'],
-    nav: { sectionKey: 'alerts', labelKey: 'alertsChannels', to: '/alerts/channels', allowedActions: ['admin:alert.update'], order: 2 },
+    allowedActions: ['admin:alert.read'],
+    nav: { sectionKey: 'alerts', labelKey: 'alertsChannels', to: '/alerts/channels', allowedActions: ['admin:alert.read'], order: 2 },
   },
-  { path: 'alerts/channels/new', LazyPage: L.LazyAlertChannelEditPage, allowedActions: ['admin:alert.update'] },
-  { path: 'alerts/channels/:id', LazyPage: L.LazyAlertChannelEditPage, allowedActions: ['admin:alert.update'] },
+  // The "new" route has no read of its own — it only ever POSTs.
+  { path: 'alerts/channels/new', LazyPage: L.LazyAlertChannelEditPage, allowedActions: ['admin:alert.create'] },
+  { path: 'alerts/channels/:id', LazyPage: L.LazyAlertChannelEditPage, allowedActions: ['admin:alert.read'] },
 
   // ── Devices ──
   // Order: Devices → Device Groups → Device Auth (foundational) → Agent
@@ -331,10 +340,13 @@ export const SHELL_ROUTES: ShellRouteConfig[] = [
   { path: 'devices/groups/new', LazyPage: L.LazyDeviceGroupCreatePage, allowedActions: ['admin:device-group.create'] },
   { path: 'devices/groups/:id', LazyPage: L.LazyDeviceGroupDetailPage, allowedActions: ['admin:device-group.read'] },
   {
+    // GET /api/admin/settings/device-auth enforces settings.read; only the
+    // PUT enforces settings.update. Gating the route on update hid a readable
+    // page from a settings auditor. The Save button carries settings.update.
     path: 'devices/device-auth',
     LazyPage: L.LazyDeviceAuthSettingsPage,
-    allowedActions: ['admin:settings.update'],
-    nav: { sectionKey: 'devices', labelKey: 'deviceAuth', to: '/devices/device-auth', allowedActions: ['admin:settings.update'], order: 2 },
+    allowedActions: ['admin:settings.read'],
+    nav: { sectionKey: 'devices', labelKey: 'deviceAuth', to: '/devices/device-auth', allowedActions: ['admin:settings.read'], order: 2 },
   },
   {
     path: 'devices/device-defaults',
@@ -451,9 +463,30 @@ export const SHELL_ROUTES: ShellRouteConfig[] = [
     allowedActions: ['admin:virtual-key.read'],
     nav: { sectionKey: 'system', labelKey: 'aiGatewaySimulator', to: '/tools/ai-gateway-simulator', allowedActions: ['admin:virtual-key.read'], order: 0 },
   },
-  { path: 'status', LazyPage: L.LazyStatusPage, nav: { sectionKey: 'system', labelKey: 'statusHealth', to: '/status', order: 1 } },
-  { path: 'status/services/:serviceName', LazyPage: L.LazyServiceDetailPage },
-  { path: 'status/health', LazyPage: L.LazyProviderHealthPage },
+  // Status declared no actions at all, so it was offered to every
+  // authenticated principal — and then every panel on it refused. Its loads:
+  // /settings + /instances (settings.read), /providers + /provider-health
+  // (provider.read), /ops-metrics/current (observability.read). /ready is the
+  // public probe and needs nothing. The filter is OR (`.some`), which is the
+  // right shape here: any ONE of the three yields a page with real content.
+  {
+    path: 'status',
+    LazyPage: L.LazyStatusPage,
+    allowedActions: ['admin:settings.read', 'admin:provider.read', 'admin:observability.read'],
+    nav: {
+      sectionKey: 'system', labelKey: 'statusHealth', to: '/status', order: 1,
+      allowedActions: ['admin:settings.read', 'admin:provider.read', 'admin:observability.read'],
+    },
+  },
+  // Sub-pages are narrower than the overview: the service detail reads
+  // /instances + /ops-metrics/current, the provider health page reads
+  // /providers + /provider-health.
+  {
+    path: 'status/services/:serviceName',
+    LazyPage: L.LazyServiceDetailPage,
+    allowedActions: ['admin:settings.read', 'admin:observability.read'],
+  },
+  { path: 'status/health', LazyPage: L.LazyProviderHealthPage, allowedActions: ['admin:provider.read'] },
   { path: 'setup', LazyPage: L.LazySetupWizardPage, allowedActions: ['admin:settings.update'], nav: { sectionKey: 'system', labelKey: 'setup', to: '/setup', allowedActions: ['admin:settings.update'], order: 2 } },
 
 

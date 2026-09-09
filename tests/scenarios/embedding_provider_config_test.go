@@ -3,7 +3,7 @@
 // singleton config can be round-tripped through the admin API. This is
 // the configuration surface that gates which embedding upstream the
 // AI Gateway's L2 semantic cache (and any other L1 semantic consumer)
-// will call. Closes the admin-write coverage gap for E61-S5.
+// will call.
 package scenarios_test
 
 import (
@@ -18,7 +18,7 @@ import (
 // TestS082_EmbeddingProviderConfig — PM-grade e2e for the fleet-wide
 // embedding (provider, model) pair on `semantic_cache_config`.
 //
-// BRAINSTORM (pre): the admin surface exposes a singleton row at
+// The admin surface exposes a singleton row at
 // `GET/PUT /api/admin/semantic-cache/config` (see semanticcache.go:128
 // — `EmbeddingProviderID` field). The two fields under test —
 // `embeddingProviderId` and `embeddingModelId` — are the single source
@@ -40,7 +40,7 @@ import (
 // `models/flat?type=embedding` returns zero rows, that is a seed
 // regression and the scenario t.Fatalfs rather than silently skipping.
 //
-// Hard-fail surfaces (per E86 hardening — no skip paths):
+// Hard-fail surfaces — no skip paths:
 //   - GET /api/admin/semantic-cache/config returns 404 → admin surface
 //     not mounted; this is a build/wiring regression, not an env quirk.
 //   - models/flat returns zero embedding rows → seed regression.
@@ -326,11 +326,11 @@ func TestS082_EmbeddingProviderConfig(t *testing.T) {
 		t.Fatalf("POST embedding-probe: status=%d body=%q", probeStatus, truncate(probeBody, 400))
 	}
 	var probeResp struct {
-		OK        bool    `json:"ok"`
-		Dimension int     `json:"dimension"`
+		OK         bool   `json:"ok"`
+		Dimension  int    `json:"dimension"`
 		ProviderID string `json:"providerId"`
-		ModelID   string  `json:"modelId"`
-		Error     string  `json:"error,omitempty"`
+		ModelID    string `json:"modelId"`
+		Error      string `json:"error,omitempty"`
 	}
 	if err := json.Unmarshal(probeBody, &probeResp); err != nil {
 		t.Fatalf("decode embedding-probe response: %v (body=%q)", err, truncate(probeBody, 400))

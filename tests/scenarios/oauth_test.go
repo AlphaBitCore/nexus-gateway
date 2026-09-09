@@ -22,7 +22,7 @@ import (
 
 // TestS120_OAuthDiscovery — PM-grade e2e.
 //
-// BRAINSTORM (pre): the OAuth + PKCE authorization server publishes a
+// The OAuth + PKCE authorization server publishes a
 // discovery document at /.well-known/openid-configuration. Every
 // authn / authz client (the SPA, machine-to-machine integrations,
 // scenario harnesses) bootstraps from this document; a regression
@@ -39,8 +39,6 @@ import (
 //  5. code_challenge_methods_supported includes "S256" (PKCE binding
 //     uses SHA-256 in CPLogin).
 //  6. The jwks_uri returns 200 and contains a non-empty keys array.
-//
-// BRAINSTORM (post — see end-of-test t.Logf).
 func TestS120_OAuthDiscovery(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -69,7 +67,7 @@ func TestS120_OAuthDiscovery(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("discovery: status %d body=%q", resp.StatusCode, truncate(body, 200))
 	}
 	var doc map[string]any
@@ -130,7 +128,7 @@ func TestS120_OAuthDiscovery(t *testing.T) {
 	}
 	jwksBody, _ := io.ReadAll(resp2.Body)
 	resp2.Body.Close()
-	if resp2.StatusCode != 200 {
+	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("jwks: status %d body=%q", resp2.StatusCode, truncate(jwksBody, 200))
 	}
 	var jwks struct {
@@ -149,7 +147,7 @@ func TestS120_OAuthDiscovery(t *testing.T) {
 
 // TestS121_OAuthTokenIntrospectRevoke — PM-grade e2e.
 //
-// BRAINSTORM (pre): walk the full lifecycle of a bearer access_token
+// Walk the full lifecycle of a bearer access_token
 // — obtain via CPLogin (authorization_code + PKCE), introspect to
 // confirm active=true, hit a protected admin endpoint to prove the
 // token authenticates, revoke it, then re-introspect to confirm
@@ -204,7 +202,7 @@ func TestS121_OAuthTokenIntrospectRevoke(t *testing.T) {
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("introspect: status %d body=%q", resp.StatusCode, truncate(body, 200))
 		}
 		var out map[string]any
@@ -232,7 +230,7 @@ func TestS121_OAuthTokenIntrospectRevoke(t *testing.T) {
 	}
 	revBody, _ := io.ReadAll(revResp.Body)
 	revResp.Body.Close()
-	if revResp.StatusCode != 200 {
+	if revResp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke: status %d body=%q", revResp.StatusCode, truncate(revBody, 200))
 	}
 
@@ -270,7 +268,7 @@ func TestS121_OAuthTokenIntrospectRevoke(t *testing.T) {
 
 // TestS122_OAuthRefreshTokenRotation — PM-grade e2e.
 //
-// BRAINSTORM (pre): RFC 6749 §6 plus RFC 6749 §10.4 say refresh tokens
+// RFC 6749 §6 plus RFC 6749 §10.4 say refresh tokens
 // SHOULD rotate on use — i.e. /oauth/token grant_type=refresh_token
 // returns a NEW refresh_token AND the old one becomes invalid. We
 // drive the full authorization_code flow inline (not via CPLogin

@@ -478,6 +478,42 @@ _results: list[Result] = []
 _denied_models: set[str] = set()
 _reached_models: set[str] = set()
 
+# Transport failures, recorded centrally for the same reason _denied_models is.
+# A request that never got a status fails no assertion by itself -- the arm that
+# issued it may retry, warn, or treat it as one absent data point -- so a run can
+# reach its client budget repeatedly and still print a clean verdict. How often
+# the client gave up before the gateway answered changes what a pass means.
+_transport_failures: list[dict] = []
+
+# The Gemini ingress names the model in the URL, not the body, so recover it from
+# the path -- otherwise a whole ingress records an empty model and its hits split
+# across per-path keys instead of grouping by model.
+_URL_MODEL_RE = re.compile(r"/models/([^:/?]+)")
+
+def _note_transport_failure(path: str, model: str, exc: Exception,
+                            elapsed: float, budget: int) -> None:
+    # A timeout is the interesting class: it is the client's own deadline, not
+    # the server refusing. Everything else (connection reset, DNS, TLS) is
+    # recorded too but counted separately -- conflating them would let a genuine
+    # network outage read as "the budget is too tight".
+    timed_out = isinstance(exc, TimeoutError) or "timed out" in str(exc).lower()
+    if not model:
+        m = _URL_MODEL_RE.search(path or "")
+        model = m.group(1) if m else ""
+    _transport_failures.append({
+        "path": path, "model": model, "error": str(exc),
+        "elapsed": elapsed, "budget": budget, "timed_out": timed_out,
+    })
+
+def _close_quietly(conn) -> None:
+    # The success paths close explicitly. Without this the exception paths leak a
+    # socket per transport failure, which against a stalling model is one fd per
+    # hit for the length of the run.
+    try:
+        conn.close()
+    except Exception:
+        pass
+
 def _note_model_access(body_dict: dict, status: int, data) -> None:
     model = (body_dict or {}).get("model") or ""
     if not model:
@@ -1046,6 +1082,9 @@ class GWClient:
             elapsed = time.time() - t0
             c.close()
         except Exception as e:
+            _note_transport_failure(path, body_dict.get("model", ""), e,
+                                    time.time() - t0, timeout)
+            _close_quietly(c)
             out = {"status": 0, "error": str(e), "elapsed": time.time() - t0, "stream": False}
             if endpoint:
                 out["endpoint"] = endpoint
@@ -1098,6 +1137,9 @@ class GWClient:
             status = r.status
             c.close()
         except Exception as e:
+            _note_transport_failure(path, fields.get("model", ""), e,
+                                    time.time() - t0, timeout)
+            _close_quietly(c)
             return {"status": 0, "error": str(e), "elapsed": time.time() - t0}
         try:
             data = json.loads(raw.decode("utf-8", errors="replace"))
@@ -1125,6 +1167,9 @@ class GWClient:
             status = r.status
             c.close()
         except Exception as e:
+            _note_transport_failure(path, body_dict.get("model", ""), e,
+                                    time.time() - t0, timeout)
+            _close_quietly(c)
             return {"status": 0, "error": str(e), "elapsed": time.time() - t0}
         return {"status": status, "bytes": raw, "headers": headers,
                 "elapsed": time.time() - t0}
@@ -1167,6 +1212,9 @@ class GWClient:
             out.update(state)  # remaining keys: chunk_count, done_seen, etc.
             return out
         except Exception as e:
+            _note_transport_failure(path, body_dict.get("model", ""), e,
+                                    time.time() - t0, timeout)
+            _close_quietly(c)
             return {"status": 0, "error": str(e), "elapsed": time.time() - t0,
                     "stream": True, "endpoint": endpoint}
 
@@ -5874,6 +5922,34 @@ def render_report(
             f"full catalogue. Denied: {', '.join(sorted(_denied_models))}. Remedy: use a key whose "
             "allowedModels is empty (tests/scripts/mint-test-vk.go mints one)")
 
+    # Same reasoning as vk-coverage above: a run that repeatedly hit its own
+    # client deadline was measured under different conditions than one that did
+    # not, and the arms that retried successfully leave no other trace.
+    _budget_hits = [f for f in _transport_failures if f["timed_out"]]
+    if _budget_hits:
+        _by_model: dict[str, int] = {}
+        for f in _budget_hits:
+            _key = f["model"] or f["path"]
+            _by_model[_key] = _by_model.get(_key, 0) + 1
+        _worst = max(f["elapsed"] for f in _budget_hits)
+        # Plural on purpose: --timeout and --video-timeout are separate flags with
+        # separate defaults, so one run carries more than one budget and naming
+        # only the first hit's would point at the wrong knob.
+        _budgets = sorted({f["budget"] for f in _budget_hits})
+        rec("PRE", "client-budget").warning(
+            f"{len(_budget_hits)} request(s) hit a client read budget "
+            f"({', '.join(f'{b}s' for b in _budgets)}) and returned no status; slowest "
+            f"gave up at {_worst:.0f}s. Arms that retried successfully report as passes, "
+            f"so this count is the only record of them. By model: "
+            + ", ".join(f"{k} x{v}" for k, v in sorted(_by_model.items()))
+            + ". Remedy: raise the budget that was hit (--timeout, or --video-timeout "
+              "for the generation arms), or investigate the model if the hits cluster on one")
+    _other_failures = [f for f in _transport_failures if not f["timed_out"]]
+    if _other_failures:
+        rec("PRE", "transport-errors").warning(
+            f"{len(_other_failures)} request(s) failed below HTTP: "
+            + "; ".join(sorted({f["error"][:80] for f in _other_failures})))
+
     # Before counting anything: two verdicts under one label make the counts
     # unreadable, so this is recorded as a failure of the RUN rather than
     # reported as a note somebody may skim past.
@@ -6050,6 +6126,13 @@ def render_report(
         print(f"    reached: {len(_reached_models)}  denied: {sorted(_denied_models)}")
         print("    Remedy: run with a virtual key whose allowedModels is empty (unrestricted). "
               "tests/scripts/mint-test-vk.go mints one.")
+    _budget_console = [f for f in _transport_failures if f["timed_out"]]
+    if _budget_console:
+        print(bold(
+            f"  CLIENT BUDGET HIT {len(_budget_console)} time(s): requests that returned no "
+            f"status at all. Retried arms among them still count as passes above."))
+        for f in _budget_console:
+            print(f"    {f['elapsed']:6.0f}s / {f['budget']}s  {f['model'] or f['path']}")
     print(f"Report: {report_path}")
     return overall == "PASS"
 
@@ -6711,10 +6794,10 @@ def _mm_stt_case(gw: "GWClient", cp: "CPClient", timeout: int) -> None:
     if src == "fingerprint":
         # Honest, and the correct answer when the bytes genuinely were not
         # kept. Reported rather than passed silently, because the stronger
-        # property is the one this row exists for. The parenthetical used to
-        # assert "payload capture off" and was simply wrong when it fired:
-        # capture was ON and the codec was under-reporting custody. A warning
-        # that names a cause it did not check sends the next reader to the
+        # property is the one this row exists for. The message HEDGES the cause
+        # rather than asserting it: "payload capture off" is wrong whenever
+        # capture is ON and the codec is under-reporting custody, and a warning
+        # that asserts a cause it did not check sends the next reader to the
         # wrong place.
         if not ref.get("sha256"):
             rec("PMM", label).failed("fingerprint custody with no digest — nothing proves which file was sent")
@@ -7476,7 +7559,7 @@ Environment variables (CLI args override):
   NEXUS_GW_URL   AI Gateway base URL  (sourced from tests/.env.<target>; see NEXUS_AI_GW_URL)
   NEXUS_CP_URL   Control Plane URL    (sourced from tests/.env.<target>)
   NEXUS_CP_USER  CP login email       (default: admin@nexus.ai)
-  NEXUS_CP_PASS  CP login password    (default: admin123)
+  NEXUS_CP_PASS  CP login password    (default: nexus-demo)
   NEXUS_CP_REDIRECT_URI  OAuth redirect_uri sent during PKCE login
                          (sourced from tests/.env.<target> NEXUS_OAUTH_REDIRECT_URI).
 
@@ -7505,7 +7588,7 @@ and Redis cache flushing are skipped automatically.
                     default=os.environ.get("NEXUS_CP_USER") or os.environ.get("NEXUS_ADMIN_EMAIL", "admin@nexus.ai"),
                     help="CP login email [env: NEXUS_CP_USER or NEXUS_ADMIN_EMAIL]")
     ap.add_argument("--cp-pass",
-                    default=os.environ.get("NEXUS_CP_PASS") or os.environ.get("NEXUS_ADMIN_PASSWORD", "admin123"),
+                    default=os.environ.get("NEXUS_CP_PASS") or os.environ.get("NEXUS_ADMIN_PASSWORD", "nexus-demo"),
                     help="CP login password [env: NEXUS_CP_PASS]")
     ap.add_argument("--routing", action="store_true",
                     help="Enable P4 routing-ON tests")
@@ -7573,7 +7656,16 @@ and Redis cache flushing are skipped automatically.
                     help="Model for concurrent test (fast model recommended)")
     ap.add_argument("--models", default="",
                     help="Comma-separated model IDs to test (default: all chat)")
-    ap.add_argument("--timeout", type=int, default=90,
+    ap.add_argument("--timeout", type=int, default=180,
+                   # 90s sat directly on this suite's own observed maximum:
+                   # the 2026-08-27 full-surface prod run measured p95 34.7s
+                   # and max 86.4s under its own concurrency, and four
+                   # requests fell off the 90s cliff and were reported as
+                   # gateway failures when the gateway was fine (status 499,
+                   # upstream_ttfb NULL — the client gave up). 180s clears the
+                   # tail while still failing fast on a real hang. Deliberately
+                   # NOT the production ceiling: this is a probe asserting a
+                   # prompt answer, not a client waiting for one.
                     help="Per-request timeout seconds")
     ap.add_argument("--db-poll-timeout", type=int, default=45)
     ap.add_argument("--report", default="",

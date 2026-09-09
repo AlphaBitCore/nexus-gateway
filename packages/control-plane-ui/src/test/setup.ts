@@ -14,7 +14,22 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 // registers matchers across all test files. Explicit expect.extend
 // works under v4.
 import * as jestDomMatchers from '@testing-library/jest-dom/matchers';
+import { configure } from '@testing-library/dom';
+
 expect.extend(jestDomMatchers);
+
+// Testing Library's async utilities (waitFor, findBy*) default to a 1000ms
+// budget that is INDEPENDENT of vitest's own testTimeout. The suite runs 366
+// files across 12 cores, and under that contention a render that takes ~50ms
+// unloaded can miss 1000ms — which showed up as CachePage.test.tsx failing on
+// a DIFFERENT arm on each of two full runs while passing 29/29 in isolation
+// every time.
+//
+// This is one knob in the orchestrator, not a per-test budget: raising it
+// cannot hide a logic defect (a genuinely broken assertion fails in isolation
+// too, where there is no contention), and it keeps a real hang bounded well
+// inside vitest's 5s testTimeout.
+configure({ asyncUtilTimeout: 4000 });
 
 import { server } from './msw-server';
 

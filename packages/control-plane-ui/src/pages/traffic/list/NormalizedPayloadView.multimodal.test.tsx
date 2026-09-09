@@ -49,7 +49,7 @@ describe('NormalizedPayloadView multimodal kinds', () => {
     );
     expect(screen.getByText('a vivid red fox')).toBeInTheDocument();
     // The card reports the real format, not the bare word "image" every
-    // format used to collapse to, and the raw base64 never reaches the DOM.
+    // format-blind reader collapses every image to, and the raw base64 never reaches the DOM.
     expect(container.textContent).toContain('image/png');
     expect(container.textContent).not.toMatch(/[A-Za-z0-9+/]{200,}={0,2}/); // no long b64 blob
   });

@@ -84,10 +84,10 @@ export function DeviceGroupDetailPage() {
     return items
       .filter(t => !existingMemberIds.has(t.id))
       .map(t => {
-        // The Membership picker used to show `t.name` only, which is the
-        // agent's WS-registered name. Many agents enrol before ever sending
-        // a hostname-carrying heartbeat, so that field is often empty —
-        // every blank row in the dropdown was an enrolled-but-quiet agent.
+        // Showing `t.name` only in the Membership picker — the
+        // agent's WS-registered name — leaves a blank row for every
+        // enrolled-but-quiet agent: many enrol before ever sending a
+        // hostname-carrying heartbeat, so that field is often empty.
         // Fall through hostname → name → short id so the row is always
         // identifiable, then append OS + currently-logged-in user (the
         // signal users actually care about per the device-list page).

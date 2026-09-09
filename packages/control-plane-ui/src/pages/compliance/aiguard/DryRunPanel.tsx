@@ -2,8 +2,8 @@
  * DryRunPanel — small tester that POSTs `/api/admin/ai-guard/dry-run` and
  * renders the normalised request + classifier response side by side.
  *
- * Uses the `aiGuardApi.dryRun` service (P-B Task 25). The admin handler
- * (P-B Task 24) constructs an AI_GATEWAY-context call through the same
+ * Uses the `aiGuardApi.dryRun` service. The admin handler behind it
+ * constructs an AI_GATEWAY-context call through the same
  * dispatcher as live traffic so the probe reflects real classifier
  * behaviour, including the cache-hit metadata on the second run.
  */

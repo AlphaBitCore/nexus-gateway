@@ -75,7 +75,8 @@ Per program plan §3 these admin probes call into AI GW logic but are exposed vi
 | Endpoint | Scenario |
 |---|---|
 | `POST /api/admin/providers/test-connection` | S-002 (add provider) |
-| `POST /api/admin/hooks/:id/test` | S-020 – S-023 setup |
+| `PUT /api/admin/hooks/:id` | S-020 – S-022 setup (enable the hook under test, restore on cleanup) |
+| `POST /api/admin/hooks/:id/test` | not exercised — no scenario calls it |
 | `POST /api/admin/hooks/:id/dry-run` | S-027 (no-side-effect contract) + S-065 (dry-run estimate) [CLOSED 2026-05-21] |
 | `POST /api/admin/routing-rules/simulate` | S-010 – S-016 setup |
 | `POST /api/admin/credentials/:id/probe` | S-050 setup (S-051 – S-053 deferred) |

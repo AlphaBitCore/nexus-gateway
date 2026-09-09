@@ -4,7 +4,6 @@
  * Backs the `/ai-gateway/cache` page (Provider Prompt Cache section) and
  * the `/ai-gateway/providers/:id` Cache tab.
  *
- * Storage shapes mirror Go structs in `packages/shared/cacheconfig/types.go`.
  * Boolean / number fields are optional at every tier — absence means
  * "inherit from a lower tier or fall back to the code default".
  */

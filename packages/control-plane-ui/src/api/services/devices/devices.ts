@@ -29,17 +29,6 @@ export const devicesApi = {
     api.post<{ thingsNotified?: number; thingDesiredVer?: number }>(`/api/admin/agent-devices/${id}/force-refresh`),
 
   /**
-   * Force out-of-cycle mTLS cert rotation. CP's
-   * POST /api/admin/agent-devices/:id/rotate-cert (IAM:
-   * agent-device:rotate) proxies to Hub's /things/:id/rotate-cert which
-   * advances thing_agent.cert_expires_at to NOW() + 5min. Agent picks
-   * up "near expiry" on next heartbeat (<=15s) and runs the existing
-   * /api/internal/things/renew-cert flow.
-   */
-  rotateCert: (id: string) =>
-    api.post<{ ok: boolean; thingId: string }>(`/api/admin/agent-devices/${id}/rotate-cert`),
-
-  /**
    * Replace the device's full tag set. PUT semantics — pass the complete
    * desired array. Empty array clears all tags.
    */
@@ -106,8 +95,8 @@ export interface MyAgentDevice {
  * the AgentSettings JSON the CP backend writes into the `agent.settings`
  * system_metadata row; values fan out to every agent via the
  * `agent_settings` shadow config key. Fields beyond quitAllowed +
- * shutdownWarning were originally fixed at seed-time defaults; admin
- * can now edit them all via #73 (CP UI Runtime Defaults card).
+ * shutdownWarning were once fixed at seed-time defaults; an admin
+ * edits them all through the CP UI Runtime Defaults card.
  */
 export interface AgentSettingsResponse {
   quitAllowed: boolean;
@@ -185,7 +174,7 @@ export interface AgentSettingsRequest {
    * Theme pack ID admin pushes to every agent Dashboard in the fleet.
    * Empty = no fleet override (each user keeps their local pick). Unknown
    * IDs cause the Dashboard to fall back to its bundled `default` theme.
-   * See packages/agent/internal/policies/applied.go DeviceDefaultsView.
+   * See packages/agent/internal/policy/policies/applied.go DeviceDefaultsView.
    */
   themeId?: string;
   /** See AgentSettingsResponse.forceQUICFallbackBundles. */

@@ -17,6 +17,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cart
 import { Card, Stack } from '@/components/ui';
 import { useApi } from '@/hooks/useApi';
 import { analyticsApi, type LatencyPhaseRow } from '@/api/services/overview/analytics';
+import { ApiError } from '@/api/client';
 import type { SparklineResponse } from '@/api/types';
 import { useTheme } from '@/theme/useTheme';
 import { getPhaseColors } from '@nexus-gateway/ui-shared';
@@ -67,7 +68,21 @@ export function LatencyPhasesPanel({ start, end, source }: Props) {
   );
 
   if (loading) return <Card padding="lg">{t('common:loading', 'Loading…')}</Card>;
-  if (error) return <Card padding="lg">{t('common:error', 'Error loading data.')}</Card>;
+  // A 4xx from this endpoint names what is wrong with the REQUEST
+  // (missing_window, bad_groupBy, unsupported groupBy: …) and the operator
+  // can act on it. The generic string discarded all of it and left them
+  // concluding latency is broken. A 5xx has nothing useful to say -- its
+  // body is a deliberate "Internal server error" -- so it keeps the generic
+  // string. Same idiom as AccountActivityTab.
+  if (error) {
+    const ae = error instanceof ApiError ? error : null;
+    const actionable = ae !== null && ae.status >= 400 && ae.status < 500 && !!ae.message;
+    return (
+      <Card padding="lg">
+        {actionable ? ae.message : t('common:error', 'Error loading data.')}
+      </Card>
+    );
+  }
   const rows: LatencyPhaseRow[] = data?.rows ?? [];
   if (rows.length === 0) {
     return (

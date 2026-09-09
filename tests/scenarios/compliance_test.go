@@ -2,12 +2,17 @@
 // pipeline: keyword blocking, PII detection, rate limiting, aiguard,
 // ingress filtering, and streaming-compliance modes.
 //
-// Scenarios in this family rely on the *seeded* HookConfig rows in the
-// local dev DB (keyword-blocker, pii-scanner, global-rate-limit, etc.).
-// We do not create hooks ad-hoc per test — hook config is global state
-// shared by every request, and toggling hooks mid-test would race with
-// parallel scenarios. Instead each scenario phrases its request to
-// match a known-seeded hook pattern.
+// Scenarios in this family rely on the *seeded* HookConfig rows
+// (keyword-blocker, pii-scanner, global-rate-limit, etc.) and switch the one
+// they need on through EnsureHookEnabled, restoring it on cleanup. They do not
+// CREATE hooks: a hook is global state every request resolves, so an ad-hoc one
+// would change the chain for everything else running.
+//
+// Enabling a seeded hook is the same kind of global change, and it is safe here
+// only because this package is sequential — there is no t.Parallel anywhere
+// under tests/scenarios, and run-all.sh drives the phases one at a time. Adding
+// t.Parallel to this family would make two scenarios fight over the same hook's
+// enabled flag, one restoring it while the other still depends on it.
 package scenarios_test
 
 import (
@@ -24,9 +29,9 @@ import (
 
 // TestS020_KeywordFilterBlocksHard — PM-grade e2e.
 //
-// BRAINSTORM (pre, V3): the seeded keyword-blocker hook is bound to
+// The seeded keyword-blocker hook is bound to
 // two rule packs (nexus/prompt-injection + nexus/secret-leak) via
-// rule_pack_install rows. Per shared/rulepack/enricher.go's
+// rule_pack_install rows. Per packages/shared/policy/rulepack/enricher.go's
 // RulePackConsumer map, that means whenever the hook resolves at
 // runtime, Enrich rewrites cfg.Config["_rulePackInstalls"] and
 // NewKeywordFilter delegates to RulePackEngine — the legacy inline
@@ -50,17 +55,11 @@ func TestS020_KeywordFilterBlocksHard(t *testing.T) {
 		t.Fatalf("CPLogin: %v", err)
 	}
 
-	// Verify keyword-blocker hook is enabled before we proceed.
-	hooksStatus, hooksBody, err := helpers.CPDoJSON(ctx, sc.Env, token, "GET",
-		"/api/admin/hooks", nil)
-	if err != nil || hooksStatus != 200 {
-		t.Fatalf("GET /api/admin/hooks: status %d err=%v", hooksStatus, err)
-	}
-	if !strings.Contains(string(hooksBody), `"keyword-blocker"`) ||
-		!strings.Contains(string(hooksBody), `"enabled":true`) {
-		t.Logf("hooks list body (first 500): %s", truncate(hooksBody, 500))
-		t.Fatalf("seeded keyword-blocker hook not found enabled in admin list")
-	}
+	// The two substring checks this replaces were independent scans of the whole
+	// list body, so they passed whenever keyword-blocker merely EXISTED and any
+	// other hook happened to be enabled — never once asserting the state this
+	// scenario depends on. They also read one page of a paginated list.
+	helpers.EnsureHookEnabled(t, ctx, sc.Env, token, sc.Cleanup, "keyword-blocker")
 
 	vkName := fmt.Sprintf("s020-%d", time.Now().UnixNano())
 	vk, err := helpers.CreateMyVK(ctx, sc.Env, token, vkName)
@@ -97,9 +96,9 @@ func TestS020_KeywordFilterBlocksHard(t *testing.T) {
 	// keyword-blocker ships onMatch.action=redact, so a severity:hard match
 	// correctly enforces a REDACT and the request continues with 200.
 	//
-	// This scenario used to demand non-2xx, which contradicted its OWN audit
-	// predicate two screens down (that already accepted a redact outcome) and
-	// could not pass against the shipped seed. Pinning the pairing instead makes
+	// Demanding non-2xx here contradicts this scenario's OWN audit
+	// predicate two screens down, which accepts a redact outcome, and
+	// cannot pass against the shipped seed. Pinning the pairing instead makes
 	// it follow the configuration rather than one branch of it: change the hook to
 	// a blocking action and the test still holds.
 	assertDecisionMatchesStatus(t, "S-020", sc, vk.ID, status, respBody)
@@ -108,11 +107,11 @@ func TestS020_KeywordFilterBlocksHard(t *testing.T) {
 // terminalHookDecisions is the set of non-APPROVE decisions the rule-pack path can
 // record, spelled with the CANONICAL names from shared/policy/decision.
 //
-// The two scenarios below previously used 'REDACT' and 'REJECT_SOFT'. Neither
+// 'REDACT' and 'REJECT_SOFT' are the obvious guesses and neither
 // exists: the enum is APPROVE / REJECT_HARD / BLOCK_SOFT / MODIFY / ABSTAIN, and
-// the value these hooks actually produce is MODIFY. So the predicate named two
-// values that can never appear and omitted the only one that does — the poll could
-// only ever time out.
+// the value these hooks actually produce is MODIFY. A predicate naming two
+// values that never appear, omitting the only one that does, can
+// only time out.
 const terminalHookDecisions = `'REJECT_HARD','BLOCK_SOFT','MODIFY'`
 
 // assertDecisionMatchesStatus pins the contract both scenarios exist to prove: the
@@ -160,7 +159,7 @@ func assertDecisionMatchesStatus(t *testing.T, id string, sc *scenarioCtx, vkID 
 
 // TestS021_PIIScannerBlocksSSN — PM-grade e2e.
 //
-// BRAINSTORM (pre, V2): seeded pii-scanner hook (request stage,
+// Seeded pii-scanner hook (request stage,
 // fail-closed) should detect the Wikipedia "always-invalid" SSN
 // sentinel 123-45-6789 and block. Cross-service: AI Gw hook eval →
 // MQ → DB. Cache-bust nonce keeps the request fresh (cache hits
@@ -179,6 +178,8 @@ func TestS021_PIIScannerBlocksSSN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CPLogin: %v", err)
 	}
+
+	helpers.EnsureHookEnabled(t, ctx, sc.Env, token, sc.Cleanup, "pii-scanner")
 
 	vkName := fmt.Sprintf("s021-%d", time.Now().UnixNano())
 	vk, err := helpers.CreateMyVK(ctx, sc.Env, token, vkName)
@@ -217,7 +218,7 @@ func TestS021_PIIScannerBlocksSSN(t *testing.T) {
 
 // TestS022_HooksApproveCleanPrompt — PM-grade e2e.
 //
-// BRAINSTORM (pre, V2): contrast / negative test against S-020/S-021.
+// Contrast / negative test against S-020/S-021.
 // A clean prompt (no keyword, no PII) must produce HTTP 200 +
 // chat.completion envelope + traffic_event.request_hook_decision='APPROVE'.
 // Without this, the suite cannot tell "gateway dead" from "hooks
@@ -230,6 +231,13 @@ func TestS022_HooksApproveCleanPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CPLogin: %v", err)
 	}
+
+	// Both hooks the positive scenarios rely on, because this one's whole job is
+	// to tell "hooks ran and approved" apart from "hooks blocking everything" —
+	// and with neither enabled it would also be indistinguishable from "no hook
+	// ran at all", which is the reading that makes an APPROVE row meaningless.
+	helpers.EnsureHookEnabled(t, ctx, sc.Env, token, sc.Cleanup, "keyword-blocker")
+	helpers.EnsureHookEnabled(t, ctx, sc.Env, token, sc.Cleanup, "pii-scanner")
 
 	vkName := fmt.Sprintf("s022-%d", time.Now().UnixNano())
 	vk, err := helpers.CreateMyVK(ctx, sc.Env, token, vkName)
@@ -293,7 +301,7 @@ func TestS022_HooksApproveCleanPrompt(t *testing.T) {
 
 // TestS023_AIGuardClassifyDirect — PM-grade e2e.
 //
-// BRAINSTORM (pre, V2): the /v1/ai-guard/classify endpoint is the
+// The /v1/ai-guard/classify endpoint is the
 // direct judge-model classification surface (no chat). Asserts the
 // endpoint accepts a well-formed prompt-injection payload and returns
 // a structured JSON envelope (200 with verdict OR 4xx/5xx with error

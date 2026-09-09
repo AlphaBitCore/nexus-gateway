@@ -3,7 +3,7 @@
  *
  * The kill-switch UI for incident response. Operates the 3-tier passthrough
  * config (global / adapter / provider) backed by
- * `packages/control-plane/internal/handler/admin_passthrough.go`. Reads use
+ * `packages/control-plane/internal/governance/passthrough/handler/handler.go`. Reads use
  * the bulk snapshot endpoint so all 3 panels render in one round-trip.
  *
  * Emergency-UX choices on this page:

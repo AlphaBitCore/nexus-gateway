@@ -18,7 +18,6 @@ describe('deviceGroupsApi', () => {
     deviceGroupsApi.previewMembership({ tag: 'x' });
     deviceGroupsApi.setMembershipQuery('g1', null);
     deviceGroupsApi.bulkForceRefresh('g1');
-    deviceGroupsApi.bulkRotateCert('g1');
     expect(m.get).toHaveBeenCalledWith(B, { q: 'a' });
     expect(m.get).toHaveBeenCalledWith(`${B}/g1`);
     expect(m.post).toHaveBeenCalledWith(B, {});
@@ -30,6 +29,5 @@ describe('deviceGroupsApi', () => {
     expect(m.post).toHaveBeenCalledWith(`${B}/preview-membership`, { membershipQuery: { tag: 'x' } });
     expect(m.put).toHaveBeenCalledWith(`${B}/g1/membership-query`, { membershipQuery: null });
     expect(m.post).toHaveBeenCalledWith(`${B}/g1/force-refresh`);
-    expect(m.post).toHaveBeenCalledWith(`${B}/g1/rotate-cert`);
   });
 });

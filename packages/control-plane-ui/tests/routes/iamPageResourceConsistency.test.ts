@@ -74,6 +74,17 @@ function routeEntries(): RouteEntry[] {
   return out;
 }
 
+/**
+ * Every Lazy* component named as a route's LazyPage, whether or not the route
+ * entry itself parsed. Used to recognise a file as SOME route's entry, so a
+ * route the strict regex above misses cannot have its page mis-attributed to
+ * a neighbour that shares its directory.
+ */
+function allRoutePageComponents(): string[] {
+  const txt = readFileSync(join(SRC, 'routes', 'shellRouteConfig.tsx'), 'utf8');
+  return [...txt.matchAll(/LazyPage:\s*L\.(Lazy\w+)/g)].map((m) => m[1]);
+}
+
 /** Resolve a page file (rel-to-src, no extension) to its actual .tsx/.ts path. */
 function resolveFile(relNoExt: string): string | null {
   for (const ext of ['.tsx', '.ts', '/index.tsx', '/index.ts']) {
@@ -175,9 +186,15 @@ describe('IAM page-resource consistency (F-0286)', () => {
   // Resolved entry file for every route, so a route's scan can exclude the
   // entry files of OTHER routes that happen to share its directory (list vs
   // detail pages) — those belong to their own route's check.
+  //
+  // Built from every LazyPage named in the config, not just the routes the
+  // strict regex above recovered. Using the parsed set made an unparsed route
+  // lose more than its own check: its page stopped counting as an entry file
+  // and was then scanned under whichever sibling route shares its directory,
+  // producing a violation attributed to a route that does not own the file.
   const entryFiles = new Set(
-    routes
-      .map((r) => (lazyFiles[r.lazy] ? resolveFile(lazyFiles[r.lazy]) : null))
+    allRoutePageComponents()
+      .map((lazy) => (lazyFiles[lazy] ? resolveFile(lazyFiles[lazy]) : null))
       .filter((f): f is string => f !== null),
   );
 

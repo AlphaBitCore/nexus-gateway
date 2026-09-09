@@ -2,8 +2,6 @@
 
 package gap_closure_test
 
-// gap4_latency_test.go — E74-S7 T7.5
-//
 // TestGap4LatencyObservability measures the p95 user-space overhead
 // added by the pf redirect + daemon listener + SNI peek.
 //
@@ -38,7 +36,7 @@ func TestGap4LatencyObservability(t *testing.T) {
 	var samples []sample
 	addr := net.JoinHostPort(targetHost, "443")
 
-	for i := 0; i < sampleCount; i++ {
+	for range sampleCount {
 		s := gap4MeasureOne(t, addr, targetHost)
 		if s != nil {
 			samples = append(samples, *s)

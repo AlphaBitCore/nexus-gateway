@@ -38,7 +38,7 @@ type SelectionState = 'none' | 'wildcard' | 'all-specific' | 'partial';
 
 /**
  * The 5 canonical service buckets — order matters for human reading.
- * Mirrors the order in shared/iam/catalog_data.go.
+ * Mirrors the order in packages/shared/identity/iam/catalog_data.go.
  */
 const SERVICE_ORDER: readonly string[] = [
   'gateway',

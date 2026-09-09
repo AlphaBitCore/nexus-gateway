@@ -5,7 +5,7 @@
 //
 // Lives at the AI Gateway request stage (the only data-plane service
 // with outbound HTTP egress wired for hook plugins per
-// packages/shared/policy/hooks/webhook/webhook.go's audit #15 caveat).
+// packages/shared/policy/hooks/webhook/webhook.go).
 // Cross-service: AI Gw hook eval → external httptest server → AI Gw
 // proxy path → DB traffic_event.
 package scenarios_test
@@ -27,7 +27,7 @@ import (
 
 // TestS069_WebhookForwardHook — PM-grade e2e.
 //
-// BRAINSTORM (pre): the webhook-forward hook is the only built-in
+// The webhook-forward hook is the only built-in
 // dispatcher that hands compliance decisions to an out-of-process
 // judge. The end-to-end invariants are:
 //

@@ -49,11 +49,11 @@ export function GroupedModelSelect({
 
   // Bulk actions operate on what is VISIBLE, and only on that.
   //
-  // Select all used to grant every model in the catalogue regardless of the
-  // search box: filter to "claude", click it, and the key silently gained every
-  // OpenAI and Gemini model too. Deselect all had the mirror problem, clearing
-  // selections the filter was hiding. Both made the key's real permissions
-  // differ from the list the admin was looking at — the same defect that made
+  // A select-all that ignores the search box grants every model in the
+  // catalogue: filter to "claude", click it, and the key silently gains every
+  // OpenAI and Gemini model too. Deselect-all has the mirror problem, clearing
+  // selections the filter is hiding. Both make the key's real permissions
+  // differ from the list the admin is looking at — the same defect that makes
   // glob refs unacceptable, one layer up.
   //
   // Selecting MERGES rather than replaces, so a model chosen before the filter

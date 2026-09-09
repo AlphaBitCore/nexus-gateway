@@ -91,7 +91,7 @@ func TestS084_ContainerizedAgentEnrollment(t *testing.T) {
 	const interval = 2 * time.Second
 	var typ, st string
 	found := false
-	for i := 0; i < tries; i++ {
+	for range tries {
 		if scanErr := sc.DB.QueryRow(ctx, query, deviceID).Scan(&typ, &st); scanErr == nil {
 			found = true
 			break

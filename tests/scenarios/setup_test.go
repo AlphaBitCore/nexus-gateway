@@ -45,20 +45,6 @@ type scenarioCtx struct {
 	Cleanup *helpers.Cleanup
 }
 
-// setupScenario resolves Env, opens the pgx pool, and binds a Cleanup
-// registry to t. Skips the test (rather than failing) if NEXUS_TEST_VK
-// is missing — use this when the scenario depends on an externally
-// provided VK. Most scenarios should prefer setupScenarioNoVK and
-// create their own VK via helpers.CreateMyVK so they are self-contained.
-func setupScenario(t *testing.T) *scenarioCtx {
-	t.Helper()
-	sc := setupScenarioNoVK(t)
-	if sc.Env.TestVK == "" || sc.Env.TestVK == "nvk_REPLACE_ME" {
-		t.Skip("NEXUS_TEST_VK not set in tests/.env.local — skipping scenario")
-	}
-	return sc
-}
-
 // setupScenarioNoVK is the variant for self-contained scenarios that
 // log in via OAuth+PKCE and mint their own VK at runtime (the §4 S-001
 // pattern). No external NEXUS_TEST_VK is required.

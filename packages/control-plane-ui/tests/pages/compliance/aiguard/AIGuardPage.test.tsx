@@ -1,5 +1,5 @@
 /**
- * AIGuardPage (P-B Task 26) — renders the singleton config, flips the
+ * AIGuardPage — renders the singleton config, flips the
  * external-URL warning banner when the radio changes, and POSTs the
  * draft on Save.
  *

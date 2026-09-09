@@ -7,10 +7,10 @@ import { PayloadSection } from './PayloadSections';
 // (payload_capture.maxInlineBodyBytes) with no spill backend configured, so
 // spillstore.EmitBody kept the first N bytes and recorded the real size.
 //
-// The drawer used to render that prefix with nothing to distinguish it from a
-// whole body. For a streaming response the prefix ends mid-SSE-frame, which
-// reads exactly like a model that stopped part-way through its reasoning — the
-// bug this section exists to prevent. These tests pin the two halves of that:
+// Rendering that prefix with nothing to distinguish it from a
+// whole body is the bug. For a streaming response the prefix ends mid-SSE-frame, which
+// reads exactly like a model that stopped part-way through its reasoning — what
+// this section exists to prevent. These tests pin the two halves of that:
 // a truncated body must SAY so and report its true size, and a whole body must
 // stay unadorned.
 const truncatedSse =

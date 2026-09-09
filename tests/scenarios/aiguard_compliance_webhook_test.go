@@ -19,12 +19,6 @@
 //	contract from the caller side: webhook-forward injects
 //	X-RS-Token per request, and only for this exact path against a
 //	trusted base.)
-//
-// This header used to describe the route as deliberately unauthenticated and
-// cite an OpenAPI file as proof. Both were stale: the gate exists, and the
-// cited spec path does not — it went with a docs-archive deletion, so the
-// "no `security` block, confirming the contract" argument rested on a file
-// that was not there to read.
 package scenarios_test
 
 import (
@@ -62,15 +56,9 @@ import (
 //  3. Auth gate — POST with NO X-RS-Token. The expected behaviour is a
 //     401: an internal classification surface must stay closed to
 //     unauthenticated callers, and reaching the handler without the
-//     header would mean the gate was removed or bypassed. The arm was
-//     originally written the other way round — it asserted anonymous
-//     POSTs were ACCEPTED, and predicted in its own comment that a
-//     future rstokenauth hardening "would surface here as a 401/403,
-//     immediately flagging the contract change". That hardening
-//     shipped and the arm flagged it exactly as intended, so the
-//     assertion is inverted rather than deleted: keeping the old one
-//     would have meant either dropping a security check or reopening
-//     the route to satisfy a test.
+//     header would mean the gate was removed or bypassed. Why this arm
+//     asserts the refusal rather than the acceptance is argued at the
+//     arm itself.
 //
 // Metric: nexus_requests_total — per the same labelling
 // convention used by S-062, this counter ticks on every ingress request
@@ -82,12 +70,10 @@ func TestS086_AIGuardComplianceWebhook(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
 
-	// Mint a fresh VK for arms 1 + 2 even though the endpoint is
-	// unauth'd in this build — exercising it with a real Bearer header
-	// also confirms the handler doesn't choke on an unexpected
-	// Authorization header (forward-compat: if auth is added later,
-	// arms 1+2 will still pass). Arm 3 omits the header to assert the
-	// current no-auth contract.
+	// Arms 1 + 2 authenticate with X-RS-Token alone — rstokenauth reads the
+	// shared secret from that header and nothing else. Arm 3 omits it and sends
+	// a Bearer instead, which is what makes its 401 a statement about the
+	// missing shared secret rather than about an unauthenticated request.
 	token, err := helpers.CPLogin(ctx, sc.Env)
 	if err != nil {
 		t.Fatalf("CPLogin: %v", err)
@@ -248,16 +234,13 @@ func TestS086_AIGuardComplianceWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Arm C AIGwPostJSON: %v", err)
 	}
-	// The assertion is INVERTED from what it used to be, and that is the point. This
-	// arm was written to prove the route accepted anonymous POSTs, with a comment
-	// predicting that "a future hardening that adds rstokenauth.MiddlewareHTTP to
-	// this route would surface here as a 401/403, immediately flagging the contract
-	// change". That hardening shipped, the arm flagged it exactly as designed, and
-	// the contract it now guards is the opposite one: an internal classification
-	// surface must stay CLOSED to unauthenticated callers.
-	//
-	// Keeping the old expectation would have meant either deleting a security
-	// assertion or re-opening the route to satisfy a test.
+	// This arm asserts the REFUSAL, and the inversion is the point. It was written
+	// to prove the route accepted anonymous POSTs, predicting in its own comment
+	// that "a future hardening that adds rstokenauth.MiddlewareHTTP to this route
+	// would surface here as a 401/403, immediately flagging the contract change".
+	// The hardening shipped and the arm flagged it exactly as designed. The other
+	// two ways to answer that flag are deleting a security assertion and re-opening
+	// the route to satisfy a test; inverting the expectation is the third.
 	switch statusC {
 	case 401, 403:
 		t.Logf("Arm C OK: anonymous POST correctly refused (status=%d, body=%q)",

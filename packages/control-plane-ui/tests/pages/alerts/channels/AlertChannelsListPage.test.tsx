@@ -17,6 +17,15 @@ import { alertsApi } from '@/api/services/alerts/alerts';
 import type { AlertChannel } from '@/api/services/alerts/alerts';
 import { AlertChannelsListPage } from '../../../../src/pages/alerts/channels/AlertChannelsListPage';
 
+// The alert write affordances gate on alert.update / .create / .delete while
+// the pages themselves load on alert.read. The set is mutable so a single arm
+// can take one grant away and prove the affordance is really gated; a blanket
+// `() => true` would leave every one of those gates untested.
+const denied = new Set<string>();
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: (key: string) => !denied.has(key),
+}));
+
 function sampleChannel(overrides: Partial<AlertChannel> = {}): AlertChannel {
   return {
     id: 'chn-1',
@@ -113,5 +122,53 @@ describe('AlertChannelsListPage', () => {
     await waitFor(() => {
       expect(deleteSpy).toHaveBeenCalledWith('chn-1');
     });
+  });
+
+  // The list loads on alert.read. Its three writes carry three different
+  // verbs, so each affordance has to be gated on its own.
+  it('leaves the Switch and Test inert without alert.update', async () => {
+    denied.add('alert:update');
+    try {
+      const updateSpy = vi.spyOn(alertsApi, 'updateChannel');
+      const testSpy = vi.spyOn(alertsApi, 'testChannel');
+      const user = userEvent.setup();
+
+      renderWithRouter(<AlertChannelsListPage />);
+      await screen.findByText('oncall-pagerduty');
+
+      const switches = screen.getAllByRole('switch');
+      expect(switches[0].hasAttribute('disabled')).toBe(true);
+      const testBtn = screen.getAllByRole('button', { name: /test/i })[0];
+      expect(testBtn.hasAttribute('disabled')).toBe(true);
+
+      await user.click(switches[0]);
+      await user.click(testBtn);
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(testSpy).not.toHaveBeenCalled();
+    } finally {
+      denied.delete('alert:update');
+    }
+  });
+
+  it('offers no Delete without alert.delete', async () => {
+    denied.add('alert:delete');
+    try {
+      renderWithRouter(<AlertChannelsListPage />);
+      await screen.findByText('oncall-pagerduty');
+      expect(screen.queryAllByRole('button', { name: /^delete$/i })).toHaveLength(0);
+    } finally {
+      denied.delete('alert:delete');
+    }
+  });
+
+  it('offers no New channel without alert.create', async () => {
+    denied.add('alert:create');
+    try {
+      renderWithRouter(<AlertChannelsListPage />);
+      await screen.findByText('oncall-pagerduty');
+      expect(screen.queryByRole('button', { name: /new channel/i })).toBeNull();
+    } finally {
+      denied.delete('alert:create');
+    }
   });
 });

@@ -3,12 +3,14 @@
 // Mirror of the Control Plane's `ValidAdapterTypes` list — the canonical
 // wire formats the AI Gateway knows how to speak. Keep this in lockstep
 // with:
-//   • packages/control-plane/internal/handler/provider_adapter_types.go
-//   • packages/ai-gateway/internal/providers/types.go  (Format enum)
-//   • docs/users/api/openapi/ai-gateway/e30-s2-provider-adapter-type.yaml
-// The Control Plane rejects any write that uses a value outside this
+//   • packages/control-plane/internal/ai/providers/handler/adapter_types.go
+//   • packages/ai-gateway/internal/providers/core/format.go  (Format enum)
+//   • docs/users/api/openapi/control-plane/providers.yaml  (adapterType enums)
+// The Control Plane rejects any write that uses a value outside its own
 // set, so the UI must only offer these to avoid guaranteed-to-fail
-// submissions.
+// submissions — and must offer ALL of them, or a format the gateway can
+// speak has no way in. scripts/check-adapter-type-lockstep.mjs holds all
+// four lists to each other; this comment is not the enforcement.
 export const PROVIDER_ADAPTER_TYPES = [
   'openai',
   'anthropic',
@@ -31,6 +33,11 @@ export const PROVIDER_ADAPTER_TYPES = [
   'together',
   'fireworks',
   'moonshot',
+  // Embeddings / rerank adapter with its own codec — not an OpenAI-compat
+  // re-user, so IsOpenAIFamily() excludes it. It is still a configurable
+  // provider: leaving it out of this list is what made a wire format the
+  // gateway speaks unreachable from the admin UI.
+  'voyage',
 ] as const;
 
 export type ProviderAdapterType = (typeof PROVIDER_ADAPTER_TYPES)[number];

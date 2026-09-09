@@ -172,7 +172,7 @@ describe('SearchableCombobox', () => {
   it('shows "Type to search" when empty and empty-fetch is disabled', async () => {
     setup();
     screen.getByRole('combobox', { name: 'picker' }).focus();
-    expect(await screen.findByText('Type to search')).toBeInTheDocument();
+    expect(await screen.findByText(i18n.t('common:comboboxTypeToSearch'))).toBeInTheDocument();
   });
 
   it('renders no matches when fetch rejects', async () => {
@@ -185,6 +185,6 @@ describe('SearchableCombobox', () => {
       </I18nextProvider>,
     );
     screen.getByRole('combobox', { name: 'picker' }).focus();
-    expect(await screen.findByText('No matches')).toBeInTheDocument();
+    expect(await screen.findByText(i18n.t('common:noResults'))).toBeInTheDocument();
   });
 });

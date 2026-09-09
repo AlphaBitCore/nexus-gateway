@@ -90,7 +90,7 @@ func TestS154_HookPipelineAlwaysFires(t *testing.T) {
 	}
 
 	for _, a := range arms {
-		a := a
+
 		t.Run(a.name, func(t *testing.T) {
 			status, respBody, err := intg.AIGwPostJSON(&envForCall, client, a.path, a.body)
 			if err != nil {
@@ -121,7 +121,7 @@ func TestS154_HookPipelineAlwaysFires(t *testing.T) {
 			var decision string
 			var pipelineLen int
 			found := false
-			for i := 0; i < tries; i++ {
+			for range tries {
 				if scanErr := sc.DB.QueryRow(ctx, query, vk.ID, a.path).Scan(&decision, &pipelineLen); scanErr == nil && decision != "" {
 					found = true
 					break

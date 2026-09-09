@@ -22,7 +22,7 @@ import (
 
 // TestS010_SingleStrategy — PM-grade e2e for a single-strategy rule.
 //
-// BRAINSTORM (pre): routing_rules is a push config_key (ai-gateway
+// routing_rules is a push config_key (ai-gateway
 // subscribes per thing_config_template). Full e2e:
 //  1. POST /api/admin/routing-rules writes RoutingRule row + audit row.
 //  2. Hub broadcasts routing_rules config_changed.
@@ -70,7 +70,7 @@ func TestS010_SingleStrategy(t *testing.T) {
 		"modelId":    modelID,
 	})
 	// VirtualKeys matches VK.Name (glob) — verified in
-	// packages/ai-gateway/internal/router/matcher.go.
+	// packages/ai-gateway/internal/routing/matcher/enumerate.go.
 	match, _ := json.Marshal(map[string]any{
 		"virtualKeys": []string{vkName},
 	})
@@ -161,15 +161,12 @@ func TestS010_SingleStrategy(t *testing.T) {
 	// nexus_requests_total{endpoint=…,status="2xx"} — the counter the gateway
 	// actually exports, registered since the initial commit.
 	//
-	// This assertion used to bind nexus_normalize_total, which HAS NEVER EXISTED:
-	// the only normalize counters are nexus_normalize_panic_total and
-	// nexus_prehook_normalize_drop_total. The switch was made deliberately, with a
-	// comment calling nexus_requests_total "absent" — and the probe that concluded
-	// that was almost certainly unauthenticated, because /metrics answers 401
-	// without a service token and an unauthenticated scrape shows every metric as
-	// absent. So a 401 talked an earlier session into replacing a working metric
-	// name with one that could never match, and ScrapeMetrics then 401'd too, so
-	// the broken assertion never ran and nobody found out.
+	// Not nexus_normalize_total, which HAS NEVER EXISTED: the only normalize
+	// counters are nexus_normalize_panic_total and nexus_prehook_normalize_drop_total.
+	// Binding it is an easy mistake to make from a probe that answered "absent" for
+	// everything, which is what an unauthenticated /metrics scrape does — it 401s
+	// without a service token, and every metric reads as missing. An assertion built
+	// that way then never runs, because ScrapeMetrics 401s too.
 	chatLabels := map[string]string{"endpoint": "chat", "status": "2xx"}
 	normDelta := postMetrics.CounterSum("nexus_requests_total", chatLabels) -
 		preMetrics.CounterSum("nexus_requests_total", chatLabels)
@@ -427,7 +424,7 @@ func TestS012_LoadBalanceDistribution(t *testing.T) {
 	envForCall.TestVK = vk.RawKey
 	client := intg.LocalHTTPClient()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		status, respBody, err := intg.AIGwPostJSON(&envForCall, client, "/v1/chat/completions", body)
 		if err != nil {
 			t.Fatalf("AIGwPostJSON i=%d: %v", i, err)
@@ -659,9 +656,9 @@ func TestS015_SmartRouting(t *testing.T) {
 // credential (chat may 401 even when routing is correct). Untangling
 // (c) needs a working OpenAI key in the dev vault first.
 func TestS016_CrossFormatIngress(t *testing.T) {
-	// Checked, not asserted by hand. The skip used to be unconditional, so the
-	// scenario stayed off even after the precondition it named was satisfied —
-	// a skip nobody has to lift is a skip nobody does lift. Now it consults the
-	// thing it depends on, and starts running the moment the environment has it.
+	// Checked, not asserted by hand. An unconditional skip keeps the scenario off
+	// even after the precondition it names is satisfied — a skip nobody has to lift
+	// is a skip nobody does lift. This one consults the thing it depends on, and
+	// starts running the moment the environment has it.
 	requireOpenAIProvider(t)
 }

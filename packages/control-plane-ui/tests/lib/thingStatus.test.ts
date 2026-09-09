@@ -11,7 +11,7 @@ describe('thingStatusVariant', () => {
 
   it('renders the drift status as a warning (config not converged, node still serving)', () => {
     // Regression guard: `drift` is what the Hub drift-reconciliation job actually
-    // writes. It previously had no entry and fell through to the gray default.
+    // writes. Without an entry it falls through to the gray default.
     expect(thingStatusVariant('drift')).toBe('warning');
   });
 

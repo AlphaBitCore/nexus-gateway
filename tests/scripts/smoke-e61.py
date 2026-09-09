@@ -1263,7 +1263,7 @@ Scenario list: {', '.join(_ALL_SCENARIOS)}
                     default=os.environ.get("NEXUS_ADMIN_EMAIL", "admin@nexus.ai"),
                     help="CP admin email [env: NEXUS_ADMIN_EMAIL]")
     ap.add_argument("--cp-pass",
-                    default=os.environ.get("NEXUS_ADMIN_PASSWORD", "admin123"),
+                    default=os.environ.get("NEXUS_ADMIN_PASSWORD", "nexus-demo"),
                     help="CP admin password [env: NEXUS_ADMIN_PASSWORD]")
     ap.add_argument("--scenarios", default="",
                     help="Comma-separated scenario names to run (default: all). "

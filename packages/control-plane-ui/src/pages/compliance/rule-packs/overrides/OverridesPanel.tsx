@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { rulePacksApi, type EffectiveRuleSet, type RulePackOverride } from '@/api/services';
 import { Button, Card, ErrorBanner, Stack } from '@/components/ui';
+import { usePermission } from '@/hooks/usePermission';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 
@@ -31,6 +32,7 @@ export interface OverridesPanelProps {
 
 export function OverridesPanel({ installId }: OverridesPanelProps) {
   const { t } = useTranslation();
+  const canUpdate = usePermission('hook:update');
   const { data, loading, error, refetch } = useApi<EffectiveRuleSet>(
     () => rulePacksApi.effectiveRules(installId),
     ['admin', 'rule-pack-installs', 'effective', installId],
@@ -79,6 +81,7 @@ export function OverridesPanel({ installId }: OverridesPanelProps) {
   }
 
   async function handleSave() {
+    if (!canUpdate) return;
     const changed: RulePackOverride[] = [];
     for (const [ruleId, row] of Object.entries(merged)) {
       const original = baseline[ruleId] ?? { disabled: false, severityOverride: '' };
@@ -112,6 +115,10 @@ export function OverridesPanel({ installId }: OverridesPanelProps) {
   if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
   if (!data) return null;
 
+  // PATCH rule-pack-installs/:id/overrides enforces admin:hook.update. Without
+  // this the panel rendered Save to a read-only viewer, who learned they could
+  // not use it only from a 403 after editing a table of overrides.
+
   return (
     <Card>
       <Stack gap="md">
@@ -135,7 +142,7 @@ export function OverridesPanel({ installId }: OverridesPanelProps) {
             <Button variant="secondary" onClick={handleResetAll} disabled={changedCount === 0}>
               {t('pages:hooks.rulePacks.resetAll', 'Reset all')}
             </Button>
-            <Button onClick={handleSave} loading={saving} disabled={changedCount === 0}>
+            <Button onClick={handleSave} loading={saving} disabled={changedCount === 0 || !canUpdate}>
               {t('common:save', 'Save')}
             </Button>
           </div>

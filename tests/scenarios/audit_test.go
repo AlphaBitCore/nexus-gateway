@@ -15,7 +15,7 @@ import (
 
 // TestS101_PayloadCaptureSpillstore — PM-grade e2e.
 //
-// BRAINSTORM (pre): the payload-capture subsystem stores request /
+// The payload-capture subsystem stores request /
 // response bodies into traffic_event_payload. Bodies under
 // maxInlineBodyBytes go inline (jsonb column); bodies over the cap
 // either spill to S3 (request_spill_ref non-null) or get truncated

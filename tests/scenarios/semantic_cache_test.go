@@ -24,7 +24,7 @@ import (
 
 // TestS064_SemanticCacheHit — PM-grade e2e for the semantic (L2) cache.
 //
-// BRAINSTORM (pre): the AI Gateway maintains TWO response caches:
+// The AI Gateway maintains TWO response caches:
 //   - L1 prompt cache (cache_test.go::TestS060_CacheHitOnRepeat) keyed on
 //     a normalised request body — identical-string matches only.
 //   - L2 semantic cache (this scenario) keyed on an embedding of the
@@ -32,8 +32,7 @@ import (
 //     fleet-wide `threshold` knob on `semantic_cache_config`.
 //
 // L2 is gated by the singleton `semantic_cache_config` row exposed at
-// `GET/PUT /api/admin/semantic-cache/config` (see
-// `docs/users/api/openapi/admin/e61-s6-cache-admin.yaml`). The row carries
+// `GET/PUT /api/admin/semantic-cache/config`. The row carries
 // `enabled`, `embeddingProviderId`, `embeddingModelId`, `threshold`,
 // `varyBy`, `embedStrategy`, and `allowCrossModel`. L2 lookups skip
 // entirely unless `enabled=true` AND a (provider, model) pair is set.
@@ -72,11 +71,11 @@ import (
 //  6. id1 == id2 is the REQUIRED outcome: different upstream calls
 //     always produce different chatcmpl- ids, so an identical id is the
 //     strongest possible signal that L2 served Arm B from cache.
-//  7. id1 != id2 is a FAIL. The scenario used to pass-on-miss because
-//     the v6→v14 index rename never triggered FT.CREATE (config-change
-//     dispatch only re-keyed on the embedding fingerprint, not on the
-//     index name). That bug shipped 2026-05-22 in index_lifecycle.go;
-//     the scenario now asserts the fix.
+//  7. id1 != id2 is a FAIL, never a pass-on-miss. An index rename that
+//     does not trigger FT.CREATE — config-change dispatch re-keying on
+//     the embedding fingerprint but not on the index name — leaves every
+//     lookup missing against an index that was never created, and a
+//     pass-on-miss scenario reports that as success.
 //  8. Metric rails (always-on): nexus_cache_lookups_total delta
 //     ≥ 2 across the two requests (L1 lookups), and
 //     nexus_cache_l2_lookups_total delta ≥ 1 (the L2 lookup PATH must
@@ -100,8 +99,7 @@ func TestS064_SemanticCacheHit(t *testing.T) {
 	})
 
 	// 1. Read the existing semantic-cache singleton so we can restore it
-	//    in cleanup. The CP exposes GET/PUT /api/admin/semantic-cache/config
-	//    per docs/users/api/openapi/admin/e61-s6-cache-admin.yaml.
+	//    in cleanup. The CP exposes GET/PUT /api/admin/semantic-cache/config.
 	//
 	//    NOTE on endpoint shape: the OpenAPI yaml pins GET/PUT — not
 	//    PATCH. The dispatch prompt mentioned PATCH; the actual admin
@@ -188,9 +186,10 @@ func TestS064_SemanticCacheHit(t *testing.T) {
 	//         dimension Arm B will skip via the id-mismatch graceful
 	//         path below.
 	dimension := 0
-	if preCfg.EmbeddingDimension != nil && *preCfg.EmbeddingDimension > 0 {
+	switch {
+	case preCfg.EmbeddingDimension != nil && *preCfg.EmbeddingDimension > 0:
 		dimension = *preCfg.EmbeddingDimension
-	} else if preCfg.EmbeddingProviderID != nil && *preCfg.EmbeddingProviderID != "" {
+	case preCfg.EmbeddingProviderID != nil && *preCfg.EmbeddingProviderID != "":
 		probePath := "/api/admin/providers/" + *preCfg.EmbeddingProviderID + "/embedding-probe"
 		probeStatus, probeBody, probeErr := helpers.CPDoJSON(ctx, sc.Env, token,
 			"POST", probePath, []byte("{}"))
@@ -210,9 +209,9 @@ func TestS064_SemanticCacheHit(t *testing.T) {
 			// real product error (no longer silently skipped).
 			dimension = 1536
 		}
-	} else {
-		t.Fatalf("S-064 precondition: semantic_cache_config singleton must carry embeddingProviderId; got nil — "+
-			"hardened scenario requires an embedding provider seeded on the singleton "+
+	default:
+		t.Fatalf("S-064 precondition: semantic_cache_config singleton must carry embeddingProviderId; got nil — " +
+			"hardened scenario requires an embedding provider seeded on the singleton " +
 			"(UPDATE semantic_cache_config SET \"embeddingProviderId\"=..., \"embeddingModelId\"=...)")
 	}
 

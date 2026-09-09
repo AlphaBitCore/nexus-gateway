@@ -19,9 +19,9 @@ import (
 //     downstream test that depends on a missing teardown still gets a
 //     readable trail rather than a silent leak.
 type Cleanup struct {
-	mu   sync.Mutex
-	fns  []func() error
-	t    *testing.T
+	mu  sync.Mutex
+	fns []func() error
+	t   *testing.T
 }
 
 // NewCleanup binds a cleanup registry to t. The registered fns are flushed

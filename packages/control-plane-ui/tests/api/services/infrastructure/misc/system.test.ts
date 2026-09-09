@@ -102,26 +102,6 @@ describe('systemApi — observability / payload / streaming / sso / siem / rollu
     expect(m.put).toHaveBeenCalledWith('/api/admin/settings/streaming-compliance', { mode: 'buffer' });
   });
 
-  it('SSO config + token test + saml metadata fetch + providers', () => {
-    systemApi.getSsoConfig();
-    systemApi.updateSsoConfig({ enabled: true });
-    systemApi.testSsoToken('jwt');
-    systemApi.fetchSamlMetadata('https://idp/metadata');
-    systemApi.getSsoProviders();
-    expect(m.get).toHaveBeenCalledWith('/api/admin/settings/sso');
-    expect(m.put).toHaveBeenCalledWith('/api/admin/settings/sso', { enabled: true });
-    expect(m.post).toHaveBeenCalledWith('/api/admin/settings/sso/test', { token: 'jwt' });
-    expect(m.post).toHaveBeenCalledWith('/api/admin/settings/sso/saml/fetch-metadata', { url: 'https://idp/metadata' });
-    expect(m.get).toHaveBeenCalledWith('/api/admin/auth/sso/providers');
-  });
-
-  it('rollup jobs list + trigger interpolates the job name', () => {
-    systemApi.listRollupJobs();
-    systemApi.triggerRollupJob('cost-daily');
-    expect(m.get).toHaveBeenCalledWith('/api/admin/rollup-jobs');
-    expect(m.post).toHaveBeenCalledWith('/api/admin/rollup-jobs/cost-daily/trigger');
-  });
-
   it('SIEM config get/put + test + event-types', () => {
     systemApi.getSiemConfig();
     systemApi.updateSiemConfig({ enabled: true });

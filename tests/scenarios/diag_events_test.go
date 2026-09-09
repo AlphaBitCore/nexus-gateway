@@ -24,7 +24,7 @@ import (
 
 // TestS141_DiagEventsListGroupsCohorts — PM-grade e2e.
 //
-// BRAINSTORM (pre): the diag-events stack is one of the rare CP areas
+// The diag-events stack is one of the rare CP areas
 // where the write-path lives entirely in the Hub (slog → SlogSink →
 // DiagWriter → thing_diag_event), and the CP admin only ever reads.
 // The strongest e2e is to seed deterministic rows directly into

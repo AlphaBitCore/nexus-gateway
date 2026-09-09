@@ -37,7 +37,7 @@ import (
 
 // TestS068_IPAccessFilter — PM-grade e2e.
 //
-// BRAINSTORM (pre): the IP filter has three failure modes that matter
+// The IP filter has three failure modes that matter
 // to operators, and we want each one observable:
 //
 //  1. **False negative** — hook configured to deny a CIDR that

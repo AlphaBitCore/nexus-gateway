@@ -68,9 +68,6 @@ export const passthroughApi = {
     api.put<PassthroughPayload>(`/api/admin/passthrough/provider/${encodeURIComponent(providerId)}`, body),
   deleteProvider: (providerId: string) =>
     api.delete(`/api/admin/passthrough/provider/${encodeURIComponent(providerId)}`),
-
-  getEffective: (providerId: string) =>
-    api.get<PassthroughPayload>(`/api/admin/passthrough/effective/${encodeURIComponent(providerId)}`),
 };
 
 /**

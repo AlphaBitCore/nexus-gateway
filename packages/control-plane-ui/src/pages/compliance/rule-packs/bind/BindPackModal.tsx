@@ -15,6 +15,7 @@ import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 
 import styles from './BindPackModal.module.css';
+import { usePermission } from '@/hooks/usePermission';
 
 export interface BindPackModalProps {
   open: boolean;
@@ -25,6 +26,10 @@ export interface BindPackModalProps {
 
 export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalProps) {
   const { t } = useTranslation();
+  // POST hooks/:id/rule-packs enforces admin:hook.update; the Bind button
+  // rendered with no check, so a read-only viewer could select packs and only
+  // discover the refusal on submit.
+  const canUpdate = usePermission('hook:update');
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [enabled, setEnabled] = useState(true);
 
@@ -158,7 +163,7 @@ export function BindPackModal({ open, hookId, onClose, onBound }: BindPackModalP
               <Button
                 onClick={() => installPacks(selectedNames)}
                 loading={saving}
-                disabled={selectedNames.length === 0}
+                disabled={selectedNames.length === 0 || !canUpdate}
               >
                 {t('pages:hooks.rulePacks.bindButtonMulti', {
                   defaultValue: 'Bind {{count}} pack(s)',

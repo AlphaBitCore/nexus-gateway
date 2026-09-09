@@ -81,6 +81,46 @@ describe('useRoutingRuleDetail', () => {
     await waitFor(() => expect(result.current.simData).toMatchObject({ error: expect.any(String) }));
   });
 
+  // The arm above passes whether the predicate is "delegation" or the literal
+  // 'auto', so it cannot guard the fix. These three can.
+  //
+  // A prompt is attached because the typed string names no catalogue model, not
+  // because it is spelled 'auto'. Without it the gateway hands smart routing a
+  // nil payload, traces "not normalizable" and answers with the rule's DEFAULT
+  // model — the preview then shows the fallback, not the live pick, on the one
+  // screen an operator opens to find out why routing is surprising them.
+  it('attaches a prompt for a keyword that is not "auto"', async () => {
+    simulate.mockResolvedValue({});
+    const { result } = renderHook(() => useRoutingRuleDetail());
+    act(() => result.current.setSimModelId('fast'));
+    await act(async () => { await result.current.runSimulation(); });
+    expect(simulate).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'fast', messages: expect.any(Array) }));
+  });
+
+  it('attaches no prompt when the typed string names a catalogue model', async () => {
+    simulate.mockResolvedValue({});
+    const { result } = renderHook(() => useRoutingRuleDetail());
+    act(() => result.current.setSimModelId('gpt-4o'));
+    await act(async () => { await result.current.runSimulation(); });
+    // A named model needs no prompt, and a canned one would decide a
+    // conditional rule's content clauses on text nobody typed.
+    const body = simulate.mock.calls[0][0] as Record<string, unknown>;
+    expect(body.messages).toBeUndefined();
+  });
+
+  it('seeds the preview input from the smart rule\'s own first keyword', async () => {
+    rule = {
+      id: 'r1', name: 'Rule', description: 'd', strategyType: 'smart', priority: 3,
+      enabled: true, pipelineStage: 1, config: { type: 'smart' },
+      matchConditions: { requestedModelLiterals: ['fast', 'cheap'] },
+    };
+    const { result } = renderHook(() => useRoutingRuleDetail());
+    // Seeding the literal 'auto' sends a string this rule does not match, and
+    // the preview then reports that an enabled, correctly-configured rule
+    // matches nothing.
+    await waitFor(() => expect(result.current.simModelId).toBe('fast'));
+  });
+
   it('handleSave (single) builds the stage-1 payload, calls update, and leaves edit mode', async () => {
     const { result } = renderHook(() => useRoutingRuleDetail());
     act(() => result.current.startEditing());

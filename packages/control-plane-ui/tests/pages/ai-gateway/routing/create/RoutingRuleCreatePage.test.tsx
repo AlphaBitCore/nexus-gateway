@@ -110,3 +110,58 @@ describe('RoutingRuleCreate', () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 });
+
+// The wizard carries its own copy of the smart-rule guard so it can block on the
+// step where the operator can still fix it. The predicate is pinned in
+// routing-rule-config-safety.test.ts; what these two pin is the WIRING — that a
+// multi-keyword rule reaches the end of the wizard, and that the one shape which
+// would quietly claim every request in the fleet still does not.
+describe('RoutingRuleCreate — smart-rule keyword guard', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  // Walk to the Match-conditions step, typing keywords into the literals input.
+  function toMatchStep(keywords: string[]) {
+    wrap();
+    fireEvent.change(screen.getByTestId('routing-rule-name'), { target: { value: 'kw-rule' } });
+    setStrategy('smart');
+    const cont = () => screen.getByRole('button', { name: i18n.t('pages:routing.wizardContinue', 'Continue') }) as HTMLButtonElement;
+    for (let i = 0; i < 3; i++) {
+      if (i === 1) {
+        // Step 1 for `smart` needs a router provider + model before it will
+        // advance. ProviderModelSelect renders bare <select>s, so address them
+        // by position: router pair first, default pair second.
+        const sels = [...document.querySelectorAll('select')].filter((s) => s.id !== 'strategyType');
+        fireEvent.change(sels[0], { target: { value: 'openai' } });
+        const after = [...document.querySelectorAll('select')].filter((s) => s.id !== 'strategyType');
+        fireEvent.change(after[1], { target: { value: 'gpt-4o' } });
+      }
+      if (cont().disabled) {
+        throw new Error(`wizard blocked leaving step ${i}: ${screen.queryByRole('alert')?.textContent}`);
+      }
+      fireEvent.click(cont());
+    }
+    const input = screen.getByRole('textbox', { name: i18n.t('pages:routing.matchRequestedModelLiteralsLabel') });
+    for (const kw of keywords) {
+      fireEvent.change(input, { target: { value: kw } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    }
+    return input;
+  }
+
+  it('several non-auto keywords leave the wizard unblocked', () => {
+    toMatchStep(['fast', 'cheap']);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('an everything-glob still blocks, and says which entry did it', () => {
+    toMatchStep(['auto', '*']);
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('*');
+    expect(alert.textContent).toContain('matches every request');
+  });
+
+  it('pinning no keyword at all blocks a smart rule', () => {
+    toMatchStep([]);
+    expect(screen.getByRole('alert').textContent).toContain('at least one request keyword');
+  });
+});

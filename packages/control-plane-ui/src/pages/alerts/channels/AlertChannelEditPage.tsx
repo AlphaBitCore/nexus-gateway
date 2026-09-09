@@ -25,6 +25,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
+import { usePermission } from '@/hooks/usePermission';
 import { alertsApi } from '@/api/services';
 import type { AlertChannel, AlertSeverity } from '@/api/services';
 import {
@@ -77,6 +78,13 @@ export function AlertChannelEditPage() {
   } = form;
 
   /* ── Mutations ─────────────────────────────────────────────────────────── */
+  // Save is a POST on the new-channel route and a PUT on an existing one,
+  // so the grant it needs depends on which. Delete is its own verb.
+  const canCreate = usePermission('alert:create');
+  const canUpdate = usePermission('alert:update');
+  const canDelete = usePermission('alert:delete');
+  const canSave = isNew ? canCreate : canUpdate;
+
   const { mutate: saveChannel, loading: saving } = useMutation<void, AlertChannel>(
     () => {
       const body = {
@@ -169,7 +177,7 @@ export function AlertChannelEditPage() {
             <h1 className={styles.detailTitle}>{title}</h1>
             <p className={styles.detailSubtitle}>{t('pages:alerts.channels.edit.subtitle')}</p>
           </div>
-          {!isNew && (
+          {!isNew && canDelete && (
             <Button variant="danger" className={styles.headerDeleteButton} onClick={() => setDeleteOpen(true)}>
               {t('common:delete')}
             </Button>
@@ -233,7 +241,7 @@ export function AlertChannelEditPage() {
         <Button className={styles.footerButton} variant="secondary" onClick={onCancel}>
           {t('common:cancel')}
         </Button>
-        <Button className={styles.footerButton} onClick={onSave} disabled={saving} loading={saving}>
+        <Button className={styles.footerButton} onClick={onSave} disabled={saving || !canSave} loading={saving}>
           {t('common:save')}
         </Button>
       </Stack>

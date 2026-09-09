@@ -43,7 +43,7 @@ describe('readClientTags', () => {
 describe('the three ids each explain themselves', () => {
   it('has a hint string for every id row, in every language', async () => {
     const langs = ['en', 'es', 'zh'] as const;
-    const keys = ['eventIdHint', 'clientRequestIdHint', 'traceIdHint'] as const;
+    const keys = ['eventIdHint', 'requestIdHint', 'traceIdHint'] as const;
     for (const lang of langs) {
       const pages = (await import(`../../../i18n/locales/${lang}/pages.json`)).default as Record<
         string,

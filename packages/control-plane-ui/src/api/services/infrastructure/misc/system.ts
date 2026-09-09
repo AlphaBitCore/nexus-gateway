@@ -77,58 +77,6 @@ export type StreamingComplianceUpdateInput = Partial<StreamingComplianceConfig>;
 // Provider) lives in @/api/services/cache. The cache-preview dry-run was
 // removed as dead code (its backend route was never registered).
 
-// SSO config (unified — OIDC + SAML)
-
-export interface OidcProviderConfig {
-  enabled: boolean;
-  displayName: string;
-  issuer: string;
-  jwksUri: string;
-  clientId: string;
-  clientSecret: string;
-  redirectUri: string;
-  authorizeUrl: string;
-  tokenUrl: string;
-  audience: string;
-  emailClaim: string;
-  groupClaim: string;
-  groupRoleMap: Record<string, string>;
-  defaultRole: string | null;
-}
-
-export interface SamlProviderConfig {
-  enabled: boolean;
-  displayName: string;
-  idpMetadataUrl: string;
-  idpEntityId: string;
-  idpSsoUrl: string;
-  idpCert: string;
-  spEntityId: string;
-  emailAttribute: string;
-  groupAttribute: string;
-  groupRoleMap: Record<string, string>;
-  defaultRole: string | null;
-  signAuthnRequest: boolean;
-}
-
-export interface SsoConfig {
-  oidc: OidcProviderConfig;
-  saml: SamlProviderConfig;
-}
-
-export interface SsoTestResponse {
-  valid: boolean;
-  claims?: Record<string, unknown>;
-  error?: string;
-}
-
-export interface SsoProvider {
-  type: 'oidc' | 'saml';
-  label: string;
-  authorizeUrl?: string;
-  loginUrl?: string;
-}
-
 // SIEM config
 export type SiemFormat = 'json' | 'cef' | 'syslog';
 
@@ -148,37 +96,6 @@ export interface SiemConfig {
   format: SiemFormat;
   headers: Record<string, string>;
   eventTypes: string[];
-}
-
-// Rollup jobs
-export interface JobStatus {
-  name: string;
-  interval: string;
-  lastRunAt: string | null;
-  lastRunMs: number;
-  lastError: string;
-  runCount: number;
-  errorCount: number;
-  running: boolean;
-}
-
-export interface WatermarkStatus {
-  jobName: string;
-  watermark: string;
-  updatedAt: string;
-}
-
-export interface TableInfo {
-  table: string;
-  rows: number;
-  earliest: string | null;
-  latest: string | null;
-}
-
-export interface RollupJobsResponse {
-  jobs: JobStatus[];
-  watermarks: WatermarkStatus[];
-  tables: TableInfo[];
 }
 
 export interface ServiceInstanceInfo {
@@ -376,25 +293,6 @@ export const systemApi = {
     api.get<StreamingComplianceConfig>('/api/admin/settings/streaming-compliance'),
   updateStreamingComplianceConfig: (input: StreamingComplianceUpdateInput) =>
     api.put<StreamingComplianceConfig>('/api/admin/settings/streaming-compliance', input),
-
-  // SSO (unified)
-  getSsoConfig: () =>
-    api.get<SsoConfig>('/api/admin/settings/sso'),
-  updateSsoConfig: (input: Partial<SsoConfig>) =>
-    api.put<SsoConfig>('/api/admin/settings/sso', input),
-  testSsoToken: (token: string) =>
-    api.post<SsoTestResponse>('/api/admin/settings/sso/test', { token }),
-  fetchSamlMetadata: (metadataUrl: string) =>
-    api.post<{ idpEntityId: string; idpSsoUrl: string; idpCert: string }>('/api/admin/settings/sso/saml/fetch-metadata', { url: metadataUrl }),
-  getSsoProviders: () =>
-    api.get<{ providers: SsoProvider[] }>('/api/admin/auth/sso/providers'),
-
-  // Rollup jobs
-  listRollupJobs: () =>
-    api.get<RollupJobsResponse>('/api/admin/rollup-jobs'),
-
-  triggerRollupJob: (name: string) =>
-    api.post<{ message: string; job: string }>(`/api/admin/rollup-jobs/${name}/trigger`),
 
   // SIEM
   getSiemConfig: () =>

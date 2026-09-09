@@ -20,8 +20,8 @@ describe('CredentialCreate', () => {
   });
 
   // Regression: the standalone Create page must expose an expiration-date
-  // input. Previously only the Provider Detail inline form had it, leaving
-  // users unable to set credential expiry from this page.
+  // input. With it only on the Provider Detail inline form,
+  // users cannot set credential expiry from this page.
   it('exposes an Expiration Date input', async () => {
     const { container } = renderWithRouter(<CredentialCreate />);
     await waitFor(() => {

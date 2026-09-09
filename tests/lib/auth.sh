@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/lib/auth.sh — Control Plane API auth via the real OAuth + PKCE flow,
-# driven with a seeded admin account (admin@nexus.ai / admin123 by default).
+# driven with a seeded admin account (admin@nexus.ai / nexus-demo by default).
 #
 # Why the OAuth flow rather than X-Nexus-Admin-Key:
 #   - The login flow itself is part of what we're testing; bypassing it would

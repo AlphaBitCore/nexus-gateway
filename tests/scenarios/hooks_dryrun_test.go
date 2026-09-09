@@ -18,7 +18,7 @@ import (
 
 // TestS027_HookDryRunContract — PM-grade e2e.
 //
-// BRAINSTORM (pre): the dry-run flow has two PM-grade invariants:
+// The dry-run flow has two PM-grade invariants:
 //
 //  1. 404 on unknown hook id — operators must not see "success" for
 //     a hook they actually deleted; better to fail loudly.

@@ -157,7 +157,18 @@ _run_phase() {
   fi
   printf '== %s ==\n' "$label"
   local log="$NEXUS_TEST_LOG_DIR/$ts/$key.log"
-  if eval "$cmd" >"$log" 2>&1; then
+  local rc=0
+  eval "$cmd" >"$log" 2>&1 || rc=$?
+  # 77 = the phase ran and declared itself SKIPPED: nothing failed, but
+  # something could not run. It is neither PASS nor FAIL, and collapsing it
+  # into either is how a release report either certifies a surface that was
+  # never exercised, or cries wolf over a legitimate absence.
+  if [[ "$rc" -eq 77 ]]; then
+    printf '⊘ %s (skipped)\n' "$label"
+    printf '## %s: SKIPPED\n\nLog: `%s`\n\n' "$label" "$log" >>"$report"
+    return 0
+  fi
+  if [[ "$rc" -eq 0 ]]; then
     printf '✓ %s\n' "$label"
     printf '## %s: PASS\n\nLog: `%s`\n\n' "$label" "$log" >>"$report"
     return 0

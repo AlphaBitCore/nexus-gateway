@@ -15,7 +15,7 @@ import (
 
 // TestS050_CredentialProbe — PM-grade e2e.
 //
-// BRAINSTORM (pre): the admin probe endpoint POST
+// The admin probe endpoint POST
 // /api/admin/credentials/:id/probe decrypts the credential, calls
 // adapter.Probe against the upstream provider, and returns a
 // structured {ok, latencyMs, providerName, …} envelope. It also

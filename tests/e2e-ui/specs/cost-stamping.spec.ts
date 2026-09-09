@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-// Spec: Cost stamping UI surface (E58) — verifies that estimatedCostUsd
+// Cost stamping UI surface — verifies that estimatedCostUsd
 // renders as USD-shaped numeric text on the two top-level cost surfaces:
 //   1. Analytics page (`/analytics`) — KPI strip + breakdown table.
 //      Source: packages/control-plane-ui/src/pages/analytics/AnalyticsPage.tsx

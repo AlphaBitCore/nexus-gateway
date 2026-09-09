@@ -2,7 +2,7 @@
  * AI Guard API service — typed functions for the admin AI Guard endpoints
  * (single-instance config + dry-run classify probe). Backed by the Go
  * `/api/admin/ai-guard/*` handlers and the `/v1/ai-guard/classify` endpoint
- * contract (see `docs/users/api/openapi/e27-s01-ai-guard.yaml`).
+ * contract.
  */
 import { api } from '../../client';
 

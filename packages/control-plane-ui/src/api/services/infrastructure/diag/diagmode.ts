@@ -8,7 +8,7 @@
  * extra join.
  *
  * Wire shapes follow the Go structs in
- * `packages/control-plane/internal/store/opsmetrics_store.go` (DiagModeWindow,
+ * `packages/control-plane/internal/observability/opsmetrics/opsstore/opsmetrics_store.go` (DiagModeWindow,
  * EnableDiagModeParams, BulkAgentFilter).
  *
  * Bulk semantics: the bulk endpoint may return **207 Multi-Status** when one

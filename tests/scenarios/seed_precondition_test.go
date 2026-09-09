@@ -14,10 +14,10 @@ import (
 // requireProviderSeeded is what a scenario calls when a request came back
 // ROUTING_NO_MATCH — no provider could serve it.
 //
-// These call sites used to read `t.Skipf("no provider seeded locally")`. That
-// is not an environmental fact: Provider.json ships seven providers, so on a
-// seeded database the absence of any usable provider is a regression, and
-// skipping means the scenario goes quiet precisely when it should go red. The
+// `t.Skipf("no provider seeded locally")` at those call sites states something
+// that is not an environmental fact: Provider.json ships seven providers, so on
+// a seeded database the absence of any usable provider is a regression, and
+// skipping makes the scenario go quiet precisely when it should go red. This
 // helper tells the two apart — never seeded → skip, naming `npm run seed`;
 // seeded but nothing usable → fail, saying so.
 func requireProviderSeeded(t *testing.T, arm, body string) {

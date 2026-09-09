@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { analyticsApi, type CacheROISummary, type CacheROIByAdapter } from '@/api/services/overview/analytics';
-import { hubApi } from '@/api/services/infrastructure/nodes/hub';
 import { useApi } from '@/hooks/useApi';
 import {
   Card,
@@ -22,7 +21,6 @@ import {
 } from 'recharts';
 import styles from './CacheROIDashboard.module.css';
 import { formatTokens } from '@/lib/format';
-import { useTimeouts } from '@/hooks/useTimeouts';
 
 type TimeRange = '7d' | '30d' | '90d';
 
@@ -44,9 +42,6 @@ function fmtUSD(v: number): string {
 function netSavingsColor(v: number): string {
   return v >= 0 ? 'var(--color-success)' : 'var(--color-danger)';
 }
-
-// Jobs that make up the full rollup pipeline, in dependency order.
-const ROLLUP_JOBS = ['rollup-5m', 'merge-1h', 'merge-1d', 'merge-1mo'] as const;
 
 interface SummaryCardProps {
   label: React.ReactNode;
@@ -100,9 +95,6 @@ export function CacheROIDashboard() {
   const { t } = useTranslation();
   const { resolvedMode } = useTheme();
   const [range, setRange] = useState<TimeRange>('30d');
-  const [triggering, setTriggering] = useState(false);
-  const [triggered, setTriggered] = useState(false);
-  const armTimeout = useTimeouts();
 
   const params = buildParams(range);
 
@@ -145,23 +137,6 @@ export function CacheROIDashboard() {
     ? combinedSavingsUsd / d.totalCacheWriteCostUsd
     : null;
 
-  const handleTriggerRollup = async () => {
-    setTriggering(true);
-    try {
-      await Promise.all(ROLLUP_JOBS.map(id => hubApi.triggerJob(id)));
-      setTriggered(true);
-      // Auto-refetch after 90 s to pick up newly computed rollup data. The
-      // 90-second window is long enough that the user has usually navigated
-      // away before it fires, so cancellation is not optional here.
-      armTimeout(() => {
-        setTriggered(false);
-        refetch();
-      }, 90_000);
-    } finally {
-      setTriggering(false);
-    }
-  };
-
   const activeAdapters: CacheROIByAdapter[] = (d.byAdapter ?? []).filter(
     a => a.gatewayCacheHitCount > 0 || (a.gatewayCacheSavingsUsd ?? 0) > 0 ||
          a.requestsWithCacheHit > 0 || a.cacheWriteCostUsd > 0 || a.cacheReadSavingsUsd > 0,
@@ -189,23 +164,26 @@ export function CacheROIDashboard() {
         }
       />
 
-      {/* Rollup not-ready banner — shown when data is served from raw traffic_event */}
+      {/*
+        Rollup not-ready banner — shown when data is served from raw
+        traffic_event. It used to carry a "Run rollup jobs" button; that is
+        gone, and the banner now just states the rollups have not landed.
+
+        The button fired four hardcoded job ids through
+        POST /api/admin/jobs/:id/trigger, which enforces settings.update while
+        this page is gated on analytics.read — so the audience most likely to
+        see the banner was the one least able to act on it, and the handler's
+        try/finally had no catch, so the 403 produced neither a message nor an
+        error. Its own comment said the four jobs run "in dependency order"
+        while Promise.all fired them concurrently, so the chain it claimed to
+        drive was not actually driven. Infrastructure → Scheduled Jobs already
+        offers exactly this, per job, to the audience that holds the grant.
+      */}
       {d.dataSource === 'direct' && (
         <div className={styles.rollupBanner}>
           <span className={styles.rollupBannerText}>
             {t('pages:analytics.cacheRoi.rollupNotReady')}
           </span>
-          {triggered ? (
-            <span className={styles.successText}>
-              {t('pages:analytics.cacheRoi.rollupTriggered')}
-            </span>
-          ) : (
-            <Button size="sm" variant="secondary" onClick={handleTriggerRollup} disabled={triggering}>
-              {triggering
-                ? t('pages:analytics.cacheRoi.triggering')
-                : t('pages:analytics.cacheRoi.triggerRollup')}
-            </Button>
-          )}
         </div>
       )}
 
