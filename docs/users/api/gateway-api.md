@@ -251,3 +251,19 @@ model accepts, which is the same data routing uses.
 - `docs/developers/architecture/services/ai-gateway/smart-routing-architecture.md` — what `model: auto` does
 - `docs/developers/architecture/services/ai-gateway/prompt-cache-architecture.md` — cache markers and hit classification
 - `docs/developers/architecture/cross-cutting/safety/error-taxonomy-architecture.md` — the error envelopes per ingress
+
+## Provider prompt-cache markers
+
+When an operator enables **Inject cache markers** for an Anthropic-family provider,
+the gateway adds a single top-level `cache_control` to the body it forwards
+upstream, which turns on Anthropic's prompt caching. Your request body is otherwise
+unchanged, and the marker never appears in the response.
+
+If your own request already carries a `cache_control` — anywhere, at the root or on
+a content block — the gateway adds nothing and forwards your body untouched. Your
+caching intent always wins: a second marker beside yours can make Anthropic reject
+the request outright when the two name different TTLs, or when your four explicit
+breakpoints already occupy every slot.
+
+The resulting cache usage is visible in the response's usage block
+(`cache_creation_input_tokens` / `cache_read_input_tokens`) and on the traffic row.

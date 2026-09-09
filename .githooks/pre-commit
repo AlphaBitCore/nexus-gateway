@@ -39,7 +39,16 @@ run_hard() {
   local out rc
   out="$("$@" 2>&1)"
   rc=$?
-  if [ "$rc" -ne 0 ]; then
+  if [ "$rc" -eq 3 ]; then
+    # Exit 3 is the "did not run" contract. Output is captured and dropped on
+    # success, so a gate that skipped used to print nothing but a ✓ — which is
+    # indistinguishable from one that ran and passed, and is how fourteen lint
+    # violations walked past this hook into CI. A skip prints its reason.
+    echo "[pre-commit] ${label} ⊘ SKIPPED — did NOT run"
+    if [ -n "$out" ]; then
+      echo "$out" | tail -n 10 | sed 's/^/    /'
+    fi
+  elif [ "$rc" -ne 0 ]; then
     echo ""
     echo "✗ ${label} FAILED — blocking commit."
     if [ -n "$out" ]; then
@@ -316,6 +325,47 @@ fi
 # once known violations were fixed and CI strict mode is now zero-hit).
 if echo "$staged" | grep -qE '^packages/control-plane-ui/src/.*\.(tsx|ts)$'; then
   run_hard "useApi queryKey" node scripts/check-useapi-querykey.mjs --strict
+fi
+
+# Double-gated routes (binding from introduction; zero known violations once
+# the setup PATCH was fixed). Echo concatenates group and route middleware,
+# so a route gated inside a gated group demands BOTH actions.
+if echo "$staged" | grep -qE '^packages/(control-plane|nexus-hub|ai-gateway|compliance-proxy)/internal/.*\.go$'; then
+  run_hard "IAM double-gate" node scripts/check-iam-double-gate.mjs
+fi
+
+# Vectorscan self-test lists (binding from introduction; zero known
+# violations). No CI job compiles the vectorscan tag, so the release image and
+# the tarball are the only automated path that ever proves the linked libhs
+# actually scans — and they each carry their own copy of the anchored test
+# list. This catches the two failure modes neither can: the copies drifting
+# apart, and a named test being renamed out from under them.
+if echo "$staged" | grep -qE '^(docker/services/Dockerfile|scripts/release/build-tarball\.sh|packages/shared/policy/hooks/matcher/.*_test\.go)$'; then
+  run_hard "vectorscan self-test lists" node scripts/check-vectorscan-selftest-list.mjs
+fi
+
+# Undefined design-token references (binding from introduction; zero known
+# violations once the eleven found this way were fixed). Always scans the whole
+# tree, never just what is staged: a reference whose definition lives in an
+# unstaged file would otherwise read as undefined.
+if echo "$staged" | grep -qE '^packages/(control-plane-ui|ui-shared|agent/ui/frontend)/.*\.(css|tsx|ts)$|^packages/control-plane-ui/public/themes/'; then
+  run_hard "design tokens defined" node scripts/check-design-token-defined.mjs
+fi
+
+# Accessibility labels through t() (binding from introduction; zero known
+# violations once the four found this way were keyed). Parity cannot see a
+# string with no key, and nobody sighted ever reads an aria-label.
+if echo "$staged" | grep -qE '^packages/(control-plane-ui|ui-shared|agent/ui/frontend)/src/.*\.tsx$'; then
+  run_hard "a11y labels through t()" node scripts/check-a11y-label-i18n.mjs
+fi
+
+# UI-to-route reachability (binding from introduction; zero known violations
+# once the ten dead clients were deleted). Fires from EITHER side: deleting a
+# Go route orphans a UI client just as surely as adding a client for a route
+# nobody built, and neither direction is visible to tsc or to the UI suite
+# (which mocks `api.get` at the module boundary).
+if echo "$staged" | grep -qE '^packages/control-plane-ui/src/api/|^packages/control-plane/(internal|cmd)/.*\.go$'; then
+  run_hard "UI-to-route reachability" node scripts/check-ui-api-routes.mjs
 fi
 
 # No-Redis-pubsub (binding; was warn-only, ratcheted to HARD on 2026-05-20

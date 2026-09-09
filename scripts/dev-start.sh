@@ -58,7 +58,7 @@ log "Checking prerequisites..."
 command -v docker >/dev/null 2>&1 || err "Docker is not installed. Install it from https://docker.com"
 command -v node >/dev/null 2>&1   || err "Node.js is not installed. Install v20+ from https://nodejs.org"
 command -v npm >/dev/null 2>&1    || err "npm is not installed."
-command -v go >/dev/null 2>&1     || err "Go is not installed. Install Go 1.25+ from https://go.dev/dl/"
+command -v go >/dev/null 2>&1     || err "Go is not installed. Install Go 1.26+ from https://go.dev/dl/"
 command -v openssl >/dev/null 2>&1 || warn "openssl not found; the repo-root .env auto-bootstrap will fall back to a fixed dev encryption key"
 
 NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
@@ -69,8 +69,8 @@ fi
 GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
 GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
 GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
-if [[ "$GO_MAJOR" -lt 1 ]] || { [[ "$GO_MAJOR" -eq 1 ]] && [[ "$GO_MINOR" -lt 25 ]]; }; then
-  warn "Go 1.25+ recommended for this repo (found go$GO_VERSION)"
+if [[ "$GO_MAJOR" -lt 1 ]] || { [[ "$GO_MAJOR" -eq 1 ]] && [[ "$GO_MINOR" -lt 26 ]]; }; then
+  warn "Go 1.26+ required for this repo — go.work pins go 1.26.0 (found go$GO_VERSION)"
 fi
 
 ok "Node.js $(node -v) | npm $(npm -v) | Go $(go version | awk '{print $3}') | Docker $(docker --version | awk '{print $3}' | tr -d ',')"

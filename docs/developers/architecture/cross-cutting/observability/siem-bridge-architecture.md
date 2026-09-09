@@ -107,7 +107,7 @@ reconfigure the URL could exfiltrate the org-wide audit stream to an internal ho
 or pivot into the Hub's network. The guard is scoped to the sink client only — the
 Hub still dials its own private dependencies normally — and shares one
 implementation with the OIDC discovery fetcher (single source of truth in
-`packages/shared/transport/http/ssrf.go`).
+`packages/httpclient/ssrf.go`).
 
 The payload shape is chosen by a `Formatter`
 (`packages/nexus-hub/internal/observability/siem/formatter.go`). Three formats are
@@ -221,7 +221,7 @@ propagates within one poll interval without any restart or shadow push.
 
 ## 7. Correlation
 
-Every forwarded row carries the `trace_id` (the `X-Nexus-Request-Id` value stamped
+Every forwarded row carries the request id (the `X-Nexus-Request-Id` value stamped
 on the originating request). A SIEM operator can pivot on that id to correlate a
 forwarded event back to the full set of `traffic_event` rows for the same request
 across services. The correlation-key model is described in

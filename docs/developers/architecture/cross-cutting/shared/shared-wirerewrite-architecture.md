@@ -3,8 +3,14 @@
 `wirerewrite` is the byte-level rewriter that runs on the adapter-wire request
 body just before two points: hashing the Nexus L1 cache key, and sending the body
 upstream to the provider. It exists to make equivalent requests hash to the same
-cache key (so caching actually hits) and to inject the provider-specific markers
-that turn on upstream prompt caching.
+cache key, so caching actually hits.
+
+It does NOT turn on the provider's own prompt cache. That marker is a field of one
+wire's request shape, so it belongs to the codec that speaks that wire — see
+[the Anthropic codec's prompt-cache marker](../../services/ai-gateway/prompt-cache-architecture.md#4-anthropic-prompt-cache-markers).
+Asking the question here cost a list of adapter names at every site that had to
+decide "is this an Anthropic-shaped body", and `cacheconfig.FamilyOf` already owns
+that answer.
 
 It is deliberately separate from
 [normalize](../../services/ai-gateway/normalization-architecture.md): `normalize`
@@ -25,11 +31,11 @@ panic returns the original body unchanged.
   active** — no config gates it. This is what lets two requests that differ only in
   a volatile field land on the same
   [L1 cache](../storage/cache-multi-tier-architecture.md) entry.
-- **`NormalizeUpstream(format, providerID, body)`** — strips and/or injects bytes
-  in the body that *will* be forwarded to the provider, returning the modified body
-  and a `Result` for audit. It runs after an L1 miss, before the request goes to
-  the broker, and is **demand-driven**: it no-ops unless the current config actually
-  gives it work to do (§4).
+- **`NormalizeUpstream(format, body)`** — strips bytes from the body that *will* be
+  forwarded to the provider, returning the modified body and a `Result` for audit.
+  It runs after an L1 miss, before the request goes to the broker, and is
+  **demand-driven**: it no-ops unless the current config actually gives it work to
+  do (§4).
 
 ## 2. The engine
 
@@ -42,18 +48,26 @@ Each rule runs through a panic-recovering wrapper, and work is layered:
 
 - **L0 key-normalise** — the key-safe subset of rules, applied by `NormalizeKey`.
 - **L3 strip** — the strip rules, applied by `NormalizeUpstream`.
-- **L4 cache-control inject** — `cache_control` marker injection for the Anthropic
-  and Bedrock wire (Bedrock Claude uses the Anthropic Messages format), gated
-  per-provider.
 
 ## 3. Rules
 
 A rule is scoped to one adapter type and carries a transform type, default and
 override enable flags, a dry-run flag, a `KeyNormalizeSafe` flag (whether it may
-run during cache-key normalisation), and — for strip rules — a `gjson` body path
-plus a compiled regex. Two transform types exist: `strip` and
-`cache_control_inject` (the last is driven by per-provider config rather than a
-bundled rule).
+run during cache-key normalisation), and — for strip rules — a compiled regex plus a
+LIST of `gjson` body paths. One transform type exists: `strip`.
+
+The list is not decoration. A wire field can legitimately arrive in more than one
+JSON shape, and a rule naming only one of them is silently absent on the others.
+Anthropic's `system` is an ARRAY of content blocks when a native `/v1/messages`
+client sends it, and a plain STRING when this gateway's own codec rebuilds the
+request on the cross-format leg — and the engine runs on `PrepareBody` output, so
+it sees whichever shape that leg produced. The Claude Code nonce rule declared
+only `system.#.text`, whose gjson `#` requires an array; it stripped the nonce for
+a `/v1/messages` caller and did nothing at all for the same conversation arriving
+on `/v1/chat/completions`, on the upstream body AND on the L1 cache key. The
+selectors are applied in order and are mutually exclusive — each no-ops on a shape
+it does not match — so declaring both costs one failed lookup, never a double
+strip.
 
 Rules apply surgically: a strip rule removes one known volatile token from a
 precise body path. Whole-body re-serialisation (e.g. JSON field-order
@@ -67,38 +81,50 @@ must hash a derived form and never touch the forwarded body.
 The bundled rules ship factory defaults that operator config can override:
 
 - **Claude Code nonce strip (off by default)** — for the Anthropic and Bedrock
-  wire. It removes Claude Code's `cch=<hex>` billing nonce from the system-prompt
-  text, so consecutive Claude Code sessions sharing an identical system prompt hash
-  to the same key. Strip rules select a `gjson` path, apply the regex to the matched
-  string values, and write the result back with `sjson`.
+  wire. It removes Claude Code's `cch=<hex>` token from the system-prompt text.
+  Strip rules select `gjson` paths, apply the regex to the matched string values,
+  and write the result back with `sjson`.
 
-Marker injection (L4) adds `cache_control: ephemeral` markers to the Anthropic-wire
-body when a provider has it enabled, optionally including the conversation-history
-boundary; this is what makes the upstream provider cache the prompt.
+  The nonce sits INSIDE the system prompt, which is the first segment of the
+  provider's own prompt-cache prefix, so a token that rotates per Claude Code
+  session defeats Anthropic's cache and not merely the gateway's L1 key. Measured
+  on the live wire: with the nonce rotating, turn 2 of a conversation reported
+  `cache_creation_input_tokens=11792, cache_read_input_tokens=0` — the provider
+  re-created the entry and read nothing; with it stripped, the same turn reported
+  `creation=0, read=11774`. At 1.25× for a write against 0.1× for a read that is
+  roughly a twelvefold difference on the prefix. The rule is `KeyNormalizeSafe`
+  and also in the upstream set, so enabling it fixes both caches at once.
 
 ## 4. Configuration and hot-reload
 
 Config is projected from the `cache` config key (`configkey.Cache`): the Control
 Plane assembles the cache-config blob and pushes it to the AI Gateway shadow, which
 projects that blob into the wirerewrite `Config` on reload. Its zero value is a safe
-all-off default. It carries exactly two things: per-adapter per-rule overrides
-(`enabled`, `dry_run_always`) and per-provider marker-injection settings keyed by the
-Provider UUID. A config change rebuilds the engine's snapshot through `Reload`.
+all-off default. It carries exactly one thing: per-adapter per-rule overrides
+(`enabled`, `dry_run_always`). A config change rebuilds the engine's snapshot
+through `Reload`.
+
+The engine holds **no per-provider state at all**. The same blob's per-provider
+prompt-cache settings are read per request by the codec that writes the marker, not
+projected here. An earlier version did project them, against a snapshot of the
+provider list taken when the `cache` key was applied — which silently disabled
+markers for any provider created after the last cache push, and for the whole
+process when a cold start reached `cache` before `providers`, an order the config
+loader does not guarantee (it ranges a Go map). Holding no provider snapshot removes
+that class rather than patching it.
 
 **There is no global on/off switch for the engine.** `Reload` derives an internal
 `hasWork` flag from the resolved snapshot:
 
 ```
 hasWork = (any adapter has ≥1 enabled upstream strip rule)
-       || (any provider has cache_control marker injection enabled)
 ```
 
 `NormalizeUpstream` returns the body untouched when `hasWork` is false, so a
 zero-config deployment pays nothing and never rewrites a forwarded byte. Enabling a
-strip rule, or switching on a provider's marker injection, **is itself the demand** —
-there is no second, operator-facing toggle to remember (forgetting it used to
-silently swallow marker injection). `NormalizeKey` is outside this gate entirely: the
-L0 cache-key normalisation always runs, whatever `hasWork` says.
+strip rule **is itself the demand** — there is no second, operator-facing toggle to
+remember. `NormalizeKey` is outside this gate entirely: the L0 cache-key
+normalisation always runs, whatever `hasWork` says.
 
 The on-the-wire identifiers — the rule IDs such as `claude-code-cch-strip` — are
 stable admin/shadow/database identifiers. They are preserved verbatim, so renaming
@@ -121,8 +147,10 @@ conservative:
   failing recovers only on a process restart. Because skipping a rule is fail-open,
   this is safe — the request simply goes upstream without that rewrite.
 
-The outcome of `NormalizeUpstream` is a `Result` with strip counts, injected-marker
-count, a dry-run flag, and byte-level `TransformSpan` records. Those spans are
+The outcome of `NormalizeUpstream` is a `Result` with strip counts, a dry-run flag,
+and byte-level `TransformSpan` records. `DryRun` is what the AI Gateway keys on to
+stamp ZERO strip counts on the audit row: a dry-run rule measures and does not
+edit, so the row must not report bytes as removed. Those spans are
 consumed in-process (cache-key derivation and strip metrics); they are not
 persisted to a database column. Masking provenance that survives to the audit
 trail rides on the parent `traffic_event` (`compliance_tags`) and the redacted

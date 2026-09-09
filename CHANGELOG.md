@@ -6,6 +6,462 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`traceparent` is honoured and recorded, so gateway traffic joins back to
+  your own APM.** A caller instrumented with OpenTelemetry already sends the W3C
+  `traceparent` header on every outbound call. The gateway already continued
+  that trace through its own spans; it now also records the caller's trace id on
+  `traffic_event.trace_id`, so a slow span in Datadog / Honeycomb / Jaeger leads
+  to the gateway's row for the same call.
+
+  The column is written **only** when an inbound `traceparent` parsed. With no
+  caller trace it stays NULL rather than receiving the trace id the gateway's own
+  tracer derives from the request id — a column meaning "the caller's trace" must
+  be empty when there is no caller trace to point at, or every row looks traced
+  and none of them is joinable.
+
+  **Caller impact:** none unless you send the header, and if you run
+  OpenTelemetry you already do.
+
+- **`X-Request-Id` is accepted as a compatibility alias for
+  `X-Nexus-Request-Id`.** They are two spellings of one id, not two ids. A stack
+  that already stamps the industry-conventional `x-request-id` on outbound calls
+  is now understood without changing a line; the canonical name still wins when
+  both arrive, and the gateway still mints one when neither does. The resolved
+  value is echoed on the response and persisted to
+  `traffic_event.external_request_id`.
+
+- **The SIEM export forwards every correlation id, not one.** Rows now carry
+  `requestId`, `endUserId` and `sessionId` alongside `traceId`. Which id a
+  security team correlates on is their decision; a bridge that forwarded only one
+  was making it for them. Fields are omitted when the row carries no value, as
+  before — nothing is sent as `null`.
+
+- **Smart routing keeps a conversation on one model while its prompt cache is
+  warm.** A provider's prompt cache is keyed on the model plus the exact request
+  prefix, so a conversation routed to a second model finds nothing cached and
+  pays full price for the whole history again. Staging traffic showed 41% of
+  consecutive chat requests from one caller switching model within 30 minutes,
+  while only 3.5% exceeded the 5-minute cache lifetime — the switching, not
+  expiry, was what threw the cache away.
+
+  A chat request that carries `X-Nexus-Session-Id` is now routed to the model
+  that tag last used, **provided that model is still among the candidates the
+  router chose from**. Membership in the pool is the whole check, because the
+  pool has already been filtered for the key's allowlist, the capabilities the
+  request needs, the modalities it carries, and a context window that holds the
+  prompt. A conversation that adds an image or outgrows a context window
+  therefore routes normally rather than being pinned to a model that cannot
+  serve it. Affinity only reorders inside the pool: it never adds a candidate
+  and never relaxes a filter.
+
+  **Caller impact:** none unless you send the header, and it is not new — it has
+  always been an attribution tag. Sending the same value across one
+  conversation's turns is what buys the cache hits. The entry lives five
+  minutes, tracking the provider's own cache lifetime, and is scoped by virtual
+  key, so one caller's tag can never reach another's traffic.
+
+  **Operator impact:** nothing to configure. The remembered model is held in
+  process and, when Redis is configured, shared across gateway instances; the
+  Redis leg carries a 50 ms deadline and the in-process tier is always read and
+  written first, so a Redis that is slow, down, or hung costs cache hits and
+  never a request.
+
+### Changed
+
+- **`traffic_event.trace_id` now holds the caller's W3C trace id; the
+  cross-service correlation key is `external_request_id`.** The two columns had
+  drifted into names that described the other one's contents: `trace_id` held the
+  request id and was documented as "a grouping key", while `external_request_id`
+  — the caller-facing request id — carried no index and nothing joined on it.
+
+  The request id is now the correlation key everywhere it was already the value
+  being compared: the Control Plane's `requestId` filter and traffic-drawer
+  pivot, the identity enricher that copies a resolved identity onto the agent and
+  compliance-proxy rows for the same request, and the diag ↔ traffic join. A new
+  partial index covers `external_request_id`.
+
+  `thing_diag_event.trace_id` is renamed `external_request_id` for the same
+  reason — it always held the request id — along with its composite index and the
+  `slog` attribute key that feeds it (`trace_id` → `external_request_id`).
+
+  **Deploying this needs an order.** The column rename must run as hand-written
+  DDL *before* `prisma db push`, which has no rename primitive and would
+  otherwise ask to drop and re-add the column. The `diag_event` envelope's field
+  name changes on the same commit, so a data plane and the Hub that disagree
+  about it lose the value silently in either direction: deploy schema → Hub →
+  gateway / compliance proxy / agent, and do not leave the fleet split across the
+  release. Agent binaries carry no external-user compatibility obligation, so no
+  dual-read window is provided. Full procedure, including the rollback order, in
+  `docs/operators/ops/runbooks/prod-deploy-data-changes.md`.
+
+  **Operator impact:** none at the API surface — no request or response header
+  changed, and the `requestId` query parameter keeps its name and its meaning.
+  Anything querying `thing_diag_event.trace_id` or `traffic_event.trace_id`
+  directly in SQL needs updating.
+
+- **A realtime session's rows group by the upgrade request's id.** They used to
+  borrow `trace_id` for a server-minted key of their own. Every row now carries
+  the upgrade request's `external_request_id`, so the ordinary request-id filter
+  returns the whole session and `trace_id` is free to mean what it says.
+
+- **Anthropic prompt caching now uses the provider's automatic caching, and the
+  marker moved to the codec that owns the wire.** The gateway had been placing
+  explicit cache breakpoints itself: one on the last system text block, and
+  optionally a second on the second-to-last user message. It now sets a single
+  root `cache_control` and lets Anthropic place and advance the breakpoint.
+
+  Measured against every Anthropic model the gateway routes to, one arm per
+  request so no arm could read what another wrote: the root marker cached the
+  system prompt **and** the message turn while the system-block marker cached
+  only the system prompt — 14597 vs 12489 tokens on Sonnet 4.6, 27529 vs 23573
+  on Opus 4.7, the same ratio on all ten. The old second breakpoint was worse
+  than that: anchored one turn behind the request, staging traffic showed it
+  writing 2.8 tokens of cache for every token it read.
+
+  `cache_control` is a field of the Anthropic Messages wire, so the marker now
+  lives in the Anthropic codec — on **both** of its doors, so a `/v1/messages`
+  caller and an OpenAI `/v1/chat/completions` caller routed to Claude get the
+  same treatment. This removed three separate lists of adapter names that each
+  had to decide "is this an Anthropic-shaped body".
+
+  **Operator impact:** none to configure. The **Inject cache markers** toggle
+  keeps its meaning and its stored value.
+
+  **Bedrock forwards uncached** until someone can probe it. AWS documents its
+  InvokeModel Claude integration answering 400 for a root `cache_control`, and
+  this repository has no Bedrock credentials to verify either that or a
+  block-level fallback; the previous code applied markers to that wire on the
+  theory that it shares the Anthropic body shape, with no cited measurement.
+
+- **The Claude Code nonce strip only worked on one of the two doors.** Its rule
+  declared a single body path, `system.#.text`, whose gjson `#` requires an array.
+  Anthropic's `system` is an array of content blocks when a native `/v1/messages`
+  client sends it, and a plain string when this gateway's own codec rebuilds the
+  request on the cross-format leg — and the rewriter runs on the prepared body, so
+  it sees whichever shape that leg produced. The rule therefore stripped the nonce
+  for a `/v1/messages` caller and did nothing at all for the same conversation
+  arriving on `/v1/chat/completions`, on the upstream body and on the L1 cache key
+  alike. Rules now declare a list of paths and the Anthropic rules carry both
+  shapes.
+
+  Why it matters: the nonce sits inside the system prompt, which is the first
+  segment of the provider's own prompt-cache prefix. Measured on the live wire,
+  turn 2 of a conversation with the nonce rotating reported
+  `cache_creation_input_tokens=11792, cache_read_input_tokens=0`; the same turn
+  with it stripped reported `creation=0, read=11774`.
+
+  **Operator impact:** none by default — both rules still ship disabled, and
+  turning one on is an admin toggle. Enabling it now does what its description
+  always claimed.
+
+- **`marker_boundary3_enabled` keeps its job and gets a better anchor.** The knob
+  has always added a SECOND cache breakpoint, and that second breakpoint is what
+  keeps a long-turn conversation hitting at all: Anthropic finds the previous
+  entry by walking back at most 20 content blocks, so a turn that appends more
+  than that — an agent round with many tool calls — stops hitting entirely, with
+  no error. What changed is WHERE the breakpoint goes, and that it now sits on top
+  of the automatic breakpoint rather than beside a hand-placed system marker.
+  Measured on the live wire with a 26-block turn, two arms with independent
+  session identities:
+
+  | turn | root marker only | root + second breakpoint |
+  |---|---|---|
+  | 2 (+26 blocks) | creation 14242, **read 0** | creation 2477, **read 11767** |
+  | 3 | creation 14512, **read 0** | creation 2747, **read 11767** |
+
+  The anchor moved from the second-to-last USER message to the end of the previous
+  assistant turn. The old position moved every turn and cached a prefix one turn
+  shorter than the breakpoint ahead of it already covered; staging traffic measured
+  it writing 2.8 tokens of cache for every token it read. The new one is stable —
+  finished content the next turn will not edit — and sits behind whatever the
+  current turn appended, however much that was. `thinking` blocks are skipped; they
+  cannot carry a marker.
+
+  **Operator impact:** off by default, as before. The admin toggle keeps its name
+  and its stored value.
+
+### Fixed
+
+- **The `X-Nexus-*` namespace no longer reaches third-party providers.** The
+  compliance proxy and the agent minted a correlation id and set it on the
+  intercepted request, so it travelled to OpenAI, Anthropic and everyone else —
+  announcing Nexus to a party the caller never told about us, and handing them
+  an id of ours. `UpstreamTransport.ForwardRequest` now strips the whole prefix,
+  matching what the AI Gateway has always done on its own forward path. Headers
+  the client sent under that prefix are stripped too: a client speaking the
+  Nexus vocabulary is addressing Nexus, and the header stops where it was
+  addressed. The correlation id still exists on every hop's audit row; it simply
+  does not travel on the wire. `X-Request-Id` is untouched — it is the caller's
+  own header, and providers read and echo it.
+
+- **The seeded super-admin password is `nexus-demo`.** The README, the
+  contributor guide, the examples index and the public getting-started page all
+  quoted `admin123`, which the seed has never set — a first-time reader was sent
+  to the login screen with a credential that could not work.
+
+- **The stated Go prerequisite matches `go.work`.** The prerequisite tables said
+  1.25 while the workspace pins `go 1.26.0`; with `GOTOOLCHAIN=local` a 1.25
+  install cannot build the tree. The bootstrap scripts compared against the wrong
+  boundary as well, so a 1.25 install passed the check and then failed the build.
+
+- **A dry-run normaliser rule silently swallowed prompt-cache markers, and the
+  job that sets dry-run could not see its own remediation.** `NormalizeUpstream`
+  reported `DryRun=true` whenever every strip rule was in dry-run mode, but the
+  marker injection that ran in the same call had still edited the body — and the
+  caller discarded that body on the dry-run flag while the audit row kept
+  reporting the markers as sent. Reachable in production: the Hub's cache-quality
+  monitor sets `dry_run_always` automatically on an error spike.
+
+  Marker injection no longer runs there at all, so the flag can no longer reach
+  it. Separately, a dry-run rule now stamps ZERO strip counts on the audit row,
+  because a dry-run rule measures and does not edit — the row describes what
+  happened to that request. Recording the would-have-stripped figure there put a
+  number nothing removed in front of four readers that all treat it as an edit:
+  the traffic audit drawer shows it to an admin, cache ROI sums it into a savings
+  figure, the 5m rollups aggregate it, and the Hub cache-quality monitor counts
+  the row as "normaliser-modified" — the last of which is why that job, after
+  flipping every rule to dry-run, kept measuring the same population and could
+  not observe its own remediation.
+
+  **Operator impact:** none. No schema change.
+
+- **Prompt-cache markers went silently off for providers created after the last
+  cache-config push, and for a whole process on some cold starts.** The
+  per-provider marker settings were resolved once, when the `cache` shadow key
+  was applied, against the provider list as it stood at that moment. A provider
+  created later had no entry. Worse, the config loader applies shadow keys by
+  ranging a Go map, so a start that reached `cache` before `providers` resolved
+  against an empty provider list and left markers off for the process lifetime —
+  while the admin UI still showed the toggle on.
+
+  The gateway now holds the config blob and resolves per request, so there is no
+  provider snapshot to go stale and key arrival order stops mattering.
+
+
+### Fixed
+
+- **A suspended account could still authenticate, on every login surface.**
+  Every gate enforced on `NexusUser.disabledAt`, a column nothing in the tree
+  has ever written; every surface that disables an account — the admin PUT,
+  offboarding, agent-user suspend, SCIM `active:false` — writes
+  `status = 'suspended'`. The control was disconnected at both ends, so SCIM
+  deprovisioning reported success while the departed employee kept signing in.
+  Two further surfaces had no account check at all: the OIDC callback and the
+  SAML ACS turned a federated identity straight into an auth code.
+
+  The store now returns a resolved verdict instead of the raw columns, so a gate
+  cannot enforce on the wrong one, and all five session-minting paths consult it.
+  A status outside `active` fails closed.
+
+  **Operator impact:** accounts that were disabled but still working now stop
+  working, which is the intended behaviour. No migration is required — the
+  verdict is computed from columns that already exist.
+
+- **`admin:user.update` alone could set another user's local password**,
+  including the super-admin's, and then sign in as them. The grant ceiling now
+  runs on the password field. The other five fields on that endpoint are
+  deliberately ungated: withholding access is not conferring it, and gating them
+  would take incident response away from any operator who does not out-rank the
+  account they need to disable.
+
+- **Admin API-key regenerate and rotate bypassed the grant ceiling.** Both mint a
+  usable plaintext credential for the key's existing owner, so a caller holding
+  only `admin:api-key.update` could pick a super-admin-owned key and read the
+  credential out of the response. All three minting paths now share one
+  predicate, which also owns the skip conditions (owner unset, or owner is the
+  caller).
+
+- **SCIM refused a group mutation and then performed it.** The ownership guard
+  signalled refusal by returning `c.JSON`'s result, which is nil on a successful
+  write, so every caller's `if err != nil` branch was dead: the 403 went out and
+  the rename / member replacement / delete landed anyway. `DeleteGroup`
+  separately had no ownership check at all, so a SCIM token could delete an
+  admin-created IAM group with its policy attachments, or another IdP's group,
+  and receive 204. Both guards now write their own refusal and report a boolean.
+
+- **Every OIDC login wrote its authorization code to the access log.** The log
+  recorded the raw query string, and the IdP callback carries `code` and `state`
+  there; a 5xx logged it at ERROR, which the diag handler ships to the Hub as a
+  persisted `diag_event` row — and the 500 arm fires before the code exchange, so
+  the stored value was an unredeemed code. The inbound log now shares the
+  outbound redactor's parameter list, which gains the OAuth family.
+
+- **`GET /api/admin/dsar` returned every listed subject's full Art.15 export.**
+  The list projected `dsar_request.outcome` — the subject's user record, group
+  memberships, traffic rows and inline prompt/response bodies — into every row,
+  and the pages walk the table. The list no longer selects the column. Reading
+  one named request's export (`GET /api/admin/dsar/{id}`) is unchanged.
+
+- **Host resolution in `shared/traffic` was internally inconsistent in three
+  ways** — regex was the only match type not folding case; the exact-host index
+  was consulted BEFORE the priority-ordered scan, so an exact rule always beat a
+  higher-priority glob and the priority field was decorative; and that index was
+  keyed on the config's own capitalisation while the scan folds case. The index
+  is now a build-time memo of the scan itself, so the two cannot disagree.
+
+  **Scope, stated plainly:** `FindInstance` and `ResolveAction` have no
+  production callers today, so none of the three was a live interception bypass.
+  The per-connection path is `shared/policy/domain`, which is tracked separately
+  and carries the mirror defect — a regex host pattern is compiled verbatim
+  while the host is lowercased, so an admin who capitalises anything in a regex
+  gets a rule that never fires.
+
+- **A scan on a closed rule-pack matcher reported that it had scanned to
+  completion.** The redaction path is contractually required to treat an
+  incomplete scan as unsafe, because a dropped hit is unmasked PII — and the
+  closed-matcher early return handed back "scanned to completion, zero matches"
+  for a scan that never touched the database. The window is a rule-pack swap
+  closing the old matcher while an in-flight redact hook still holds it.
+
+  Found while fixing it: `hs_selftest.go` included `<hs/hs.h>` where its
+  neighbour includes `<hs.h>`, and that one character made the entire
+  `vectorscan`-tagged package fail to compile — so no test in it had ever run
+  via the documented `go test -tags vectorscan` path. The first run after the
+  fix was red on a pre-existing assertion that required exactly one hit, which
+  is an RE2 detail: with `firstOnly=false` a Vectorscan database reports every
+  match END.
+
+- **Gemini redaction landed one slot off and sent the tail in plaintext.** The
+  extractor routes `thought=true` parts to reasoning and off the redactable
+  segment list, while the rewriter wrote into every text part — so for
+  `[A, thought, B]` it redacted A, wrote B's redaction into the THINKING part,
+  ran out of segments and returned, leaving B on the wire in clear while the
+  pipeline recorded the request as redacted. It also corrupted the thought text
+  Gemini requires echoed back verbatim across turns. The response side had the
+  same shape, returning unredacted assistant text to the client. Separately, the
+  extractor read both `systemInstruction` and the protobuf `system_instruction`
+  spelling while the rewriter read only the first, so a snake_case request had
+  its system prompt's redaction written into the first user message and its last
+  message never rewritten at all. Both decisions are now single-sourced.
+
+- **Three per-device admin routes failed OPEN.** `/agent-devices/:id/audit`,
+  `/config` and `/timeline` were registered under the plain IAM middleware while
+  their six siblings used the device-aware one. The plain middleware evaluates
+  against the wildcard resource, so a policy statement scoped to a device group
+  never matches the target — an administrator's group-scoped Deny is not merely
+  outranked, it never enters the tally, and whatever unscoped Allow exists
+  carries the request. `/agent-users/:id/devices` had the same hole from the
+  other direction: keyed on a user, it returned every one of that user's devices
+  regardless of which groups the caller may see, and it now re-evaluates per row
+  and fails closed. A tree-wide gate refuses any future device-scoped route
+  registered without the device-aware middleware.
+
+- **A device could forge its own audit attribution.** The `/things/audit` HTTP
+  fallback forwarded the device-supplied event map to the queue verbatim, so a
+  device could self-assert `entityId`, `orgId`, `identity` and the
+  producer-trust flags. An exact-string denylist would not have closed it: the
+  downstream consumer decodes with a case-INSENSITIVE matcher, so a forged
+  `EntityId` binds anyway and a lowercase `thingid` — which marshals after the
+  server-stamped canonical `thingId` — wins on last-key-wins and overrides the
+  stamp itself. The forwarder now keeps only the keys an agent legitimately
+  produces, folded-case, before re-stamping. `source` stays settable by a
+  Hub-internal service caller, which is the contract that path documents.
+
+- **A user's identity audit showed another subject's traffic after a device
+  reassignment.** The agent leg attributed traffic by a bare
+  `thing_id IN (the user's devices)` with no ownership window, so a device
+  reassigned A → B surfaced B's events in A's audit view and vice versa. It is
+  now scoped to each `DeviceAssignment`'s `[assignedAt, releasedAt)` window,
+  matching the DSAR access and erase paths.
+
+- **The generated PAC file was not valid JavaScript.** The bypass-domain
+  template emitted one `if` per domain but only ever opened the condition once,
+  so any install with two or more bypass domains produced a file every browser
+  rejects wholesale — silently, and taking the whole proxy configuration with
+  it. The template now emits a single parenthesised condition, and the fix is
+  pinned by a test that runs the generated text through a real JavaScript parser
+  at 0, 1, 2 and 63 domains.
+
+- **Five committed yaml files carried a database password, and the secrets gate
+  could not see it.** `check-no-yaml-secrets.mjs` matched on KEY NAMES, so a
+  credential embedded in a connection URL under a key called `url` was invisible
+  to it. The gate now also inspects VALUES for `scheme://user:password@host`,
+  the five URLs ship empty, and the one legitimate occurrence (a CI service
+  container) carries an explicit waiver with its reason.
+
+- **`npm run seed:prod` re-enabled every job an operator had disabled.** `Job`
+  was a reference fixture, so a production re-seed upserted all 47 rows with
+  `enabled: true` over the live table — data retention included. The Hub's own
+  store already refuses exactly this (`UpsertJob` omits `enabled` so "a restart
+  must not clobber an admin's disable action"); the seed was the one writer
+  breaking the rule the rest of the system states. The seed no longer owns the
+  `job` table at all: the Hub writes every one of those columns at boot from
+  each job's own Go definition.
+
+- **`SEED_DEMO` was read by two halves of the same system that disagreed.** The
+  TypeScript side tested `!== 'false'` — fail-OPEN on every near-miss spelling
+  (`0`, `False`, `no`, `off`, a trailing space), while the container entrypoint
+  tested `= "true"` — fail-CLOSED on the same input. `SEED_DEMO=0` therefore
+  skipped the demo tier in a container and seeded it everywhere else, and that
+  tier's credential plaintexts are derivable from ids committed to this
+  repository. There is now ONE reader: both directions are accepted in the
+  spellings anyone would write, unset still means yes so the dev quickstart is
+  unchanged, and anything unreadable is refused with a non-zero exit rather than
+  silently assigned a side.
+
+- **`stream: true` was honoured on endpoints that have no stream.** The rule
+  forcing non-stream was a denylist naming image generation and TTS, so
+  `{"input":"…","stream":true}` on `/v1/embeddings` or `/v1/rerank` set `stream`
+  on the upstream request and took the SSE responder — for upstreams that answer
+  with one JSON object. The client got a 200 with
+  `Content-Type: text/event-stream` and no event frames. It is now an allowlist
+  living beside the endpoint-kind constants, so a kind added later defaults to
+  non-stream. `/v1/chat/completions`, `/v1/responses`, `/v1/messages` and Gemini
+  `:streamGenerateContent` are unaffected.
+
+  **Client impact:** a caller that sent `stream: true` to embeddings or rerank
+  now receives the documented `application/json` body instead of an empty event
+  stream. The published API reference already stated these endpoints do not
+  stream.
+
+- **Sticky credential selection ignored `selectionWeight` and reshuffled the
+  whole fleet on any circuit change.** It was `hash(virtualKeyId) % len(eligible)`,
+  which picks an INDEX: every eligible credential took a 1/N share regardless of
+  weight — including a half-open probe deliberately clamped to weight 1, which
+  therefore load-tested a credential that had just been failing — and because
+  `len(eligible)` is the divisor, one credential opening its circuit remapped
+  essentially every virtual key, discarding the provider-side prompt cache
+  fleet-wide during an incident. Replaced with weighted rendezvous hashing.
+
+  **Operator impact, one time, on first deploy:** virtual keys pinned to
+  multi-credential pools are re-assigned, so provider-side prompt caches refill
+  once (single-credential providers are untouched). `selectionWeight` becomes
+  load-bearing on the sticky path for the first time — an 8/1 pool that was
+  splitting 50/50 will move to roughly 89/11 — so check that a heavy credential
+  has the provider-side quota for its new share. Per-credential spend
+  attribution shifts accordingly.
+
+- **The Redis rate limiter never recovered from a lost script cache.** `Allow`
+  called `EVALSHA` with a hash captured at construction and had no `NOSCRIPT`
+  fallback, so a Redis restart, a failover to a replica that never loaded the
+  script, or a `SCRIPT FLUSH` made every later call error for the lifetime of
+  the process. The caller's error path falls back to the per-process limiter, so
+  the cluster-wide quota silently became per-instance — N replicas each
+  enforcing the full limit — with nothing in the logs saying so.
+
+  **Operator impact:** a deployment currently in that degraded state starts
+  enforcing the configured limit again on deploy, so callers that had been
+  passing may begin receiving 429s. That is the configured limit taking effect,
+  not a new restriction.
+
+- **A credential drained to `selectionWeight: 0` kept serving traffic.** Two
+  lookups answered "which credentials may serve this provider?" differently: the
+  list excluded weight 0, the single-credential fallback did not, and the
+  resolver falls back from the first to the second exactly when the list is
+  empty — which is what draining every credential produces. The same split
+  existed in the store and in the cache layer that production actually runs;
+  both are aligned, and an empty list is now an answer rather than a reason to
+  reach for the credential the list excluded.
+
+  **Operator impact:** a drained credential that was still serving now stops. A
+  provider whose entire pool is drained returns HTTP 500
+  `PROVIDER_TARGET_UNAVAILABLE`; routing to a *different* provider still fails
+  over normally. This is the drain doing what the console says it does — the
+  field's own help text reads "Set to 0 to exclude from the pool without
+  disabling."
+
 ## [1.6.0] — 2026-08-23
 
 ### Added

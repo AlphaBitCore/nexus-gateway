@@ -215,6 +215,10 @@ worktrees/
 # Local tool installs (golangci-lint etc.) — not committed
 .tooling/
 
+# Per-checkout golangci-lint cache. The shared per-user default replays a
+# sibling worktree's findings into this one; see scripts/check-go-lint.sh.
+.golangci-cache/
+
 # Runtime-generated node identity + auth keys (contains RSA private keys).
 # Untracked-but-not-ignored meant a plain `git add -A` would commit a private key.
 .nexus/

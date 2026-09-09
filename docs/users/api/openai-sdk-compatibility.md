@@ -121,8 +121,9 @@ gateway does not serve, so `err.message` is never empty.
 The last two rows look similar and mean opposite things. `PROVIDER_UNAVAILABLE`
 means providers were called and every one of them failed — an upstream incident,
 and worth retrying. `PROVIDER_TARGET_UNAVAILABLE` means no provider was called at
-all: the gateway could not prepare a target for the request, typically because
-the credential behind it is missing or cannot be decrypted. Retrying that will
+all: the gateway could not prepare a target for the request — the credential
+behind it is missing, cannot be decrypted, or every credential for that provider
+is disabled, retired, or drained to `selectionWeight: 0`. Retrying that will
 not help until an operator fixes the configuration, which is why it is a `500`
 rather than a `502` — SDKs treat `502` as transient and will back off and try
 again, turning one broken credential into sustained load.

@@ -384,6 +384,27 @@ the first migrator pass must report installing, and a second pass against an
 unchanged lockfile must report reuse. Losing install-once is otherwise silent —
 it just reinstalls on every `up` and still exits 0.
 
+### 8.3 `SEED_DEMO` has exactly one reader
+
+The migrator entrypoint passes `SEED_DEMO` through **unread**. It used to
+branch on `[ "${SEED_DEMO:-true}" = "true" ]` — a second, differently-written
+parse of a variable `seed.ts` already parses, and the two agreed only on
+`true` and on unset. `SEED_DEMO=1` skipped the demo tier in the entrypoint and
+seeded it in `npm run seed`; `SEED_DEMO=maybe` silently picked a side in each,
+independently.
+
+That matters more than a normal config typo because of what the demo tier is:
+13 `NexusUser`, 12 `VirtualKey` and 5 `AdminApiKey` rows whose credential
+plaintexts are derivable from the OSS repository. A near-miss spelling that
+fails **open** seeds them into a production database.
+
+`seed:prod` is only `SEED_DEMO=false npm run seed`, so the entrypoint branch
+decided nothing the variable does not already decide one layer down. Removing
+it leaves one reader — `seed.ts` — which accepts both directions in the
+spellings anyone would actually write and **refuses** anything else rather than
+guessing. A refusal exits non-zero, which surfaces as a migrator failure rather
+than as a quietly-seeded demo tier.
+
 `control-plane-ui` runs nginx with `deploy/nginx/nexus-ui.conf`, routing
 `/api/*` and `/oauth/*` /`/authserver/*` to `control-plane`, the `/v1*` /
 `/v1beta*` / `/openai/deployments*` / `/api/paas*` ingress family to
@@ -427,6 +448,16 @@ The same firing self-test from §3 is re-run here, linked with the identical
 `-extldflags` recipe the shipped binaries use, so the proof that Vectorscan
 scans covers the binaries actually being packaged, not a differently-linked
 stand-in.
+
+**The service list is derived, never restated.** `build-tarball.sh` reads the
+set of services out of the `ExecStart` line of each `deploy/systemd/*.service`
+unit rather than carrying its own list, so a fifth service is packaged by adding
+its unit and nothing else. A restated list is a list that goes stale silently:
+the build succeeds, and the missing binary only surfaces when an operator's
+`systemctl start` finds no executable. Three guards keep the derivation honest —
+an empty `deploy/systemd/`, a unit with no `ExecStart` line, and a unit whose
+`--config` argument does not name `<svc>.yaml` each fail the build rather than
+shipping a short or mismatched archive.
 
 The archive stages `bin/` (four static binaries), `ui/` (the built Vite
 `control-plane-ui` dist), `systemd/` (the four `deploy/systemd/*.service`

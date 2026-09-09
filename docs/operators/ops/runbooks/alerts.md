@@ -9,7 +9,7 @@ Alerts are **not** evaluated in Prometheus. The Hub's alert engine reads `traffi
 ## First moves for any alert
 
 ```
-1. What is the trace_id?      → traffic_event.trace_id is the key to everything
+1. What is the request id?    → traffic_event.external_request_id is the key to everything
 2. Is this new, or chronic?   → GET /api/admin/alerts?ruleId=<id>
 3. Did WE change something?   → correlate against the deploy timestamp
 ```

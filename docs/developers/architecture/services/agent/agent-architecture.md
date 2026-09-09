@@ -27,7 +27,7 @@ Enforcement is real and local. The agent runs the shared hook pipeline
 admin-bound rule packs directly on the device. A blocked request is blocked at
 the endpoint; it never reaches the provider. The agent measures upstream TTFB and
 total time on its forward path, the same instrumentation the Compliance Proxy
-uses, so cross-service traces stitch by `trace_id` at query time.
+uses, so cross-service rows stitch by `external_request_id` at query time.
 
 Two processes cooperate per install:
 

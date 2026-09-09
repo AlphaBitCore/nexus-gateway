@@ -57,8 +57,19 @@ Endpoints below are dialect-neutral — they have no vendor standard, so they ex
 
 `**model` is the only routing input.** Send a model name and the gateway selects the provider,
 translates your request onto that provider's wire, and translates the answer back into your
-dialect's envelope. On chat endpoints you may send `"model": "auto"` and let the gateway choose the
-model as well; `auto` is not accepted on `/v1/embeddings`.
+dialect's envelope. You may also delegate the model choice: send `"model": "auto"` — or whatever
+keyword this deployment's smart routing rules publish — and the gateway chooses.
+Delegation is not chat-only: it resolves per endpoint, to a chat model on
+`/v1/chat/completions`, an embedding model on `/v1/embeddings`, a rerank model on
+`/v1/rerank`, an image model on `/v1/images/generations`. Delegation requires a
+`smart` routing rule that claims your keyword; a keyword no rule claims is
+answered `404 ROUTING_NO_MATCH`, because nothing behind it names a model.
+
+One thing to weigh on `/v1/embeddings`: two embedding models emit vectors in
+different spaces. If you index with a delegated request, a later request served
+by a different model returns vectors that are not comparable with what you
+stored, with no error to tell you. Name the model explicitly wherever the vectors
+outlive the request.
 
 Two consequences worth stating plainly:
 
@@ -132,20 +143,102 @@ Beyond authentication, the gateway reads these. All are optional.
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Content-Type: application/json` | required on every JSON endpoint                                                                                                                              |
 | `anthropic-version: 2023-06-01`  | conventional on `/v1/messages`; never validated. Its **presence** also switches `GET /v1/models` and `GET /v1/models/{model}` to the Anthropic catalog shape |
-| `x-request-id`                   | your own request id. Recorded against the request, and echoed back on the response                                                                            |
-| `X-Nexus-Request-Id`             | the trace id for a unit of work spanning several calls. Honoured when you send one, minted otherwise                                                          |
+| `X-Nexus-Request-Id`             | your id for this one request. Honoured when you send one, minted otherwise, echoed back either way — quote it when reporting a problem                        |
+| `x-request-id`                   | the same thing under the conventional spelling, for stacks that already stamp it. Read only when `X-Nexus-Request-Id` is absent                               |
+| `traceparent`                    | W3C trace context. Send it and the gateway continues your trace, and records its trace id so this traffic joins back to your APM                              |
 | `X-Nexus-End-User-Id`            | opaque end-user attribution tag, trimmed and capped at 256 bytes                                                                                             |
-| `X-Nexus-Session-Id`             | opaque session attribution tag, same cap                                                                                                                     |
+| `X-Nexus-Session-Id`             | opaque conversation tag, same cap. Also keeps a conversation on one model — see below                                                                        |
 | `X-Nexus-Client-Tags`            | opaque `key=value` bag, at most 8 pairs                                                                                                                      |
 | `X-Nexus-No-Cache`               | bypass the response cache for this request                                                                                                                   |
 
 
-Attribution comes from these headers only. The gateway does not read a protocol's own end-user
-field — OpenAI's `user`, Anthropic's `metadata.user_id` — for attribution; those are forwarded to
-the provider untouched.
+#### Finding your traffic later
 
-Headers you send are not relayed upstream wholesale: the gateway forwards an allowlist, and every
-`x-nexus-` header you send is dropped before the request leaves.
+Five of those headers exist only so you can find this request again afterwards, at five different
+grains. Send none of them and the gateway still records every request — you just have fewer ways
+to ask for it back. Each one buys one query.
+
+| To find… | Send | Grain |
+| --- | --- | --- |
+| this one request | `X-Nexus-Request-Id` (or `x-request-id`) | one request |
+| everything one of your users did | `X-Nexus-End-User-Id` | one user, many conversations |
+| everything in one conversation | `X-Nexus-Session-Id` | one conversation, many requests |
+| this traffic from inside your own trace | `traceparent` | whatever your tracer scoped |
+| traffic by a fact only your system knows | `X-Nexus-Client-Tags` | whatever you tagged |
+
+```bash
+curl "$NEXUS_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $NEXUS_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Nexus-Request-Id: 7b2f1c04-3d5e-4a91-9f2a-8c6d5e4b3a21" \
+  -H "X-Nexus-End-User-Id: acct_8817" \
+  -H "X-Nexus-Session-Id: thread_20a4" \
+  -H "X-Nexus-Client-Tags: tenant=acme,env=prod" \
+  -d '{"model":"gpt-5.4-mini","messages":[{"role":"user","content":"hi"}]}'
+```
+
+All five are optional and independent — send one, some, or none. The four id headers are
+exact-match filters in the Control Plane's traffic list — including `traceparent`, whose trace id
+gets its own filter so you can arrive from your APM with a trace id in hand; client tags are shown
+on the event and included in the SIEM export.
+
+**`X-Nexus-Request-Id` and `x-request-id` are the same header under two names.** Send whichever
+your stack already uses; if you send both, the `X-Nexus-` one wins. Send nothing and the gateway
+mints one. Either way the resolved value comes back on `X-Nexus-Request-Id`, and that is the value
+to quote when you report a problem. (Your `x-request-id` comes back too when you sent one; when you
+did not, that header carries the provider's own id, so read `X-Nexus-Request-Id` for ours.)
+
+**Send one if your traffic crosses more than one Nexus component.** With an agent or the compliance
+proxy in the path, a request produces a row per component. They join on the id you sent, because
+each component resolves the same value from the same request. Send nothing and each mints its own,
+leaving the rows correlated only by client IP and time — enough for attribution, not enough to pull
+up a request's whole path with one filter. Note that only `x-request-id` continues to your provider;
+the `X-Nexus-*` namespace is addressed to Nexus and stops here.
+
+**`traceparent` is the only one you probably already send.** Any OpenTelemetry-instrumented
+client emits it. The gateway continues your trace rather than starting a new one, and records
+your trace id against the traffic row, so a slow span in your APM leads to the gateway's record
+of the same call. Send nothing and that field stays empty — the gateway will not put an id of its
+own invention in a field that means "your trace".
+
+**Attribution comes from these headers only.** The gateway does not read a protocol's own end-user
+field — OpenAI's `user`, Anthropic's `metadata.user_id` — for this; those are forwarded to the
+provider untouched. One header means your attribution does not change with the wire shape you
+happen to speak.
+
+**The `X-Nexus-*` namespace stops here.** Every header in it is addressed to Nexus, so the ones you
+send do not continue to your provider — on any path, including through the compliance proxy and the
+agent. Your own `x-request-id` does continue, since it is yours and providers read and echo it. That
+is the one behavioural difference between the two spellings of the request id.
+
+(One header of ours can reach your provider: `X-Nexus-Attestation`, which a Nexus agent adds to prove
+the call came from an enrolled device. Its reader is the compliance proxy, but an agent egressing
+straight to a provider cannot route around it. It carries a signature and no credential.)
+
+**These tags describe your users, not Nexus's.** Values are opaque: stored exactly as sent, never
+validated, never matched against Nexus accounts, never used for routing, quota, or access
+control. They are scoped to your API key, so a wrong or duplicated value can only affect your own
+traffic. They are also **stored as sent and never redacted** — the compliance pipeline governs
+message bodies, not these fields — so use opaque identifiers, not names or email addresses.
+
+#### Sending `X-Nexus-Session-Id` keeps a conversation's prompt cache warm
+
+Send the same value on every turn of one conversation, and a different value for a different
+conversation. Any stable opaque string works — whatever your client already calls a thread,
+conversation, or session.
+
+It is worth doing because of how providers cache prompts. A provider's cache is keyed on the model
+plus the exact prefix of the request, so a conversation that gets routed to a second model finds
+nothing cached and pays full price for the whole history again. When smart routing picks the model
+for you, this header lets the gateway keep the conversation on the model it already has a warm
+cache on, for as long as that cache lives.
+
+The header only ever reorders models the request was already eligible for. If the conversation
+grows past the previous model's context window, or adds an image that model cannot read, the
+gateway routes normally — it will not send a request to a model that cannot serve it.
+
+Sending nothing changes nothing: routing behaves exactly as it does today. A wrong or reused value
+only affects your own traffic, since the tag is scoped to your API key.
 
 ### Response headers
 
@@ -154,9 +247,9 @@ Headers you send are not relayed upstream wholesale: the gateway forwards an all
 | -------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------ |
 | `X-Nexus-Via`                                            | always                             | hop marker, `ai-gateway`                                                       |
 | `X-Nexus-Mode` `X-Nexus-Hook`                            | always                             | per-hop chains aligned 1:1 with `X-Nexus-Via`. The gateway has no mode, so its position is empty; read them by position, not by presence |
-| `X-Nexus-Request-Id`                                     | always                             | the id to quote when reporting a problem                                       |
+| `X-Nexus-Request-Id`                                     | always                             | the request id — the one you sent under either spelling, or the one we minted. This is the id to quote when reporting a problem |
 | `x-request-id`                                           | when you sent one, or the provider returned one | yours if you sent one, otherwise the provider's — one value, never both     |
-| `X-Nexus-Attempts`                                       | always                             | upstream attempts made, at least 1                                             |
+| `X-Nexus-Attempts`                                       | once routing ran                   | upstream attempts made, at least 1. Absent when the request was refused before routing — bad key, oversized body, a blocked request |
 | `X-Nexus-Cache`                                          | JSON proxy routes                  | `HIT` or `MISS`. Endpoints that are never cached always report `MISS`          |
 | `X-Nexus-Hook`                                           | always                             | compliance pipeline outcome, e.g. `passed:pii-scanner`                         |
 | `X-Nexus-Routed-Model` `X-Nexus-Routed-Provider`         | when routing substituted the model | what actually served the request                                               |
@@ -855,6 +948,8 @@ gRPC status name:
 These have no vendor standard, so they exist once and are the same whichever SDK you use.
 
 ### 7.1 Rerank documents
+
+Rerank is request/response only. There is no streaming form — a `stream` field in the body is ignored and the answer is a single JSON object.
 
 `POST /v1/rerank`
 

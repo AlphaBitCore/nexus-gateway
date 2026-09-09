@@ -47,7 +47,7 @@ cp_login                                                            # caches tok
 cp_curl /api/admin/<path>                                           # any path
 ```
 
-Seed credentials: `admin@nexus.ai / admin123` (super-admin).
+Seed credentials: `admin@nexus.ai / nexus-demo` (super-admin).
 
 ## Pre-commit checks
 

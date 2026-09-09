@@ -6,7 +6,9 @@ Traffic is a timeline of the outbound network connections this agent intercepted
 
 Each row shows the time (relative, with the absolute time on hover), the originating app (process name), the site (hostname), the HTTP method, the path, the latency (human-readable), a status, and tags.
 
-The **status** reflects what the agent did with the connection: `Inspected` (green), `Processed` (amber), `Blocked` (red), `Bump failed` (red), or `Untracked` (muted). The **tags** column adds an `AI` chip when the destination matched an interception domain, a `hook · <decision>` chip when a hook actually ran (red for a deny / reject / soft-block decision, amber for approve), and a `policy` chip when a policy rule applied.
+The **status** reflects what the agent did with the connection: `Inspected` (green), `Processed` (amber), `Blocked` (red), `Bump failed` (red), or `Untracked` (muted). Those five are decided by one ordered rule set, and the order is what makes the answer trustworthy: a failed TLS bump on a matched flow reads `Bump failed`; a hook that denied, rejected or soft-blocked reads `Blocked`, as does a policy action of `deny`; a hook that approved reads `Processed`; a flow that matched no interception rule reads `Untracked`; and anything else reads `Inspected`.
+
+`Untracked` is evaluated LAST, not first. Evaluated first it captures flows that a hook or a policy DID act on, so a connection the agent blocked would present as one it never looked at — the worst direction for this particular mistake to go. The desktop UI and the agent's own Go classifier decide the same row and are kept in step deliberately; when they disagree, the row an operator sees disagrees with the row the audit trail holds. The **tags** column adds an `AI` chip when the destination matched an interception domain, a `hook · <decision>` chip when a hook actually ran (red for a deny / reject / soft-block decision, amber for approve), and a `policy` chip when a policy rule applied.
 
 ## Filters and controls
 

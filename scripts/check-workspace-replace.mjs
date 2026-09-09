@@ -67,7 +67,7 @@ function ownModulePath(modFile) {
 
 // checkModText runs the require/replace rules (Rules 1-2) against go.mod text
 // directly, without touching the filesystem, so the self-test fixture can drive
-// the exact regexes that silently rotted in F-0317. `ownModule` is passed in so
+// the exact regexes that silently rot when a path moves. `ownModule` is passed in so
 // the self-test does not need a real `module` line resolved from disk.
 // expectedReplaceTarget computes the relative path a go.mod's replace directive
 // must point at, from the requiring module's directory to the sibling's
@@ -177,7 +177,7 @@ function checkOne(modFile) {
 }
 
 // --selftest drives the require/replace regexes against in-memory fixtures so a
-// future regex drift (the exact F-0317 failure: the patterns hardcoded the wrong
+// future regex drift (the failure this guards: the patterns hardcode the wrong
 // org and silently matched nothing) can never ship green. A known-bad go.mod MUST
 // produce violations and a known-good one MUST produce none; if the regexes stop
 // matching the real module path, the bad fixture yields zero violations and this

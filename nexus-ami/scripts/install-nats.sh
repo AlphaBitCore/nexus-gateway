@@ -11,9 +11,9 @@ source "$(dirname "$0")/lib-verify.sh"
 
 NATS_VERSION=2.10.20
 ARCH=$(uname -m)
-# per-arch sha256 from the NATS-published SHA256SUMS for this release
-# (the script previously ignored those sums). verify_sha256 fails the build on
-# any mismatch. Re-record both on every version bump:
+# per-arch sha256 from the NATS-published SHA256SUMS for this release.
+# verify_sha256 fails the build on any mismatch. Re-record both on every
+# version bump:
 #   curl -fsSL https://github.com/nats-io/nats-server/releases/download/v<V>/SHA256SUMS
 case "$ARCH" in
   x86_64)  NATS_ARCH=amd64; NATS_SHA256=979c6e633fb03987771b8f7baf99041b574638486ead35acdb868f6a7187a164 ;;

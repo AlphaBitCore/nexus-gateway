@@ -535,3 +535,107 @@ When a branch lands DB-shape changes (schema change in `tools/db-migrate/schema/
 - `packages/agent/internal/lifecycle/killswitch/killswitch.go` — receiver.
 - `docs/developers/architecture/cross-cutting/safety/kill-switch-architecture.md` — architectural reference.
 - `docs/developers/architecture/cross-cutting/safety/pii-redaction-policy-architecture.md` — AI-Guard reconcile architectural reference.
+
+### `fix/nexus-request-headers-id` — `thing_diag_event.trace_id` renamed to `external_request_id`
+
+**Scope.** One column rename on `thing_diag_event`, plus the composite index
+that carries it. No value changes: the column always held the request id, and
+only its name is wrong. The rename ships together with a wire change — the
+`diag_event` envelope's `traceId` field becomes `externalRequestId` — so the
+Hub's drain handler reads only the new key after this deploy.
+
+`traffic_event` is NOT renamed. Its `trace_id` column stays, and changes meaning
+instead: it now holds the caller's own W3C trace id, written only when the
+request arrived with a parseable `traceparent`. Rows written before this deploy
+hold a Nexus-minted request id there. Nothing reads the column across that
+boundary — the Control Plane's `requestId` filter, the identity enricher and the
+diag join all key on `external_request_id` after this deploy — so no backfill is
+needed, but a hand-written query that mixes rows from both sides will compare two
+different kinds of value.
+
+**Tables + paths.** `thing_diag_event.trace_id` → `external_request_id`;
+index `thing_diag_event(thing_id, trace_id, occurred_at DESC)` →
+`(thing_id, external_request_id, occurred_at DESC)`. New partial index on
+`traffic_event(external_request_id)`.
+
+**Value rule.** Preserve. `RENAME COLUMN` keeps every row's value; this is a
+metadata-only operation in PostgreSQL and does not rewrite the table.
+
+**Order — flip before `db push`, not after.** Prisma has no rename primitive:
+`db push` sees a dropped column and an added one and asks for
+`--accept-data-loss`, which the schema runbook says to STOP on. Run the DDL
+first, and `db push` then finds the schema already matching and does nothing to
+that table. `schema-extras.sql` runs AFTER `db push` and cannot rescue this.
+
+```sql
+-- BEFORE db push. Both statements are metadata-only; neither rewrites a table.
+ALTER TABLE thing_diag_event RENAME COLUMN trace_id TO external_request_id;
+ALTER INDEX thing_diag_event_thing_id_trace_id_occurred_at_idx
+  RENAME TO thing_diag_event_thing_id_external_request_id_occurred_at_idx;
+```
+
+The new name is not a choice: `db push` compares against the name Prisma derives
+from the mapped column names, so renaming to anything else leaves a surplus index
+and a missing one. Read it out of the release rather than typing it — the same
+`migrate diff` that produced the drop-and-add above prints the `CREATE INDEX` it
+would issue, and its name is the target.
+
+Confirm the current name the same way (`\d thing_diag_event`); it follows the
+same derivation, so a table whose index predates the mapped-name convention can
+carry a different one.
+
+The new `traffic_event(external_request_id)` index is in `schema-extras.sql` and
+lands on its own after `db push`. Build it `CONCURRENTLY` on prod: the table is
+the largest in the deployment and a plain `CREATE INDEX` holds a write lock for
+the duration, stalling every data-plane insert behind it.
+
+**Binary order — Hub before the data planes, and no partial fleet.** The
+`diag_event` envelope's field name changes on the same commit. A new data plane
+sending `externalRequestId` to an old Hub loses the value silently; an old data
+plane sending `traceId` to a new Hub does the same. Deploy schema → Hub →
+gateway / compliance proxy / agent, and do not leave the fleet split across a
+release. Agent binaries carry no external-user compatibility obligation, so no
+dual-read window is provided.
+
+**Smoke after deploy — and read the zero correctly.** The diag sink's threshold
+is slog ERROR. A healthy deploy therefore produces exactly one `lifecycle` row
+per service and nothing else: 2xx access logs are Debug, and a 4xx does not
+reach ERROR either, so no amount of ordinary traffic will populate the column.
+Those lifecycle rows are emitted outside any request scope, so their id is
+legitimately NULL. A query that counts them and finds zero has measured nothing.
+
+Split the two questions:
+
+```sql
+-- 1. Is there anything in the window this check could even see?
+SELECT count(*) FILTER (WHERE level = 'error') AS error_rows,
+       count(*)                                AS all_rows
+FROM thing_diag_event WHERE occurred_at > now() - interval '10 minutes';
+
+-- 2. Only if error_rows > 0 — do those rows carry the id?
+SELECT source, count(*) FILTER (WHERE external_request_id IS NOT NULL) AS with_id,
+       count(*) AS total
+FROM thing_diag_event
+WHERE occurred_at > now() - interval '10 minutes' AND level = 'error'
+GROUP BY source;
+```
+
+`error_rows = 0` is the normal outcome and means the check did not run — say so,
+rather than recording a pass or a fail. When `error_rows > 0`, `with_id` must be
+non-zero for a service that was serving requests; zero there is the real signal
+that the slog attribute key and the writer disagree.
+
+The write path is better verified against history than against a fresh window:
+
+```sql
+SELECT level, count(*) AS total, count(external_request_id) AS with_id
+FROM thing_diag_event GROUP BY level;
+```
+
+Errors carrying an id prove the column is populated when a request-scoped ERROR
+happens, and the rename preserves those rows — which is the thing this deploy
+could have broken.
+
+**Rollback.** Reverse the rename (`RENAME COLUMN external_request_id TO
+trace_id` and the index back) BEFORE rolling the binaries back, for the same
+reason the forward order is what it is. No data is lost in either direction.

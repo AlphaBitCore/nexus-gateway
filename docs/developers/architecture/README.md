@@ -114,6 +114,7 @@ If you are about to edit code in an area that is genuinely **not** covered by an
 | Adding a new AI endpoint (embeddings, image-gen, TTS/STT, batch), extending `SchemaCodec`, the `Model` capability matrix, endpoint typology constants (`WireShape*`, `Endpoint*`) | `docs/developers/architecture/cross-cutting/foundation/endpoint-typology-architecture.md` |
 | Changing what a model declares it can do — `Model.type` / `features` / `inputModalities` / `outputModalities` / `capabilityJson`, or any consumer that reads them to pick or reject a model | `docs/developers/architecture/cross-cutting/foundation/model-capability-architecture.md` |
 | Multi-endpoint coordination, per-endpoint-kind routing fan-out | `docs/developers/architecture/cross-cutting/foundation/multi-endpoint-coordination-architecture.md` |
+| Which representation a consumer reads (routing / cache identity / compliance / metering / audit / view-time), how a compliance edit is written back onto a wire, how an ingress declares what it can do, and how an unrecognised provider field is reported | `docs/developers/architecture/cross-cutting/foundation/canonical-waist-architecture.md` |
 | `packages/shared/transport/mq/**`, NATS JetStream subjects / streams / consumers, MQ-vs-HTTP/WS decision | `docs/developers/architecture/cross-cutting/foundation/mq-architecture.md` |
 | `packages/nexus-hub/internal/jobs/**`, cron jobs, retention purge, drift check | `docs/developers/architecture/cross-cutting/foundation/jobs-architecture.md` |
 | Nexus HTTP header contract — response markers (via / cache / routing / quota / hook chains) and request headers (VK carriers, correlation, feature flags, CORS allowlist composition) | `docs/developers/architecture/cross-cutting/foundation/nexus-headers.md` |
@@ -122,14 +123,14 @@ If you are about to edit code in an area that is genuinely **not** covered by an
 
 | Editing area / file glob | Read FIRST |
 |---|---|
-| Choosing among the observability surfaces (Audit / Diag / Metrics / Traces / SIEM), cross-surface `trace_id` correlation | `docs/developers/architecture/cross-cutting/observability/observability-architecture.md` (umbrella) |
+| Choosing among the observability surfaces (Audit / Diag / Metrics / Traces / SIEM), cross-surface request-id correlation | `docs/developers/architecture/cross-cutting/observability/observability-architecture.md` (umbrella) |
 | Audit event schema, `packages/shared/audit/**`, `packages/nexus-hub/internal/traffic/chain/**`, MQ audit sink, body storage with spillstore | `docs/developers/architecture/cross-cutting/observability/audit-pipeline-architecture.md` |
 | Admin mutation audit — which handlers emit which action / entityType | `docs/developers/architecture/cross-cutting/observability/admin-audit-log-coverage.md` |
 | Built-in Go alert rules, `AlertRule` rows, alerteval pipeline, channel fan-out | `docs/developers/architecture/cross-cutting/observability/alerting-architecture.md` |
 | `packages/nexus-hub/internal/observability/siem/**`, `packages/control-plane/internal/observability/siem/**`, SIEM bridge poll/checkpoint, sink + wire formats, `siem.config` admin surface | `docs/developers/architecture/cross-cutting/observability/siem-bridge-architecture.md` |
 | `packages/control-plane/internal/observability/opsmetrics/**`, `packages/nexus-hub/internal/observability/opsmetrics/**`, per-Thing stats rollup, quota rollup | `docs/developers/architecture/cross-cutting/observability/metrics-rollup-architecture.md` |
 | Adding / renaming a Prometheus metric (any `*.go` calling `promauto.New*`) | `docs/developers/architecture/cross-cutting/observability/prometheus-naming-architecture.md` |
-| `packages/shared/core/telemetry/**`, OTel setup, `traceparent` / `trace_id` propagation, span attribute conventions | `docs/developers/architecture/cross-cutting/observability/otel-tracing-architecture.md` |
+| `packages/shared/core/telemetry/**`, OTel setup, `traceparent` capture and request-id propagation, span attribute conventions | `docs/developers/architecture/cross-cutting/observability/otel-tracing-architecture.md` |
 | `packages/shared/core/diag/**`, `packages/agent/internal/observability/diagnostics/**`, diag-mode shadow keys, silence rules | `docs/developers/architecture/cross-cutting/observability/diag-event-triage-architecture.md` |
 | `/debug/runtime` snapshot, `runtimeintrospect` sources, Hub introspection bridge, `/runtime/*` read API, snapshot redaction | `docs/developers/architecture/cross-cutting/observability/runtime-introspection-architecture.md` |
 | `tests/lib/`, `tests/integration-go/`, new smoke / protocol / AI-judge test, new test skill | `docs/developers/architecture/cross-cutting/observability/test-harness-architecture.md` |

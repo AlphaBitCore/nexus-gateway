@@ -21,12 +21,76 @@ The response side settled the same concept earlier: thinking blocks, thought par
 
 A `TransformSpan` describes one byte-level modification against a `NormalizedPayload` (a hook redaction, AI-Guard suggestion, cache-normaliser strip, or cache_control inject); `ApplySpans` reconstructs the wire body from the payload + its spans. A span's `ContentAddress` indexes the modified content (e.g. `messages.<i>.content.<j>`, `http.bodyView`). The reserved address `AddressAuditOnlySentinel` (`"webhook.flat"`) marks an **audit-only** span: it records *what* a subsystem flagged but addresses a flat projection the gateway never reconstructs, so `ApplySpans` drops it — it lands in the audit record only and never mutates delivered or stored bytes. `IsAuditOnlySentinelAddress` is the single recogniser; compliance consumers use its negation as a denylist to tell an applicable redaction from an advisory audit-only span (see `hook-architecture.md` §5, `CarriesRedaction`).
 
+### Writing an edited payload back onto the wire
+
+`ApplySpans` produces an edited payload; it does not produce bytes. Two functions
+turn that payload back into a body, one per direction, and they live in
+`normalize/codecs/canonical_rewrite.go`:
+
+- `RewriteCanonicalRequestContent(body, edited)` walks `messages[]`.
+- `RewriteCanonicalResponseContent(body, edited)` walks `choices[].message`.
+
+Both take the CANONICAL body the payload was decoded from and EDIT it in place —
+they never reconstruct it. That is the load-bearing property: a channel nothing
+redacted stays byte-identical, and the envelope (`id`, `usage`, `model`,
+`system_fingerprint`, `service_tier`, `finish_reason`, sampling params, `tools`)
+cannot be lost by a redaction, because neither function ever writes outside the
+content channels. Each walks the wire in the SAME order its decode produced
+blocks and pairs slot with block BY TYPE; a mismatch is an error, never a partial
+write, because writing a prefix would put one channel's redaction onto another
+channel's text.
+
+There is one rewriter per canonical WIRE SHAPE, and there are exactly three:
+`messages[]` (request), `choices[]` (chat response), `output[]`
+(`/v1/responses` response). That is not the same as three shapes at the waist —
+a hook still receives ONE `NormalizedPayload`, because every shape decodes into
+it. What differs is where the text lives on the wire, and writing bytes is the
+one job that has to know. A reader about to write
+`RewriteAnthropicRequestContent` — a rewriter per PROVIDER rather than per shape
+— is solving the problem below the waist.
+
+**A redaction edits; it never reconstructs.** This is the rule the three
+rewriters exist to enforce, and it was learned by breaking it twice in one
+change. Both attempts redacted the canonical payload correctly and then rebuilt
+the wire body from it, and a rebuild silently drops everything the intermediate
+shape does not model:
+
+- Encoding canonical back to the **Anthropic request** wire dropped
+  `cache_control` (prompt caching stops working, so the customer's bill rises on
+  exactly the requests a policy touched), `metadata.user_id`, `mcp_servers` and
+  `content[].citations` — and turned a server tool
+  (`{"type":"web_search_20250305"}`) into a client-side custom tool with no
+  `type`, so the upstream emits a `tool_use` and blocks on a `tool_result` the
+  client cannot produce.
+- Decoding a **`/v1/responses` response** to chat and re-encoding dropped
+  `previous_response_id`, `output[].content[].annotations` (the citations a
+  web-search answer must display), reasoning `encrypted_content` and the echoed
+  request config, regenerated the item ids so an `item_reference` named
+  something the upstream had never seen, and reordered `output[]`.
+
+Both are silent. A visible refusal is better, and an in-place edit is better
+still — which is why the request lane is limited to the ingress formats whose
+wire IS the canonical chat body, and why the Responses shape got its own
+rewriter instead of a round trip. See `docs/handoffs/hooks-canonical-waist.md`.
+
+`nexus_thinking` is the case that shows why the gate on a redaction has to be
+"the original text is gone from the WHOLE body" rather than a list of channels.
+It is Anthropic's exact-replay carrier — the thinking blocks with their
+signatures — so the same text exists twice in a canonical body, once in
+`reasoning_content` where the decode reads it and once inside a carrier no codec
+decodes. Every consumer prefers the carrier: the request leg rebuilds native
+thinking blocks from it, and the Anthropic stream encoder explicitly discards its
+reasoning buffer when one is present. A redaction therefore landed on the copy
+nobody delivers. The carrier cannot be redacted in place — its signature is
+computed over the original text — so a reasoning edit DROPS it, which is honest:
+the redaction already invalidated the signature.
+
 ## 2. The tiered dispatch model
 
 `core.Registry` is the coordinator. `BuildRegistry` (`packages/shared/transport/normalize/buildregistry.go`) assembles it once per service and freezes it. `Registry.Normalize` dispatches in tiers:
 
 - **Tier 1 — keyed per-wire normalizers** (`normalize/codecs`, registered by `RegisterDefaultAIBuiltins`, plus per-host traffic adapters via `RegisterTier1AdapterNormalizers`). Selected by `AdapterType` and `AdapterType::EndpointPath` keys — JSON wires with a known shape.
-- **Tier 1.5 — the sniff pass.** When every keyed candidate missed or declined, the registry offers the body to codecs enrolled via `RegisterSniffer` (anthropic, openai-chat, openai-responses, gemini — in that precision order). Each implements the optional `core.Sniffer` capability: `LooksLike(raw, meta)` probes a bounded prefix for protocol-distinctive markers in BOTH directions. Response markers are probed unconditionally (the Anthropic `message_start` SSE frame, the OpenAI `chatcmpl` / `"object":"chat.completion` discriminators, the Gemini `"candidates"` key plus a corroborating Gemini key); request markers are probed only when `meta.Direction` is request or unset — anthropic matches `"messages"` + `"max_tokens"` (the pair is protocol-required on `/v1/messages`), openai-chat matches `"messages"` + `"model"` with an `"author"` exclusion (chatgpt-web requests carry the same pair but wrap the role in an `author` object and belong to the Tier-2 chatgpt-web spec), gemini matches `"contents"` plus one of `"generationConfig"` / `"systemInstruction"` / `"safetySettings"`. An Anthropic request body satisfies both the anthropic and openai request probes (`messages`+`model`+`max_tokens` is a superset); registration order resolves the ambiguity — anthropic probes first, so the stricter marker set wins. A match runs the same claim contract as Tier 1. This is how key-missed capture traffic — whose `AdapterType` carries a host or tool name rather than a wire key, and whose path resolves nothing — still lands on the full-fidelity codec instead of the pattern probe or the verbatim dump, in both directions. Probe precision is pinned by the cross-corpus sniffer matrix test (`codecs/sniffer_test.go`): no sniffer outside a case's allowed set may probe-match its corpus wire, and the request-direction walk-order discrimination is pinned end-to-end by `TestRequestSniffOrderDiscrimination` plus the `*-req-keymissed` corpus goldens.
+- **Tier 1.5 — the sniff pass.** When every keyed candidate missed or declined, the registry offers the body to codecs enrolled via `RegisterSniffer` (anthropic, openai-chat, openai-responses, gemini — in that precision order). Each implements the optional `core.Sniffer` capability: `LooksLike(raw, meta)` probes a bounded prefix for protocol-distinctive markers in BOTH directions. Response markers are probed unconditionally (the Anthropic `message_start` SSE frame, the OpenAI `chatcmpl` / `"object":"chat.completion` discriminators, the Gemini `"candidates"` key plus a corroborating Gemini key); request markers are probed only when `meta.Direction` is request or unset — anthropic matches `"messages"` + `"max_tokens"` (the pair is protocol-required on `/v1/messages`), openai-chat matches `"messages"` + `"model"` with an `"author"` exclusion (chatgpt-web requests carry the same pair but wrap the role in an `author` object and belong to the Tier-2 chatgpt-web spec), gemini matches `"contents"` plus one of `"generationConfig"` / `"systemInstruction"` / `"safetySettings"` **or their protobuf spellings** `"generation_config"` / `"system_instruction"` / `"safety_settings"` — Google's JSON surface accepts both, and a request written with the protobuf names carries none of the camelCase markers, so without them it was not sniffed as Gemini at all and the row lost its `detectedSpec`. An Anthropic request body satisfies both the anthropic and openai request probes (`messages`+`model`+`max_tokens` is a superset); registration order resolves the ambiguity — anthropic probes first, so the stricter marker set wins. A match runs the same claim contract as Tier 1. This is how key-missed capture traffic — whose `AdapterType` carries a host or tool name rather than a wire key, and whose path resolves nothing — still lands on the full-fidelity codec instead of the pattern probe or the verbatim dump, in both directions. Probe precision is pinned by the cross-corpus sniffer matrix test (`codecs/sniffer_test.go`): no sniffer outside a case's allowed set may probe-match its corpus wire, and the request-direction walk-order discrimination is pinned end-to-end by `TestRequestSniffOrderDiscrimination` plus the `*-req-keymissed` corpus goldens.
 - **Tier 2 — consumer-web pattern probe + NonJSONDetector framework** (`normalize/extract`, wired by `WireTier2`). The JSON probe recognises only consumer-web shapes the codecs do not own — the ChatGPT-web request/JSON-Patch-SSE pair, the claude.ai single-prompt request, and the flat-prompt legacy completions shape. Standard-API wires (OpenAI Chat, Anthropic Messages, Gemini, OpenAI Responses) are deliberately NOT patterned here: the Tier-1 codecs decode them by key, path, or sniff, and a duplicate Tier-2 spec would only produce a lower-fidelity second answer. For wires that are not plain JSON the detector chain runs: a protobuf Connect-RPC envelope (`ConnectRPCProtobufDetector`) or a Google `batchexecute` form post (`BatchExecuteDetector`). Each detector implements `ID()` / `LooksLike(raw)` / `Decode(raw, direction)`.
 - **Tier 3 — generic HTTP** (`GenericHTTPNormalizer`). The catch-all that records non-AI HTTP structure when no AI wire matches.
 
@@ -61,6 +125,16 @@ The convention is OpenAI's, so cost and analytics never branch on provider:
 - **OpenAI-compatible family** — `codecs/openai_chat.go` resolves the cached-token alias chain across vendors (DeepSeek `prompt_cache_hit_tokens`, Moonshot `prompt_cache_tokens`); the Responses-API top-level `input_tokens` / `output_tokens` mapping lives in `codecs/openai_responses.go`.
 
 This is the contract `core.ExtractUsage` in the AI Gateway depends on — see [provider-adapter-architecture.md](provider-adapter-architecture.md) §5.
+
+### 3.1 Usage-only extraction, and why the OpenAI one reads the body twice
+
+Most callers of a normalizer want the whole `NormalizedPayload`. The cost and analytics path wants only `Usage`, and asking for the rest means projecting `choices[]` — a slice, a struct per choice, and a string per content field — on every ordinary response. `UsageOnlyExtractor` is the optional interface a normalizer implements to answer that narrower question; one that does not implement it falls back to full `Normalize`, so the interface is an optimisation and never a behaviour fork.
+
+The OpenAI normalizer's implementation is worth stating because its shape looks redundant and is not. It projects `choices[]` for exactly one reason: the **reasoning-content estimate**, which fires only when a message carries `reasoning_content` or `reasoning` AND the usage block reported no `reasoning_tokens`. A body containing neither spelling cannot trigger it, so the fast path skips the projection when a byte scan finds no `reasoning` — and then scans again for a backslash.
+
+The second scan is what makes the shortcut **exact rather than likely**. A backslash is JSON's only escape mechanism, so a body without one cannot spell either key any way but literally. Without that test a provider emitting `"reasoning_content"` would silently lose its estimate, and `ReasoningTokens` is billing-adjacent — a wrong number here reaches an invoice, not a log line. The scans are ordered so a body that does carry reasoning short-circuits before the second one runs.
+
+The projected path stays a named function (`extractOpenAIUsageProjected`) rather than being inlined, so the differential test has an **oracle it can call**. A test that reimplemented the projection to compare against would be a second copy, free to drift from the one it exists to prove.
 
 ## 4. Text and structure extraction
 
@@ -106,7 +180,9 @@ Traffic no AI tier claims still gets a TYPED structural projection, never a blin
 
 **Provenance semantic.** Every payload this normalizer emits — all branches above plus decode-error partials — stamps `detectedSpec:"generic-http"` and `confidence:1.0`. The 1.0 means full confidence in the projection itself: a structural projection is always a faithful rendering of what it claims to be. It makes zero claim about AI semantics — "no AI spec identified" is what the `generic-http` value says, never a lowered score. The UI renders the provenance chip on fallback rows from these two fields (as a neutral "Structural" badge that suppresses the confidence numeral — printing 1.00 next to a Tier-1 decode's 0.95 would read as more trusted than the real decode).
 
-**Hook scannability.** `NormalizedPayload.TextProjection()` (`core/projection.go`) is the contract that keeps every typed projection visible to content-scanning hooks (keyword, PII): `http-sse` projects one entry per frame (verbatim `dataText`, or the re-marshaled `data` tree), and an `http-json` tree projects as its compact re-marshaled document. A new fallback Kind MUST extend `httpTextProjection` in the same change — a Kind the projection cannot read is content a configured `http`/`all` hook silently stops scanning.
+**Hook scannability.** `NormalizedPayload.TextProjection()` (`core/projection.go`) is the contract that keeps every typed projection visible to content-scanning hooks (keyword, PII). It takes **no options**, and that is the point: a knob deciding which delivered text a compliance rule may see is a knob that can be set wrong, and the only setting that was ever correct is "all of it". `ContentReasoning` used to be excluded unless a hook set `scope: include_reasoning` — an opt-in with no UI, no admin API, no persisted column and no documentation — so in every real deployment the model's thinking was encoded onto the wire as `delta.reasoning_content`, shown to the caller, and matched by nothing.
+
+Two walks must mirror this projection entry for entry, because they consume its output positionally: `SpansFromModifiedContent` (hooks/core) and each redacting hook's addressing walk. A block occupies a slot **only when it contributed text** — an empty `ContentText` produces no entry — so a walk that consumes a slot for it shifts every span after it onto another block's bytes. The remaining kinds: `http-sse` projects one entry per frame (verbatim `dataText`, or the re-marshaled `data` tree), and an `http-json` tree projects as its compact re-marshaled document. A new fallback Kind MUST extend `httpTextProjection` in the same change — a Kind the projection cannot read is content a configured `http`/`all` hook silently stops scanning.
 
 ### 4.2 Media: one shape, one grammar, one resolver
 

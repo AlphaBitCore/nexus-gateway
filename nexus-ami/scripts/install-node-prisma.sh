@@ -23,9 +23,9 @@ source "$(dirname "$0")/lib-verify.sh"
 
 NODE_VERSION=20.19.0
 ARCH=$(uname -m)
-# per-arch sha256 from the Node-published SHASUMS256.txt for this
-# release (the script previously ignored those sums). verify_sha256 fails the
-# build on any mismatch. Re-record both on every version bump:
+# per-arch sha256 from the Node-published SHASUMS256.txt for this release.
+# verify_sha256 fails the build on any mismatch. Re-record both on every
+# version bump:
 #   curl -fsSL https://nodejs.org/dist/v<V>/SHASUMS256.txt
 case "$ARCH" in
   x86_64)  NODE_ARCH=x64;   NODE_SHA256=b4e336584d62abefad31baecff7af167268be9bb7dd11f1297112e6eed3ca0d5 ;;

@@ -161,6 +161,15 @@ Two consequences worth stating because they are load-bearing:
 - The strict guard passes the caller's own `strictFailClosed` rather than a hardcoded
   `true`. That block only runs when the caller is strict, so the value is identical; passing
   the field is what makes the single build correct for both postures.
+- **The build's unbuildable list is discarded on the tlsbump path, deliberately.**
+  `BuildPipeline` returns it as a third value so a caller that holds an audit record can
+  stamp `hook-unbuildable:<impl>` even when the pipeline is nil (see
+  `hook-architecture.md` §4). These three sites do not: on the packet path a nil pipeline
+  means "forward", and turning the list into a tag would mean emitting an audit row that
+  the forward path does not otherwise produce. The signal there stays the build-time
+  warning plus `PipelineSkippedTotal`. The **degraded** signal is unaffected — its window
+  lives on the `PolicyResolver` these callers share, so a hook failing on this path counts
+  toward the same gauge and the same per-request tag wherever a result is merged.
 
 > **Predicate soundness caveat.** `MayBlock`/`MayRedact` read the *declared*
 > `onMatch` action. A hook whose runtime decision can EXCEED its declared ceiling
@@ -186,6 +195,47 @@ decision keyed on the enforcing **action**) and nothing transport-specific. The
 | `Confirm` / `Prescan` | the relay hook runner + `MayMatchRawContent` | `bo.policyResolver` pipeline + `MayMatchRawContent` |
 | `Escalate` redaction | `redactCanonicalBuffer` (canonical waist) | `SpliceTextFrames` / `FrameRedactor` over the held+drained remainder |
 | **fail posture** | fail-CLOSED (appliance) | fail-OPEN (agent NE host-packet safety) |
+
+### The tail window is derived from the rule set, not a constant
+
+The engine states its own soundness condition:
+
+> Soundness for sub-MaxPatternBytes values requires `TailWindowBytes > MaxPatternBytes + PrescanBatchBytes + maxUnitSize`
+
+Below it, the prescan runs only after `PrescanBatchBytes` of NEW content arrives — and by then the window may already have evicted, which is to say DELIVERED, the start of the value that just completed. The bounded-fragment leak the engine discloses for values LARGER than the window happens instead to a value SMALLER than it.
+
+The gateway used to pass a fixed 8 KB. Measured against the rule set the product ships — 12 enabled packs, 423 rules, every one anchor-strippable — the derived bound is **7362 bytes** (`dlp-dump-002`, a multi-tuple bulk `INSERT`; correctly bounded, and that long because a five-row insert genuinely is). Against a 1024-byte prescan batch that leaves the condition short by 195 bytes, so a bulk-dump exfiltration streaming out had its leading bytes delivered raw before the rule matching it could fire.
+
+The window is therefore sized by `modela.TailWindowFor(maxPattern)` — `maxPattern + 2×PrescanBatchBytes`, floored at the 8 KB default so a small rule set never buys latency by shrinking coverage. For the shipped pack that is **9410 bytes**.
+
+`maxUnitSize`, the condition's third term, is deliberately not sized against: the SSE scanner admits frames far larger than any window worth holding, so it stays the engine's disclosed best-effort surface. The headroom above the bare condition is one prescan batch, which covers a unit orders of magnitude larger than the one-token frame a chat stream produces.
+
+**The operator warning now tests the condition rather than a proxy for it.** `StreamingCoverageGap` was `maxBounded >= tailWindow` — the point at which `withDefaults` CLAMPS the lookahead, which is strictly later. The difference is a band one `PrescanBatchBytes` wide just under the window, and the shipped pack landed inside it: the one configuration that actually produced a gap was the one the warning could not see. A gap that survives the derived sizing means a pattern so long the window would have to grow past anything worth holding; the answer for it is buffered mode or a narrower rule, not a bigger window.
+
+Nothing here is an admin knob, and 290 of the 423 shipped rules are syntactically unbounded (`+`, `*`, `{n,}`) anyway — so no finite lookahead is provably sufficient for them, and buffered mode remains the answer where full coverage is required.
+
+### What counts as redactable text on the canonical substrate
+
+`AppendRedactableText` is what the prescan and the confirm actually see, so any
+assistant-visible channel missing from it is a channel no response rule reaches.
+The rule is: **everything the client receives is scanned**, because everything the client receives can carry a value that must not reach it. On the ai-gateway substrate that means, per chunk:
+
+- `Delta` — ordinary content.
+- `RefusalDelta` — the structured-outputs refusal a model streams on `choices[].delta.refusal` INSTEAD of content when it declines.
+- `ReasoningDelta` — the model's thinking, which the gateway encodes onto the wire as `delta.reasoning_content` and the client displays.
+- each `ToolCallDeltas[]` `Arguments` / `Name` / `ID` — model-authored text that happens to be JSON.
+
+Two of those were absent, and both failed the same way. A channel missing here is invisible to BOTH passes, not just the cheap one: the prescan decides whether the expensive confirm runs at all, so a pattern appearing only in the missing channel never fires a rule and the value is delivered. That is not a weaker scan, it is no scan.
+
+Reasoning was the larger of the two, and it was not only a streaming gap. The text projection excluded `ContentReasoning` unless a hook set `scope: include_reasoning` — an opt-in with no UI, no admin API, no persisted column and no documentation, which no deployment could turn on. So reasoning was scanned by nothing, anywhere, while being delivered everywhere. The knob is deleted and the projection always includes it; `modela_scanned_channels_test.go` holds the substrate to the full channel list.
+
+The **buffer** mode had a third instance of the same failure, and it survived the fix above because it does not go through the substrate's channel list at all. Buffer mode accumulates the stream and hands the response stage a canonical body it builds BY HAND (`canonicalStreamAccumulator.canonicalBody`), and that body deliberately omitted the reasoning channel — with the reason written down: *"extractChatResponse does not scan reasoning_content, so the non-stream canonical path never redacts it; the buffer path preserves the same coverage"*. True when written. It stopped being true when the response stage moved to the canonical waist and began decoding reasoning as its own block, at which point buffer mode became the one gateway path still re-emitting a reasoning channel no policy could touch — on exactly the models that put most of their content there. The accumulator now emits `reasoning_content`, and `syntheticChunkFromCanonical` reads the reasoning back out of the REWRITTEN body rather than from the accumulator's own copy, so a redaction reaches the wire instead of being applied and then read around.
+
+The general shape is worth naming, because it has now happened three times: **a consumer that assembles a canonical body by hand can put content in a channel the canonical decode does not read, and nothing fails — the content is simply never scanned.** A body built by a codec cannot drift that way. When a hand-built canonical body is unavoidable, the test that matters is not "does the field appear" but "does the canonical DECODE produce a block for it", which is what `buffer_reasoning_redaction_test.go` asserts before it asserts anything about redaction.
+
+The tool-call fields are newline-separated so a pattern cannot span two unrelated fields; the text channels are not, because they never co-occur on one chunk and a separator would break a value spanning consecutive frames — the case the bounded tail window exists to catch.
+
+`ContentBytes` must measure exactly what this function emits (separators aside). The engine admits and evicts units from the window by that number, so an under-report evicts scanned content early and an over-report evicts the tail before the bytes completing a pattern arrive.
 
 The engine is posture-neutral; fail-open vs fail-closed is injected entirely by the
 substrate. The escalate gate keys on `ActionFromDecision(decision)` (not the raw
@@ -557,6 +607,59 @@ Two compile-time consistency tests pin this surface:
   wrong wire shape instead of returning `ErrUnsupported` early on
   `meta.Stream` to let the Registry walk continue to Tier 2/3.
 
+## What the tlsbump substrate can scan
+
+On the agent and the compliance proxy, one expression decides what a streaming
+scan can see: `AppendRedactableText` appends `codec.ChunkText`, which is the
+matched `traffic.Adapter`'s `ExtractStreamChunk` applied to the frame. Text that
+expression cannot reach is delivered to the client having been scanned by
+nothing, and the delivery is indistinguishable from a clean one — no error, no
+counter, no log line. Two channels were unreachable for as long as the substrate
+existed:
+
+- **Reasoning.** Every adapter routes chain-of-thought to `ReasoningSegments`
+  (Anthropic `thinking_delta`, Gemini `thought=true`, OpenAI/DeepSeek
+  `reasoning_content`, the `reasoning` spelling xAI and OpenRouter use, Cohere
+  `tool_plan`). `ChunkText` joined `Segments` alone. `NormalizedContent`'s own
+  contract says a scanner opts in by reading both lists; this one read one.
+- **The Responses wire.** A Responses event is `{"type":"response.output_text.
+  delta","delta":"…"}` with no `choices` anywhere in it, and the chat extractor
+  reads `choices.0.delta`. A captured 206-frame reasoning stream carrying 674
+  bytes of assistant and reasoning text extracted **zero**.
+
+Both channels now reach the buffer, and the joined text stays spliceable because
+no frame carries content and reasoning together — measured across every captured
+upstream stream (1,274 frames: 140 content-only, 55 reasoning-only, 0 both).
+`ContentBytes` grows accordingly, which is correct: reasoning was always content
+that should have been counted against the window.
+
+Three corpus-driven gates in `packages/shared/transport/tlsbump/sse_scan_coverage_test.go`
+keep it that way — every corpus must yield scannable text, every reasoning-bearing
+frame must reach the buffer, and every text-bearing frame must be spliceable. The
+third is what turns red if a provider starts interleaving the two channels, which
+is the signal to give the splice a per-channel path rather than to discover it as
+a redaction that silently could not be applied.
+
+### The coverage warning speaks once per rule set, not once per process
+
+`WarnStreamingCoverageGap` tells an operator that a rule set's longest contiguous
+enforceable pattern leaves Model-A best-effort at the window in force. It is
+deduped, because a busy stream would otherwise log it at every stream setup — but
+the dedupe is scoped to the config generation the bound was derived under
+(`Pipeline.RuleSetGeneration`), and the previous generation's set is dropped when
+the generation advances.
+
+Keying on the bound alone, for the life of the process, is the shape that reads
+correct and is not. An operator warned about a 7362-byte bound narrows the rule,
+the gap closes, and later the long pattern comes back — same bound, gap reopened,
+and the process stays silent because that bound had been seen. The log then says
+the problem was fixed while it is live. The generation is the single truth point
+for "the rule set changed", so scoping to it also bounds the memory a
+never-evicted map did not.
+
+Callers with no generation to hand may pass 0; they get the weaker
+once-per-process behaviour for that bound, never a louder log.
+
 ## Failure modes the contract protects against
 
 - **Flat-text PII over SSE.** A hook scoped to "block prompt-cache
@@ -586,6 +689,23 @@ Two compile-time consistency tests pin this surface:
   crash the SSE goroutine and drop the connection. PreHook wraps both
   `Registry.Normalize` and `OnPayload` in `recover()`; a panic logs
   WARN and drops the pre-hook only, the stream continues.
+- **A bumped HTTP/1.1 tunnel that never releases its goroutine.** The
+  single-connection listener under `tlsbump` hands `http.Server` one hijacked
+  connection, and `http.Server` calls `Accept` in a LOOP. The second call has
+  to end when that connection is done. It used to block on a `done` channel
+  nothing ever closed, so `Serve` never returned and neither did the caller —
+  one goroutine, plus its descriptor, stranded per bumped HTTP/1.1 tunnel for
+  the life of the process. The failure is invisible in behaviour: every request
+  succeeds, and the service simply drifts upward in goroutine count until it
+  dies. Returning an error from the second `Accept` immediately is not the fix
+  either — `http.Server` would tear down the connection it is still serving.
+- **A settings write with no principal.** The streaming-compliance settings
+  handler, like every mutating admin handler, now refuses when
+  `AdminAuthFromContext` yields nothing rather than recording `updatedBy = ""`
+  — a row saying nobody made the change. Production never reaches that branch
+  (the admin group is behind `AdminAuth`), which is exactly why it survived:
+  the handler tests drove it with no principal, so a whole file of business
+  logic was being exercised on an arm production never takes.
 
 ## Implementation notes
 

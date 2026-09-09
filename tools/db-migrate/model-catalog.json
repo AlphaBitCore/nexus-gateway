@@ -5612,12 +5612,11 @@
         {
           "code": "command-a-vision-07-2025",
           "name": "Command A Vision",
-          "description": "Cohere Command A with image understanding — chat v2 with image_url content parts.",
+          "description": "Cohere Command A with image understanding — chat v2 with image_url content parts. The only Cohere chat model that accepts images, and the only one that refuses tools.",
           "providerModelId": "command-a-vision-07-2025",
           "type": "chat",
           "features": [
             "streaming",
-            "function_calling",
             "structured_outputs"
           ],
           "inputPricePerMillion": 2.5,

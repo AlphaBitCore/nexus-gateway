@@ -71,6 +71,30 @@ const KEY_RE = new RegExp(
 
 const OPT_OUT_RE = /#\s*nolint:yaml-secrets\b/;
 
+// A connection URL carries its credential in the userinfo segment, so the key
+// name says nothing about whether the line holds a secret. `url` is in
+// REFERENCE_SUFFIXES for a good reason — a URL is normally a LOCATION — and that
+// exemption is exactly why five committed yaml files carried a database password
+// while this gate scanned 45 files and reported zero.
+//
+// So this rule inspects the VALUE, whatever the key is called. It is deliberately
+// narrow: it wants a PASSWORD, so `scheme://host` and `scheme://user@host` are
+// both left alone, and a `${VAR}` placeholder in either position is a reference
+// rather than a value. The credential is masked in the gate's own output — a lint
+// that prints the secret it found has moved the problem, not fixed it.
+const CONNECTION_URL_RE = /\b([a-z][a-z0-9+.-]*):\/\/([^\s:/@"']+):([^\s@"']+)@/i;
+
+function connectionURLCredential(value) {
+  const m = CONNECTION_URL_RE.exec(value);
+  if (!m) return null;
+  const [, scheme, user, password] = m;
+  // `${VAR}` / `<placeholder>` in either position means the real value is
+  // supplied elsewhere.
+  if (/^(\$\{[^}]*\}|<[^>]*>)$/.test(password) || /^(\$\{[^}]*\}|<[^>]*>)$/.test(user)) return null;
+  if (password === '') return null;
+  return { scheme, user, masked: `${scheme}://${user}:***@…` };
+}
+
 // Patterns that mark the VALUE as a non-secret placeholder.
 const PLACEHOLDER_VALUE_RE = /^(\s*$|""|''|null|~|\$\{[^}]+\}|<[^>]+>)/;
 
@@ -174,6 +198,20 @@ function main() {
       const stripped = raw.replace(/^\s+/, '');
       if (stripped.startsWith('#')) continue; // whole-line comment
       if (OPT_OUT_RE.test(raw)) continue;
+      // Value-level rule first: it applies to EVERY line, including the ones
+      // whose key name exempts them from the name-based rule below.
+      const cred = connectionURLCredential(stripInlineComment(raw));
+      if (cred) {
+        const keyName = (KEY_RE.exec(raw) || [, , 'url'])[2] || 'url';
+        hits.push({
+          file: f,
+          line: i + 1,
+          key: keyName,
+          value: cred.masked,
+          text: `${keyName}: "${cred.masked}"  (connection URL carries a password)`,
+        });
+        continue;
+      }
       const m = KEY_RE.exec(raw);
       if (!m) continue;
       const [, , key, rawValue] = m;

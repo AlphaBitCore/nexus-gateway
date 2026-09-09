@@ -133,6 +133,46 @@ The catalog, usage and estimate surfaces produce gateway errors without a `*audi
 
 The same writer answers any path the gateway does not serve, registered both under `/v1/` and at the root. A catch-all matches everything, which puts `ServeMux`'s own 405/`Allow` branch out of reach — it runs only when no pattern matched — so the fallback asks the mux which methods WOULD have matched (`servedUnderOtherMethods`) and answers 405 `METHOD_NOT_ALLOWED` with `Allow` when any would. Without that step a wrong-method request became a 404 whose body claimed the gateway does not serve a path it does serve. Go's `ServeMux` answers an unmatched pattern with `404 page not found` as `text/plain`, and every SDK the gateway speaks to JSON-parses error bodies, so an unmounted path reached the caller as a status carrying no message. Registering the fallback at the root as well as under `/v1/` is what extends that to the Gemini and Azure-compat prefixes; `ServeMux` prefers the more specific pattern, so no mounted route is displaced.
 
+### 4.2 `error_reason` — the human-readable half, and its bound
+
+`traffic_event.error_code` is ours and comes from the vocabulary above.
+`error_reason` is the string beside it, and on the `PROVIDER_ERROR` arm it is
+**provider-controlled text**: the upstream's own `error.message`, its top-level
+`message`, or the raw body. Three properties are enforced on it, and each
+existed because its absence had a consequence.
+
+**One implementation.** `redact.ProviderErrorMessage` /
+`redact.BoundErrorReason` in `packages/shared/traffic/redact` are shared by
+both audit writers. There used to be a copy per service, and they diverged
+exactly as copies do: the shared one was fixed and the AI Gateway's kept
+returning the provider's string unbounded and cutting the raw body mid-rune.
+`traffic/redact` is the home because both writers already import it — it is the
+module that decides what may be persisted.
+
+**Bounded at 300 bytes, on the FIELD not on one branch.** The cap originally
+sat only on the raw-body fallback, the branch a real provider almost never
+reaches because they all return a structured `error.message`, so in practice
+the column took whatever length the provider chose. Every producer now bounds:
+the two `COMPLIANCE_BLOCKED` arms bound `CompliancePipelineResult.Reason` too,
+which arrives straight off a third-party AI-Guard webhook's JSON response.
+
+**Cut on a rune boundary, and repaired to valid UTF-8.** Invalid UTF-8 in a
+text column is not cosmetic — PostgreSQL rejects the INSERT and the audit
+consumer classifies that rejection as permanent, so the event is DROPPED. A
+mid-rune slice manufactures exactly that, and a provider can also simply send
+invalid bytes, so the cut is rune-aligned AND the result is repaired rather
+than trusting either alone. The walk-back also has a floor: a run of
+continuation bytes would otherwise walk to zero and return a bare `"..."`,
+annihilating the message rather than bounding it.
+
+**Where the bytes come from differs by service, and both are consistent with
+their own body columns.** The compliance proxy and agent classify over the
+**gated** response body, so under a redact policy the reason degrades to the
+status line rather than quoting bytes the storage gate just withheld from
+`traffic_event_payload`. The AI Gateway stamps its reason and its response-body
+column from the same raw bytes under the same action, so the two agree there
+too — there is no column-vs-column asymmetry on either path.
+
 ## 5. Hook rejection path
 
 Compliance hooks return a `Decision` (`packages/shared/policy/hooks/core/types.go`):

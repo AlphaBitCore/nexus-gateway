@@ -486,7 +486,7 @@ components:
                         - boolean
                         - "null"
                 marker_boundary3_enabled:
-                    description: Anthropic-family knob — whether the third cache boundary marker is enabled. Null inherits.
+                    description: Anthropic-family knob — adds a SECOND cache breakpoint at the end of the previous assistant turn, on top of the automatic one. Anthropic finds the last cached prefix by looking back at most 20 content blocks, so a turn appending more than that stops hitting the cache entirely; this anchors a write behind it. Meaningful only while marker_inject_enabled is true. Null inherits.
                     type:
                         - boolean
                         - "null"
@@ -533,7 +533,7 @@ components:
                         - boolean
                         - "null"
                 marker_boundary3_enabled:
-                    description: Anthropic-family knob — whether the third cache boundary marker is enabled. Null inherits.
+                    description: Anthropic-family knob — adds a SECOND cache breakpoint at the end of the previous assistant turn, on top of the automatic one. Anthropic finds the last cached prefix by looking back at most 20 content blocks, so a turn appending more than that stops hitting the cache entirely; this anchors a write behind it. Meaningful only while marker_inject_enabled is true. Null inherits.
                     type:
                         - boolean
                         - "null"

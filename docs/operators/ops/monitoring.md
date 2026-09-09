@@ -9,12 +9,12 @@ Architecture background: [observability-architecture.md](../../developers/archit
 | Question | Surface | Where you look |
 | --- | --- | --- |
 | What is happening right now, in aggregate? | Metrics | Prometheus (`/metrics` scrape) |
-| What happened to **this one request**? | Audit | `traffic_event`, keyed by `trace_id` |
-| Why did a service misbehave internally? | Diag | `thing_diag_event`, same `trace_id` |
+| What happened to **this one request**? | Audit | `traffic_event`, keyed by `external_request_id` |
+| Why did a service misbehave internally? | Diag | `thing_diag_event`, same `external_request_id` |
 | Span-by-span across services? | Traces | Your OTel collector — **off unless an endpoint is configured**; Nexus stores no spans |
 | What must reach our SIEM? | SIEM bridge | Your external sink |
 
-They share one correlation key: **`X-Nexus-Request-Id`**, echoed on every response and landing in `traffic_event.trace_id` and `thing_diag_event.trace_id`. Start there — it is the only id that crosses all of them.
+They share one correlation key: the request id — **`X-Nexus-Request-Id`**, or its `X-Request-Id` alias, minted when the caller sent neither. It is echoed on every response and lands in `traffic_event.external_request_id` and `thing_diag_event.external_request_id`. Start there — it is the only id that crosses all of them. (`traffic_event.trace_id` is a different column: the caller's own W3C trace id, present only when they sent a `traceparent`.)
 
 ## Scraping
 
@@ -103,5 +103,5 @@ An honest list, so you do not go hunting for something that is not there:
 
 - **No dashboards in-repo.** No Grafana JSON is shipped. The queries above are the starting set.
 - **No SLOs.** Nothing defines a target or an error budget.
-- **Tracing is off** unless an OTel endpoint is configured, and Nexus persists no spans regardless — cross-service correlation is via `trace_id` in the database, not via traces.
+- **Tracing is off** unless an OTel endpoint is configured, and Nexus persists no spans regardless — cross-service correlation is via `external_request_id` in the database, not via traces.
 - **The Agent has no business metrics.** It emits diag events and a WebSocket `metrics_sample`, but has no `/metrics` endpoint and no `Recorder`. Do not expect agent traffic in Prometheus.

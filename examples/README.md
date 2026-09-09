@@ -34,4 +34,4 @@ If any of those fail, return to the top-level README's "Quick start" section bef
 
 - Every example uses the **seeded** virtual key, providers, and models. The seed lives in `tools/db-migrate/seed/` — reference fixtures under `seed/fixtures/` + a demo tenant under `seed/fixtures/demo/` (see [`tools/db-migrate/seed/README.md`](../tools/db-migrate/seed/README.md)).
 - Curl examples target `localhost` ports as documented in the top-level README. For your own deployment, replace `localhost:<port>` with your service URL.
-- Examples assume the seeded super-admin (`admin@nexus.ai / admin123`) for any admin-API call. Use [`tests/lib/auth.sh`](../tests/lib/auth.sh)'s `cp_login` / `cp_curl` helpers for token-managed admin calls.
+- Examples assume the seeded super-admin (`admin@nexus.ai / nexus-demo`) for any admin-API call. Use [`tests/lib/auth.sh`](../tests/lib/auth.sh)'s `cp_login` / `cp_curl` helpers for token-managed admin calls.

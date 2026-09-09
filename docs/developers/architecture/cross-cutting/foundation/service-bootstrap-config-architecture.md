@@ -176,5 +176,5 @@ The agent's pattern reflects its deployment shape: a single yaml is what the ins
 - Agent yaml loader — `packages/agent/internal/sync/schema/config.go`
 - yaml files (per service) — `packages/<svc>/<svc>.config.yaml`, `packages/<svc>/<svc>.dev.yaml`
 - env contract — `.env.example` (repo root)
-- Layer model + R1-R5 invariants + 14-layer rename — `docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md` (A03)
+- Layer model + R1-R6 invariants + 14-layer rename — `docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md` (A03)
 - Runtime config flow (Cat A / Cat B configKeys) — `docs/developers/architecture/cross-cutting/foundation/thing-model.md` (A01) + `docs/developers/architecture/cross-cutting/foundation/thing-config-sync-architecture.md` (A02)

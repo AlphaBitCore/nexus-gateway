@@ -60,7 +60,7 @@
       ]
     },
     "priority": 10,
-    "timeoutMs": 3000,
+    "timeoutMs": 30000,
     "failBehavior": "fail-closed",
     "enabled": false,
     "applicableIngress": [
@@ -189,7 +189,7 @@
       }
     },
     "priority": 7,
-    "timeoutMs": 3000,
+    "timeoutMs": 30000,
     "failBehavior": "fail-open",
     "enabled": false,
     "applicableIngress": [
@@ -333,7 +333,7 @@
       ]
     },
     "priority": 12,
-    "timeoutMs": 3000,
+    "timeoutMs": 30000,
     "failBehavior": "fail-closed",
     "enabled": false,
     "applicableIngress": [
@@ -452,7 +452,7 @@
       }
     },
     "priority": 7,
-    "timeoutMs": 3000,
+    "timeoutMs": 30000,
     "failBehavior": "fail-open",
     "enabled": false,
     "applicableIngress": [

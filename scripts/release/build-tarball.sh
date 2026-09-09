@@ -44,8 +44,15 @@ trap 'rm -rf "$STAGE_ROOT"' EXIT
 # with this list; the run asserts the number of PASS lines, so a rename fails
 # the build instead of quietly reducing what is proven. Same list as
 # docker/services/Dockerfile.
-SELFTEST_PATTERN='^(TestHSSelfTest|TestVectorscan_ScanUnderCgoLimit|TestVectorscan_ScanComplete_ReportsCompletion)$'
-SELFTEST_COUNT=3
+#
+# The list proves TWO properties: that the linked libhs actually scans, and that
+# a matcher closed underneath an in-flight request reports the scan as
+# INCOMPLETE rather than as "scanned, nothing found" — the second is what stops
+# a rule-pack swap from silently approving a payload the hook never looked at.
+# Both live here because no CI job compiles this build tag; the image and
+# tarball builds are the only automated path that does.
+SELFTEST_PATTERN='^(TestHSSelfTest|TestVectorscan_ScanUnderCgoLimit|TestVectorscan_ScanComplete_ReportsCompletion|TestVectorscan_ScanComplete_ClosedMatcherReportsIncomplete)$'
+SELFTEST_COUNT=4
 
 echo "==> [tarball] ensuring buildbase exists"
 docker image inspect "$BUILDBASE_TAG" >/dev/null 2>&1 || \
@@ -60,6 +67,44 @@ docker image inspect "$BUILDBASE_TAG" >/dev/null 2>&1 || \
 # reaches the `docker build` above instead, and a same-named image may have been
 # built by hand with arbitrary --build-arg values.
 scripts/release/verify-image.sh "$BUILDBASE_TAG" baseline
+
+# The service list has one source: the units this tarball ships. Each unit's
+# ExecStart already names its binary and its yaml, so reading them here is what
+# makes the staged bin/ and config/ unable to disagree with the units pointing
+# at them.
+#
+# nullglob, because without it an empty directory yields the literal pattern:
+# the loop would run once on a path that does not exist and fail there, and the
+# count check below would never run.
+shopt -s nullglob
+units=(deploy/systemd/*.service)
+shopt -u nullglob
+if [ ${#units[@]} -eq 0 ]; then
+  echo "ERROR: no units under deploy/systemd/ — the tarball would stage an" >&2
+  echo "       empty bin/ and report success." >&2
+  exit 1
+fi
+
+SERVICES=""
+for unit in "${units[@]}"; do
+  line="$(grep -m1 '^ExecStart=' "$unit" || true)"
+  [ -n "$line" ] || { echo "ERROR: $unit has no ExecStart line" >&2; exit 1; }
+  case "$line" in
+    *-config\ *) ;;
+    *) echo "ERROR: $unit ExecStart passes no -config/--config" >&2; exit 1 ;;
+  esac
+  svc="$(printf '%s' "$line" | sed -E 's|^ExecStart=([^ ]*/)?([^ ]+).*|\2|')"
+  cfg="$(printf '%s' "$line" | sed -E 's|.*--?config +([^ ]+).*|\1|')"
+  cfg="${cfg##*/}"
+  if [ "$cfg" != "${svc}.yaml" ]; then
+    echo "ERROR: $unit runs '$svc' but loads '$cfg' — the tarball stages" >&2
+    echo "       config/<binary>.yaml, so the two must share a name." >&2
+    exit 1
+  fi
+  SERVICES="$SERVICES $svc"
+done
+SERVICES="${SERVICES# }"
+echo "==> [tarball] services declared by deploy/systemd: $SERVICES"
 
 echo "==> [tarball] compiling statically-linked C++ runtime binaries"
 mkdir -p "$STAGE/bin"
@@ -109,12 +154,8 @@ docker run --rm -v "$REPO_ROOT":/src -v "$STAGE/bin":/out "$BUILDBASE_TAG" bash 
   #      only placement that does not depend on which package's cgo group
   #      happens to land last for a given binary.
   EXTLD='-static-libgcc -Wl,--no-as-needed -l:libstdc++.a -l:libgcc.a -lm'
-  for svc in \
-    nexus-hub:packages/nexus-hub/cmd/nexus-hub \
-    control-plane:packages/control-plane/cmd/control-plane \
-    ai-gateway:packages/ai-gateway/cmd/ai-gateway \
-    compliance-proxy:packages/compliance-proxy/cmd/compliance-proxy; do
-    name=\${svc%%:*}; path=\${svc#*:}
+  for name in $SERVICES; do
+    path=packages/\$name/cmd/\$name
     go build -tags vectorscan -trimpath \
       -ldflags \"-s -w -X main.buildVersion=${VERSION}@${REVISION} -extldflags '\$EXTLD'\" \
       -o /out/\$name ./\$path/
@@ -179,7 +220,7 @@ make control-plane-ui-build
 mkdir -p "$STAGE/ui" "$STAGE/systemd" "$STAGE/config"
 cp -r packages/control-plane-ui/dist/. "$STAGE/ui/"
 cp deploy/systemd/*.service "$STAGE/systemd/"
-for svc in nexus-hub control-plane ai-gateway compliance-proxy; do
+for svc in $SERVICES; do
   cp "packages/$svc/$svc.config.yaml" "$STAGE/config/$svc.yaml"
 done
 cp .env.example "$STAGE/config/env.example"
