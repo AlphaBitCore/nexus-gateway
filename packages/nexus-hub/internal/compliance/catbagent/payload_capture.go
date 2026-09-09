@@ -25,7 +25,7 @@ import (
 //	}
 //
 // The system_metadata row is a single JSONB blob owned by
-// control-plane/internal/handler/admin_extras.go::UpdatePayloadCaptureConfig.
+// packages/control-plane/internal/settings/handler/settings/payload_capture.go.
 // The SELECT here duplicates the DB.GetSystemMetadata surface to avoid a
 // cp -> hub dependency cycle — same rationale as the other Cat B loaders.
 // Any schema change to system_metadata must update both sites.
@@ -46,8 +46,8 @@ func NewAgentPayloadCaptureLoader(db pgxQuerier, logger *slog.Logger) *AgentPayl
 
 // payloadCaptureConfigKey is the system_metadata row that stores the
 // admin-editable payload capture config. Mirrors the constant in
-// packages/control-plane/internal/handler/admin_extras.go and the key
-// used by packages/compliance-proxy/internal/configloader/payloadcapture.go.
+// packages/control-plane/internal/settings/handler/settings/payload_capture.go
+// and the key used by packages/compliance-proxy/internal/config/loaders/payloadcapture.go.
 const payloadCaptureConfigKey = "payload_capture.config"
 
 // agentPayloadCaptureWire is the JSON shape the agent's

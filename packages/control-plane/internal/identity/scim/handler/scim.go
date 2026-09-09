@@ -225,9 +225,9 @@ func (h *Handler) GetUser(c echo.Context) error {
 	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
 	// A SCIM token may only read users its own IdP provisioned. The
 	// guard writes the error response itself; a nil user means it denied.
-	u, errResp := h.assertScimUser(c, ctx, c.Param("id"), tok)
-	if u == nil {
-		return errResp
+	u, ok := h.assertScimUser(c, ctx, c.Param("id"), tok)
+	if !ok {
+		return nil // the guard already wrote the SCIM error response
 	}
 	return c.JSON(http.StatusOK, h.userToSCIM(u))
 }
@@ -305,8 +305,8 @@ func (h *Handler) ReplaceUser(c echo.Context) error {
 
 	// Only the owning IdP's token may mutate this user.
 	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
-	if u, errResp := h.assertScimUser(c, ctx, id, tok); u == nil {
-		return errResp
+	if _, ok := h.assertScimUser(c, ctx, id, tok); !ok {
+		return nil // the guard already wrote the SCIM error response
 	}
 
 	active := body.Active == nil || *body.Active
@@ -342,8 +342,8 @@ func (h *Handler) PatchUser(c echo.Context) error {
 	// Only the owning IdP's token may patch this user (blocks the
 	// cross-IdP email-rewrite account-takeover and active=false DoS).
 	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
-	if u, errResp := h.assertScimUser(c, ctx, id, tok); u == nil {
-		return errResp
+	if _, ok := h.assertScimUser(c, ctx, id, tok); !ok {
+		return nil // the guard already wrote the SCIM error response
 	}
 
 	params := userstore.UpdateNexusUserParams{}
@@ -371,8 +371,8 @@ func (h *Handler) DeleteUser(c echo.Context) error {
 	id := c.Param("id")
 	// Only the owning IdP's token may deprovision this user.
 	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
-	if u, errResp := h.assertScimUser(c, ctx, id, tok); u == nil {
-		return errResp
+	if _, ok := h.assertScimUser(c, ctx, id, tok); !ok {
+		return nil // the guard already wrote the SCIM error response
 	}
 	// Deprovision = suspend, not hard delete.
 	status := "suspended"
@@ -499,18 +499,24 @@ func (h *Handler) CreateGroup(c echo.Context) error {
 // be owned by the token's IdP via a UserFederatedIdentity link. Without this a
 // SCIM token minted for IdP-A could read, re-email (account takeover), suspend,
 // or deprovision any user — including local super-admins and users from IdP-B.
-// On success it returns the loaded user; otherwise the echo error to return.
-func (h *Handler) assertScimUser(c echo.Context, ctx context.Context, id string, tok *scimstore.ScimToken) (*userstore.NexusUserSafe, error) {
+// On success it returns the loaded user and ok=true. On refusal it writes the
+// SCIM error response ITSELF and returns ok=false: the guard cannot hand back an
+// error value, because an error value is what its group-side twin handed back
+// and every caller compared it against nil — a comparison that was always false.
+func (h *Handler) assertScimUser(c echo.Context, ctx context.Context, id string, tok *scimstore.ScimToken) (*userstore.NexusUserSafe, bool) {
 	u, err := h.users.GetNexusUserSafe(ctx, id)
 	if err != nil {
-		return nil, h.scimError(c, http.StatusInternalServerError, "lookup user: "+err.Error(), "serverError")
+		_ = h.scimError(c, http.StatusInternalServerError, "lookup user: "+err.Error(), "serverError")
+		return nil, false
 	}
 	if u == nil {
-		return nil, h.scimError(c, http.StatusNotFound, "user not found", "noTarget")
+		_ = h.scimError(c, http.StatusNotFound, "user not found", "noTarget")
+		return nil, false
 	}
 	if u.Source != "scim" {
-		return nil, h.scimError(c, http.StatusForbidden,
+		_ = h.scimError(c, http.StatusForbidden,
 			"target NexusUser is admin-managed; SCIM cannot mutate it", "mutability")
+		return nil, false
 	}
 	// Token must own the user: the IdP that provisioned it is the only IdP
 	// allowed to keep managing it. A token with no IdP scope (a global/admin
@@ -518,35 +524,46 @@ func (h *Handler) assertScimUser(c echo.Context, ctx context.Context, id string,
 	if tok != nil && tok.IdentityProviderID != nil && *tok.IdentityProviderID != "" {
 		owned, oerr := h.scim.UserOwnedByIdP(ctx, id, *tok.IdentityProviderID)
 		if oerr != nil {
-			return nil, h.scimError(c, http.StatusInternalServerError, "verify ownership: "+oerr.Error(), "serverError")
+			_ = h.scimError(c, http.StatusInternalServerError, "verify ownership: "+oerr.Error(), "serverError")
+			return nil, false
 		}
 		if !owned {
-			return nil, h.scimError(c, http.StatusForbidden,
+			_ = h.scimError(c, http.StatusForbidden,
 				"SCIM token's IdP does not own this user", "noPermission")
+			return nil, false
 		}
 	}
-	return u, nil
+	return u, true
 }
 
-func (h *Handler) assertScimGroup(c echo.Context, ctx context.Context, id string, tok *scimstore.ScimToken) (source string, idpID *string, errResp error) {
+// It writes its own refusal and reports ok=false. It deliberately does NOT
+// return an error: scimError ends in c.JSON, which returns nil on a successful
+// write, so the previous `errResp error` signature made every caller's
+// `if errResp != nil` branch dead. The 403 went out on the wire and the handler
+// carried on into the rename, the member replacement, or the delete.
+func (h *Handler) assertScimGroup(c echo.Context, ctx context.Context, id string, tok *scimstore.ScimToken) (source string, idpID *string, ok bool) {
 	src, ipid, err := h.scim.GetIamGroupSource(ctx, id)
 	if err != nil {
-		return "", nil, h.scimError(c, http.StatusInternalServerError, "lookup group: "+err.Error(), "serverError")
+		_ = h.scimError(c, http.StatusInternalServerError, "lookup group: "+err.Error(), "serverError")
+		return "", nil, false
 	}
 	if src == "" {
-		return "", nil, h.scimError(c, http.StatusNotFound, "group not found", "noTarget")
+		_ = h.scimError(c, http.StatusNotFound, "group not found", "noTarget")
+		return "", nil, false
 	}
 	if src != "scim" {
-		return "", nil, h.scimError(c, http.StatusForbidden,
+		_ = h.scimError(c, http.StatusForbidden,
 			"target IamGroup is admin-managed; SCIM cannot mutate it", "mutability")
+		return "", nil, false
 	}
 	// Token must own the group: the IdP that pushed it is the only IdP
 	// allowed to keep pushing into it.
 	if tok != nil && tok.IdentityProviderID != nil && ipid != nil && *tok.IdentityProviderID != *ipid {
-		return "", nil, h.scimError(c, http.StatusForbidden,
+		_ = h.scimError(c, http.StatusForbidden,
 			"SCIM token's IdP does not own this group", "noPermission")
+		return "", nil, false
 	}
-	return src, ipid, nil
+	return src, ipid, true
 }
 
 func (h *Handler) ReplaceGroup(c echo.Context) error {
@@ -557,8 +574,8 @@ func (h *Handler) ReplaceGroup(c echo.Context) error {
 		return h.scimError(c, http.StatusBadRequest, "invalid request body", "invalidValue")
 	}
 	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
-	if _, _, errResp := h.assertScimGroup(c, ctx, id, tok); errResp != nil {
-		return errResp
+	if _, _, ok := h.assertScimGroup(c, ctx, id, tok); !ok {
+		return nil // the guard already wrote the SCIM error response
 	}
 	g, err := h.iam.UpdateIamGroup(ctx, id, iamstore.UpdateIamGroupParams{Name: &body.DisplayName})
 	if err != nil || g == nil {
@@ -585,8 +602,8 @@ func (h *Handler) PatchGroup(c echo.Context) error {
 	}
 
 	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
-	if _, _, errResp := h.assertScimGroup(c, ctx, id, tok); errResp != nil {
-		return errResp
+	if _, _, ok := h.assertScimGroup(c, ctx, id, tok); !ok {
+		return nil // the guard already wrote the SCIM error response
 	}
 
 	g, err := h.iam.GetIamGroup(ctx, id)
@@ -624,7 +641,17 @@ func (h *Handler) PatchGroup(c echo.Context) error {
 
 func (h *Handler) DeleteGroup(c echo.Context) error {
 	ctx := c.Request().Context()
-	if err := h.iam.DeleteIamGroup(ctx, c.Param("id")); err != nil {
+	id := c.Param("id")
+	// The destructive verb was the one group mutation with no ownership check at
+	// all, while ReplaceGroup and PatchGroup both ran one. A SCIM token could
+	// therefore delete an IamGroup SCIM does not manage — one an admin created
+	// in the UI, carrying its policy attachments — or one owned by a DIFFERENT
+	// IdP, and got 204 either way, indistinguishable from an ordinary success.
+	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
+	if _, _, ok := h.assertScimGroup(c, ctx, id, tok); !ok {
+		return nil // the guard already wrote the SCIM error response
+	}
+	if err := h.iam.DeleteIamGroup(ctx, id); err != nil {
 		return h.scimError(c, http.StatusNotFound, "group not found", "noTarget")
 	}
 	return c.NoContent(http.StatusNoContent)

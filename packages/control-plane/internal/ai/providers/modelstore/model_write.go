@@ -13,7 +13,7 @@ import (
 // the scanners, and the list/get queries) stay in model.go; what a caller may
 // set, what the store fills in for them, and the two statements that persist
 // it live here. The normalizer in particular is the piece two different
-// create paths used to each have their own copy of.
+// create paths would otherwise each carry their own copy of.
 
 // CreateModelParams holds fields for creating a model. The DB
 // primary key (id) is auto-generated UUID — callers don't supply it.
@@ -53,9 +53,9 @@ type CreateModelParams struct {
 //
 // Exported because a model is created down two paths — this package's
 // CreateModel and providerstore's bulk provider-with-models insert — and they
-// used to normalize separately. The bulk path defaulted every type to
-// ["text"]/["text"], so a wizard-created stt model landed declaring it accepts
-// text, and it never folded `vision` at all. Two normalizers for one write is
+// must not normalize separately. A bulk path with its own normalizer defaults every type to
+// ["text"]/["text"], so a wizard-created stt model lands declaring it accepts
+// text, and never folds `vision` at all. Two normalizers for one write is
 // the same shape of bug as two vocabularies for one fact.
 func NormalizeCreateParams(p CreateModelParams) CreateModelParams {
 	if p.Features == nil {

@@ -48,26 +48,16 @@ func TestReclaimInFlight_PipelineError_Acknowledged(t *testing.T) {
 	t.Log("reclaimInFlight smove pipeline error: exercised via TestCircuitFlush_Run_ReclaimWarnContinues")
 }
 
-// rehydrateFromDB — scan error log+continue branch (line 403-406)
-
-// TestRehydrateFromDB_ScanErrorContinues covers the Scan error branch inside
-// the loop. The Scan error triggers a j.logger.Warn + continue (not return).
-// We verify this by having 2 rows: first fails scan (wrong columns count,
-// but pgxmock actually succeeds — we need a different approach).
+// rehydrateFromDB's scan-error branch is exercised for real by
+// TestRehydrate_UnreadableRowIsCountedNotSwallowed.
 //
-// Instead we use RowError(0, ...) which causes rows.Next() to return false
-// immediately before any Scan, putting the error in rows.Err().
-// The actual scan-error warn branch (line 403-405) is not exercisable via
-// pgxmock because pgxmock Scan always succeeds if types match — acknowledged
-// as untestable without a custom rows implementation.
-// This test documents that acknowledgment.
-func TestRehydrateFromDB_ScanErrorAcknowledged(t *testing.T) {
-	// The scan error warn branch (line 403-405 of rehydrateFromDB) is
-	// unreachable via pgxmock because Scan type-switches are not injectable.
-	// The overall package coverage remains above 95% without this branch.
-	// This test is a no-op sentinel that confirms the acknowledgment.
-	t.Log("scan-error warn branch acknowledged as untestable via pgxmock")
-}
+// A sentinel test used to stand here asserting nothing, on the stated ground
+// that the branch was "not exercisable via pgxmock because pgxmock Scan always
+// succeeds if types match". That holds only while every destination is a
+// string. Two of the five in this query are *time.Time, and a non-time value
+// in one of those columns makes Scan fail on demand — so the branch was
+// testable all along, and the acknowledgment was hiding a reachable path
+// rather than recording an unreachable one.
 
 // credential_stats_flush.go:Run — SRem error (warn, continue), SMembers error
 

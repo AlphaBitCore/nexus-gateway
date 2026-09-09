@@ -95,8 +95,8 @@ var NexusViewer = PolicyDocument{
 }
 
 // NexusRegionalDeviceAdmin is the worked example canned policy for group-scoped
-// device management. It grants device CRUD + force-resync + cert rotation,
-// scoped to a specific DeviceGroup via the `${nexus:GroupId}` placeholder.
+// device management. It grants device CRUD + force-resync, scoped to a
+// specific DeviceGroup via the `${nexus:GroupId}` placeholder.
 // The admin substitutes the actual group ID at attachment time — the same
 // pattern used for `${nexus:OrgId}` in org-scoped policies.
 var NexusRegionalDeviceAdmin = PolicyDocument{
@@ -108,7 +108,6 @@ var NexusRegionalDeviceAdmin = PolicyDocument{
 			"admin:agent-device.update",
 			"admin:agent-device.delete",
 			"admin:agent-device.force-resync",
-			"admin:agent-device.rotate",
 			"admin:diagnostic-mode.read",
 		},
 		Resource: []string{

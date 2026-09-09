@@ -9,7 +9,8 @@ import (
 	"strings"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputstaging"
 )
 
@@ -196,11 +197,17 @@ func classifyImpl(
 	sink TrafficSink,
 ) (*Response, error) {
 	// Correlation: the triggering user request's id rides on ctx (set by
-	// the RequestID middleware from the inbound X-Nexus-Request-Id, and
-	// inherited by in-process hook callers whose ctx descends from the
-	// request ctx). Stamp it onto every emitted ai-guard event so the
-	// classifier's own cost row is joinable to the user-traffic row.
-	traceID := nexushttp.RequestIDFromContext(ctx)
+	// the RequestID middleware, and inherited by in-process hook callers whose
+	// ctx descends from the request ctx). Stamp it onto every emitted ai-guard
+	// event so the classifier's own cost row is joinable to the user-traffic
+	// row.
+	//
+	// It is the REQUEST id, and it lands on external_request_id. It must not be
+	// filed as the trace id: that column means "the caller's own W3C trace",
+	// and this value is one Nexus resolved or minted, which downstream is
+	// indistinguishable from a real customer trace.
+	requestID := nexushttp.RequestIDFromContext(ctx)
+	callerTraceID := telemetry.InboundTraceID(ctx)
 
 	// Step 0: if req.Messages is provided, apply inputstaging.Plan to
 	// select the subset that fits the judge model's context window and
@@ -230,7 +237,8 @@ func classifyImpl(
 			CacheHit:        true,
 			BackendMode:     cfg.BackendMode,
 			InternalPurpose: internalPurposeAIGuard,
-			TraceID:         traceID,
+			RequestID:       requestID,
+			CallerTraceID:   callerTraceID,
 			// cached.Metadata carries the provider that served the original
 			// (cache-writing) call. No new call is made on a cache hit — cost
 			// is correctly zero — but the provider identity is still real,
@@ -258,7 +266,8 @@ func classifyImpl(
 			BackendMode:     cfg.BackendMode,
 			InternalPurpose: internalPurposeAIGuard,
 			ErrorDetail:     fmt.Sprintf("prompt_render_failed: %v", err),
-			TraceID:         traceID,
+			RequestID:       requestID,
+			CallerTraceID:   callerTraceID,
 		})
 		return nil, &BackendUnavailable{Detail: "prompt_render_failed"}
 	}
@@ -292,7 +301,8 @@ func classifyImpl(
 			BackendMode:     cfg.BackendMode,
 			InternalPurpose: internalPurposeAIGuard,
 			ErrorDetail:     callErr.Error(),
-			TraceID:         traceID,
+			RequestID:       requestID,
+			CallerTraceID:   callerTraceID,
 		})
 		return nil, &BackendUnavailable{Detail: callErr.Error()}
 	}
@@ -327,7 +337,8 @@ func classifyImpl(
 		CacheReadTokens:     resp.Metadata.CacheReadTokens,
 		CacheCreationTokens: resp.Metadata.CacheCreationTokens,
 		CostUsd:             resp.Metadata.CostUsd,
-		TraceID:             traceID,
+		RequestID:           requestID,
+		CallerTraceID:       callerTraceID,
 		ProviderID:          resp.Metadata.ProviderID,
 		ProviderName:        resp.Metadata.ProviderName,
 	})

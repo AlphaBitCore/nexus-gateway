@@ -48,6 +48,15 @@ func FixtureProviderModel(f provcore.Format) string {
 // MinimalNativeChatBody returns a minimal valid chat request for the given
 // ingress wire format, or an error when the format has no hub ingress mapper
 // (e.g. Bedrock native ingress is not translated through the hub today).
+//
+// These bodies are deliberately synthetic and deliberately thin. They answer
+// one question — can this ingress be encoded for this target at all — which is
+// what SelfCheck asks at startup and what the streaming-flag gate asks of every
+// pair. They are NOT evidence about content fidelity: one user turn of plain
+// text passes a signature comparison no matter what a codec does to media,
+// tool calls or a thinking block. That question is answered by the captured
+// conversations under testdata/upstream-requests, which providers actually
+// accepted; nothing here should grow to imitate them.
 func MinimalNativeChatBody(ingress provcore.Format) ([]byte, error) {
 	switch ingress {
 	case provcore.FormatOpenAI, provcore.FormatDeepSeek, provcore.FormatGLM, provcore.FormatAzureOpenAI, provcore.FormatMiniMax:
@@ -55,6 +64,18 @@ func MinimalNativeChatBody(ingress provcore.Format) ([]byte, error) {
 			"model": "gpt-4o-mini",
 			"max_tokens": 32,
 			"messages": [{"role": "user", "content": "hello"}]
+		}`), nil
+	case provcore.FormatOpenAIResponses:
+		// /v1/responses is a mounted ingress with its own request grammar —
+		// `input` instead of `messages`, `max_output_tokens` instead of
+		// `max_tokens`. Without a fixture here SelfCheck skipped it silently
+		// (it continues past a format with no minimal body), so the one startup
+		// check that walks every routable pair was not walking this ingress at
+		// all.
+		return []byte(`{
+			"model": "gpt-4o-mini",
+			"max_output_tokens": 32,
+			"input": "hello"
 		}`), nil
 	case provcore.FormatAnthropic:
 		return []byte(`{

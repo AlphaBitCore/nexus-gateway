@@ -21,8 +21,8 @@ func (stubOpenAIAdapter) Execute(context.Context, Request) (*Response, error) {
 func (stubOpenAIAdapter) Probe(context.Context, CallTarget) (*ProbeResult, error) {
 	return &ProbeResult{OK: true}, nil
 }
-func (stubOpenAIAdapter) PrepareBody(req Request) ([]byte, []string, string, error) {
-	return req.Body, nil, "", nil
+func (stubOpenAIAdapter) PrepareBody(req Request) (PreparedBody, error) {
+	return PreparedBody{Body: req.Body}, nil
 }
 func (stubOpenAIAdapter) ExecuteWithBody(context.Context, Request, []byte, []string, string) (*Response, error) {
 	return &Response{StatusCode: 200}, nil
@@ -86,8 +86,8 @@ func (invalidFormatAdapter) Execute(context.Context, Request) (*Response, error)
 func (invalidFormatAdapter) Probe(context.Context, CallTarget) (*ProbeResult, error) {
 	return nil, nil
 }
-func (invalidFormatAdapter) PrepareBody(req Request) ([]byte, []string, string, error) {
-	return req.Body, nil, "", nil
+func (invalidFormatAdapter) PrepareBody(req Request) (PreparedBody, error) {
+	return PreparedBody{Body: req.Body}, nil
 }
 func (invalidFormatAdapter) ExecuteWithBody(context.Context, Request, []byte, []string, string) (*Response, error) {
 	return nil, nil

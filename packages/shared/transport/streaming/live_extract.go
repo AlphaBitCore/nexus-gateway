@@ -105,12 +105,12 @@ func extractDeltaText(evt *SSEEvent) string {
 	// validator must accept. That one is benign in a production build (the pointer
 	// is never dereferenced) and checkptr-fatal only under -race.
 	//
-	// Behaviour delta, and it is wider than "a few sequences" — an earlier version
-	// of this comment said that and was wrong. goccy accepts a routine class the
+	// Behaviour delta, and it is wider than "a few sequences". goccy accepts a
+	// routine class the
 	// standard rejects: a raw control byte inside a string, a trailing NUL, a
 	// trailing comma, a leading-zero number. A single-byte-insertion sweep over one
 	// 43-byte OpenAI frame produced 69 such mutations. Every one of them now takes
-	// the raw-verbatim branch where goccy previously decoded the delta.
+	// the raw-verbatim branch where goccy would decode the delta.
 	//
 	// Two consequences, neither of them "conservative":
 	//

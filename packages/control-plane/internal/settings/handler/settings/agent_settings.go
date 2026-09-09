@@ -8,7 +8,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/systembundles"
 )
@@ -100,8 +99,8 @@ func (h *Handler) GetAgentSettings(c echo.Context) error {
 // mapBool / mapString return the typed value at key from the
 // JSON-decoded settings map, falling back to the supplied default
 // when the key is missing OR the type differs. Centralises the noisy
-// type-switch logic that the GetAgentSettings response builder used
-// to repeat per-field.
+// type-switch logic the GetAgentSettings response builder would otherwise
+// repeat per-field.
 func mapBool(m map[string]any, key string, fallback bool) bool {
 	if v, ok := m[key].(bool); ok {
 		return v
@@ -332,10 +331,9 @@ func (h *Handler) UpdateAgentSettings(c echo.Context) error {
 		current["attestationEnabled"] = *body.AttestationEnabled
 	}
 
-	aa := middleware.AdminAuthFromContext(c)
-	updatedBy := ""
-	if aa != nil {
-		updatedBy = aa.KeyID
+	updatedBy, ok := requireAdminActor(c)
+	if !ok {
+		return unauthenticated(c)
 	}
 	if err := h.meta.SetSystemMetadata(ctx, "agent.settings", current, updatedBy); err != nil {
 		h.logger.Error("save agent settings", "error", err)

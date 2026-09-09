@@ -51,11 +51,18 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/modela"
 )
 
-// modelATailWindowBytes bounds the trailing canonical content held undelivered.
-// A PII value shorter than this window is fully retained when its completing
-// bytes arrive, so the prescan HIT + escalation redact it before delivery; longer
-// values carry the disclosed bounded-fragment risk. ~8KB mirrors the live
-// pipeline's scan-window default.
+// modelATailWindowBytes is the FLOOR for the trailing canonical content held
+// undelivered. A value shorter than the window in force is fully retained when
+// its completing bytes arrive, so the prescan HIT + escalation redact it before
+// delivery; longer values carry the disclosed bounded-fragment risk. ~8KB
+// mirrors the live pipeline's scan-window default.
+//
+// It is a floor and not the window itself, because the window has to clear the
+// rule set's longest contiguous enforceable pattern plus a prescan batch — see
+// modela.TailWindowFor. As a fixed constant it did not: the shipped rule pack
+// derives 7362 bytes (a multi-tuple bulk INSERT, correctly bounded and that long
+// by nature), which leaves 830 bytes against a 1024-byte prescan batch, so the
+// start of such a dump was delivered raw before the rule matching it could fire.
 const modelATailWindowBytes = 8 * 1024
 
 // runModelAStream is the prescan-gated real-time streaming handler. It mirrors
@@ -64,7 +71,7 @@ const modelATailWindowBytes = 8 * 1024
 // HIT is confirmed, at which point it escalates to canonical-buffer redaction for
 // the remainder. prescan is the cheap union prefilter (closing over the response
 // probe's MayMatchRawContent); a nil prescan fails safe to "always confirm".
-func (h *Handler) runModelAStream(ctx context.Context, s *streamState, tee http.ResponseWriter, usage *chunkUsageHolder, prescan func([]byte) bool, maxPattern int) *chunkSSEReader {
+func (h *Handler) runModelAStream(ctx context.Context, s *streamState, tee http.ResponseWriter, usage *chunkUsageHolder, prescan func([]byte) bool, maxPattern int, ruleSetGen uint64) *chunkSSEReader {
 	term := &chunkSSEReader{ctx: ctx, ingressFormat: s.ingressFormat}
 
 	// respAcc folds every false-positive confirm's per-hook latency into one record
@@ -121,11 +128,13 @@ func (h *Handler) runModelAStream(ctx context.Context, s *streamState, tee http.
 		respAcc:               &respAcc,
 		authoritativeAppended: &authoritativeAppended,
 	}
-	// Config-time operator signal (#16): warn once if the derived contiguous-pattern bound
-	// meets/exceeds the tail window the engine clamps the lookahead below. Off the per-byte
-	// path; maxPattern is already derived (buildResponsePrescan), not recomputed here.
-	modela.WarnStreamingCoverageGap(s.logger, maxPattern, modelATailWindowBytes)
-	_ = modela.Run(ctx, sub, modela.Config{TailWindowBytes: modelATailWindowBytes, MaxBufferBytes: maxBuf, MaxPatternBytes: maxPattern})
+	tailWindow := gatewayTailWindow(maxPattern)
+	// Config-time operator signal: warn once when the derived bound still leaves a
+	// coverage gap at that window — which now means a genuinely oversized pattern,
+	// since the sizing above closes the ordinary case. Off the per-byte path;
+	// maxPattern is already derived (buildResponsePrescan), not recomputed here.
+	modela.WarnStreamingCoverageGap(s.logger, ruleSetGen, maxPattern, tailWindow)
+	_ = modela.Run(ctx, sub, modela.Config{TailWindowBytes: tailWindow, MaxBufferBytes: maxBuf, MaxPatternBytes: maxPattern})
 	return term
 }
 
@@ -270,7 +279,7 @@ func (h *Handler) escalateModelA(ctx context.Context, s *streamState, tee http.R
 	if outcome.rewritten {
 		body = outcome.body
 	}
-	synth := syntheticChunkFromCanonical(body, acc.reasoning.String())
+	synth := syntheticChunkFromCanonical(body)
 	// Preserve the ORIGINAL wire tool-call indices across the live→escalation
 	// switch. canonicalBody renders tool_calls in acc.toolOrder order, so the
 	// positional index syntheticChunkFromCanonical assigned (0,1,2…) maps back to
@@ -293,4 +302,20 @@ func (h *Handler) escalateModelA(ctx context.Context, s *streamState, tee http.R
 		term.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: werr})
 	}
 	return term
+}
+
+// gatewayTailWindow sizes the Model-A trailing window from the rule set, so the
+// engine's soundness condition holds for whatever pack is loaded rather than for
+// the pack that happened to be loaded when a constant was chosen. Floored at
+// modelATailWindowBytes so a small rule set never shrinks the window.
+//
+// It is a function, and not three lines inline, for one reason: a gate can call
+// it. The soundness test used to recompute the same expression, which made it
+// true by construction — reverting the relay to the fixed constant (the original
+// defect, verbatim) left the whole package green.
+func gatewayTailWindow(maxPattern int) int {
+	if w := modela.TailWindowFor(maxPattern); w > modelATailWindowBytes {
+		return w
+	}
+	return modelATailWindowBytes
 }

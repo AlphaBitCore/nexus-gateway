@@ -65,9 +65,9 @@ func openaiResponsesInputContentToBlocks(parts []openaiResponsesInputContent, ba
 				out = append(out, core.ContentBlock{Type: core.ContentText, Text: p.Text})
 			}
 		case "input_image":
-			// This used to emit an entirely empty ref — no mime, no size,
-			// no source — which told a reader nothing except that something
-			// had been there. All three documented shapes are real refs.
+			// An entirely empty ref — no mime, no size, no source — tells a
+			// reader nothing except that something was there. All three
+			// documented shapes produce real refs.
 			switch {
 			case p.ImageURL != "":
 				out = append(out, mediaBlock(inlineOrExternal(

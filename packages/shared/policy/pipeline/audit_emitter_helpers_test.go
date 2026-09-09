@@ -119,51 +119,6 @@ func TestClassifyComplianceError_NoErrorWhenAllApprove(t *testing.T) {
 	}
 }
 
-// --- extractProviderErrorMessage -----------------------------------------
-
-func TestExtractProviderErrorMessage_EmptyBodyFallsBackToStatus(t *testing.T) {
-	got := extractProviderErrorMessage(nil, 503)
-	if got != "provider returned HTTP 503" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestExtractProviderErrorMessage_OpenAIShape(t *testing.T) {
-	body := []byte(`{"error":{"message":"insufficient quota","type":"insufficient_quota"}}`)
-	if got := extractProviderErrorMessage(body, 429); got != "insufficient quota" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestExtractProviderErrorMessage_TopLevelMessage(t *testing.T) {
-	body := []byte(`{"message":"bad request"}`)
-	if got := extractProviderErrorMessage(body, 400); got != "bad request" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestExtractProviderErrorMessage_FallsBackToRawBody(t *testing.T) {
-	body := []byte(`<html>upstream is down</html>`)
-	got := extractProviderErrorMessage(body, 502)
-	if got != "<html>upstream is down</html>" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestExtractProviderErrorMessage_LongBodyTruncated(t *testing.T) {
-	body := make([]byte, 400)
-	for i := range body {
-		body[i] = 'a'
-	}
-	got := extractProviderErrorMessage(body, 502)
-	if !strings.HasSuffix(got, "...") {
-		t.Errorf("long body should end with ellipsis: %q", got[len(got)-20:])
-	}
-	if len(got) != 303 {
-		t.Errorf("truncated length: %d, want 303 (300 + '...')", len(got))
-	}
-}
-
 // --- headerLookup / extractUserAgent --------------------------------------
 
 func TestHeaderLookup(t *testing.T) {

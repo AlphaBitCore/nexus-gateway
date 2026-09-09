@@ -29,7 +29,11 @@ server:
   requestReadBufKb: 64
 
 database:
-  url: "postgresql://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
+  # Empty on purpose: a connection URL carries its credential in the userinfo
+  # segment, so this line is a SECRET even though the key is called `url`.
+  # The value comes from the DATABASE_URL env override (see .env.example);
+  # binding rule: CLAUDE.md "Secrets are env-only — never yaml".
+  url: ""
 
 redis:
   # Local dev Redis runs on 6437 via docker-compose. See packages/shared/
@@ -166,7 +170,21 @@ upstream:
   # Request budget. Non-streaming: caps the whole exchange. Streaming: caps
   # only time-to-first-byte (think time before the first token); after that
   # streamIdleTimeoutSec governs. Raise for long-reasoning models.
-  timeoutSec: 600
+  # The per-request provider budget, and the ANCHOR of the timeout ladder.
+  # Every hop outside this one must be strictly LARGER, so the innermost
+  # expires first: it is the only hop that knows what it was waiting for,
+  # can classify the failure as a timeout (feeding the retry/failover
+  # policy) and can write a complete traffic_event row.
+  #
+  # The ladder, measured on prod 2026-08-28 and spaced after finding it
+  # tied: nginx proxy_read_timeout 480s > this 360s. ALB idle must exceed
+  # nginx, and a client SDK must exceed the ALB (OpenAI and Anthropic
+  # both default to 600s). It was previously 300s against an nginx that
+  # was also 300s — and nginx starts its clock earlier, when the request
+  # arrives rather than when the upstream call begins, so an equal value
+  # does not race: nginx always cut first and the client got its bare 504
+  # instead of our classified error.
+  timeoutSec: 360
   # Streaming silence budget — the downstream write deadline resets on every
   # chunk, so an active stream runs unbounded and only a stalled upstream is
   # cut after this much quiet.

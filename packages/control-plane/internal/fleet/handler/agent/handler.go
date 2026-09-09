@@ -18,6 +18,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentauditstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/fleetstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
@@ -52,6 +53,16 @@ type Deps struct {
 	Hub    HubAPI
 	Audit  *audit.Writer
 	Logger *slog.Logger
+
+	// IAM and DeviceGroups let the user-keyed device listing re-evaluate the
+	// caller's permission PER ROW. That route is keyed on a user, so no
+	// device-aware middleware can gate it — the device ids are only known
+	// after the query — and without a per-row check it returns every one of
+	// that user's devices regardless of which groups the caller may see.
+	// Both nil-tolerant: a handler built without them refuses the listing
+	// rather than serving it unscoped.
+	IAM          *iam.Engine
+	DeviceGroups middleware.DeviceGroupLookup
 }
 
 // Handler owns the agent admin API surface.
@@ -66,6 +77,9 @@ type Handler struct {
 	hub        HubAPI
 	audit      *audit.Writer
 	logger     *slog.Logger
+
+	iamEngine    *iam.Engine
+	deviceGroups middleware.DeviceGroupLookup
 
 	// updateDeviceTagsFn is the unit-test seam for the per-device tag
 	// UPDATE that runs through the pool. Default uses h.pool.Exec; tests
@@ -87,7 +101,8 @@ func New(d Deps) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &Handler{pool: d.Pool, hub: d.Hub, audit: d.Audit, logger: logger}
+	h := &Handler{pool: d.Pool, hub: d.Hub, audit: d.Audit, logger: logger,
+		iamEngine: d.IAM, deviceGroups: d.DeviceGroups}
 	if d.Pool != nil {
 		h.agents = agentstore.New(d.Pool)
 		h.agentAudit = agentauditstore.New(d.Pool)
@@ -229,11 +244,20 @@ func (h *Handler) queryMetricsOrFallback(ctx context.Context, q metricspkg.Metri
 	} else {
 		rows, err = h.metrics.QueryRollupCascade(ctx, q)
 	}
-	if err == nil && len(rows) > 0 {
-		gran := metricspkg.SelectGranularity(q.StartTime, q.EndTime)
-		return metricspkg.BuildResult(q, rows, gran), nil
+	// A read ERROR and a genuinely-empty window are different answers, and
+	// returning (nil, nil) for both made them indistinguishable: every caller
+	// then answered HTTP 200 with an empty payload, so a broken read leg
+	// rendered as "no traffic" on the dashboard. There is no raw-query
+	// fallback behind these helpers despite the tryRollup* naming — the
+	// handler's next line is the zero-value response.
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	gran := metricspkg.SelectGranularity(q.StartTime, q.EndTime)
+	return metricspkg.BuildResult(q, rows, gran), nil
 }
 
 // RegisterRoutes mounts every agent admin endpoint under the

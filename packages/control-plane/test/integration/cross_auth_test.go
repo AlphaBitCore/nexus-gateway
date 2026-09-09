@@ -42,7 +42,7 @@ import (
 // (Action: [*]) so every IAM-gated admin route grants to this principal.
 const (
 	seedAdminEmail    = "admin@nexus.ai"
-	seedAdminPassword = "admin123"
+	seedAdminPassword = "nexus-demo"
 	seedAdminUserID   = "nexus-user-super-admin"
 
 	// cpUIClientID is the built-in public OAuth client registered by

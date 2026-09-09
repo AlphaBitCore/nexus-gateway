@@ -112,7 +112,7 @@ func NewCircuitFlushMetrics(reg prometheus.Registerer) *CircuitFlushMetrics {
 			Namespace: "nexus",
 			Subsystem: "credential_circuit_flush",
 			Name:      "transitions_total",
-			Help:      "Circuit state transitions persisted to DB, labelled by destination state and reason.",
+			Help:      "Circuit state CHANGES persisted to DB, labelled by destination state and reason. Counts only when the stored state actually differs; a write that re-persists the state a row already holds is not a transition.",
 		}, []string{"to", "reason"}),
 	}
 }
@@ -374,6 +374,8 @@ func (j *CredentialCircuitFlushJob) flushOne(ctx context.Context, credID string)
 	openedAt := parseRFC3339NanoPtr(fields[credstate.CircuitFieldOpenedAt])
 	nextProbeAt := parseRFC3339NanoPtr(fields[credstate.CircuitFieldNextProbe])
 
+	prev := j.storedState(ctx, credID)
+
 	_, err = j.pool.Exec(ctx, `
 		UPDATE "Credential" SET
 			"circuitState"        = $2,
@@ -390,14 +392,41 @@ func (j *CredentialCircuitFlushJob) flushOne(ctx context.Context, credID string)
 	if reason != nil {
 		reasonLabel = *reason
 	}
-	j.metrics.transition(state, reasonLabel)
+	if prev != state {
+		j.metrics.transition(state, reasonLabel)
+	}
 	return nil
+}
+
+// storedState reads the circuit state currently persisted on the row, so the
+// transitions counter can tell a real state CHANGE from a re-write of the
+// state the row already holds.
+//
+// Incrementing the counter on every write over-counts, because two production paths write
+// a state the row already has: a credential sitting in the dirty set while only
+// its nextProbeAt moved — and nextProbeAt advances on EVERY probe while a
+// circuit stays open — logs a fresh "transition to open" each flush cycle;
+// and a partial-failure cycle replays the whole in-flight set, so one failing
+// entry re-counts every entry that already succeeded.
+//
+// A read error yields "" so the counter still moves: over-counting once is
+// better than losing a genuine transition, and the write below is unaffected
+// either way.
+func (j *CredentialCircuitFlushJob) storedState(ctx context.Context, credID string) string {
+	var prev string
+	if err := j.pool.QueryRow(ctx,
+		`SELECT "circuitState" FROM "Credential" WHERE id = $1`, credID,
+	).Scan(&prev); err != nil {
+		return ""
+	}
+	return prev
 }
 
 // writeClosed resets every circuit column on a credential row to the closed
 // state. Shared by flushOne's recovery branch and the orphan reconcile so the
 // "what closed looks like in the DB" SQL lives in exactly one place.
 func (j *CredentialCircuitFlushJob) writeClosed(ctx context.Context, credID string) error {
+	prev := j.storedState(ctx, credID)
 	if _, err := j.pool.Exec(ctx, `
 		UPDATE "Credential" SET
 			"circuitState"        = $2,
@@ -409,7 +438,9 @@ func (j *CredentialCircuitFlushJob) writeClosed(ctx context.Context, credID stri
 	`, credID, credstate.CircuitClosed); err != nil {
 		return fmt.Errorf("update closed: %w", err)
 	}
-	j.metrics.transition(credstate.CircuitClosed, "")
+	if prev != credstate.CircuitClosed {
+		j.metrics.transition(credstate.CircuitClosed, "")
+	}
 	return nil
 }
 
@@ -506,7 +537,7 @@ func (j *CredentialCircuitFlushJob) rehydrateFromDB(ctx context.Context, inFligh
 	defer rows.Close()
 
 	now := time.Now().UTC()
-	var restored, skippedExisting, skippedExpired, skippedInFlight int
+	var restored, skippedExisting, skippedExpired, skippedInFlight, unreadable int
 
 	for rows.Next() {
 		var (
@@ -514,6 +545,18 @@ func (j *CredentialCircuitFlushJob) rehydrateFromDB(ctx context.Context, inFligh
 			openedAt, nextProbeAt *time.Time
 		)
 		if err := rows.Scan(&id, &state, &reason, &openedAt, &nextProbeAt); err != nil {
+			// Skipping the row is right and stays: rehydration is best-effort
+			// convergence, and failing the whole pass over one bad row would
+			// leave EVERY open circuit un-rehydrated rather than one.
+			//
+			// What it must not do is skip SILENTLY as far as the metric is
+			// concerned. Each unreadable row is an open circuit the gateway
+			// goes on treating as closed, and without an outcome label the
+			// only trace is a per-row warn: rehydrate_total shows nothing, and
+			// the summary below did not fire at all when every row failed,
+			// because its guard counted only the four success-ish outcomes.
+			unreadable++
+			j.metrics.rehydrate("unreadable")
 			j.logger.Warn("scan persisted row", "error", err)
 			continue
 		}
@@ -560,12 +603,13 @@ func (j *CredentialCircuitFlushJob) rehydrateFromDB(ctx context.Context, inFligh
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate rows: %w", err)
 	}
-	if restored > 0 || skippedExisting > 0 || skippedExpired > 0 || skippedInFlight > 0 {
+	if restored > 0 || skippedExisting > 0 || skippedExpired > 0 || skippedInFlight > 0 || unreadable > 0 {
 		j.logger.Info("circuit state rehydrated from DB",
 			"restored", restored,
 			"skipped_existing", skippedExisting,
 			"skipped_expired", skippedExpired,
-			"skipped_in_flight", skippedInFlight)
+			"skipped_in_flight", skippedInFlight,
+			"unreadable", unreadable)
 	}
 	return nil
 }

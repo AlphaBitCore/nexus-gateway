@@ -20,6 +20,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/openai"
 )
 
 const adapterID = "voyage"
@@ -147,8 +148,18 @@ func (a *Adapter) DetectResponseUsage(_ *http.Response, body []byte) traffic.Usa
 	return usage
 }
 
-func (a *Adapter) RewriteRequestBody(_ context.Context, body []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
-	return body, 0, traffic.ErrRewriteUnsupported
+// RewriteRequestBody writes a redaction back into the request's `input`.
+//
+// Voyage serves the OpenAI embeddings request shape verbatim, so it delegates to
+// that adapter's walk rather than carrying a second copy — a second copy is a
+// second place for the extractor and the rewriter to disagree about which slot a
+// segment belongs to.
+//
+// Declining this used to mean a redact policy on Voyage traffic could only ever
+// REFUSE the request: the callers fail closed on an unsupported rewrite, because
+// forwarding the original would send upstream exactly what the policy masked.
+func (a *Adapter) RewriteRequestBody(_ context.Context, body []byte, _ string, content traffic.NormalizedContent) ([]byte, int, error) {
+	return openai.RewriteEmbeddingsInput(body, content)
 }
 func (a *Adapter) RewriteResponseBody(_ context.Context, body []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
 	return body, 0, traffic.ErrRewriteUnsupported

@@ -27,11 +27,11 @@ func TestCaptureParallelResponse(t *testing.T) {
 		if rec.ResponseContentType != "application/json" {
 			t.Errorf("ResponseContentType=%q", rec.ResponseContentType)
 		}
-		// This used to assert an explicit ResponseAction=approve stamp and call it
-		// load-bearing, because the gate dropped a zero-value action. The rule now
+		// Asserting an explicit ResponseAction=approve stamp would make that stamp
+		// load-bearing, which is only true if the gate drops a zero-value action. It
 		// lives in redact.StorageRawBodyChecked, the one gate all three services
-		// persist through, so the stamp is gone and what gets asserted is the
-		// outcome it existed to produce: an unset action means no redaction demand,
+		// persists through, so there is no stamp and what is asserted is the
+		// outcome: an unset action means no redaction demand,
 		// and the captured body reaches the store.
 		if rec.ResponseAction != "" {
 			t.Errorf("ResponseAction=%q — a parallel handler runs no response hook, so the action stays unset "+

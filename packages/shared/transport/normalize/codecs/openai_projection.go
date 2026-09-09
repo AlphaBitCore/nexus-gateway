@@ -3,10 +3,9 @@
 //
 // Tier-1 normalizers (anthropic_messages, gemini_generate, openai_chat,
 // cohere_chat, replicate, …) all produce the same core.NormalizedPayload
-// shape on the response side. The ai-gateway response codec used to
-// hand-roll a JSON walk per provider (each spec_*/codec.go DecodeResponse
-// did its own provider→OpenAI projection ~80-100 LOC). This helper
-// concentrates that projection in one place so:
+// shape on the response side. Without this helper each spec_*/codec.go
+// DecodeResponse hand-rolls its own provider→OpenAI projection. Concentrating
+// it in one place means:
 //
 //   1. Cross-component callers (the codec for non-OpenAI providers, the
 //      cache-HIT replay path, /v1/estimate dry-run encoders) all see the
@@ -158,13 +157,22 @@ func projectChoices(payload core.NormalizedPayload, metaFinishReason string) []a
 
 	choices := make([]any, 0, len(assistants))
 	for i, a := range assistants {
-		text, reasoning, toolCalls := projectAssistantBlocksAt(a.Content, i)
+		text, reasoning, refusal, toolCalls := projectAssistantBlocksAt(a.Content, i)
 		message := map[string]any{
 			"role":    "assistant",
 			"content": text,
 		}
 		if reasoning != "" {
 			message["reasoning_content"] = reasoning
+		}
+		if refusal != "" {
+			message["refusal"] = refusal
+			// A refusal turn carries no content on the wire. Leaving an empty
+			// string would read as "the model answered with nothing" rather
+			// than "the model declined".
+			if text == "" {
+				message["content"] = nil
+			}
 		}
 		if len(toolCalls) > 0 {
 			message["tool_calls"] = toolCalls
@@ -196,18 +204,24 @@ func projectChoices(payload core.NormalizedPayload, metaFinishReason string) []a
 }
 
 // projectAssistantBlocks walks an assistant message's content blocks
-// and returns the (text, reasoning, toolCalls) triple in OpenAI shape.
-func projectAssistantBlocks(blocks []core.ContentBlock) (text, reasoning string, toolCalls []any) {
+// and returns the (text, reasoning, refusal, toolCalls) tuple in OpenAI shape.
+func projectAssistantBlocks(blocks []core.ContentBlock) (text, reasoning, refusal string, toolCalls []any) {
 	return projectAssistantBlocksAt(blocks, 0)
 }
 
-func projectAssistantBlocksAt(blocks []core.ContentBlock, assistantIndex int) (text, reasoning string, toolCalls []any) {
+func projectAssistantBlocksAt(blocks []core.ContentBlock, assistantIndex int) (text, reasoning, refusal string, toolCalls []any) {
 	for blockIndex, b := range blocks {
 		switch b.Type {
 		case core.ContentText:
 			text += b.Text
 		case core.ContentReasoning:
 			reasoning += b.Text
+		case core.ContentRefusal:
+			// Back onto message.refusal, never onto content. The streaming
+			// contract already argued this for Chunk.RefusalDelta: an SDK that
+			// reads refusal to detect a declined request must not find the
+			// decline delivered as the answer.
+			refusal += b.Text
 		case core.ContentToolUse:
 			if b.ToolUse == nil {
 				continue
@@ -240,7 +254,7 @@ func projectAssistantBlocksAt(blocks []core.ContentBlock, assistantIndex int) (t
 			})
 		}
 	}
-	return text, reasoning, toolCalls
+	return text, reasoning, refusal, toolCalls
 }
 
 // projectUsage converts a canonical Usage to the OpenAI chat-completion

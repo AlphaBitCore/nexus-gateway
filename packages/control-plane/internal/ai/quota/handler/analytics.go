@@ -251,10 +251,21 @@ func (h *Handler) QuotaAnalyticsTrend(c echo.Context) error {
 			EndTime:      end,
 		})
 		if err != nil {
+			// A failed month is NOT plotted as zero. Appending
+			// `CostUsd: 0` and carrying on renders identically to a month
+			// that genuinely cost nothing — so a chart an operator reads to set
+			// a quota limit would be half fabricated, with no way to tell which
+			// half. The handler queries each month separately, so a single
+			// flaky query is enough to invent a data point.
+			//
+			// Refusing the whole request is the honest answer: the UI shows an
+			// error state and the operator retries, instead of acting on a
+			// number nothing produced. The sibling endpoints (Overview, Top)
+			// already refuse this way.
 			h.logger.Error("quota analytics trend: query rollup", "error", err, "periodKey", periodKey)
-			// Return empty point for this period rather than aborting.
-			data = append(data, QuotaAnalyticsTrendPoint{PeriodKey: periodKey, CostUsd: 0})
-			continue
+			return c.JSON(http.StatusInternalServerError, errJSON(
+				fmt.Sprintf("Could not read spend for %s; the trend is incomplete and is not returned partially", periodKey),
+				"server_error", "INTERNAL_ERROR"))
 		}
 
 		prefix := dimension + "=" + targetID

@@ -27,13 +27,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
@@ -53,6 +54,7 @@ import (
 	configtypes "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	trafficbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
+	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )
@@ -305,6 +307,7 @@ func makeFakeDeps(t *testing.T, fexec *fakeExecutor, fbridge *fakeBridge) *Deps 
 	t.Cleanup(ht.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID:               "vk-1",
 			Name:             "test-vk",
@@ -1501,9 +1504,9 @@ func TestServeProxy_Fake_NormaliserWired(t *testing.T) {
 }
 
 // TestServeProxy_Fake_CacheHIT_Stream_ReasoningTokensOnEntryUsage
-// targets the previously-uncovered `entry.Usage.ReasoningTokens != nil`
-// stamp arm in handleStreamHit (the existing test put ReasoningTokens
-// on the terminal chunk's Usage but not on entry.Usage).
+// targets the `entry.Usage.ReasoningTokens != nil`
+// stamp arm in handleStreamHit, which the existing test misses by putting
+// ReasoningTokens on the terminal chunk's Usage but not on entry.Usage.
 func TestServeProxy_Fake_CacheHIT_Stream_ReasoningTokensOnEntryUsage(t *testing.T) {
 	fexec := &fakeExecutor{}
 	fbridge := &fakeBridge{}
@@ -1856,14 +1859,27 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookModifies(t *testing.T) {
 // The stub traffic adapter signals that rewrite is not supported; a redact
 // that cannot be applied must fail CLOSED — the handler returns 502 and must
 // NOT serve the unredacted upstream body to the client.
-// stubRewriteRedactsAdapter succeeds RewriteResponseBody with a recognizably
-// redacted body — it models the canonical (OpenAI) adapter that B0 always uses
-// for response redaction, so a Modify decision produces a redacted 200 rather
-// than the old reverse-encode fail-closed.
-type stubRewriteRedactsAdapter struct{ stubTrafficAdapter }
+// unresolvableSpanHook returns Modify carrying a span whose content address
+// resolves to nothing. ApplySpans drops such a span, so the rewrite produces no
+// change — the shape a rewrite FAILURE takes now that the codec owns the
+// write-back and there is no adapter seam to stub.
+type unresolvableSpanHook struct {
+	goHooks.AnyEndpointAnyModality
+}
 
-func (s *stubRewriteRedactsAdapter) RewriteResponseBody(_ context.Context, _ []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
-	return []byte(`{"choices":[{"message":{"content":"[REDACTED]"}}]}`), 1, nil
+func (unresolvableSpanHook) Execute(_ context.Context, _ *goHooks.HookInput) (*goHooks.HookResult, error) {
+	return &goHooks.HookResult{
+		Decision: goHooks.Modify,
+		TransformSpans: []normalize.TransformSpan{{
+			Source:         normalize.SourceHook,
+			SourceID:       "unresolvable",
+			Action:         normalize.ActionRedact,
+			ContentAddress: "messages.99.content.99",
+			Start:          0,
+			End:            1,
+			Replacement:    "[REDACTED]",
+		}},
+	}, nil
 }
 
 // B0: response redaction runs on the CANONICAL body via the OpenAI adapter, which
@@ -1876,7 +1892,6 @@ func TestServeProxy_Fake_Direct_NonStream_RedactRewritesOnCanonical(t *testing.T
 	deps := makeFakeDeps(t, fexec, fbridge)
 	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteRedactsAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-redacts"}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
 		WireShape:  typology.WireShapeOpenAIChat,
@@ -1889,21 +1904,13 @@ func TestServeProxy_Fake_Direct_NonStream_RedactRewritesOnCanonical(t *testing.T
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200 (canonical redact rewrites, no fail-closed); body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "[REDACTED]") {
+	if !strings.Contains(w.Body.String(), "modified by response hook") {
 		t.Errorf("body=%s want redacted content from the canonical rewrite", w.Body.String())
 	}
 	// The original (un-redacted) upstream content must NOT leak to the client.
 	if strings.Contains(w.Body.String(), "broker hi") {
 		t.Errorf("body=%s leaked unredacted upstream content", w.Body.String())
 	}
-}
-
-// stubRewriteFailAdapter returns a real (non-ErrRewriteUnsupported)
-// error from RewriteResponseBody.
-type stubRewriteFailAdapter struct{ stubTrafficAdapter }
-
-func (s *stubRewriteFailAdapter) RewriteResponseBody(_ context.Context, _ []byte, _ string, _ traffic.NormalizedContent) ([]byte, int, error) {
-	return nil, 0, errors.New("synthesised rewrite failure")
 }
 
 // B0: the broker non-stream path also runs response redaction on the CANONICAL
@@ -1915,7 +1922,6 @@ func TestServeProxy_Fake_BrokerLeader_RedactRewritesOnCanonical(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteRedactsAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-redacts"}}
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
 	cacheOpt(deps)
@@ -1932,7 +1938,7 @@ func TestServeProxy_Fake_BrokerLeader_RedactRewritesOnCanonical(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200 (broker canonical redact rewrites); body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "[REDACTED]") {
+	if !strings.Contains(w.Body.String(), "modified by response hook") {
 		t.Errorf("body=%s want redacted content from the canonical rewrite (broker path)", w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "broker hi") {
@@ -1944,9 +1950,8 @@ func TestServeProxy_Fake_BrokerLeader_ModifyRewriteFails500(t *testing.T) {
 	fexec := &fakeExecutor{Result: fakeBrokerSuccessResult()}
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
-	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
+	deps.HookConfigCache = newResponseHookCache(t, unresolvableSpanHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteFailAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-fail"}}
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
 	cacheOpt(deps)
@@ -1974,7 +1979,6 @@ func TestServeProxy_Fake_CacheHIT_RedactRewritesOnCanonical(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteRedactsAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-redacts"}}
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
 	cacheOpt(deps)
@@ -2002,7 +2006,7 @@ func TestServeProxy_Fake_CacheHIT_RedactRewritesOnCanonical(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200 (cache HIT canonical redact rewrites); body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "[REDACTED]") {
+	if !strings.Contains(w.Body.String(), "modified by response hook") {
 		t.Errorf("body=%s want redacted content from the canonical rewrite (cache HIT path)", w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "cached hi") {
@@ -2014,9 +2018,8 @@ func TestServeProxy_Fake_CacheHIT_ModifyRewriteFails500(t *testing.T) {
 	fexec := &fakeExecutor{}
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
-	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
+	deps.HookConfigCache = newResponseHookCache(t, unresolvableSpanHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteFailAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-fail"}}
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
 	cacheOpt(deps)
@@ -2053,9 +2056,8 @@ func TestServeProxy_Fake_Direct_NonStream_ModifyRewriteFails500(t *testing.T) {
 	fexec := &fakeExecutor{Result: fakeBrokerSuccessResult()}
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
-	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
+	deps.HookConfigCache = newResponseHookCache(t, unresolvableSpanHook{})
 	deps.TrafficAdapters = nil
-	deps.TrafficAdapter = &stubRewriteFailAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-fail"}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
 		WireShape:  typology.WireShapeOpenAIChat,
@@ -2068,8 +2070,9 @@ func TestServeProxy_Fake_Direct_NonStream_ModifyRewriteFails500(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d want 500; body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "response rewrite failed") {
-		t.Errorf("body=%s want 500 envelope", w.Body.String())
+	if !strings.Contains(w.Body.String(), "REDACT_FAIL_CLOSED") {
+		t.Errorf("body=%s want the fail-closed envelope — an unappliable redaction must never "+
+			"deliver the original, whichever arm detects it", w.Body.String())
 	}
 }
 

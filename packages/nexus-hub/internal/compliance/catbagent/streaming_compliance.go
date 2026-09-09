@@ -18,7 +18,7 @@ import (
 //
 // Wire shape mirrors shared/streaming/policy.DecodeGlobalPolicy
 // (snake_case keys to match the JSON the admin UI writes via
-// control-plane/internal/handler/admin_extras.go::UpdateStreamingPolicyConfig
+// packages/control-plane/internal/settings/handler/settings/streaming_compliance.go
 // — same pattern as payload_capture). The agent's
 // shared/streaming/policy.Store.ApplyShadowState consumes this directly.
 //

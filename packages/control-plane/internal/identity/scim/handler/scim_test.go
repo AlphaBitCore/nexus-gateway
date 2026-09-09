@@ -113,6 +113,12 @@ type stubIAMStore struct {
 	deleteErr   error
 	membersRaw  []map[string]string
 	membersErr  error
+	// Mutation counters. A guard that answers 403 and then mutates anyway is
+	// indistinguishable from a working guard on the status code alone, so the
+	// SCIM ownership tests assert the store was never touched.
+	updateGroupCalls  int
+	deleteGroupCalls  int
+	removeMemberCalls int
 }
 
 func (s *stubIAMStore) ListIamGroups(_ context.Context) ([]iamstore.GroupRow, error) {
@@ -122,15 +128,20 @@ func (s *stubIAMStore) GetIamGroup(_ context.Context, _ string) (*iamstore.Group
 	return s.group, s.groupErr
 }
 func (s *stubIAMStore) UpdateIamGroup(_ context.Context, _ string, _ iamstore.UpdateIamGroupParams) (*iamstore.GroupRow, error) {
+	s.updateGroupCalls++
 	return s.updateGroup, nil
 }
 func (s *stubIAMStore) DeleteIamGroup(_ context.Context, _ string) error {
+	s.deleteGroupCalls++
 	return s.deleteErr
 }
 func (s *stubIAMStore) AddGroupMember(_ context.Context, _, _, _ string) (string, error) {
 	return "membership-id", nil
 }
-func (s *stubIAMStore) RemoveGroupMember(_ context.Context, _ string) error { return nil }
+func (s *stubIAMStore) RemoveGroupMember(_ context.Context, _ string) error {
+	s.removeMemberCalls++
+	return nil
+}
 func (s *stubIAMStore) RemoveGroupMemberByPrincipal(_ context.Context, _, _, _ string) error {
 	return nil
 }
@@ -879,9 +890,14 @@ func TestPatchGroup_ReplaceDisplayName(t *testing.T) {
 	}
 }
 
+// Both delete tests below use a scim-sourced group, so they exercise the
+// path they name. With the zero-value stub they pass without reaching it — an empty
+// group source, i.e. a group with no ownership at all — which is exactly the
+// state the ownership guard exists to refuse, and the 404 arm gets its status
+// from the store error only because nothing checks ownership first.
 func TestDeleteGroup_Success_Returns204(t *testing.T) {
 	is := &stubIAMStore{deleteErr: nil}
-	h := buildHandler(&stubUserStore{}, is, &stubScimStore{})
+	h := buildHandler(&stubUserStore{}, is, &stubScimStore{groupSrc: "scim"})
 	c, rec := echoCtx(http.MethodDelete, "/Groups/g1", nil)
 	c.SetParamNames("id")
 	c.SetParamValues("g1")
@@ -895,7 +911,7 @@ func TestDeleteGroup_Success_Returns204(t *testing.T) {
 
 func TestDeleteGroup_Error_Returns404(t *testing.T) {
 	is := &stubIAMStore{deleteErr: errors.New("not found")}
-	h := buildHandler(&stubUserStore{}, is, &stubScimStore{})
+	h := buildHandler(&stubUserStore{}, is, &stubScimStore{groupSrc: "scim"})
 	c, rec := echoCtx(http.MethodDelete, "/Groups/missing", nil)
 	c.SetParamNames("id")
 	c.SetParamValues("missing")
@@ -904,6 +920,92 @@ func TestDeleteGroup_Error_Returns404(t *testing.T) {
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code=%d want 404", rec.Code)
+	}
+}
+
+// TestDeleteGroup_AdminManagedGroup_Refused403 — a group an admin created in the
+// UI (source != "scim") is not SCIM's to delete. Deleting it takes its policy
+// attachments with it, and the old handler answered 204.
+func TestDeleteGroup_AdminManagedGroup_Refused403(t *testing.T) {
+	is := &stubIAMStore{}
+	h := buildHandler(&stubUserStore{}, is, &stubScimStore{groupSrc: "local"})
+	c, rec := echoCtx(http.MethodDelete, "/Groups/g1", nil)
+	c.SetParamNames("id")
+	c.SetParamValues("g1")
+	if err := h.DeleteGroup(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403", rec.Code)
+	}
+	if is.deleteGroupCalls != 0 {
+		t.Errorf("DeleteIamGroup ran %d times after a 403", is.deleteGroupCalls)
+	}
+}
+
+// TestDeleteGroup_ForeignIdP_Refused403 — in a multi-IdP tenant, one directory
+// must not reach into another's groups. Same 204 before.
+func TestDeleteGroup_ForeignIdP_Refused403(t *testing.T) {
+	owner := "idp-a"
+	other := "idp-b"
+	is := &stubIAMStore{}
+	h := buildHandler(&stubUserStore{}, is, &stubScimStore{groupSrc: "scim", groupIdpID: &owner})
+	c, rec := echoCtx(http.MethodDelete, "/Groups/g1", nil)
+	c.Set("scimToken", &scimstore.ScimToken{IdentityProviderID: &other})
+	c.SetParamNames("id")
+	c.SetParamValues("g1")
+	if err := h.DeleteGroup(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403", rec.Code)
+	}
+	if is.deleteGroupCalls != 0 {
+		t.Errorf("DeleteIamGroup ran %d times after a 403", is.deleteGroupCalls)
+	}
+}
+
+// TestScimGroupGuard_RefusalStopsTheMutation is the class test for the dead
+// branch. scimError ends in c.JSON, which returns nil on a successful write, so
+// the guard's old `errResp error` return made `if errResp != nil` always false:
+// the 403 body went out and the handler ran the mutation anyway. Each of the
+// three group mutations is driven against an admin-managed group and must leave
+// the store untouched.
+func TestScimGroupGuard_RefusalStopsTheMutation(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{"displayName": "Renamed"})
+	patch, _ := json.Marshal(map[string]any{
+		"Operations": []map[string]any{{"op": "replace", "path": "displayName", "value": "Renamed"}},
+	})
+
+	cases := []struct {
+		name string
+		call func(h *Handler, c echo.Context) error
+		body []byte
+		verb string
+	}{
+		{"replace", func(h *Handler, c echo.Context) error { return h.ReplaceGroup(c) }, body, http.MethodPut},
+		{"patch", func(h *Handler, c echo.Context) error { return h.PatchGroup(c) }, patch, http.MethodPatch},
+		{"delete", func(h *Handler, c echo.Context) error { return h.DeleteGroup(c) }, nil, http.MethodDelete},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			is := &stubIAMStore{}
+			h := buildHandler(&stubUserStore{}, is, &stubScimStore{groupSrc: "local"})
+			c, rec := echoCtx(tc.verb, "/Groups/g1", tc.body)
+			c.SetParamNames("id")
+			c.SetParamValues("g1")
+			if err := tc.call(h, c); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+			}
+			if is.updateGroupCalls != 0 || is.deleteGroupCalls != 0 || is.removeMemberCalls != 0 {
+				t.Fatalf("a 403 was answered but the store was still mutated: update=%d delete=%d removeMember=%d",
+					is.updateGroupCalls, is.deleteGroupCalls, is.removeMemberCalls)
+			}
+		})
 	}
 }
 

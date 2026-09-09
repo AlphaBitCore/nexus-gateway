@@ -12,13 +12,17 @@ import (
 // Event is the Agent's internal representation of a captured traffic event.
 // Maps to traffic_event columns in the unified schema.
 type Event struct {
-	ID      string `json:"id"`
+	ID string `json:"id"`
+	// TraceID is the intercepted client's own W3C trace id, from a traceparent
+	// on the bumped request. Empty when the client sent none, and empty for
+	// passthrough flows, whose tunnel is never decrypted. Never the request id.
 	TraceID string `json:"traceId"`
-	// ExternalRequestID is the CALLER's own request id — the x-request-id
-	// they sent — read off the intercepted request by tlsbump and carried
-	// through unchanged. Distinct from TraceID, which is ours and groups a
-	// unit of work. Without a column to land in, the value was captured and
-	// then dropped between tlsbump and upload on the agent path alone.
+	// ExternalRequestID is the request id — X-Nexus-Request-Id or its
+	// X-Request-Id alias, read off the intercepted request by tlsbump and
+	// carried through unchanged, or minted when the client sent neither. It is
+	// what joins this row to the other services' rows for the same request.
+	// Without a column to land in, the value was captured and then dropped
+	// between tlsbump and upload on the agent path alone.
 	ExternalRequestID string    `json:"externalRequestId,omitempty"`
 	Timestamp         time.Time `json:"timestamp"`
 	SourceIP          string    `json:"sourceIp"`

@@ -1,8 +1,8 @@
 // Package codec — OpenAI embedding request encoding (canonical door).
 //
 // Architecture references:
-//   - docs/dev/architecture/provider-adapter-architecture.md §3a Rules 1-7
-//   - docs/dev/architecture/endpoint-typology-architecture.md §2
+//   - docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md §3a Rules 1-7
+//   - docs/developers/architecture/cross-cutting/foundation/endpoint-typology-architecture.md §2
 //
 // Per-model wire rules ride the contract (specs/openai/rewrites carries
 // the rules with their empirical 400 citations per Rule 7); this file owns

@@ -5,7 +5,6 @@
 // writes the X-Nexus-Attestation header value on every outbound CONNECT
 // to the compliance-proxy.
 //
-// Architecture: docs/developers/architecture/services/agent/agent-attestation-architecture.md
 // Wire format: packages/shared/transport/tlsbump/attestation.go
 //
 // Fail-open contract: every Sign() error path causes the caller to OMIT the
@@ -325,32 +324,44 @@ func (s *Signer) InjectInto(req *http.Request) error {
 		// traffic bodies are typically <1 MiB; cap at 8 MiB so a
 		// pathological client can't make the injector spike memory.
 		const maxBodyForHash = 8 * 1024 * 1024
-		buf, err := io.ReadAll(io.LimitReader(req.Body, maxBodyForHash+1))
-		_ = req.Body.Close()
+		orig := req.Body
+		buf, err := io.ReadAll(io.LimitReader(orig, maxBodyForHash+1))
 		switch {
 		case err != nil:
-			// Treat read failure as "no body to hash" and continue
-			// with empty-body hash. Fail-open: never block the
-			// request because hashing failed.
+			// Treat read failure as "no body to hash" and continue with the
+			// empty-body hash. Fail-open: never block the request because
+			// hashing failed. The prefix we consumed is rejoined to whatever
+			// remains so the transport sees the real body — and the real
+			// error, if the read keeps failing — rather than a truncated one.
+			// The original is NOT closed here: the transport owns closing the
+			// body it is handed, and closing it now is what made the read
+			// below return nothing.
 			bodyBytes = nil
+			req.Body = readCloserOver(io.MultiReader(bytes.NewReader(buf), orig), orig)
 		case len(buf) > maxBodyForHash:
-			// Body exceeded the cap — we read past the limit. Treat
-			// as a streaming body (sign empty-body hash) and rewrap
-			// the bytes we did consume + the rest of the original.
-			// The cap is conservative; AI request bodies rarely hit
-			// it. Tagged for follow-up to handle large bodies via a
-			// streaming-hash io.TeeReader if real traffic shows the
-			// limit fires.
+			// Body exceeded the cap. Sign the empty-body hash and rejoin the
+			// buffered prefix with the rest of the original stream.
+			//
+			// The original body must NOT be closed before this rejoin. Closing it
+			// unconditionally above makes the io.MultiReader's second source a
+			// CLOSED body: every upload over 8 MiB reaches the upstream truncated
+			// to its first 8 MiB, or fails outright depending on the reader —
+			// silently, on a fail-open path whose whole point is not to disturb
+			// the request.
+			//
+			// GetBody is left as the caller set it, and deliberately not
+			// replaced with one that replays `buf`. That replacement claimed
+			// the request was replayable when what it replayed was the
+			// truncated prefix, so a redirect or a transport retry would have
+			// sent a body the client never wrote. A nil GetBody means "not
+			// replayable", which is the truth here.
 			bodyBytes = nil
-			// Rewrap so the wire send still gets the full body.
-			// io.MultiReader rejoins the buffered prefix with the
-			// remaining stream.
-			req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf), req.Body))
-			req.GetBody = func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(buf)), nil
-			}
+			req.Body = readCloserOver(io.MultiReader(bytes.NewReader(buf), orig), orig)
 		default:
-			// Normal path: body fully buffered + hashable.
+			// Normal path: body fully buffered and hashable. Reading to EOF is
+			// what makes closing the original correct here — nothing is left in
+			// it, and the replacement is an in-memory reader.
+			_ = orig.Close()
 			bodyBytes = buf
 			req.Body = io.NopCloser(bytes.NewReader(buf))
 			req.GetBody = func() (io.ReadCloser, error) {
@@ -400,4 +411,17 @@ func (s *Signer) GetProxyConnectHeader(_ context.Context, _ *url.URL, _ string) 
 		return nil, nil //nolint:nilerr // intentional fail-open, see func doc
 	}
 	return http.Header{pair.Name: []string{pair.Value}}, nil
+}
+
+// readCloserOver pairs a reader with the Closer that owns the underlying
+// resource, so a rejoined body still releases the original when the transport
+// closes it. io.NopCloser would drop that Close on the floor and leak the
+// connection the body was reading from.
+type bodyRejoin struct {
+	io.Reader
+	io.Closer
+}
+
+func readCloserOver(r io.Reader, c io.Closer) io.ReadCloser {
+	return bodyRejoin{Reader: r, Closer: c}
 }

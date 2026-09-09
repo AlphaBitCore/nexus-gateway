@@ -99,6 +99,14 @@ type responsesStreamSession struct {
 	// non-stream mapResponsesStatusToFinishReason hadToolCalls path) instead of
 	// collapsing to "stop" — the buffer/cross-format re-encoder relies on it.
 	sawToolCall bool
+
+	// toolNames maps output_index to the function name, because this wire
+	// announces the name ONCE on response.output_item.added and never repeats it
+	// on the argument deltas that follow. Dropping it left every re-encoded tool
+	// call with an empty name: the arguments arrived, so the client knew a tool
+	// was requested and could not tell WHICH — and a response hook inspecting
+	// tool names saw nothing to inspect.
+	toolNames map[int]string
 }
 
 func (s *responsesStreamSession) Next(ctx context.Context) (provcore.Chunk, error) {
@@ -141,6 +149,12 @@ func (s *responsesStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 			continue
 		case "response.output_item.added":
 			s.currentItemType = gjson.GetBytes(ev.Data, "item.type").String()
+			if name := gjson.GetBytes(ev.Data, "item.name").String(); name != "" {
+				if s.toolNames == nil {
+					s.toolNames = map[int]string{}
+				}
+				s.toolNames[int(gjson.GetBytes(ev.Data, "output_index").Int())] = name
+			}
 			continue
 		case "response.content_part.added", "response.content_part.done",
 			"response.output_item.done",
@@ -172,6 +186,7 @@ func (s *responsesStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 				ToolCallDeltas: []provcore.ToolCallDelta{{
 					Index:     idx,
 					ID:        gjson.GetBytes(ev.Data, "item_id").String(),
+					Name:      s.toolNames[idx],
 					Arguments: delta,
 				}},
 				RawBytes:    formatSSE(evType, ev.Data),

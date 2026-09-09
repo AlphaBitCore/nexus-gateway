@@ -363,7 +363,7 @@ func TestUpsertOverrides_ExecError_Wraps(t *testing.T) {
 	}
 }
 
-// S-13: an override severity outside hard|soft|warn must be refused and NOT
+// An override severity outside hard|soft|warn must be refused and NOT
 // written. severityEnforces() accepts only hard|soft, so persisting "high"
 // leaves the rule matching and reporting while it silently stops blocking —
 // the exact runtime downgrade validSeverities exists to prevent on the two

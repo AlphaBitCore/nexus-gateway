@@ -17,7 +17,7 @@ import (
 )
 
 // agentDeviceCtxKey mirrors the unexported key used by
-// internal/middleware/agentmtls.go. The middleware sets this on the Echo
+// packages/control-plane/internal/platform/middleware/agentmtls.go. The middleware sets this on the Echo
 // context after mTLS passes; tests simulate the middleware having run by
 // setting it directly, avoiding the need to spin up a TLS listener.
 const agentDeviceCtxKey = "agentDevice"

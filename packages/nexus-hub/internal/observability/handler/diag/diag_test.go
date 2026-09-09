@@ -32,7 +32,7 @@ func makeDiagCtx(t *testing.T, body any) (echo.Context, *httptest.ResponseRecord
 // diagInsertArgCount is the count of bound parameters in the INSERT INTO
 // thing_diag_event query in opsmetrics_diag.go. Tracks the column list
 // 1:1 — bump in lockstep when a new column lands on the drain path. The
-// trace_id column lifted the count from 14 to 15.
+// external_request_id column lifted the count from 14 to 15.
 const diagInsertArgCount = 15
 
 // expectInsert registers a pgxmock expectation for the INSERT INTO
@@ -384,20 +384,20 @@ func TestDiagDrain_WithStackTraceAndAgentVersion(t *testing.T) {
 	}
 }
 
-// TestDiagDrain_WithTraceID verifies that a non-empty TraceID on the
+// TestDiagDrain_WithExternalRequestID verifies that a non-empty request id on the
 // drain-event payload reaches the INSERT as a non-nil bound argument at
 // position 10 (right after message_hash, before attrs). The Hub-side
 // "" → NULL pointer indirection lives in insertDiagDrainEvent — this
 // test pins that a populated value survives the indirection rather than
 // being dropped to NULL.
-func TestDiagDrain_WithTraceID(t *testing.T) {
+func TestDiagDrain_WithExternalRequestID(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatalf("pgxmock.NewPool: %v", err)
 	}
 	defer mock.Close()
 
-	// Build the expectation by hand so we can pin the trace_id arg by
+	// Build the expectation by hand so we can pin the external_request_id arg by
 	// position. The other 14 args remain AnyArg.
 	args := make([]any, diagInsertArgCount)
 	for i := range args {
@@ -406,21 +406,21 @@ func TestDiagDrain_WithTraceID(t *testing.T) {
 	// Positions (1-indexed in the SQL VALUES, 0-indexed in the args slice):
 	//   1: id,  2: thing_id,  3: thing_type,  4: occurred_at,  5: level,
 	//   6: event_type,  7: source,  8: message,  9: message_hash,
-	//  10: trace_id,  11: attrs,  ...
+	//  10: external_request_id,  11: attrs,  ...
 	// Match a *string pointing at the expected value (NULL-when-empty
 	// contract uses *string, never the raw string).
-	expectedTrace := "trace-drain-abc"
-	args[9] = &expectedTrace
+	expectedRequestID := "req-drain-abc"
+	args[9] = &expectedRequestID
 	mock.ExpectExec(`INSERT INTO thing_diag_event`).
 		WithArgs(args...).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	evt := DiagDrainEvent{
-		ID: "trace-test",
+		ID: "req-id-test",
 		DiagEvent: opsmetrics.DiagEvent{
-			Source:  "nexus-agent",
-			Message: "with trace",
-			TraceID: expectedTrace,
+			Source:            "nexus-agent",
+			Message:           "with request id",
+			ExternalRequestID: expectedRequestID,
 		},
 	}
 	if err := insertDiagDrainEvent(t.Context(), mock, "thing-1", "agent", evt); err != nil {
@@ -431,11 +431,11 @@ func TestDiagDrain_WithTraceID(t *testing.T) {
 	}
 }
 
-// TestDiagDrain_EmptyTraceIDIsNull asserts the inverse: an empty TraceID
+// TestDiagDrain_EmptyExternalRequestIDIsNull asserts the inverse: an empty request id
 // hits the INSERT as a NULL bound arg (Go nil *string) instead of an empty
-// string. Without this guard, admin queries that filter `WHERE trace_id
+// string. Without this guard, admin queries that filter `WHERE external_request_id
 // IS NULL` would silently miss legacy rows.
-func TestDiagDrain_EmptyTraceIDIsNull(t *testing.T) {
+func TestDiagDrain_EmptyExternalRequestIDIsNull(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatalf("pgxmock.NewPool: %v", err)
@@ -455,11 +455,11 @@ func TestDiagDrain_EmptyTraceIDIsNull(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	evt := DiagDrainEvent{
-		ID: "no-trace",
+		ID: "no-request-id",
 		DiagEvent: opsmetrics.DiagEvent{
 			Source:  "nexus-agent",
 			Message: "boot fault",
-			// TraceID left empty intentionally.
+			// ExternalRequestID left empty intentionally.
 		},
 	}
 	if err := insertDiagDrainEvent(t.Context(), mock, "thing-1", "agent", evt); err != nil {

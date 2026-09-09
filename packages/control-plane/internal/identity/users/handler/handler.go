@@ -49,6 +49,11 @@ type iamUserStore interface {
 	ListNexusUsers(ctx context.Context, p userstore.NexusUserListParams) ([]userstore.NexusUserSafe, int, error)
 	GetNexusUserSafe(ctx context.Context, id string) (*userstore.NexusUserSafe, error)
 	GetNexusUserOrgInfo(ctx context.Context, userID string) (orgID, orgName string, err error)
+	// FindDefaultOrganizationID resolves the organisation for a user created
+	// without one. SCIM, OIDC-JIT and agent enrollment already use it; the
+	// admin create path does too, rather than relying on a column default the
+	// seed has never been able to satisfy.
+	FindDefaultOrganizationID(ctx context.Context) (string, error)
 	FindNexusUserByID(ctx context.Context, id string) (*userstore.NexusUser, error)
 	CreateNexusUser(ctx context.Context, p userstore.CreateNexusUserParams) (*userstore.NexusUserSafe, error)
 	UpdateNexusUser(ctx context.Context, id string, p userstore.UpdateNexusUserParams) (*userstore.NexusUserSafe, error)

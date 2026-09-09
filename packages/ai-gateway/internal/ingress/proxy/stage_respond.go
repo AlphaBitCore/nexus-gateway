@@ -24,8 +24,7 @@ func (st respondStage) run() bool {
 
 	// Forward allowlisted upstream response headers BEFORE the Nexus
 	// stamps so any conflict (e.g. an upstream emitting `via` or
-	// `server`) is overwritten by Nexus on the same key — see
-	// docs/developers/specs/e36/e36-s2-forward-header-yaml-response.md "Nexus wins"
+	// `server`) is overwritten by Nexus on the same key — the "Nexus wins"
 	// invariant. isCacheHit=false on this direct (live) path.
 	writeForwardedResponseHeaders(s.w, h.deps.Allowlist, provcore.Format(target.AdapterType), result.Headers, false)
 
@@ -40,7 +39,7 @@ func (st respondStage) run() bool {
 		// path. There is no cache write on the direct path
 		// (cache is disabled or off for this request).
 		sub := newDirectStreamSubscription(result.Stream)
-		h.handleStreamWithSubscription(s.r, s.w, s.rec, sub, target, result.Coerced, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
+		h.handleStreamWithSubscription(s.r, s.w, s.rec, sub, target, result.Coerced, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.log())
 	} else {
 		// Stamp the PhaseSink values onto rec NOW so
 		// setResponseHeaders can emit the upstream timings in
@@ -68,10 +67,10 @@ func (st respondStage) run() bool {
 				provcoreUsageToMap(&result.Usage),
 				false,
 				s.in,
-				s.logger,
+				s.log(),
 			)
 		}
-		h.handleNonStream(s.r, s.w, s.rec, result, target, s.body, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
+		h.handleNonStream(s.r, s.w, s.rec, result, target, s.body, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.log())
 	}
 	return false
 }

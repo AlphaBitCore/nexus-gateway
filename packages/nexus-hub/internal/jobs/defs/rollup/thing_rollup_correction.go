@@ -8,8 +8,8 @@ import (
 
 const (
 	thingRollupCorrectionJobID          = "thing-rollup-correction"
-	thingRollupCorrectionJobName        = "Per-Thing Rollup Correction"
-	thingRollupCorrectionJobDescription = "Recomputes per-Thing rollups for the trailing correction window (default 7 days) to absorb late-arriving events. The per-Thing twin of rollup-correction; without it a late event whose per-Thing 5m bucket already sealed would never be re-aggregated and per-Thing dashboards would permanently under-count."
+	thingRollupCorrectionJobName        = "Per-Node Rollup Correction"
+	thingRollupCorrectionJobDescription = "Recomputes per-node rollups for the trailing correction window (default 7 days) to absorb late-arriving events. The per-node twin of rollup-correction; without it a late event whose per-node 5m bucket already sealed would never be re-aggregated and per-node dashboards would permanently under-count."
 )
 
 // ThingRollupCorrectionJob is the per-Thing twin of RollupCorrectionJob. The

@@ -217,7 +217,7 @@ func (h *Handler) runCanonicalBufferStream(ctx context.Context, s *streamState, 
 		// Modify: re-emit the REDACTED canonical body. Masked content + masked
 		// tool-call arguments are read back from the rewritten canonical and
 		// forward-encoded to the ingress wire; the original is never delivered.
-		emit = []provcore.Chunk{syntheticChunkFromCanonical(outcome.body, acc.reasoning.String())}
+		emit = []provcore.Chunk{syntheticChunkFromCanonical(outcome.body)}
 	} else {
 		// Approve / no response hook: re-encode the buffered canonical chunks
 		// unchanged to the ingress wire.

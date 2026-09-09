@@ -1,7 +1,6 @@
 package wirerewrite
 
 import (
-	"fmt"
 	"log/slog"
 	"sync/atomic"
 
@@ -18,21 +17,16 @@ type Engine struct {
 // resolvedConfig is the pre-compiled, immutable snapshot derived from a
 // Config + bundled rules. Replaced atomically on every Reload.
 type resolvedConfig struct {
-	// hasWork short-circuits NormalizeUpstream when nothing is configured to
-	// do: no enabled strip rule and no Provider with marker injection on.
-	// Derived at Reload from the resolved rules + provider settings — the
-	// engine runs on demand, there is no operator-facing global toggle.
-	// NormalizeKey always runs regardless.
+	// hasWork short-circuits NormalizeUpstream when no strip rule is enabled.
+	// Derived at Reload from the resolved rules — the engine runs on demand,
+	// there is no operator-facing global toggle. NormalizeKey always runs
+	// regardless.
 	hasWork bool
 
 	// keyRules maps adapter_type → rules that are safe for L0 key normalisation.
 	keyRules map[AdapterType][]ruleEntry
 	// upstreamRules maps adapter_type → all rules (L3 body modification).
 	upstreamRules map[AdapterType][]ruleEntry
-
-	// Per-provider and global settings for L4 marker injection.
-	providerInjectEnabled map[string]bool // providerID → inject enabled
-	providerBoundary3     map[string]bool // providerID → boundary3 enabled
 }
 
 // ruleEntry pairs a Rule with its circuit breaker (shared across reloads
@@ -60,7 +54,12 @@ func (e *ruleEntry) safeRun(body []byte) (out []byte, count int, removed int) {
 func (e *ruleEntry) run(body []byte) (out []byte, count int, removed int) {
 	switch e.rule.Type {
 	case RuleTypeStrip:
-		return applyStripRule(body, e.rule.BodyPath, &e.rule)
+		out = body
+		for _, path := range e.rule.BodyPaths {
+			modified, c, b := applyStripRule(out, path, &e.rule)
+			out, count, removed = modified, count+c, removed+b
+		}
+		return out, count, removed
 	default:
 		return body, 0, 0
 	}
@@ -103,18 +102,9 @@ func (e *Engine) Reload(cfg Config) {
 		}
 	}
 
-	providerInject := make(map[string]bool, len(cfg.Providers))
-	providerBoundary3 := make(map[string]bool, len(cfg.Providers))
-	for pid, pc := range cfg.Providers {
-		providerInject[pid] = pc.CacheMarkerInjectEnabled
-		providerBoundary3[pid] = pc.CacheMarkerBoundary3Enabled
-	}
-
 	resolved := &resolvedConfig{
-		keyRules:              make(map[AdapterType][]ruleEntry),
-		upstreamRules:         make(map[AdapterType][]ruleEntry),
-		providerInjectEnabled: providerInject,
-		providerBoundary3:     providerBoundary3,
+		keyRules:      make(map[AdapterType][]ruleEntry),
+		upstreamRules: make(map[AdapterType][]ruleEntry),
 	}
 
 	for _, r := range bundles {
@@ -152,24 +142,14 @@ func (e *Engine) Reload(cfg Config) {
 		resolved.upstreamRules[rule.AdapterType] = append(resolved.upstreamRules[rule.AdapterType], entry)
 	}
 
-	// Demand-driven gate. The upstream rewrite runs only when something is
-	// actually configured to do: an enabled strip rule (upstreamRules only
-	// ever holds enabled rules — disabled ones are skipped above), or a
-	// Provider with cache_control marker injection on. There is no
-	// operator-facing global switch; enabling either feature is itself the
-	// demand.
+	// Demand-driven gate. The upstream rewrite runs only when a strip rule is
+	// enabled (upstreamRules only ever holds enabled rules — disabled ones are
+	// skipped above). There is no operator-facing global switch; enabling a
+	// rule is itself the demand.
 	for _, rules := range resolved.upstreamRules {
 		if len(rules) > 0 {
 			resolved.hasWork = true
 			break
-		}
-	}
-	if !resolved.hasWork {
-		for _, on := range providerInject {
-			if on {
-				resolved.hasWork = true
-				break
-			}
 		}
 	}
 
@@ -207,13 +187,18 @@ func (e *Engine) NormalizeKey(format AdapterType, body []byte) []byte {
 	return current
 }
 
-// NormalizeUpstream strips and injects bytes in the body that WILL be
-// forwarded to the upstream provider. Returns the modified body and a
-// Result summary for audit. Runs on demand: it no-ops unless an enabled strip
-// rule or a marker-injecting Provider is configured (resolvedConfig.hasWork).
-// providerID is the Provider row UUID, used for per-Provider L4 settings.
-// Always fail-open: any error returns the original body.
-func (e *Engine) NormalizeUpstream(format AdapterType, providerID string, body []byte) ([]byte, Result) {
+// NormalizeUpstream strips bytes from the body that WILL be forwarded to the
+// upstream provider. Returns the modified body and a Result summary for audit.
+// Runs on demand: it no-ops unless an enabled strip rule is configured
+// (resolvedConfig.hasWork). Always fail-open: any error returns the original
+// body.
+//
+// Provider prompt-cache markers used to live here as an "L4" step keyed on the
+// adapter name. They now belong to the codec that speaks the wire carrying
+// them — see the Anthropic codec's prompt_cache.go — because the marker is a
+// field of one wire's request shape, not a cross-format concern, and asking
+// the question here cost a list of adapter names that FamilyOf already owns.
+func (e *Engine) NormalizeUpstream(format AdapterType, body []byte) ([]byte, Result) {
 	resolved := e.compiled.Load()
 	if resolved == nil || !resolved.hasWork {
 		return body, Result{}
@@ -269,31 +254,6 @@ func (e *Engine) NormalizeUpstream(format AdapterType, providerID string, body [
 		allDryRun = false
 	}
 	result.DryRun = allDryRun
-
-	// L4: cache_control marker injection (Anthropic and Bedrock-Claude wire).
-	// Bedrock Claude uses the identical Anthropic Messages format on the wire,
-	// so the same injection logic applies.
-	if (format == AdapterAnthropic || format == AdapterBedrock) && resolved.providerInjectEnabled[providerID] {
-		injected, injErr := injectCacheMarkers(current, "ephemeral", resolved.providerBoundary3[providerID])
-		if injErr == nil {
-			n := countInjectedMarkers(current, injected)
-			result.MarkersInjected = n
-			current = injected
-			if n > 0 {
-				result.TransformSpans = append(result.TransformSpans, normalize.TransformSpan{
-					Source:   normalize.SourceCacheControlInject,
-					SourceID: "cache_control",
-					Action:   normalize.ActionInject,
-					// Inject markers are scattered across the body in
-					// canonical-JSON addressable locations; without a
-					// per-marker offset we record one summary span.
-					Start:  0,
-					End:    0,
-					Reason: fmt.Sprintf("%d markers injected", n),
-				})
-			}
-		}
-	}
 
 	return current, result
 }

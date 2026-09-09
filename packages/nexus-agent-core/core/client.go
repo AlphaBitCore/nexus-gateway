@@ -1,14 +1,17 @@
 package core
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"bytes"
 	"context"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // client.go is the HTTP engine for the typed capability surface: it builds and
@@ -33,9 +36,20 @@ type Client struct {
 // timeout), not a fixed wall clock.
 func NewClient(env Env, ts TokenSource, httpc *http.Client) *Client {
 	if httpc == nil {
-		httpc = &http.Client{Timeout: 60 * time.Second, Transport: NewHTTPTransport()}
+		// The two tunings NewHTTPTransport exists for are Config fields.
+		httpc = nexushttp.New(nexushttp.Config{
+			Timeout:             60 * time.Second,
+			TLSHandshakeTimeout: 30 * time.Second,
+			IdleConnTimeout:     30 * time.Second,
+			Caller:              "agent-core",
+		})
 	}
-	streamc := &http.Client{Transport: transportOf(httpc)}
+	streamc := nexushttp.New(nexushttp.Config{
+		NoTimeout: true,
+		Caller:    "agent-core-stream",
+		// Shares the admin client's pool rather than opening a second one.
+		Transport: func(*http.Transport) http.RoundTripper { return transportOf(httpc) },
+	})
 	return &Client{env: env, ts: ts, httpc: httpc, streamc: streamc}
 }
 
@@ -70,9 +84,12 @@ func NewHTTPTransport() *http.Transport {
 // transportOf returns c's round-tripper, or a fresh widened transport when it has
 // none — so the streaming client reuses an injected transport (test servers /
 // mocks) yet still gets the widened handshake budget in production.
+// transportOf returns what c actually dials, with any httpclient wrapper peeled
+// off: the stream client puts its own logging layer on, and two of them would
+// log every request twice.
 func transportOf(c *http.Client) http.RoundTripper {
 	if c.Transport != nil {
-		return c.Transport
+		return nexushttp.Base(c.Transport)
 	}
 	return NewHTTPTransport()
 }

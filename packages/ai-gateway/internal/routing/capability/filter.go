@@ -106,15 +106,14 @@ func Compatible(req *EmbeddingRequest, cap *ModelCapability) (ok bool, reason st
 // internal/ingress/proxy), which re-encodes canonical float vectors to
 // little-endian float32 base64 for the caller.
 //
-// This used to require an explicit per-model "base64" declaration, on the
-// reasoning that only the OpenAI-native codec passed encoding_format to the wire
-// and a base64 request would otherwise be silently downgraded (or 400'd by
-// Cohere). That reasoning was sound but the guard did not hold: the
-// explicit-model passthrough path never runs this filter, so a base64 request to
-// e.g. gemini-embedding-001 sailed through and WAS silently downgraded — and the
-// OpenAI SDKs, having implicitly asked for base64, decoded the float array into a
-// quarter-length garbage vector (observed on staging 2026-07-27). Guaranteeing
-// base64 on the response path fixes the whole class instead of gating it.
+// Requiring an explicit per-model "base64" declaration instead reads well — only
+// the OpenAI-native codec passes encoding_format to the wire, so a base64 request
+// would otherwise be silently downgraded, or 400'd by Cohere — but the guard does
+// not hold: the explicit-model passthrough path never runs this filter, so a
+// base64 request to e.g. gemini-embedding-001 sails through and IS silently
+// downgraded, and the OpenAI SDKs, having implicitly asked for base64, decode the
+// float array into a quarter-length garbage vector (observed on staging).
+// Guaranteeing base64 on the response path closes the class instead of gating it.
 //
 // A descriptor that declares formats still widens the set (a provider-specific
 // encoding beyond these two), it just cannot narrow it below the two the gateway

@@ -622,8 +622,8 @@ func TestToken_Refresh_DisabledUser(t *testing.T) {
 	f := newTokenFixture(t)
 	disabled := time.Now().Add(-time.Hour)
 	users := fakeUsers{"usr-1": {
-		ID:         "usr-1",
-		DisabledAt: &disabled,
+		ID:   "usr-1",
+		Auth: store.NewAuthDisposition(store.StatusActive, &disabled),
 	}}
 	f.refresh.rotateReturns = []rotateResult{{
 		newToken: "rt-rotated",

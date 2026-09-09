@@ -49,7 +49,7 @@ import (
 
 // OpenAIResponsesNormalizer handles OpenAI's `/v1/responses` surface
 // (request + non-streaming response). For streaming, the SSE event
-// stream is decoded upstream by spec_openai/codec_responses.go's
+// stream is decoded upstream by packages/ai-gateway/internal/providers/specs/openai/responses/codec_responses.go's
 // StreamDecoder and replayed as canonical chat-completion frames at
 // the audit-emit boundary; this normalizer sees only the
 // already-canonical bytes in that path.

@@ -283,7 +283,7 @@ func (h *Handler) ListNodeOverrides(c echo.Context) error {
 	if id == "" {
 		return c.JSON(http.StatusBadRequest, errJSON("id is required", "validation_error", "VALIDATION_ERROR"))
 	}
-	return h.hubForward(c, http.MethodGet,
+	return h.hubProxy(c, http.MethodGet,
 		"/api/hub/things/"+url.PathEscape(id)+"/overrides", nil)
 }
 
@@ -377,7 +377,7 @@ func (h *Handler) SetNodeOverride(c echo.Context) error {
 	// here. The proxy passes X-Nexus-Actor-Id / X-Nexus-Actor-Name through
 	// hubForward so the Hub-side audit attribution carries the live admin
 	// identity.
-	return h.hubForward(c, http.MethodPut,
+	return h.hubProxy(c, http.MethodPut,
 		"/api/hub/things/"+url.PathEscape(id)+"/overrides/"+url.PathEscape(configKey), nil)
 }
 
@@ -400,7 +400,7 @@ func (h *Handler) ClearNodeOverride(c echo.Context) error {
 		return c.JSON(http.StatusForbidden, errJSON("your role does not have access to this node type", "forbidden", "TYPE_SCOPE_DENIED"))
 	}
 
-	return h.hubForward(c, http.MethodDelete,
+	return h.hubProxy(c, http.MethodDelete,
 		"/api/hub/things/"+url.PathEscape(id)+"/overrides/"+url.PathEscape(configKey), nil)
 }
 
@@ -409,7 +409,7 @@ func (h *Handler) ClearNodeOverride(c echo.Context) error {
 // Pure proxy. Query params (type, actor, hasTtl, stale, limit, offset)
 // pass through unchanged via hubForward's RawQuery propagation.
 func (h *Handler) ListGlobalOverrides(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/things/overrides", nil)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/things/overrides", nil)
 }
 
 // adminResyncBody mirrors the OpenAPI ResyncBody. ConfigKey is optional;
@@ -466,12 +466,13 @@ func (h *Handler) AdminResyncNode(c echo.Context) error {
 	c.Request().ContentLength = int64(len(hubBody))
 	c.Request().Header.Set("Content-Type", "application/json")
 
-	if err := h.hubForward(c, http.MethodPost,
-		"/api/hub/things/"+url.PathEscape(id)+"/resync", nil); err != nil {
+	ok, err := h.hubForward(c, http.MethodPost,
+		"/api/hub/things/"+url.PathEscape(id)+"/resync", nil)
+	if err != nil {
 		return err
 	}
 
-	if c.Response().Status >= 200 && c.Response().Status < 300 {
+	if ok {
 		// Both single-key and all-key force-resyncs are VerbForceResync; the
 		// "all keys" distinction goes in AfterState.scope so SIEM eventType
 		// stays stable as node.force-resync.

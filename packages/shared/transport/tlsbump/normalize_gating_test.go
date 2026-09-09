@@ -15,16 +15,14 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/openai"
 )
 
-// Finding C-18: the bumped path used to run the full normalize decode on every
-// request and response whether or not any hook was bound to consume it. Its only
-// consumer is HookInput.Normalized, and the audit row does not carry it — the
-// emitter reads AuditInfo.RequestNormalized / ResponseNormalized, which this path
-// never stamps. So with no hooks the decode was computed and discarded.
+// The bumped path runs the full normalize decode only when a hook is bound to
+// consume it. Its only consumer is HookInput.Normalized, and the audit row does
+// not carry it — the emitter reads AuditInfo.RequestNormalized /
+// ResponseNormalized, which this path never stamps. Running it unconditionally
+// therefore computes and discards the decode whenever no hook is bound.
 //
-// Before this change nothing in the package wired a normalize registry or asserted
-// on HookInput.Normalized at all, so both halves below are new coverage: that the
-// decode still happens when a hook needs it, and that it no longer happens when
-// nothing does.
+// Both halves are asserted here: that the decode still happens when a hook needs
+// it, and that it does not when nothing does.
 
 // countingAdapter observes whether runtimeNormalize ran, by counting the adapter
 // extraction it performs. Embedding the interface keeps this to the one method under

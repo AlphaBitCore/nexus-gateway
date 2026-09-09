@@ -2,12 +2,13 @@ package alerting
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/client"
+	"github.com/goccy/go-json"
+
+	alertclient "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/client"
 	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
@@ -55,7 +56,7 @@ func callerFromContext(ctx context.Context) (Caller, bool) {
 
 // targetThingID extracts the thing identifier from an alert TargetKey. Device
 // alert targets are formatted `<sourceType>:<thingID>` (e.g. `thing:n1`,
-// `proxy:n1`) — see raiser.go and jobs/thing_offline_alerts.go. A key without a
+// `proxy:n1`) — see raiser.go and packages/nexus-hub/internal/jobs/defs/health/thing_offline_alerts.go. A key without a
 // colon is returned verbatim. The thing portion is what a device caller must
 // match to raise an alert about itself.
 func targetThingID(targetKey string) string {

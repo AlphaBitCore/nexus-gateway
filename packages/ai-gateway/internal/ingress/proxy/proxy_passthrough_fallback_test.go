@@ -361,9 +361,9 @@ func TestResolveRouteOrPassthrough_StillPassesThroughWhenNoRuleMatched(t *testin
 }
 
 // TestResolveNoMatchPassthrough_CatalogNotLoadedIsNot404 separates the two
-// facts that used to share a status code.
+// facts that otherwise share a status code.
 //
-// The production shape (staging, 2026-08-11): for 34 minutes every request for
+// Measured on staging: for 34 minutes every request for
 // claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5-20251001, gpt-4o,
 // text-embedding-3-large and gemini-embedding-001 came back
 // "404 ROUTING_NO_MATCH / no available provider for model X / Ensure the model

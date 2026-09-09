@@ -2,11 +2,13 @@ package iam
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
+	iamengine "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -31,7 +33,17 @@ func (h *Handler) AttachPrincipalPolicy(c echo.Context) error {
 		expiresAtTime = &t
 	}
 	ctx := c.Request().Context()
-	principalType := c.Param("type")
+	// Normalise on the way IN so storage only ever holds the canonical
+	// spelling. LoadPolicies matches principalType for EQUALITY, so a row
+	// written under the session's own "admin_user" would be listable here and
+	// invisible to every evaluation — the console showing a grant the request
+	// still refuses.
+	principalType, ptOK := iamengine.NormalisePrincipalType(c.Param("type"))
+	if !ptOK {
+		return c.JSON(http.StatusBadRequest, errJSON(
+			"principalType must be one of "+strings.Join(iamengine.AcceptedPrincipalTypes(), ", "),
+			"validation_error", "INVALID_PRINCIPAL_TYPE"))
+	}
 	principalID := c.Param("id")
 
 	// Grant ceiling — attaching a policy confers its permissions to
@@ -65,7 +77,15 @@ func (h *Handler) AttachPrincipalPolicy(c echo.Context) error {
 }
 
 func (h *Handler) ListPrincipalPolicies(c echo.Context) error {
-	principalType := c.Param("type")
+	// Same normalisation as the write path: listing under "admin_user" must
+	// show what was stored under "nexus_user", or the two disagree again in
+	// the opposite direction.
+	principalType, ptOK := iamengine.NormalisePrincipalType(c.Param("type"))
+	if !ptOK {
+		return c.JSON(http.StatusBadRequest, errJSON(
+			"principalType must be one of "+strings.Join(iamengine.AcceptedPrincipalTypes(), ", "),
+			"validation_error", "INVALID_PRINCIPAL_TYPE"))
+	}
 	principalID := c.Param("id")
 
 	attachments, err := h.iam.ListPrincipalPolicyAttachments(c.Request().Context(), principalType, principalID)

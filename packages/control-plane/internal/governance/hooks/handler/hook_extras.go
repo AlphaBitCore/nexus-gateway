@@ -3,17 +3,18 @@ package hooks
 import (
 	"bytes"
 	"context"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/hookstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // ProxyConfig holds the AI Gateway seam needed for hook test forwarding.

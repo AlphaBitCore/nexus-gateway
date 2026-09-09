@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"math/big"
@@ -17,7 +16,9 @@ import (
 	"sync"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // OidcConfig holds the OIDC settings for one external IdP — issuer, JWKS

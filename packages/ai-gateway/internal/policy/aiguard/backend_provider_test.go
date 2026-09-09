@@ -43,8 +43,8 @@ func (f *fakeAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore
 	return &provcore.ProbeResult{OK: true}, nil
 }
 
-func (f *fakeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
-	return req.Body, nil, "", nil
+func (f *fakeAdapter) PrepareBody(req provcore.Request) (provcore.PreparedBody, error) {
+	return provcore.PreparedBody{Body: req.Body}, nil
 }
 
 func (f *fakeAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, _ []string, _ string) (*provcore.Response, error) {
@@ -219,8 +219,8 @@ func TestAdapterBackend_StampsCost_OnlyWithPriceLookup(t *testing.T) {
 // TestAdapterBackend_CachedJudgePromptBilledAtCacheRate is the regression test
 // for the classifier's share of the internal-ops over-estimate. The judge
 // template is fixed, so a warm provider cache serves most of the prompt and the
-// provider reports prompt_tokens INCLUDING that cached share. The backend used
-// to bill every one of those tokens at the full input rate.
+// provider reports prompt_tokens INCLUDING that cached share, so billing every
+// one of those tokens at the full input rate over-charges the classifier.
 func TestAdapterBackend_CachedJudgePromptBilledAtCacheRate(t *testing.T) {
 	pt, ct, cr := 4000, 20, 3600
 	a := &fakeAdapter{

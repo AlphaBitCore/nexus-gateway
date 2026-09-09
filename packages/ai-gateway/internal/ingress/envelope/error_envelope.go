@@ -290,10 +290,10 @@ func encodeErrorEnvelopeForIngressForStream(ingress provcore.Format, pe *provcor
 // gRPC UNKNOWN string so the client at least sees a defined value.
 func geminiStatusForHTTPCode(code int) string {
 	switch code {
-	// 405 is absent from Google's documented HTTP-to-gRPC table, so it used to
-	// fall through to UNKNOWN — a shrug at a case we know exactly, and the one
-	// the method-not-allowed fallback produces on every /v1beta wrong-method
-	// call. INVALID_ARGUMENT is the same read the OpenAI shape gives it.
+	// 405 is absent from Google's documented HTTP-to-gRPC table, so unless it is
+	// named here it falls through to UNKNOWN — a shrug at a case we know exactly,
+	// and the one the method-not-allowed fallback produces on every /v1beta
+	// wrong-method call. INVALID_ARGUMENT is the same read the OpenAI shape gives it.
 	case 400, 405:
 		return "INVALID_ARGUMENT"
 	case 401:

@@ -11,9 +11,9 @@ import (
 
 // TestHandleMQMessage_BinaryTrafficFrameDispatches is the regression for the
 // binary-wire bug: the gateway publishes audit on the binary TLV wire by default,
-// but the alerts engine used to JSON-decode it (and split it on '\n'), so every
-// record failed to decode and threshold alerting was silently dead. handleMQMessage
-// must now dual-read the binary frame and dispatch every record. The records carry
+// but an alerts engine that JSON-decodes it (and splits on '\n') leaves every
+// record undecodable and threshold alerting silently dead. handleMQMessage
+// must dual-read the binary frame and dispatch every record. The records carry
 // inline bodies to exercise the metadata-only (zero-copy) body decode on this path.
 func TestHandleMQMessage_BinaryTrafficFrameDispatches(t *testing.T) {
 	e := newEngineForTest(t, &fakeRuleLister{}, &fakeAlertSink{}, &stubMQConsumer{})

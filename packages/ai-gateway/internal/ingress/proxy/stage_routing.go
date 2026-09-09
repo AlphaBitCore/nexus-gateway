@@ -74,10 +74,10 @@ func (st routingStage) run() bool {
 				h.writeNoCompatibleCapability(s.w, s.rec, ncpErr)
 				return false
 			}
-			s.logger.Debug("empty NoCompatibleProviderError; trying passthrough fallback", "model", s.modelID)
+			s.log().Debug("empty NoCompatibleProviderError; trying passthrough fallback", "model", s.modelID)
 			// fall through to the no-targets passthrough path below
 		} else {
-			s.logger.Error("routing failed", "error", err)
+			s.log().Error("routing failed", "error", err)
 			h.writeDetailedErr(s.w, s.rec, http.StatusInternalServerError, "ROUTING_NO_MATCH",
 				"routing failed", "Check that a routing rule exists for this model")
 			return false
@@ -90,7 +90,13 @@ func (st routingStage) run() bool {
 		// whose trace carries no router entries, and the error arms return
 		// early after writeDetailedErr has already handed s.rec to the audit
 		// pipeline. Draining up front covers all three exits at once.
-		drainRouterCost(s.rec, routeResult, s.logger)
+		// Trace is empty on every request that did not consult a router model,
+		// and the whole body of drainRouterCost sits inside the loop over it — so
+		// the call is a no-op there while s.log() would build the scoped logger
+		// for it. Skip both.
+		if routeResult != nil && len(routeResult.Trace) > 0 {
+			drainRouterCost(s.rec, routeResult, s.log())
+		}
 
 		// Passthrough answers "no rule applies — serve the model they asked
 		// for". When a rule DID apply and resolved nothing, that answer is the
@@ -111,7 +117,7 @@ func (st routingStage) run() bool {
 			if t := buildRoutingAuditTrace(routeResult); t != nil {
 				s.rec.RoutingTrace = t
 			}
-			s.logger.Warn("a routing rule applied and resolved nothing; refusing rather than "+
+			s.log().Warn("a routing rule applied and resolved nothing; refusing rather than "+
 				"serving the requested model", "model", s.modelID)
 			h.writeDetailedErr(s.w, s.rec, http.StatusServiceUnavailable, "ROUTING_RULES_RESOLVED_NOTHING",
 				"a routing rule applies to this request but none could resolve a target",
@@ -120,7 +126,7 @@ func (st routingStage) run() bool {
 			return false
 		}
 
-		s.logger.Debug("no routing targets resolved; trying passthrough fallback", "model", s.modelID)
+		s.log().Debug("no routing targets resolved; trying passthrough fallback", "model", s.modelID)
 		fallbackResult, fallbackErr := h.resolveNoMatchPassthrough(s.r.Context(), s.modelID, s.vkMeta, s.resolved, typology.EndpointKind(s.endpointType), deferredRequest{canonical: s.cacheNormalized, rawBody: func() []byte { return s.body }})
 		if fallbackErr != nil {
 			var routingErr *routingFallbackError
@@ -128,25 +134,32 @@ func (st routingStage) run() bool {
 				h.writeDetailedErr(s.w, s.rec, routingErr.status, routingErr.code, routingErr.message, routingErr.hint)
 				return false
 			}
-			s.logger.Error("passthrough fallback failed", "model", s.modelID, "error", fallbackErr)
+			s.log().Error("passthrough fallback failed", "model", s.modelID, "error", fallbackErr)
 			h.writeDetailedErr(s.w, s.rec, http.StatusInternalServerError, "ROUTING_NO_MATCH",
 				"routing fallback failed", "Check gateway model catalog and provider configuration")
 			return false
 		}
 		routeResult = fallbackResult
 	}
-	s.logger.Debug("route resolved",
-		"model", s.modelID,
-		"targets", len(routeResult.AllTargets()),
-		"ruleId", routeResult.RuleID,
-		"provider", routeResult.Primary().ProviderName,
-	)
+	// Guarded: two of these arguments are calls, not values. AllTargets()
+	// and Primary() run whether or not the line is ever emitted, and this
+	// executes on every successfully routed request.
+	if s.debugEnabled() {
+		s.log().Debug("route resolved",
+			"model", s.modelID,
+			"targets", len(routeResult.AllTargets()),
+			"ruleId", routeResult.RuleID,
+			"provider", routeResult.Primary().ProviderName,
+		)
+	}
 	s.rec.RoutingRuleID = routeResult.RuleID
 	s.rec.RoutingRuleName = routeResult.RuleName
 	if t := buildRoutingAuditTrace(routeResult); t != nil {
 		s.rec.RoutingTrace = t
 	}
-	drainRouterCost(s.rec, routeResult, s.logger)
+	if len(routeResult.Trace) > 0 {
+		drainRouterCost(s.rec, routeResult, s.log())
+	}
 	// Stamp the REQUESTED-side identity (traffic_event model_id / provider_id
 	// / provider_name). These carry the model the CLIENT asked for, and are
 	// populated only when that model resolved unambiguously to one catalog

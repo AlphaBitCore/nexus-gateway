@@ -86,8 +86,7 @@ type Config struct {
 	// providers and when surfacing upstream responses to clients.
 	// When nil (operator's YAML has no `forwardHeaders:` block) the
 	// gateway falls back to the embedded defaults that reproduce the
-	// historical hard-coded behavior; see
-	// docs/developers/specs/e36/e36-s1-forward-header-yaml-request.md.
+	// historical hard-coded behavior.
 	ForwardHeaders *forwardheader.Config `yaml:"forwardHeaders,omitempty"`
 	// Observability holds operator-side instrumentation toggles that
 	// don't merit the full shadow-config dance (yaml-only, redeploy to
@@ -503,8 +502,8 @@ func validate(cfg *Config) error {
 		// Either the single master key OR the multi-key map satisfies the
 		// requirement: CREDENTIAL_KEY_MAP is documented as standalone
 		// ("takes precedence when present"), and wiring builds a map-only
-		// decryptor correctly — but validate() previously demanded the single
-		// key unconditionally, making map-only mode non-bootable.
+		// decryptor correctly, so validate() must not demand the single
+		// key unconditionally, which makes map-only mode non-bootable.
 		return fmt.Errorf("a credential decryption key is required: set CREDENTIAL_ENCRYPTION_KEY (single hex key) or CREDENTIAL_KEY_MAP (multi-key \"v1:hex64,v2:hex64\"); both decrypt Hub-pushed provider credentials")
 	}
 	if len(cfg.Redis.Addrs) == 0 && os.Getenv("REDIS_ADDRS") == "" {

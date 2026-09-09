@@ -130,7 +130,7 @@ func (s *realtimeSession) meterResponseDone(frame []byte, now time.Time) (sever 
 // buildResponseRecord assembles one response row. Each row gets its own
 // traffic_event id from the audit writer, so RequestID carries the upgrade
 // request's real correlation value rather than a synthetic one; grouping
-// rides the server-minted TraceID.
+// rides the upgrade request's external_request_id, shared by every row.
 func (s *realtimeSession) buildResponseRecord(usage realtimeproxy.Usage, costUsd float64, latencyMs int, now time.Time) *audit.Record {
 	rec := &audit.Record{
 		// Carried from the session record rather than re-read from a header
@@ -140,11 +140,13 @@ func (s *realtimeSession) buildResponseRecord(usage realtimeproxy.Usage, costUsd
 		SessionID:  s.rec.SessionID,
 		ClientTags: s.rec.ClientTags,
 		RequestID:  s.rec.RequestID,
-		TraceID:    s.sessionID,
-		Timestamp:  now.UTC(),
-		Method:     s.rec.Method,
-		Path:       s.rec.Path,
-		SourceIP:   s.rec.SourceIP,
+		// The caller's own trace, carried from the upgrade record — this
+		// function has no request to re-read it from.
+		TraceID:   s.rec.TraceID,
+		Timestamp: now.UTC(),
+		Method:    s.rec.Method,
+		Path:      s.rec.Path,
+		SourceIP:  s.rec.SourceIP,
 		// The exchange completed on a live provider stream.
 		StatusCode:    200,
 		IngressFormat: string(s.in.BodyFormat),

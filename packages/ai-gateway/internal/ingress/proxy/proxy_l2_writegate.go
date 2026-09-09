@@ -30,8 +30,8 @@ import (
 // that a stalled provider cannot walk the heap to GOMEMLIMIT. Both properties
 // hold across box sizes once it scales with GOMAXPROCS.
 //
-// Atomic because tests substitute a small cap while other tests in the package
-// run in parallel; production writes it exactly once, at init.
+// Atomic because tests substitute a small cap for the duration of one test;
+// production writes it exactly once, at init.
 var l2WriteMax atomic.Int64
 
 // l2WriteInflight is the current outstanding count. Process-wide rather than

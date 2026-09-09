@@ -3,10 +3,12 @@ package hubapi
 import (
 	"encoding/base64"
 	"errors"
-	"github.com/goccy/go-json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/labstack/echo/v4"
 
@@ -462,7 +464,23 @@ func (h *InternalThingsAPI) AuditUpload(c echo.Context) error {
 
 	ctx := c.Request().Context()
 	ids := make([]string, 0, len(req.Events))
+	// Ids this Hub could not enqueue. A dropped event used to vanish
+	// silently while the response still reported ack:true, so the caller
+	// had no way to know a compliance record was lost.
+	var rejected []string
+	var strippedTotal int
+	// A device-token caller is bound to its own identity and is the untrusted
+	// side here; a service token is fleet-shared and trusted, and the contract
+	// below lets it label its own `source`.
+	deviceCaller := ThingFromContext(c) != nil
 	for _, evt := range req.Events {
+		// Drop every key a device may not assert BEFORE stamping the
+		// authoritative ones. Without this the map was forwarded verbatim, so a
+		// device could self-assert entityId / orgId / identity, and — because
+		// the downstream consumer's decoder matches field names
+		// case-insensitively and a lowercase "thingid" marshals after the
+		// canonical "thingId" — override the stamp itself on last-key-wins.
+		strippedTotal += stripNonAgentAuditKeys(evt, deviceCaller)
 		evt["thingId"] = req.ThingID
 		if thingName != "" {
 			evt["thingName"] = thingName
@@ -498,6 +516,11 @@ func (h *InternalThingsAPI) AuditUpload(c echo.Context) error {
 		}
 		data, err := json.Marshal(evt)
 		if err != nil {
+			// Same disposition as the canonical /agent-audit route: name the
+			// id rather than dropping it silently under a success response.
+			if id, ok := evt["id"].(string); ok && id != "" {
+				rejected = append(rejected, id)
+			}
 			continue
 		}
 		if err := h.MQProducer.Enqueue(ctx, "nexus.event.agent", data); err != nil {
@@ -508,11 +531,25 @@ func (h *InternalThingsAPI) AuditUpload(c echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]any{
+	if strippedTotal > 0 {
+		// A well-behaved agent sends nothing outside the allowlist, so a strip
+		// is either a forgery attempt or a producer that has drifted from the
+		// wire contract. Either is worth a line; neither is worth a refusal,
+		// because dropping the batch would lose real compliance evidence over
+		// one bad key.
+		slog.Default().Warn("things/audit: dropped keys a device may not assert",
+			"thingId", req.ThingID, "stripped", strippedTotal, "events", len(req.Events))
+	}
+
+	resp := map[string]any{
 		"ack":      true,
 		"accepted": len(ids),
 		"eventIds": ids,
-	})
+	}
+	if len(rejected) > 0 {
+		resp["rejected"] = rejected
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // Deregister handles POST /api/internal/things/deregister.

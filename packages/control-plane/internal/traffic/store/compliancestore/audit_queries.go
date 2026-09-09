@@ -467,7 +467,20 @@ func (s *Store) GetComplianceCoverage(ctx context.Context, start, end time.Time)
 	if s.metrics != nil {
 		for _, q := range complianceMetrics {
 			rollupRows, err := s.metrics.QueryRollupCascade(ctx, q)
-			if err != nil || len(rollupRows) == 0 {
+			if err != nil {
+				// Abandon the rollup path entirely rather than publishing a
+				// partial one. `continue` used to keep whatever the surviving
+				// leg had already accumulated and still set rollupOK, so a
+				// single failed leg produced a coverage percentage computed
+				// over part of the fleet AND suppressed the direct scan below
+				// that would have answered correctly. Dropping out here costs
+				// one table scan and gets the right number.
+				rollupOK = false
+				break
+			}
+			if len(rollupRows) == 0 {
+				// A quiet source, not a fault: contribute nothing and let the
+				// other legs decide whether rollup has anything to say.
 				continue
 			}
 			rollupOK = true

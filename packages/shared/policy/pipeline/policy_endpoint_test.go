@@ -85,7 +85,7 @@ func TestBuildPipeline_EmbeddingsDropsTextClassAHooks(t *testing.T) {
 	// Build pipeline for embeddings endpoint REQUEST with text modality.
 	// Class-A text hooks MUST be present on the request side because
 	// embedding inputs are plain text and must be inspected.
-	pipe, err := resolver.BuildPipeline(
+	pipe, _, err := resolver.BuildPipeline(
 		"request", "AI_GATEWAY",
 		core.EndpointTypeEmbeddings,
 		[]core.Modality{core.ModalityText},
@@ -177,7 +177,7 @@ func TestBuildPipeline_EmbeddingsResponseDropsTextClassAHooks(t *testing.T) {
 	resolver := NewPolicyResolver(allConfigs, registry, logger)
 
 	// Build pipeline for embeddings endpoint RESPONSE.
-	pipe, err := resolver.BuildPipeline(
+	pipe, _, err := resolver.BuildPipeline(
 		"response", "AI_GATEWAY",
 		core.EndpointTypeEmbeddings,
 		[]core.Modality{core.ModalityText},
@@ -252,7 +252,7 @@ func TestBuildPipeline_ChatIncludesClassAAndClassBHooks(t *testing.T) {
 	}
 
 	resolver := NewPolicyResolver(configs, registry, logger)
-	pipe, err := resolver.BuildPipeline(
+	pipe, _, err := resolver.BuildPipeline(
 		"request", "AI_GATEWAY",
 		core.EndpointTypeChat,
 		[]core.Modality{core.ModalityText},

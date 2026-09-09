@@ -681,19 +681,19 @@ func TestUpdateSetupState_SaveError_500(t *testing.T) {
 	}
 }
 
-func TestUpdateSetupState_AnonContext_UpdatedByIsEmpty(t *testing.T) {
-	mock, h, _ := newHandlerWithMock(t)
-	mock.ExpectExec(`INSERT INTO system_metadata`).
-		WithArgs("setup-wizard-state", pgxmock.AnyArg(), "").
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+// A mutating settings handler reached with NO principal must refuse. Why
+// writing updatedBy = "" instead is the defect is argued once, at the top of
+// the no-principal arms in settings_handler_test.go.
+func TestUpdateSetupState_WithoutAPrincipalRefuses(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
 
-	req := jsonReq(http.MethodPut, "/api/admin/setup-state", `{"completed":false}`)
+	req := jsonReq(http.MethodPut, "/api/admin/settings/setup-state", `{}`)
 	rec := httptest.NewRecorder()
-	if err := h.UpdateSetupState(anonCtx(req, rec)); err != nil {
-		t.Fatalf("UpdateSetupState: %v", err)
+	if err := h.UpdateSetupState(noAuthCtx(req, rec)); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet: %v", err)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

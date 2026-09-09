@@ -15,6 +15,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/freshness"
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/promptcache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
@@ -75,7 +76,12 @@ type Deps struct {
 	// visible when shadow ticks arrive.
 	AIGuardConfigCache func() *aiguard.ConfigCache
 	NormEngine         *wirerewrite.Engine
-	PassthroughCache   *passthrough.Cache
+	// PromptCache holds the latest cache blob for the request path to read.
+	// Unlike the normaliser it is NOT a projection against a provider
+	// snapshot, so it cannot go stale when providers change and does not
+	// care whether `cache` or `providers` reaches the loader first.
+	PromptCache      *promptcache.Settings
+	PassthroughCache *passthrough.Cache
 
 	// SemanticIndexLifecycle receives the latest ConfigSnapshot from the Hub
 	// shadow and ensures the Valkey index is up to date. May be nil when the
@@ -392,8 +398,11 @@ func registerAGCacheConfig(l *cfgloader.Loader, d Deps) {
 		if d.GeminiCacheMgrSet != nil {
 			d.GeminiCacheMgrSet.SetConfig(blob)
 		}
+		if d.PromptCache != nil {
+			d.PromptCache.SetConfig(blob)
+		}
 		if d.NormEngine != nil {
-			d.NormEngine.Reload(wiring.ProjectCacheBlobToNormaliserConfig(blob, d.CacheLayer))
+			d.NormEngine.Reload(wiring.ProjectCacheBlobToNormaliserConfig(blob))
 		}
 		return nil, nil
 	})
@@ -455,9 +464,9 @@ type semanticCacheConfigBlob struct {
 // The in-process ConfigCache update is DECOUPLED from index lifecycle: the
 // snapshot carries fleet config (vary_by, enabled, threshold) the L1 + L2 hot
 // path needs even on a Sentinel/Cluster Redis where the *redis.Client index
-// management (IndexLifecycle) is unavailable. Coupling the two previously left
-// the ConfigCache un-Set on Sentinel, so L1's ScopeReady() never flipped and
-// vary_by never reached the gateway.
+// management (IndexLifecycle) is unavailable. Coupling the two leaves
+// the ConfigCache un-Set on Sentinel, so L1's ScopeReady() never flips and
+// vary_by never reaches the gateway.
 func registerAGSemanticCacheConfig(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, configkey.SemanticCacheConfig, func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
 		if d.SemanticIndexLifecycle == nil && d.SemanticConfigCache == nil {
@@ -465,8 +474,7 @@ func registerAGSemanticCacheConfig(l *cfgloader.Loader, d Deps) {
 		}
 		if len(raw) == 0 {
 			// Empty payload: disable the semantic cache.
-			applySemanticSnapshot(ctx, d, semantic.ConfigSnapshot{Enabled: false})
-			return nil, nil
+			return nil, applySemanticSnapshot(ctx, d, semantic.ConfigSnapshot{Enabled: false})
 		}
 		var blob semanticCacheConfigBlob
 		if err := json.Unmarshal(raw, &blob); err != nil {
@@ -496,8 +504,7 @@ func registerAGSemanticCacheConfig(l *cfgloader.Loader, d Deps) {
 			snap.EmbeddingDimension = *blob.EmbeddingDimension
 		}
 
-		applySemanticSnapshot(ctx, d, snap)
-		return nil, nil
+		return nil, applySemanticSnapshot(ctx, d, snap)
 	})
 }
 
@@ -507,14 +514,32 @@ func registerAGSemanticCacheConfig(l *cfgloader.Loader, d Deps) {
 // L2) the ConfigCache is Set directly so vary_by + enabled still reach the
 // hot path — L1 exact-match runs on every Redis topology and folds vary_by into
 // its key, so it must learn the fleet scope regardless of L2 index availability.
-func applySemanticSnapshot(ctx context.Context, d Deps, snap semantic.ConfigSnapshot) {
+//
+// The lifecycle's error is RETURNED, not swallowed. It reports that the L2
+// index does not exist; reporting the apply as successful anyway let the
+// shadow's reported version advance past the key, after which every later push
+// of it was short-circuited and the lifecycle's own fingerprint rollback could
+// never be retried.
+//
+// The consequence, decided deliberately: a Valkey that stays unavailable holds
+// this node OUT OF SYNC on the Config Sync page indefinitely. The loader's
+// retry is bounded (8 attempts, exponential backoff to 60s, then one warning —
+// no spin and no log flood), but the key never reaches `reported`, so the
+// node's reported version never catches up to desired.
+//
+// That is the honest state: the desired config was not applied. The semantic
+// cache being optional is not a reason to report a failure as a success — the
+// alternative is precisely the defect this replaced, a dead L2 index shown as
+// applied and converged while every read misses and every write still pays for
+// an embedding.
+func applySemanticSnapshot(ctx context.Context, d Deps, snap semantic.ConfigSnapshot) error {
 	if d.SemanticIndexLifecycle != nil {
-		d.SemanticIndexLifecycle.OnConfigSnapshot(ctx, snap)
-		return
+		return d.SemanticIndexLifecycle.OnConfigSnapshot(ctx, snap)
 	}
 	if d.SemanticConfigCache != nil {
 		d.SemanticConfigCache.Set(snap)
 	}
+	return nil
 }
 
 // extractCacheConfigBlob mirrors the JSON Hub-shadow payload for

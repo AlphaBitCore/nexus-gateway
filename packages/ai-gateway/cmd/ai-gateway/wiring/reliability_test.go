@@ -3,10 +3,11 @@ package wiring
 import (
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
 )

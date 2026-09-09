@@ -1,4 +1,4 @@
-// packages/nexus-hub/internal/storage/rollupstore/rollupstore_test.go —
+// packages/nexus-hub/internal/quota/rollup/rollupstore_test.go —
 // pgxmock-driven unit tests for the rollup helper SQL paths. Every exported
 // function is exercised through the PgxPool seam (or the existing pgx.Tx
 // interface for tx-scoped writes) without touching the shared dev DB.

@@ -3,12 +3,13 @@ package aiguard
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 func TestExternalBackend_HappyPath(t *testing.T) {

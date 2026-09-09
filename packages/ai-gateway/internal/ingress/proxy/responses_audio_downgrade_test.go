@@ -18,9 +18,9 @@ import (
 // This is an end-to-end assertion on purpose. ServesResponses is resolved at
 // FOUR sites — the routing stage, the cache-prep stage, IngressChatToWire and
 // the executor — and the upstream wire shape they choose has to agree. Their
-// comments used to ask each other to agree in prose ("all three sites must
+// comments can only ask each other to agree in prose ("all three sites must
 // agree", "dispatch site 1 of 3"), and the executor's own comment records what
-// happened when one of them keyed off the wrong field: a verbatim Responses
+// happens when one of them keys off the wrong field: a verbatim Responses
 // body posted to the chat URL, 400. Passing the body as an argument makes a
 // site that forgets fail to compile; this proves they also agree on WHICH body,
 // which the compiler cannot check.

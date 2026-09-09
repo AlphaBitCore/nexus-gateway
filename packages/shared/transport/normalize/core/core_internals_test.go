@@ -2,7 +2,7 @@ package core
 
 // coverage_core_test.go pins observable behavior of every core sub-file from
 // inside package core (white-box), ensuring per-package coverage ≥95%.
-// Tests that also appear in codecs/coverage_gaps_test.go use a different
+// Tests that also appear in packages/ai-gateway/internal/platform/audit/coverage_gaps_test.go use a different
 // namespace or stub ID to avoid prometheus registration collisions.
 //
 // Sections mirror the source files:
@@ -11,7 +11,7 @@ package core
 //   - auditbridge.go  — BuildAuditFn arms + StripContentTypeParams + stripContentTypeParams
 //   - registry.go     — All / Replace / SetConfidenceThreshold / RegisterTier2 / MaybeGunzip / Normalize tiers
 //   - apply_spans.go  — ApplySpans / clonePayload / parseInt / resolveTextRef / mapEntryRef
-//   - projection.go   — TextProjection / TextProjectionWith / JoinedText
+//   - projection.go   — TextProjection / JoinedText
 //   - confidence.go   — scoreTier1Confidence
 
 import (
@@ -797,14 +797,22 @@ func TestCoreTextProjection_AIChat(t *testing.T) {
 			}},
 		},
 	}
+	// Every delivered channel: sys, user msg, response, tool out, reasoning.
+	// Reasoning used to be excluded here unless a caller opted in — an option no
+	// deployment could set, on text the gateway sends to the client.
 	got := p.TextProjection()
-	// Without IncludeReasoning: sys, user msg, response, tool out (no reasoning)
-	if len(got) != 4 {
-		t.Fatalf("expected 4 texts, got %v", got)
+	if len(got) != 5 {
+		t.Fatalf("expected 5 texts, got %v", got)
 	}
-	withReasoning := p.TextProjectionWith(TextProjectionOptions{IncludeReasoning: true})
-	if len(withReasoning) != 5 {
-		t.Fatalf("with reasoning expected 5 texts, got %v", withReasoning)
+	var sawReasoning bool
+	for _, g := range got {
+		if g == "reasoning" {
+			sawReasoning = true
+		}
+	}
+	if !sawReasoning {
+		t.Errorf("the reasoning block is absent from the projection, so no compliance rule "+
+			"can match text the client receives: %v", got)
 	}
 }
 
@@ -834,7 +842,7 @@ func TestCoreTextProjection_HTTPForm(t *testing.T) {
 // stream content: verbatim text frames project as-is, JSON frames as
 // their re-marshaled document, and empty frames are skipped. This is
 // the contract that keeps fallback http-sse rows visible to keyword /
-// PII hooks (they previously landed as http-text and were scanned).
+// PII hooks.
 func TestCoreTextProjection_HTTPSSEFrames(t *testing.T) {
 	p := &NormalizedPayload{
 		Kind: KindHTTPSSE,
@@ -1195,15 +1203,14 @@ func TestCoreTextProjection_AIEmbedding_NilInputs(t *testing.T) {
 	}
 }
 
-// TestCoreTextProjection_AIEmbedding_WithReasoningOption verifies that the
-// IncludeReasoning option does not affect embedding projection (embeddings
-// have no reasoning blocks).
-func TestCoreTextProjection_AIEmbedding_WithReasoningOption(t *testing.T) {
+// An embedding payload carries its text in Inputs rather than Messages, so the
+// projection has a separate branch for it — one a chat-shaped test never reaches.
+func TestCoreTextProjection_AIEmbedding_ProjectsInputs(t *testing.T) {
 	p := &NormalizedPayload{
 		Kind:   KindAIEmbedding,
 		Inputs: []string{"embed this"},
 	}
-	got := p.TextProjectionWith(TextProjectionOptions{IncludeReasoning: true})
+	got := p.TextProjection()
 	if len(got) != 1 || got[0] != "embed this" {
 		t.Fatalf("expected [embed this], got %v", got)
 	}
@@ -1248,7 +1255,7 @@ func TestCoreTopLevelKeys_MalformedObject(t *testing.T) {
 
 func TestCoreTextProjection_NilReceiver(t *testing.T) {
 	var p *NormalizedPayload
-	if got := p.TextProjectionWith(TextProjectionOptions{}); got != nil {
+	if got := p.TextProjection(); got != nil {
 		t.Fatalf("nil payload should project nothing, got %v", got)
 	}
 }
@@ -1260,14 +1267,14 @@ func TestCoreTextProjection_RedactedProjectsNothing(t *testing.T) {
 		Redacted: true,
 		Messages: []Message{{Role: RoleUser, Content: []ContentBlock{{Type: ContentText, Text: "secret"}}}},
 	}
-	if got := p.TextProjectionWith(TextProjectionOptions{}); got != nil {
+	if got := p.TextProjection(); got != nil {
 		t.Fatalf("redacted payload should project nothing, got %v", got)
 	}
 }
 
 func TestCoreTextProjection_HTTPEmptyBodyView(t *testing.T) {
 	p := &NormalizedPayload{Kind: KindHTTPText, HTTP: &HTTPPayload{BodyView: &HTTPBodyView{}}}
-	if got := p.TextProjectionWith(TextProjectionOptions{}); got != nil {
+	if got := p.TextProjection(); got != nil {
 		t.Fatalf("empty bodyView should project nothing, got %v", got)
 	}
 }

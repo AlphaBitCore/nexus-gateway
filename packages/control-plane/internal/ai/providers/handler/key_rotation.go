@@ -61,7 +61,19 @@ func (h *Handler) GetKeyRotationStatus(c echo.Context) error {
 	}
 
 	targetKeyID := h.multiVault.CurrentKeyID()
-	pending, _ := h.creds.CountCredentialsNotOnKey(c.Request().Context(), targetKeyID)
+
+	// The count error is SURFACED, not dropped. Writing it as
+	// `pending, _ := ...` has a failed query answer `status: "idle",
+	// pendingCount: 0` — "every credential is on the current key, nothing left
+	// to rotate". That is the one answer an operator must not be given wrongly:
+	// it is what they read to decide a key rotation is complete and the old key
+	// can be retired.
+	pending, err := h.creds.CountCredentialsNotOnKey(c.Request().Context(), targetKeyID)
+	if err != nil {
+		h.logger.Error("key rotation status: count credentials not on key", "targetKeyId", targetKeyID, "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON(
+			"Could not determine how many credentials remain on an older key", "server_error", "INTERNAL_ERROR"))
+	}
 
 	status := "idle"
 	if rotationInProgress.Load() {

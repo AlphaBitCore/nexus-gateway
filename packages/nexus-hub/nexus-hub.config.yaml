@@ -22,7 +22,11 @@ server:
   shutdownTimeout: 15s
 
 database:
-  url: "postgres://postgres:postgres@localhost:5432/nexus_gateway?sslmode=disable"
+  # Empty on purpose: a connection URL carries its credential in the userinfo
+  # segment, so this line is a SECRET even though the key is called `url`.
+  # The value comes from the DATABASE_URL env override (see .env.example);
+  # binding rule: CLAUDE.md "Secrets are env-only — never yaml".
+  url: ""
   # Connection-pool sizing. The Hub is the traffic_event DRAIN: its MQ
   # consumer batch-inserts every event the gateway/proxy/agent emit, on
   # top of shadow/config/IAM/enrollment work — so under high ingest the
@@ -158,8 +162,8 @@ hub:
 #
 # Stated explicitly, and disabled, on purpose. This template previously carried NO
 # spill block at all, so the shipping posture of a compliance product was readable
-# only by inferring a Go default from source — the same silence finding S-3 exists
-# to remove, one layer up. `enabled: false` means every captured body stays inline
+# only by inferring a Go default from source — the same silence a runtime-source
+# report exists to remove, one layer up. `enabled: false` means every captured body stays inline
 # on traffic_event_payload, bounded by payloadCapture.maxInlineBodyBytes.
 #
 # The SHIPPING posture for a real deployment is `nexus-hub.prod.yaml.example`, which

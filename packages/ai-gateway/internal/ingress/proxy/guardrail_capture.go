@@ -9,22 +9,21 @@ import (
 // guardrail_capture.go — payload capture for POST /v1/guardrail, under the same
 // operator switch that governs every other request and response body.
 //
-// This endpoint used to store no body at all, on the reasoning that the
-// evaluated text is the caller's sensitive material. That reasoning answers the
-// wrong question. Sensitivity governs WHO may read a body, WHETHER it is masked,
-// and HOW LONG it is kept — three questions this deployment already answers, with
-// the operator's payload_capture switch, the pipeline's own redaction spans, and
-// IAM on the traffic detail. Dropping the bytes substituted one blunt answer for
-// all three, and did it only here: the identical sentence sent to
-// /v1/chat/completions is stored, so the retention policy for a piece of text
-// depended on which door it came in by.
+// Storing no body here, on the reasoning that the evaluated text is the caller's
+// sensitive material, answers the wrong question. Sensitivity governs WHO may
+// read a body, WHETHER it is masked, and HOW LONG it is kept — three questions
+// this deployment already answers, with the operator's payload_capture switch,
+// the pipeline's own redaction spans, and IAM on the traffic detail. Dropping the
+// bytes substitutes one blunt answer for all three, and only here: the identical
+// sentence sent to /v1/chat/completions is stored, so the retention policy for a
+// piece of text would depend on which door it came in by.
 //
-// It also made the one record that most needs reconstruction the one record that
-// could not be reconstructed. A guardrail row IS a verdict about content; an
-// auditor asking what the verdict applied to got the decision, the tags and the
-// coverage, and never the text. The same argument was already accepted for STT
-// (see captureSTTAudio: "the transcription was auditable and the thing
-// transcribed was not") — guardrail is that shape and was simply left out.
+// It also leaves the one record that most needs reconstruction unreconstructable.
+// A guardrail row IS a verdict about content, and an auditor asking what the
+// verdict applied to gets the decision, the tags and the coverage, and never the
+// text. The same argument is accepted for STT (see captureSTTAudio: "the
+// transcription was auditable and the thing transcribed was not") — guardrail is
+// that shape.
 
 // captureGuardrailRequest records the evaluated text on the audit row, before
 // the body is parsed, so a request rejected as malformed still records what the

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Bounded sizes its buffer from a declared length (findings M-1 and C-11). These pin the
+// Bounded sizes its buffer from a declared length. These pin the
 // cases where sizing differs from io.ReadAll, because most of them fail SILENTLY: a
 // mis-sized buffer yields a body that is the wrong length rather than an error, and callers
 // feed that body to usage extraction, to compliance hooks, or relay it verbatim to a client.
@@ -426,8 +426,8 @@ func (r *overDeliveringReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if len(p) == 0 {
-		// This is the shape that used to hang: an empty read window. Returning (0, nil) is what
-		// strings.Reader and bytes.Reader do here, and it is what made the old loop spin.
+		// An empty read window. Returning (0, nil) is what strings.Reader and
+		// bytes.Reader do here, and a loop that counts it as progress spins.
 		return 0, nil
 	}
 	n := copy(p, r.data)
@@ -496,8 +496,8 @@ func TestBounded_DoublingIsClampedToTheCap(t *testing.T) {
 
 // TestBounded_CapacityNeverExceedsTheCap pins the invariant the unclamped read window rests on,
 // across the shapes that decide the first allocation and the growth step. It is asserted
-// separately because the window used to be clamped defensively at the read site; that clamp is
-// gone now that the loop condition makes it unreachable, and this is what keeps it unreachable.
+// separately because nothing clamps the window at the read site: the loop condition is the only
+// thing making an over-cap capacity unreachable, and this is what keeps it that way.
 func TestBounded_CapacityNeverExceedsTheCap(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

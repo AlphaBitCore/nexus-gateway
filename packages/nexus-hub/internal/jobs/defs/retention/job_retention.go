@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
+	jobstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
 )
 
 const (

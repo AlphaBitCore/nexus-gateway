@@ -9,8 +9,8 @@ import (
 
 const (
 	staleThingJobID          = "stale-thing-sweep"
-	staleThingJobName        = "Stale Thing Sweep"
-	staleThingJobDescription = "Marks Things offline when their last_seen_at exceeds the per-category threshold."
+	staleThingJobName        = "Stale Node Sweep"
+	staleThingJobDescription = "Marks nodes offline when their last_seen_at exceeds the per-category threshold."
 )
 
 // StaleThingConfig holds the per-category offline thresholds.

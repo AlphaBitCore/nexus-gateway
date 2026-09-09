@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
@@ -42,7 +43,10 @@ type bumpedExchange struct {
 	// call-sites, even if the admin invalidates mid-request.
 	pcCfg payloadcapture.Config
 
-	// txID / traceID — the canonical X-Nexus-Request-Id correlation value.
+	// txID is the request id (X-Nexus-Request-Id, its X-Request-Id alias, or
+	// minted here) and is the cross-service correlation key. traceID is the
+	// intercepted client's own W3C trace, empty when they carried none. Two
+	// different ids with two different owners — never each other's fallback.
 	txID    string
 	traceID string
 
@@ -56,10 +60,10 @@ type bumpedExchange struct {
 	domainRuleID       string
 
 	// auditCtx is built at the end of the request phase and stamped onto the
-	// context by stampCPMarker, in the SAME WithContext as the CPMarker (finding
-	// C-3). The two used to be separate stamps and therefore two http.Request
-	// clones, even though stampCPMarker runs immediately after the request phase
-	// with nothing reading the context in between. Holding it here for one call
+	// context by stampCPMarker, in the SAME WithContext as the CPMarker. Separate
+	// stamps would mean two http.Request clones, even though stampCPMarker runs
+	// immediately after the request phase with nothing reading the context in
+	// between. Holding it here for one call
 	// keeps both values immutable once stamped — the alternative, a mutable holder
 	// in the context, would be readable from the SSE goroutines while still being
 	// written.
@@ -69,7 +73,7 @@ type bumpedExchange struct {
 	endpointType typology.EndpointKind
 
 	// deferredAudit holds the audit emission for the stream-through fast path, which
-	// must run AFTER relayResponse rather than before it (finding C-34). Nil on every
+	// must run AFTER relayResponse rather than before it. Nil on every
 	// other arm, which emits inline because it has already read the body.
 	deferredAudit func()
 
@@ -142,7 +146,7 @@ func (x *bumpedExchange) prepare() {
 	// pointer is stamped onto AuditInfo so buildEvent can read it
 	// at emit time across every Emit / EmitDual call site.
 	// The sink is created here but NOT stamped here: stampCPMarker carries it into its
-	// existing clone (finding C-3). In-package phases read x.phaseSink directly, and the only
+	// existing clone. In-package phases read x.phaseSink directly, and the only
 	// context reader is the tracing RoundTripper, which runs inside forwardUpstream — after
 	// stampCPMarker on every path that forwards upstream.
 	x.phaseSink = traffic.NewPhaseSink()
@@ -169,18 +173,29 @@ func (x *bumpedExchange) prepare() {
 		x.pcCfg = bo.payloadCaptureStore.Get()
 	}
 
-	// Use client-supplied correlation ID if present; otherwise generate one.
-	// X-Nexus-Request-Id is the single canonical correlation header — it
-	// doubles as the cross-service trace id (seeded by the agent for
-	// intercepted flows, generated here for direct proxy traffic) and is
-	// forwarded to ai-gateway so its audit records share the same id.
-	x.txID = x.r.Header.Get("X-Nexus-Request-Id")
+	// The request id under either accepted spelling, minted when the
+	// intercepted client sent neither. It lands on the audit row's
+	// external_request_id, which is what stitches this hop's row to the rows
+	// the next Nexus service writes for the same request.
+	x.txID = traffic.ResolveRequestID(x.r.Header)
 	if x.txID == "" {
 		x.txID = uuid.NewString()
 	}
-	// Set the header on the outgoing request so upstream services can correlate.
-	x.r.Header.Set("X-Nexus-Request-Id", x.txID)
-	x.traceID = x.txID
+	// The id is NOT written back onto the outgoing request. This is a passive
+	// interception point: the request was addressed to the upstream, and a
+	// header we add to it announces Nexus to a third party the caller never
+	// told about us. The value lives on this hop's audit row instead, and
+	// ForwardRequest strips the whole X-Nexus-* namespace on the way out.
+	//
+	// Cross-service correlation does not depend on it. The identity enricher's
+	// primary leg matches agent / compliance-proxy rows to the gateway's by
+	// client IP and time window, not by a shared header.
+	// The trace id is the intercepted client's own, and only theirs. This is a
+	// passive interception point: it records the W3C trace the client was
+	// already carrying and records nothing when the client carried none. It is
+	// never the request id — that would file a Nexus-minted value in a column
+	// that means "the caller's distributed trace".
+	x.traceID = telemetry.InboundTraceIDFromHeaders(x.r.Header)
 
 	// Rewrite the URL to point to the upstream.
 	x.r.URL.Scheme = "https"

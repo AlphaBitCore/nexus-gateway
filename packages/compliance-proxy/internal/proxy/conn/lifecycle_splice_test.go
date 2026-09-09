@@ -8,7 +8,7 @@ import (
 )
 
 // IdleConn must NOT expose io.ReaderFrom or io.WriterTo, and that is a decision rather
-// than an oversight (finding C-8).
+// than an oversight.
 //
 // Exposing them would let io.Copy reach *net.TCPConn's fast path — splice(2) on Linux —
 // on the CONNECT passthrough relay, which is where the whole tunnel's throughput lives.

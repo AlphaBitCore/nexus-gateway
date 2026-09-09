@@ -99,10 +99,20 @@ func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 	}
 
 	// Build the canonical content string from the message.content blocks.
-	var content strings.Builder
+	//
+	// A reasoning model answers with TWO blocks — a `thinking` one and a `text`
+	// one — and only the text block is the answer. Collecting the thinking here
+	// would fold the model's private reasoning into the visible content; passing
+	// over it entirely, which this did, dropped the reasoning from canonical
+	// altogether, so no response rule could scan it and no egress could render
+	// it. It belongs on the reasoning channel, beside the tool plan.
+	var content, thinking strings.Builder
 	gjson.GetBytes(nativeBody, "message.content").ForEach(func(_, part gjson.Result) bool {
-		if part.Get("type").Str == "text" {
+		switch part.Get("type").Str {
+		case "text":
 			content.WriteString(part.Get("text").Str)
+		case "thinking":
+			thinking.WriteString(part.Get("thinking").Str)
 		}
 		return true
 	})
@@ -111,10 +121,15 @@ func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 		"role":    "assistant",
 		"content": content.String(),
 	}
+	// Cohere has two reasoning-shaped channels and canonical has one. A turn
+	// carries at most one of them — a tool plan precedes tool calls, a thinking
+	// block precedes an answer — so the tool plan wins only when it is present.
 	if plan := gjson.GetBytes(nativeBody, "message.tool_plan"); plan.Type == gjson.String && plan.Str != "" {
 		// Surface Cohere's reasoning trace via OpenAI's reasoning_content
 		// extension so o-series-aware clients can consume it.
 		message["reasoning_content"] = plan.Str
+	} else if thinking.Len() > 0 {
+		message["reasoning_content"] = thinking.String()
 	}
 	if tc := gjson.GetBytes(nativeBody, "message.tool_calls"); tc.IsArray() {
 		var calls []json.RawMessage

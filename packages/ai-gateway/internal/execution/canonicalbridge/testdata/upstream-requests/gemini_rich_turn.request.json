@@ -1,0 +1,93 @@
+{
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "Be terse."
+      }
+    ]
+  },
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "get_weather",
+          "description": "get weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "What is the weather in Paris? Use the tool. The image and file are context."
+        },
+        {
+          "inlineData": {
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+          }
+        },
+        {
+          "inlineData": {
+            "mimeType": "application/pdf",
+            "data": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgODBdIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDUgMCBSID4+ID4+IC9Db250ZW50cyA0IDAgUiA+PgplbmRvYmoKNCAwIG9iago8PCAvTGVuZ3RoIDgzID4+CnN0cmVhbQpCVCAvRjEgMTAgVGYgMTIgNDAgVGQgKE5leHVzIGNvcnB1cyBmaXh0dXJlOiB0aGUgd2VhdGhlciByZXBvcnQgaXMgYXR0YWNoZWQuKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDAgMDAwMDAgbiAKMDAwMDAwMDM3MyAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjQ0MwolJUVPRgo="
+          }
+        }
+      ]
+    },
+    {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "get_weather",
+            "args": {
+              "city": "Paris"
+            }
+          },
+          "thoughtSignature": "CpsCARFNMg/0K566d2b/FD/1FjTIM1rOXBb+s6biNWbI8be3vRtv3aN79ZmNv8tqvJUT40uzEcrEqU2AZIIe/F7MXimoel25vv1A9Suh23qo0fme0kqgGYKgOc0QFR61LN+n+Nfhi35IcJPdC93VOjaeSevVJGvHe8/Cc6rjc+trppFjuCidprQK2SZL9eU2WqV9T0XJLp6Ff2hiWdYoDd6e9R5k6uTs0XVFCpiA6K8YemqGKGzOiLFNaMNk7e0gK3mmWhd7uEBvSFGWIOeLumJ5iXZatFJRUqCtWN3WMitho4MROeouXF4Kil+kopnPHhZGe6luHmEpvceLxlPmfs+7FuDoICwV5ScjrUlmgGXagW0X8CqI0qPohssktQ=="
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "get_weather",
+            "response": {
+              "result": {
+                "city": "Paris",
+                "temp_c": 18
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "And what about tomorrow?"
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 800
+  }
+}

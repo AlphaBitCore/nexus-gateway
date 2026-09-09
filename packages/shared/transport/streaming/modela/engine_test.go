@@ -601,7 +601,7 @@ func TestConfigDefaults(t *testing.T) {
 	}
 }
 
-// TestCompactionWindowedConfirm proves the #12 fix keeps detection sound: with a small
+// TestCompactionWindowedConfirm proves compaction keeps detection sound: with a small
 // tail window, delivering several units advances deliveredScanLen past the window so
 // scanBuf is compacted (the delivered prefix dropped + offsets rebased). A later prescan
 // hit must STILL fire a confirm (the `len(scanBuf) > confirmedLen` gate not wrongly
@@ -707,10 +707,10 @@ func TestCompactionRebasePreservesPrescanGate(t *testing.T) {
 	}
 }
 
-// TestSustainedPrescanFP_ConfirmWorkIsLinear gates the #12 O(N²)→O(N) confirm fix with an
-// asserting bound (the benchmark only prints). Under a perpetual prescan false-positive every
+// TestSustainedPrescanFP_ConfirmWorkIsLinear gates the confirm cost with an asserting
+// bound (the benchmark only prints). Under a perpetual prescan false-positive every
 // unit fires a confirm; windowed confirm copies only the bounded tail (O(window) bytes per
-// confirm → O(N) total), while the pre-#12 full-buffer confirm copied the whole accumulated
+// confirm → O(N) total), while a full-buffer confirm copies the whole accumulated
 // prefix (O(N) bytes per confirm → O(N²) total). testing.AllocsPerRun is BLIND to this: the
 // alloc COUNT is ~N either way — only the alloc BYTES diverge. So this measures TotalAlloc
 // bytes at two stream lengths and asserts that 4× the units grows bytes ~linearly (< 8×); a

@@ -1,0 +1,29 @@
+{
+  "id": "c10f3e11-7b0d-4c72-99ef-cf64f413b89c",
+  "message": {
+    "role": "assistant",
+    "tool_plan": "I will use one or more of the available tools to find the answer",
+    "tool_calls": [
+      {
+        "id": "get_weather_xbr1cmd29rp9",
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "arguments": "{\"city\":\"Paris\"}"
+        }
+      }
+    ]
+  },
+  "finish_reason": "TOOL_CALL",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 72,
+      "output_tokens": 22
+    },
+    "tokens": {
+      "input_tokens": 1793,
+      "output_tokens": 34
+    },
+    "cached_tokens": 112
+  }
+}

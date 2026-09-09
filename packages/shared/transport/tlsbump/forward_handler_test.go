@@ -118,11 +118,11 @@ func TestReadResponseBodyBounded(t *testing.T) {
 	})
 }
 
-// TestBumpedPathReads_SizeFromContentLength pins finding C-11's win at THIS layer, not just
-// in bodyread's own tests. The helpers here own the decision to forward the declared length,
-// and dropping it would leave every assertion above passing — the bodies would still be
-// correct, they would just cost geometric growth again. Capacity is the only observable
-// difference, so it is what is asserted.
+// TestBumpedPathReads_SizeFromContentLength pins the declared-length read at THIS layer,
+// not just in bodyread's own tests. The helpers here own the decision to forward the
+// declared length, and dropping it would leave every assertion above passing — the bodies
+// would still be correct, they would just cost geometric growth again. Capacity is the only
+// observable difference, so it is what is asserted.
 func TestBumpedPathReads_SizeFromContentLength(t *testing.T) {
 	payload := bytes.Repeat([]byte("q"), 8192)
 
@@ -157,8 +157,8 @@ func TestBumpedPathReads_SizeFromContentLength(t *testing.T) {
 		if cap(got) > len(payload)+1 {
 			t.Fatalf("capacity = %d for an %d-byte response with an honest Content-Length, want at "+
 				"most %d — resp.ContentLength is not reaching bodyread.Bounded. This helper takes the "+
-				"whole *http.Response precisely so it can read that field; taking only the body was "+
-				"what made the response half of C-11 impossible.",
+				"whole *http.Response precisely so it can read that field; taking only the body "+
+				"makes a declared-length response read impossible.",
 				cap(got), len(payload), len(payload)+1)
 		}
 	})

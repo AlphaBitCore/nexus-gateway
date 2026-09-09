@@ -10,8 +10,8 @@ import (
 
 // TestSelectTrustCandidate covers the per-distro anchor-directory detection:
 // the first candidate whose directory exists wins, and a host with none of
-// the known layouts reports not-found. This is the logic that previously
-// lived as a Debian-only hardcode in the install-ca shim and left RPM hosts
+// the known layouts reports not-found. A Debian-only hardcode here, as the
+// install-ca shim once carried, leaves RPM hosts
 // with intercepted TLS untrusted.
 func TestSelectTrustCandidate(t *testing.T) {
 	cands := linuxTrustCandidates()

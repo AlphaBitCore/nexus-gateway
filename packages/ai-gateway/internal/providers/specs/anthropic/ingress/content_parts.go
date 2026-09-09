@@ -7,6 +7,7 @@ package ingress
 import (
 	"strings"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/tidwall/gjson"
 )
 
@@ -99,8 +100,17 @@ func anthropicMessageToOpenAI(msg gjson.Result) []map[string]any {
 			case "file":
 				file["file_id"] = src.Get("file_id").String()
 			}
+			// Anthropic keeps the name on `title`, and the codec's encode side
+			// puts it there. A document that never had one still needs a
+			// filename here: this canonical body is an OpenAI request, and
+			// OpenAI rejects file_data without one. Supplying it from the
+			// declared mime is the same adapter auto-fill the Anthropic
+			// max_tokens default performs — the protocol-required field is
+			// filled from what the wire does state.
 			if t := part.Get("title").String(); t != "" {
 				file["filename"] = t
+			} else if _, hasData := file["file_data"]; hasData {
+				file["filename"] = specutil.FilenameForMime(src.Get("media_type").String())
 			}
 			if len(file) > 0 {
 				images = append(images, map[string]any{"type": "file", "file": file})

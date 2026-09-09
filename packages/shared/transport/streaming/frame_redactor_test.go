@@ -243,12 +243,11 @@ func TestBufferPipeline_RedactorConcurrency(t *testing.T) {
 	}
 }
 
-// TestBufferPipeline_CoFiringBlockSoft_RedactDelivers proves the #13 appliance-leak fix:
+// TestBufferPipeline_CoFiringBlockSoft_RedactDelivers is the appliance-leak guard:
 // a co-firing soft-block promotes the aggregate Decision to BlockSoft but carries the
 // redact's content, so the buffer routes it through the FrameRedactor (gating on
-// CarriesRedaction, not Decision==Modify) and delivers the MASKED stream — not the
-// original, which the old Decision==Modify switch fell through to `default` and replayed
-// raw (the leak this fixes).
+// CarriesRedaction, not Decision==Modify) and delivers the MASKED stream. A switch on
+// Decision==Modify falls through to `default` and replays the original raw.
 func TestBufferPipeline_CoFiringBlockSoft_RedactDelivers(t *testing.T) {
 	fr := &mockFrameRedactor{
 		fn: func(events []*SSEEvent, _ *core.CompliancePipelineResult) ([]*SSEEvent, error) {
@@ -289,8 +288,8 @@ func TestBufferPipeline_CoFiringBlockSoft_RedactDelivers(t *testing.T) {
 	}
 }
 
-// TestBufferPipeline_CoFiringBlockSoft_FailOpenDegrade_KeepsBlockAction pins the #13 P3
-// guard: when the redactor CANNOT splice and fails open (agent: returns the original frames
+// TestBufferPipeline_CoFiringBlockSoft_FailOpenDegrade_KeepsBlockAction pins the
+// degrade arm: when the redactor CANNOT splice and fails open (agent: returns the original frames
 // with a nil error after stamping ReasonRedactInflightUnsupported), the original was relayed,
 // so the disposition must NOT be re-stamped redact — it stays the aggregate BlockSoft/block.
 func TestBufferPipeline_CoFiringBlockSoft_FailOpenDegrade_KeepsBlockAction(t *testing.T) {

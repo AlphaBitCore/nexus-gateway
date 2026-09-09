@@ -3,6 +3,7 @@ package proxy
 import (
 	"crypto/sha256"
 	"encoding/hex"
+
 	// stdlib encoding/json, not goccy: this digest must be byte-stable across
 	// runs, and stdlib guarantees map keys are marshalled in sorted order.
 	"encoding/json"

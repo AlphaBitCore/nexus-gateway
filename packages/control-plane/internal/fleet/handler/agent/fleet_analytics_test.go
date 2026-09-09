@@ -165,6 +165,11 @@ func TestFleetAnalyticsTopDest_EmptyFallback(t *testing.T) {
 	h := newHandlerForTest(mock, &fakeHub{}, nil)
 	// QueryRollupCascade path: no rows returned → result is nil.
 	mock.ExpectQuery(`metric_rollup`).
+		// 1 metric + 2 times = 3 positional args. Without WithArgs pgxmock
+		// expects ZERO, so this never matched and the query returned an
+		// ERROR — which the old (nil,nil)-on-error contract turned into "no
+		// data", so the test passed while never reaching the empty path.
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"metricName", "dimensionKey", "value", "bucketStart", "granularity"}))
 
 	e := echo.New()
@@ -198,6 +203,11 @@ func TestFleetAnalyticsTopDest_WithResult(t *testing.T) {
 	// The handler calls QueryRollupCascade (TimeSeries=false).
 	// The cascade tries multiple tables — give it a match on the first table.
 	mock.ExpectQuery(`metric_rollup`).
+		// 1 metric + 2 times = 3 positional args. Without WithArgs pgxmock
+		// expects ZERO, so this never matched and the query returned an
+		// ERROR — which the old (nil,nil)-on-error contract turned into "no
+		// data", so the test passed while never reaching the empty path.
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"metricName", "dimensionKey", "value", "bucketStart", "granularity"}).
 			AddRow(metricspkg.MetricRequestCount, "target_host=api.openai.com", float64(100), time.Now(), "1h").
 			AddRow(metricspkg.MetricActiveEntities, "target_host=api.openai.com", float64(5), time.Now(), "1h"))
@@ -221,6 +231,11 @@ func TestQueryMetricsOrFallback_TimeSeriesPath(t *testing.T) {
 	// watermark query then the rollup table. Return empty rows so the
 	// function returns nil result cleanly.
 	mock.ExpectQuery(`metric_rollup`).
+		// 1 metric + 2 times = 3 positional args. Without WithArgs pgxmock
+		// expects ZERO, so this never matched and the query returned an
+		// ERROR — which the old (nil,nil)-on-error contract turned into "no
+		// data", so the test passed while never reaching the empty path.
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"metricName", "dimensionKey", "value", "bucketStart", "granularity"}))
 
 	now := time.Now()

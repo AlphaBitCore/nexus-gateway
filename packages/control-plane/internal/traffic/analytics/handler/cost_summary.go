@@ -74,11 +74,21 @@ type costSummaryTotals struct {
 // ok=false when the rollup cascade returned no rows (caller falls back to a direct DB SUM).
 func (h *Handler) rollupCostSummaryTotals(ctx context.Context, since, until time.Time) (costSummaryTotals, bool) {
 	q := metrics.MetricsQuery{Metrics: costSummaryMetrics, StartTime: since, EndTime: until}
-	rows, err := h.metrics.QueryRollupCascade(ctx, q)
-	if err != nil || len(rows) == 0 {
+	result, err := h.queryMetricsOrFallback(ctx, q)
+	// A read FAILURE and an empty window are different answers. Both
+	// fall back to the direct scan below — that is the design, and it
+	// is why this is a log rather than a 5xx — but only one of them is
+	// a fault. Collapsing them meant a broken rollup leg silently sent
+	// every request to a full traffic_event scan with nothing to say
+	// so. The empty case stays silent on purpose: a fresh install and
+	// a quiet window would otherwise log on every request.
+	if err != nil {
+		h.logger.Error("cost summary: rollup totals read failed; falling back to a direct scan", "error", err)
 		return costSummaryTotals{}, false
 	}
-	result := metrics.BuildResult(q, rows, metrics.SelectGranularity(since, until))
+	if result == nil {
+		return costSummaryTotals{}, false
+	}
 	s := result.Summary
 	return costSummaryTotals{
 		estimated:         s[metrics.MetricEstimatedCostUSD],
@@ -98,11 +108,15 @@ func (h *Handler) rollupCostSummaryByDim(ctx context.Context, since, until time.
 		StartTime:    since,
 		EndTime:      until,
 	}
-	rows, err := h.metrics.QueryRollupCascade(ctx, q)
-	if err != nil || len(rows) == 0 {
+	result, err := h.queryMetricsOrFallback(ctx, q)
+	if err != nil {
+		h.logger.Error("cost summary: rollup breakdown read failed; falling back to a direct scan",
+			"dimension", dim, "error", err)
 		return nil
 	}
-	result := metrics.BuildResult(q, rows, metrics.SelectGranularity(since, until))
+	if result == nil {
+		return nil
+	}
 	return result.Groups
 }
 

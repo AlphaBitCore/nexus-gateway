@@ -243,10 +243,9 @@ func TestOpenAIChatNonStream_ReasoningEstimateCreatesUsageWhenBodyHasNone(t *tes
 
 func TestOpenAIChatStream_ReasoningDeltaEstimatedWhenUsageOmitsIt(t *testing.T) {
 	// Frames separated by a BLANK line, which is what SSE requires and what every
-	// provider emits. This fixture previously joined the data lines with a single "\n",
-	// making it one three-line frame rather than three frames — it decoded only because
-	// walkSSEFrames used to dispatch per line instead of per frame (findings R-14/R-15).
-	// It was the only fixture in this package framed that way; ten other files use "\n\n".
+	// provider emits — as do the ten other fixtures in this package. Joined with a
+	// single "\n" this would be one three-line frame, and only a decoder dispatching
+	// per line rather than per frame would read it as three.
 	raw := strings.Join([]string{
 		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"ab"}}]}`,
 		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}`,
@@ -449,7 +448,7 @@ func TestGenericHTTP_MultipartPartNameFallbacks(t *testing.T) {
 // OpenAI projection
 
 func TestProjectAssistantBlocks_ToolUseWithoutPayloadSkipped(t *testing.T) {
-	text, _, toolCalls := projectAssistantBlocks([]core.ContentBlock{
+	text, _, _, toolCalls := projectAssistantBlocks([]core.ContentBlock{
 		{Type: core.ContentToolUse}, // malformed: no ToolUse payload
 		{Type: core.ContentText, Text: "still here"},
 	})

@@ -126,6 +126,7 @@ type (
 	UpsertDeviceAssignmentParams = enrollstore.UpsertDeviceAssignmentParams
 	DeviceAssignmentSource       = enrollstore.DeviceAssignmentSource
 	DeviceAssignmentMatch        = trafficstore.DeviceAssignmentMatch
+	DeviceAssignmentWindow       = trafficstore.DeviceAssignmentWindow
 	AgentByIP                    = trafficstore.AgentByIP
 
 	NexusUserInfo = userstore.NexusUserInfo
@@ -164,7 +165,7 @@ type (
 
 	// traffic/store (trafficstore alias — package name is "store", aliased to avoid collision)
 	PendingIdentityEvent      = trafficstore.PendingIdentityEvent
-	MatchedEventByTraceID     = trafficstore.MatchedEventByTraceID
+	MatchedEventByRequestID   = trafficstore.MatchedEventByRequestID
 	UpdateEventIdentityParams = trafficstore.UpdateEventIdentityParams
 )
 

@@ -1,7 +1,7 @@
 // Package codec_test — GLM embedding codec round-trip and error-path tests.
 //
 // Architecture references:
-//   - docs/dev/architecture/provider-adapter-architecture.md §3a Rules 1-7
+//   - docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md §3a Rules 1-7
 //
 // Tests assert OBSERVABLE behavior and NAMED FAILURE MODES. Coverage target
 // is ≥95% per the unit-test-coverage-95 binding.

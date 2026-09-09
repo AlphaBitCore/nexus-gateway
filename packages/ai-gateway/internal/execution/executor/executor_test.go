@@ -13,8 +13,8 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	configtypes "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -84,9 +84,9 @@ func (m *mockAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore
 	return &provcore.ProbeResult{OK: true}, nil
 }
 
-func (m *mockAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
+func (m *mockAdapter) PrepareBody(req provcore.Request) (provcore.PreparedBody, error) {
 	m.prepareBodyCalls++
-	return req.Body, nil, "", nil
+	return provcore.PreparedBody{Body: req.Body}, nil
 }
 
 func (m *mockAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, rewrites []string, urlOverride string) (*provcore.Response, error) {

@@ -11,11 +11,11 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	metricsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	metricsreg "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )

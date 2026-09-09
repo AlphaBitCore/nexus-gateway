@@ -15,12 +15,13 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/estimator"
@@ -319,11 +320,11 @@ func (h *Handler) runEstimateOnce(ctx context.Context, body []byte, target Estim
 
 // resolveTargetModel finds the (providerId, modelId) row the caller named.
 //
-// providerId used to be echoed back and nothing else: the lookup was by code
-// alone, so two providers serving one code both resolved to whichever row the
-// catalog returned first, and a compare across two providers of the same model
-// — the endpoint's whole purpose — priced both at one provider's rates. It is
-// consulted first now, and the by-code lookups stay as the fallback for a
+// Echoing providerId back and looking up by code
+// alone resolves two providers serving one code to whichever row the
+// catalog returns first, so a compare across two providers of the same model
+// — the endpoint's whole purpose — prices both at one provider's rates. It is
+// consulted first, and the by-code lookups stay as the fallback for a
 // caller that names only the model.
 func (h *Handler) resolveTargetModel(ctx context.Context, target EstimateCompareTarget) (store.Model, bool) {
 	if h.deps == nil || h.deps.Models == nil {

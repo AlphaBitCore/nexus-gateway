@@ -44,13 +44,14 @@
     "hero": {
       "inSync": "配置已同步",
       "inSyncMeta": "全部策略已生效，最近上报：{{at}}。",
-      "drifted": "配置未同步",
-      "driftedMeta": "落后 {{behind}} 个版本{{s}}，下次同步会自动追上。",
       "killSwitchEngaged": "紧急停摆已启用",
       "killSwitchMeta": "管理员已暂停拦截。原因：{{reason}}。",
       "diagActive": "诊断模式已开启",
       "diagActiveMeta": "详细诊断至 {{until}}。",
-      "desired": "目标"
+      "outOfSync": "配置未同步",
+      "outOfSyncMeta_one": "落后 {{count}} 个版本，下次同步会自动追上。",
+      "outOfSyncMeta_other": "落后 {{count}} 个版本，下次同步会自动追上。",
+      "target": "目标"
     },
     "kpi": {
       "domains": "域名",
@@ -66,16 +67,12 @@
       "enforcement": "拦截与执法",
       "deviceControls": "设备控制"
     },
-    "section": {
-      "count": "{{count}} 项"
-    },
     "sync": {
       "title": "同步状态",
-      "desired": "目标版本",
-      "reported": "已上报版本",
       "inSync": "已同步",
-      "drifted": "未同步（落后 {{behind}} 个版本{{s}}）",
-      "lastReportedAt": "最近上报"
+      "lastReportedAt": "最近上报",
+      "outOfSync_one": "未同步（落后 {{count}} 个版本）",
+      "outOfSync_other": "未同步（落后 {{count}} 个版本）"
     },
     "interceptionDomains": {
       "title": "拦截域名",

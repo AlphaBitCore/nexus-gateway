@@ -21,12 +21,13 @@ package proxy
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
@@ -381,7 +382,8 @@ func TestCacheHit_Stream_CrossIngress_WireGrammar(t *testing.T) {
 				Stream:     true,
 			}
 			prepReq.Target.ProviderModelID = "gpt-4o"
-			finalBody, _, _, err := adapter.PrepareBody(prepReq)
+			finalBodyPrep, err := adapter.PrepareBody(prepReq)
+			finalBody, _, _ := finalBodyPrep.Body, finalBodyPrep.Rewrites, finalBodyPrep.URLOverride
 			if err != nil {
 				t.Fatalf("PrepareBody: %v", err)
 			}
@@ -467,7 +469,8 @@ func TestCacheHit_Stream_ResponsesIngress_OriginOverride(t *testing.T) {
 		Stream:     true,
 	}
 	prepReq.Target.ProviderModelID = "gpt-4o"
-	finalBody, _, _, err := adapter.PrepareBody(prepReq)
+	finalBodyPrep, err := adapter.PrepareBody(prepReq)
+	finalBody, _, _ := finalBodyPrep.Body, finalBodyPrep.Rewrites, finalBodyPrep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}

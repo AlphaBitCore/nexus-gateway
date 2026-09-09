@@ -1,8 +1,6 @@
 // Package alerts owns the unified alerting admin surface — alerts /
 // alert rules / alert channels — proxied through to Nexus Hub's
-// /api/v1/admin/alerts/* endpoints. R6 second domain extracted from
-// the flat handler/ package; recipe documented in
-// docs/_archive/2026-q2/programs/r6-handler-decomp-runbook.md.
+// /api/v1/admin/alerts/* endpoints.
 //
 // Every CP route here is a thin forwarder: CP records the actor for
 // audit + applies IAM gating, Hub owns the durable alert/rule/channel
@@ -11,19 +9,20 @@
 package alerts
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // HubBaseURLToken is the narrow surface alerts needs from Hub:

@@ -13,7 +13,10 @@ import (
 
 // tryRollupSummary attempts to serve AnalyticsSummary from rollup data.
 // Returns true if rollup data was found and response was written.
-func (h *Handler) tryRollupSummary(c echo.Context) bool {
+// tryRollupSummary reports (served, error). A read ERROR is not "no data":
+// the caller must answer 5xx rather than a zero-value summary, or a broken
+// read leg renders as "no traffic" on the dashboard.
+func (h *Handler) tryRollupSummary(c echo.Context) (bool, error) {
 	start, end := parseTimeRange(c)
 	s, e := rollupDefaultTimeRange(start, end, tzLoc(c))
 
@@ -28,9 +31,12 @@ func (h *Handler) tryRollupSummary(c echo.Context) bool {
 		StartTime:    s,
 		EndTime:      e,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, err := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if err != nil {
+		return false, err
+	}
 	if result == nil {
-		return false
+		return false, nil
 	}
 
 	as := &analyticsstore.AnalyticsSummary{
@@ -74,7 +80,7 @@ func (h *Handler) tryRollupSummary(c echo.Context) bool {
 	}
 
 	_ = c.JSON(http.StatusOK, as)
-	return true
+	return true, nil
 }
 
 // queryAnalyticsPhasePercentiles computes the three phase P95s used by

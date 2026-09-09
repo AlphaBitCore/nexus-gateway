@@ -5,9 +5,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
+
+	"github.com/goccy/go-json"
 )
 
 // ExternalBackend calls an OpenAI-compatible chat-completion endpoint over

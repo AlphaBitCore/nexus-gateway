@@ -1,9 +1,8 @@
-// Package wiring_test (supplemental) — additional coverage targeting
-// functions at <100% as reported by go tool cover -func after the first
-// test file was written.
+// Package wiring_test (supplemental) — the wiring branches the main test
+// file does not drive.
 //
-// Each test section is labelled with the function it targets and the
-// specific branch(es) that were previously uncovered.
+// Each section is labelled with the function it targets and the branch it
+// reaches.
 package wiring
 
 import (
@@ -543,7 +542,7 @@ func TestInitRedis_PingOK_ReturnsNonNilClient(t *testing.T) {
 
 // InitOTEL — enabled=true path with bad endpoint. telemetry.Init may succeed
 // or fail. Either branch coverage is exercised by flipping Enabled=true
-// (previously only the enabled=false path existed in the test suite).
+// (the enabled=false path is covered by the main file).
 
 func TestInitOTEL_Enabled_BadEndpoint(t *testing.T) {
 	cfg := minimalHubConfig()

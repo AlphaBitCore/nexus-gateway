@@ -118,12 +118,10 @@ func TestCrossServiceConsistency_OAI_Compat_Provider_RoutesToOpenAI(t *testing.T
 }
 
 func TestCrossServiceConsistency_UnknownAdapter_FallsThroughToGeneric(t *testing.T) {
-	// An adapter type the registry doesn't know about now falls through
-	// the lookup chain and lands on the "*:*:*" generic-http normalizer.
-	// Previously (before generic-http was registered) this produced
-	// status="failed". The invariant we pin here: behaviour is
-	// deterministic across all three producers AND the payload Kind
-	// matches the body's content-type.
+	// An adapter type the registry does not know about falls through the
+	// lookup chain and lands on the "*:*:*" generic-http normalizer. The
+	// invariant pinned here: behaviour is deterministic across all three
+	// producers AND the payload Kind matches the body's content-type.
 	reg := NewRegistry()
 	RegisterDefaultAIBuiltins(reg)
 	reg.Freeze()

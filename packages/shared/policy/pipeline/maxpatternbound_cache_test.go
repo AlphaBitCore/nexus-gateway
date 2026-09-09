@@ -93,7 +93,7 @@ func TestBuildPipeline_StampsBoundResponseStageOnly(t *testing.T) {
 	}
 	r := NewPolicyResolver([]core.HookConfig{mkCfg("response"), mkCfg("request")}, reg, testLogger())
 
-	resp, err := r.BuildPipeline("response", "AI_GATEWAY", "", nil, time.Second, 5*time.Second, false, true, testLogger())
+	resp, _, err := r.BuildPipeline("response", "AI_GATEWAY", "", nil, time.Second, 5*time.Second, false, true, testLogger())
 	if err != nil || resp == nil {
 		t.Fatalf("response BuildPipeline: err=%v nil=%v", err, resp == nil)
 	}
@@ -110,7 +110,7 @@ func TestBuildPipeline_StampsBoundResponseStageOnly(t *testing.T) {
 		t.Fatal("response build should populate the bound cache")
 	}
 
-	req, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil, time.Second, 5*time.Second, false, true, testLogger())
+	req, _, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil, time.Second, 5*time.Second, false, true, testLogger())
 	if err != nil || req == nil {
 		t.Fatalf("request BuildPipeline: err=%v nil=%v", err, req == nil)
 	}

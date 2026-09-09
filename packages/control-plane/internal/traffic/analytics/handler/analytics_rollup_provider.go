@@ -30,7 +30,10 @@ type metricsAggRow struct {
 // queried off the `routed_provider=...` dimension. The legacy `provider=...`
 // dimension was the requested provider, which OpenAI-style traffic never
 // fills, so reading from it returns frozen pre-fix data and undercounts.
-func (h *Handler) tryRollupByProvider(c echo.Context) bool {
+// Reports (served, error). A read ERROR is not "no data": the caller must
+// answer 5xx rather than an empty payload, or a broken read leg renders as
+// "no traffic" on the dashboard.
+func (h *Handler) tryRollupByProvider(c echo.Context) (bool, error) {
 	startP, endP := parseTimeRange(c)
 	start, end := rollupDefaultTimeRange(startP, endP, tzLoc(c))
 
@@ -44,9 +47,12 @@ func (h *Handler) tryRollupByProvider(c echo.Context) bool {
 		StartTime:    start,
 		EndTime:      end,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, readErr := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if readErr != nil {
+		return false, readErr
+	}
 	if result == nil {
-		return false
+		return false, nil
 	}
 
 	groups := h.rollupGroupsToGroupByResults(c.Request().Context(), "provider", result.Groups, "provider")
@@ -78,7 +84,7 @@ func (h *Handler) tryRollupByProvider(c echo.Context) bool {
 	}
 
 	_ = c.JSON(http.StatusOK, map[string]any{"data": mapped})
-	return true
+	return true, nil
 }
 
 // byProviderPhase carries the three phase P95s per provider for the
@@ -129,13 +135,16 @@ func (h *Handler) queryByProviderPhasePercentiles(ctx context.Context, start, en
 
 // tryRollupGroupBy attempts to serve a group-by analytics query (usage, cost,
 // cost-report) from rollup data. sumFields is "tokens" or "cost".
-func (h *Handler) tryRollupGroupBy(c echo.Context, groupKey, sumFields string) ([]analyticsstore.GroupByResult, bool) {
+// Reports (served, error). A read ERROR is not "no data": the caller must
+// answer 5xx rather than an empty payload, or a broken read leg renders as
+// "no traffic" on the dashboard.
+func (h *Handler) tryRollupGroupBy(c echo.Context, groupKey, sumFields string) ([]analyticsstore.GroupByResult, bool, error) {
 	startP, endP := parseTimeRange(c)
 	start, end := rollupDefaultTimeRange(startP, endP, tzLoc(c))
 
 	dimKey, ok := rollupDimensionForGroupKey[groupKey]
 	if !ok || dimKey == "" {
-		return nil, false
+		return nil, false, nil
 	}
 
 	var metricNames []string
@@ -162,17 +171,23 @@ func (h *Handler) tryRollupGroupBy(c echo.Context, groupKey, sumFields string) (
 		StartTime:    start,
 		EndTime:      end,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, readErr := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if readErr != nil {
+		return nil, false, readErr
+	}
 	if result == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
-	return h.rollupGroupsToGroupByResults(c.Request().Context(), dimKey, result.Groups, sumFields), true
+	return h.rollupGroupsToGroupByResults(c.Request().Context(), dimKey, result.Groups, sumFields), true, nil
 }
 
 // tryRollupMetricsAggregates attempts to serve MetricsAggregates from rollup
 // time-series data.
-func (h *Handler) tryRollupMetricsAggregates(c echo.Context) bool {
+// Reports (served, error). A read ERROR is not "no data": the caller must
+// answer 5xx rather than an empty payload, or a broken read leg renders as
+// "no traffic" on the dashboard.
+func (h *Handler) tryRollupMetricsAggregates(c echo.Context) (bool, error) {
 	startP, endP := parseTimeRange(c)
 	start, end := rollupDefaultTimeRange(startP, endP, tzLoc(c))
 
@@ -202,8 +217,15 @@ func (h *Handler) tryRollupMetricsAggregates(c echo.Context) bool {
 		EndTime:      end,
 	}
 	rows, err := h.metrics.QueryRollup(c.Request().Context(), q)
-	if err != nil || len(rows) == 0 {
-		return false
+	if err != nil {
+		// Same conflation queryMetricsOrFallback used to make, written inline:
+		// a read error is not an empty window, and reporting "no data" here
+		// makes the endpoint answer 200 with {"data":[]} while the read leg
+		// is down.
+		return false, err
+	}
+	if len(rows) == 0 {
+		return false, nil
 	}
 
 	// Map rollup metric names → legacy UI metric names. Phase metrics
@@ -365,12 +387,15 @@ func (h *Handler) tryRollupMetricsAggregates(c echo.Context) bool {
 	}
 
 	_ = c.JSON(http.StatusOK, map[string]any{"data": data})
-	return true
+	return true, nil
 }
 
 // tryRollupQuality attempts to serve AnalyticsQuality from rollup data.
 // Returns true if rollup data was found and response was written.
-func (h *Handler) tryRollupQuality(c echo.Context) bool {
+// Reports (served, error). A read ERROR is not "no data": the caller must
+// answer 5xx rather than an empty payload, or a broken read leg renders as
+// "no traffic" on the dashboard.
+func (h *Handler) tryRollupQuality(c echo.Context) (bool, error) {
 	startP, endP := parseTimeRange(c)
 	start, end := rollupDefaultTimeRange(startP, endP, tzLoc(c))
 
@@ -380,9 +405,12 @@ func (h *Handler) tryRollupQuality(c echo.Context) bool {
 		StartTime:    start,
 		EndTime:      end,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, readErr := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if readErr != nil {
+		return false, readErr
+	}
 	if result == nil {
-		return false
+		return false, nil
 	}
 
 	totalResponses := int(result.Summary[metrics.MetricStatus2xxCount])
@@ -397,7 +425,7 @@ func (h *Handler) tryRollupQuality(c echo.Context) bool {
 		"anomalyCount":   anomalyCount,
 		"anomalyRate":    anomalyRate,
 	})
-	return true
+	return true, nil
 }
 
 // formatFloat converts a float64 to a compact string representation,
@@ -425,7 +453,10 @@ func buildProviderDim(id, label string) []byte {
 
 // tryRollupCostReport attempts to serve AnalyticsCostReport from rollup data.
 // Returns a slice of GroupByResult (or nil if rollup has no data).
-func (h *Handler) tryRollupCostReport(c echo.Context) []analyticsstore.GroupByResult {
+// Reports (served, error). A read ERROR is not "no data": the caller must
+// answer 5xx rather than an empty payload, or a broken read leg renders as
+// "no traffic" on the dashboard.
+func (h *Handler) tryRollupCostReport(c echo.Context) ([]analyticsstore.GroupByResult, error) {
 	startP, endP := parseTimeRange(c)
 	start, end := rollupDefaultTimeRange(startP, endP, tzLoc(c))
 
@@ -439,10 +470,13 @@ func (h *Handler) tryRollupCostReport(c echo.Context) []analyticsstore.GroupByRe
 		StartTime:    start,
 		EndTime:      end,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, readErr := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if readErr != nil {
+		return nil, readErr
+	}
 	if result == nil {
-		return nil
+		return nil, nil
 	}
 
-	return h.rollupGroupsToGroupByResults(c.Request().Context(), "organization", result.Groups, "cost")
+	return h.rollupGroupsToGroupByResults(c.Request().Context(), "organization", result.Groups, "cost"), nil
 }

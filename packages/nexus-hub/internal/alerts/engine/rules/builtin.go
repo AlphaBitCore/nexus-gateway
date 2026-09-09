@@ -1,6 +1,6 @@
 package rules
 
-import "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
+import alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 
 // BuiltinRules is the Go-side source of truth for built-in alerting rule
 // definitions used by `rules.NewRegistry` at Hub startup. The AlertRule rows
@@ -587,7 +587,7 @@ var BuiltinRules = []RuleDef{
 	// credential.health_degraded_sustained are raised by the
 	// credential-reliability-alerts job (packages/nexus-hub/internal/jobs/defs/credential)
 	// from the persisted reliability state on the Credential table. Per
-	// docs/developers/architecture/control-plane/credentials-architecture.md
+	// docs/developers/architecture/cross-cutting/safety/credentials-architecture.md
 	// they take no operator-tunable params today; the schema is intentionally
 	// empty so the admin UI's "Reset Rule" button does not surface knobs the
 	// job ignores. Three rules kept symmetric (sourceType=provider,

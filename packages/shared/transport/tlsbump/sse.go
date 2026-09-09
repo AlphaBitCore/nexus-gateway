@@ -100,8 +100,7 @@ func finalizeUsage(ctx context.Context, acc streaming.UsageAccumulator) traffic.
 //
 // `audCtx` carries the request-stage outcome — request body bytes already
 // captured for payload audit, plus the request hook pipeline result — so the
-// per-mode emit sites can record both stages on traffic_event. Previously
-// this data was thrown away on the SSE path.
+// per-mode emit sites can record both stages on traffic_event.
 func handleSSEResponse(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -126,19 +125,18 @@ func handleSSEResponse(
 	// agent NE host-packet path passes strictFailClosed=false, skips this
 	// guard, and stays fail-open by design (CLAUDE.md NE safety rule).
 	//
-	// The pipeline built here is the ONE response pipeline for the whole SSE path
-	// (finding C-19): the scope-derived mode routing below and whichever streaming
-	// mode runs all reuse this instance. It previously built with a literal `true`
-	// and discarded the result, and each mode then rebuilt it — three identical
-	// builds per request for a strict caller, two for a non-strict one.
-	// bo.strictFailClosed is the same value the literal was, because this block
-	// only runs for a strict caller; passing the field makes the one build correct
-	// for both postures.
+	// The pipeline built here is the ONE response pipeline for the whole SSE path:
+	// the scope-derived mode routing below and whichever streaming mode runs all
+	// reuse this instance. Discarding it and letting each mode rebuild costs three
+	// identical builds per request for a strict caller, two for a non-strict one.
+	// bo.strictFailClosed rather than a literal `true`: this block only runs for a
+	// strict caller, so the two agree here, but passing the field makes the single
+	// build correct for both postures.
 	var responsePipeline *compliance.Pipeline
 	if respInput != nil {
 		// Endpoint type is not classified at SSE stage — pass "" so all hooks
 		// are considered.
-		p, pErr := bo.policyResolver.BuildPipeline(
+		p, _, pErr := bo.policyResolver.BuildPipeline(
 			"response", "COMPLIANCE_PROXY",
 			"", nil,
 			bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
@@ -223,12 +221,11 @@ func handleSSEResponse(
 		"statusCode", resp.StatusCode,
 		"contentType", resp.Header.Get("Content-Type"),
 	)
-	// A second, Debug-level entry line used to sit here with six attributes. It was
-	// deleted rather than guarded with logger.Enabled (finding C-4's remainder): three of
-	// its six attributes duplicated the Info line above, and the other three were nil
-	// checks on audCtx / respInput / auditInfo — internal invariants every path below
-	// already handles, i.e. development scaffolding rather than a diagnostic. Deleting
-	// costs nothing at any level and needs no guard; guarding would have kept six
+	// No second, Debug-level entry line here. Three of the six attributes such a line
+	// would carry duplicate the Info line above, and the other three are nil checks on
+	// audCtx / respInput / auditInfo — internal invariants every path below already
+	// handles, i.e. development scaffolding rather than a diagnostic. Its absence costs
+	// nothing at any level and needs no logger.Enabled guard; guarding would keep six
 	// argument boxes per SSE response for a line nothing greps.
 
 	// Build a UsageAccumulator when the request was detected as AI
@@ -384,10 +381,10 @@ func handleSSEResponse(
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, result, resp.StatusCode, requestStart, finalizeUsage(ctx, acc), livePipeline.CapturedBytes())
 
 	case "buffer":
-		// Same single pipeline as every other mode, built once at SSE entry. The
-		// build-failure fallback that used to live here is gone with the duplicate
-		// build: a strict caller is refused with 451 at entry, and a non-strict
-		// caller cannot produce a build error at all, so the branch was unreachable.
+		// Same single pipeline as every other mode, built once at SSE entry. No
+		// build-failure fallback here: a strict caller is refused with 451 at entry,
+		// and a non-strict caller cannot produce a build error at all, so such a
+		// branch would be unreachable.
 		var pipelineExec streaming.PipelineExecutor
 		if responsePipeline != nil {
 			pipelineExec = responsePipeline

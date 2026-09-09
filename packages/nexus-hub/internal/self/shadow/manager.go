@@ -42,7 +42,7 @@ var Channel = store.ConfigChangedChannel
 // connection after the listener loop loses its conn (e.g. server
 // restart, network blip). Declared as a var (not const) so unit tests
 // can compress it to keep test runtime bounded; production code never
-// mutates it. Same pattern as the test-only seams in auth/apikey.go.
+// mutates it. Same pattern as the test-only seams in packages/control-plane/internal/identity/authn/apikey.go.
 var reacquireBackoff = time.Second
 
 // ReloadHandler is invoked when the desired state for a registered key

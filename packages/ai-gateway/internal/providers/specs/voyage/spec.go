@@ -6,7 +6,7 @@
 // using a Bearer token for auth.
 //
 // Architecture references:
-//   - docs/dev/architecture/provider-adapter-architecture.md §3a Rules 1-7
+//   - docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md §3a Rules 1-7
 //
 // Wire format (Voyage AI API):
 //

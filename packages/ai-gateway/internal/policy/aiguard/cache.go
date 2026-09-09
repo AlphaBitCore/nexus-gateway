@@ -6,8 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/goccy/go-json"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/redis/go-redis/v9"
 )

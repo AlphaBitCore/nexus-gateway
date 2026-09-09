@@ -1,6 +1,6 @@
 // Package httperr provides the canonical JSON error envelope shared by all
 // Control Plane admin handlers. Keeping a single definition here avoids the
-// per-package copies of the same helper that previously drifted in formatting.
+// per-package copies of the same helper, which drift in formatting.
 package httperr
 
 // ErrJSON builds the canonical JSON error envelope used across admin handlers:

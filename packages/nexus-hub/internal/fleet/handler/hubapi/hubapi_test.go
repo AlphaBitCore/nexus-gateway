@@ -3,7 +3,6 @@
 // mode that does not require a live database or real manager transaction, using
 // only in-process fakes and the Echo httptest pattern.
 //
-// Architecture reference: docs/developers/architecture/services/hub/nexus-hub-internals-architecture.md (Tier 3).
 // Manager is a concrete struct, not an interface; manager-level DB flows are
 // covered by pgxmock in fleet/manager/manager_pgxmock_test.go. This file
 // focuses on pure-logic helpers and the HTTP-layer validation surface.
@@ -26,6 +25,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/scheduler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 )
 
@@ -1059,8 +1059,17 @@ func TestInternalThingsAPI_AuditUpload_SourceStamp_And_EmptyStatusStrip(t *testi
 	}
 }
 
-func TestInternalThingsAPI_AuditUpload_PreexistingSource_Preserved(t *testing.T) {
-	// Rule: pre-existing "source" field must not be overwritten.
+// TestInternalThingsAPI_AuditUpload_DeviceSuppliedSourceIsStripped replaces a
+// test that asserted the OPPOSITE, and the reversal is the finding.
+//
+// It drove a DEVICE-token caller and required its self-declared
+// source:"gateway" to survive — i.e. it pinned an agent's ability to file its
+// own traffic under another producer's label. The contract that allows a
+// pre-set source is for HUB-INTERNAL (service-token) callers; the agent's own
+// audit Event carries sourceIp and sourceProcess and NO `source` field at all,
+// so a device-supplied one can only be a forgery. That arm is covered by
+// TestStripNonAgentAuditKeys_ServiceCallerKeepsSource.
+func TestInternalThingsAPI_AuditUpload_DeviceSuppliedSourceIsStripped(t *testing.T) {
 	e := newTestEcho()
 	mq := &recordingMQProducer{}
 	h := &InternalThingsAPI{MQProducer: mq}
@@ -1076,8 +1085,113 @@ func TestInternalThingsAPI_AuditUpload_PreexistingSource_Preserved(t *testing.T)
 	}
 	var evt map[string]any
 	_ = json.Unmarshal(mq.payloads[0], &evt)
+	if evt["source"] != "agent" {
+		t.Errorf("source=%v want 'agent' — a device labelling its own traffic is attribution spoofing", evt["source"])
+	}
+}
+
+// TestInternalThingsAPI_AuditUpload_DeviceCannotForgeAttribution is the defect
+// itself. Forwarding the event map to NATS verbatim lets a device
+// self-assert entityId / orgId / identity and the producer-trust flags — and,
+// because the consumer's decoder matches field names CASE-INSENSITIVELY while a
+// lowercase "thingid" marshals AFTER the server-stamped canonical "thingId", it
+// can override the stamp itself on last-key-wins.
+//
+// The assertion is on the DECODED value, not on the map: an exact-string
+// denylist would pass a map-level check and still lose to the decoder.
+func TestInternalThingsAPI_AuditUpload_DeviceCannotForgeAttribution(t *testing.T) {
+	e := newTestEcho()
+	mq := &recordingMQProducer{}
+	h := &InternalThingsAPI{MQProducer: mq}
+	body := map[string]any{
+		"thingId": "t-1",
+		"events": []any{map[string]any{
+			"id": "e1",
+			// Attribution, in the canonical spelling and in case variants that
+			// bind anyway under a case-insensitive decoder.
+			"entityId": "victim-entity", "EntityId": "victim-entity-2", "ORGID": "victim-org",
+			"orgName": "Victim Corp", "identity": "someone-else@corp.test",
+			// The stamp itself, spelled to sort AFTER the canonical key.
+			"thingid": "another-agent",
+			// Producer trust.
+			"attestationVerified": true, "internalPurpose": "trusted", "apiKeyClass": "internal",
+			// A legitimate agent-produced field must survive.
+			"statusCode": float64(200),
+		}},
+	}
+	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"})
+	_ = h.AuditUpload(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200", rec.Code)
+	}
+
+	// Decode through the SAME case-insensitive decoder the consumer uses, so a
+	// forged case-variant that still binds is caught.
+	var decoded consumer.TrafficEventMessage
+	if err := json.Unmarshal(mq.payloads[0], &decoded); err != nil {
+		t.Fatalf("decode forwarded payload: %v", err)
+	}
+	if decoded.ThingID == nil || *decoded.ThingID != "t-1" {
+		t.Errorf("thingId decoded as %v — a lowercase forgery overrode the server stamp", decoded.ThingID)
+	}
+	if decoded.EntityID != nil {
+		t.Errorf("entityId survived as %q — a device asserted server-owned attribution", *decoded.EntityID)
+	}
+	if decoded.OrgID != nil {
+		t.Errorf("orgId survived as %q", *decoded.OrgID)
+	}
+	if decoded.OrgName != nil {
+		t.Errorf("orgName survived as %q", *decoded.OrgName)
+	}
+	if decoded.Identity != nil {
+		t.Errorf("identity survived as %v", decoded.Identity)
+	}
+	if decoded.AttestationVerified != nil && *decoded.AttestationVerified {
+		t.Error("attestationVerified survived — a device graded its own homework")
+	}
+	if decoded.InternalPurpose != nil {
+		t.Errorf("internalPurpose survived as %q", *decoded.InternalPurpose)
+	}
+	// The strip must not read as "drop everything": a legitimate field stays.
+	if decoded.StatusCode == nil || *decoded.StatusCode != 200 {
+		t.Errorf("statusCode = %v; a legitimate agent-produced field was stripped", decoded.StatusCode)
+	}
+}
+
+// TestStripNonAgentAuditKeys_ServiceCallerKeepsSource pins the split. `source`
+// is server-owned for a device and settable by a Hub-internal service caller,
+// which is what the handler's own contract describes; every other server-owned
+// key is stripped from BOTH.
+func TestStripNonAgentAuditKeys_ServiceCallerKeepsSource(t *testing.T) {
+	evt := map[string]any{"id": "e1", "source": "gateway", "entityId": "victim"}
+	stripNonAgentAuditKeys(evt, false /* service-token caller */)
 	if evt["source"] != "gateway" {
-		t.Errorf("source=%v want 'gateway' (pre-existing source must not be overwritten)", evt["source"])
+		t.Errorf("source=%v — a Hub-internal caller may label its own source", evt["source"])
+	}
+	if _, ok := evt["entityId"]; ok {
+		t.Error("entityId survived for a service caller; attribution is server-owned for everyone")
+	}
+
+	evt = map[string]any{"id": "e1", "source": "gateway"}
+	stripNonAgentAuditKeys(evt, true /* device-token caller */)
+	if _, ok := evt["source"]; ok {
+		t.Error("a device-supplied source survived")
+	}
+}
+
+// TestAuditAllowlist_ServerOwnedKeysAreRealFields keeps the deny list honest: a
+// misspelled entry would silently stop denying anything, and the key it meant to
+// cover would become forgeable with nothing failing.
+func TestAuditAllowlist_ServerOwnedKeysAreRealFields(t *testing.T) {
+	wire := map[string]struct{}{}
+	for _, k := range consumerWireKeys() {
+		wire[strings.ToLower(k)] = struct{}{}
+	}
+	for _, k := range append(append([]string{}, auditKeysServerOwned...), auditKeysDeviceMayNotAssert...) {
+		if _, ok := wire[strings.ToLower(k)]; !ok {
+			t.Errorf("server-owned key %q is not a field the consumer decodes — it denies nothing", k)
+		}
 	}
 }
 

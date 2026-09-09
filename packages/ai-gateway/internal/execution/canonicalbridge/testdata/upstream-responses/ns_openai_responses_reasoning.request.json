@@ -1,0 +1,8 @@
+{
+  "model": "gpt-5-mini",
+  "input": "17*23? think step by step",
+  "reasoning": {
+    "summary": "auto"
+  },
+  "max_output_tokens": 600
+}

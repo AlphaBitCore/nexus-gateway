@@ -39,6 +39,29 @@ func (r *replaySub) Next(ctx context.Context) (provcore.Chunk, error) {
 	if r.idx >= len(r.chunks) {
 		return provcore.Chunk{}, io.EOF
 	}
+	return r.take(), nil
+}
+
+// TryNext implements ReadySubscription. Every chunk of a replay is already in
+// memory, so "ready" is just "not past the end" — the whole timeline is
+// available from the first call, which is what lets the reader hand the client
+// a completed response in one write instead of one per recorded frame.
+//
+// Unlike Next it does not consult a context. It never waits, so there is nothing
+// for a cancellation to interrupt; a cancelled caller stops asking, and the
+// blocking Next it returns to reports ctx.Err() as it always did.
+func (r *replaySub) TryNext() (provcore.Chunk, bool) {
+	if r.closed.Load() || r.idx >= len(r.chunks) {
+		return provcore.Chunk{}, false
+	}
+	return r.take(), true
+}
+
+// take consumes the chunk at the cursor. Both entry points go through it so the
+// two can never disagree about which fields a replayed chunk carries — a drift
+// that would surface as a HIT whose frames differ from the MISS that recorded
+// them, in whichever field the copy forgot.
+func (r *replaySub) take() provcore.Chunk {
 	rec := r.chunks[r.idx]
 	r.idx++
 	r.metrics.IncReplayChunks()
@@ -57,7 +80,7 @@ func (r *replaySub) Next(ctx context.Context) (provcore.Chunk, error) {
 		// path consumes RawBytes directly. For cross-ingress replay the
 		// canonical Delta / ToolCallDeltas / etc. fields above are used.
 		RawBytes: rec.RawBytes,
-	}, nil
+	}
 }
 
 func (r *replaySub) Close() error {

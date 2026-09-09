@@ -105,7 +105,7 @@ func domainName(d *domain.InterceptionDomain) string {
 }
 
 // bumpedFlow holds the per-TUNNEL state of one bumped CONNECT tunnel —
-// everything the forward handler closure used to capture. One instance
+// everything the forward handler closure would otherwise capture. One instance
 // serves every keep-alive request on the same bumped TLS session; all
 // per-request state lives on bumpedExchange instead.
 type bumpedFlow struct {
@@ -186,7 +186,7 @@ func (f *bumpedFlow) serveRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	// The stream-through arm defers its audit row to here so the row carries the
 	// upstream timings the PhaseSink stamps off the body read, and a latency_ms that
-	// includes the transfer (finding C-34). A defer rather than a call after the relay,
+	// includes the transfer. A defer rather than a call after the relay,
 	// so a panic in the relay still writes the row. No-op on every other arm.
 	defer x.runDeferredAudit()
 	x.relayResponse(resp)

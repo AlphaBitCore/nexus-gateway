@@ -28,15 +28,17 @@ type identityWire struct {
 	Status        string  `json:"status"`
 }
 
-// detailsWire is the typed form of the traffic_event.details object. The ten base
-// fields carry no omitempty so they are always present (matching the old map,
-// which always inserted them — empty strings as "" and absent any-values as
-// null). The four hook-rewrite fields are pointers with omitempty so they are
-// present iff their stage rewrote, reproducing the old map's conditional blocks
-// (including hookRewriteCount:0 when a rewrite happened to leave the count zero).
+// detailsWire is the typed form of the traffic_event.details object. The eight
+// base fields carry no omitempty so they are always present (empty strings as
+// "" and absent any-values as null). The four hook-rewrite fields are pointers
+// with omitempty so they are present iff their stage rewrote (including
+// hookRewriteCount:0 when a rewrite happened to leave the count zero).
+//
+// The correlation ids are deliberately NOT here. They have real columns —
+// external_request_id and trace_id — and a JSONB copy of a column is a second
+// place for the same fact to drift, exported to the customer's SIEM as an
+// undocumented duplicate. Anything that needs an id reads the column.
 type detailsWire struct {
-	RequestID              string `json:"requestId"`
-	ClientRequestID        string `json:"clientRequestId"`
 	SourceApp              string `json:"sourceApp"`
 	CacheKey               string `json:"cacheKey"`
 	ResponseHookReason     string `json:"responseHookReason"`
@@ -46,9 +48,9 @@ type detailsWire struct {
 	ComplianceFlags        any    `json:"complianceFlags"`
 	Metadata               any    `json:"metadata"`
 
-	// omitempty, unlike the ten base fields above: a record with no caller
-	// tags must serialize exactly as it did before this field existed, so
-	// existing rows' details JSON stays byte-identical.
+	// omitempty, unlike the base fields above: a record with no caller tags
+	// must serialize exactly as it did before this field existed, so existing
+	// rows' details JSON stays byte-identical.
 	ClientTags map[string]string `json:"clientTags,omitempty"`
 
 	HookRewritten            *bool `json:"hookRewritten,omitempty"`
@@ -88,8 +90,6 @@ func buildIdentity(rec *Record) identityWire {
 // non-rewriting record omits those keys entirely.
 func buildDetails(rec *Record) detailsWire {
 	dw := detailsWire{
-		RequestID:              rec.RequestID,
-		ClientRequestID:        rec.ClientRequestID,
 		SourceApp:              rec.SourceApp,
 		CacheKey:               rec.CacheKey,
 		ResponseHookReason:     rec.ResponseHookReason,

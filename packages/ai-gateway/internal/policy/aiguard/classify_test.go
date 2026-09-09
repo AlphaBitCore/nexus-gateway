@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputstaging"
 )
 
@@ -69,7 +69,7 @@ func TestClassifyImpl_HappyPath_WritesTrafficEvent(t *testing.T) {
 	}
 }
 
-func TestClassifyImpl_StampsTraceIDFromContext(t *testing.T) {
+func TestClassifyImpl_StampsRequestIDFromContext(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	cache := NewCache(rdb)
 	sink := &stubTrafficSink{}
@@ -87,8 +87,8 @@ func TestClassifyImpl_StampsTraceIDFromContext(t *testing.T) {
 	if len(sink.events) != 1 {
 		t.Fatalf("want 1 event, got %d", len(sink.events))
 	}
-	if sink.events[0].TraceID != "parent-req-123" {
-		t.Errorf("miss-path TraceID = %q, want parent-req-123", sink.events[0].TraceID)
+	if sink.events[0].RequestID != "parent-req-123" {
+		t.Errorf("miss-path RequestID = %q, want parent-req-123", sink.events[0].RequestID)
 	}
 
 	// Hit path: same content second time → cache hit event must also carry it.
@@ -98,24 +98,30 @@ func TestClassifyImpl_StampsTraceIDFromContext(t *testing.T) {
 	if len(sink.events) != 2 || !sink.events[1].CacheHit {
 		t.Fatalf("want second event to be a cache hit: %+v", sink.events)
 	}
-	if sink.events[1].TraceID != "parent-req-123" {
-		t.Errorf("hit-path TraceID = %q, want parent-req-123", sink.events[1].TraceID)
+	if sink.events[1].RequestID != "parent-req-123" {
+		t.Errorf("hit-path RequestID = %q, want parent-req-123", sink.events[1].RequestID)
+	}
+	// The triggering request carried no traceparent, so the ai-guard row has no
+	// caller trace to record. Reusing the request id here would file a
+	// Nexus-minted value in the column that means "the caller's own trace".
+	if sink.events[1].CallerTraceID != "" {
+		t.Errorf("hit-path CallerTraceID = %q, want empty: only an inbound traceparent may fill it", sink.events[1].CallerTraceID)
 	}
 }
 
-func TestClassifyImpl_NoTraceID_WhenContextUnset(t *testing.T) {
+func TestClassifyImpl_NoRequestID_WhenContextUnset(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	cache := NewCache(rdb)
 	sink := &stubTrafficSink{}
 	be := &stubBackend{err: errors.New("network down")}
 	cfg := &RuntimeConfig{BackendFingerprint: "fp-no-trace", PromptTemplate: DefaultPrompt, CacheTTLSeconds: 60, TimeoutMs: 2000}
-	// No request id on ctx → emitted event carries an empty TraceID.
+	// No request id on ctx → emitted event carries an empty RequestID.
 	_, _ = classifyImpl(context.Background(), Request{DetectorType: "x", Content: "x"}, cfg, be, cache, sink)
 	if len(sink.events) != 1 {
 		t.Fatalf("want 1 failure event, got %d", len(sink.events))
 	}
-	if sink.events[0].TraceID != "" {
-		t.Errorf("TraceID = %q, want empty when no request id on ctx", sink.events[0].TraceID)
+	if sink.events[0].RequestID != "" {
+		t.Errorf("RequestID = %q, want empty when no request id on ctx", sink.events[0].RequestID)
 	}
 }
 

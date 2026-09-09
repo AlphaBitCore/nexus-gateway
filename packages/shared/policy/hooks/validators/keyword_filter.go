@@ -22,9 +22,11 @@ type KeywordFilter struct {
 	contentPrescan // raw-body prefilter (core.RawContentPrescanner)
 	cfg            *core.HookConfig
 	categories     []string // indexed by pattern ID
-	matcher        matcher.Matcher
-	caseSensitive  bool
-	onMatch        core.OnMatchConfig
+	// pats is the pattern SOURCE — see the note on ContentSafety.pats.
+	pats          []matcher.Pattern
+	matcher       matcher.Matcher
+	caseSensitive bool
+	onMatch       core.OnMatchConfig
 }
 
 // NewKeywordFilter constructs a KeywordFilter from declarative config.
@@ -88,6 +90,7 @@ func NewKeywordFilter(cfg *core.HookConfig) (core.Hook, error) {
 		contentPrescan: newContentPrescan(pats),
 		cfg:            cfg,
 		categories:     categories,
+		pats:           pats,
 		matcher:        mtch,
 		caseSensitive:  caseSensitive,
 		onMatch:        onMatch,
@@ -106,8 +109,8 @@ func (kf *KeywordFilter) Execute(_ context.Context, input *core.HookInput) (*cor
 		Decision:         core.Approve,
 	}
 
-	segments := input.TextSegmentsWith(kf.cfg.ProjectionOptions())
-	matched := matchedSet(kf.matcher, segments)
+	segments := input.TextSegments()
+	matched := matchedSetOrConfirm(kf.matcher, kf.pats, segments)
 	core.ObserveContentScan(kf.cfg.ImplementationID, len(matched))
 
 	// Segment-major, pattern-minor first-match-wins (preserved verbatim): the

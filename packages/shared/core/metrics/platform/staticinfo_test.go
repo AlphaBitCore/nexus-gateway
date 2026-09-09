@@ -29,10 +29,9 @@ func TestCaptureStaticInfoIncludesIdentity(t *testing.T) {
 	// The three build fields are resolved inside CaptureStaticInfo now, so a
 	// caller cannot report an empty sha by forgetting to fill one in.
 	// Seven hex digits because that is git's own abbreviation floor and the
-	// shortest thing shaFromTaggedVersion will accept. It used to be six,
-	// which no `git rev-parse --short` emits by default — a stand-in short
-	// enough that it is now rejected, which is the point of the validation
-	// rather than an accident of it.
+	// shortest thing shaFromTaggedVersion accepts. Six is rejected, and no
+	// `git rev-parse --short` emits six by default — which is the point of the
+	// validation rather than an accident of it.
 	if info.BuildSHA != "abc1234" {
 		t.Errorf("buildSHA = %q, want the sha carried by the build version", info.BuildSHA)
 	}

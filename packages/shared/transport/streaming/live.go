@@ -30,13 +30,13 @@ type LiveConfig struct {
 	MinCheckpointChars int
 	MaxCheckpointChars int
 	MaxBufferSize      int // max total buffer (default 8MB)
-	// ChannelSize is INERT as of finding C-30 and setting it has no effect. It sized the
-	// buffered channel between a reader goroutine and the delivery loop; parsing now runs
-	// inline, so there is no channel. The field and its default survive because LiveConfig
-	// is exported from packages/shared and has shipped in a released agent binary, where
-	// CLAUDE.md's 1.0 GA rule makes removing it a breaking change — same reason
-	// Min/MaxCheckpointChars above are kept. Leaving the old comment ("internal channel
-	// buffer") would have told the next reader a knob exists that does nothing.
+	// ChannelSize is INERT and setting it has no effect. It sized the buffered channel
+	// between a reader goroutine and the delivery loop; parsing runs inline, so there is
+	// no channel. The field and its default survive because LiveConfig is exported from
+	// packages/shared and has shipped in a released agent binary, where CLAUDE.md's 1.0
+	// GA rule makes removing it a breaking change — same reason Min/MaxCheckpointChars
+	// above are kept. Documenting it as an "internal channel buffer" would tell the next
+	// reader a knob exists that does nothing.
 	ChannelSize int
 }
 
@@ -224,37 +224,32 @@ func (l *LivePipeline) Process(
 		upstreamForReader = io.TeeReader(upstream, rawAcc)
 	}
 
-	// Parsing runs INLINE in the delivery loop (finding C-30). There was a reader
-	// goroutine handing frames over a buffered channel; deleting it removes one goroutine
-	// and two synchronisation operations per frame, collapses teardown from three stuck
-	// points to one, and fixes a leak — a panic in this loop unwound through `defer cancel()`
-	// but NOT through CloseUpstreamOnExit, and a reader parked in upstream.Read never
-	// observed ctx, so that goroutine and its pooled 64 KiB scan buffer leaked for good.
+	// Parsing runs INLINE in the delivery loop. A reader goroutine handing frames over a
+	// buffered channel costs one goroutine and two synchronisation operations per frame,
+	// gives teardown three stuck points instead of one, and leaks: a panic in this loop
+	// unwinds through `defer cancel()` but NOT through CloseUpstreamOnExit, and a reader
+	// parked in upstream.Read never observes ctx, so that goroutine and its pooled 64 KiB
+	// scan buffer are gone for good.
 	//
-	// The B6 review retracted the backpressure objection: the channel held 64 frames in every
-	// production caller, against a 4 MiB per-stream h2 flow-control window — single-digit KB,
-	// immaterial. (LiveConfig.ChannelSize is what sized it, and is now inert; see its field
-	// comment for why it survives.)
+	// Backpressure is not an objection to inlining: the channel held 64 frames in every
+	// production caller, against a 4 MiB per-stream h2 flow-control window — single-digit
+	// KB. (LiveConfig.ChannelSize is what sized it and is now inert; see its field comment
+	// for why it survives.)
 	//
-	// The behaviour change the owner signed off is real and its FIRST justification here was
-	// wrong. It said "on a client abort the provider never sends the usage trailer anyway" —
-	// but the provider is on the other connection and never observes the client abort, so it
-	// keeps sending, trailer included. The accurate statement: Feed used to run before the
-	// channel send, so a reader could buffer up to 64 frames — including a trailer the client
-	// never received — and feed all of them; that observation window is now one frame. A
-	// differential run over 14 stream scenarios found this to be the ONLY divergence between
-	// the two versions, and it is confined to the writer-error path: `writer_fails_frame3` fed
-	// 2 frames where the old code fed 10 plus [DONE]. Consequence: an aborted stream now
-	// records no provider-reported usage, so its cost falls back to estimation. That is
-	// defensible (do not count what was not delivered) and it removes a nondeterministic
-	// window, but it is cost-visible, so it is stated rather than implied. What it did NOT retract is a behaviour change the owner signed off: Feed
-	// used to run before the channel send, so up to 65 frames could be fed but never
-	// delivered; that observation window is now one frame. On a client abort the provider
-	// never sends the usage trailer anyway, so this only narrows a nondeterministic chance of
-	// observing a trailer the client never received.
+	// There is one real behaviour change, and the owner signed it off. Feeding before the
+	// channel send lets a reader buffer up to 64 frames — including a trailer the client
+	// never received — and feed all of them; inline, that observation window is one frame.
+	// The provider is on the other connection and never observes a client abort, so it
+	// keeps sending, trailer included: this is NOT "the trailer was never sent anyway". A
+	// differential run over 14 stream scenarios found it to be the ONLY divergence, and it
+	// is confined to the writer-error path: `writer_fails_frame3` feeds 2 frames where the
+	// buffered version fed 10 plus [DONE]. Consequence: an aborted stream records no
+	// provider-reported usage, so its cost falls back to estimation. That is defensible —
+	// do not count what was not delivered — and it removes a nondeterministic window, but
+	// it is cost-visible, so it is stated rather than implied.
 	parser := NewSSEParserWithLogger(upstreamForReader, l.logger)
-	// One goroutine now, so this defer covers every exit path — including the panic path
-	// that used to leak the buffer.
+	// One goroutine, so this defer covers every exit path — including the panic path
+	// that would otherwise leak the buffer.
 	defer parser.Release()
 
 	var readerErr error
@@ -302,7 +297,7 @@ func (l *LivePipeline) Process(
 		}
 		checkpointInput := buildCheckpointInput(baseInput, accumulatedAll.String())
 		if l.preHook != nil && rawAcc != nil {
-			// Reuse one destination across checkpoints (finding C-22). A fresh copy
+			// Reuse one destination across checkpoints. A fresh copy
 			// per checkpoint made total allocation quadratic in stream length. The
 			// pre-hook does not retain the slice, and no NormalizedPayload can alias
 			// it — see SnapshotInto's contract for the evidence.
@@ -324,12 +319,12 @@ func (l *LivePipeline) Process(
 			break
 		}
 
-		// MERGE TRAP 1 (B6 review, highest severity): Feed must stay ABOVE the
-		// audit-capped and MaxBufferSize skips below. It used to live in the reader, so
-		// those skips could not affect it; put it below either one and every stream past
+		// MERGE TRAP 1, the highest-severity one: Feed must stay ABOVE the
+		// audit-capped and MaxBufferSize skips below. In the reader those skips could
+		// not affect it; put it below either one here and every stream past
 		// MaxBufferSize stops feeding the accumulator partway — and since every tier-1
 		// accumulator reads its counts from frames at the END of the stream, such streams
-		// would lose tier-1 usage entirely.
+		// lose tier-1 usage entirely.
 		if l.usage != nil {
 			l.usage.Feed(evt)
 		}

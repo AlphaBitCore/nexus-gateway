@@ -3,10 +3,11 @@ package audit
 import (
 	"bytes"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // TestMarshalChunkParallel_ByteIdenticalToSerial locks the parallel flush

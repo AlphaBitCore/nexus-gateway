@@ -2,10 +2,11 @@ package audit
 
 import (
 	"bytes"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"

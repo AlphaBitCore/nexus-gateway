@@ -20,22 +20,11 @@ func TestTextSegments_NilNormalizedReturnsNil(t *testing.T) {
 	}
 }
 
-func TestTextSegmentsWith_NilReceiverReturnsNil(t *testing.T) {
-	var input *HookInput
-	if got := input.TextSegmentsWith(normalize.TextProjectionOptions{}); got != nil {
-		t.Errorf("nil receiver: got %v want nil", got)
-	}
-}
-
-func TestTextSegmentsWith_NilNormalizedReturnsNil(t *testing.T) {
-	input := &HookInput{}
-	if got := input.TextSegmentsWith(normalize.TextProjectionOptions{}); got != nil {
-		t.Errorf("nil Normalized: got %v want nil", got)
-	}
-}
-
-func TestTextSegmentsWith_IncludeReasoningPicksUpReasoningBlocks(t *testing.T) {
-	// Default projection skips ContentReasoning. include_reasoning opts-in.
+// Reasoning reaches the scanner. It used to require a per-hook `scope` opt-in
+// that had no UI, no admin API, no persisted column and no documentation — so
+// in every real deployment a value the model wrote while thinking was encoded
+// onto the wire as delta.reasoning_content and matched by nothing.
+func TestTextSegments_ReasoningReachesTheScanner(t *testing.T) {
 	payload := &normalize.NormalizedPayload{
 		Kind:             normalize.KindAIChat,
 		NormalizeVersion: normalize.SchemaVersion,
@@ -49,54 +38,22 @@ func TestTextSegmentsWith_IncludeReasoningPicksUpReasoningBlocks(t *testing.T) {
 	}
 	in := &HookInput{Normalized: payload}
 
-	defSegs := in.TextSegments()
-	if len(defSegs) != 1 || defSegs[0] != "visible" {
-		t.Errorf("default scope should skip reasoning; got %v", defSegs)
-	}
-
-	withReason := in.TextSegmentsWith(normalize.TextProjectionOptions{IncludeReasoning: true})
-	// Reasoning should now be included alongside visible text.
-	found := false
-	for _, s := range withReason {
-		if s == "thinking out loud" {
-			found = true
+	segs := in.TextSegments()
+	var sawVisible, sawReasoning bool
+	for _, s := range segs {
+		switch s {
+		case "visible":
+			sawVisible = true
+		case "thinking out loud":
+			sawReasoning = true
 		}
 	}
-	if !found {
-		t.Errorf("include_reasoning should include reasoning text; got %v", withReason)
+	if !sawVisible {
+		t.Errorf("ordinary assistant text is missing from the segments: %v", segs)
 	}
-}
-
-func TestProjectionOptions_NilReceiverReturnsZero(t *testing.T) {
-	var c *HookConfig
-	got := c.ProjectionOptions()
-	if got.IncludeReasoning {
-		t.Errorf("nil receiver should yield zero-value opts; got %+v", got)
-	}
-}
-
-func TestProjectionOptions_DefaultScopeZero(t *testing.T) {
-	c := &HookConfig{Scope: ""}
-	got := c.ProjectionOptions()
-	if got.IncludeReasoning {
-		t.Errorf("default scope should NOT include reasoning; got %+v", got)
-	}
-}
-
-func TestProjectionOptions_IncludeReasoningScope(t *testing.T) {
-	c := &HookConfig{Scope: "include_reasoning"}
-	got := c.ProjectionOptions()
-	if !got.IncludeReasoning {
-		t.Errorf("include_reasoning scope must set IncludeReasoning=true; got %+v", got)
-	}
-}
-
-func TestProjectionOptions_UnknownScopeFallsBackToZero(t *testing.T) {
-	// Unknown scope is forward-compat: must not error, must return zero.
-	c := &HookConfig{Scope: "future-scope-value"}
-	got := c.ProjectionOptions()
-	if got.IncludeReasoning {
-		t.Errorf("unknown scope must be inert; got %+v", got)
+	if !sawReasoning {
+		t.Errorf("reasoning text is missing from the segments, so no rule can match what the "+
+			"client is shown: %v", segs)
 	}
 }
 
@@ -151,13 +108,15 @@ func TestSpansFromModifiedContent_EmptyModifiedReturnsNil(t *testing.T) {
 }
 
 func TestSpansFromModifiedContent_EmptyOriginalReturnsNil(t *testing.T) {
-	// Original empty (zero ContentText/ContentToolResult blocks) → return nil.
+	// A payload that projects NOTHING. Reasoning no longer qualifies — it is
+	// scanned like any other delivered text — so this uses a block type the
+	// projection genuinely has no slot for.
 	in := &HookInput{Normalized: &normalize.NormalizedPayload{
 		Kind:             normalize.KindAIChat,
 		NormalizeVersion: normalize.SchemaVersion,
 		Messages: []normalize.Message{{
 			Role:    normalize.RoleUser,
-			Content: []normalize.ContentBlock{{Type: normalize.ContentReasoning, Text: "skip me"}},
+			Content: []normalize.ContentBlock{{Type: normalize.ContentText, Text: ""}},
 		}},
 	}}
 	got := SpansFromModifiedContent(in, []ContentBlock{{Text: "anything"}},
@@ -235,31 +194,67 @@ func TestSpansFromModifiedContent_ToolResultBlockAddressed(t *testing.T) {
 	}
 }
 
-func TestSpansFromModifiedContent_NonTextContentSkipped(t *testing.T) {
-	// Non-text / non-tool-result blocks (reasoning, tool_use) are not in the
-	// projection and must not consume a modified slot.
+// A block that contributes NO projection entry must not consume a modified
+// slot, or every span after it masks another block's bytes at the wrong
+// address. An empty ContentText is the plain case: the projection skips it,
+// and this walk used to consume a slot for it anyway.
+func TestSpansFromModifiedContent_EmptyBlockConsumesNoSlot(t *testing.T) {
 	in := &HookInput{Normalized: &normalize.NormalizedPayload{
 		Kind:             normalize.KindAIChat,
 		NormalizeVersion: normalize.SchemaVersion,
 		Messages: []normalize.Message{{
 			Role: normalize.RoleUser,
 			Content: []normalize.ContentBlock{
-				{Type: normalize.ContentReasoning, Text: "thinking"}, // skipped
+				{Type: normalize.ContentText, Text: ""}, // no projection entry
 				{Type: normalize.ContentText, Text: "real-text"},
 			},
 		}},
 	}}
-	modified := []ContentBlock{{Text: "[X]"}}
-	spans := SpansFromModifiedContent(in, modified,
+	spans := SpansFromModifiedContent(in, []ContentBlock{{Text: "[X]"}},
 		normalize.SourceHook, "r", normalize.ActionRedact)
 	if len(spans) != 1 {
 		t.Fatalf("len(spans) = %d, want 1", len(spans))
 	}
-	// The span must address the actual text block (index 1), not the
-	// skipped reasoning block (index 0).
 	if spans[0].ContentAddress != "messages.0.content.1" {
-		t.Errorf("address: %q want messages.0.content.1 (reasoning block skipped)",
-			spans[0].ContentAddress)
+		t.Errorf("address: %q want messages.0.content.1 — the empty block consumed a slot and "+
+			"the redaction landed on the wrong block", spans[0].ContentAddress)
+	}
+	if spans[0].Replacement != "[X]" {
+		t.Errorf("replacement: %q want [X]", spans[0].Replacement)
+	}
+}
+
+// Reasoning DOES contribute a projection entry, so it both consumes a slot and
+// is addressable. If it did not, a rule matching inside the model's thinking
+// would be found and then have nowhere to be masked — and every span after it
+// would be off by one.
+func TestSpansFromModifiedContent_ReasoningIsAddressableAndAligned(t *testing.T) {
+	in := &HookInput{Normalized: &normalize.NormalizedPayload{
+		Kind:             normalize.KindAIChat,
+		NormalizeVersion: normalize.SchemaVersion,
+		Messages: []normalize.Message{{
+			Role: normalize.RoleAssistant,
+			Content: []normalize.ContentBlock{
+				{Type: normalize.ContentReasoning, Text: "thinking about 123-45-6789"},
+				{Type: normalize.ContentText, Text: "real-text"},
+			},
+		}},
+	}}
+	spans := SpansFromModifiedContent(in,
+		[]ContentBlock{{Text: "thinking about [REDACTED]"}, {Text: "[X]"}},
+		normalize.SourceHook, "r", normalize.ActionRedact)
+	if len(spans) != 2 {
+		t.Fatalf("len(spans) = %d, want 2 (reasoning + text)", len(spans))
+	}
+	if spans[0].ContentAddress != "messages.0.content.0" {
+		t.Errorf("reasoning span address: %q want messages.0.content.0", spans[0].ContentAddress)
+	}
+	if spans[0].Replacement != "thinking about [REDACTED]" {
+		t.Errorf("reasoning replacement: %q", spans[0].Replacement)
+	}
+	if spans[1].ContentAddress != "messages.0.content.1" {
+		t.Errorf("text span address: %q want messages.0.content.1 — the reasoning block ahead of "+
+			"it must have consumed exactly one slot", spans[1].ContentAddress)
 	}
 }
 
@@ -347,5 +342,35 @@ func TestSpansFromModifiedContent_NoChangesEmitsNoSpans(t *testing.T) {
 		normalize.SourceHook, "r", normalize.ActionRedact)
 	if len(spans) != 0 {
 		t.Errorf("no diff should yield no spans; got %v", spans)
+	}
+}
+
+// The projection skips a tool result with no output and a block type it does
+// not model at all. Both must therefore consume no slot here — the same
+// alignment property as the empty-text case, on the two remaining shapes that
+// can produce it.
+func TestSpansFromModifiedContent_EmptyToolResultAndUnmodelledBlockConsumeNoSlot(t *testing.T) {
+	in := &HookInput{Normalized: &normalize.NormalizedPayload{
+		Kind:             normalize.KindAIChat,
+		NormalizeVersion: normalize.SchemaVersion,
+		Messages: []normalize.Message{{
+			Role: normalize.RoleAssistant,
+			Content: []normalize.ContentBlock{
+				{Type: normalize.ContentToolResult, ToolResult: nil},
+				{Type: normalize.ContentToolResult, ToolResult: &normalize.ToolResult{Output: ""}},
+				{Type: normalize.ContentMedia},
+				{Type: normalize.ContentText, Text: "real-text"},
+			},
+		}},
+	}}
+	spans := SpansFromModifiedContent(in, []ContentBlock{{Text: "[X]"}},
+		normalize.SourceHook, "r", normalize.ActionRedact)
+	if len(spans) != 1 {
+		t.Fatalf("len(spans) = %d, want 1", len(spans))
+	}
+	if spans[0].ContentAddress != "messages.0.content.3" {
+		t.Errorf("address: %q want messages.0.content.3 — a block that projects nothing "+
+			"consumed a slot and the redaction landed on the wrong block",
+			spans[0].ContentAddress)
 	}
 }

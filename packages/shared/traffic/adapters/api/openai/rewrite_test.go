@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -170,14 +171,54 @@ func TestRewriteRequestBody_ResponsesCreate_Array(t *testing.T) {
 	}
 }
 
-func TestRewriteRequestBody_Embeddings_Unsupported(t *testing.T) {
+// A redaction on an embeddings request must reach the wire, in both the
+// single-string and array-of-strings shapes of `input`.
+//
+// This previously asserted ErrRewriteUnsupported. The callers fail CLOSED on an
+// unsupported rewrite, so declining meant a redact rule matching an embedded
+// document could only REFUSE the request — never mask it and let it through.
+func TestRewriteRequestBody_EmbeddingsRedactsBothInputShapes(t *testing.T) {
 	a := &Adapter{}
-	body := []byte(`{"model":"text-embedding-3-small","input":"hello"}`)
-	_, _, err := a.RewriteRequestBody(context.Background(), body, "/v1/embeddings",
-		traffic.NormalizedContent{Segments: []string{"x"}})
-	if !errors.Is(err, traffic.ErrRewriteUnsupported) {
-		t.Errorf("expected ErrRewriteUnsupported, got %v", err)
-	}
+
+	t.Run("single string", func(t *testing.T) {
+		body := []byte(`{"model":"text-embedding-3-small","input":"my SSN is 123-45-6789"}`)
+		out, n, err := a.RewriteRequestBody(context.Background(), body, "/v1/embeddings",
+			traffic.NormalizedContent{Segments: []string{"my SSN is [REDACTED]"}})
+		if err != nil {
+			t.Fatalf("err=%v want nil", err)
+		}
+		if n != 1 {
+			t.Errorf("patched=%d want 1", n)
+		}
+		if strings.Contains(string(out), "123-45-6789") {
+			t.Errorf("the value survives the rewrite: %s", out)
+		}
+	})
+
+	t.Run("array with a token array mixed in", func(t *testing.T) {
+		// Pre-tokenised inputs carry no text a policy can address; the extractor
+		// produces no segment for them, so they must consume no slot here either
+		// or every later document is masked with the wrong replacement.
+		body := []byte(`{"model":"text-embedding-3-small","input":["first 123-45-6789",[1,2,3],"second 987-65-4321"]}`)
+		out, n, err := a.RewriteRequestBody(context.Background(), body, "/v1/embeddings",
+			traffic.NormalizedContent{Segments: []string{"first [A]", "second [B]"}})
+		if err != nil {
+			t.Fatalf("err=%v want nil", err)
+		}
+		if n != 2 {
+			t.Errorf("patched=%d want 2", n)
+		}
+		got := string(out)
+		if !strings.Contains(got, "first [A]") || !strings.Contains(got, "second [B]") {
+			t.Errorf("replacements did not land on their own slots: %s", got)
+		}
+		if strings.Contains(got, "123-45-6789") || strings.Contains(got, "987-65-4321") {
+			t.Errorf("an original value survives: %s", got)
+		}
+		if !strings.Contains(got, "[1,2,3]") {
+			t.Errorf("the token array was disturbed: %s", got)
+		}
+	})
 }
 
 func TestRewriteRequestBody_UnknownPath_Unsupported(t *testing.T) {

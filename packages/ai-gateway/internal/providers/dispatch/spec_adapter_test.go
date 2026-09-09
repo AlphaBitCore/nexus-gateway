@@ -375,10 +375,10 @@ func TestSpecAdapter_Passthrough_RewritesModelToProviderModelID(t *testing.T) {
 // is the regression guard for the bug where routing OpenAI-shape bodies
 // to FormatMoonshot/Mistral/Groq/... left payload["model"] equal to the
 // caller's original code (e.g. "claude-opus-4-7") instead of the target
-// provider's ProviderModelID. The dispatch model rewrite used to
-// whitelist only OpenAI/DeepSeek/GLM and silently dropped through
+// provider's ProviderModelID. A dispatch model rewrite that
+// whitelists only OpenAI/DeepSeek/GLM silently drops through
 // for the ten OpenAI-compat re-users that share IdentityCodec; those
-// upstreams then 4xx'd with "model not found" and the proxy surfaced
+// upstreams then 4xx with "model not found" and the proxy surfaces
 // "all upstream providers failed".
 func TestSpecAdapter_Passthrough_RewritesModelForAllOpenAIWireShapeFormats(t *testing.T) {
 	formats := []Format{
@@ -780,11 +780,13 @@ func TestSpecAdapter_PrepareBody_ExposedAndIdempotent(t *testing.T) {
 		Target:     CallTarget{ProviderModelID: "gpt-4o-2024-08-06"},
 	}
 
-	body1, rw1, _, err := adapter.PrepareBody(req)
+	body1Prep, err := adapter.PrepareBody(req)
+	body1, rw1, _ := body1Prep.Body, body1Prep.Rewrites, body1Prep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody error: %v", err)
 	}
-	body2, rw2, _, err := adapter.PrepareBody(req)
+	body2Prep, err := adapter.PrepareBody(req)
+	body2, rw2, _ := body2Prep.Body, body2Prep.Rewrites, body2Prep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody error (2nd): %v", err)
 	}
@@ -845,11 +847,13 @@ func TestSpecAdapter_PrepareBody_CodecPathIdempotent(t *testing.T) {
 		Target:     CallTarget{ProviderModelID: "claude-3-5-sonnet-20240620"},
 	}
 
-	body1, rw1, _, err := adapter.PrepareBody(req)
+	body1Prep, err := adapter.PrepareBody(req)
+	body1, rw1, _ := body1Prep.Body, body1Prep.Rewrites, body1Prep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody (1st) error: %v", err)
 	}
-	body2, rw2, _, err := adapter.PrepareBody(req)
+	body2Prep, err := adapter.PrepareBody(req)
+	body2, rw2, _ := body2Prep.Body, body2Prep.Rewrites, body2Prep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody (2nd) error: %v", err)
 	}
@@ -896,7 +900,8 @@ func TestSpecAdapter_PrepareBody_EndpointModelsReturnsNil(t *testing.T) {
 		Body:       nil,
 		Target:     CallTarget{},
 	}
-	body, rewrites, _, err := adapter.PrepareBody(req)
+	bodyPrep, err := adapter.PrepareBody(req)
+	body, rewrites, _ := bodyPrep.Body, bodyPrep.Rewrites, bodyPrep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody typology.WireShapeNone error: %v", err)
 	}

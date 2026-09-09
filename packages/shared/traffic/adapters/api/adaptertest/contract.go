@@ -87,10 +87,10 @@ const (
 )
 
 // RunContract executes the shared adapter contract against one vendor Case.
-// Every assertion the per-vendor test files used to carry is reproduced here;
-// each branch of the vendor adapter (ID, Configure, the five extract/rewrite
+// Each branch of the vendor adapter (ID, Configure, the five extract/rewrite
 // delegations and their error sentinels, all five DetectRequestMeta paths, the
-// three DetectResponseUsage states, and both Normalize outcomes) is exercised.
+// three DetectResponseUsage states, and both Normalize outcomes) is exercised
+// here rather than once per vendor test file.
 func RunContract(t *testing.T, c Case) {
 	t.Helper()
 
@@ -230,12 +230,27 @@ func RunContract(t *testing.T, c Case) {
 		}
 	})
 
-	// RewriteRequestBody on /embeddings returns ErrRewriteUnsupported — the
-	// inner openai adapter rejects rewriting on this surface.
-	t.Run("RewriteRequestBody_EmbeddingsUnsupported", func(t *testing.T) {
-		_, _, err := c.Adapter.RewriteRequestBody(context.Background(), []byte(`{"input":"hi"}`), embeddingsPath, traffic.NormalizedContent{})
-		if !errors.Is(err, traffic.ErrRewriteUnsupported) {
-			t.Errorf("err=%v want ErrRewriteUnsupported", err)
+	// RewriteRequestBody on /embeddings writes the redaction into `input`.
+	//
+	// This used to assert ErrRewriteUnsupported, which was the shipped behaviour
+	// and a dead end for policy: the callers fail CLOSED on an unsupported
+	// rewrite — forwarding the original would send upstream exactly what was
+	// masked — so a redact rule that matched an embedding could only ever REFUSE
+	// the request. `input` is a flat list of strings; there was nothing a
+	// redaction could lose by being applied.
+	t.Run("RewriteRequestBody_EmbeddingsRedacts", func(t *testing.T) {
+		out, n, err := c.Adapter.RewriteRequestBody(context.Background(),
+			[]byte(`{"model":"m","input":["original"]}`), embeddingsPath,
+			traffic.NormalizedContent{Segments: []string{"REDACTED"}})
+		if err != nil {
+			t.Fatalf("err=%v want nil — a redaction on this vendor's embeddings can only be "+
+				"refused, never applied", err)
+		}
+		if n != 1 {
+			t.Errorf("patched=%d want 1", n)
+		}
+		if strings.Contains(string(out), "original") || !strings.Contains(string(out), "REDACTED") {
+			t.Errorf("rewrite did not apply: %s", string(out))
 		}
 	})
 

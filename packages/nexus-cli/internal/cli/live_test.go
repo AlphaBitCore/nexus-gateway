@@ -31,7 +31,7 @@ func TestLive_CLICommands(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := core.NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := core.NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("headless login: %v", err)
 	}
 

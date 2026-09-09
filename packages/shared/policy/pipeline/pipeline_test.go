@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -238,20 +236,25 @@ func TestPipeline_FailOpen(t *testing.T) {
 // TestPipeline_FailOpen_IncrementsCounter verifies that a hook error resolved
 // as fail-open bumps compliance_hook_fail_open_total{hook=<name>}, and that a
 // fail-closed error does NOT bump it (the counter tracks silently-degraded
-// hooks specifically). Uses an isolated registry so the global metric set is
-// untouched.
+// hooks specifically).
+//
+// It reads a DELTA on the package counter instead of swapping the package
+// variable for the duration of the test. The swap raced, and the race was real
+// rather than a scheduling artefact: executeSequentialAbandonable deliberately
+// abandons a hook goroutine when the per-hook timeout fires, so a goroutine
+// spawned by an EARLIER test is still inside executeOneHook — which reads this
+// very variable — while this test writes it. The detector reported it
+// intermittently, and it landed on whichever test happened to run alongside.
+//
+// A delta is immune to that goroutine: it can only Inc() children of OTHER
+// label values, since its hooks carry different names, and Inc is atomic. The
+// same reasoning applies to every other package-level metric var here — none of
+// them may be assigned while an abandoned hook goroutine can still be running.
 func TestPipeline_FailOpen_IncrementsCounter(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	c := promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-		Name: "test_hook_fail_open_total",
-		Help: "test",
-	}, []string{"hook"})
-
-	// Swap the package-level convenience var for the duration of the test so
-	// pipeline.go increments our isolated counter, then restore it.
-	prev := HookFailOpenTotal
-	HookFailOpenTotal = c
-	defer func() { HookFailOpenTotal = prev }()
+	count := func(hook string) float64 {
+		return testutil.ToFloat64(HookFailOpenTotal.WithLabelValues(hook))
+	}
+	piiBase, secretBase := count("pii-detector"), count("block-on-secret")
 
 	// fail-open hook: error must increment the counter by 1.
 	openHooks := []boundHook{
@@ -263,8 +266,8 @@ func TestPipeline_FailOpen_IncrementsCounter(t *testing.T) {
 	if got := p.Execute(context.Background(), &core.HookInput{}); got.Decision != core.Approve {
 		t.Fatalf("expected APPROVE (fail-open), got %s", got.Decision)
 	}
-	if v := testutil.ToFloat64(c.WithLabelValues("pii-detector")); v != 1 {
-		t.Fatalf("expected fail_open_total{pii-detector}=1, got %v", v)
+	if v := count("pii-detector") - piiBase; v != 1 {
+		t.Fatalf("expected fail_open_total{pii-detector} to rise by 1, rose by %v", v)
 	}
 
 	// fail-closed hook erroring must NOT increment the fail-open counter.
@@ -277,12 +280,12 @@ func TestPipeline_FailOpen_IncrementsCounter(t *testing.T) {
 	if got := pc.Execute(context.Background(), &core.HookInput{}); got.Decision != core.RejectHard {
 		t.Fatalf("expected REJECT_HARD (fail-closed), got %s", got.Decision)
 	}
-	if v := testutil.ToFloat64(c.WithLabelValues("block-on-secret")); v != 0 {
-		t.Fatalf("expected fail_open_total{block-on-secret}=0 on fail-closed, got %v", v)
+	if v := count("block-on-secret") - secretBase; v != 0 {
+		t.Fatalf("expected fail_open_total{block-on-secret} unchanged on fail-closed, rose by %v", v)
 	}
 	// And the original hook's count is unchanged by the second pipeline.
-	if v := testutil.ToFloat64(c.WithLabelValues("pii-detector")); v != 1 {
-		t.Fatalf("expected fail_open_total{pii-detector} still 1, got %v", v)
+	if v := count("pii-detector") - piiBase; v != 1 {
+		t.Fatalf("expected fail_open_total{pii-detector} still +1, got +%v", v)
 	}
 }
 
@@ -366,13 +369,9 @@ func TestPipeline_StrictEnforcing_RedactHookError_FailsClosed(t *testing.T) {
 // error in a NON-strict pipeline (packet-path callers) stays fail-open and
 // increments hook_fail_open_total — host-network safety mandates fail-open.
 func TestPipeline_NonStrictEnforcing_HookError_FailsOpen(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	c := promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-		Name: "test_strict_fail_open_total", Help: "test",
-	}, []string{"hook"})
-	prev := HookFailOpenTotal
-	HookFailOpenTotal = c
-	defer func() { HookFailOpenTotal = prev }()
+	// Delta, not a swap — see TestPipeline_FailOpen_IncrementsCounter for why
+	// no test in this package may assign a package-level metric var.
+	base := testutil.ToFloat64(HookFailOpenTotal.WithLabelValues("block-on-secret"))
 
 	hks := []boundHook{
 		{hook: &stubHook{err: errors.New("guard backend down")},
@@ -386,8 +385,8 @@ func TestPipeline_NonStrictEnforcing_HookError_FailsOpen(t *testing.T) {
 	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_OPEN" {
 		t.Fatalf("expected HOOK_ERROR_FAIL_OPEN, got %q", result.HookResults[0].ReasonCode)
 	}
-	if v := testutil.ToFloat64(c.WithLabelValues("block-on-secret")); v != 1 {
-		t.Fatalf("expected fail_open_total{block-on-secret}=1, got %v", v)
+	if v := testutil.ToFloat64(HookFailOpenTotal.WithLabelValues("block-on-secret")) - base; v != 1 {
+		t.Fatalf("expected fail_open_total{block-on-secret} to rise by 1, rose by %v", v)
 	}
 }
 
@@ -491,7 +490,7 @@ func TestBuildPipeline_PlumbsStrictPosture(t *testing.T) {
 	r := NewPolicyResolver(cfgs, reg, testLogger())
 
 	// strict=true → enforcing hook error rejects.
-	pipe, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
+	pipe, _, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
 		5*time.Second, 30*time.Second, false, true, testLogger())
 	if err != nil || pipe == nil {
 		t.Fatalf("BuildPipeline strict: err=%v pipe=%v", err, pipe)
@@ -501,7 +500,7 @@ func TestBuildPipeline_PlumbsStrictPosture(t *testing.T) {
 	}
 
 	// strict=false → same hook error stays fail-open.
-	pipeOpen, err := r.BuildPipeline("request", "AGENT", "", nil,
+	pipeOpen, _, err := r.BuildPipeline("request", "AGENT", "", nil,
 		5*time.Second, 30*time.Second, false, false, testLogger())
 	if err != nil || pipeOpen == nil {
 		t.Fatalf("BuildPipeline non-strict: err=%v pipe=%v", err, pipeOpen)
@@ -828,11 +827,11 @@ func (h *redactStubHook) Execute(context.Context, *core.HookInput) (*core.HookRe
 	return &core.HookResult{Decision: core.Modify, ModifiedContent: h.content}, nil
 }
 
-// TestPipeline_CoFiringRedactSoftBlock_CarriesRedaction pins the #13 core invariant: when
+// TestPipeline_CoFiringRedactSoftBlock_CarriesRedaction pins the core invariant: when
 // a redact hook (Modify + ModifiedContent) co-fires with a soft-block hook, mergeResults
 // promotes the aggregate Decision to BlockSoft (the strictest) but MUST carry the redact's
-// ModifiedContent — previously it was dropped, leaving consumers unable to apply the
-// redaction (fail-closed or leak). CarriesRedaction() must report true so every consumer
+// ModifiedContent. Dropping it leaves consumers unable to apply the redaction
+// (fail-closed or leak). CarriesRedaction() must report true so every consumer
 // applies the mask instead of keying on Decision==Modify and forwarding the original raw.
 func TestPipeline_CoFiringRedactSoftBlock_CarriesRedaction(t *testing.T) {
 	hks := []boundHook{
@@ -891,8 +890,9 @@ func applicableSpan() normalize.TransformSpan {
 	return normalize.TransformSpan{Source: normalize.SourceHook, Action: normalize.ActionRedact, ContentAddress: "messages.0.content.0.toolUse.input.0", Start: 0, End: 4}
 }
 
-// TestPipeline_ApproveWebhookAuditSpans_CoFiringSoftBlock_NoRedaction is the #14 fix:
-// an Approve hook emitting AUDIT-ONLY sentinel spans (the approve-webhook+redactions
+// TestPipeline_ApproveWebhookAuditSpans_CoFiringSoftBlock_NoRedaction is the
+// advisory-spans case: an Approve hook emitting AUDIT-ONLY sentinel spans (the
+// approve-webhook+redactions
 // shape) co-firing with a soft-block promotes the aggregate to BlockSoft, but those
 // advisory spans are NOT an applicable redaction — CarriesRedaction() must be false so
 // the appliance soft-delivers instead of failing closed (over-block).

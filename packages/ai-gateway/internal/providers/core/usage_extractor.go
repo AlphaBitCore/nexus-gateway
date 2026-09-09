@@ -90,7 +90,7 @@ func ExtractUsage(raw []byte, wireFormat Format) Usage {
 	// content projection (~4-5x cheaper, far fewer allocs). It declines (ok=false)
 	// for SSE bodies and parse failures, falling through to the full Normalize below;
 	// when ok=true the result is contractually identical to full Normalize's Usage
-	// (see shared/normalize/codecs/usage_only.go + its differential equivalence tests).
+	// (see packages/shared/transport/normalize/codecs/usage_only.go + its differential equivalence tests).
 	if ue, hasFast := n.(normcodecs.UsageOnlyExtractor); hasFast {
 		if u, ok := ue.ExtractUsageOnly(raw); ok {
 			if u == nil {

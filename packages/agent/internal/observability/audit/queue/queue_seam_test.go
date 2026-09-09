@@ -3,8 +3,7 @@
 // cleanup) and the MarkSynced prepare-failure branch via test seams.
 // The seams default to os.Rename / os.Remove on package init; production code
 // never reassigns them. Mirrors the established pattern in
-// packages/agent/internal/identity/secretstore/fallback.go (renameFn + osFile)
-// and packages/agent/internal/identity/enrollment/enroll.go.
+// packages/agent/internal/identity/enrollment/enroll.go.
 package queue
 
 import (

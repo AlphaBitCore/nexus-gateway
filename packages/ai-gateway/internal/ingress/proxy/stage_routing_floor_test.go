@@ -280,8 +280,8 @@ func TestEmbeddingCapabilityGuard_VerdictMatchesTheResolvers(t *testing.T) {
 	}
 }
 
-// TestNamedModelModalityGuard_FlagGovernsTheNamedVerdict is the #297 red-proof
-// for the passthrough gate. The floor and the input-modality ceiling are the
+// TestNamedModelModalityGuard_FlagGovernsTheNamedVerdict is the red-proof for
+// the passthrough gate. The floor and the input-modality ceiling are the
 // gateway's OWN modality verdict on a model the caller NAMED; by default that
 // verdict is the upstream's (our catalogue can be wrong), and only
 // EnforceNamedModelModality makes the gateway enforce it locally.

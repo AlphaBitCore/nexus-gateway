@@ -112,8 +112,8 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 // TestSave_AConcurrentReaderNeverSeesAPartialConfig pins the property the
 // truncate destroyed.
 //
-// Save used to open the real path with O_CREATE|O_TRUNC|O_WRONLY and encode
-// into it. That empties the file BEFORE the replacement exists, so for the
+// Opening the real path with O_CREATE|O_TRUNC|O_WRONLY and encoding
+// into it empties the file BEFORE the replacement exists, so for the
 // duration of the encode the config on disk is short or empty — and anything
 // that goes wrong in that window (a full disk, a failing close, the process
 // dying) leaves the operator with no environments rather than the ones they

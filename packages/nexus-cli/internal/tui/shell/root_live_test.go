@@ -41,7 +41,7 @@ func TestLive_AgentCockpit(t *testing.T) {
 	store := liveStore{m: map[string]string{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
-	if err := core.NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := core.NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	gw := core.NewClient(env, core.NewTokenSource(env, store, hc), hc)

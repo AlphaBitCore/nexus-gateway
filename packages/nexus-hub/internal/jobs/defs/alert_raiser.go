@@ -3,7 +3,7 @@ package defs
 import (
 	"context"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
+	alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 )
 
 // AlertRaiser is the narrow subset of alerting.Raiser used by scheduled jobs.

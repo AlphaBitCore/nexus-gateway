@@ -161,10 +161,9 @@ func TestCaptureStaticInfoNeverReportsAnEmptyServiceVersion(t *testing.T) {
 
 // A sha is a sha, or it is not reported as one.
 //
-// `shaFromTaggedVersion` used to return whatever followed the last `@`, which
-// made two shipped build recipes produce a buildSha that is not a sha, and in
-// both cases the bad value SUPPRESSED the real VCS revision that was sitting
-// right there:
+// Returning whatever follows the last `@` makes two shipped build recipes
+// produce a buildSha that is not a sha, and in both cases the bad value
+// SUPPRESSES the real VCS revision sitting right there:
 //
 //   - nexus-ami/scripts/build-binaries.sh stamps
 //     `ami@$(cat NEXUS_VERSION || echo unknown)+vs`. With the file present that

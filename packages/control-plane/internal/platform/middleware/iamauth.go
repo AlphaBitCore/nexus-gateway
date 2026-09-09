@@ -54,14 +54,13 @@ func RequireIAMPermission(engine *iam.Engine, action string, resourceFn func(ech
 				"nexus:SourceIp": c.RealIP(),
 			}
 
-			// Translate session auth principal type to IAM storage principal type.
-			// Session context uses "admin_user" for dashboard JWT sessions;
-			// IAM storage (IamPolicyAttachment, IamGroupMembership) uses
-			// the "nexus_user" type.
-			iamPrincipalType := aa.AuthPrincipalType
-			if iamPrincipalType == "admin_user" {
-				iamPrincipalType = "nexus_user"
-			}
+			// Translate the session's principal type to the one IAM storage
+			// uses — "admin_user" for a dashboard JWT session, "nexus_user" in
+			// IamPolicyAttachment / IamGroupMembership. One normaliser owns the
+			// mapping (iam.NormalisePrincipalType); a type it does not
+			// recognise becomes "", which matches no stored row, so an unknown
+			// session type is denied by having nothing to allow.
+			iamPrincipalType, _ := iam.NormalisePrincipalType(aa.AuthPrincipalType)
 
 			// resources holds the candidate set EvaluateMulti scans
 			// against each Statement's Resource pattern. Default: just
@@ -168,10 +167,9 @@ func RequireIAMPermissionForDevice(engine *iam.Engine, action, deviceIDParam str
 				"nexus:SourceIp": c.RealIP(),
 			}
 
-			iamPrincipalType := aa.AuthPrincipalType
-			if iamPrincipalType == "admin_user" {
-				iamPrincipalType = "nexus_user"
-			}
+			// Same translation as the unscoped variant above — one normaliser
+			// owns the mapping, so a new principal type is added in one place.
+			iamPrincipalType, _ := iam.NormalisePrincipalType(aa.AuthPrincipalType)
 
 			result, err := engine.EvaluateMulti(c.Request().Context(), iamPrincipalType, aa.KeyID, action, resources, ctxCond)
 			if err != nil {

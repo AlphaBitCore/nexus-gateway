@@ -215,13 +215,13 @@ func filterByCapability(candidates []core.SmartModelRow, needsTools, needsReason
 	kept = candidates
 	// Acceptance, asked once per modality the request actually carries.
 	//
-	// This used to ask about images only, gated on an estImages counter, and its
-	// own comment claimed the dimensions above the floor ask "can this candidate
-	// take what the request carries" — which was true of exactly one of them. A
-	// request carrying audio, video or a document was routed without anyone
-	// asking whether the chosen model accepts it, so the router itself produced
-	// the upstream 400. When the CALLER names a model, the model's limits are
-	// the model's; when WE pick it, a refusal caused by our pick is ours.
+	// Asking about images only, gated on an estImages counter, would answer "can
+	// this candidate take what the request carries" for exactly one modality. A
+	// request carrying audio, video or a document would then be routed without
+	// anyone asking whether the chosen model accepts it, so the router itself
+	// produces the upstream 400. When the CALLER names a model, the model's
+	// limits are the model's; when WE pick it, a refusal caused by our pick is
+	// ours.
 	//
 	// Reading the modality arrays, never features["vision"]: the two described
 	// the same property and disagreed on 34 production rows — every one

@@ -35,7 +35,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/generativecaps"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/guardrail"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -58,11 +60,11 @@ func (h *Handler) ServeGuardrail() http.HandlerFunc {
 		}
 
 		start := time.Now().UTC()
-		requestID := r.Header.Get("X-Nexus-Request-Id")
+		requestID := traffic.ResolveRequestID(r.Header)
 		rec := &audit.Record{
 			RequestID:       requestID,
-			ClientRequestID: r.Header.Get("x-request-id"),
-			TraceID:         requestID,
+			ClientRequestID: r.Header.Get(traffic.HeaderRequestIDAlias),
+			TraceID:         telemetry.InboundTraceID(r.Context()),
 			Timestamp:       start,
 			Method:          r.Method,
 			Path:            r.URL.Path,
@@ -167,7 +169,7 @@ func (h *Handler) ServeGuardrail() http.HandlerFunc {
 			pipelineStage = "response"
 		}
 		resolver := h.deps.HookConfigCache.Resolver(r.Context())
-		pl, buildErr := resolver.BuildPipeline(
+		pl, _, buildErr := resolver.BuildPipeline(
 			pipelineStage, "AI_GATEWAY",
 			typology.EndpointKindGuardrail,
 			[]hookcore.Modality{hookcore.ModalityText},
@@ -187,9 +189,24 @@ func (h *Handler) ServeGuardrail() http.HandlerFunc {
 			pl.SetAllowModify(true)
 			pl.SetClearSoftOnApprove(true)
 			result = pl.Execute(r.Context(), &hookcore.HookInput{
-				RequestID:     requestID,
-				Stage:         pipelineStage,
-				Normalized:    guardrail.BuildNormalized(segs),
+				RequestID:  requestID,
+				Stage:      pipelineStage,
+				Normalized: guardrail.BuildNormalized(segs),
+				// The metadata half of the input, populated exactly as the
+				// inline request stage populates it. Leaving it empty does not
+				// make metadata hooks abstain — they run and read zero values.
+				// `ip-access-filter` is bound to every endpoint and treats an
+				// unparseable source IP as a hard reject, so an operator
+				// enabling that shipped, admin-toggleable hook would have
+				// blocked one hundred percent of this endpoint's traffic while
+				// chat continued unaffected. The rate limiter would have
+				// bucketed every caller under one empty key, and the
+				// request-size validator would have judged every body to be
+				// zero bytes.
+				ContentType: r.Header.Get("Content-Type"),
+				BodySize:    int64(len(raw)),
+				SourceIP:    middleware.ClientIP(r),
+
 				IngressType:   "AI_GATEWAY",
 				Method:        r.Method,
 				Path:          r.URL.Path,

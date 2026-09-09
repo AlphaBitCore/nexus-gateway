@@ -2,10 +2,12 @@ package iam
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
+	iamengine "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/iamstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
@@ -140,9 +142,22 @@ func (h *Handler) AddIAMGroupMember(c echo.Context) error {
 	if err := c.Bind(&body); err != nil || body.PrincipalID == "" {
 		return c.JSON(http.StatusBadRequest, errJSON("principalType and principalId required", "validation_error", ""))
 	}
+	// Default, then normalise on the way IN — the same reason as the
+	// attachment handler. A membership stored under the session's own
+	// "admin_user" is listable and never loaded: LoadPolicies joins group
+	// membership on an equality match too. nexus-hub's smart_group.go had to
+	// query `principalType IN ('nexus_user', 'admin_user')` to cope with rows
+	// this path already let through; that workaround is the evidence.
 	if body.PrincipalType == "" {
 		body.PrincipalType = "nexus_user"
 	}
+	canonicalPT, ptOK := iamengine.NormalisePrincipalType(body.PrincipalType)
+	if !ptOK {
+		return c.JSON(http.StatusBadRequest, errJSON(
+			"principalType must be one of "+strings.Join(iamengine.AcceptedPrincipalTypes(), ", "),
+			"validation_error", "INVALID_PRINCIPAL_TYPE"))
+	}
+	body.PrincipalType = canonicalPT
 
 	// Grant ceiling — adding a principal to a group confers ALL of the
 	// group's currently-attached policies to that principal. The caller must

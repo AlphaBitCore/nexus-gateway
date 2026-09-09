@@ -10,14 +10,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
+	alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
 )
 
 const (
 	thingOfflineJobID          = "thing-offline-alerts"
-	thingOfflineJobName        = "Thing Offline Alerts"
-	thingOfflineJobDescription = "Raises thing.offline alerts for Things whose last_seen_at has exceeded the rule's offlineAfterSec threshold; auto-resolves firing alerts for Things that have come back fresh or have been deleted."
+	thingOfflineJobName        = "Node Offline Alerts"
+	thingOfflineJobDescription = "Raises thing.offline alerts for nodes whose last_seen_at has exceeded the rule's offlineAfterSec threshold; auto-resolves firing alerts for nodes that have come back fresh or have been deleted."
 
 	thingOfflineRuleID        = "thing.offline"
 	thingTargetKeyPrefix      = "thing:"

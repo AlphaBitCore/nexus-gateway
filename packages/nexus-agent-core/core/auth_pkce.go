@@ -1,12 +1,13 @@
 package core
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // Authenticator drives the two login flows over the env's CP base URL and
@@ -31,7 +34,10 @@ type Authenticator struct {
 // NewAuthenticator builds an Authenticator for env.
 func NewAuthenticator(env Env, store SecretStore, httpc *http.Client) *Authenticator {
 	if httpc == nil {
-		httpc = &http.Client{Timeout: 30 * time.Second}
+		httpc = nexushttp.New(nexushttp.Config{
+			Timeout: 30 * time.Second,
+			Caller:  "agent-core-auth",
+		})
 	}
 	return &Authenticator{env: env, store: store, httpc: httpc, openBrowser: openInBrowser}
 }

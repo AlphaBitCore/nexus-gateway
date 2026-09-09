@@ -64,12 +64,6 @@ func TestMediaContributesNothingToTheComplianceProjection(t *testing.T) {
 					t.Fatalf("fragment %d carries media content into the scanner: %d bytes", i, len(s))
 				}
 			}
-			// Reasoning is opt-in, and opting in must not change this.
-			for i, s := range tc.payload.TextProjectionWith(TextProjectionOptions{IncludeReasoning: true}) {
-				if strings.Contains(s, marker[:64]) {
-					t.Fatalf("fragment %d leaks once reasoning is included", i)
-				}
-			}
 		})
 	}
 }

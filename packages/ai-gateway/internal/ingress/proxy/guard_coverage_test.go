@@ -32,8 +32,8 @@ import (
 // test proves the guard fires for the case it was written with; only the
 // enumeration proves no path was skipped.
 //
-// The floor + input-modality guards now sit behind namedModelModalityGuard (the
-// #297 EnforceNamedModelModality gate: a NAMED model's modality verdict is the
+// The floor + input-modality guards sit behind namedModelModalityGuard (the
+// EnforceNamedModelModality gate: a NAMED model's modality verdict is the
 // upstream's by default). That is a change in WHEN they fire, not WHETHER the
 // path reaches them — so this gate follows the wrapper transitively rather than
 // weakening to "reachable somehow". The passthrough entry must invoke the
@@ -47,7 +47,8 @@ var passthroughDirectGuards = []string{
 }
 
 // namedModalityGuards are the modality guards the wrapper must invoke — the
-// floor and the input-modality ceiling, gated together by the #297 flag.
+// floor and the input-modality ceiling, gated together by the
+// EnforceNamedModelModality flag.
 var namedModalityGuards = []string{
 	"floorGuard",
 	"inputModalityGuard",

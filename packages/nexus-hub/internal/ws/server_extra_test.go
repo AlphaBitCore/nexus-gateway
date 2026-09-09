@@ -1544,10 +1544,16 @@ func TestAuthenticate_ServiceToken_RevokedThingIsRejected(t *testing.T) {
 	}
 }
 
-// TestAuthenticate_ServiceToken_UnknownThingIsRejected verifies that a
-// service-token upgrade for an unknown thingID is rejected (GetThingStatus
-// returns ErrNotFound → errUnauthorized).
-func TestAuthenticate_ServiceToken_UnknownThingIsRejected(t *testing.T) {
+// TestAuthenticate_ServiceToken_RegistryReadFailureIsRejected pins the
+// fail-closed arm: a registry read that fails for an unexplained reason must
+// not be mistaken for a first enrollment.
+//
+// Renamed from ...UnknownThingIsRejected, which said the opposite of what it
+// tested and of what the code now does. Its fixture is a GENERIC error, never
+// store.ErrNotFound, so it was always exercising the DB-error path — and an
+// unknown thingID is now deliberately ADMITTED so a service can enrol itself
+// over the handshake. The ErrNotFound arm lives in server_bootstrap_test.go.
+func TestAuthenticate_ServiceToken_RegistryReadFailureIsRejected(t *testing.T) {
 	pool := NewPool(nil, nullLogger())
 	fv := &fakeValidator{statusErr: errors.New("not found")}
 	srv := newServerWithDeps(pool, &fakeManager{}, fv, "hub-1", testServiceToken, nil, false, nullLogger())
@@ -1562,13 +1568,13 @@ func TestAuthenticate_ServiceToken_UnknownThingIsRejected(t *testing.T) {
 		Subprotocols: []string{"nexus.bearer"},
 	})
 	if err == nil {
-		t.Fatal("expected dial to fail for unknown service Thing")
+		t.Fatal("expected dial to fail when the registry read errored")
 	}
 	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		var code int
 		if resp != nil {
 			code = resp.StatusCode
 		}
-		t.Fatalf("expected 401 for unknown service Thing; got %d", code)
+		t.Fatalf("expected 401 when the registry read errored; got %d", code)
 	}
 }

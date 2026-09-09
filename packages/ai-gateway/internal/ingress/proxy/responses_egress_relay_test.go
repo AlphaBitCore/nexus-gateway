@@ -12,7 +12,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
+	streamcache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 )

@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 func TestRequestIDGenerator_DerivesTraceIDFromUUIDRequestID(t *testing.T) {

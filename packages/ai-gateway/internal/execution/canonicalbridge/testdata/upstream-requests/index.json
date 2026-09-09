@@ -1,0 +1,78 @@
+{
+  "anthropic_rich_turn": {
+    "channels": "system + text/image/document turn + tool_use + tool_result + follow-up",
+    "model": "claude-sonnet-4-5-20250929",
+    "note": "turn2 replays turn1's own answer verbatim; both turns answered 200",
+    "provider": "anthropic",
+    "url": "https://api.anthropic.com/v1/messages"
+  },
+  "anthropic_thinking_rich_turn": {
+    "channels": "system + text/image/document turn + tool_use + tool_result + follow-up",
+    "model": "claude-sonnet-4-5-20250929",
+    "note": "turn2 replays turn1's own answer verbatim; both turns answered 200",
+    "provider": "anthropic",
+    "url": "https://api.anthropic.com/v1/messages"
+  },
+  "cohere_rich_turn": {
+    "channels": "system + text turn + documents[] + tool_plan + tool_calls + tool result + follow-up",
+    "model": "command-a-03-2025",
+    "note": "turn2 replays turn1's own answer verbatim; both turns answered 200",
+    "provider": "cohere",
+    "url": "https://api.cohere.com/v2/chat"
+  },
+  "cohere_vision_turn": {
+    "channels": "system + text/image turn + assistant text turn + follow-up",
+    "model": "command-a-vision-07-2025",
+    "note": "turn2 replays turn1's own answer verbatim; both turns answered 200",
+    "provider": "cohere",
+    "url": "https://api.cohere.com/v2/chat"
+  },
+  "gemini_rich_turn": {
+    "channels": "systemInstruction + text/inlineData turn + functionCall + functionResponse + follow-up",
+    "model": "gemini-2.5-flash",
+    "note": "turn2 replays turn1's own answer verbatim; both turns answered 200",
+    "provider": "gemini",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+  },
+  "openai_chat_rich_turn": {
+    "channels": "system + text/image/file turn + assistant tool_calls + tool result + follow-up",
+    "model": "gpt-4o-mini",
+    "note": "turn2 replays turn1's own answer verbatim; both turns answered 200",
+    "provider": "openai",
+    "url": "https://api.openai.com/v1/chat/completions"
+  },
+  "openai_responses_parallel_tool_turn": {
+    "inputItemTypes": [
+      "function_call",
+      "function_call_output",
+      "message"
+    ],
+    "model": "gpt-4o-mini",
+    "note": "turn2 input[] replays upstream's own output items; both turns answered 200",
+    "provider": "openai",
+    "url": "https://api.openai.com/v1/responses"
+  },
+  "openai_responses_reasoning_tool_turn": {
+    "inputItemTypes": [
+      "function_call",
+      "function_call_output",
+      "message",
+      "reasoning"
+    ],
+    "model": "gpt-5-mini",
+    "note": "turn2 input[] replays upstream's own output items; both turns answered 200",
+    "provider": "openai",
+    "url": "https://api.openai.com/v1/responses"
+  },
+  "openai_responses_tool_turn": {
+    "inputItemTypes": [
+      "function_call",
+      "function_call_output",
+      "message"
+    ],
+    "model": "gpt-4o-mini",
+    "note": "turn2 input[] replays upstream's own output items; both turns answered 200",
+    "provider": "openai",
+    "url": "https://api.openai.com/v1/responses"
+  }
+}

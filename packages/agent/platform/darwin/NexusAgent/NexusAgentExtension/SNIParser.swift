@@ -31,8 +31,19 @@ enum SNIParser {
         var p = 0
 
         // TLS record header (5 bytes): type(1) + version(2) + length(2).
-        // type 0x16 = Handshake.
-        guard bytes.count >= p + 5, bytes[p] == 0x16 else { return nil }
+        // type 0x16 = Handshake, and the record-layer version MAJOR byte is
+        // 0x03 for every version this can legitimately be — SSL3 and TLS 1.0
+        // through 1.3 all put 0x03 there, and TLS 1.3 still writes a 1.0/1.2
+        // record version for compatibility.
+        //
+        // Checking the content type ALONE was not enough: any protocol whose
+        // first byte happens to be 0x16 entered the parse, and a buffer that
+        // then satisfied the length arithmetic yielded a "hostname" that no
+        // client ever sent. This function's answer picks the policy applied to
+        // the flow, so a plausible-but-wrong hostname is worse than none — a
+        // nil here means plain relay, which is the fail-open outcome the
+        // provider is designed around.
+        guard bytes.count >= p + 5, bytes[p] == 0x16, bytes[p + 1] == 0x03 else { return nil }
         // Skip record-layer length — we work over the contiguous buffer.
         p += 5
 

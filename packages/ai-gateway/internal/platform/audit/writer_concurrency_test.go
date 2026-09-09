@@ -2,11 +2,12 @@ package audit
 
 import (
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/prometheus/client_golang/prometheus"

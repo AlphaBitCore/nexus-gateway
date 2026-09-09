@@ -9,7 +9,6 @@ import (
 
 	authserver_store "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -145,10 +144,9 @@ func (h *Handler) UpdateDeviceAuthSettings(c echo.Context) error {
 		}
 	}
 
-	aa := middleware.AdminAuthFromContext(c)
-	updatedBy := ""
-	if aa != nil {
-		updatedBy = aa.KeyID
+	updatedBy, ok := requireAdminActor(c)
+	if !ok {
+		return unauthenticated(c)
 	}
 
 	if err := h.meta.SetSystemMetadata(ctx, deviceAuthModeKey, body.Mode, updatedBy); err != nil {

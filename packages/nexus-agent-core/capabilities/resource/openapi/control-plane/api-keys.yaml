@@ -24,13 +24,13 @@ paths:
                   description: Filter to keys owned by this user ID. Ignored when `scope=owned`.
                   required: false
                   schema:
-                    type: string
+                      type: string
                 - name: scope
                   in: query
                   description: When set to `owned`, the result is filtered to keys owned by the authenticated principal.
                   required: false
                   schema:
-                    type: string
+                      type: string
             responses:
                 "500":
                     description: Internal Server Error
@@ -55,8 +55,8 @@ paths:
                                       status: active
                                       lastUsedAt: "2026-05-20T11:02:00Z"
                                       expiresAt: "2026-12-31T23:59:59Z"
-                                      rotatedAt: null
-                                      rotatedFromId: null
+                                      rotatedAt:
+                                      rotatedFromId:
                                       createdBy: admin@example.com
                                       createdAt: "2026-01-15T09:00:00Z"
                                       ownerUserId: usr_01H8X9...
@@ -83,7 +83,7 @@ paths:
                                     description: Human-readable label for the key. Must be non-empty.
                                 expiresAt:
                                     type: string
-                                    description: Optional RFC3339 expiry timestamp. Empty or unparseable means no expiry.
+                                    description: An empty `expiresAt` means no expiry. Any other value must parse as RFC3339 and lie in the future, or the request is rejected with 400 (INVALID_EXPIRES_AT or EXPIRES_AT_IN_PAST).
                                 ownerUserId:
                                     type:
                                         - string
@@ -98,20 +98,6 @@ paths:
                             expiresAt: "2026-12-31T23:59:59Z"
                             ownerUserId: usr_01H8X9...
             responses:
-                "400":
-                    description: Bad Request
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "500":
-                    description: Internal Server Error
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "201":
                     description: Created
                     content:
@@ -127,6 +113,38 @@ paths:
                                 ownerUserId: usr_01H8X9...
                                 expiresAt: "2026-12-31T23:59:59Z"
                                 createdAt: "2026-05-29T10:00:00Z"
+                "400":
+                    description: Bad Request
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '403':
+                    description: 'Refused by the grant ceiling: the caller does not hold every permission the target principal holds (code PRIVILEGE_ESCALATION_BLOCKED), or the request is unauthenticated.'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                '409':
+                    description: A key with those details already exists (code API_KEY_EXISTS).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '503':
+                    description: The IAM engine is unavailable, so the grant ceiling cannot be evaluated and the write is refused rather than allowed through unchecked.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
     /api/admin/api-keys/{id}:
         get:
             operationId: getAPIKey
@@ -140,15 +158,8 @@ paths:
                   description: API key ID.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
-                "404":
-                    description: Not Found
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "200":
                     description: OK
                     content:
@@ -165,11 +176,24 @@ paths:
                                     status: active
                                     lastUsedAt: "2026-05-20T11:02:00Z"
                                     expiresAt: "2026-12-31T23:59:59Z"
-                                    rotatedAt: null
-                                    rotatedFromId: null
+                                    rotatedAt:
+                                    rotatedFromId:
                                     createdBy: admin@example.com
                                     createdAt: "2026-01-15T09:00:00Z"
                                     ownerUserId: usr_01H8X9...
+                "404":
+                    description: Not Found
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '500':
+                    description: The key could not be read.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
         patch:
             operationId: updateAPIKey
             summary: Update an admin API key
@@ -177,7 +201,7 @@ paths:
                 Updates mutable fields of an admin API key. All fields are optional,
                 but at least one effective change must be supplied or the request is
                 rejected with 400 ("No valid fields to update"). An empty `name` is
-                ignored; an empty or unparseable `expiresAt` is treated as no change.
+                ignored; an empty `expiresAt` leaves the stored expiry unchanged.
             x-nexus-iam-action: iam.ResourceApiKey.Action(iam.VerbUpdate)
             x-nexus-tier: confirm
             parameters:
@@ -186,7 +210,7 @@ paths:
                   description: API key ID.
                   required: true
                   schema:
-                    type: string
+                      type: string
             requestBody:
                 required: true
                 content:
@@ -208,26 +232,12 @@ paths:
                                     type:
                                         - string
                                         - "null"
-                                    description: New RFC3339 expiry. Empty or unparseable is treated as no change.
+                                    description: An empty `expiresAt` is skipped, so the stored expiry is left unchanged; there is no way to clear one. Any other value must parse as RFC3339 and lie in the future, or the request is rejected with 400 (INVALID_EXPIRES_AT or EXPIRES_AT_IN_PAST).
                         example:
                             name: ci-deploy-key-renamed
                             enabled: false
                             expiresAt: "2027-01-31T23:59:59Z"
             responses:
-                "400":
-                    description: Bad Request
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "500":
-                    description: Internal Server Error
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "200":
                     description: OK
                     content:
@@ -244,6 +254,32 @@ paths:
                                     status: active
                                     expiresAt: "2027-01-31T23:59:59Z"
                                     ownerUserId: usr_01H8X9...
+                "400":
+                    description: Bad Request
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '404':
+                    description: No record exists with the given id.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                '409':
+                    description: A key with those details already exists (code API_KEY_EXISTS).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
         delete:
             operationId: deleteAPIKey
             summary: Delete an admin API key
@@ -259,8 +295,24 @@ paths:
                   description: API key ID.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                deleted: true
+                                id: ak_01H8X9...
+                '404':
+                    description: No record exists with the given id.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
                 "409":
                     description: Conflict — cannot delete the API key used for the current session.
                     content:
@@ -275,16 +327,6 @@ paths:
                             schema:
                                 type: object
                                 additionalProperties: {}
-                "200":
-                    description: OK
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                            example:
-                                deleted: true
-                                id: ak_01H8X9...
     /api/admin/api-keys/{id}/regenerate:
         post:
             operationId: regenerateAPIKey
@@ -301,22 +343,8 @@ paths:
                   description: API key ID to regenerate.
                   required: true
                   schema:
-                    type: string
+                      type: string
             responses:
-                "404":
-                    description: Not Found
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "500":
-                    description: Internal Server Error
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "200":
                     description: OK
                     content:
@@ -329,6 +357,44 @@ paths:
                                 key: nxk_z9y8x7w6...
                                 keyPrefix: nxk_z9y8x7w
                                 message: Key regenerated. Save this key — it will not be shown again.
+                '400':
+                    description: 'The caller tripped a database constraint: a missing required column (code FIELD_REQUIRED) or a reference to something that does not exist (code REFERENCE_NOT_FOUND).'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                '403':
+                    description: 'Refused by the grant ceiling: the caller does not hold every permission the target principal holds (code PRIVILEGE_ESCALATION_BLOCKED), or the request is unauthenticated.'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                "404":
+                    description: Not Found
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '409':
+                    description: A key with those details already exists (code API_KEY_EXISTS).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '503':
+                    description: The IAM engine is unavailable, so the grant ceiling cannot be evaluated and the write is refused rather than allowed through unchecked.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
     /api/admin/api-keys/{id}/retire:
         put:
             operationId: retireAPIKey
@@ -348,7 +414,7 @@ paths:
                   description: API key ID to retire.
                   required: true
                   schema:
-                    type: string
+                      type: string
             requestBody:
                 required: true
                 content:
@@ -428,7 +494,7 @@ paths:
                   description: Predecessor API key ID to rotate.
                   required: true
                   schema:
-                    type: string
+                      type: string
             requestBody:
                 required: true
                 content:
@@ -444,34 +510,6 @@ paths:
                         example:
                             expiresAt: "2027-06-30T23:59:59Z"
             responses:
-                "400":
-                    description: Bad Request — expiresAt is not a valid RFC3339 timestamp.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "500":
-                    description: Internal Server Error
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "404":
-                    description: Not Found — predecessor key does not exist.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
-                "409":
-                    description: Conflict — predecessor is not in `active` state.
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                additionalProperties: {}
                 "201":
                     description: Created
                     content:
@@ -489,3 +527,67 @@ paths:
                                     status: rotating
                                     rotatedAt: "2026-05-29T10:05:00Z"
                                 message: Key rotated. The predecessor remains valid until you retire it. Save the new key — it will not be shown again.
+                "400":
+                    description: 'Rejected before the successor is minted: an expiry that is unparseable (INVALID_EXPIRES_AT) or in the past (EXPIRES_AT_IN_PAST), or a caller-tripped constraint (FIELD_REQUIRED, REFERENCE_NOT_FOUND).'
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '403':
+                    description: 'Refused by the grant ceiling: the caller does not hold every permission the target principal holds (code PRIVILEGE_ESCALATION_BLOCKED), or the request is unauthenticated.'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+                "404":
+                    description: Not Found — predecessor key does not exist.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "409":
+                    description: Conflict — predecessor is not in `active` state.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "500":
+                    description: Internal Server Error
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                '503':
+                    description: The IAM engine is unavailable, so the grant ceiling cannot be evaluated and the write is refused rather than allowed through unchecked.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AdminError'
+components:
+    schemas:
+        AdminError:
+            type: object
+            description: Error envelope returned by every admin handler.
+            properties:
+                error:
+                    type: object
+                    properties:
+                        message:
+                            type: string
+                            description: Human-readable failure reason.
+                        type:
+                            type: string
+                            description: Error class, such as validation_error, authorization_error, not_found or server_error.
+                        code:
+                            type: string
+                            description: Machine-readable code. An empty string when the handler supplies none.
+                    required:
+                        - message
+                        - type
+                        - code
+            required:
+                - error

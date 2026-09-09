@@ -31,8 +31,7 @@ import (
 // writeFileAtomic (Chmod/Write/Sync/Close) and the crypto/rand-failure arms
 // in Enroll/Renew (ecdsa.GenerateKey, x509.CreateCertificateRequest,
 // MarshalECPrivateKey). Production never reassigns them. Mirrors the
-// established pattern in packages/agent/internal/identity/secretstore/fallback.go
-// (osFile + createTempFn) and packages/agent/internal/network/tls/engine.go
+// established pattern in packages/agent/internal/network/tls/engine.go
 // (tlsRandReader).
 var (
 	createTempFn = func(dir, pattern string) (osFile, error) {

@@ -3,12 +3,13 @@ package audit
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"

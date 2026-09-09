@@ -11,7 +11,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -82,10 +81,9 @@ func (h *Handler) UpdateSettings(c echo.Context) error {
 		current["defaultFailBehavior"] = v
 	}
 
-	aa := middleware.AdminAuthFromContext(c)
-	updatedBy := ""
-	if aa != nil {
-		updatedBy = aa.KeyID
+	updatedBy, ok := requireAdminActor(c)
+	if !ok {
+		return unauthenticated(c)
 	}
 	if err := h.meta.SetSystemMetadata(ctx, settingsMetaKey, current, updatedBy); err != nil {
 		h.logger.Error("save settings", "error", err)

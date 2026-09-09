@@ -1,6 +1,8 @@
 package core
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"net/http"
 	"testing"
 	"time"
@@ -19,9 +21,9 @@ func TestNewClient_StreamingUncappedAndHandshakeWidened(t *testing.T) {
 	if c.streamc.Timeout != 0 {
 		t.Fatalf("streaming client must have no overall timeout (ctx-bound), got %v", c.streamc.Timeout)
 	}
-	tr, ok := c.httpc.Transport.(*http.Transport)
+	tr, ok := nexushttp.Base(c.httpc.Transport).(*http.Transport)
 	if !ok {
-		t.Fatalf("admin transport should be *http.Transport, got %T", c.httpc.Transport)
+		t.Fatalf("admin transport should be *http.Transport under the wrapper, got %T", c.httpc.Transport)
 	}
 	if tr.TLSHandshakeTimeout != 30*time.Second {
 		t.Fatalf("TLS handshake budget = %v, want 30s", tr.TLSHandshakeTimeout)
@@ -31,7 +33,9 @@ func TestNewClient_StreamingUncappedAndHandshakeWidened(t *testing.T) {
 	if tr.IdleConnTimeout != 30*time.Second {
 		t.Fatalf("IdleConnTimeout = %v, want 30s (recycle idle conns before a middlebox drops them)", tr.IdleConnTimeout)
 	}
-	if c.streamc.Transport != c.httpc.Transport {
+	// Each client carries its own logging wrapper, with its own caller label;
+	// what has to be shared is the transport underneath, which is the pool.
+	if nexushttp.Base(c.streamc.Transport) != nexushttp.Base(c.httpc.Transport) {
 		t.Fatal("the streaming client should share the admin transport (pooling + same TLS/proxy settings)")
 	}
 }
@@ -44,7 +48,7 @@ func TestNewClient_StreamingUncappedAndHandshakeWidened(t *testing.T) {
 func TestNewClient_StreamingReusesInjectedTransport(t *testing.T) {
 	inj := &http.Client{Transport: http.DefaultTransport}
 	c := NewClient(Env{Name: "local"}, fixedTokenSource{}, inj)
-	if c.streamc.Transport != inj.Transport {
+	if nexushttp.Base(c.streamc.Transport) != inj.Transport {
 		t.Fatal("an injected client's transport must back the streaming client")
 	}
 }

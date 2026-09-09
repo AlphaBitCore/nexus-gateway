@@ -3,6 +3,7 @@ package usercascade
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/pashagolub/pgxmock/v4"
@@ -29,8 +30,12 @@ func expectCascade(m pgxmock.PgxPoolIface, accountRows int64) {
 	m.ExpectExec(`DELETE FROM "UserFederatedIdentity" WHERE "userId" = \$1`).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 3))
 	m.ExpectExec(`DELETE FROM "RefreshToken" WHERE "userId" = \$1`).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 4))
 	m.ExpectExec(`DELETE FROM "ScimToken" WHERE "createdBy" = \$1`).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 5))
-	m.ExpectExec(`DELETE FROM "IamGroupMembership" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 6))
-	m.ExpectExec(`DELETE FROM "IamPolicyAttachment" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 7))
+	// The principalType is now a bound argument carrying the CANONICAL spelling.
+	// Pinning 'admin_user' inline in these two expectations uses the session
+	// spelling, which matches no row in IAM storage, so they pass while the
+	// statements delete nothing and every removed user leaves orphans behind.
+	m.ExpectExec(`DELETE FROM "IamGroupMembership" WHERE "principalType" = \$2 AND "principalId" = \$1`).WithArgs("u1", "nexus_user").WillReturnResult(pgxmock.NewResult("DELETE", 6))
+	m.ExpectExec(`DELETE FROM "IamPolicyAttachment" WHERE "principalType" = \$2 AND "principalId" = \$1`).WithArgs("u1", "nexus_user").WillReturnResult(pgxmock.NewResult("DELETE", 7))
 	m.ExpectExec(`DELETE FROM "NexusUser" WHERE id = \$1`).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", accountRows))
 }
 
@@ -84,7 +89,13 @@ func TestDeleteUserAccountNotFound(t *testing.T) {
 		`DELETE FROM "ScimToken"`, `DELETE FROM "IamGroupMembership"`,
 		`DELETE FROM "IamPolicyAttachment"`, `DELETE FROM "NexusUser"`,
 	} {
-		m.ExpectExec(re).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
+		// The two IAM deletes bind the canonical principalType as $2; everything
+		// else takes the user id alone.
+		args := []any{"u1"}
+		if strings.Contains(re, "Iam") {
+			args = append(args, "nexus_user")
+		}
+		m.ExpectExec(re).WithArgs(args...).WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	}
 	tx := beginTx(t, m)
 
@@ -127,7 +138,13 @@ func TestDeleteUserAccountFinalError(t *testing.T) {
 		`DELETE FROM "ScimToken"`, `DELETE FROM "IamGroupMembership"`,
 		`DELETE FROM "IamPolicyAttachment"`,
 	} {
-		m.ExpectExec(re).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
+		// The two IAM deletes bind the canonical principalType as $2; everything
+		// else takes the user id alone.
+		args := []any{"u1"}
+		if strings.Contains(re, "Iam") {
+			args = append(args, "nexus_user")
+		}
+		m.ExpectExec(re).WithArgs(args...).WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	}
 	m.ExpectExec(`DELETE FROM "NexusUser"`).WithArgs("u1").WillReturnError(errors.New("boom"))
 	tx := beginTx(t, m)

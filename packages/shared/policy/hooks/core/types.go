@@ -180,27 +180,6 @@ func (i *HookInput) TextSegments() []string {
 // impls wrap the callback in recover()).
 type PreHookCallback func(rawBody []byte, ci *HookInput)
 
-// TextSegmentsWith is the scope-aware sibling of TextSegments.
-func (i *HookInput) TextSegmentsWith(opts normalize.TextProjectionOptions) []string {
-	if i == nil || i.Normalized == nil {
-		return nil
-	}
-	return i.Normalized.TextProjectionWith(opts)
-}
-
-// ProjectionOptions returns the TextProjectionOptions implied by the
-// hook config's Scope field.
-func (c *HookConfig) ProjectionOptions() normalize.TextProjectionOptions {
-	if c == nil {
-		return normalize.TextProjectionOptions{}
-	}
-	opts := normalize.TextProjectionOptions{}
-	if c.Scope == "include_reasoning" {
-		opts.IncludeReasoning = true
-	}
-	return opts
-}
-
 // HookConfig is the declarative configuration for a hook instance.
 type HookConfig struct {
 	ID                string   `yaml:"id"                json:"id"`
@@ -213,10 +192,8 @@ type HookConfig struct {
 	TimeoutMs         int      `yaml:"timeoutMs"         json:"timeoutMs"`
 	ApplicableIngress []string `yaml:"applicableIngress" json:"applicableIngress"` // e.g. ["ALL"], ["COMPLIANCE_PROXY"]
 	// ApplicableTrafficKinds filters this hook by NormalizedPayload.kind.
-	ApplicableTrafficKinds []string `yaml:"applicableTrafficKinds" json:"applicableTrafficKinds,omitempty"`
-	// Scope opts the rule in to scanning canonical content blocks beyond the default.
-	Scope  string         `yaml:"scope,omitempty"        json:"scope,omitempty"`
-	Config map[string]any `yaml:"config"                 json:"config"`
+	ApplicableTrafficKinds []string       `yaml:"applicableTrafficKinds" json:"applicableTrafficKinds,omitempty"`
+	Config                 map[string]any `yaml:"config" json:"config"`
 }
 
 // EndpointType identifies the API endpoint category a request targets.

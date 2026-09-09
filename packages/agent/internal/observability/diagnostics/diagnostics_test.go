@@ -155,9 +155,8 @@ func TestTail_MissingFileReturnsErr(t *testing.T) {
 // TestTail_DirectoryPathTakesScannerErrBranch covers tail()'s
 // scanner.Err() branch. os.Open on a directory succeeds, Stat
 // succeeds, but the first Read on the bufio.Scanner returns an
-// "is a directory" error on macOS / Linux. The branch was previously
-// untestable without filesystem mocking; this path uses a real
-// TempDir to exercise it portably.
+// "is a directory" error on macOS / Linux. A real TempDir exercises the
+// branch portably, without filesystem mocking.
 //
 // On filesystems that allow scanning a directory (rare; some FUSE
 // variants), the test skips so the rest of the suite stays green.

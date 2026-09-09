@@ -1240,7 +1240,7 @@ func TestUpsertOverrides_EmptyInstallID_Returns400(t *testing.T) {
 	}
 }
 
-// S-13: a rejected override is a client error. The store refuses a
+// A rejected override is a client error. The store refuses a
 // severityOverride outside hard|soft|warn (persisting one silently stops the
 // rule from blocking); the handler must surface that as 400 with the per-rule
 // reasons, not as a 500 that tells the operator the server is broken.

@@ -40,8 +40,8 @@ type Attempt struct {
 	// It is per-attempt because a coercion is per-target: the same request
 	// translated for two wires is rewritten differently, and a walk that ends
 	// on the third target was not coerced the way the first one was. It rides
-	// here rather than on the request because the response header that used to
-	// be its only home reaches a caller who has already discarded it, and the
+	// here rather than on the request because a response header is read by a
+	// caller who has already discarded it by then, and the
 	// operator asking "what did we change" hours later has the traffic row and
 	// nothing else — while the adapter contract says a field we coerced is a
 	// field we own.
@@ -51,11 +51,11 @@ type Attempt struct {
 	// strategy's order, "largest-window" after a context overflow,
 	// "different-provider" after a rate limit or an upstream fault.
 	//
-	// Selection stopped being positional, so the trace has to carry the
-	// decision. Reading a chain that jumped over three entries, an operator
-	// otherwise cannot tell a deliberate choice from a bug — and the invariant
-	// that used to police this ("every target passed over has a named reason")
-	// was itself positional and stopped meaning anything.
+	// Selection is not positional, so the trace has to carry the decision.
+	// Reading a chain that jumped over three entries, an operator otherwise
+	// cannot tell a deliberate choice from a bug, and a positional invariant
+	// ("every target passed over has a named reason") cannot express the
+	// difference either.
 	SelectionReason string
 	// ErrorClass is what this attempt was classified AS — the finest name the
 	// executor has for the failure, and the one it branched on. Empty on

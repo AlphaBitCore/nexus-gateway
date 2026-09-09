@@ -16,7 +16,7 @@ import (
 // panic and returns non-nil strategy registry, health ranker, and capability
 // cache.
 func TestInitRouter_nilDeps(t *testing.T) {
-	stratReg, healthRanker, resolver, capCache := InitRouter(context.Background(), nil, nil, nil, nil, discardLogger(), false)
+	stratReg, healthRanker, resolver, capCache := InitRouter(context.Background(), nil, nil, nil, nil, discardLogger(), false, nil)
 	if stratReg == nil {
 		t.Error("expected non-nil strategy registry")
 	}

@@ -221,14 +221,16 @@ func (e *RulePackEngine) Execute(_ context.Context, input *core.HookInput) (*cor
 		Decision:         core.Approve,
 	}
 
-	segments := input.TextSegmentsWith(e.cfg.ProjectionOptions())
+	segments := input.TextSegments()
 
 	// One scan over all rules, both directions handled upstream. firstOnly:
 	// a detect/block decision only needs to know whether a rule fired in a
 	// segment, not how many times. The decision resolution below is engine-
 	// agnostic and byte-identical to the per-rule MatchString loop it replaces.
-	// complete is false only when the cgo matcher truncated mid-scan (alloc
-	// failure) — a partial hit set the redaction path must treat as fail-unsafe.
+	// complete is false when the cgo matcher truncated mid-scan (alloc failure)
+	// OR when it was closed by a rule-pack swap and never looked at all — both
+	// leave a hit set that understates what the rules would find, and the second
+	// understates it all the way to empty.
 	var hits []matcher.Hit
 	complete := true
 	if cs, ok := e.matcher.(matcher.CompleteScanner); ok {
@@ -240,7 +242,6 @@ func (e *RulePackEngine) Execute(_ context.Context, input *core.HookInput) (*cor
 	for _, h := range hits {
 		matched[[2]int{h.ID, h.Seg}] = struct{}{}
 	}
-	core.ObserveContentScan(e.cfg.ImplementationID, len(matched))
 
 	// A redact hook turns matches into masking spans instead of a block
 	// decision. The fast cgo matcher above is compiled without start-of-match,
@@ -250,6 +251,27 @@ func (e *RulePackEngine) Execute(_ context.Context, input *core.HookInput) (*cor
 	if e.onMatch.Action == core.ActionRedact {
 		return e.executeRedact(input, result, matched, complete, start)
 	}
+
+	// The redact branch above consults `complete` itself. The enforcement loop
+	// below reads only `matched`, so leaving an incomplete set unrepaired would
+	// turn "the scan never ran" into "no rule fired" and approve exactly the
+	// content the operator bound this pack to block — while the audit row
+	// records an approve that asserts a scan happened. Rebuild from the rule
+	// SOURCE: RE2 is the oracle the accelerator may be faster than, never less
+	// complete than. This is the same fail-safe matchedSetOrConfirm gives the
+	// keyword-filter and content-safety hooks; the rule-pack engine is the
+	// higher-privilege surface of the three, since it is what compliance packs
+	// bind to.
+	if !complete {
+		matched = e.matchedByRE2(segments)
+	}
+
+	// Observed AFTER the repair, so the histogram reports the set the decision
+	// below is actually made from. Observing before it recorded zero matches on
+	// exactly the requests this engine then blocks — an operator watching the
+	// metric through a rule-pack swap would have seen no scan activity while
+	// RULEPACK_MATCH blocks were firing.
+	core.ObserveContentScan(e.cfg.ImplementationID, len(matched))
 
 	for ri := range e.rules {
 		cr := e.rules[ri]
@@ -309,4 +331,38 @@ func (e *RulePackEngine) Close() error {
 		return c.Close()
 	}
 	return nil
+}
+
+// matchedByRE2 rebuilds the (rule index, segment index) match set using each
+// rule's own RE2 pattern, bypassing the cgo accelerator entirely. It is the
+// fail-safe for a scan whose result cannot be trusted to be complete — a
+// truncated one, or one against a matcher a rule-pack swap already closed.
+//
+// The key shape matches the fast path because the engine numbers its patterns
+// by rule index (NewRulePackEngine assigns ID: len(compiled) as it appends), so
+// a hit's pattern ID and a rule's slice index are the same integer.
+//
+// The loop itself is rebuildMatchedByRE2, shared with the front-end hooks'
+// matchedSetOrConfirm — this method only supplies the engine's patterns. It
+// does not call matchedSetOrConfirm directly because that re-scans through the
+// matcher first, and Execute has already scanned: reusing it would double the
+// accelerated scan on every healthy request to avoid duplicating a loop that
+// only runs on a broken one.
+//
+// One behavioural note worth knowing: the Vectorscan database is built from
+// boundForDetection(expr), a detection-only repeat cap, while this rebuilds
+// from the rule's verbatim pattern. The repaired set is therefore a SUPERSET of
+// what a complete accelerated scan would produce. That is the safe direction
+// for a block posture, and it means a differential test comparing the two would
+// report a divergence that is not a defect.
+func (e *RulePackEngine) matchedByRE2(segments []string) map[[2]int]struct{} {
+	pats := make([]matcher.Pattern, 0, len(e.rules))
+	for ri := range e.rules {
+		pats = append(pats, matcher.Pattern{
+			ID:    ri,
+			Expr:  e.rules[ri].rule.Pattern,
+			Flags: e.rules[ri].rule.Flags,
+		})
+	}
+	return rebuildMatchedByRE2(pats, segments)
 }

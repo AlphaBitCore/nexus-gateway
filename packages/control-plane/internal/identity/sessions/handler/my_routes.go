@@ -11,7 +11,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/handler"
+	virtualkey "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/handler"
 	authpkg "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 )
 

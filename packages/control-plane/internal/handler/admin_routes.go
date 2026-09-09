@@ -3,30 +3,30 @@ package handler
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/cache/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/quota/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/routing/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/handler"
+	cache "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/cache/handler"
+	providers "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/handler"
+	quota "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/quota/handler"
+	routing "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/routing/handler"
+	virtualkey "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/handler/agent"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/dsar/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/interception/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/killswitch/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/passthrough/handler"
+	dsar "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/dsar/handler"
+	hooks "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/handler"
+	interception "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/interception/handler"
+	killswitch "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/killswitch/handler"
+	passthrough "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/passthrough/handler"
 	handleriam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/infrastructure/infra"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/alerts/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/dlq/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/opsmetrics/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/retention/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/siem/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/thingstats/handler"
+	alerts "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/alerts/handler"
+	dlq "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/dlq/handler"
+	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/opsmetrics/handler"
+	observability "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/retention/handler"
+	siem "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/siem/handler"
+	thingstats "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/thingstats/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/handler/settings"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/analytics/handler"
+	analytics "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/analytics/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/handler/traffic"
 )
 
@@ -161,6 +161,12 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 		Hub:    h.Hub,
 		Audit:  h.Audit,
 		Logger: h.Logger,
+		// The user-keyed device listing re-evaluates per row; it cannot be
+		// gated by iamMWDevice because the device ids are only known after the
+		// query. Same engine and same group lookup the middleware uses, so the
+		// two cannot answer differently.
+		IAM:          h.IAM,
+		DeviceGroups: agentstore.New(h.DB.InternalPool()),
 	})
 	agentHandler.RegisterRoutes(g, iamMW, iamMWDevice)
 	// Agent exemption management routes — owned by handler/exemption/

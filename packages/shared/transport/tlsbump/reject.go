@@ -2,9 +2,10 @@ package tlsbump
 
 import (
 	"fmt"
-	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 // RejectLevel controls how much information is included in reject responses.

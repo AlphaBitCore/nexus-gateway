@@ -23,6 +23,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
@@ -70,9 +71,20 @@ type SemanticPrewarmEntry struct {
 	// May be empty — stored as an empty tag so the entry is visible
 	// to all scopes unless the lookup filters on vk_scope.
 	VKScope string `json:"vkScope"`
-	// TTLSeconds is the entry TTL in seconds [60, 604800].
+	// TTLSeconds is the entry TTL in seconds; it must be within
+	// [minPrewarmTTLSeconds, maxPrewarmTTLSeconds] and is REQUIRED — an
+	// omitted field is 0, which is out of range and skips the entry rather
+	// than writing one that never expires.
 	TTLSeconds int `json:"ttlSeconds"`
 }
+
+// Bounds for SemanticPrewarmEntry.TTLSeconds: one minute to seven days. A
+// shorter entry is not worth an embedding call; a longer one outlives any
+// retention window an operator can set on it.
+const (
+	minPrewarmTTLSeconds = 60
+	maxPrewarmTTLSeconds = 7 * 24 * 60 * 60
+)
 
 // SemanticPrewarmRequest is the POST /internal/semantic-prewarm body.
 // Credentials are NOT carried on this envelope — the AI GW resolves the
@@ -237,6 +249,20 @@ func semanticPrewarmHandler(
 			if resolveSkipReason != "" {
 				result.Skipped = true
 				result.SkipReason = resolveSkipReason
+				totalSkipped++
+				results[i] = result
+				continue
+			}
+
+			// Enforce the range this field's own doc comment states. It was
+			// documented and unchecked, and the unchecked direction is the bad
+			// one: ttlSeconds 0 — or an omitted field, which is 0 in Go — wrote
+			// a semantic entry with no expiry at all, holding prompt and
+			// response text where retention and erasure cannot reach it.
+			if entry.TTLSeconds < minPrewarmTTLSeconds || entry.TTLSeconds > maxPrewarmTTLSeconds {
+				result.Skipped = true
+				result.SkipReason = fmt.Sprintf("ttl_seconds_out_of_range: %d not in [%d, %d]",
+					entry.TTLSeconds, minPrewarmTTLSeconds, maxPrewarmTTLSeconds)
 				totalSkipped++
 				results[i] = result
 				continue

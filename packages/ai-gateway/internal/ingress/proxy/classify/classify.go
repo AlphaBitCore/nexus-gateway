@@ -1,13 +1,13 @@
-// packages/ai-gateway/internal/handler/classify_handler.go
 package classify
 
 import (
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/goccy/go-json"
 
 	"github.com/labstack/echo/v4"
 

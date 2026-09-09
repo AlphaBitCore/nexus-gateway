@@ -84,9 +84,9 @@ func TestDispatchStreamMode_RoutesEachKnownMode(t *testing.T) {
 // passthrough on an unknown enum value. The conservative default is
 // "do not silently engage compliance hooks against opted-out
 // traffic" — bytes flow verbatim and the misconfigured mode surfaces
-// elsewhere (validation, admin UI warnings). Previously this default
-// engaged live mode, which would flip a typo into a hook-running
-// session on whatever traffic landed first.
+// elsewhere (validation, admin UI warnings). A default that
+// engages live mode instead flips a typo into a hook-running
+// session on whatever traffic lands first.
 func TestDispatchStreamMode_UnknownEnumFallsBackToPassthrough(t *testing.T) {
 	body := "data: forbidden-content\n\ndata: [DONE]\n\n"
 	var teeBuf bytes.Buffer

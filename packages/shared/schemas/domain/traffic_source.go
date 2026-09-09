@@ -26,7 +26,7 @@ const (
 // DB source values written into traffic_event.source by each data-plane
 // writer. These must stay in sync with:
 //   - packages/nexus-hub/internal/observability/consumer/traffic.go (MQ → DB writer)
-//   - packages/compliance-proxy/internal/audit/sql.go (fallback writer)
+//   - packages/compliance-proxy/internal/audit/event_message.go (source stamp)
 //
 // CHECK constraint on traffic_event.source pins the allowed set.
 const (

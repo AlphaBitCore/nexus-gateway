@@ -164,7 +164,7 @@ func TestNormalize_AgentRunResponse_RealWireShape(t *testing.T) {
 }
 
 // TestNormalize_AgentRunRequest_LexicalUserMessage decodes the typed-message
-// (Lexical) request body — the path that previously fell through to
+// (Lexical) request body — the path that otherwise falls through to
 // generic-http.
 func TestNormalize_AgentRunRequest_LexicalUserMessage(t *testing.T) {
 	a := &Adapter{}

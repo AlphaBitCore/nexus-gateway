@@ -1,13 +1,14 @@
 package audit
 
 import (
-	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bytebudget"
@@ -128,8 +129,8 @@ type Writer struct {
 	// a top allocator + CPU cost on the request path it was meant to protect.
 	spillLogCount atomic.Uint64
 
-	// noSpoolLogCount rate-limits the "no durable spool configured" drop log
-	// (finding L-7). Deliberately a SEPARATE counter from spillLogCount: the two
+	// noSpoolLogCount rate-limits the "no durable spool configured" drop log.
+	// Deliberately a SEPARATE counter from spillLogCount: the two
 	// causes are unrelated — one is a misconfigured deployment, the other a failing
 	// disk — and sharing a throttle would let a storm of either hide the first
 	// occurrence of the other, which is precisely the class of silence this audit

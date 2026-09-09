@@ -73,29 +73,46 @@ type UserAuditSummary struct {
 // GetUserAuditEvents returns audit events for a user across all paths.
 // Correlates non-agent traffic via entity_id and agent traffic via thing_id
 // joined back to DeviceAssignment for the user.
+//
+// The agent leg is scoped to each assignment's [assignedAt, releasedAt) window.
+// A bare `thing_id IN (the user's devices)` has no such bound, so a device
+// reassigned A -> B surfaced B's agent events in A's audit view and vice versa:
+// the released assignment row still names the device, and nothing said WHEN it
+// was theirs. That is a cross-subject content leak on the screen an operator
+// reads to answer "what did this person do".
+//
+// The window matches the DSAR access and erase paths, which have always been
+// scoped this way (dsarstore/dsar.go). The virtual-key leg (entity_id = userID)
+// needs no window — the row names the subject directly.
 func (s *Store) GetUserAuditEvents(ctx context.Context, userID string, limit, offset int) ([]AuditEventRow, int, error) {
 	var total int
 	err := s.pool.QueryRow(ctx, `
-		WITH user_devices AS (
-			SELECT "deviceId" FROM "DeviceAssignment" WHERE "userId" = $1
-		)
 		SELECT COUNT(*) FROM traffic_event
 		WHERE entity_id = $1
-		   OR (source = 'agent' AND thing_id IN (SELECT "deviceId" FROM user_devices))
+		   OR (source = 'agent' AND EXISTS (
+		        SELECT 1 FROM "DeviceAssignment" da
+		         WHERE da."deviceId" = traffic_event.thing_id
+		           AND da."userId" = $1
+		           AND traffic_event.timestamp >= da."assignedAt"
+		           AND (da."releasedAt" IS NULL OR traffic_event.timestamp < da."releasedAt")
+		      ))
 	`, userID).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count user audit events: %w", err)
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		WITH user_devices AS (
-			SELECT "deviceId" FROM "DeviceAssignment" WHERE "userId" = $1
-		)
 		SELECT id, source, timestamp, target_host, latency_ms,
 		       entity_id, entity_type, request_hook_decision, details
 		FROM traffic_event
 		WHERE entity_id = $1
-		   OR (source = 'agent' AND thing_id IN (SELECT "deviceId" FROM user_devices))
+		   OR (source = 'agent' AND EXISTS (
+		        SELECT 1 FROM "DeviceAssignment" da
+		         WHERE da."deviceId" = traffic_event.thing_id
+		           AND da."userId" = $1
+		           AND traffic_event.timestamp >= da."assignedAt"
+		           AND (da."releasedAt" IS NULL OR traffic_event.timestamp < da."releasedAt")
+		      ))
 		ORDER BY timestamp DESC
 		LIMIT $2 OFFSET $3
 	`, userID, limit, offset)
@@ -217,9 +234,6 @@ func (s *Store) ListActiveDevicesByUser(ctx context.Context, userID string) ([]U
 func (s *Store) GetUserAuditSummary(ctx context.Context, userID string) (*UserAuditSummary, error) {
 	var summary UserAuditSummary
 	err := s.pool.QueryRow(ctx, `
-		WITH user_devices AS (
-			SELECT "deviceId" FROM "DeviceAssignment" WHERE "userId" = $1
-		)
 		SELECT
 			COUNT(*),
 			COUNT(*) FILTER (WHERE source = 'ai-gateway'),
@@ -228,7 +242,13 @@ func (s *Store) GetUserAuditSummary(ctx context.Context, userID string) (*UserAu
 			MAX(timestamp)
 		FROM traffic_event
 		WHERE entity_id = $1
-		   OR (source = 'agent' AND thing_id IN (SELECT "deviceId" FROM user_devices))
+		   OR (source = 'agent' AND EXISTS (
+		        SELECT 1 FROM "DeviceAssignment" da
+		         WHERE da."deviceId" = traffic_event.thing_id
+		           AND da."userId" = $1
+		           AND traffic_event.timestamp >= da."assignedAt"
+		           AND (da."releasedAt" IS NULL OR traffic_event.timestamp < da."releasedAt")
+		      ))
 	`, userID).Scan(&summary.TotalEvents, &summary.VKEvents, &summary.ProxyEvents, &summary.AgentEvents, &summary.LastActivity)
 	if err != nil {
 		return nil, fmt.Errorf("user audit summary: %w", err)

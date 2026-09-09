@@ -14,18 +14,28 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterSetupRoutes registers the setup guide endpoints under
 // /api/admin/setup/proxy/:thingId/...
+// Each route carries its OWN action, and the group carries none.
+//
+// A group carrying settings.read while the PATCH additionally carries
+// settings.write breaks: Echo CONCATENATES group and route middleware, so the PATCH
+// requires BOTH — and the IAM model does not imply one verb from another, so a
+// principal holding exactly the settings.write this route declares is
+// refused. The rule-pack registrar avoids this by registering its
+// writes on the parent group rather than inside its read-gated subgroup;
+// this is the same shape, spelled per-route.
 func (h *Handler) RegisterSetupRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
-	p := g.Group("/setup/proxy/:thingId", iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
-	p.GET("/ca-cert", h.SetupGetCACert)
-	p.GET("/mdm-profile", h.SetupGetMDMProfile)
-	p.GET("/pac-file", h.SetupGetPACFile)
+	p := g.Group("/setup/proxy/:thingId")
+	read := iam.ResourceSettings.Action(iam.VerbRead)
+	p.GET("/ca-cert", h.SetupGetCACert, iamMW(read))
+	p.GET("/mdm-profile", h.SetupGetMDMProfile, iamMW(read))
+	p.GET("/pac-file", h.SetupGetPACFile, iamMW(read))
 	p.PATCH("/onboarding", h.SetupPatchOnboarding, iamMW(iam.ResourceSettings.Action(iam.VerbWrite)))
 }
 
@@ -228,19 +238,37 @@ func (h *Handler) SetupGetMDMProfile(c echo.Context) error {
 	return c.Blob(http.StatusOK, "application/x-apple-aspen-config", buf.Bytes())
 }
 
-// pacFileTmpl is the JavaScript PAC file template. Domains is a slice of
-// dnsDomainIs(...) fragments for all AI provider domains.
+// pacFileTmpl is the JavaScript PAC file template. Fragments is a slice of
+// dnsDomainIs(...) host tests for all monitored AI provider domains.
+//
+// EVERY FRAGMENT GOES INSIDE ONE CONDITION. Emitting one `if`
+// per domain and joining them with `||` BETWEEN the statements gives:
+//
+//	if (dnsDomainIs(host, ".openai.com")) ||
+//	if (dnsDomainIs(host, ".anthropic.com"))
+//	    return "PROXY host:port";
+//
+// A PAC file is JavaScript a client's proxy resolver parses, and it rejects the
+// WHOLE file on a syntax error, not the offending line. The seed ships 63
+// enabled interception domains, so every deployment's download carried 62 stray
+// `||`. Exactly one domain parses, which is why it survived.
+//
+// Each fragment is parenthesised because a fragment may itself contain `||`
+// (the exact-host form is `host === "x" || dnsDomainIs(host, ".x")`).
+//
+// FAILOPEN SITS ON THE MATCHED RETURN, never on the fallthrough. On the
+// fallthrough it sends every UNMONITORED request through the proxy while monitored
+// domains keep the strict directive — the inverse of what it means. "A monitored
+// domain may fall back to DIRECT when the proxy is unreachable" is a statement
+// about the matched branch.
 var pacFileTmpl = template.Must(template.New("pac").Parse(`function FindProxyForURL(url, host) {
-{{- range $i, $frag := .Fragments}}
-    {{- if $i}} ||{{end}}
-    if ({{$frag}})
-{{- end}}
-        return "PROXY {{.ProxyHost}}:{{.ProxyPort}}";
+    if ({{range $i, $frag := .Fragments}}{{if $i}} || {{end}}({{$frag}}){{end}})
 {{- if .FailOpen}}
-    return "PROXY {{.ProxyHost}}:{{.ProxyPort}}; DIRECT";
+        return "PROXY {{.ProxyHost}}:{{.ProxyPort}}; DIRECT";
 {{- else}}
-    return "DIRECT";
+        return "PROXY {{.ProxyHost}}:{{.ProxyPort}}";
 {{- end}}
+    return "DIRECT";
 }
 `))
 

@@ -272,10 +272,10 @@ func TestHookAppliesToKind_NilInputOrNilNormalizedAreApplicable(t *testing.T) {
 	// empty-capture hooks run without forcing the caller to stamp a fake
 	// payload kind.
 	bh := &boundHook{config: &core.HookConfig{ApplicableTrafficKinds: []string{"ai"}}}
-	if !hookAppliesToKind(bh, nil) {
+	if !appliesToInput(bh, nil) {
 		t.Error("nil input should be applicable")
 	}
-	if !hookAppliesToKind(bh, &core.HookInput{Normalized: nil}) {
+	if !appliesToInput(bh, &core.HookInput{Normalized: nil}) {
 		t.Error("nil Normalized should be applicable")
 	}
 }
@@ -285,11 +285,11 @@ func TestHookAppliesToKind_EmptyKindsDefaultsToAI(t *testing.T) {
 	// ["ai"] for backwards compatibility with older configs.
 	bh := &boundHook{config: &core.HookConfig{ApplicableTrafficKinds: nil}}
 	in := &core.HookInput{Normalized: &normalize.NormalizedPayload{Kind: normalize.KindAIChat}}
-	if !hookAppliesToKind(bh, in) {
+	if !appliesToInput(bh, in) {
 		t.Error("empty kinds should default to 'ai' and match KindAIChat")
 	}
 	httpIn := &core.HookInput{Normalized: &normalize.NormalizedPayload{Kind: normalize.KindHTTPJSON}}
-	if hookAppliesToKind(bh, httpIn) {
+	if appliesToInput(bh, httpIn) {
 		t.Error("empty kinds defaulting to 'ai' must NOT match http kinds")
 	}
 }
@@ -298,7 +298,7 @@ func TestHookAppliesToKind_StarAndAllShortCircuitTrue(t *testing.T) {
 	for _, marker := range []string{"all", "*"} {
 		bh := &boundHook{config: &core.HookConfig{ApplicableTrafficKinds: []string{marker}}}
 		in := &core.HookInput{Normalized: &normalize.NormalizedPayload{Kind: normalize.KindHTTPBinary}}
-		if !hookAppliesToKind(bh, in) {
+		if !appliesToInput(bh, in) {
 			t.Errorf("marker %q should match every kind", marker)
 		}
 	}
@@ -308,10 +308,10 @@ func TestHookAppliesToKind_ExactKindMatch(t *testing.T) {
 	bh := &boundHook{config: &core.HookConfig{ApplicableTrafficKinds: []string{"ai-embedding"}}}
 	match := &core.HookInput{Normalized: &normalize.NormalizedPayload{Kind: normalize.KindAIEmbedding}}
 	mismatch := &core.HookInput{Normalized: &normalize.NormalizedPayload{Kind: normalize.KindAIChat}}
-	if !hookAppliesToKind(bh, match) {
+	if !appliesToInput(bh, match) {
 		t.Error("exact kind match should be applicable")
 	}
-	if hookAppliesToKind(bh, mismatch) {
+	if appliesToInput(bh, mismatch) {
 		t.Error("exact-only kind should reject mismatched ai-chat")
 	}
 }
@@ -335,7 +335,7 @@ func TestHookAppliesToKind_AIFamilyAndHTTPFamilyShorthand(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			in := &core.HookInput{Normalized: &normalize.NormalizedPayload{Kind: c.kind}}
-			if got := hookAppliesToKind(c.bh, in); got != c.wantApplies {
+			if got := appliesToInput(c.bh, in); got != c.wantApplies {
 				t.Errorf("got %v, want %v", got, c.wantApplies)
 			}
 		})
@@ -347,7 +347,7 @@ func TestHookAppliesToKind_UnknownKindReturnsFalse(t *testing.T) {
 	// specific entries must reject — there's no implicit fall-through.
 	bh := &boundHook{config: &core.HookConfig{ApplicableTrafficKinds: []string{"ai-chat"}}}
 	in := &core.HookInput{Normalized: &normalize.NormalizedPayload{Kind: normalize.KindUnsupported}}
-	if hookAppliesToKind(bh, in) {
+	if appliesToInput(bh, in) {
 		t.Error("unsupported kind should not match a specific allowlist")
 	}
 }
@@ -535,7 +535,7 @@ func TestBuildPipeline_NoApplicableHooksReturnsNilNilNoError(t *testing.T) {
 	// Returning a zero-hook *Pipeline would still walk the dispatch
 	// machinery on every request.
 	r := newResolverWith("a", "b") // both enabled, but stage="request"
-	pipe, err := r.BuildPipeline("connection", "AI_GATEWAY",
+	pipe, _, err := r.BuildPipeline("connection", "AI_GATEWAY",
 		"", nil, time.Second, 5*time.Second, false, false, testLogger())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -559,7 +559,7 @@ func TestBuildPipeline_SkipsIncompatibleHookToNilPipeline(t *testing.T) {
 		{ID: "bad", ImplementationID: "noop", Name: "bad",
 			Stage: "connection", Enabled: true, FailBehavior: "fail-open"},
 	}, registry, testLogger())
-	pipe, err := r.BuildPipeline("connection", "AI_GATEWAY",
+	pipe, _, err := r.BuildPipeline("connection", "AI_GATEWAY",
 		"", nil, time.Second, 5*time.Second, false, false, testLogger())
 	if err != nil {
 		t.Fatalf("incompatible hook must be skipped, not error: %v", err)
@@ -1709,4 +1709,14 @@ func TestPolicyResolver_SwapResetsWarnedUnknownConcurrentSafe(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// appliesToInput is the two-step production dance in one call: snapshot the
+// kind, then ask the predicate. Production takes the snapshot early on purpose
+// — the abandon path reads it while the chain goroutine may be replacing the
+// payload — so the tests go through the same helper rather than reconstructing
+// the pointer read the fix removed.
+func appliesToInput(bh *boundHook, in *core.HookInput) bool {
+	kind, has := payloadKindOf(in)
+	return hookAppliesToKind(bh, kind, has)
 }

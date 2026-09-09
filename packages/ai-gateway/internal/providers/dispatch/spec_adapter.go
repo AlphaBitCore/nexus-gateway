@@ -64,7 +64,7 @@ func (a *specAdapter) SupportsShape(shape typology.WireShape) bool {
 }
 
 func (a *specAdapter) Execute(ctx context.Context, req Request) (*Response, error) {
-	body, rewrites, urlOverride, err := a.prepareBodyFull(req)
+	prepared, err := a.prepareBodyFull(req)
 	if err != nil {
 		// A codec Fail that is ALREADY a typed *ProviderError (its own Status /
 		// Code / Type, e.g. a nexus-field rejection) survives verbatim — do not
@@ -81,7 +81,7 @@ func (a *specAdapter) Execute(ctx context.Context, req Request) (*Response, erro
 			Message: fmt.Sprintf("encode request: %v", err),
 		}
 	}
-	return a.executeWithBodyAndURL(ctx, req, body, rewrites, urlOverride)
+	return a.executeWithBodyAndURL(ctx, req, prepared.Body, prepared.Rewrites, prepared.URLOverride)
 }
 
 func (a *specAdapter) ExecuteWithBody(ctx context.Context, req Request, body []byte, rewrites []string, urlOverride string) (*Response, error) {
@@ -431,7 +431,7 @@ func (a *specAdapter) ListModels(ctx context.Context, target CallTarget) ([]stri
 // it into ExecuteWithBody — the override (e.g. Gemini :batchEmbedContents)
 // then reaches the dispatched URL instead of being re-derived from the
 // body in generic dispatch.
-func (a *specAdapter) PrepareBody(req Request) ([]byte, []string, string, error) {
+func (a *specAdapter) PrepareBody(req Request) (PreparedBody, error) {
 	return a.prepareBodyFull(req)
 }
 
@@ -439,9 +439,9 @@ func (a *specAdapter) PrepareBody(req Request) ([]byte, []string, string, error)
 // returns the EncodeResult.URLOverride. Called by Execute so that codecs
 // that set URLOverride (e.g. Gemini embedding codec for batch vs single)
 // actually influence the upstream URL.
-func (a *specAdapter) prepareBodyFull(req Request) (body []byte, rewrites []string, urlOverride string, err error) {
+func (a *specAdapter) prepareBodyFull(req Request) (PreparedBody, error) {
 	if req.WireShape == typology.WireShapeNone {
-		return nil, nil, "", nil
+		return PreparedBody{}, nil
 	}
 	if a.nativeLeg(req) {
 		return a.prepareNative(req)
@@ -452,7 +452,7 @@ func (a *specAdapter) prepareBodyFull(req Request) (body []byte, rewrites []stri
 	// header reflects what the upstream actually saw.
 	result, encErr := a.spec.SchemaCodec.EncodeRequest(req.WireShape, req.Body, req.Target)
 	if encErr != nil {
-		return nil, nil, "", encErr
+		return PreparedBody{}, encErr
 	}
 	// Strip AFTER the codec, not before it. The codec must still SEE
 	// nexus.ext.<provider>.<key> — that is how a caller reaches a
@@ -472,7 +472,12 @@ func (a *specAdapter) prepareBodyFull(req Request) (body []byte, rewrites []stri
 	// yet; here it has, so there is nothing left to preserve for anyone. The
 	// registry-wide gate reads both carriers, and both are removed by the same
 	// call.
-	return result.Body, result.Rewrites, result.URLOverride, nil
+	return PreparedBody{
+		Body:              result.Body,
+		Rewrites:          result.Rewrites,
+		URLOverride:       result.URLOverride,
+		PromptCacheMarked: result.PromptCacheMarked,
+	}, nil
 }
 
 // nativeLeg is the same-spec triage: may this body skip the canonical
@@ -516,7 +521,7 @@ func (a *specAdapter) nativeLeg(req Request) bool {
 // prepareNative runs the native leg: dispatch-owned guards, then the
 // codec's same-spec differential. The codec is always in the path — what
 // this leg skips is only the trip through the OpenAI canonical spec.
-func (a *specAdapter) prepareNative(req Request) ([]byte, []string, string, error) {
+func (a *specAdapter) prepareNative(req Request) (PreparedBody, error) {
 	// Strip the gateway-internal `nexus` namespace before anything else.
 	// The native leg forwards req.Body to upstream (modulo the codec's
 	// differential) and no upstream understands the namespace — most 4xx
@@ -527,7 +532,7 @@ func (a *specAdapter) prepareNative(req Request) ([]byte, []string, string, erro
 	// Degenerate target: nothing to stamp and no quirk can key on an empty
 	// model id. Preserved from the legacy passthrough.
 	if req.Target.ProviderModelID == "" {
-		return body, nil, "", nil
+		return PreparedBody{Body: body}, nil
 	}
 
 	// Non-object carve-out — a stated dispatch-level exception to the
@@ -539,14 +544,19 @@ func (a *specAdapter) prepareNative(req Request) ([]byte, []string, string, erro
 	// verbatim and let the upstream return its own error. Leading-byte
 	// scan only — no full validation pass (the upstream already validates).
 	if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 || t[0] != '{' {
-		return body, nil, "", nil
+		return PreparedBody{Body: body}, nil
 	}
 
 	res, err := a.spec.SchemaCodec.RewriteNative(req.WireShape, body, req.Target, req.Stream)
 	if err != nil {
-		return nil, nil, "", err
+		return PreparedBody{}, err
 	}
-	return res.Body, res.Rewrites, res.URLOverride, nil
+	return PreparedBody{
+		Body:              res.Body,
+		Rewrites:          res.Rewrites,
+		URLOverride:       res.URLOverride,
+		PromptCacheMarked: res.PromptCacheMarked,
+	}, nil
 }
 
 // applyURLOverride replaces the action suffix of a provider URL with

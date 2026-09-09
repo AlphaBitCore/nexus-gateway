@@ -86,9 +86,9 @@ var upstreamCodes = map[string]struct{}{
 // rejected the request, as opposed to the gateway rejecting it before or instead
 // of calling one.
 //
-// This is the question the alert rules actually need. They used to approximate
-// it with `error_code == ""`, on the contract that the gateway left upstream
-// failures unclassified — a contract the gateway does not honour, which left
+// This is the question the alert rules actually need. Approximating
+// it with `error_code == ""` assumes the gateway leaves upstream
+// failures unclassified — a contract it does not honour, which leaves
 // those rules unable to fire. Ask this instead: it stays correct as codes are
 // added, and an empty code (a producer that forgot to classify) reads as false
 // rather than silently counting as an upstream failure.

@@ -4,8 +4,8 @@
 // same way, and so the classification is reviewable on its own. The rule that
 // matters here: a rejected rule or override is the CALLER's mistake. Reporting
 // it as 500 sends an operator hunting a server fault when the fix is a severity
-// typo in their own request body — and until S-13, rulepack.InvalidRulesError
-// had no status mapping anywhere, so every validation rejection did exactly
+// typo in their own request body. With no status mapping for
+// rulepack.InvalidRulesError anywhere, every validation rejection does exactly
 // that.
 package rulepacks
 

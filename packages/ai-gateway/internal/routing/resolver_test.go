@@ -882,7 +882,7 @@ func TestResolver_CatchAll_LosesToSpecific(t *testing.T) {
 	// Rules inserted in the order the real store returns them: pipelineStage
 	// ASC, priority DESC. Specific (priority 100) before catch-all (priority
 	// 0) — mirrors `SELECT ... ORDER BY "pipelineStage" ASC, priority DESC`
-	// in packages/ai-gateway/internal/store/routing.go.
+	// in packages/ai-gateway/internal/platform/store/routing.go.
 	f.addRule(store.RoutingRule{
 		ID:              "r-specific",
 		Name:            "specific-gpt4",
@@ -1119,10 +1119,10 @@ func TestResolve_ARuleThatResolvesNothingYieldsTheSlot(t *testing.T) {
 // established where the request context is prepared and every strategy that
 // needs it reads that one answer.
 //
-// It used to be asked twice. The smart strategy fetched the catalogue itself
-// and applied the virtual key's allowlist in its own loop, alongside the
-// resolver's. Two readers of one snapshot is how the defects this program keeps
-// finding begin — not because a second read is slow, but because the two can
+// Asking it twice — a smart strategy fetching the catalogue itself
+// and applying the virtual key's allowlist in its own loop, alongside the
+// resolver's — is where this class of defect begins. Two readers of one snapshot,
+// not because a second read is slow, but because the two can
 // answer differently, and the one that disagrees is invisible until a request
 // lands on the difference.
 func TestResolve_TheModelPoolIsReadOnce(t *testing.T) {

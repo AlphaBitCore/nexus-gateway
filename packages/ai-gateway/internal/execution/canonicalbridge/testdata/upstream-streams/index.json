@@ -1,0 +1,86 @@
+{
+  "anthropic_thinking_tools": {
+    "channels": "块索引模型:text_delta / thinking_delta / input_json_delta / stop_reason / usage",
+    "model": "claude-sonnet-5",
+    "provider": "anthropic",
+    "responseBytes": 1586,
+    "url": "https://api.anthropic.com/v1/messages"
+  },
+  "cohere_reasoning": {
+    "channels": "TWO content blocks — a `thinking` one and a `text` one. The chat-stream reference documents neither, which is why this is captured rather than written",
+    "model": "command-a-reasoning-08-2025",
+    "provider": "cohere",
+    "responseBytes": 101115,
+    "url": "https://api.cohere.com/v2/chat"
+  },
+  "deepseek_reasoning": {
+    "channels": "reasoning_content 长分片 + DeepSeek 的 usage 扩展",
+    "model": "deepseek-reasoner",
+    "provider": "deepseek",
+    "responseBytes": 11473,
+    "url": "https://api.deepseek.com/chat/completions"
+  },
+  "gemini_thinking": {
+    "channels": "parts[].thought=true — Gemini 的思维链通道",
+    "model": "gemini-2.5-flash",
+    "provider": "gemini",
+    "responseBytes": 9262,
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+  },
+  "gemini_tools": {
+    "channels": "parts[].functionCall + finishReason + usageMetadata",
+    "model": "gemini-2.5-flash",
+    "provider": "gemini",
+    "responseBytes": 944,
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+  },
+  "moonshot_tools": {
+    "channels": "Kimi 的 usage 扁平别名 + tool_calls",
+    "model": "moonshot-v1-8k",
+    "provider": "moonshot",
+    "responseBytes": 3690,
+    "url": "https://api.moonshot.cn/v1/chat/completions"
+  },
+  "openai_multichoice": {
+    "channels": "choices[].index — n>1 时的多候选",
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "responseBytes": 2550,
+    "url": "https://api.openai.com/v1/chat/completions"
+  },
+  "openai_reasoning": {
+    "channels": "推理模型的 usage.completion_tokens_details.reasoning_tokens",
+    "model": "gpt-5-mini",
+    "provider": "openai",
+    "responseBytes": 3786,
+    "url": "https://api.openai.com/v1/chat/completions"
+  },
+  "openai_refusal": {
+    "channels": "delta.refusal — 结构化输出下的拒答通道",
+    "model": "gpt-4o-2024-08-06",
+    "provider": "openai",
+    "responseBytes": 3786,
+    "url": "https://api.openai.com/v1/chat/completions"
+  },
+  "openai_responses_reasoning": {
+    "channels": "response.reasoning_summary_text.delta — the Responses reasoning channel",
+    "model": "gpt-5-mini",
+    "provider": "openai",
+    "responseBytes": 65271,
+    "url": "https://api.openai.com/v1/responses"
+  },
+  "openai_responses_tools": {
+    "channels": "the /v1/responses event grammar: response.output_text.delta, response.function_call_arguments.delta, response.completed",
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "responseBytes": 6598,
+    "url": "https://api.openai.com/v1/responses"
+  },
+  "openai_tools": {
+    "channels": "content + tool_calls 分片 + finish_reason + usage",
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "responseBytes": 3222,
+    "url": "https://api.openai.com/v1/chat/completions"
+  }
+}

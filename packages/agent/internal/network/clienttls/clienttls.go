@@ -36,6 +36,10 @@ func underlyingHTTPTransport(rt http.RoundTripper) *http.Transport {
 // both client cert and CA in one shot — for example, the Hub client which
 // validates the Hub's CA and presents the agent's mTLS cert.
 //
+// The transport's existing ALPN list survives the install unless cfg states
+// one of its own — see the note inside. Without that, pinning a CA pool
+// silently downgraded the connection to HTTP/1.1.
+//
 // Must be called once during construction, before concurrent outbound
 // requests are in flight. CloseIdleConnections forces the next dial to read
 // the updated config but does not interrupt in-flight requests.
@@ -55,7 +59,26 @@ func WithTLSConfig(c *http.Client, cfg *tls.Config) error {
 	if cfg == nil {
 		tr.TLSClientConfig = nil
 	} else {
-		tr.TLSClientConfig = cfg.Clone()
+		next := cfg.Clone()
+		// Carry the transport's ALPN list across the replacement unless the
+		// caller stated one of their own.
+		//
+		// The base client from shared/transport/http calls
+		// http2.ConfigureTransports, and that writes "h2" into
+		// TLSClientConfig.NextProtos. Replacing the whole config therefore
+		// dropped the ALPN offer, so both agent Hub clients — which call this
+		// only to pin a CA pool and an mTLS cert, saying nothing about ALPN —
+		// silently negotiated HTTP/1.1. TLSNextProto still held the h2
+		// registration, but it can only fire on a handshake that NEGOTIATED
+		// h2, and there was no longer an offer to negotiate from. The
+		// ReadIdleTimeout keep-alive probe configured beside it became dead
+		// configuration, and nothing logged the downgrade.
+		//
+		// A caller that DOES set NextProtos is choosing deliberately and wins.
+		if len(next.NextProtos) == 0 && tr.TLSClientConfig != nil && len(tr.TLSClientConfig.NextProtos) > 0 {
+			next.NextProtos = append([]string(nil), tr.TLSClientConfig.NextProtos...)
+		}
+		tr.TLSClientConfig = next
 	}
 	tr.CloseIdleConnections()
 	return nil

@@ -462,8 +462,8 @@ func TestServeVideoPoll_VeoCompletedReconcilesFloor(t *testing.T) {
 // A stored id that no longer decodes is OUR fault, not the provider's:
 // submit validates the same round-trip before storing and refuses the job
 // otherwise, so this state can only be reached if the stored copy diverged
-// after that. The 502 it used to answer sent the operator to the provider,
-// and its hint blamed a malformed provider name that submit had already
+// after that. A 502 here sends the operator to the provider,
+// with a hint blaming a malformed provider name that submit has already
 // ruled out.
 //
 // The safety property is unchanged and still asserted: a hostile id never

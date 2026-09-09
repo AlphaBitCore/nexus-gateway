@@ -1,0 +1,34 @@
+{
+  "model": "claude-sonnet-5",
+  "stream": true,
+  "max_tokens": 2000,
+  "thinking": {
+    "type": "adaptive"
+  },
+  "output_config": {
+    "effort": "high"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "weather in Paris? use the tool"
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "get weather",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    }
+  ]
+}

@@ -292,7 +292,11 @@ func TestAnalyticsSparkline_NoDataDefault(t *testing.T) {
 		WithArgs("merge-1h").
 		WillReturnError(errPgxNoRowsSentinel)
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
-		WithArgs(matchManyArgs(17)...).
+		// 18 metrics + 2 times. This read 17 and never matched, so the mock
+		// returned an ERROR that the old (nil,nil)-on-error contract turned
+		// into "no data" — the phase-aggregate metrics were added to the
+		// sparkline and nothing noticed the test had stopped exercising it.
+		WithArgs(matchManyArgs(20)...).
 		WillReturnRows(pgxmock.NewRows(rollupCols))
 	c, rec := echoCtx("GET", "/api/admin/analytics/sparkline")
 	if err := h.AnalyticsSparkline(c); err != nil {

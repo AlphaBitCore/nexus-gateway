@@ -34,7 +34,7 @@ func TestNewCircuitFlushMetrics_WithRegistry(t *testing.T) {
 		t.Fatal("expected non-nil metrics")
 	}
 	// Exercise each method with a real backing registry to exercise the
-	// non-nil branch that was previously at 0% (constructor body).
+	// non-nil branch of the constructor body.
 	m.cycle("ok")
 	m.flushed(1)
 	m.reclaimed(2)

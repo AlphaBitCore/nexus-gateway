@@ -30,6 +30,8 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 )
@@ -299,12 +301,16 @@ func countCanonicalInputChars(canonical []byte) int {
 		})
 		return true
 	})
-	gjson.GetBytes(canonical, "systemInstruction.parts").ForEach(func(_, part gjson.Result) bool {
-		if t := part.Get("text"); t.Exists() {
-			total += len(t.String())
-		}
-		return true
-	})
+	// Both spellings. Reading only camelCase under-counted the prompt for a
+	// protobuf-spelled request, and this count feeds `auto` prompt-size
+	// routing as well as the estimate the caller is shown.
+	specutil.GeminiFirstBytes(canonical, specutil.GeminiSystemInstructionPaths).
+		ForEach(func(_, part gjson.Result) bool {
+			if t := part.Get("text"); t.Exists() {
+				total += len(t.String())
+			}
+			return true
+		})
 
 	return total
 }

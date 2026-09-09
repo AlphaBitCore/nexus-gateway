@@ -48,7 +48,20 @@ func (e *Engine) Swap(domains []InterceptionDomain) error {
 	for _, d := range domains {
 		m := hostMatcher{domain: d}
 		if d.HostMatchType == HostMatchRegex {
-			rx, err := regexp.Compile(d.HostPattern)
+			// COMPILED CASE-INSENSITIVELY, because MatchHost lowercases the host
+			// before matching (see below) while every other match type also
+			// lowercases the PATTERN. A verbatim regex was the one type that did
+			// neither, so `^API\.openai\.com$` matched NOTHING — not the
+			// mixed-case host, not the lowercase one. An admin who capitalised
+			// anything in a regex got a rule that silently never fired, and an
+			// unmatched host is relayed uninspected.
+			//
+			// The fold is not purely "case only" and the limit is worth stating:
+			// RE2 folds a character class's RANGES before negating it, so under
+			// (?i) a pattern containing [^a-z] stops matching A-Z. That is a
+			// narrower match than before; the alternative — leaving it verbatim —
+			// is a rule that never matches at all.
+			rx, err := regexp.Compile("(?i)" + d.HostPattern)
 			if err != nil {
 				return err
 			}

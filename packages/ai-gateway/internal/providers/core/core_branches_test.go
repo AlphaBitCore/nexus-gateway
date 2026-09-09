@@ -174,8 +174,8 @@ func (stubCoreAdapter) Execute(_ context.Context, _ Request) (*Response, error) 
 func (stubCoreAdapter) Probe(_ context.Context, _ CallTarget) (*ProbeResult, error) {
 	return &ProbeResult{OK: true}, nil
 }
-func (stubCoreAdapter) PrepareBody(req Request) ([]byte, []string, string, error) {
-	return req.Body, nil, "", nil
+func (stubCoreAdapter) PrepareBody(req Request) (PreparedBody, error) {
+	return PreparedBody{Body: req.Body}, nil
 }
 func (stubCoreAdapter) ExecuteWithBody(_ context.Context, _ Request, _ []byte, _ []string, _ string) (*Response, error) {
 	return &Response{StatusCode: 200}, nil

@@ -140,9 +140,24 @@ func InitScheduler(
 	sched.Register(defjobs_expiry.NewOverrideExpiry(st, mgr, cfg.Scheduler.OverrideExpiryInterval, opsReg, logger))
 	sched.Register(defjobs_audit.NewAuditChainVerify(pool, cfg.Scheduler.AuditChainVerifyInterval, opsReg, logger))
 
-	// Audit pipeline freshness — defaults: tick every 60s, alarm at 5min stale.
+	// Audit pipeline freshness — tick every 5min, alarm at 10min stale.
 	// Catches the silent-stall failure class (INSERT fails after consumer pull).
-	sched.Register(defjobs_audit.NewAuditFreshnessCheck(pool, 60*time.Second, 5*time.Minute, opsReg, logger).
+	//
+	// Both numbers were loosened from 60s/5min because the check was too eager
+	// on a low-traffic deployment. Receipt and persistence are not simultaneous:
+	// events batch, so for the first seconds after one arrives the table still
+	// holds the previous row — indistinguishable from the stalled signature this
+	// job looks for. On prod 2026-08-27 a probe landed at 10:06:36, the check ran
+	// at 10:06:59, and it reported lag=693s because that probe's batch had not
+	// flushed yet. The ERROR surfaces as a card on Infrastructure → Errors, so a
+	// quiet box would show "audit pipeline appears stale" every time traffic
+	// resumed — which is how the card that mattered during the 2026-05-14 silent
+	// 16-hour loss gets tuned out.
+	//
+	// The looser numbers cost nothing against what this exists to catch: that
+	// incident ran for SIXTEEN HOURS. A tick every 5min bounds how often it can
+	// speak at all, and a 10min ceiling gives a batch ample time to land.
+	sched.Register(defjobs_audit.NewAuditFreshnessCheck(pool, 5*time.Minute, 10*time.Minute, opsReg, logger).
 		WithLastReceived(lastTrafficReceived))
 
 	sched.Register(defjobs_drift.NewIdentityEnricher(st, cfg.Scheduler.IdentityEnrichInterval, opsReg, logger))

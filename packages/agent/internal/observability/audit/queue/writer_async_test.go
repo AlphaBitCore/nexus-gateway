@@ -357,9 +357,9 @@ func TestRecordBatch_TxBeginErr_AfterClose(t *testing.T) {
 	}
 }
 
-// Finding A-4: the flush interval is now a timer armed per batch rather than a standing
-// ticker, so an idle writer wakes zero times instead of 600 times a minute at the production
-// 100 ms interval. The idle saving itself is structural — a goroutine parked in select with no
+// The flush interval is a timer armed per batch rather than a standing ticker, so an
+// idle writer wakes zero times instead of 600 times a minute at the production 100 ms
+// interval. The idle saving itself is structural — a goroutine parked in select with no
 // pending timer cannot wake — but two behaviours the change could plausibly break are NOT
 // structural, and both fail silently: audit rows simply sit in memory instead of reaching the
 // encrypted queue, with no error logged anywhere. Hence these two.
@@ -452,11 +452,11 @@ func TestQueueWriter_TrickleDoesNotPostponeFlush(t *testing.T) {
 		"until Close — silently, since nothing on this path errors.")
 }
 
-// TestQueueWriter_FlushDeadlineRunsFromTheFirstEvent_NotATickBoundary is the guard for A-4's
-// actual claim, which neither test above can see.
+// TestQueueWriter_FlushDeadlineRunsFromTheFirstEvent_NotATickBoundary is the guard for the
+// per-batch timer's actual claim, which neither test above can see.
 //
-// A-4 replaced a standing 100 ms ticker with a timer armed only while a batch is pending, so an
-// idle writer parks with no pending timer and wakes zero times a minute instead of 600. That is a
+// A timer armed only while a batch is pending, rather than a standing 100 ms ticker, parks an
+// idle writer with no pending timer: it wakes zero times a minute instead of 600. That is a
 // battery claim on a laptop agent, and it has no direct observable: an empty-batch flush returns
 // without touching the queue, so a reinstated ticker commits exactly the same rows. Both existing
 // interval tests stay green against it.
@@ -512,11 +512,11 @@ func TestQueueWriter_FlushDeadlineRunsFromTheFirstEvent_NotATickBoundary(t *test
 			t.Fatalf("the row committed %v after its event, short of the %v interval. The flush "+
 				"deadline is being measured from an absolute tick boundary rather than from the "+
 				"first event of the batch — i.e. a standing ticker, which is the resident idle "+
-				"wake-up A-4 removed.", elapsed, interval)
+				"wake-up this writer exists to avoid.", elapsed, interval)
 		}
 		if elapsed > interval+2*step {
 			t.Fatalf("the row committed %v after its event, well past the %v interval: the "+
-				"worst-case flush latency A-4 promised to leave unchanged has regressed.",
+				"worst-case flush latency the per-batch timer leaves unchanged has regressed.",
 				elapsed, interval)
 		}
 	})

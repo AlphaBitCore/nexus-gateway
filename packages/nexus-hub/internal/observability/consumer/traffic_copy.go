@@ -25,9 +25,14 @@ import (
 // caller (flush) falls back to per-item reprocessing on the proven pgx.Batch path
 // (flushItem), so the poison-isolation + no-strand guarantee is untouched.
 //
-// The value builders (trafficEventRowValues / payloadRowValues) are shared with
-// the pgx.Batch path in traffic_inserts.go so the two paths can never drift in
-// column order or null-stripping.
+// The two paths do NOT share a value builder. insertTrafficEvents and
+// insertPayloads (traffic_inserts.go) each spell their argument list out inline;
+// trafficEventRowValues / payloadRowValues below have no production caller at
+// all. So the column order and the null-stripping ARE duplicated, and the lists
+// can drift. What is guarded is only the COPY side: trafficEventColumns against
+// insertTrafficEventSQL, by TestTrafficEventColumnsParity. The Batch path's
+// inline list has no equivalent gate — a column added to one and not the other
+// is caught by neither.
 
 // trafficCopyEnabled gates the COPY fast path. On by default: the COPY staging
 // load is the disk-WRITE-bound drain's shipped optimum (set-based insert,
@@ -48,10 +53,11 @@ func trafficCopyEnabledFromEnv(v string) bool {
 	}
 }
 
-// trafficEventColumns is the traffic_event column list in the exact order of
-// trafficEventRowValues — the single source of truth for both the COPY staging
-// load and the INSERT…SELECT projection. Must stay in lockstep with
-// insertTrafficEventSQL's column list (guarded by TestTrafficEventColumnsParity).
+// trafficEventColumns is the traffic_event column list in the exact order
+// appendTrafficEventRow emits — the source of truth for the COPY staging load
+// and the INSERT…SELECT projection, and for those two only. Must stay in
+// lockstep with insertTrafficEventSQL's column list (guarded by
+// TestTrafficEventColumnsParity); the pgx.Batch path keeps its own inline list.
 var trafficEventColumns = []string{
 	"id", "source", "trace_id", "external_request_id", "timestamp",
 	"source_ip", "target_host", "method", "path", "status_code", "latency_ms",

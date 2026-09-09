@@ -88,6 +88,8 @@ func TestRoutingSimulate_MalformedJSON(t *testing.T) {
 func TestRoutingSimulate_NoRuleMatched(t *testing.T) {
 	resolver := &stubResolver{
 		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			// Resolve hydrates: this caller named a model the catalogue knows.
+			rctx.RequestedModel.CandidateIDs = []string{"mdl-1"}
 			return &routingcore.RoutingPlan{
 				OriginalModelID: rctx.RequestedModel.ID,
 				PipelineTrace: []routingcore.PipelineTraceEntry{
@@ -99,7 +101,7 @@ func TestRoutingSimulate_NoRuleMatched(t *testing.T) {
 	h := RoutingSimulateHandler(resolver, nil, discardLogger())
 
 	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
-		strings.NewReader(`{"modelId":"unknown","endpointType":"chat"}`))
+		strings.NewReader(`{"modelId":"gpt-4o","endpointType":"chat"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -156,9 +158,86 @@ func TestRoutingSimulate_AutoNoRuleIsRejection(t *testing.T) {
 	}
 }
 
+// A deployment may trigger smart routing on its own keyword, not only `auto`.
+// The preview used to key this warning on the literal string "auto", so every
+// other keyword fell to the named-model branch and the operator was told the
+// explicit-model passthrough would serve it. It would not: the passthrough
+// serves a CATALOGUE model, and a keyword names none — the live gateway 404s.
+// This is the screen an operator opens because routing is already surprising
+// them, so the wrong half of that answer is the expensive half.
+func TestRoutingSimulate_ANonAutoKeywordWithNoRuleIsRejection(t *testing.T) {
+	resolver := &stubResolver{
+		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			// A keyword resolves to no catalogue row, so Resolve leaves
+			// CandidateIDs empty — exactly as it does for `auto`.
+			return &routingcore.RoutingPlan{OriginalModelID: rctx.RequestedModel.ID}, nil
+		},
+	}
+	h := RoutingSimulateHandler(resolver, nil, discardLogger())
+	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
+		strings.NewReader(`{"modelId":"fast","endpointType":"chat","messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := decodeResp(t, rec)
+	warnings, _ := body["warnings"].([]any)
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning for a keyword no rule claims")
+	}
+	first := warnings[0].(string)
+	if !strings.Contains(first, "would be rejected") {
+		t.Fatalf("a keyword no rule claims must warn rejection, got %v", warnings)
+	}
+	if strings.Contains(first, "passthrough") {
+		t.Errorf("a keyword names no catalogue model, so it must not be described "+
+			"as passthrough-served: %v", first)
+	}
+	if !strings.Contains(first, "fast") {
+		t.Errorf("the warning must name the keyword the operator typed: %v", first)
+	}
+}
+
+// The catalogue read failing is not the same fact as "this names no model", and
+// answering the second when we only know the first tells an operator their
+// model does not exist during a database blip.
+func TestRoutingSimulate_CatalogueUnreadableIsReportedAsUnknown(t *testing.T) {
+	resolver := &stubResolver{
+		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			rctx.RequestedModel.HydrationFailed = true
+			return &routingcore.RoutingPlan{OriginalModelID: rctx.RequestedModel.ID}, nil
+		},
+	}
+	h := RoutingSimulateHandler(resolver, nil, discardLogger())
+	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
+		strings.NewReader(`{"modelId":"gpt-4o","endpointType":"chat","messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := decodeResp(t, rec)
+	warnings, _ := body["warnings"].([]any)
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning when the catalogue could not be read")
+	}
+	first := warnings[0].(string)
+	if !strings.Contains(first, "could not be read") {
+		t.Fatalf("an unreadable catalogue must be reported as such, got %v", warnings)
+	}
+	if strings.Contains(first, "names no model in the catalogue") {
+		t.Errorf("a blip must not be reported as the model not existing: %v", first)
+	}
+	// The empty-messages warning keys on the same fact, so it must stay silent
+	// too rather than claim smart routing was requested.
+	for _, w := range warnings {
+		if strings.Contains(w.(string), "smart routing requested") {
+			t.Errorf("must not claim smart routing on an unreadable catalogue: %v", w)
+		}
+	}
+}
+
 func TestRoutingSimulate_SingleStrategyMatch(t *testing.T) {
 	resolver := &stubResolver{
 		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			rctx.RequestedModel.CandidateIDs = []string{"mdl-1"}
 			return &routingcore.RoutingPlan{
 				OriginalModelID: rctx.RequestedModel.ID,
 				RuleID:          "rr-1",
@@ -535,5 +614,105 @@ func TestNormalizeEndpointType(t *testing.T) {
 		if got := normalizeEndpointType(c.in); got != c.want {
 			t.Errorf("normalizeEndpointType(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// TestRoutingSimulate_NoSmartWarningWhenNoRuleClaimedTheRequest — the
+// empty-messages warning is about a rule that has to read the prompt, so it
+// must not fire when no rule matched at all.
+//
+// Keying it on "the caller named no catalogue model" made it true of a typo and
+// of a pasted model UUID as well, and for those it was appended directly after
+// the warning above saying the request would be rejected: two readings of one
+// request on one screen, the second contradicting the first.
+func TestRoutingSimulate_NoSmartWarningWhenNoRuleClaimedTheRequest(t *testing.T) {
+	resolver := &stubResolver{
+		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			// A typo: no candidates, and no rule claimed it either.
+			return &routingcore.RoutingPlan{OriginalModelID: rctx.RequestedModel.ID}, nil
+		},
+	}
+	h := RoutingSimulateHandler(resolver, nil, discardLogger())
+	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
+		strings.NewReader(`{"modelId":"gpt-4o-mni","endpointType":"chat"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := decodeResp(t, rec)
+	warnings, _ := body["warnings"].([]any)
+	for _, w := range warnings {
+		if strings.Contains(w.(string), "smart routing requested") {
+			t.Errorf("no rule claimed this request, so nothing was going to read the "+
+				"prompt — the warning contradicts the rejection warning beside it: %v", warnings)
+		}
+	}
+	// The rejection warning itself must still be there.
+	if len(warnings) == 0 || !strings.Contains(warnings[0].(string), "would be rejected") {
+		t.Fatalf("expected the rejection warning to survive, got %v", warnings)
+	}
+}
+
+// The other half: when a rule DID claim the request and the prompt is empty,
+// the warning is the whole point and must still fire.
+func TestRoutingSimulate_SmartWarningFiresWhenARuleClaimedAKeyword(t *testing.T) {
+	resolver := &stubResolver{
+		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			return &routingcore.RoutingPlan{
+				OriginalModelID: rctx.RequestedModel.ID,
+				RuleID:          "rr-smart",
+				RuleName:        "delegated",
+			}, nil
+		},
+	}
+	h := RoutingSimulateHandler(resolver, nil, discardLogger())
+	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
+		strings.NewReader(`{"modelId":"fast","endpointType":"chat"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := decodeResp(t, rec)
+	warnings, _ := body["warnings"].([]any)
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.(string), "smart routing requested but messages is empty") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a rule claimed the keyword and no prompt was supplied — the warning is "+
+			"the point of this preview: %v", warnings)
+	}
+}
+
+// TestRoutingSimulate_NamedModelWarningDoesNotAssertServability — candidate
+// resolution deliberately returns models whose provider is disabled, so
+// "the caller named a catalogue model" does not imply the passthrough will
+// serve it. Stating "this is a valid, enabled model" as fact was wrong for
+// every such row; the passthrough answers those 404.
+func TestRoutingSimulate_NamedModelWarningDoesNotAssertServability(t *testing.T) {
+	resolver := &stubResolver{
+		resolve: func(_ context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error) {
+			rctx.RequestedModel.CandidateIDs = []string{"mdl-on-a-disabled-provider"}
+			return &routingcore.RoutingPlan{OriginalModelID: rctx.RequestedModel.ID}, nil
+		},
+	}
+	h := RoutingSimulateHandler(resolver, nil, discardLogger())
+	req := httptest.NewRequest(http.MethodPost, "/internal/routing-simulate",
+		strings.NewReader(`{"modelId":"orphan-model","endpointType":"chat"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := decodeResp(t, rec)
+	warnings, _ := body["warnings"].([]any)
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning")
+	}
+	first := warnings[0].(string)
+	if !strings.Contains(first, "passthrough") {
+		t.Fatalf("a named catalogue model must still get the passthrough warning: %v", first)
+	}
+	if !strings.Contains(first, "servable") {
+		t.Errorf("the warning must condition on servability rather than assert it — "+
+			"candidate resolution does not check the provider's enabled flag: %v", first)
 	}
 }

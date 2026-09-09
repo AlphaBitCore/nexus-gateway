@@ -183,6 +183,35 @@ func EndpointKindAcceptsModelType(k EndpointKind, modelType string) bool {
 	}
 }
 
+// EndpointKindSupportsStreaming reports whether a request classified as this
+// kind may be served over the streaming response path.
+//
+// It is an ALLOWLIST, deliberately. A denylist naming only image generation and
+// TTS lets `{"input":"…","stream":true}` on /v1/embeddings or /v1/rerank set
+// Stream on the upstream request and take the SSE responder — for endpoints whose
+// upstreams answer with one JSON object and have no event stream to parse. Every
+// kind a denylist does not think of fails open, and a kind added later does too.
+// Naming the kinds that DO stream makes the next one default to safe.
+//
+// Chat and Responses are the streaming wire forms this gateway serves. Realtime
+// is a WebSocket protocol whose transport is streaming by definition; it does
+// not reach the HTTP response path, and answering true here keeps this function
+// describing the protocol rather than the routing accident.
+//
+// Note this says "may", not "does": the caller still honours the client's
+// `stream` flag. What it withholds is the ability to opt IN on a kind that has
+// no stream.
+func EndpointKindSupportsStreaming(k EndpointKind) bool {
+	switch k {
+	case EndpointKindChat, EndpointKindResponses, EndpointKindRealtime:
+		return true
+	default:
+		// Embeddings, rerank, image generation, TTS, STT, video generation,
+		// batch, job, models, guardrail — one response, no event stream.
+		return false
+	}
+}
+
 // IsValid reports whether k is one of the defined EndpointKind constants.
 // The empty EndpointKind is treated as invalid here — callers that need
 // "unclassified" semantics check for empty string separately.

@@ -3,7 +3,6 @@ package thingclient
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -417,10 +416,10 @@ func TestFlushMQBuffer_Shutdown(t *testing.T) {
 // --- Audit Upload ---
 
 func TestUploadAudit_Success(t *testing.T) {
-	wantResp := AuditBatchResponse{
-		Ack:          true,
-		ConfirmedIDs: []string{"id-1", "id-2"},
-	}
+	// Verbatim wire bytes from Hub's AuditUpload handler: `accepted` is a
+	// COUNT on this route and the ids come back under `eventIds`. Written as
+	// a literal so a wrong json tag fails instead of round-tripping.
+	const wantWire = `{"ack":true,"accepted":2,"eventIds":["id-1","id-2"]}`
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/internal/things/audit" {
 			t.Errorf("path = %q, want /api/internal/things/audit", r.URL.Path)
@@ -436,7 +435,7 @@ func TestUploadAudit_Success(t *testing.T) {
 			t.Error("expected non-empty request body")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(wantResp)
+		_, _ = w.Write([]byte(wantWire))
 	}))
 	defer ts.Close()
 
@@ -449,11 +448,12 @@ func TestUploadAudit_Success(t *testing.T) {
 	if !result.Ack {
 		t.Error("Ack = false, want true")
 	}
-	if len(result.ConfirmedIDs) != 2 {
-		t.Errorf("len(ConfirmedIDs) = %d, want 2", len(result.ConfirmedIDs))
+	if result.Accepted != 2 {
+		t.Errorf("Accepted = %d, want 2 — this route sends a COUNT, not a list", result.Accepted)
 	}
-	if result.ConfirmedIDs[0] != "id-1" || result.ConfirmedIDs[1] != "id-2" {
-		t.Errorf("ConfirmedIDs = %v, want [id-1, id-2]", result.ConfirmedIDs)
+	if len(result.EventIDs) != 2 || result.EventIDs[0] != "id-1" || result.EventIDs[1] != "id-2" {
+		t.Errorf("EventIDs = %v, want [id-1 id-2]; the ids come back under `eventIds`, "+
+			"which is the tag this type used to get wrong", result.EventIDs)
 	}
 }
 
@@ -473,15 +473,12 @@ func TestUploadAudit_HTTPError(t *testing.T) {
 }
 
 func TestUploadAuditWithRetry_Success(t *testing.T) {
-	wantResp := AuditBatchResponse{
-		Ack:          true,
-		ConfirmedIDs: []string{"id-1"},
-	}
+	const wantWire = `{"ack":true,"accepted":1,"eventIds":["id-1"]}`
 	var callCount atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		callCount.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(wantResp)
+		_, _ = w.Write([]byte(wantWire))
 	}))
 	defer ts.Close()
 
@@ -500,10 +497,7 @@ func TestUploadAuditWithRetry_Success(t *testing.T) {
 }
 
 func TestUploadAuditWithRetry_RetriesOnFailure(t *testing.T) {
-	wantResp := AuditBatchResponse{
-		Ack:          true,
-		ConfirmedIDs: []string{"id-1"},
-	}
+	const wantWire = `{"ack":true,"accepted":1,"eventIds":["id-1"]}`
 	var callCount atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		n := callCount.Add(1)
@@ -513,7 +507,7 @@ func TestUploadAuditWithRetry_RetriesOnFailure(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(wantResp)
+		_, _ = w.Write([]byte(wantWire))
 	}))
 	defer ts.Close()
 

@@ -28,8 +28,11 @@ func RuleMatchesContext(conds *core.MatchConditions, modelID string, ctx *core.R
 	// offering `gpt-4-*` as its example, while the comparison was exact: a rule
 	// written from that example never matched anything, and nothing said why.
 	//
-	// A pattern with no `*` still compares exactly, so `auto` — which every
-	// smart rule is required to pin — is untouched.
+	// A pattern with no `*` still compares exactly, so a plain keyword is
+	// matched literally. Which keywords those are is the rule's own: a smart
+	// rule must pin at least one, but not which one — the guard in
+	// control-plane/internal/ai/routing/handler refuses only an entry that
+	// reaches every request.
 	if len(conds.RequestedModelLiterals) > 0 {
 		matched := false
 		for _, pattern := range conds.RequestedModelLiterals {

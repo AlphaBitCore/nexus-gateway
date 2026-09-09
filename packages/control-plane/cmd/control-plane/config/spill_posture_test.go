@@ -8,13 +8,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The spill posture must be STATED, not merely defaulted (finding S-4).
+// The spill posture must be STATED, not merely defaulted.
 //
 // None of the four server services' *.config.yaml carried a `spill:` block at all.
 // The factory then returned (nil, nil) and every captured body stayed inline —
 // correct behaviour, readable only by inferring a Go zero value from source. That
-// is the same silence S-3 exists to remove, one layer up: an operator reading the
-// shipped template could not tell "spill is off" from "spill was never considered".
+// is the same silence a runtime-source report exists to remove, one layer up: an
+// operator reading the shipped template cannot tell "spill is off" from "spill was
+// never considered".
 //
 // The raw bytes are read as well as the parsed struct for the reason that makes
 // this finding subtle: an ABSENT block and `enabled: false` both unmarshal to

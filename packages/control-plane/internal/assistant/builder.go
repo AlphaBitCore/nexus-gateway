@@ -1,8 +1,11 @@
 package assistant
 
 import (
-	"github.com/goccy/go-json"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"net/http"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/initiator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/selfdispatch"
@@ -24,13 +27,21 @@ import (
 func newCallerCPClient(env core.Env, dispatcher http.Handler, authorization, sourceIP, requestID string) *core.Client {
 	var httpc *http.Client
 	if dispatcher != nil {
-		httpc = &http.Client{Transport: selfdispatch.New(selfdispatch.Config{
-			Handler:   dispatcher,
-			CPBaseURL: env.CPBaseURL,
-			Initiator: initiator.ViaAssistant,
-			SourceIP:  sourceIP,
-			RequestID: requestID,
-		})}
+		// The tuned transport is discarded on purpose: this dispatches in
+		// process, and a real one would turn these into network calls.
+		httpc = nexushttp.New(nexushttp.Config{
+			NoTimeout: true,
+			Caller:    "cp-assistant-selfdispatch",
+			Transport: func(*http.Transport) http.RoundTripper {
+				return selfdispatch.New(selfdispatch.Config{
+					Handler:   dispatcher,
+					CPBaseURL: env.CPBaseURL,
+					Initiator: initiator.ViaAssistant,
+					SourceIP:  sourceIP,
+					RequestID: requestID,
+				})
+			},
+		})
 	}
 	return core.NewClient(env, newBearerTokenSource(authorization), httpc)
 }

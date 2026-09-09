@@ -47,7 +47,7 @@ type ThingNode struct {
 // The Go struct field is `Metadata` (json:"metadata") and we read
 // it from the `thing.metadata` JSONB column — this is where the Hub
 // writes `staticInfo` (sysinfo: hostname, OS, CPU, memory, NICs, …) via
-// `UpdateStaticInfo` (see nexus-hub/internal/opsmetrics/static_info_writer.go).
+// `UpdateStaticInfo` (see packages/nexus-hub/internal/observability/opsmetrics/static_info_writer.go).
 // The legacy `thing.reported` column carries the applied-config shadow
 // and is intentionally NOT exposed here — the Devices Detail page never
 // renders config shadow, and surfacing it as `metadata` was a long-

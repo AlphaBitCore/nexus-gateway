@@ -7,7 +7,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 )
@@ -168,10 +167,9 @@ func (h *Handler) UpdatePayloadCaptureConfig(c echo.Context) error {
 		merged.MaxResponseBytes = payloadCaptureDefaultMaxResponseBytes
 	}
 
-	aa := middleware.AdminAuthFromContext(c)
-	updatedBy := ""
-	if aa != nil {
-		updatedBy = aa.KeyID
+	updatedBy, ok := requireAdminActor(c)
+	if !ok {
+		return unauthenticated(c)
 	}
 	if err := h.payloadCaptureMeta().SetSystemMetadata(ctx, payloadCaptureConfigKey, merged, updatedBy); err != nil {
 		h.logger.Error("save payload capture config", "error", err)

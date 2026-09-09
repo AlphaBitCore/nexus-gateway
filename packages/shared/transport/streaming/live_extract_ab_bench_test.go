@@ -2,14 +2,14 @@ package streaming
 
 import "testing"
 
-// Paired before/after benchmarks for the extractDeltaText validity gate (C-31's
-// fix, whose cost lands on the C-16 path) and the accumulator key gates (C-20).
+// Paired before/after benchmarks for the extractDeltaText validity gate, whose
+// cost lands on the per-frame unmarshal, and for the accumulator key gates.
 //
 // The "before" arm calls the reference implementations kept in
 // live_extract_equivalence_test.go / usage_gating_equivalence_test.go, so both arms
 // share one oracle with the differential correctness tests. That part is sound.
 //
-// WHAT IS NOT SOUND, and cost this program a set of retracted numbers: `go test
+// WHAT IS NOT SOUND, and is worth a set of retracted numbers: `go test
 // -bench X -count=N` does NOT interleave sub-benchmarks. It runs all N repetitions
 // of impl=before, THEN all N of impl=after. Verified directly — with -count=3,
 // samples 1-3 are before and 4-6 are after. So each arm gets a contiguous block of
@@ -63,13 +63,13 @@ func BenchmarkAB_Extract_OpenAIRole(b *testing.B)   { benchExtractAB(b, frameOpe
 func BenchmarkAB_Extract_OpenAIFinish(b *testing.B) { benchExtractAB(b, frameOpenAIFinish) }
 func BenchmarkAB_Extract_OpenAIUsage(b *testing.B)  { benchExtractAB(b, frameOpenAIUsage) }
 
-// BenchmarkAB_Extract_Anthropic is the binding-B9 shape — a valid-JSON frame this
-// function does not model — and the one whose response hooks the C-17 fix
-// restored, so it is now on the hot path for real rather than hypothetically.
+// BenchmarkAB_Extract_Anthropic is a valid-JSON frame this function does not
+// model, and the one whose response hooks run on the hot path for real rather than
+// hypothetically.
 func BenchmarkAB_Extract_Anthropic(b *testing.B) { benchExtractAB(b, frameAnthropic) }
 
 // BenchmarkAB_Extract_ResponsesAPI and _Gemini are the other two choices-less
-// wires named in the C-17 analysis.
+// wires.
 func BenchmarkAB_Extract_ResponsesAPI(b *testing.B) {
 	benchExtractAB(b, `{"type":"response.output_text.delta","delta":"hello ","item_id":"msg_1","output_index":0}`)
 }
@@ -83,7 +83,7 @@ func BenchmarkAB_Extract_Gemini(b *testing.B) {
 // and the decode never runs at all.
 func BenchmarkAB_Extract_RawText(b *testing.B) { benchExtractAB(b, frameRawText) }
 
-// --- C-20: the usage accumulators ---
+// --- The usage accumulators ---
 
 // benchFeedAB builds a FRESH accumulator inside each sub-benchmark run on both
 // sides. Reusing one across runs let its fallback text buffer grow with every
@@ -115,7 +115,7 @@ func benchFeedAB(b *testing.B, evt *SSEEvent, newRef func() func(*SSEEvent), new
 // anthropic event-name hoist below.
 
 // BenchmarkAB_Feed_AnthropicIgnoredEvent is the hoisted-switch win: a `ping`
-// frame the accumulator reads nothing from, which used to pay a full validity
+// frame the accumulator reads nothing from, which would otherwise pay a full validity
 // scan before the switch discarded it.
 func BenchmarkAB_Feed_AnthropicIgnoredEvent(b *testing.B) {
 	evt := &SSEEvent{Event: "ping", Data: `{"type":"ping"}`}

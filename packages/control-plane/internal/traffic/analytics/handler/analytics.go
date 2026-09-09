@@ -131,26 +131,43 @@ func tzLoc(c echo.Context) *time.Location {
 
 // MetricsAggregates returns metric rollup data for the given time range.
 func (h *Handler) MetricsAggregates(c echo.Context) error {
-	if h.tryRollupMetricsAggregates(c) {
+	served, err := h.tryRollupMetricsAggregates(c)
+	if err != nil {
+		h.logger.Error("metrics aggregates rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
+	if served {
 		return nil
 	}
-	// Rollup returned no data — return empty result.
+	// Rollup genuinely held no rows — an empty result is the truthful answer.
 	return c.JSON(http.StatusOK, map[string]any{"data": []any{}})
 }
 
 func (h *Handler) AnalyticsSummary(c echo.Context) error {
-	if h.tryRollupSummary(c) {
+	served, err := h.tryRollupSummary(c)
+	if err != nil {
+		h.logger.Error("analytics summary rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
+	if served {
 		return nil
 	}
-	// Rollup returned no data — return zero-value summary.
+	// Rollup genuinely held no rows for this window — a zero-value summary is
+	// the truthful answer. A READ FAILURE takes the branch above; landing here
+	// instead would render as "no traffic".
 	return c.JSON(http.StatusOK, &analyticsstore.AnalyticsSummary{})
 }
 
 func (h *Handler) AnalyticsByProvider(c echo.Context) error {
-	if h.tryRollupByProvider(c) {
+	served, err := h.tryRollupByProvider(c)
+	if err != nil {
+		h.logger.Error("analytics by-provider rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
+	if served {
 		return nil
 	}
-	// Rollup returned no data — return empty result.
+	// Rollup genuinely held no rows — an empty result is the truthful answer.
 	return c.JSON(http.StatusOK, map[string]any{"data": []any{}})
 }
 
@@ -216,7 +233,11 @@ func (h *Handler) AnalyticsUsage(c echo.Context) error {
 		col = "provider"
 	}
 
-	rollupData, ok := h.tryRollupGroupBy(c, col, "tokens")
+	rollupData, ok, err := h.tryRollupGroupBy(c, col, "tokens")
+	if err != nil {
+		h.logger.Error("analytics usage rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
 	if !ok {
 		return c.JSON(http.StatusOK, map[string]any{"data": []any{}, "total": 0})
 	}
@@ -232,7 +253,11 @@ func (h *Handler) AnalyticsCost(c echo.Context) error {
 		col = "provider"
 	}
 
-	rollupData, ok := h.tryRollupGroupBy(c, col, "cost")
+	rollupData, ok, err := h.tryRollupGroupBy(c, col, "cost")
+	if err != nil {
+		h.logger.Error("analytics cost rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
 	if !ok {
 		return c.JSON(http.StatusOK, map[string]any{"data": []any{}, "total": 0})
 	}
@@ -242,7 +267,11 @@ func (h *Handler) AnalyticsCost(c echo.Context) error {
 }
 
 func (h *Handler) AnalyticsCostReport(c echo.Context) error {
-	rollupData := h.tryRollupCostReport(c)
+	rollupData, err := h.tryRollupCostReport(c)
+	if err != nil {
+		h.logger.Error("analytics cost report rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
 	if rollupData == nil {
 		return c.JSON(http.StatusOK, map[string]any{"data": []any{}, "total": 0})
 	}
@@ -367,7 +396,11 @@ func (h *Handler) resolveDeviceUsers(ctx context.Context, data []analyticsstore.
 }
 
 func (h *Handler) AnalyticsRouting(c echo.Context) error {
-	rollupData := h.tryRollupRouting(c)
+	rollupData, err := h.tryRollupRouting(c)
+	if err != nil {
+		h.logger.Error("analytics routing rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
 	if rollupData == nil {
 		return c.JSON(http.StatusOK, map[string]any{"data": []any{}})
 	}
@@ -375,7 +408,11 @@ func (h *Handler) AnalyticsRouting(c echo.Context) error {
 }
 
 func (h *Handler) AnalyticsRoutingFallbacks(c echo.Context) error {
-	rollupData := h.tryRollupRoutingFallbacks(c)
+	rollupData, err := h.tryRollupRoutingFallbacks(c)
+	if err != nil {
+		h.logger.Error("analytics routing fallbacks rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
 	if rollupData == nil {
 		return c.JSON(http.StatusOK, map[string]any{"data": []any{}})
 	}
@@ -412,7 +449,11 @@ func (h *Handler) AnalyticsSparkline(c echo.Context) error {
 		EndTime:      *end,
 		TimeSeries:   true,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, readErr := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if readErr != nil {
+		h.logger.Error("analytics latency rollup read", "error", readErr)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
 	if result != nil {
 		return c.JSON(http.StatusOK, result)
 	}
@@ -425,7 +466,12 @@ func (h *Handler) AnalyticsSparkline(c echo.Context) error {
 }
 
 func (h *Handler) AnalyticsQuality(c echo.Context) error {
-	if h.tryRollupQuality(c) {
+	served, err := h.tryRollupQuality(c)
+	if err != nil {
+		h.logger.Error("analytics quality rollup read", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
+	if served {
 		return nil
 	}
 	// Rollup returned no data — return zero-value quality summary.

@@ -6,7 +6,7 @@
 // interception-path PASSTHROUGH rule. They are kept together because they are
 // one family with one purpose — making the ABSENCE of inspection auditable — and
 // because keeping them apart is how the third one came to record nothing at all
-// while the other two recorded everything (R-6).
+// while the other two recorded everything.
 package pipeline
 
 import (
@@ -53,14 +53,13 @@ func (e *AuditEmitter) EmitKillSwitchPassthrough(sourceAddr, targetHost string) 
 // compliance inspection because an explicit interception-path rule said
 // PASSTHROUGH.
 //
-// It exists because that flow used to leave no trace at all. The path-policy
+// It exists because that flow otherwise leaves no trace at all: the path-policy
 // branch sets complianceEnabled=false and runResponseStage returns immediately,
-// so traffic_event got nothing while the proxy log alone recorded the decision.
+// so traffic_event gets nothing and the proxy log alone records the decision.
 // Its two siblings both emit — an exemption grant (EmitExempted) and an
 // emergency bypass (BUMP_DISABLED_EMERGENCY) — precisely so the ABSENCE of
-// inspection is itself auditable. This was the only member of that family that
-// recorded nothing, so an auditor asking "what passed through uninspected, and
-// why" got two answers out of three.
+// inspection is itself auditable. Without this one, an auditor asking "what
+// passed through uninspected, and why" gets two answers out of three.
 //
 // Only EXPLICIT path rules reach here, never a domain's DefaultPathAction: every
 // seeded domain defaults to PASSTHROUGH, so auditing the default would emit a

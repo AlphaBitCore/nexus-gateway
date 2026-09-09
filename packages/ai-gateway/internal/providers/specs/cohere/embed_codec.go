@@ -1,8 +1,8 @@
 // Package cohere — embedding codec helpers (canonical ↔ Cohere /v1/embed wire).
 //
 // Architecture references:
-//   - docs/dev/architecture/provider-adapter-architecture.md §3a Rules 1-7
-//   - docs/dev/architecture/endpoint-typology-architecture.md §2
+//   - docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md §3a Rules 1-7
+//   - docs/developers/architecture/cross-cutting/foundation/endpoint-typology-architecture.md §2
 //
 // Cohere v3 models (embed-english-v3.0, embed-multilingual-v3.0) require
 // the input_type field. Observed 400 "invalid_request_error: input_type is

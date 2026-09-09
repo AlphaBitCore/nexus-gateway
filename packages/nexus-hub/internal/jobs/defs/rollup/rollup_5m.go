@@ -3,16 +3,17 @@ package rollup
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
+	rollupstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 )
@@ -688,8 +689,8 @@ func (j *Rollup5mJob) emitEventMetrics(
 	}
 
 	// MetricRoutingFallback (routed_provider != provider) and
-	// MetricModelShiftCount (routed_model != original_model) were both
-	// originally emitted to flag remaps, but both comparisons now
+	// MetricModelShiftCount (routed_model != original_model) flag remaps,
+	// and both comparisons
 	// degenerate: traffic_event.provider_id is always empty since the
 	// requested-vs-routed split, and original_model_id (= model_id, the
 	// literal client request) carries a code string that never matches

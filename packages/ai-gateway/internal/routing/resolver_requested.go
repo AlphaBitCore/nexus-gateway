@@ -30,6 +30,23 @@ import (
 // The "auto" sentinel is intentionally left without candidates so
 // matchConditions.models cannot accidentally route auto requests through a UUID
 // rule — those must be authored with matchConditions.requestedModelLiterals.
+//
+// This is the last place the model path special-cases that word, and it is NOT
+// the same case as the embeddings veto that used to sit in readBody. That one
+// REFUSED a request, protecting one spelling while the identical risk flowed
+// through every other keyword. This one skips a catalogue lookup that would
+// return nothing anyway, so any other keyword reaches the same end state by
+// doing the scan. What it buys is the convention: were a deployment ever to
+// carry a catalogue row whose code is literally "auto", hydrating it would make
+// every `auto` request a NAMED-model request — reachable by
+// matchConditions.models and subject to the VK named-model check — and
+// delegation would stop working on that deployment with nothing to read.
+//
+// The asymmetry it leaves is small and stated here so it is not rediscovered:
+// a keyword can set HydrationFailed when the catalogue is unreadable and `auto`
+// cannot, because `auto` never asks. For a smart rule that changes nothing —
+// literal matching does not consult the catalogue — so no provider-scoped
+// condition depends on the difference.
 func (r *Resolver) hydrateRequestedModel(ctx context.Context, rctx *core.RoutingContext) {
 	if rctx == nil {
 		return
@@ -86,12 +103,20 @@ func (r *Resolver) hydrateRequestedModel(ctx context.Context, rctx *core.Routing
 // requestedIdentity returns the traffic_event REQUESTED-side identity
 // (model_id / provider_id / provider_name) for a hydrated RequestedModel. It is
 // populated only when the client asked for a SPECIFIC model that resolved
-// unambiguously to exactly one catalog model — "auto" (no candidates) and
-// multi-provider codes (candidate order is non-deterministic and VK access is a
-// routing concern) yield empties so the requested columns stay NULL rather than
-// guessing. The routed_* columns always carry the actually-served target.
+// unambiguously to exactly one catalog model. A routing keyword resolves to no
+// candidates at all, and a multi-provider code to several (candidate order is
+// non-deterministic and VK access is a routing concern), so both yield empties
+// and the requested columns stay NULL rather than guessing. The routed_* columns
+// always carry the actually-served target.
+//
+// The test is the candidate count alone. It used to also read `rm.ID != "auto"`,
+// which could never change the answer: CandidateIDs is assigned in exactly one
+// place — hydrateRequestedModel, below its early return for "auto" — so the
+// sentinel never has candidates. Spelling the condition "auto" implied the
+// gateway special-cases that word here, which is the false premise a reader
+// would then carry into every keyword question.
 func requestedIdentity(rm core.RequestedModel) (modelID, providerID, providerName string) {
-	if rm.ID != "auto" && len(rm.CandidateIDs) == 1 {
+	if len(rm.CandidateIDs) == 1 {
 		return rm.CandidateIDs[0], rm.ProviderID, rm.ProviderName
 	}
 	return "", "", ""
@@ -101,14 +126,22 @@ func requestedIdentity(rm core.RequestedModel) (modelID, providerID, providerNam
 // rather than delegating the choice.
 //
 // The gateway only overrides a target's eligibility when it made the choice
-// itself. `auto`, an empty model, and a code fanning out to several rows all
-// mean "you pick"; anything resolving to exactly one row is the caller's pick,
-// and its limits are between them and the upstream.
+// itself. A routing keyword, an empty model, and a code fanning out to several
+// rows all mean "you pick"; anything resolving to exactly one row is the
+// caller's pick, and its limits are between them and the upstream.
 //
 // Same test requestedIdentity uses for the requested-side audit columns, so the
-// audit row and the routing decision cannot disagree about who chose.
+// audit row and the routing decision cannot disagree about who chose — and, as
+// there, the `rm.ID != "auto"` term is gone because it was unreachable.
+//
+// KNOWN GAP, deliberately not addressed here: a keyword an operator pins that is
+// ALSO a catalog code makes this true even though the router picked the target,
+// which skips the recovery list's modality floor. That predates keyword support
+// (every non-smart strategy could already redirect a named model) and changing
+// it means changing which side owns the floor — a shipped invariant with its own
+// blast radius, not a rider on this one.
 func callerNamedTheModel(rm core.RequestedModel) bool {
-	return rm.ID != "" && rm.ID != "auto" && len(rm.CandidateIDs) == 1
+	return rm.ID != "" && len(rm.CandidateIDs) == 1
 }
 
 // filterRecoveryByCapability applies the ceiling per modality with a

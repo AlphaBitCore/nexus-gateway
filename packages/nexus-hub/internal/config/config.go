@@ -686,8 +686,8 @@ func validate(cfg *HubConfig) error {
 	// always wires the alert subsystem (InitAlerts is unconditional), so it is
 	// always required — gate it here at config load for fail-fast symmetry with
 	// the Control Plane + AI Gateway (which gate it in their validate()), rather
-	// than only at InitAlerts. InitAlerts keeps its own nil-cipher fail-closed
-	// (FU-1) as defense in depth.
+	// than only at InitAlerts. InitAlerts keeps its own nil-cipher fail-closed as
+	// defense in depth.
 	if cfg.Auth.CredentialMasterKey == "" {
 		return fmt.Errorf("auth.credentialMasterKey is required (env CREDENTIAL_ENCRYPTION_KEY; [MUST MATCH] Control Plane + AI Gateway; encrypts alert-channel secrets at rest — generate via `openssl rand -hex 32`)")
 	}

@@ -73,9 +73,9 @@ func TestBuildProviderRequest_NilRequest(t *testing.T) {
 }
 
 func TestOpenAIProxyErrorBody(t *testing.T) {
-	// error.type carries OpenAI's vocabulary, derived from the status. It used to
-	// be the constant "proxy_error" for every gateway-generated error, which is
-	// not a value any OpenAI SDK recognises (AP-3). error.code stays the Nexus
+	// error.type carries OpenAI's vocabulary, derived from the status. Stamping
+	// the constant "proxy_error" for every gateway-generated error puts a value
+	// no OpenAI SDK recognises on the wire. error.code stays the Nexus
 	// code — see proxy_error_envelope_test.go for the full contract.
 	b := openAIProxyErrorBody(400, "", "bad request", "")
 	if gjson.GetBytes(b, "error.message").String() != "bad request" ||
@@ -94,8 +94,8 @@ func TestOpenAIProxyErrorBody(t *testing.T) {
 
 // TestWriteIngressError_RecordsBody_AndShapesPerIngress locks the maintainer
 // requirements: (1) a gateway error is ALWAYS stamped to rec.ResponseBody so it
-// lands in traffic_event.payloads.response_body (previously only error_code /
-// error_reason were recorded, body was empty); (2) the error envelope is in the
+// lands in traffic_event.payloads.response_body (stamping only error_code /
+// error_reason leaves the body empty); (2) the error envelope is in the
 // caller's ingress wire shape (anthropic → not the OpenAI proxy_error shape;
 // openai → proxy_error shape).
 func TestWriteIngressError_RecordsBody_AndShapesPerIngress(t *testing.T) {

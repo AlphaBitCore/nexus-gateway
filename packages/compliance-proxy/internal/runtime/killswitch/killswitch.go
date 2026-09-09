@@ -14,8 +14,8 @@ import (
 // Prometheus gauge so Hub dashboards reflect reality (the gauge was
 // registered but never Set, so it shipped a permanent 0 — a safety control that
 // reported "off" while engaged). Called from every state-transition chokepoint
-// (toggleLocked covers Toggle + ApplyBreakGlass; ForceClose disengages
-// directly). Nil-safe: in unit tests metrics.Register is never called.
+// (toggleLocked is the single chokepoint, covering Toggle and
+// ApplyBreakGlass). Nil-safe: in unit tests metrics.Register is never called.
 func publishActiveGauge(engaged bool) {
 	if metrics.KillSwitchActive == nil {
 		return
@@ -25,20 +25,6 @@ func publishActiveGauge(engaged bool) {
 	} else {
 		metrics.KillSwitchActive.With().Set(0)
 	}
-}
-
-// killSwitchHistoryCapacity caps the in-memory toggle history. Older entries
-// fall off the back as new ones are appended. Not persisted across restart —
-// this is an operational signal, not a legal record.
-const killSwitchHistoryCapacity = 100
-
-// KillSwitchHistoryEntry records a single kill switch toggle or force-close.
-type KillSwitchHistoryEntry struct {
-	At               time.Time `json:"at"`
-	Engaged          bool      `json:"engaged"`
-	ChangedBy        string    `json:"changedBy"`
-	ForceClose       bool      `json:"forceClose"`
-	ForceClosedCount int       `json:"forceClosedCount"`
 }
 
 // KillSwitch manages the kill switch engaged/disengaged state.
@@ -52,13 +38,11 @@ type KillSwitchHistoryEntry struct {
 // There is no cross-instance publisher and no local persistence — the shadow
 // is the source of truth across restarts.
 type KillSwitch struct {
-	mu           sync.Mutex
-	engaged      atomic.Bool // true = kill switch engaged (passthrough mode); false = bump active (default)
-	lastChanged  time.Time
-	changedBy    string
-	logger       *slog.Logger
-	forceCloseFn func() int // callback to force-close bumped connections; returns count
-	history      []KillSwitchHistoryEntry
+	mu          sync.Mutex
+	engaged     atomic.Bool // true = kill switch engaged (passthrough mode); false = bump active (default)
+	lastChanged time.Time
+	changedBy   string
+	logger      *slog.Logger
 }
 
 // KillSwitchState represents the current state of the kill switch.
@@ -70,48 +54,9 @@ type KillSwitchState struct {
 
 // NewKillSwitch creates a kill switch that is NOT engaged by default (bump active).
 func NewKillSwitch(logger *slog.Logger) *KillSwitch {
-	ks := &KillSwitch{
-		logger:  logger,
-		history: make([]KillSwitchHistoryEntry, 0, killSwitchHistoryCapacity),
-	}
+	ks := &KillSwitch{logger: logger}
 	ks.engaged.Store(false)
 	return ks
-}
-
-// recordHistoryLocked appends an entry to the bounded history. Caller must
-// hold k.mu.
-func (k *KillSwitch) recordHistoryLocked(entry KillSwitchHistoryEntry) {
-	if len(k.history) >= killSwitchHistoryCapacity {
-		// Drop the oldest entry to make room.
-		copy(k.history, k.history[1:])
-		k.history = k.history[:killSwitchHistoryCapacity-1]
-	}
-	k.history = append(k.history, entry)
-}
-
-// History returns a newest-first copy of the toggle history.
-func (k *KillSwitch) History() []KillSwitchHistoryEntry {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	out := make([]KillSwitchHistoryEntry, len(k.history))
-	// Reverse copy so the newest entry is first.
-	for i, e := range k.history {
-		out[len(k.history)-1-i] = e
-	}
-	return out
-}
-
-// HistoryCapacity returns the maximum number of entries kept in memory.
-func (k *KillSwitch) HistoryCapacity() int {
-	return killSwitchHistoryCapacity
-}
-
-// SetForceCloseFunc sets the callback invoked when force-closing bumped connections.
-// The function must return the number of connections that were closed.
-func (k *KillSwitch) SetForceCloseFunc(fn func() int) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.forceCloseFn = fn
 }
 
 // State returns the current kill switch state.
@@ -149,12 +94,6 @@ func (k *KillSwitch) toggleLocked(engaged bool, changedBy string) KillSwitchStat
 
 	k.logger.Info("kill switch toggled", "from", prev, "to", engaged, "changedBy", changedBy)
 
-	k.recordHistoryLocked(KillSwitchHistoryEntry{
-		At:        k.lastChanged,
-		Engaged:   engaged,
-		ChangedBy: k.changedBy,
-	})
-
 	publishActiveGauge(engaged)
 
 	return KillSwitchState{
@@ -166,11 +105,11 @@ func (k *KillSwitch) toggleLocked(engaged bool, changedBy string) KillSwitchStat
 
 // ApplyBreakGlass applies a break-glass desired state from a PUT
 // /runtime/config/killswitch request. It short-circuits when the incoming
-// engaged flag matches the current state (so a redundant break-glass appends
-// no new in-memory history entry and emits no toggle log line). The durable
-// break-glass event log owned by the PUT handler still records every request
-// independently, so the re-affirmation is not lost — only the per-instance
-// operational history is spared the duplicate. Returns nil on success;
+// engaged flag matches the current state, so a redundant break-glass leaves
+// lastChanged/changedBy where they are and emits no toggle log line. The
+// durable break-glass event log owned by the PUT handler still records every
+// request independently, so the re-affirmation is not lost — only the
+// per-instance state stamp is spared the churn. Returns nil on success;
 // callers treat the error path as "apply failed" and skip the event log +
 // version bump.
 func (k *KillSwitch) ApplyBreakGlass(ks interception.Killswitch) error {
@@ -181,47 +120,6 @@ func (k *KillSwitch) ApplyBreakGlass(ks interception.Killswitch) error {
 	}
 	k.toggleLocked(ks.Engaged, "break-glass")
 	return nil
-}
-
-// ForceClose disengages the kill switch AND force-closes all bumped
-// connections. Returns the new state and the number of force-closed
-// connections. changedBy identifies who performed the action; falls back
-// to "api" if empty.
-func (k *KillSwitch) ForceClose(changedBy string) (KillSwitchState, int) {
-	k.mu.Lock()
-
-	k.engaged.Store(false)
-	k.lastChanged = time.Now()
-	if changedBy == "" {
-		changedBy = "api"
-	}
-	k.changedBy = changedBy
-
-	closed := 0
-	if k.forceCloseFn != nil {
-		closed = k.forceCloseFn()
-	}
-
-	k.logger.Warn("kill switch force-closed", "connectionsForced", closed)
-
-	k.recordHistoryLocked(KillSwitchHistoryEntry{
-		At:               k.lastChanged,
-		Engaged:          false,
-		ChangedBy:        k.changedBy,
-		ForceClose:       true,
-		ForceClosedCount: closed,
-	})
-
-	state := KillSwitchState{
-		Engaged:     false,
-		LastChanged: k.lastChanged,
-		ChangedBy:   k.changedBy,
-	}
-	k.mu.Unlock()
-
-	publishActiveGauge(false)
-
-	return state, closed
 }
 
 // Snapshot returns the kill switch state in the shared configtypes shape

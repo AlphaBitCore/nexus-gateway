@@ -16,13 +16,12 @@ import (
 // dispatch separator, and multiple `data:` lines in one frame are joined with "\n".
 // A trailing frame with no blank line after it is still dispatched at EOF.
 //
-// Doing this per-line instead was finding R-14: a W3C-legal multi-line `data:` frame
-// produced one callback per line, each carrying a JSON fragment that could not parse,
-// so the frame silently lost its Tier-1 decode and the body fell through to Tier 3 —
-// hooks then saw the verbatim fallback instead of structured messages. Collecting also
-// fixes R-15: the `event:` name now applies to the whole frame regardless of whether it
-// appeared before or after the data lines, where previously it bound only to data lines
-// that followed it.
+// Doing this per-line instead breaks a W3C-legal multi-line `data:` frame: one callback
+// per line, each carrying a JSON fragment that cannot parse, so the frame silently loses
+// its Tier-1 decode and the body falls through to Tier 3 — hooks then see the verbatim
+// fallback instead of structured messages. Collecting also makes the `event:` name apply
+// to the whole frame whether it appears before or after the data lines, rather than
+// binding only to the data lines that follow it.
 //
 // Comments (`:` prefix) and the `id:` / `retry:` fields are ignored, per spec.
 //

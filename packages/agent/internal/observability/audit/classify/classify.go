@@ -54,35 +54,59 @@ const (
 //
 // Decision tree (first match wins):
 //
-//  1. DomainRuleID empty             → Untracked (host wasn't in admin's
-//     interception_domain table — no policy ever applied).
-//  2. ErrorCode set OR BumpStatus contains FAILED/PASSTHROUGH while
-//     DomainRuleID is set             → BumpFailed (we wanted to inspect
-//     but the bump didn't take; usually anti-pinning).
-//  3. HookDecision is reject_hard /
-//     block_soft / deny               → Blocked.
-//  4. HookDecision is approve         → Processed (hook pipeline ran
-//     successfully).
-//  5. PathAction == PASSTHROUGH       → Inspect (matched + admin asked
-//     to skip hooks).
-//  6. fallthrough                     → Inspect (matched but neither
-//     PROCESS nor explicit hook outcome — treat as bumped-but-no-hook).
+//  1. ErrorCode set OR BumpStatus FAILED*, on a MATCHED flow
+//     → BumpFailed (we wanted to inspect but the bump didn't take;
+//     usually anti-pinning). Gated on matched() because a transport
+//     error on a host we never intended to bump is not a bump failure.
+//  2. HookDecision is reject_hard / block_soft / deny → Blocked.
+//  3. Action == "deny"                                → Blocked.
+//  4. HookDecision is approve                         → Processed.
+//  5. not matched()                                   → Untracked.
+//  6. PathAction == PASSTHROUGH, or fallthrough       → Inspect.
 //
-// The ordering matters: BumpFailed beats hook outcome (a bump failure
-// means hooks could not have run at all even if HookDecision was
-// stamped from a stale earlier branch).
+// TWO orderings are load-bearing here.
+//
+// BumpFailed still beats hook outcome: a non-bumped flow cannot have run
+// hooks, whatever HookDecision was stamped from an earlier branch.
+//
+// And the UNTRACKED FALLBACK IS LAST, never first. As step 1 it catches a
+// flow carrying a deny — or a hook verdict — but no stamped DomainRuleID,
+// and Untracked is not uploaded at the shipped default level
+// ("processed"). The denial then never reaches the console: the one
+// outcome an operator most needs to see is the one silently dropped.
+// "Untracked" has to mean "nothing happened to this flow", so any positive
+// verdict has to be consulted before it.
+//
+// The TypeScript mirror (packages/agent/ui/frontend/src/lib/classify.ts)
+// decides the same row, and an order that differs there badges a flow
+// "blocked" while this function calls it "untracked" and declines to
+// upload it — the two halves of one decision tree disagreeing. Both sides
+// spell the order the same way; keep them in step.
+// matched reports whether an interception_domain row applied to this flow.
+//
+// Normally that is a stamped DomainRuleID. A row emitted by an OLDER DAEMON
+// carries the verb instead — action "inspect" or "deny" means a domain matched
+// even though no rule id was recorded — and the TypeScript mirror has always
+// honoured that. Naming the condition once keeps the two sides from
+// disagreeing about which rows count as matched, which is how they drifted
+// before.
+func matched(e event.Event) bool {
+	return e.DomainRuleID != "" || e.Action == "inspect" || e.Action == "deny"
+}
+
 func Classify(e event.Event) Classification {
-	if e.DomainRuleID == "" {
-		return ClassUntracked
-	}
 	// Bump failure beats every other signal — a non-bumped flow can't
 	// have run hooks regardless of what HookDecision says.
-	if e.ErrorCode != "" {
-		return ClassBumpFailed
-	}
-	switch e.BumpStatus {
-	case "BUMP_FAILED", "BUMP_FAILED_PASSTHROUGH":
-		return ClassBumpFailed
+	if matched(e) {
+		if e.ErrorCode != "" {
+			return ClassBumpFailed
+		}
+		switch e.BumpStatus {
+		case "BUMP_FAILED", "BUMP_FAILED_PASSTHROUGH", "BUMP_FAILED_MINT_FALLBACK_RELAY":
+			// MINT_FALLBACK_RELAY was present in the TypeScript mirror and
+			// missing here — a second way the two sides disagreed.
+			return ClassBumpFailed
+		}
 	}
 	// hooks.Decision constants are stored UPPER-CASE on the wire
 	// ("APPROVE" / "REJECT_HARD" / "BLOCK_SOFT") because that's how
@@ -100,6 +124,10 @@ func Classify(e event.Event) Classification {
 	}
 	if e.Action == "deny" {
 		return ClassBlocked
+	}
+	// Only now: no verdict of any kind, and nothing matched.
+	if !matched(e) {
+		return ClassUntracked
 	}
 	// PathAction PASSTHROUGH explicitly means admin asked us to skip
 	// hooks; otherwise we fell through with no hook output for an

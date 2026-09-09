@@ -60,12 +60,12 @@ const (
 	PhaseAuditEmit Phase = "audit_emit_ms"
 
 	// Request-hooks stage sub-phases. RequestHooksMs (the per-hook
-	// self-timing sum) only covers the hooks' own Execute time; the framing
-	// work (content extraction, pipeline build, body rewrite) was previously
-	// untimed and unrepresented in latency_breakdown. A hook whose cost
-	// scales with body size (e.g. a full-body PII scan over a large prompt)
-	// would register near-zero in request_hooks_ms while its real cost lands
-	// in the framing segments; these keys make each segment attributable.
+	// self-timing sum) only covers the hooks' own Execute time. The framing
+	// work (content extraction, pipeline build, body rewrite) is what these
+	// keys time: untimed, it is unrepresented in latency_breakdown, and a
+	// hook whose cost scales with body size (e.g. a full-body PII scan over a
+	// large prompt) registers near-zero in request_hooks_ms while its real
+	// cost lands in the framing segments.
 	// (For small bodies these segments are sub-millisecond.)
 	//
 	//	PhaseHookExtract — adapter.ExtractRequest content extraction that

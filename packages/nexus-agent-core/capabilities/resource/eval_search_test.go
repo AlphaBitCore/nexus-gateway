@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// eval_search_test.go is the deterministic half of the search-quality eval
-// (design: docs/superpowers/specs/2026-06-05-resource-catalog-ai-first-design.md §3.5).
+// eval_search_test.go is the deterministic half of the search-quality eval.
 // It scores Search() against a golden set of real operator questions and pins
 // the measured hit rates as regression floors, so any change to the scorer or
 // the catalog that degrades retrieval fails here instead of in an agent session.

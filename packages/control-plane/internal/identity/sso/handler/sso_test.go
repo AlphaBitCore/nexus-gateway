@@ -416,8 +416,12 @@ func TestSSOEnroll_MetaMode_OtherValue_Allows(t *testing.T) {
 }
 
 // stubUserChecker satisfies enrollUserChecker for testing the user-active check.
+// It carries the two NexusUser columns that express "switched off" and resolves
+// them the way the real store does, so a stub can express the production case
+// (status='suspended', disabledAt NULL) and not only the hand-disabled one.
 type stubUserChecker struct {
 	err        error
+	status     string // "" defaults to authcodestore.StatusActive
 	disabledAt *time.Time
 }
 
@@ -425,7 +429,11 @@ func (s *stubUserChecker) GetByID(_ context.Context, _ string) (*authcodestore.U
 	if s.err != nil {
 		return nil, s.err
 	}
-	u := &authcodestore.User{DisabledAt: s.disabledAt}
+	status := s.status
+	if status == "" {
+		status = authcodestore.StatusActive
+	}
+	u := &authcodestore.User{Auth: authcodestore.NewAuthDisposition(status, s.disabledAt)}
 	return u, nil
 }
 
@@ -472,6 +480,30 @@ func TestSSOEnroll_DisabledUser_Returns403(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["error"] != "user_disabled" {
 		t.Errorf("error=%q want user_disabled", body["error"])
+	}
+}
+
+// TestSSOEnroll_SuspendedUser_Returns403 is the arm the disabledAt test above
+// could not reach. Device enrolment is the one surface where a suspended
+// employee's laptop would otherwise be handed a fresh agent identity, and the
+// gate was reading the column no disable surface writes.
+func TestSSOEnroll_SuspendedUser_Returns403(t *testing.T) {
+	verifier, challenge := validPKCE(t)
+	redirectURI := "nexus://enroll"
+	codes := buildCodes(t, "c-suspended", authcodestore.AuthCodeEntry{
+		UserID:        "usr-suspended",
+		PKCEChallenge: challenge,
+		RedirectURI:   redirectURI,
+		ExpiresAt:     time.Now().Add(time.Minute),
+	})
+	h := buildHandler(t, codes, buildSigner(t))
+	h.userChecker = &stubUserChecker{status: "suspended"}
+
+	rec := postJSON(t, h, map[string]any{
+		"code": "c-suspended", "code_verifier": verifier, "redirect_uri": redirectURI,
+	})
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("a suspended user enrolled a device: status=%d want 403", rec.Code)
 	}
 }
 

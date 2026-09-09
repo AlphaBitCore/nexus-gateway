@@ -18,7 +18,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
 
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -61,7 +63,20 @@ func echoGET(path string) (echo.Context, *httptest.ResponseRecorder) {
 	return e.NewContext(req, rec), rec
 }
 
+// echoPUT attaches an authenticated principal, which is the only state
+// production reaches — the admin group is behind AdminAuth. Attaching
+// none drives every mutating-siem test through the "unknown"
+// actor fall-through, an arm production never takes, while a config row that
+// names a FABRICATED actor looks like a supported outcome.
 func echoPUT(path string, body any) (echo.Context, *httptest.ResponseRecorder) {
+	c, rec := echoPUTNoAuth(path, body)
+	middleware.WithAdminAuth(c, &auth.AdminAuth{KeyID: "test-key", KeyName: "Test Admin"})
+	return c, rec
+}
+
+// echoPUTNoAuth is for the arms that assert a mutating handler refuses rather
+// than recording an actor it invented.
+func echoPUTNoAuth(path string, body any) (echo.Context, *httptest.ResponseRecorder) {
 	e := echo.New()
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPut, path, bytes.NewReader(b))
@@ -721,5 +736,22 @@ func TestListSIEMEventTypes_IncludesTrafficTypes(t *testing.T) {
 		if !found {
 			t.Errorf("traffic type %q not found in event types", k)
 		}
+	}
+}
+
+// Recording updatedBy = "unknown" when no principal is attached fabricates
+// an actor: a row that names nobody while looking
+// like it names someone. Production never reaches that branch (the admin group
+// is behind AdminAuth), which is how it hides; refusing makes the state
+// unrepresentable, so the eight other tests here must supply a principal and
+// therefore exercise the real path.
+func TestUpdateSIEMConfig_WithoutAPrincipalRefuses(t *testing.T) {
+	_, h := newHandlerWithMock(t)
+	c, rec := echoPUTNoAuth("/api/admin/settings/siem", map[string]any{"enabled": true})
+	if err := h.UpdateSIEMConfig(c); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
 }

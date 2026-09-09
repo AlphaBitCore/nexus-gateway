@@ -2,13 +2,11 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/tidwall/gjson"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
@@ -41,12 +39,15 @@ func nullableString(s string) *string {
 type AuditInfo struct {
 	TransactionID string
 	ConnectionID  string
-	// TraceID is the cross-service correlation id (X-Nexus-Request-Id header).
-	// Seeded by the agent for intercepted flows; falls back to TransactionID
-	// for traffic that enters the proxy directly without an upstream trace id.
+	// TraceID is the caller's own W3C trace id, lifted from an inbound
+	// traceparent and empty when they sent none — which is most traffic. It
+	// has no fallback: substituting anything here would file a value we chose
+	// in a field that means "the caller's trace".
 	TraceID string
-	// ExternalRequestID is the caller's own x-request-id, recorded as given.
-	// Ours to carry, never to rewrite — see audit.AuditEvent.
+	// ExternalRequestID is the request id — X-Nexus-Request-Id or its
+	// X-Request-Id alias, or the value minted when the caller sent neither. It
+	// is the cross-service correlation key: the rows the several services write
+	// for one request all carry it. Never rewritten — see audit.AuditEvent.
 	ExternalRequestID string
 	// Headers are the sanitised request headers (auth headers already stripped).
 	// Used to extract User-Agent for the auto-discovery dashboard.
@@ -226,8 +227,6 @@ func (e *AuditEmitter) buildEvent(
 		sc = &statusCode
 	}
 
-	errorCode, errorReason := classifyComplianceError(requestResult, responseResult, bumpStatus, statusCode, responseBody)
-
 	// Capture User-Agent for the auto-discovery dashboard. Only present for
 	// successfully bumped requests; passthrough flows have UA inside TLS.
 	userAgent := extractUserAgent(info.Headers)
@@ -271,6 +270,21 @@ func (e *AuditEmitter) buildEvent(
 	// action-governed) raw body.
 	requestBody = e.gateStorageBody(requestBody, info.RequestBodyRedacted, stageAction(requestResult), "request")
 	responseBody = e.gateStorageBody(responseBody, info.ResponseBodyRedacted, stageAction(responseResult), "response")
+
+	// Classified over the GATED body, deliberately, and only here.
+	//
+	// Running before the gate would have the classifier read the RAW response,
+	// and its last fallback writes up to 300 raw bytes into
+	// traffic_event.error_reason. Under a redact policy those bytes are
+	// correctly kept out of traffic_event_payload and land in the column beside
+	// it instead — the gate honoured for one column and bypassed for its
+	// neighbour. Reading the gated bytes makes error_reason degrade exactly as
+	// the policy intends: when the gate withheld the body there is nothing to
+	// quote, and the classifier falls back to the status line.
+	//
+	// Nothing between the gate and here reads errorCode/errorReason, so the
+	// position affects only which bytes the classifier sees.
+	errorCode, errorReason := classifyComplianceError(requestResult, responseResult, bumpStatus, statusCode, responseBody)
 	// Bound by spillEmitTimeout: spillstore.EmitBody can issue network I/O
 	// (S3 PutObject) and must not stall the proxy indefinitely. On timeout
 	// EmitBody returns an inline-only container flagged truncated.
@@ -283,14 +297,11 @@ func (e *AuditEmitter) buildEvent(
 	requestBodyContainer := spillstore.EmitBody(ctx, e.spill, threshold, requestBody, requestCT, eventID, "request", false, e.logger)
 	responseBodyContainer := spillstore.EmitBody(ctx, e.spill, threshold, responseBody, info.ResponseContentType, eventID, "response", false, e.logger)
 	// A spilled body stays REF-ONLY: the container carries its SpillRef and no
-	// bytes. There used to be an opt-in (WithPreSpillNormalize) that re-attached
-	// up to 2 MiB in memory so a writer's flush-time normalize pass could read the
-	// content without a spill-store fetch. It was deleted with owner approval —
-	// nothing ever called it, and the applyNormalize its doc named as the sole
-	// consumer does not exist anywhere in the repo, so the retention was pure
-	// memory cost. Reinstating it needs the consumer to exist first: the audit
-	// queue holds up to ~1000 events until flush, so retention that is not
-	// bounded AND actually read pins gigabytes under MQ backpressure.
+	// bytes. Re-attaching them in memory — so a writer's flush-time normalize
+	// pass could read the content without a spill-store fetch — needs that
+	// consumer to exist first. The audit queue holds up to ~1000 events until
+	// flush, so retention that is not bounded AND actually read pins gigabytes
+	// under MQ backpressure.
 
 	// Latency phase fields. Hook aggregates derive from per-hook latency_ms
 	// in the JSONB pipelines. Upstream phase fields come from the PhaseSink
@@ -374,11 +385,11 @@ func (e *AuditEmitter) buildEvent(
 // it yields the empty action.
 //
 // The empty action's meaning is NOT decided here. redact.StorageRawBodyChecked
-// owns it, and owns it for all three services, which is the point: this function
-// used to spell out "empty maps to approve" itself, the gateway spelled the same
-// rule out at each of its own call sites, and the shared emitter the proxy and
-// the agent depend on was the copy that had it — one rule in three places, which
-// is how it came to be missing from the one that mattered.
+// owns it, and owns it for all three services, which is the point. Spelling
+// "empty maps to approve" out here, and again at each gateway call site, and
+// again in the shared emitter the proxy and the agent depend on, is one rule
+// in three places — which is how it comes to be missing from the one that
+// matters.
 func stageAction(r *CompliancePipelineResult) decision.Action {
 	if r == nil {
 		return ""
@@ -445,38 +456,101 @@ func classifyComplianceError(
 	responseBody []byte,
 ) (code, reason string) {
 	if requestResult != nil && (requestResult.Decision == RejectHard || requestResult.Decision == BlockSoft) {
-		return "COMPLIANCE_BLOCKED", requestResult.Reason
+		return "COMPLIANCE_BLOCKED", redact.BoundErrorReason(requestResult.Reason)
 	}
 	if responseResult != nil && (responseResult.Decision == RejectHard || responseResult.Decision == BlockSoft) {
-		return "COMPLIANCE_BLOCKED", responseResult.Reason
+		return "COMPLIANCE_BLOCKED", redact.BoundErrorReason(responseResult.Reason)
 	}
 	if bumpStatus == "BUMP_FAILED_PASSTHROUGH" {
 		return "BUMP_FAILED", "TLS inspection unavailable, connection passed through"
 	}
 	if statusCode >= 400 {
-		return "PROVIDER_ERROR", extractProviderErrorMessage(responseBody, statusCode)
+		// true: responseBody here is the output of gateStorageBody, so these
+		// bytes have already passed the storage gate and quoting them verbatim
+		// cannot say more than the payload column already does.
+		return "PROVIDER_ERROR", redact.ProviderErrorMessage(responseBody, statusCode, true)
 	}
 	return "", ""
 }
 
-// extractProviderErrorMessage extracts a human-readable error message from a
-// provider response body. Handles .error.message (OpenAI / Anthropic / Gemini)
-// and top-level .message. Falls back to a truncated raw body, or a generic
-// "provider returned HTTP <N>" when the body is empty.
-func extractProviderErrorMessage(body []byte, statusCode int) string {
-	if len(body) == 0 {
-		return fmt.Sprintf("provider returned HTTP %d", statusCode)
+// hookTraceRecord is what request_hooks_pipeline / response_hooks_pipeline
+// persist: the metadata answering "which hook did what", and nothing else.
+//
+// Marshalling decision.HookResult wholesale also wrote ModifiedContent — the
+// full message text with only matched spans substituted — and TransformSpans,
+// the byte offsets of every redaction. Both are in-flight working state:
+// every reader of them in the tree consumes them while rewriting the wire
+// body, and nothing reads them back off the row. The control-plane UI's
+// HookExecutionRecord type does not even declare them.
+//
+// So under approve the column stored a copy of the conversation PER HOOK, and
+// under redact or block it stored the text the storage gate had just withheld
+// from the body column two fields over — the gate honoured for one column and
+// bypassed for its neighbour, on a field far larger than error_reason.
+//
+// This is not a new rule. The ai-gateway's appendHookTrace already projects
+// onto exactly this shape, and the blocking-rule branch below already
+// projects rather than marshals. The third case now matches the two that
+// were already right.
+//
+// The tags mirror HookResult's exactly, so the persisted shape is unchanged
+// apart from the two omissions and no reader needs to adapt.
+type hookTraceRecord struct {
+	Order            int                `json:"order"`
+	HookID           string             `json:"hookId"`
+	ImplementationID string             `json:"implementationId,omitempty"`
+	HookName         string             `json:"hookName"`
+	Decision         Decision           `json:"decision"`
+	Reason           string             `json:"reason,omitempty"`
+	ReasonCode       string             `json:"reasonCode,omitempty"`
+	LatencyMs        int                `json:"latencyMs"`
+	LatencyUs        int                `json:"latencyUs"`
+	Tags             []string           `json:"tags,omitempty"`
+	Error            string             `json:"error,omitempty"`
+	Action           core.Action        `json:"action,omitempty"`
+	BlockingRule     *core.BlockingRule `json:"blockingRule,omitempty"`
+}
+
+// hookTrace projects the pipeline's results onto the persisted shape. It
+// copies rather than clearing fields in place: the results are still the
+// caller's, and the in-flight rewrite paths read ModifiedContent from them.
+func hookTrace(results []HookResult) []hookTraceRecord {
+	out := make([]hookTraceRecord, 0, len(results))
+	for _, r := range results {
+		out = append(out, hookTraceRecord{
+			Order:            r.Order,
+			HookID:           r.HookID,
+			ImplementationID: r.ImplementationID,
+			HookName:         r.HookName,
+			Decision:         r.Decision,
+			// NOT bounded, and that is a correction rather than an omission.
+			//
+			// These went through redact.BoundErrorReason on the theory that
+			// hook-authored text deserves the same cap as error_reason. It does
+			// not: BoundErrorReason keeps the HEAD, and Go's wrapping puts the
+			// cause at the END. A webhook hook that times out records
+			// `Post "<url>": context deadline exceeded`, and Hub's
+			// proxy_hook_timeout_rate aggregator decides by substring-matching
+			// "deadline exceeded" — so past roughly a 240-character endpoint URL
+			// the truncation cut the marker off and the timeout alert silently
+			// stopped counting, exactly when a slow webhook is the thing worth
+			// alerting on. Measured, not theorised.
+			//
+			// MaxErrorReasonBytes is documented as bounding every string that
+			// becomes traffic_event.error_reason. Neither of these becomes it —
+			// they land in the JSONB trace — so the constant was being borrowed
+			// outside its own contract, which is what let the mismatch through.
+			Reason:       r.Reason,
+			ReasonCode:   r.ReasonCode,
+			LatencyMs:    r.LatencyMs,
+			LatencyUs:    r.LatencyUs,
+			Tags:         r.Tags,
+			Error:        r.Error,
+			Action:       r.Action,
+			BlockingRule: r.BlockingRule,
+		})
 	}
-	if msg := gjson.GetBytes(body, "error.message").String(); msg != "" {
-		return msg
-	}
-	if msg := gjson.GetBytes(body, "message").String(); msg != "" {
-		return msg
-	}
-	if len(body) > 300 {
-		return string(body[:300]) + "..."
-	}
-	return string(body)
+	return out
 }
 
 // stagePayload reduces a single CompliancePipelineResult into the per-stage
@@ -507,7 +581,7 @@ func stagePayload(e *AuditEmitter, info AuditInfo, r *CompliancePipelineResult) 
 	}
 	var pipeline []byte
 	if len(r.HookResults) > 0 {
-		if data, err := json.Marshal(r.HookResults); err != nil {
+		if data, err := json.Marshal(hookTrace(r.HookResults)); err != nil {
 			e.logger.Error("compliance/emitter: failed to marshal hooks pipeline",
 				"error", err,
 				"transactionId", info.TransactionID,

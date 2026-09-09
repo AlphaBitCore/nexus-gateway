@@ -6,7 +6,8 @@ package pipeline
 // aggregation seam.
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -26,8 +27,10 @@ import (
 //
 // Tags: union of all hook-emitted tags, sorted alphabetically and deduplicated.
 func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipelineResult {
-	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].Order < results[j].Order
+	// Generic rather than sort.SliceStable: the reflective form allocates a
+	// swapper per call, and this runs once per request with hooks bound.
+	slices.SortStableFunc(results, func(a, b core.HookResult) int {
+		return cmp.Compare(a.Order, b.Order)
 	})
 
 	pr := &core.CompliancePipelineResult{
@@ -47,11 +50,28 @@ func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipel
 			tagSet[tag] = struct{}{}
 		}
 	}
+	// A hook the operator configured and this pipeline could not build is a
+	// compliance gap, and it belongs on the result of every request the pipeline
+	// served — not only in a startup log that is deduplicated per reload epoch.
+	// The tag names the implementation so an audit query answers "which requests
+	// went out without the PII detector" instead of "something was wrong once".
+	for _, tag := range UnbuildableTags(p.unbuildable) {
+		tagSet[tag] = struct{}{}
+	}
+	// A hook that RAN but has been failing on most of the traffic around this
+	// request is the other half of the same operator question. The gauge says
+	// "right now"; this says "this request was one of them", which is what an
+	// audit query needs to answer "what went out unguarded while it was broken".
+	for i := range results {
+		if p.health.Degraded(results[i].ImplementationID) {
+			tagSet[degradedTagPrefix+results[i].ImplementationID] = struct{}{}
+		}
+	}
 	merged := make([]string, 0, len(tagSet))
 	for tag := range tagSet {
 		merged = append(merged, tag)
 	}
-	sort.Strings(merged)
+	slices.Sort(merged)
 	pr.Tags = merged
 
 	hasSoftReject := false
@@ -132,11 +152,11 @@ func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipel
 	pr.TransformSpans = allSpans
 	// Carry the redaction payload UNCONDITIONALLY, symmetric with TransformSpans above.
 	// When a redact hook (Modify + ModifiedContent + spans) co-fires with a soft-block
-	// hook, StrictestDecision promotes the aggregate Decision to BlockSoft; previously
-	// ModifiedContent was set only in the `else if hasModify` branch and was therefore
-	// DROPPED, leaving spans without their replacement content. Downstream consumers
-	// then could not apply the redaction and fell back to fail-closed (block) OR
-	// replay-original (leak), depending on the path. Carrying it here lets every
+	// hook, StrictestDecision promotes the aggregate Decision to BlockSoft. Setting
+	// ModifiedContent only in the `else if hasModify` branch therefore DROPS it,
+	// leaving spans without their replacement content: downstream consumers cannot
+	// apply the redaction and fall back to fail-closed (block) OR replay-original
+	// (leak), depending on the path. Carrying it here lets every
 	// consumer that keys on CarriesRedaction (not Decision==Modify) redact-and-deliver.
 	// lastModifiedContent is non-nil only when a Modify hook captured content; Approve
 	// and RejectHard (which short-circuits above) never populate it, so no non-redact

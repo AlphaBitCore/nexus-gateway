@@ -24,6 +24,12 @@ import (
 // matched primary rule and its cumulative selection probability. Simulate
 // uses this so operators can see the full distribution of a loadbalance /
 // ab_split / conditional rule, not just the branch one roll happened to hit.
+// Explain also HYDRATES rctx in place — it runs Resolve, which resolves the
+// request's model string against the catalogue onto RequestedModel.CandidateIDs
+// (empty for a routing keyword, which names no catalogue row). The handler
+// reads that back to word its warnings, so a fake standing in for a caller who
+// named a real model must fill it in; one modelling a keyword must leave it
+// empty.
 type routeResolver interface {
 	Explain(ctx context.Context, rctx *routingcore.RoutingContext) (*routingcore.RoutingPlan, error)
 }
@@ -265,21 +271,49 @@ func RoutingSimulateHandler(resolver routeResolver, bridge canonicalbridge.API, 
 			resp.Trace = []routingcore.TraceEntry{}
 		}
 
+		// Explain ran Resolve, which hydrated RequestedModel in place, so
+		// CandidateIDs now answers the question these warnings turn on: did the
+		// caller name a model the CATALOGUE knows, or a routing keyword?
+		//
+		// It used to be asked as `modelId == "auto"`. That was the same question
+		// only while "auto" was the sole keyword a smart rule could match. Once a
+		// deployment can trigger smart routing on its own words, a preview of
+		// `fast` answered with the passthrough paragraph below — telling an
+		// operator the live gateway would serve a string the catalogue has never
+		// heard of, when it would 404. This is the screen they opened BECAUSE
+		// routing is not doing what they expected, so a confident wrong answer
+		// here is the most expensive kind.
+		//
+		// `auto` is unaffected: hydrateRequestedModel skips it deliberately, so
+		// it has no candidates and lands on the same branch it always did.
+		callerNamedACatalogModel := len(rctx.RequestedModel.CandidateIDs) > 0
+
 		if plan.RuleID == "" && len(plan.Targets) == 0 {
-			// No rule matched, but that is only a rejection for `auto`. A
-			// caller who NAMES a model needs no rule: the live gateway serves
-			// it through the explicit-model passthrough (the resolver's
-			// Explain does not model that handler stage, so its empty target
-			// list here is NOT what the client would see). Routing rules only
-			// REDIRECT a named model; they are not required to serve one.
-			if strings.EqualFold(strings.TrimSpace(req.ModelID), "auto") || req.ModelID == "" {
-				resp.Warnings = append(resp.Warnings, "no stage-1 rule matched — an `auto` request has nothing to route and would be rejected")
-			} else {
-				resp.Warnings = append(resp.Warnings, "no routing rule matched — if this is a valid, enabled model the live gateway serves it directly through the explicit-model passthrough (routing rules only REDIRECT a named model; they are not required to serve one). This preview evaluates only the rule engine and does not model that passthrough, so an empty target list here is not what the client receives for a valid model.")
+			// No rule matched. For a caller who NAMED a model that is no
+			// rejection: the live gateway serves it through the explicit-model
+			// passthrough (the resolver's Explain does not model that handler
+			// stage, so its empty target list here is NOT what the client would
+			// see). Routing rules only REDIRECT a named model; they are not
+			// required to serve one. A keyword has no such fallback — nothing
+			// downstream can serve a string that names no model.
+			switch {
+			case rctx.RequestedModel.HydrationFailed:
+				resp.Warnings = append(resp.Warnings, "no stage-1 rule matched, and the model catalogue could not be read for `"+req.ModelID+"` — this preview cannot tell a routing keyword from a named model, so treat the empty target list as unknown rather than as a rejection")
+			case callerNamedACatalogModel:
+				resp.Warnings = append(resp.Warnings, "no routing rule matched — `"+req.ModelID+"` does name a catalogue model, so if it is servable (its provider enabled and its status not disabled — which candidate resolution deliberately does not check) the live gateway serves it directly through the explicit-model passthrough. Routing rules only REDIRECT a named model; they are not required to serve one. This preview evaluates only the rule engine and does not model that passthrough, so an empty target list here is not what the client receives.")
+			default:
+				resp.Warnings = append(resp.Warnings, "no stage-1 rule matched — `"+req.ModelID+"` names no model in the catalogue, so it can only be served by a routing rule that claims it under matchConditions.requestedModelLiterals. As authored, this request has nothing to route and would be rejected.")
 			}
 		}
 		resp.Warnings = append(resp.Warnings, "simulate runs without virtual-key context; project/organization/virtual-key matchConditions are evaluated as empty")
-		if req.ModelID == "auto" && len(req.Messages) == 0 {
+		// Gated on a rule having MATCHED, not merely on the choice being
+		// delegated. "No candidates" is also true of a typo and of a pasted
+		// model UUID, and for those this fired directly after the warning above
+		// saying the request would be rejected — two readings of one request on
+		// one screen. A rule that claimed the request is when "the rule may need
+		// to read the prompt" is actually true, whatever keyword carried it.
+		if plan.RuleID != "" && !callerNamedACatalogModel &&
+			!rctx.RequestedModel.HydrationFailed && len(req.Messages) == 0 {
 			resp.Warnings = append(resp.Warnings, "smart routing requested but messages is empty")
 		}
 

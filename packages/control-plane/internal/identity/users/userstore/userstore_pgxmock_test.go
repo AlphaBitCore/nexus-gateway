@@ -153,7 +153,8 @@ func TestNexusUserCRUD(t *testing.T) {
 		t.Fatalf("missing → (nil,nil), got %+v %v", u, err)
 	}
 	// Create with defaults (source ""→local, canAccess nil→false, pwd ""→nil) asserted via WithArgs
-	m.ExpectQuery(`INSERT INTO "NexusUser"`).WithArgs("Alice", sp("a@x.com"), (*string)(nil), false, sp("org1"), "admin", "local").
+	m.ExpectQuery(`INSERT INTO "NexusUser" \(id, "displayName", email, "passwordHash", "canAccessControlPlane", "organizationId"`).
+		WithArgs("Alice", sp("a@x.com"), (*string)(nil), false, sp("org1"), "admin", "local").
 		WillReturnRows(pgxmock.NewRows(safeCols).AddRow(safeRow("u1")...))
 	if u, err := s.CreateNexusUser(context.Background(), CreateNexusUserParams{DisplayName: "Alice", Email: sp("a@x.com"), OrganizationID: sp("org1"), CreatedBy: "admin", PasswordHash: sp("")}); err != nil || u == nil {
 		t.Fatalf("CreateNexusUser: %+v %v", u, err)
@@ -161,7 +162,7 @@ func TestNexusUserCRUD(t *testing.T) {
 	if err := m.ExpectationsWereMet(); err != nil {
 		t.Fatalf("create defaults not applied: %v", err)
 	}
-	m.ExpectQuery(`INSERT INTO "NexusUser"`).WithArgs(anyArgs(7)...).WillReturnError(errors.New("dup"))
+	m.ExpectQuery(`INSERT INTO "NexusUser"`).WithArgs(anyArgs(6)...).WillReturnError(errors.New("dup"))
 	if _, err := s.CreateNexusUser(context.Background(), CreateNexusUserParams{}); err == nil {
 		t.Fatal("create error should surface")
 	}
@@ -204,8 +205,15 @@ func expectDeleteCascade(m pgxmock.PgxPoolIface, userID string, accountRows int6
 	m.ExpectExec(`DELETE FROM "UserFederatedIdentity" WHERE "userId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
 	m.ExpectExec(`DELETE FROM "RefreshToken" WHERE "userId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
 	m.ExpectExec(`DELETE FROM "ScimToken" WHERE "createdBy" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
-	m.ExpectExec(`DELETE FROM "IamGroupMembership" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
-	m.ExpectExec(`DELETE FROM "IamPolicyAttachment" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	// $2 carries the CANONICAL principal type. Asserted through WithArgs
+	// because the regex can no longer see it: with the value bound rather
+	// than inlined, a pattern match alone would accept the session spelling
+	// that #122 was about. "nexus_user" is spelled out rather than taken from
+	// the constant so a change to it has to be looked at here too.
+	m.ExpectExec(`DELETE FROM "IamGroupMembership" WHERE "principalType" = \$2 AND "principalId" = \$1`).
+		WithArgs(userID, "nexus_user").WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "IamPolicyAttachment" WHERE "principalType" = \$2 AND "principalId" = \$1`).
+		WithArgs(userID, "nexus_user").WillReturnResult(pgxmock.NewResult("DELETE", 1))
 	m.ExpectExec(`DELETE FROM "NexusUser" WHERE id = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", accountRows))
 }
 
@@ -292,7 +300,13 @@ func TestUserstoreBranchesAndErrors(t *testing.T) {
 	}
 	// CreateNexusUser with canAccess=&true + non-empty password (covers both override branches)
 	ca := true
-	m.ExpectQuery(`INSERT INTO "NexusUser"`).WithArgs("Bob", (*string)(nil), sp("secret"), true, (*string)(nil), "admin", "oidc").
+	// No OrganizationID: the statement must OMIT the column so the schema's
+	// `@default("default")` applies. Binding it to NULL is what produced
+	// SQLSTATE 23502 and an opaque HTTP 500 on every create without an org.
+	// The regexp pins the absence — an argument count alone would still pass
+	// if the column reappeared under a different parameter number.
+	m.ExpectQuery(`INSERT INTO "NexusUser" \(id, "displayName", email, "passwordHash", "canAccessControlPlane", "createdBy", source`).
+		WithArgs("Bob", (*string)(nil), sp("secret"), true, "admin", "oidc").
 		WillReturnRows(pgxmock.NewRows(safeCols).AddRow(safeRow("u2")...))
 	if _, err := s.CreateNexusUser(context.Background(), CreateNexusUserParams{DisplayName: "Bob", PasswordHash: sp("secret"), CanAccessControlPlane: &ca, CreatedBy: "admin", Source: "oidc"}); err != nil {
 		t.Fatalf("CreateNexusUser non-default: %v", err)

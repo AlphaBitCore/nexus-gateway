@@ -13,15 +13,15 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/openai"
 )
 
-// Finding C-3: the PhaseSink stamp moved out of prepare() and into stampCPMarker's existing
-// clone, taking a bumped request from three http.Request clones to two.
+// The PhaseSink stamp rides stampCPMarker's existing clone rather than a clone of its own
+// in prepare(), taking a bumped request from three http.Request clones to two.
 //
 // It is safe because nothing between those two points reads the sink OFF A CONTEXT — the
 // in-package phases hold x.phaseSink directly, and the only context reader that matters is the
-// tracing RoundTripper, which runs inside forwardUpstream. But "safe" was not "tested": deleting
-// the stamp entirely left the WHOLE repository green. That is the finding-C-17 failure shape —
-// the wiring goes nil, no error is raised, the stream still relays, the audit row still writes,
-// and the upstream latency columns are quietly empty forever.
+// tracing RoundTripper, which runs inside forwardUpstream. But "safe" is not "tested":
+// deleting the stamp entirely leaves the WHOLE repository green. That is the failure shape
+// this file exists for — the wiring goes nil, no error is raised, the stream still relays,
+// the audit row still writes, and the upstream latency columns are quietly empty forever.
 //
 // The reason no test could see it is that the package's own harness builds
 // &UpstreamTransport{transport: rt} directly, bypassing traffic.NewTracingTransport, which
@@ -134,15 +134,15 @@ func TestAttestedPassthrough_KeepsTheClientHelloOnTheContext(t *testing.T) {
 	}
 }
 
-// Finding C-34. The stream-through arm — no response hooks AND no provider detected, i.e. the
-// non-AI traffic a compliance proxy still audits — used to emit its audit row BEFORE relaying the
-// body. Two columns are populated off the body read (PhaseSink stamps upstream TTFB on the first
-// Read returning content and refreshes upstream-total on every Read), so both were NULL on every
-// such row forever; and latency_ms was computed before the transfer, so a large download
-// under-reported its own duration by the entire transfer time.
+// The stream-through arm — no response hooks AND no provider detected, i.e. the non-AI
+// traffic a compliance proxy still audits — emits its audit row AFTER relaying the body.
+// Emitting it before leaves two columns NULL on every such row forever, because both are
+// populated off the body read (PhaseSink stamps upstream TTFB on the first Read returning
+// content and refreshes upstream-total on every Read); and latency_ms, computed before the
+// transfer, under-reports a large download by the entire transfer time.
 //
-// The emission is now deferred to after the relay. These two tests pin both halves of why that is
-// safe: the row gains the timings, and the row is still written when the relay panics.
+// These two tests pin both halves of why deferring is safe: the row gains the timings, and
+// the row is still written when the relay panics.
 func TestStreamThroughRow_CarriesUpstreamTimings(t *testing.T) {
 	writer := &recordingAuditWriter{}
 	// No adapter registry and no response hooks => providerDetected false, respPipeline nil =>

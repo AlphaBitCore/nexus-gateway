@@ -146,10 +146,10 @@ func TestGetTrafficEventArtifact_TTS_MislabeledCT_SniffsAudio(t *testing.T) {
 // application/octet-stream — never an active content-type — with nosniff so
 // the browser cannot re-interpret it.
 //
-// The name this test used to carry claimed it covered an HTML/SVG polyglot.
-// It did not: bare markup matches no signature, so it took the same path as
-// any unknown blob. A REAL polyglot goes the other way — a file that is a
-// valid GIF *and* valid HTML sniffs as image/gif and IS served inline — which
+// This is NOT the HTML/SVG polyglot case, however much bare markup looks like
+// one: markup matches no signature, so it takes the same path as any unknown
+// blob. A REAL polyglot goes the other way — a file that is a valid GIF *and*
+// valid HTML sniffs as image/gif and IS served inline — which
 // TestArtifactPolyglotServesAsItsContainer covers, with the reasoning for why
 // that is the safe answer.
 func TestGetTrafficEventArtifact_NonImageBytes_DegradesToOctet(t *testing.T) {

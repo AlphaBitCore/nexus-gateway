@@ -105,7 +105,7 @@ func (st streamAccountingStage) run() bool {
 
 	// An SSE stream that faulted mid-flight cannot change its
 	// HTTP status (headers were flushed with 200 before the first chunk),
-	// so the failure was previously indistinguishable from a clean
+	// so the failure is otherwise indistinguishable from a clean
 	// no-usage stream. Surface the reader's terminal error as a queryable
 	// usage_extraction_status + error_code. A failed stream carries no
 	// usage so $0 cost stays correct; only the audit classification changes.

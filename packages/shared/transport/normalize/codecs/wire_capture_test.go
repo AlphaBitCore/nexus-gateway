@@ -114,9 +114,9 @@ func TestOpenAIChat_RealAudioOutResponse(t *testing.T) {
 	}
 }
 
-// Cohere v2 accepts array content with image parts. The codec previously
-// decoded content as a string only, so an image-bearing request degraded to
-// one raw-JSON text block and the image was lost.
+// Cohere v2 accepts array content with image parts. A codec that
+// decodes content as a string only degrades an image-bearing request to
+// one raw-JSON text block and loses the image.
 func TestCohereChat_RealArrayContentRequest(t *testing.T) {
 	body := `{"model":"command-a-vision-07-2025","messages":[{"role":"user","content":[` +
 		`{"type":"text","text":"what colour"},` +
@@ -151,8 +151,8 @@ func TestCohereChat_RealArrayContentRequest(t *testing.T) {
 	}
 }
 
-// An Anthropic PDF arrives as a document block with a base64 source. It used
-// to fall through to the JSON-marshal branch, which put the whole document
+// An Anthropic PDF arrives as a document block with a base64 source. It must
+// not fall through to the JSON-marshal branch, which puts the whole document
 // into a text block — binary flowing through the compliance pipeline as prose.
 func TestAnthropicMessages_RealPDFDocumentRequest(t *testing.T) {
 	body := `{"model":"claude-sonnet-4-5-20250929","max_tokens":32,"messages":[{"role":"user","content":[` +

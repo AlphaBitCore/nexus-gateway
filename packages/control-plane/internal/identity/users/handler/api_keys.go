@@ -6,12 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
@@ -56,8 +55,17 @@ func (h *Handler) ListAPIKeys(c echo.Context) error {
 }
 
 func (h *Handler) GetAPIKey(c echo.Context) error {
+	// err and a nil key mean DIFFERENT things and the store already separates
+	// them: GetAdminAPIKey returns (nil, nil) for no rows and (nil, err) for a
+	// read failure. Folding them into one 404 tells a caller their key is gone
+	// when the database is merely unreachable — the one answer that makes them
+	// stop retrying and start re-provisioning.
 	k, err := h.users.GetAdminAPIKey(c.Request().Context(), c.Param("id"))
-	if err != nil || k == nil {
+	if err != nil {
+		h.logger.Error("get api key", "error", err, "id", c.Param("id"))
+		return c.JSON(http.StatusInternalServerError, errJSON("Failed to read API key", "server_error", ""))
+	}
+	if k == nil {
 		return c.JSON(http.StatusNotFound, errJSON("API key not found", "not_found", ""))
 	}
 	return c.JSON(http.StatusOK, map[string]any{"data": k})
@@ -93,27 +101,16 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 		}
 	}
 
-	// Grant ceiling: an admin API key whose ownerUserId is set
-	// authenticates AS that owner (authn.EffectivePrincipal). Minting a key for
-	// an owner OTHER than the caller would let a narrowly-scoped caller inherit a
-	// more-powerful principal's authority (e.g. mint a super-admin-owned key with
-	// only admin:api-key.create). Require the caller to already cover every
-	// permission the target owner holds before the key is created. When the owner
-	// is unset or is the caller's own user id, the ceiling is skipped (behavior
-	// unchanged — the key confers nothing the caller does not already have).
-	if body.OwnerUserID != nil && *body.OwnerUserID != "" &&
-		(aa == nil || *body.OwnerUserID != aa.KeyID) {
-		if blocked, resp := h.ceilingBlocksOwner(c, "nexus_user", *body.OwnerUserID); blocked {
-			return resp
-		}
+	// Grant ceiling: an admin API key whose ownerUserId is set authenticates AS
+	// that owner. The skip conditions live inside ceilingBlocksKeyOwner so all
+	// three minting paths share one spelling of them.
+	if blocked, resp := h.ceilingBlocksKeyOwner(c, body.OwnerUserID); blocked {
+		return resp
 	}
 
-	var expiresAt *time.Time
-	if body.ExpiresAt != "" {
-		t, err := time.Parse(time.RFC3339, body.ExpiresAt)
-		if err == nil {
-			expiresAt = &t
-		}
+	expiresAt, ok, err := parseGrantExpiry(c, body.ExpiresAt)
+	if !ok {
+		return err
 	}
 
 	k, err := h.users.CreateAdminAPIKey(c.Request().Context(), userstore.CreateAdminAPIKeyParams{
@@ -126,6 +123,9 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 		OwnerUserID: body.OwnerUserID,
 	})
 	if err != nil {
+		if msg, code, status := apiKeyWriteConstraintError(err); status != 0 {
+			return c.JSON(status, errJSON(msg, "validation_error", code))
+		}
 		h.logger.Error("create api key", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create API key", "server_error", ""))
 	}
@@ -162,18 +162,18 @@ func (h *Handler) UpdateAPIKey(c echo.Context) error {
 		params.Enabled = body.Enabled
 		hasUpdate = true
 	}
-	if body.ExpiresAt != nil {
-		if *body.ExpiresAt == "" {
-			// Explicitly clearing expiresAt — pass nil (COALESCE preserves NULL)
-			// The store uses COALESCE, so nil means "no change". To clear, we need
-			// a sentinel. For now, treat empty string as "no change" consistent
-			// with the old behavior of passing nil.
-		} else {
-			if t, err := time.Parse(time.RFC3339, *body.ExpiresAt); err == nil {
-				params.ExpiresAt = &t
-				hasUpdate = true
-			}
+	// `"expiresAt": ""` is a no-op, not a clear: the store UPDATE is a COALESCE,
+	// so nil means "leave the column alone" and there is no value that means
+	// "set it back to NULL". Removing an expiry is therefore not something this
+	// endpoint offers — which is the safer direction for a credential, and the
+	// direction the other expiry-bearing endpoints take too.
+	if body.ExpiresAt != nil && *body.ExpiresAt != "" {
+		t, ok, err := parseGrantExpiry(c, *body.ExpiresAt)
+		if !ok {
+			return err
 		}
+		params.ExpiresAt = t
+		hasUpdate = true
 	}
 
 	if !hasUpdate {
@@ -181,7 +181,16 @@ func (h *Handler) UpdateAPIKey(c echo.Context) error {
 	}
 
 	k, err := h.users.UpdateAdminAPIKey(c.Request().Context(), id, params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The store's UPDATE ... RETURNING matches no row for an id that is
+		// gone, which is the caller naming something that does not exist.
+		return c.JSON(http.StatusNotFound, errJSON("API key not found", "not_found", ""))
+	}
 	if err != nil {
+		if msg, code, status := apiKeyWriteConstraintError(err); status != 0 {
+			return c.JSON(status, errJSON(msg, "validation_error", code))
+		}
+		h.logger.Error("update api key", "error", err, "id", id)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to update API key", "server_error", ""))
 	}
 
@@ -196,8 +205,18 @@ func (h *Handler) UpdateAPIKey(c echo.Context) error {
 func (h *Handler) RegenerateAPIKey(c echo.Context) error {
 	id := c.Param("id")
 	k, err := h.users.GetAdminAPIKey(c.Request().Context(), id)
-	if err != nil || k == nil {
+	if err != nil {
+		h.logger.Error("regenerate api key: owner lookup", "error", err, "id", id)
+		return c.JSON(http.StatusInternalServerError, errJSON("Failed to read API key", "server_error", ""))
+	}
+	if k == nil {
 		return c.JSON(http.StatusNotFound, errJSON("API key not found", "not_found", ""))
+	}
+
+	// Regenerating mints a fresh plaintext credential for the SAME owner, so it
+	// hands out exactly what create's ceiling exists to withhold.
+	if blocked, resp := h.ceilingBlocksKeyOwner(c, k.OwnerUserID); blocked {
+		return resp
 	}
 
 	rawBytes := make([]byte, 32)
@@ -207,6 +226,9 @@ func (h *Handler) RegenerateAPIKey(c echo.Context) error {
 	keyPrefix := rawKey[:12]
 
 	if err := h.users.RegenerateAdminAPIKey(c.Request().Context(), id, keyHash, auth.CurrentKeyVersion(), keyPrefix); err != nil {
+		if msg, code, status := apiKeyWriteConstraintError(err); status != 0 {
+			return c.JSON(status, errJSON(msg, "validation_error", code))
+		}
 		h.logger.Error("regenerate api key", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to regenerate API key", "server_error", ""))
 	}
@@ -230,6 +252,17 @@ func (h *Handler) DeleteAPIKey(c echo.Context) error {
 	}
 
 	if err := h.users.DeleteAdminAPIKey(c.Request().Context(), id); err != nil {
+		// The store already tells us which of the two this is: it returns
+		// pgx.ErrNoRows when nothing matched. Collapsing that into a 500 threw
+		// away an answer we had been handed, and reported a key that is
+		// already gone as a server fault — the caller then cannot tell "your
+		// id is stale" from "the admin API is broken".
+		//
+		// Every other read in this file already spells the 404; delete was the
+		// one that skipped it.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return c.JSON(http.StatusNotFound, errJSON("API key not found", "not_found", ""))
+		}
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to delete API key", "server_error", ""))
 	}
 
@@ -266,13 +299,26 @@ func (h *Handler) RotateAPIKey(c echo.Context) error {
 	// an EOF-style error which we swallow because all fields are optional.
 	_ = c.Bind(&body)
 
-	var newExpiresAt *time.Time
-	if body.ExpiresAt != "" {
-		t, err := time.Parse(time.RFC3339, body.ExpiresAt)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, errJSON("invalid expiresAt; expected RFC3339", "validation_error", ""))
-		}
-		newExpiresAt = &t
+	newExpiresAt, ok, err := parseGrantExpiry(c, body.ExpiresAt)
+	if !ok {
+		return err
+	}
+
+	// The successor inherits the predecessor's owner, so rotate mints a usable
+	// credential for that principal exactly as create and regenerate do. The
+	// predecessor is loaded here rather than trusted from the path, because the
+	// owner is the input the ceiling evaluates. A missing key is refused with the
+	// same 404 the rotate store call would have produced.
+	pred, perr := h.users.GetAdminAPIKey(c.Request().Context(), id)
+	if perr != nil {
+		h.logger.Error("rotate api key: predecessor lookup", "error", perr, "id", id)
+		return c.JSON(http.StatusInternalServerError, errJSON("Failed to read API key", "server_error", ""))
+	}
+	if pred == nil {
+		return c.JSON(http.StatusNotFound, errJSON("API key not found", "not_found", ""))
+	}
+	if blocked, resp := h.ceilingBlocksKeyOwner(c, pred.OwnerUserID); blocked {
+		return resp
 	}
 
 	// Generate the successor key material outside the DB transaction so we
@@ -312,6 +358,9 @@ func (h *Handler) RotateAPIKey(c echo.Context) error {
 		// a plain error rather than a typed sentinel.
 		if err.Error() != "" && (containsStatusInvariantHint(err.Error())) {
 			return c.JSON(http.StatusConflict, errJSON(err.Error(), "validation_error", "ROTATE_INVALID_STATE"))
+		}
+		if msg, code, status := apiKeyWriteConstraintError(err); status != 0 {
+			return c.JSON(status, errJSON(msg, "validation_error", code))
 		}
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to rotate API key", "server_error", ""))
 	}

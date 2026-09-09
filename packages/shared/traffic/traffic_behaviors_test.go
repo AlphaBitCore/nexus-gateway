@@ -431,40 +431,6 @@ func TestResolveAction_SkipsDisabledPathRule(t *testing.T) {
 	}
 }
 
-// observability.go — RegisterMetrics + RecordUnmatched smoke.
-
-func TestObservability_RegisterAndRecordUnmatched(t *testing.T) {
-	// RegisterMetrics is sync.Once-guarded; first call wins. We call it with
-	// a unique namespace; subsequent tests in this package may have already
-	// registered, in which case our call is the documented no-op. Either way
-	// RecordUnmatched MUST be safe (nil-check inside guards a missing counter).
-	RegisterMetrics("nexus_traffic_test")
-	// Second call is a no-op — must not panic / duplicate-register.
-	RegisterMetrics("nexus_traffic_test_other")
-
-	// Increment a couple of label combos — the function returns nothing; we
-	// assert it does not panic and that unmatchedTotal is wired.
-	RecordUnmatched("api.openai.com", "no_rule")
-	RecordUnmatched("api.openai.com", "no_adapter")
-	RecordUnmatched("api.anthropic.com", "parse_error")
-
-	if unmatchedTotal == nil {
-		t.Fatalf("unmatchedTotal must be initialised after RegisterMetrics")
-	}
-}
-
-// RecordUnmatched without a prior RegisterMetrics must be a safe no-op.
-// We test the nil-guard by temporarily zeroing the package counter, calling,
-// and restoring. (Single-test isolation: this runs after the register test;
-// we restore so subsequent test runs are deterministic.)
-func TestRecordUnmatched_NilCounterIsNoop(t *testing.T) {
-	saved := unmatchedTotal
-	unmatchedTotal = nil
-	defer func() { unmatchedTotal = saved }()
-	// Must not panic.
-	RecordUnmatched("any", "any")
-}
-
 // tracing.go — Unwrap, AddBreakdown, Breakdown, WithPhaseSink nil-sink,
 // NewTracingTransport nil-base, RoundTrip transport error path.
 

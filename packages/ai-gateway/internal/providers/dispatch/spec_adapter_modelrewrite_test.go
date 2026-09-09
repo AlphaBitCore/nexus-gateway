@@ -56,7 +56,8 @@ func rpm(req Request) ([]byte, []string, error) {
 		Format:      FormatOpenAI,
 		SchemaCodec: openaicodec.New(openaicodec.Contract{}),
 	}, log: slog.Default()}
-	body, rewrites, _, err := a.prepareBodyFull(req)
+	bodyPrep, err := a.prepareBodyFull(req)
+	body, rewrites, _ := bodyPrep.Body, bodyPrep.Rewrites, bodyPrep.URLOverride
 	return body, rewrites, err
 }
 
@@ -73,7 +74,8 @@ func rpmForceDecode(req Request) ([]byte, []string, error) {
 			}},
 		}),
 	}, log: slog.Default()}
-	body, rewrites, _, err := a.prepareBodyFull(req)
+	bodyPrep, err := a.prepareBodyFull(req)
+	body, rewrites, _ := bodyPrep.Body, bodyPrep.Rewrites, bodyPrep.URLOverride
 	return body, rewrites, err
 }
 
@@ -109,7 +111,8 @@ func rpmAnthropic(req Request) ([]byte, []string, error) {
 		Format:      FormatAnthropic,
 		SchemaCodec: stampingCodec{},
 	}, log: slog.Default()}
-	body, rewrites, _, err := a.prepareBodyFull(req)
+	bodyPrep, err := a.prepareBodyFull(req)
+	body, rewrites, _ := bodyPrep.Body, bodyPrep.Rewrites, bodyPrep.URLOverride
 	return body, rewrites, err
 }
 
@@ -199,8 +202,14 @@ func TestA2_Streaming_NonConformant_MapPath_AppliesUsageOption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rewrites != nil {
-		t.Errorf("no adapter rewrite configured, got %v", rewrites)
+	// No MODEL rewrite is configured for this target, but the streaming leg
+	// still turns on include_usage, and that is reported: it adds a terminal
+	// chunk to the caller's stream, so a caller who did not ask for it sees a
+	// frame they did not send for. This test's own name says the option is
+	// applied — asserting it is applied while asserting nothing records it was
+	// the shape that let the fill stay invisible.
+	if len(rewrites) != 1 || rewrites[0] != "stream_options.include_usage→true_for_usage_capture" {
+		t.Errorf("rewrites = %v, want only the usage-option coercion", rewrites)
 	}
 	var m map[string]any
 	if err := json.Unmarshal(out, &m); err != nil {
@@ -252,7 +261,8 @@ func TestA2_Streaming_ConformantButStructuralRuleApplies_TakesDecodeDoor(t *test
 			}},
 		}),
 	}, log: slog.Default()}
-	out, rewrites, _, err := a.prepareBodyFull(reqFor(body, true))
+	outPrep, err := a.prepareBodyFull(reqFor(body, true))
+	out, rewrites, _ := outPrep.Body, outPrep.Rewrites, outPrep.URLOverride
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,10 +422,11 @@ func TestStructuralGate_RoutesTheDecodeDoor(t *testing.T) {
 
 	// Gate false → surgical sjson path: rule NOT invoked, model set, other
 	// fields (temperature) preserved verbatim.
-	out, _, _, err := adapterFor(func(string) bool { return false }).prepareBodyFull(reqFor(body, false))
+	outPrep0, err := adapterFor(func(string) bool { return false }).prepareBodyFull(reqFor(body, false))
 	if err != nil {
 		t.Fatal(err)
 	}
+	out := outPrep0.Body
 	if ruleCalls != 0 {
 		t.Fatalf("rule must NOT run when its gate is false; got %d", ruleCalls)
 	}
@@ -428,7 +439,7 @@ func TestStructuralGate_RoutesTheDecodeDoor(t *testing.T) {
 
 	// Gate true → decode door: rule invoked exactly once.
 	ruleCalls = 0
-	if _, _, _, err = adapterFor(func(string) bool { return true }).prepareBodyFull(reqFor(body, false)); err != nil {
+	if _, err = adapterFor(func(string) bool { return true }).prepareBodyFull(reqFor(body, false)); err != nil {
 		t.Fatal(err)
 	}
 	if ruleCalls != 1 {
@@ -493,7 +504,8 @@ func TestModelInBody_False_NonOpenAI_NoRewrite(t *testing.T) {
 		Target:     CallTarget{ProviderModelID: "gemini-2.0-flash"},
 	}
 	a := &specAdapter{spec: AdapterSpec{Format: FormatGemini, SchemaCodec: noopCodec{}}, log: slog.Default()}
-	out, rw, _, err := a.prepareBodyFull(req)
+	outPrep, err := a.prepareBodyFull(req)
+	out, rw, _ := outPrep.Body, outPrep.Rewrites, outPrep.URLOverride
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +542,7 @@ func TestPrepareBody_Anthropic_ModelInBody_Wired(t *testing.T) {
 	spec := specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic)
 	ad := NewSpecAdapter(spec, nil)
 	body := []byte(`{"model":"my-fast-alias","messages":[]}`)
-	got, _, _, err := ad.PrepareBody(Request{
+	gotPrep, err := ad.PrepareBody(Request{
 		WireShape:  typology.WireShapeAnthropicMessages,
 		BodyFormat: FormatAnthropic,
 		Body:       body,
@@ -539,13 +551,14 @@ func TestPrepareBody_Anthropic_ModelInBody_Wired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	got := gotPrep.Body
 	if !strings.Contains(string(got), `"model":"claude-opus-4-8"`) {
 		t.Fatalf("capability spec must rewrite the Anthropic body model to ProviderModelID; got %s", got)
 	}
 	// A verbatim codec (model-in-URL wires) must NOT rewrite the body.
 	specNoCap := specFrom(&fakeTransport{}, noopCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic)
 	adNoCap := NewSpecAdapter(specNoCap, nil)
-	gotNoCap, _, _, err := adNoCap.PrepareBody(Request{
+	gotNoCapPrep, err := adNoCap.PrepareBody(Request{
 		WireShape:  typology.WireShapeAnthropicMessages,
 		BodyFormat: FormatAnthropic,
 		Body:       body,
@@ -554,6 +567,7 @@ func TestPrepareBody_Anthropic_ModelInBody_Wired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody(no-cap): %v", err)
 	}
+	gotNoCap := gotNoCapPrep.Body
 	if string(gotNoCap) != string(body) {
 		t.Fatalf("no-capability spec must pass the body through unchanged; got %s", gotNoCap)
 	}

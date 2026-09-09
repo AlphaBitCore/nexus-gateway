@@ -123,7 +123,7 @@ func TestEntryForStampsViaFromInProcessContext(t *testing.T) {
 	}
 }
 
-// TestEntryForIgnoresForgedHeader pins the #18b H1 forgery defense: an inbound
+// TestEntryForIgnoresForgedHeader pins the header-forgery defence: an inbound
 // X-Nexus-Initiated-By header (a value a malicious admin could set on a manual API
 // call) must NOT stamp Via — only the in-process context value does. The header is
 // no longer read by EntryFor (and is stripped at ingress by StripInitiatorHeader),

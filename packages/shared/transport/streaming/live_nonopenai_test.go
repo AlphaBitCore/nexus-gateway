@@ -11,7 +11,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
 
-// These tests pin the C-17 contract: the live (chunked_async) relay must run
+// These tests pin the hook-execution contract: the live (chunked_async) relay must run
 // the response hook pipeline at least once for ANY stream that carried
 // content, regardless of whether the wire shape is one the inline
 // delta extractor models.
@@ -66,8 +66,8 @@ func stubPreHook(seen *[][]byte) PreHookCallback {
 	}
 }
 
-// TestLivePipeline_NonOpenAIShape_RunsHooks is the C-17 regression test. Before
-// the fix it failed with zero Execute calls.
+// TestLivePipeline_NonOpenAIShape_RunsHooks is the regression test: an extractor
+// that models only the OpenAI wire makes this fail with zero Execute calls.
 func TestLivePipeline_NonOpenAIShape_RunsHooks(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -93,10 +93,10 @@ func TestLivePipeline_NonOpenAIShape_RunsHooks(t *testing.T) {
 				t.Fatalf("relay dropped content; output=%q", got)
 			}
 
-			// THE C-17 CONTRACT: the pipeline must have executed at least once.
+			// THE CONTRACT: the pipeline must have executed at least once.
 			if len(mp.calls) == 0 {
 				t.Fatal("response hook pipeline NEVER executed for a non-OpenAI stream " +
-					"— C-17: pendingLen stayed 0 so every checkpoint gate failed")
+					"— pendingLen stayed 0 so every checkpoint gate failed")
 			}
 			// And the checkpoint must have been handed the raw wire bytes, which is
 			// what lets the pre-hook recover real content for an unmodeled shape.

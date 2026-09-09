@@ -220,17 +220,27 @@ func TestGranule_SelectionByWindow(t *testing.T) {
 	}
 }
 
-func TestTableForGranule_MapsAllAndFallsBackTo5m(t *testing.T) {
-	cases := map[string]string{
-		"5m":      "thing_metric_rollup_local_5m",
-		"1h":      "thing_metric_rollup_local_1h",
-		"1d":      "thing_metric_rollup_local_1d",
-		"1mo":     "thing_metric_rollup_local_1mo",
-		"unknown": "thing_metric_rollup_local_5m",
+// An unrecognised tier must name NO table. The previous version of this test
+// asserted it fell back to the 5m table — the defect pinned under a name that
+// read like coverage ("...AndFallsBackTo5m"). That fallback returned real rows
+// from the WRONG tier and presented them as the right ones, with nothing in the
+// answer to say so.
+func TestTableForGranule_NamesNothingForATierItDoesNotKnow(t *testing.T) {
+	known := map[string]string{
+		"5m":  "thing_metric_rollup_local_5m",
+		"1h":  "thing_metric_rollup_local_1h",
+		"1d":  "thing_metric_rollup_local_1d",
+		"1mo": "thing_metric_rollup_local_1mo",
 	}
-	for in, want := range cases {
+	for in, want := range known {
 		if got := tableForGranule(in); got != want {
 			t.Errorf("tableForGranule(%q) = %s want %s", in, got, want)
+		}
+	}
+	for _, in := range []string{"", "unknown", "1y", "5 m"} {
+		if got := tableForGranule(in); got != "" {
+			t.Errorf("tableForGranule(%q) = %q, want \"\" — answering with another tier's "+
+				"table returns real rows from the wrong window and calls them the right ones", in, got)
 		}
 	}
 }

@@ -197,9 +197,14 @@ func (pd *PiiDetector) Execute(_ context.Context, input *core.HookInput) (*core.
 	// per-pattern RE2 below for precise offsets + Luhn validation. A pattern that
 	// fires here but fails Luhn still resolves to Approve via the action paths,
 	// so the gate never over-reports.
-	gateMatched := matchedSet(pd.matcher, input.TextSegmentsWith(pd.cfg.ProjectionOptions()))
+	gateMatched, complete := matchedSet(pd.matcher, input.TextSegments())
 	core.ObserveContentScan(pd.cfg.ImplementationID, len(gateMatched))
-	if len(gateMatched) == 0 {
+	// `complete &&` is the fail-safe. An empty set from a scan that never ran —
+	// the matcher was closed by a rule-pack swap while this request held it —
+	// looks exactly like benign traffic, and this hook's whole job is masking
+	// PII. The action branches below re-run RE2 over every pattern anyway, so
+	// the recovery costs a slower request, never a missed mask.
+	if complete && len(gateMatched) == 0 {
 		result.LatencyMs = int(time.Since(start).Milliseconds())
 		return result, nil
 	}
@@ -218,7 +223,7 @@ func (pd *PiiDetector) Execute(_ context.Context, input *core.HookInput) (*core.
 // untouched (Approve forwards and stores as-is). Short-circuits on the first
 // match; no spans are collected.
 func (pd *PiiDetector) executeApprove(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
-	for _, text := range input.TextSegmentsWith(pd.cfg.ProjectionOptions()) {
+	for _, text := range input.TextSegments() {
 		for idx := range pd.patterns {
 			p := &pd.patterns[idx]
 			for _, match := range p.re.FindAllString(text, -1) {

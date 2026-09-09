@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Correctness gate for the fmt-free WriteSSEEvent (finding C-21). The claim is
+// Correctness gate for the fmt-free WriteSSEEvent. The claim is
 // byte-identical output at lower cost, so the test does not restate what the wire
 // should look like — it runs the ORIGINAL implementation beside the current one and
 // requires the bytes to match exactly. Anything else would encode my belief about
@@ -82,7 +82,7 @@ func serializeCorpus() []*SSEEvent {
 	}
 }
 
-// TestWriteSSEEvent_ByteIdenticalToReference is the primary C-21 correctness proof.
+// TestWriteSSEEvent_ByteIdenticalToReference is the primary correctness proof.
 func TestWriteSSEEvent_ByteIdenticalToReference(t *testing.T) {
 	for i, evt := range serializeCorpus() {
 		var got, want bytes.Buffer

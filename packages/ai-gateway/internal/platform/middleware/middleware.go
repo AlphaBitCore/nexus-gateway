@@ -12,24 +12,32 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 )
 
-// RequestID honors an inbound X-Nexus-Request-Id (set by an upstream Nexus
-// service) and assigns a fresh UUID only when none is present, so trace_id
-// correlation survives the hop instead of being severed at the gateway. Any
-// client-supplied x-request-id is preserved separately for audit correlation.
+// RequestID resolves the caller's request id from either accepted spelling —
+// X-Nexus-Request-Id, else its X-Request-Id alias — and mints a UUID only when
+// the caller sent neither, so correlation survives the hop instead of being
+// severed at the gateway. The resolved value is written back onto the request
+// under the canonical name, so every downstream read site sees one id
+// regardless of which name it arrived under, and echoed on the response under
+// that same name.
+//
+// The caller's own X-Request-Id is still echoed when they sent one. The
+// response contract for that header is "exactly one value: yours if you sent
+// one, otherwise the provider's" — see nexus-headers.md — so this is an echo,
+// not a second correlation channel.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Nexus-Request-Id")
+		id := traffic.ResolveRequestID(r.Header)
 		if id == "" {
 			id = uuid.New().String()
 		}
-		w.Header().Set("X-Nexus-Request-Id", id)
-		r.Header.Set("X-Nexus-Request-Id", id)
-		// Preserve client's x-request-id if present (read by handler as ClientRequestID).
-		if clientID := r.Header.Get("X-Request-Id"); clientID != "" {
-			w.Header().Set("X-Request-Id", clientID)
+		w.Header().Set(traffic.HeaderRequestID, id)
+		r.Header.Set(traffic.HeaderRequestID, id)
+		if clientID := r.Header.Get(traffic.HeaderRequestIDAlias); clientID != "" {
+			w.Header().Set(traffic.HeaderRequestIDAlias, clientID)
 		}
 		r = r.WithContext(nexushttp.WithRequestID(r.Context(), id))
 		next.ServeHTTP(w, r)

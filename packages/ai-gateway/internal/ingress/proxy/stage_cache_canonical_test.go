@@ -54,14 +54,14 @@ func newCanonicalFixture(t *testing.T, stub *bodyEchoNormalize, originalBody []b
 	req.Header.Set("Content-Type", "application/json")
 	rctx := h.buildRequestContext(req, nil, originalBody, provcore.FormatOpenAI, "gpt-4o", "chat")
 	return &proxyState{
-		h:        h,
-		r:        req,
-		rec:      &audit.Record{},
-		resolved: Ingress{BodyFormat: provcore.FormatOpenAI},
-		rctxFull: rctx,
-		body:     originalBody,
-		modelID:  "gpt-4o",
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		h:            h,
+		r:            req,
+		rec:          &audit.Record{},
+		resolved:     Ingress{BodyFormat: provcore.FormatOpenAI},
+		rctxFull:     rctx,
+		body:         originalBody,
+		modelID:      "gpt-4o",
+		scopedLogger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

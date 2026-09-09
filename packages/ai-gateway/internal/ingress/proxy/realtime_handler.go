@@ -39,6 +39,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/generativecaps"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -134,15 +136,19 @@ func (h *Handler) ServeRealtime(in Ingress) http.HandlerFunc {
 		}
 
 		start := time.Now().UTC()
-		// The grouping key for ALL of the session's traffic_event rows is a
-		// SERVER-minted UUID. It must never derive from the request's id or
-		// trace headers: the middleware honors an inbound X-Nexus-Request-Id,
-		// so a client could otherwise merge or collide session groups.
+		// The session's runtime identity, used for logging and for the
+		// in-process session registry. It is NOT an audit grouping key: every
+		// row this session writes carries the upgrade request's
+		// external_request_id, so the ordinary request-id filter returns the
+		// whole session. A caller who reuses one request id across two sessions
+		// sees their rows merge — the same caveat every caller-supplied id in
+		// this system carries, and not one realtime earns a private second key
+		// to escape.
 		sessionID := uuid.NewString()
 		rec := &audit.Record{
-			RequestID:       r.Header.Get("X-Nexus-Request-Id"),
-			ClientRequestID: r.Header.Get("x-request-id"),
-			TraceID:         sessionID,
+			RequestID:       traffic.ResolveRequestID(r.Header),
+			ClientRequestID: r.Header.Get(traffic.HeaderRequestIDAlias),
+			TraceID:         telemetry.InboundTraceID(r.Context()),
 			Timestamp:       start,
 			Method:          r.Method,
 			Path:            r.URL.Path,

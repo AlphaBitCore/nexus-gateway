@@ -53,13 +53,13 @@ func TestProviderHealthRollup_Run_ClassifiesStatuses(t *testing.T) {
 			AddRow("prov-3", "p3", int(100), int(30), int(200), now, &lastErr)) // unavailable (30%)
 
 	// One UPSERT per provider, and the third argument is the STATUS — which is
-	// what this test is named for and previously did not assert at all.
+	// what this test is named for.
 	//
-	// Two things made these expectations decorative. ExpectExec without
+	// Two things can make these expectations decorative. ExpectExec without
 	// WithArgs means "expects ZERO arguments" in pgxmock, and upsert passes
-	// nine, so none of them could ever match; and without ExpectationsWereMet
-	// nothing reports an unmatched expectation. The Execs errored, Run logged
-	// and continued, and the test passed green over a classification that never
+	// nine, so none of them can match; and without ExpectationsWereMet
+	// nothing reports an unmatched expectation. The Execs then error, Run logs
+	// and continues, and the test passes green over a classification that never
 	// reached the database.
 	anyArg := pgxmock.AnyArg
 	for _, want := range []string{"healthy", "degraded", "unavailable"} {

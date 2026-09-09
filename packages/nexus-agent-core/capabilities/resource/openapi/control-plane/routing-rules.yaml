@@ -88,8 +88,13 @@ paths:
                 (array, string, number) or an object whose embedded `type` is not a
                 recognized strategy node type is rejected with 400 before the rule is
                 persisted and broadcast fleet-wide. When `strategyType` is `smart`,
-                `matchConditions` must pin `requestedModelLiterals` to `["auto"]` — an
-                unrestricted smart rule is rejected with 400. The legacy
+                `matchConditions` must pin `requestedModelLiterals` to at least one
+                request keyword — any keywords, any number, and globs are matched, so
+                `["auto"]`, `["fast", "cheap"]` and `["gpt-4-*"]` are all accepted. What
+                is rejected with 400 is a rule that reaches traffic nobody named: absent
+                or empty `matchConditions`, an absent or empty `requestedModelLiterals`,
+                a blank entry (no request can carry an empty `model`), and an entry made
+                only of `*`, which matches every request. The legacy
                 `matchConditions.organizations` key is rejected with 422 in favor of
                 `projects`. A supplied `retryPolicy` is validated for bounds before
                 persistence; omitting it makes the rule inherit the AI Gateway YAML
@@ -136,7 +141,7 @@ paths:
                                         — a config that passed a shallower check used to fail the
                                         resolver's parse on every request routed by the rule.
                                 matchConditions:
-                                    description: 'Request-matching predicate as an arbitrary JSON value. The legacy key `organizations` is rejected (use `projects`). For `strategyType=smart`, must include `requestedModelLiterals: ["auto"]`.'
+                                    description: 'Request-matching predicate as an arbitrary JSON value. The legacy key `organizations` is rejected (use `projects`). For `strategyType=smart`, must include a non-empty `requestedModelLiterals` — any request keywords the deployment chooses (e.g. `["auto"]`, `["fast", "cheap"]`, `["gpt-4-*"]`); blank entries and an all-`*` entry are rejected.'
                                 priority:
                                     type: integer
                                     description: Match priority within a pipeline stage; higher values are evaluated first.
@@ -264,8 +269,8 @@ paths:
                                 - strategyType
                                 - config
                         example:
-                            name: Auto smart routing
-                            description: Route auto requests through the smart strategy
+                            name: Delegated model choice
+                            description: Hand model selection to the smart strategy for the keywords this fleet publishes
                             strategyType: smart
                             config:
                                 candidates:
@@ -273,6 +278,8 @@ paths:
                             matchConditions:
                                 requestedModelLiterals:
                                     - auto
+                                    - fast
+                                    - cheap
                             priority: 100
                             fallbackChain: []
                             enabled: true
@@ -388,7 +395,10 @@ paths:
                 override so the rule inherits the AI Gateway YAML default. The legacy
                 `matchConditions.organizations` key is rejected with 422. When both
                 `strategyType=smart` and `matchConditions` are supplied, the smart-rule
-                guard requires `requestedModelLiterals: ["auto"]`. An explicit
+                guard requires a non-empty `requestedModelLiterals` whose entries are
+                neither blank nor all-`*`. The guard reads the STORED strategy, so an
+                edit that changes only `matchConditions` on a rule that is already
+                `smart` is judged as a smart rule. An explicit
                 `pipelineStage` of 0 is preserved; any other value is normalized to 1.
             x-nexus-iam-action: iam.ResourceRoutingRule.Action(iam.VerbUpdate)
             x-nexus-tier: confirm

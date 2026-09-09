@@ -225,7 +225,7 @@ func (h *AgentEnrollHandler) SSOEnroll(c echo.Context) error {
 			h.Logger.Warn("sso-enroll: user lookup", "user_id", entry.UserID, "error", err)
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid_code"})
 		}
-		if user.DisabledAt != nil {
+		if user.Auth.Blocked() {
 			return c.JSON(http.StatusForbidden, map[string]string{"error": "user_disabled"})
 		}
 	}

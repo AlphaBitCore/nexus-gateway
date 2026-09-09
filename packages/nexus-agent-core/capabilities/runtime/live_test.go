@@ -1,7 +1,7 @@
 //go:build live
 
 // Live integration check for the capabilities layer against a running local
-// stack (CP :3001, AI-GW :3050, Hub :3060; admin admin@nexus.ai / admin123).
+// stack (CP :3001, AI-GW :3050, Hub :3060; admin admin@nexus.ai / nexus-demo).
 // Excluded from default builds and CI. Run explicitly with:
 //
 //	go test -tags live -run TestLive ./internal/capabilities/...
@@ -54,7 +54,7 @@ func liveClient(t *testing.T) (*core.Client, context.Context) {
 	hc := &http.Client{Timeout: 30 * time.Second}
 	store := liveMemStore{m: map[string]string{}}
 	a := core.NewAuthenticator(env, store, hc)
-	if err := a.LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := a.LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Skipf("local stack not reachable / login failed: %v", err)
 	}
 	return core.NewClient(env, core.NewTokenSource(env, store, hc), hc), ctx

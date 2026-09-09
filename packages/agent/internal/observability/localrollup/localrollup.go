@@ -92,7 +92,7 @@ type Aggregator struct {
 
 // New constructs an Aggregator using the agent's SQLite handle exposed by
 // audit.Queue.DB(). The schema must already include the rollup tables (added
-// in audit/queue.go init).
+// in packages/agent/internal/observability/audit/queue/queue.go init).
 func New(db *sql.DB, logger *slog.Logger) *Aggregator {
 	return &Aggregator{
 		db:        db,
@@ -656,6 +656,18 @@ func Granule(start, end time.Time) string {
 	}
 }
 
+// tableForGranule returns the local rollup table for a tier, or "" for a tier
+// this package does not recognise.
+//
+// A default returning the 5m table has an unrecognised tier read
+// real rows from the WRONG tier and answer as if they were the right ones —
+// silently, and with no way for the caller to tell. Naming nothing is the only
+// honest answer to a question this function cannot answer.
+//
+// Its one caller feeds it Granule's output, whose four branches are
+// exhaustive, so "" is unreachable there and QueryRollup carries no guard for
+// it. The empty return is for a FUTURE caller with a different source: it gets
+// nothing, rather than another tier's rows presented as its own.
 func tableForGranule(g string) string {
 	switch g {
 	case "5m":
@@ -666,9 +678,8 @@ func tableForGranule(g string) string {
 		return "thing_metric_rollup_local_1d"
 	case "1mo":
 		return "thing_metric_rollup_local_1mo"
-	default:
-		return "thing_metric_rollup_local_5m"
 	}
+	return ""
 }
 
 // QueryRollup reads rollup rows for the given query window from the local
@@ -678,6 +689,9 @@ func (a *Aggregator) QueryRollup(ctx context.Context, q Query) ([]Row, error) {
 	if !q.EndTime.After(q.StartTime) {
 		return nil, nil
 	}
+	// No empty-table guard here, deliberately: Granule's four branches are
+	// exhaustive, so this call site cannot produce one. A guard would be an
+	// unreachable branch bought with a coverage hole.
 	table := tableForGranule(Granule(q.StartTime, q.EndTime))
 
 	where := []string{"bucket_start >= ?", "bucket_start < ?"}

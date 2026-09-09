@@ -34,7 +34,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/robfig/cron/v3"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
+	jobstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
 )
 
 // Job is a unit of scheduled work.
@@ -84,11 +84,28 @@ type JobStatus struct {
 	NextRun      *time.Time    `json:"nextRun"`
 	RunCount     int64         `json:"runCount"`
 	ErrorCount   int64         `json:"errorCount"`
+	// Registered reports whether THIS process has the job in its registry.
+	// The `job` table is the row source because it holds run history and the
+	// admin's enable/disable intent, both of which outlive any one process --
+	// but registration is per-process and mode-dependent: SyncDefinitions
+	// upserts only what this build registered and never deletes, so a row
+	// seeded for another mode (ops-raw-partition on a MySQL deployment that
+	// registers ops-raw-partition-mysql) sits in the list Enabled, with the
+	// description it was seeded with, and never runs. Without this the list
+	// cannot say so, and Trigger / Enable on such a row answer 404 -- which
+	// reads as a missing record rather than a deployment fact.
+	Registered bool `json:"registered"`
 }
 
 // stopDrainTimeout caps how long Stop() waits for in-flight jobs to
 // finish after the cron engine has been signalled to stop.
 const stopDrainTimeout = 30 * time.Second
+
+// overdueLookupTimeout bounds the single job-table read Start makes to find
+// jobs that fell due while the process was down. Startup must not block on the
+// database: on timeout the lookup returns nothing and every job simply waits
+// for its next tick, which is the behaviour that shipped before this existed.
+const overdueLookupTimeout = 10 * time.Second
 
 // minDefaultRunTimeout is the floor applied to defaultTimeout(j) so
 // even a job with a 5-second interval gets a generous-enough cap.
@@ -301,6 +318,16 @@ func (s *Scheduler) SetEnabled(ctx context.Context, id string, enabled bool) err
 // Start launches the cron engine and registers every enabled job.
 // Jobs that implement OnStartRunner.RunOnStart()=true are kicked off
 // once immediately in detached goroutines so Start() returns promptly.
+//
+// Jobs whose persisted last run is already older than their interval are
+// kicked off too, whether or not they opt into RunOnStart. robfig's `@every`
+// counts from the moment of registration, so without this a restart resets
+// every timer to process-start and the slot that fell due in between is lost
+// with no error anywhere: lastStatus still reads success and the run simply
+// never happens. On prod a deploy at 11:19 pushed seven daily jobs — data
+// retention purge, the rollup merges, rollup correction — from a run due at
+// 11:33 that day to one 24 hours later, and a second deploy the same day would
+// have moved it again. Daily work on a daily deploy cadence would never run.
 func (s *Scheduler) Start() {
 	s.cronCtx, s.cancel = context.WithCancel(context.Background())
 
@@ -334,9 +361,22 @@ func (s *Scheduler) Start() {
 	// Kick off RunOnStart jobs in detached goroutines so we don't
 	// block Start. Each goes through runOne which gives it the same
 	// timeout + recover treatment as a scheduled tick.
+	kicked := make(map[string]bool, len(onStartEntries))
 	for _, e := range onStartEntries {
+		kicked[e.job.ID()] = true
 		go s.runOne(e, false)
 	}
+	// The catch-up wave runs SEQUENTIALLY, in one goroutine, unlike the
+	// RunOnStart kicks above. After a long outage every job is overdue at
+	// once, and firing fifty-three of them in parallel would put the chunked
+	// retention deletes and several heavy rollups on the database in the same
+	// instant. These runs are late by definition, so serialising them costs
+	// nothing that matters and removes the spike entirely.
+	go func() {
+		for _, e := range s.overdueAtStart(kicked) {
+			s.runOne(e, false)
+		}
+	}()
 
 	// Announce scheduler leadership so multi-replica deployments are observable.
 	// A Prometheus alert should fire when sum(nexus_hub_scheduler_leader) != 1:
@@ -350,6 +390,63 @@ func (s *Scheduler) Start() {
 	if s.leaderGauge != nil {
 		s.leaderGauge.Set(1)
 	}
+}
+
+// overdueAtStart returns the registered, enabled entries whose PERSISTED last
+// run is already at least one interval old, excluding any the caller has
+// already kicked off.
+//
+// This is the half of restart behaviour the cron engine cannot supply. Its
+// schedule lives entirely in memory and begins at registration, so it has no
+// way to know a job was due while the process was down. The job table does
+// know, and that is the only durable record of it.
+//
+// A job that has NEVER run is deliberately not overdue. There is no slot to
+// have missed, and `@every` semantics are to wait one interval before the
+// first tick; treating a fresh registration as due would fire every new job
+// on the deploy that introduces it.
+//
+// Fail-open: if the store cannot be read, log and return nothing. Jobs still
+// run on their normal cadence, which is exactly today's behaviour, and a slow
+// or unavailable database must never hold up scheduler startup.
+func (s *Scheduler) overdueAtStart(skip map[string]bool) []*entry {
+	// No store means no durable record of what ran, so there is nothing to
+	// catch up on — same guard every other store touch in this file uses.
+	if s.js == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(s.cronCtx, overdueLookupTimeout)
+	defer cancel()
+
+	rows, err := s.js.ListJobsWithStats(ctx)
+	if err != nil {
+		s.logger.Error("overdue-at-start lookup failed; jobs will wait for their next tick",
+			"error", err)
+		return nil
+	}
+
+	now := time.Now()
+	var due []*entry
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, r := range rows {
+		if !r.Enabled || r.LastRun == nil || skip[r.ID] {
+			continue
+		}
+		e, ok := s.jobs[r.ID]
+		if !ok || !e.enabled.Load() {
+			continue
+		}
+		deadline := r.LastRun.Add(e.job.Interval())
+		if now.Before(deadline) {
+			continue
+		}
+		s.logger.Info("job was due while the scheduler was down; running it now",
+			"job", r.ID, "lastRun", r.LastRun, "dueAt", deadline, "interval", e.job.Interval())
+		due = append(due, e)
+	}
+	return due
 }
 
 // scheduleEntry registers `e` with the cron engine. Caller holds s.mu.
@@ -518,6 +615,8 @@ func (s *Scheduler) listJobsInMemory() []JobStatus {
 		e.statusMu.Lock()
 		st := e.status
 		e.statusMu.Unlock()
+		// Every entry in s.jobs is registered by construction.
+		st.Registered = true
 		// Refresh NextRun from cron when the engine is up.
 		if next := s.nextRunFor(e); next != nil {
 			st.NextRun = next
@@ -582,9 +681,15 @@ func (s *Scheduler) statusFromStats(r jobstore.JobWithStats) JobStatus {
 		ErrorCount:   r.ErrorCount,
 	}
 	if e, ok := s.jobs[r.ID]; ok {
+		st.Registered = true
 		if next := s.nextRunForLocked(e); next != nil {
 			st.NextRun = next
-		} else if r.LastRun != nil {
+		} else if r.Enabled && r.LastRun != nil {
+			// Cron has no entry for this job yet (Hub not started, or the
+			// entry is being rebuilt), so estimate from the last run. Only
+			// while ENABLED: SetEnabled zeroes cronEntryID on disable, which
+			// takes the same nil branch, and estimating there put a Next Run
+			// of "tomorrow" next to a Disabled badge.
 			n := r.LastRun.Add(e.job.Interval())
 			st.NextRun = &n
 		}

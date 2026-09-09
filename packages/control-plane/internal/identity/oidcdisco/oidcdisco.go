@@ -19,7 +19,6 @@ package oidcdisco
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net"
 	"net/http"
@@ -28,7 +27,9 @@ import (
 	"sync"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 const (
@@ -112,10 +113,12 @@ type Resolver struct {
 // a DNS lookup so the common case fails fast with a clear error before any
 // socket is opened.
 func NewResolver(opts ...Option) *Resolver {
-	dialer := &net.Dialer{Control: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly)}
-	transport := &http.Transport{DialContext: dialer.DialContext}
 	r := &Resolver{
-		client:    &http.Client{Timeout: defaultTimeout, Transport: transport},
+		client: nexushttp.New(nexushttp.Config{
+			Timeout:     defaultTimeout,
+			DialControl: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly),
+			Caller:      "oidcdisco",
+		}),
 		ttl:       DefaultTTL,
 		now:       time.Now,
 		checkHost: validatePublicHost,
@@ -138,7 +141,7 @@ type Option func(*Resolver)
 func WithInsecureSkipHostCheck() Option {
 	return func(r *Resolver) {
 		r.checkHost = nil
-		r.client = &http.Client{Timeout: defaultTimeout}
+		r.client = nexushttp.New(nexushttp.Config{Timeout: defaultTimeout, Caller: "oidcdisco"})
 	}
 }
 

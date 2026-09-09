@@ -143,8 +143,8 @@ func TestBuildModelCatalog_NewestGenerationFirst(t *testing.T) {
 }
 
 // The router LLM's only way to tell a vision model from a text-only one. It
-// used to be the `vision` tag inside f; when vision stopped being stored, a
-// prompt still asking for that tag would have matched nothing at all.
+// is not the `vision` tag inside f: that is not stored, so a
+// prompt asking for it matches nothing at all.
 func TestBuildModelCatalog_CarriesNonTextInputModalities(t *testing.T) {
 	out := buildModelCatalog([]core.SmartModelRow{
 		{ModelID: "m1", ModelCode: "sees-images", ProviderID: "p1", InputModalities: []string{"text", "image"}},

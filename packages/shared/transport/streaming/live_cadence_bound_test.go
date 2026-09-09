@@ -11,17 +11,15 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
 
-// Findings R-6, R-8 (remainder) and R-11 all asked the same question: does the checkpoint-cadence
-// inflation introduced by C-31's validity gate need a hard bound?
+// Does the checkpoint-cadence inflation from the validity gate need a hard bound?
 //
-// The register carried them as "blocked on production data — the backslash-bearing frame fraction
-// f is the independent variable and cannot be synthesized". That was the wrong frame. The effect is
-// MONOTONIC in f: a frame only takes the raw-verbatim path when it is backslash-bearing AND
-// invalid, and every such frame pushes more bytes into accumulatedAll than the decoded delta would.
-// A monotonic effect's worst case is its terminal answer, and the worst case is f = 1 — every frame
-// on the fallback path — which is trivially synthesizable. No production capture is required to
-// decide whether a bound is needed; it is required only to predict where between the endpoints a
-// given deployment sits, which is a different question and not what these findings asked.
+// It looks answerable only with production data — the backslash-bearing frame fraction f is
+// the independent variable and cannot be synthesized — but the effect is MONOTONIC in f: a
+// frame takes the raw-verbatim path only when it is backslash-bearing AND invalid, and every
+// such frame pushes more bytes into accumulatedAll than the decoded delta would. A monotonic
+// effect's worst case is its terminal answer, and the worst case is f = 1 — every frame on the
+// fallback path — which is trivially synthesizable. A capture would say where between the
+// endpoints a given deployment sits; it is not needed to decide whether a bound exists.
 //
 // The answer these tests establish: the bound ALREADY EXISTS. The checkpoint step is
 // max(CheckpointChars, accumulatedAll.Len()/8), so the cadence widens as the transcript grows and
@@ -63,9 +61,9 @@ func countCheckpoints(t *testing.T, frames int, mk func(int) string) int {
 	return len(mp.calls)
 }
 
-// TestCheckpointCadence_StaysSublinearOnTheFallbackPath is the terminal answer to R-6 / R-8
-// remainder / R-11. It measures both endpoints of f and asserts the property that makes a hard
-// bound unnecessary: the execution count grows far slower than the stream length, so the total
+// TestCheckpointCadence_StaysSublinearOnTheFallbackPath is why the checkpoint cadence needs
+// no hard cap. It measures both endpoints of f and asserts the property that makes one
+// unnecessary: the execution count grows far slower than the stream length, so the total
 // re-normalization work stays sub-quadratic even when EVERY frame takes the raw-verbatim path.
 func TestCheckpointCadence_StaysSublinearOnTheFallbackPath(t *testing.T) {
 	sizes := []int{50, 150, 500, 1500}
@@ -78,8 +76,8 @@ func TestCheckpointCadence_StaysSublinearOnTheFallbackPath(t *testing.T) {
 			n, f0[i], f1[i], float64(f1[i])/float64(max(f0[i], 1)))
 	}
 
-	// 1. The inflation is real and is what R-8 reported — recorded here rather than asserted as a
-	//    fixed number, since it is a consequence of frame/delta length ratios, not a guarantee.
+	// 1. The inflation is real — recorded here rather than asserted as a fixed number, since it
+	//    is a consequence of frame/delta length ratios, not a guarantee.
 	if f1[1] <= f0[1] {
 		t.Fatalf("at 150 frames f=1 produced %d executions and f=0 produced %d: the fallback path "+
 			"is supposed to inflate the cadence, so this test is no longer measuring what it "+
@@ -105,8 +103,8 @@ func TestCheckpointCadence_StaysSublinearOnTheFallbackPath(t *testing.T) {
 	// 3. And the absolute worst case stays small enough that a hard cap would buy nothing: at
 	//    f = 1 over 1500 frames the pipeline runs a double-digit number of times, not hundreds.
 	if f1[len(f1)-1] > 60 {
-		t.Fatalf("f=1 over %d frames produced %d executions. The register's conclusion that no "+
-			"additional bound is needed rests on this staying small; re-open R-6 if it does not.",
+		t.Fatalf("f=1 over %d frames produced %d executions. The conclusion that no additional "+
+			"bound is needed rests on this staying small; add one if it does not.",
 			sizes[len(sizes)-1], f1[len(f1)-1])
 	}
 }

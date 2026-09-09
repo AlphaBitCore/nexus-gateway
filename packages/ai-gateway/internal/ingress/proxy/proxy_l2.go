@@ -76,14 +76,32 @@ func fleetSemanticPolicy(cc *semantic.ConfigCache) (semanticCachePolicy, bool) {
 func resolveL2VKScope(rec *audit.Record, varyBy string) string {
 	switch varyBy {
 	case "user":
-		return rec.UserID
+		return orVKScope(rec.UserID, rec)
 	case "org":
-		return rec.OrganizationID
+		return orVKScope(rec.OrganizationID, rec)
 	case "none":
 		return ""
 	default: // "vk" and anything else → strict VK isolation
 		return rec.VirtualKeyID
 	}
+}
+
+// orVKScope narrows to the virtual key when the admin's chosen dimension has no
+// value on this request, and NEVER widens to fleet-wide.
+//
+// The empty string is not "no opinion" here — downstream it means no scope
+// token at all, which is cross-tenant sharing. `rec.UserID` is set only for
+// personal virtual keys (see Record.ApplyVKMeta), so an admin who picked "user"
+// believing it stricter than "vk" was silently getting "none" for every
+// application-key request — which is most enterprise traffic, since an
+// application key is exactly the shared key a business system calls with.
+// Degrading to the virtual key keeps the isolation at least as strict as the
+// default; widening to nothing is the one outcome the setting can never mean.
+func orVKScope(preferred string, rec *audit.Record) string {
+	if preferred != "" {
+		return preferred
+	}
+	return rec.VirtualKeyID
 }
 
 // resolveL1CacheScope produces the tenant-isolation token folded into the L1
@@ -98,26 +116,33 @@ func resolveL2VKScope(rec *audit.Record, varyBy string) string {
 // semantic cache is switched off. The raw snapshot's VaryBy is "" until the
 // first Hub push; both "" and "none" mean fleet-wide (no scope), preserving the
 // default cross-tenant dedup.
+// vkScopeToken is the fallback every non-"none" scope narrows to when its own
+// dimension is absent on this request. Returning "" instead would turn a
+// stricter-than-default setting into no isolation at all — see orVKScope.
+func vkScopeToken(rec *audit.Record) string {
+	if rec.VirtualKeyID == "" {
+		return ""
+	}
+	return "vk:" + rec.VirtualKeyID
+}
+
 func resolveL1CacheScope(cc *semantic.ConfigCache, rec *audit.Record) string {
 	if cc == nil || rec == nil {
 		return ""
 	}
 	switch cc.Get().VaryBy {
 	case "user":
-		if rec.UserID == "" {
-			return ""
+		if rec.UserID != "" {
+			return "user:" + rec.UserID
 		}
-		return "user:" + rec.UserID
+		return vkScopeToken(rec)
 	case "org":
-		if rec.OrganizationID == "" {
-			return ""
+		if rec.OrganizationID != "" {
+			return "org:" + rec.OrganizationID
 		}
-		return "org:" + rec.OrganizationID
+		return vkScopeToken(rec)
 	case "vk":
-		if rec.VirtualKeyID == "" {
-			return ""
-		}
-		return "vk:" + rec.VirtualKeyID
+		return vkScopeToken(rec)
 	default: // "none" or unset → fleet-wide, no isolation
 		return ""
 	}
@@ -364,8 +389,8 @@ func (h *Handler) scheduleL2Write(
 	}
 
 	// Resolve the scope from the configured vary_by so the write isolates on
-	// the same dimension the reader filters on (the write previously
-	// hardcoded VK scope, making vary_by ∈ {user, org, none} a permanent miss).
+	// the same dimension the reader filters on (a write that
+	// hardcodes VK scope makes vary_by ∈ {user, org, none} a permanent miss).
 	vkScope := resolveL2VKScope(rec, pol.VaryBy)
 	responseKind := "response"
 	if isStream {

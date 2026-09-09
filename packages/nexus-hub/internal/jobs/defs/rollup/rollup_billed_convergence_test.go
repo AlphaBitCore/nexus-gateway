@@ -25,8 +25,8 @@ func rowWithInternalOps(ts time.Time, cost, embedding, aiGuard float64) []any {
 // billed_cost_usd is the number the AI Gateway's quota Backfill re-seeds the
 // live counter from on boot (usage_cache_backfill.go). The live counter itself
 // only ever charges rec.EstimatedCostUsd — it has no idea internal-ops costs
-// exist, and cannot: the flag that used to control this lived in the HUB's
-// config and was never pushed to the gateway.
+// exist, and cannot: a flag controlling this would live in the HUB's
+// config and is never pushed to the gateway.
 //
 // So any internal-ops cost the rollup folds into billed makes the quota counter
 // JUMP across a reboot: charged one number while live, re-seeded from a bigger
@@ -34,7 +34,7 @@ func rowWithInternalOps(ts time.Time, cost, embedding, aiGuard float64) []any {
 // switched off, which zeroes those columns on every row — which is exactly the
 // blind spot the fixtures around this one share.
 //
-// The invariant, now structural rather than configurable: billed passes through
+// The invariant is structural rather than configurable: billed passes through
 // estimated. Internal-ops costs stay visible on their own dedicated series.
 func TestRollup5m_BilledPassesThroughEstimated_EvenWithInternalOps(t *testing.T) {
 	mock, err := pgxmock.NewPool()

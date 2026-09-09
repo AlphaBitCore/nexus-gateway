@@ -10,9 +10,9 @@ import (
 // TestModelTypes_MatchesTheEndpointNotTheNamedModelsCatalogueRow.
 //
 // A rule saying "this applies to embedding traffic" is written for embedding
-// traffic. It used to be compared against the catalogue type of whatever model
-// the caller named — and an `auto` request names no model, so the field was
-// empty, the comparison failed, and the rule silently never matched the
+// traffic. Comparing it against the catalogue type of whatever model
+// the caller named breaks on `auto`, which names no model: the field is
+// empty, the comparison fails, and the rule silently never matches the
 // requests it most obviously exists for. The admin sees a rule that is enabled,
 // correct-looking, and inert.
 //

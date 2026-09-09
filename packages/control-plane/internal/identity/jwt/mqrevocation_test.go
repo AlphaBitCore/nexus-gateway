@@ -314,9 +314,9 @@ func TestMQRevocationChecker_ReplayCatchup_AppliesMissedEvents(t *testing.T) {
 			t.Errorf("replay got method %s, want GET", r.Method)
 		}
 		// X-RS-Token, not Authorization: the replay endpoint is gated by
-		// rstokenauth. This assertion used to pin "Bearer secret" — faithful to
-		// what the client sent, and wrong about what the server reads, which is
-		// how a permanently-401ing catchup stayed green in the suite.
+		// rstokenauth. Pinning "Bearer secret" here is faithful to
+		// what the client sends and wrong about what the server reads, which is
+		// how a permanently-401ing catchup stays green in the suite.
 		if got := r.Header.Get("X-RS-Token"); got != "secret" {
 			t.Errorf("replay X-RS-Token = %q, want \"secret\"", got)
 		}

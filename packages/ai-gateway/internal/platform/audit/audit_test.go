@@ -3,10 +3,11 @@ package audit
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"log/slog"
 
@@ -111,7 +112,8 @@ func TestRecordToMessage_AllFields(t *testing.T) {
 	msg := w.recordToMessage(rec)
 
 	// The primary key is minted per event, never the caller-supplied
-	// X-Nexus-Request-Id — that value keeps its correlation role on TraceID.
+	// X-Nexus-Request-Id — that value keeps its correlation role on
+	// ExternalRequestID.
 	if msg.ID == "" || msg.ID == "req-123" {
 		t.Errorf("ID = %q, want a minted id distinct from the request id", msg.ID)
 	}
@@ -121,8 +123,12 @@ func TestRecordToMessage_AllFields(t *testing.T) {
 	if msg.TraceID != "trace-upstream-789" {
 		t.Errorf("TraceID = %q, want %q", msg.TraceID, "trace-upstream-789")
 	}
-	if msg.ExternalRequestID != "ext-req-456" {
-		t.Errorf("ExternalRequestID = %q, want %q", msg.ExternalRequestID, "ext-req-456")
+	// The RESOLVED request id, not the alias spelling the caller happened to
+	// use. This record carries both, and external_request_id takes the resolved
+	// one — it is the key every cross-service join uses, and the alias is only
+	// kept so the response can echo back the spelling the caller sent.
+	if msg.ExternalRequestID != "req-123" {
+		t.Errorf("ExternalRequestID = %q, want %q", msg.ExternalRequestID, "req-123")
 	}
 	if msg.EntityType != "user" {
 		t.Errorf("EntityType = %q, want %q", msg.EntityType, "user")
@@ -765,5 +771,87 @@ func TestBufferOverflow(t *testing.T) {
 
 	if count := len(w.recCh); count > cap {
 		t.Errorf("queue size %d exceeds cap %d", count, cap)
+	}
+}
+
+// TestRecordToMessage_ExternalRequestIDCarriesTheResolvedID pins the column at
+// the centre of the correlation contract.
+//
+// The bug this catches: mapping external_request_id from ClientRequestID, which
+// holds only what arrived under the X-Request-Id alias. A caller sending the
+// canonical X-Nexus-Request-Id — or sending nothing, leaving the middleware to
+// mint one — then wrote NULL into the column every cross-service join uses, and
+// nothing failed. The gateway and the tlsbump producers would silently disagree
+// about where a request id lives.
+func TestRecordToMessage_ExternalRequestIDCarriesTheResolvedID(t *testing.T) {
+	tests := []struct {
+		name            string
+		requestID       string
+		clientRequestID string
+		want            string
+	}{
+		{
+			name:            "canonical spelling only",
+			requestID:       "resolved-from-nexus-header",
+			clientRequestID: "",
+			want:            "resolved-from-nexus-header",
+		},
+		{
+			name:            "alias only — middleware resolved it into RequestID too",
+			requestID:       "resolved-from-alias",
+			clientRequestID: "resolved-from-alias",
+			want:            "resolved-from-alias",
+		},
+		{
+			name:            "caller sent neither — the minted id still lands",
+			requestID:       "minted-uuid",
+			clientRequestID: "",
+			want:            "minted-uuid",
+		},
+		{
+			name:            "both spellings, different values — the resolved one wins",
+			requestID:       "resolved-from-nexus-header",
+			clientRequestID: "the-alias-value",
+			want:            "resolved-from-nexus-header",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
+			msg := w.recordToMessage(&Record{
+				RequestID:       tc.requestID,
+				ClientRequestID: tc.clientRequestID,
+				Timestamp:       time.Now().UTC(),
+			})
+			if msg.ExternalRequestID != tc.want {
+				t.Errorf("ExternalRequestID = %q, want %q — this is the key every cross-service join uses",
+					msg.ExternalRequestID, tc.want)
+			}
+		})
+	}
+}
+
+// TestRecordToMessage_TraceIDIsOnlyTheCallersTrace guards the other half: the
+// trace column must carry the caller's W3C trace and nothing else, so a record
+// with a request id but no caller trace leaves it empty.
+func TestRecordToMessage_TraceIDIsOnlyTheCallersTrace(t *testing.T) {
+	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
+	msg := w.recordToMessage(&Record{
+		RequestID: "minted-uuid",
+		TraceID:   "",
+		Timestamp: time.Now().UTC(),
+	})
+	if msg.TraceID != "" {
+		t.Errorf("TraceID = %q, want empty: no inbound traceparent means no caller trace to record", msg.TraceID)
+	}
+
+	withTrace := w.recordToMessage(&Record{
+		RequestID: "minted-uuid",
+		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
+		Timestamp: time.Now().UTC(),
+	})
+	if withTrace.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("TraceID = %q, want the caller's trace id", withTrace.TraceID)
 	}
 }

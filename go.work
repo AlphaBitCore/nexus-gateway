@@ -8,6 +8,7 @@ use (
 	./packages/ai-gateway
 	./packages/compliance-proxy
 	./packages/control-plane
+	./packages/httpclient
 	./packages/nexus-agent-core
 	./packages/nexus-cli
 	./packages/nexus-hub

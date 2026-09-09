@@ -330,8 +330,8 @@ func (e erroringNormalizer) Normalize(context.Context, []byte, normcore.Meta) (n
 // TestBuild_NormalizeError_BumpsDropCounterAndWarns pins the
 // drop-on-normalize-error contract:
 // when Registry.Normalize returns a non-nil non-panic error, the
-// pre-hook callback used to drop silently and the hook executor saw
-// the flat-text fallback. Now it MUST:
+// pre-hook callback must not drop silently, leaving the hook executor on
+// the flat-text fallback. It MUST:
 //   - bump nexus_prehook_normalize_drop_total{adapter="<id>"} by 1
 //   - emit a WARN log line naming the adapter + error
 //   - still not stamp ci.Normalized (preserves the old don't-panic

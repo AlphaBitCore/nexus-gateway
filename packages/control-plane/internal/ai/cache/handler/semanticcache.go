@@ -128,7 +128,7 @@ func (h *SemanticCacheHandler) RegisterSemanticCacheRoutes(
 
 // semanticCacheUpdateRequest is the JSON body shape for PUT
 // /api/admin/semantic-cache/config. Mirrors SemanticCacheConfigUpdate from
-// the OpenAPI spec (docs/openapi/e61-s6-cache-admin.yaml).
+// the OpenAPI spec.
 type semanticCacheUpdateRequest struct {
 	EmbeddingProviderID *string `json:"embeddingProviderId"`
 	EmbeddingModelID    *string `json:"embeddingModelId"`

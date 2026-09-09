@@ -9,7 +9,7 @@ import (
 // The caller's own x-request-id has to survive the compliance-proxy leg.
 //
 // Three ids reach traffic_event and they answer three questions: the row's id
-// says which row, trace_id says which unit of work, and external_request_id is
+// says which row, external_request_id says which request, and trace_id is
 // the caller's own — recorded as given so an external system can join Nexus
 // rows to its own logs. Only the AI Gateway ever wrote the third. A caller
 // whose traffic reached Nexus through the compliance proxy had the header

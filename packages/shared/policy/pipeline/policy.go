@@ -1,11 +1,12 @@
 package pipeline
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"log/slog"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +44,12 @@ type PolicyResolver struct {
 	registry    *core.HookRegistry
 	logger      *slog.Logger
 
+	// health is the per-implementation failure window behind the degraded
+	// gauge, log and audit tag. It is on the resolver rather than on a Pipeline
+	// because a Pipeline is built per request, and a window that starts empty on
+	// every request can never reach the sample floor.
+	health *hookHealth
+
 	// hookCache caches instantiated Hook objects keyed by HookConfig.ID.
 	// On Swap(), entries whose config content is unchanged are preserved;
 	// rows that changed or were removed are evicted so the factory runs
@@ -77,14 +84,35 @@ type PolicyResolver struct {
 // and a factory registry. The resolver stores a defensive copy of configs.
 // For service-specific hooks, pass a registry cloned via Registry.Clone().
 // Subsequent updates go through Swap.
+// sortedSnapshot copies configs and orders them by Priority, which is the
+// order the pipeline must execute them in.
+//
+// Sorting HERE rather than in resolveFrom is what makes the per-request sort
+// unnecessary rather than merely cheaper: resolveFrom filters by stage,
+// ingress and traffic kind with an append loop, and a filtered subsequence of
+// an ordered slice is ordered. Configs enter the resolver only through
+// NewPolicyResolver and Swap — both on the config-load path — so the cost is
+// paid once per reload instead of once per request.
+//
+// Stable, so hooks that share a priority keep the order the configuration
+// declares them in. Which of two equally-prioritised hooks runs first is
+// observable: it decides whose Modify the merge sees last.
+func sortedSnapshot(configs []core.HookConfig) []core.HookConfig {
+	out := append([]core.HookConfig(nil), configs...)
+	slices.SortStableFunc(out, func(a, b core.HookConfig) int {
+		return cmp.Compare(a.Priority, b.Priority)
+	})
+	return out
+}
+
 func NewPolicyResolver(configs []core.HookConfig, registry *core.HookRegistry, logger *slog.Logger) *PolicyResolver {
 	r := &PolicyResolver{
 		registry:  registry,
 		logger:    logger,
 		hookCache: make(map[string]core.Hook),
+		health:    newHookHealth(),
 	}
-	snapshot := append([]core.HookConfig(nil), configs...)
-	r.hookConfigs.Store(&configSnapshot{gen: 0, configs: snapshot})
+	r.hookConfigs.Store(&configSnapshot{gen: 0, configs: sortedSnapshot(configs)})
 	return r
 }
 
@@ -105,7 +133,7 @@ func NewPolicyResolver(configs []core.HookConfig, registry *core.HookRegistry, l
 // rather than O(N) when most rows are stable.
 func (r *PolicyResolver) Swap(configs []core.HookConfig) {
 	prevGen := r.swapGen.Add(1) - 1
-	snapshot := append([]core.HookConfig(nil), configs...)
+	snapshot := sortedSnapshot(configs)
 	// Publish gen+configs as ONE atomic value (lockstep with swapGen) so cache
 	// consumers reading hookConfigs get a consistent pair — see configSnapshot.
 	oldPtr := r.hookConfigs.Swap(&configSnapshot{gen: prevGen + 1, configs: snapshot})
@@ -144,12 +172,34 @@ func (r *PolicyResolver) Swap(configs []core.HookConfig) {
 	r.hookMu.Unlock()
 
 	// Close immediately. The matcher's own in-flight-scan drain makes this safe
-	// for scans already running on the evicted hook. A request that resolved the
-	// old hook in the microseconds before this swap but has not yet called Scan
-	// will get a no-op (Approve) for that one request — acceptable for the agent,
-	// which is the mandated fail-open caller. If the proxies ever ship the
-	// Vectorscan tag, switch this to a grace-period deferred close so that
-	// resolve→Scan window drains too.
+	// for scans already running on the evicted hook. The window this does NOT
+	// cover is a request that resolved the old hook in the microseconds before
+	// the swap and has not yet called Scan.
+	//
+	// THE PROXIES DO SHIP THE VECTORSCAN TAG — scripts/release/build-tarball.sh
+	// builds all four services with it — so an earlier note deferring the fix
+	// until "if the proxies ever ship" it was describing a condition that had
+	// already fired. What makes the window survivable today is not the deferral
+	// but the disposition on the other side: a scan on a closed matcher now
+	// reports INCOMPLETE, and every consumer treats that as fail-unsafe rather
+	// than as "scanned, nothing found". The request pays a slower RE2
+	// re-confirmation instead of losing its masking.
+	//
+	// A grace-period deferred close is NOT the fix, and the trace that was
+	// pending here is what rules it out. The SSE response stage builds its
+	// pipeline once (tlsbump/sse.go BuildPipeline, one call per response) and
+	// streaming.LivePipeline calls Execute at every checkpoint, so the
+	// resolve→Scan window is not microseconds — it is the whole stream. No
+	// fixed grace period bounds that: a long enough response outlives any
+	// constant you pick, and picking one would buy the appearance of a closed
+	// window rather than a closed one.
+	//
+	// What would close it is reference counting the matcher for the lifetime of
+	// every pipeline holding it. That is deliberately not built: the window is
+	// already SAFE (INCOMPLETE → RE2 re-confirmation, above), so the only thing
+	// bought is latency, on the rare event of a config reload, in exchange for
+	// cross-goroutine lifetime management on a safety-critical path. The
+	// trade does not pay.
 	for _, h := range evicted {
 		if c, ok := h.(io.Closer); ok {
 			if err := c.Close(); err != nil && r.logger != nil {
@@ -249,14 +299,26 @@ func (r *PolicyResolver) ResolveHooks(stage, ingressType string, strictFailClose
 // configs were read under (BuildPipeline, for the per-gen caches) call loadSnapshot +
 // resolveFrom directly so the hooks and the cache gen come from the SAME atomic load.
 func (r *PolicyResolver) resolve(stage, ingressType string, strictFailClosed bool) ([]boundHook, error) {
-	return r.resolveFrom(r.snapshot(), stage, ingressType, strictFailClosed)
+	hooks, _, err := r.resolveFrom(r.snapshot(), stage, ingressType, strictFailClosed)
+	return hooks, err
 }
 
 // resolveFrom is resolve over an already-captured config snapshot. Pointers taken into
 // `configs` remain valid for the lifetime of the returned boundHook slice (Go GC keeps
 // the backing array alive as long as any pointer references it).
-func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressType string, strictFailClosed bool) ([]boundHook, error) {
+// resolveFrom returns the bound hooks for a stage, plus the ids of hooks that
+// were DROPPED because they could not be built — an unknown implementationId, a
+// factory error, a connection-stage incompatibility. Those are compliance gaps,
+// not configuration: the operator asked for the hook and it is not running.
+//
+// They are returned rather than only logged because the log is deduplicated per
+// reload epoch, so a persistently-broken hook produces one line at startup and
+// then nothing — traffic flows, the dashboard is green, and that hook has never
+// run. On a compliance gateway a hook that does not execute is worse than one
+// that fails, because a failure is at least visible.
+func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressType string, strictFailClosed bool) ([]boundHook, []string, error) {
 	var out []boundHook
+	var unbuildable []string
 
 	for i := range configs {
 		cfg := &configs[i]
@@ -276,10 +338,12 @@ func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressTy
 		factory := r.registry.Get(cfg.ImplementationID)
 		if factory == nil {
 			if strictFailClosed && strings.EqualFold(cfg.FailBehavior, "fail-closed") {
-				return nil, fmt.Errorf("hook %q (impl %q): unknown implementationId (no factory registered) and FailBehavior=fail-closed: %w",
+				return nil, nil, fmt.Errorf("hook %q (impl %q): unknown implementationId (no factory registered) and FailBehavior=fail-closed: %w",
 					cfg.ID, cfg.ImplementationID, errFailClosedUnbuildable)
 			}
 			r.warnUnknownImpl(cfg.ImplementationID, cfg.ID, cfg.Name)
+			PipelineSkippedTotal.WithLabelValues("", "unknown_implementation", stage).Inc()
+			unbuildable = append(unbuildable, cfg.ImplementationID)
 			continue
 		}
 
@@ -306,7 +370,7 @@ func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressTy
 		if err != nil {
 			r.hookMu.Unlock()
 			if strictFailClosed && strings.EqualFold(cfg.FailBehavior, "fail-closed") {
-				return nil, fmt.Errorf("hook %q (impl %q): factory build error and FailBehavior=fail-closed: %w",
+				return nil, nil, fmt.Errorf("hook %q (impl %q): factory build error and FailBehavior=fail-closed: %w",
 					cfg.ID, cfg.ImplementationID, err)
 			}
 			// Availability-first graceful degradation: a single hook whose
@@ -317,6 +381,8 @@ func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressTy
 			// hook off". Mirrors the unknown-implementationId continue above
 			// and the per-hook fail-open posture in pipeline.executeOneHook.
 			r.warnSkippedHook(cfg.ImplementationID, cfg.ID, cfg.Name, err)
+			PipelineSkippedTotal.WithLabelValues("", "factory_error", stage).Inc()
+			unbuildable = append(unbuildable, cfg.ImplementationID)
 			continue
 		}
 
@@ -327,7 +393,7 @@ func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressTy
 				// any native resources it holds (a Vectorscan matcher's cgo DB).
 				closeHook(hook)
 				if strictFailClosed && strings.EqualFold(cfg.FailBehavior, "fail-closed") {
-					return nil, fmt.Errorf("hook %q (impl %q): not connection-stage compatible (connection stage forbids MODIFY-capable hooks) and FailBehavior=fail-closed: %w",
+					return nil, nil, fmt.Errorf("hook %q (impl %q): not connection-stage compatible (connection stage forbids MODIFY-capable hooks) and FailBehavior=fail-closed: %w",
 						cfg.ID, cfg.ImplementationID, errFailClosedUnbuildable)
 				}
 				// Same availability-first posture: a connection-stage hook that
@@ -335,6 +401,8 @@ func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressTy
 				// hook, not grounds to take down the connection-stage pipeline.
 				r.warnSkippedHook(cfg.ImplementationID, cfg.ID, cfg.Name,
 					fmt.Errorf("not connection-stage compatible; connection stage forbids MODIFY-capable hooks"))
+				PipelineSkippedTotal.WithLabelValues("", "connection_incompatible", stage).Inc()
+				unbuildable = append(unbuildable, cfg.ImplementationID)
 				continue
 			}
 		}
@@ -345,11 +413,14 @@ func (r *PolicyResolver) resolveFrom(configs []core.HookConfig, stage, ingressTy
 		out = append(out, boundHook{hook: hook, config: cfg})
 	}
 
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].config.Priority < out[j].config.Priority
-	})
+	// No sort here. The resolver's snapshot is ordered by Priority when it is
+	// stored (sortedSnapshot), and the loop above appends in source order, so
+	// out is already ordered — a filtered subsequence of an ordered slice is
+	// ordered. TestResolveFrom_PreservesPriorityOrderWithoutSorting holds that
+	// invariant, because the day it stops being true this function will go on
+	// returning an unsorted pipeline without saying anything.
 
-	return out, nil
+	return out, unbuildable, nil
 }
 
 // BuildPipeline resolves hooks for the given stage and ingress type and returns a
@@ -379,16 +450,21 @@ func (r *PolicyResolver) BuildPipeline(
 	parallel bool,
 	strictFailClosed bool,
 	logger *slog.Logger,
-) (*Pipeline, error) {
+) (*Pipeline, []string, error) {
 	// Load the (gen, configs) pair ONCE so the hooks we resolve and the generation
 	// we tag the per-gen caches with come from the same atomic snapshot.
 	gen, configs := r.loadSnapshot()
-	candidates, err := r.resolveFrom(configs, stage, ingressType, strictFailClosed)
+	candidates, unbuildable, err := r.resolveFrom(configs, stage, ingressType, strictFailClosed)
 	if err != nil {
-		return nil, err
+		return nil, unbuildable, err
 	}
 	if len(candidates) == 0 {
-		return nil, nil
+		// unbuildable travels even with no pipeline. When EVERY configured hook
+		// failed to build, this is the ONLY way the caller learns the difference
+		// between "no hooks are configured" and "every hook the operator
+		// configured is broken" — the two produce the same nil pipeline, and the
+		// tag that distinguishes them rides the merge, which never runs.
+		return nil, unbuildable, nil
 	}
 
 	// Apply endpoint + modality gates.
@@ -432,9 +508,18 @@ func (r *PolicyResolver) BuildPipeline(
 	}
 
 	if len(filtered) == 0 {
-		return nil, nil
+		return nil, unbuildable, nil
 	}
 	p := NewPipeline(filtered, perHookTimeout, totalTimeout, parallel, logger)
+	p.health = r.health
+	// Carry the hooks that could not be built onto the pipeline so every request
+	// it serves says so. Without this the only signal is a startup log that is
+	// deduplicated per reload epoch: a hook broken since Tuesday produces one
+	// line on Tuesday and silence afterwards, while traffic flows and the
+	// dashboard stays green. The tag makes each affected request queryable in
+	// the audit, which is what "this hook has not run since Tuesday" needs to be
+	// answerable from.
+	p.unbuildable = unbuildable
 	// Thread the same strict posture forwarded to ResolveHooks onto the runtime
 	// pipeline so an enforcing hook's ERROR/TIMEOUT/PANIC fails closed on strict
 	// (non-packet-path) callers — matching the build-time UNBUILDABLE posture.
@@ -443,6 +528,9 @@ func (r *PolicyResolver) BuildPipeline(
 	// resolved set (cached per generation). nil => use the per-hook loop. The gen is
 	// the one the configs were loaded under (above), not a fresh read.
 	p.unionPrescan = r.unionPrescanFor(filtered, gen)
+	// Carry the generation the hooks were resolved under, so anything derived from
+	// this rule set can be scoped to it (see RuleSetGeneration).
+	p.gen = gen
 	// Pre-stamp the per-generation cached MaxPatternBound so the streaming hot path
 	// reads O(1) instead of re-walking every hook regex per request. Only the response
 	// stage consumes the bound (Model-A streaming), so skip the cache lookup + signature
@@ -453,7 +541,7 @@ func (r *PolicyResolver) BuildPipeline(
 		p.maxBounded, p.anyUnbounded = r.maxPatternBoundFor(filtered, gen)
 		p.boundComputed = true
 	}
-	return p, nil
+	return p, unbuildable, nil
 }
 
 // HasHooks returns true if any enabled hooks exist for the given stage.

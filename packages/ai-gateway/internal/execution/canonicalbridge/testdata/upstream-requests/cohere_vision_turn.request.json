@@ -1,0 +1,37 @@
+{
+  "model": "command-a-vision-07-2025",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Be terse."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What colour is this image?"
+        },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "The image is entirely red. It's a solid color with no variations or other elements present."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "And is it light or dark?"
+    }
+  ]
+}

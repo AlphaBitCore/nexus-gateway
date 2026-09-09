@@ -86,6 +86,14 @@ const (
 // derivation under-counts). See Config.MaxPatternBytes.
 const DefaultMaxPatternBytes = defaultMaxPatternBytes
 
+// DefaultPrescanBatchBytes is the package default prescan batching threshold,
+// exported because it is a TERM IN THE SOUNDNESS CONDITION (see the package doc:
+// window > MaxPatternBytes + PrescanBatchBytes + maxUnitSize) and a substrate
+// that sizes its window from a derived pattern bound has to include it. While it
+// was unexported, the one caller that sizes a window sized it against the
+// pattern bound alone and landed under the condition it was trying to satisfy.
+const DefaultPrescanBatchBytes = defaultPrescanBatchBytes
+
 // Config tunes the tail window and the held-bytes ceiling. Zero fields take the
 // package defaults.
 type Config struct {
@@ -223,14 +231,13 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 	cfg = cfg.withDefaults()
 
 	var (
-		held             []U    // trailing units NOT yet delivered to the client
-		heldScanLens     []int  // per-held-unit scanBuf byte length (parallel to held)
-		heldBytes        int    // total transport bytes currently held (MaxBufferBytes ceiling)
-		contentBytes     int    // redactable-content bytes currently held (tail window)
-		scanBuf          []byte // accumulated redactable content the prescan/confirm read
-		deliveredScanLen int    // scanBuf offset where the oldest still-held unit begins
-		scannedLen       int    // high-water scanBuf offset already prescanned (hit or miss)
-		anyConfirm       bool   // whether any confirm ran (audit: approve vs no-hook)
+		q                heldQueue[U] // trailing units NOT yet delivered, with their scan lengths
+		heldBytes        int          // total transport bytes currently held (MaxBufferBytes ceiling)
+		contentBytes     int          // redactable-content bytes currently held (tail window)
+		scanBuf          []byte       // accumulated redactable content the prescan/confirm read
+		deliveredScanLen int          // scanBuf offset where the oldest still-held unit begins
+		scannedLen       int          // high-water scanBuf offset already prescanned (hit or miss)
+		anyConfirm       bool         // whether any confirm ran (audit: approve vs no-hook)
 	)
 
 	// scanThrough advances the windowed prescan to the current end of scanBuf and, on a
@@ -290,8 +297,7 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 		// eviction math.
 		before := len(scanBuf)
 		scanBuf = sub.AppendRedactableText(scanBuf, u)
-		held = append(held, u)
-		heldScanLens = append(heldScanLens, len(scanBuf)-before)
+		q.Push(u, len(scanBuf)-before)
 		heldBytes += sub.UnitBytes(u)
 		contentBytes += sub.ContentBytes(u)
 
@@ -305,7 +311,7 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 		// undelivered because the scan precedes its release).
 		if len(scanBuf)-scannedLen >= cfg.PrescanBatchBytes {
 			if res := scanThrough(); res != nil {
-				return sub.Escalate(ctx, held, res)
+				return sub.Escalate(ctx, q.Window(), res)
 			}
 		}
 
@@ -318,17 +324,17 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 		//     But evicting a CONTENT unit raw under memory pressure alone — when the
 		//     window has NOT filled with content (it filled with reasoning) — could
 		//     leak a still-incomplete sub-window value, so that case ESCALATES instead.
-		for len(held) > 0 {
+		for q.Len() > 0 {
 			overWindow := contentBytes > cfg.TailWindowBytes
 			overBuf := heldBytes > cfg.MaxBufferBytes
 			if !overWindow && !overBuf {
 				break
 			}
-			front := held[0]
+			front := q.Front()
 			if overBuf && !overWindow && sub.ContentBytes(front) > 0 {
 				// Memory-pressure eviction of a content-bearing unit whose value may be
 				// incomplete: escalate (buffer + redact the remainder) rather than leak.
-				return sub.Escalate(ctx, held, nil)
+				return sub.Escalate(ctx, q.Window(), nil)
 			}
 			// FLUSH-BEFORE-DELIVER (with a MaxPatternBytes lookahead): release front only once
 			// the prescan has covered front's end PLUS MaxPatternBytes. frontScanEnd is front's
@@ -344,9 +350,9 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 			// MaxPatternBytes, so this only fires for a large single unit (or a tiny window). A
 			// flush hit escalates instead of delivering raw; scanThrough scans the full held
 			// window [deliveredScanLen:].
-			if frontScanEnd := deliveredScanLen + heldScanLens[0]; scannedLen < len(scanBuf) && scannedLen < frontScanEnd+cfg.MaxPatternBytes {
+			if frontScanEnd := deliveredScanLen + q.FrontLen(); scannedLen < len(scanBuf) && scannedLen < frontScanEnd+cfg.MaxPatternBytes {
 				if res := scanThrough(); res != nil {
-					return sub.Escalate(ctx, held, res)
+					return sub.Escalate(ctx, q.Window(), res)
 				}
 			}
 			if derr := sub.Deliver(ctx, front); derr != nil {
@@ -354,11 +360,8 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 			}
 			heldBytes -= sub.UnitBytes(front)
 			contentBytes -= sub.ContentBytes(front)
-			deliveredScanLen += heldScanLens[0]
-			var zero U
-			held[0] = zero // release the delivered unit's payload to the GC immediately
-			held = held[1:]
-			heldScanLens = heldScanLens[1:]
+			deliveredScanLen += q.FrontLen()
+			q.Pop() // zeroes the slot so the payload reaches the GC immediately
 		}
 
 		// Compact scanBuf: drop the already-delivered prefix so memory is bounded at
@@ -394,7 +397,7 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 	// content unit would be delivered unscanned. A hit escalates (redact/block); only a
 	// miss / approve-cleared tail is delivered raw below.
 	if res := scanThrough(); res != nil {
-		return sub.Escalate(ctx, held, res)
+		return sub.Escalate(ctx, q.Window(), res)
 	}
 
 	// EOF without escalation → every prescan was a miss or a false-positive approve,
@@ -404,7 +407,7 @@ func Run[U any](ctx context.Context, sub Substrate[U], cfg Config) error {
 	if !anyConfirm {
 		sub.OnApproveEOF()
 	}
-	for _, u := range held {
+	for _, u := range q.Window() {
 		if derr := sub.Deliver(ctx, u); derr != nil {
 			return derr
 		}

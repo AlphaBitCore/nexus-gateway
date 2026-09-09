@@ -35,7 +35,7 @@ func (h *Handler) scanVideoPrompt(w http.ResponseWriter, r *http.Request, rec *a
 		return false
 	}
 	resolver := h.deps.HookConfigCache.Resolver(r.Context())
-	pl, buildErr := resolver.BuildPipeline(
+	pl, _, buildErr := resolver.BuildPipeline(
 		"request", "AI_GATEWAY",
 		typology.EndpointKindVideoGeneration,
 		[]hookcore.Modality{hookcore.ModalityText},

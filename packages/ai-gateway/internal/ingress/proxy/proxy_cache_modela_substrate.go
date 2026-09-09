@@ -64,13 +64,32 @@ func (m *modelACanonicalSubstrate) Next(ctx context.Context) (provcore.Chunk, er
 	return chunk, nil
 }
 
-// AppendRedactableText appends the chunk's scannable channels — assistant delta plus
-// tool-call arguments / name / id — onto dst, newline-separating the tool-call
-// fields so a pattern cannot span two unrelated fields. Reasoning is omitted to
-// match the canonical redaction's coverage. Appending onto the engine's buffer keeps
-// the hot miss path allocation-free.
+// AppendRedactableText appends the chunk's scannable channels — assistant delta,
+// refusal, reasoning, and tool-call arguments / name / id — onto dst,
+// newline-separating the tool-call fields so a pattern cannot span two unrelated
+// fields. Appending onto the engine's buffer keeps the hot miss path
+// allocation-free.
+//
+// Everything the client receives is scanned, because everything the client
+// receives can carry a value that must not reach it.
 func (m *modelACanonicalSubstrate) AppendRedactableText(dst []byte, chunk provcore.Chunk) []byte {
 	dst = append(dst, chunk.Delta...)
+	// A structured-outputs refusal is assistant-VISIBLE output that arrives
+	// instead of content, so it is scanned exactly like content. Leaving it out
+	// let a refusal reach the client having passed through no response rule at
+	// all — and because the prescan is what decides whether to escalate, a
+	// pattern that only ever appeared in the refusal could never trigger the
+	// full confirm either. Appended without a separator, like Delta: the two
+	// never co-occur on one chunk, and a separator would break a value that
+	// spans consecutive frames.
+	dst = append(dst, chunk.RefusalDelta...)
+	// Reasoning used to be skipped here, to "match the canonical redaction's
+	// coverage". That reason did not hold: redaction covers reasoning, and the
+	// text projection now scans it everywhere, so skipping it left real-time
+	// streaming as the one path where a card number the model wrote while
+	// thinking reached the caller unscanned. Same shape as the refusal above —
+	// the prescan gates the confirm, so an omitted channel is invisible to both.
+	dst = append(dst, chunk.ReasoningDelta...)
 	for _, d := range chunk.ToolCallDeltas {
 		if d.Arguments != "" {
 			dst = append(dst, d.Arguments...)
@@ -94,8 +113,10 @@ func (m *modelACanonicalSubstrate) UnitBytes(chunk provcore.Chunk) int {
 }
 
 // ContentBytes is the chunk's redactable-content size without field separators (the
-// tail-window budget): assistant delta + tool-call arguments / name / id, never
-// reasoning, so a non-content reasoning chunk does not evict content from the window.
+// tail-window budget). It MUST measure exactly what AppendRedactableText emits —
+// the engine admits and evicts units from the window by this number, so an
+// under-report evicts scanned content early and an over-report evicts the tail
+// before its completing bytes arrive.
 func (m *modelACanonicalSubstrate) ContentBytes(chunk provcore.Chunk) int {
 	return modelAContentSize(chunk)
 }

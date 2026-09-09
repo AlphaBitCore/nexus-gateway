@@ -52,8 +52,8 @@ const pgUniqueViolation = "23505"
 // checked), and UpsertOverrides. A severity typo silently downgrades a
 // blocking rule at runtime (severityEnforces accepts only hard|soft and maps
 // anything else to non-enforcing), so these gates are a correctness backstop,
-// not cosmetics — which is exactly why the override path, missing from this
-// list until S-13, was able to disable enforcement with a 200.
+// not cosmetics: an override path missing from this list can disable enforcement
+// with a 200.
 var validSeverities = map[string]struct{}{
 	"hard": {}, "soft": {}, "warn": {},
 }

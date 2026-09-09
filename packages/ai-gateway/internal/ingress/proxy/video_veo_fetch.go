@@ -23,13 +23,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	sharedhttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	sharedhttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // veoAPIHost is the Gemini API host — the ONLY host the API-key header is
@@ -73,19 +72,21 @@ func veoURLAllowed(u *url.URL) error {
 // veoFetchClient is the dedicated egress client: SSRF-guarded dialer +
 // redirect re-validation + credential strip. No client-level timeout — the
 // artifact stream is bounded by the request context and the relay ceiling.
-var veoFetchClient = &http.Client{
-	Transport: &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-			Control:   sharedhttp.BlockPrivateDialControl,
-		}).DialContext,
+var veoFetchClient = newVeoFetchClient()
+
+func newVeoFetchClient() *http.Client {
+	c := sharedhttp.New(sharedhttp.Config{
+		NoTimeout:             true,
+		DialTimeout:           10 * time.Second,
+		KeepAlive:             30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 60 * time.Second,
 		MaxIdleConns:          16,
 		IdleConnTimeout:       90 * time.Second,
-	},
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		DialControl:           sharedhttp.BlockPrivateDialControl,
+		Caller:                "veo-artifact-fetch",
+	})
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("veo artifact fetch: too many redirects")
 		}
@@ -95,7 +96,8 @@ var veoFetchClient = &http.Client{
 		// The credential belongs ONLY to the initial allow-listed host.
 		req.Header.Del("X-Goog-Api-Key")
 		return nil
-	},
+	}
+	return c
 }
 
 // doFetchVeoArtifact is the handler's seam onto fetchVeoArtifact — a var so

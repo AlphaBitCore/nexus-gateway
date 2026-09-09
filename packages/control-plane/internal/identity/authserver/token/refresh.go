@@ -32,7 +32,7 @@ type refreshHashFn func([]byte) []byte
 // substitute fakes without standing up a Postgres instance, while keeping
 // the production constructor signature unchanged (*store.RefreshStore
 // satisfies the interface implicitly). Mirrors the PgxPool convention in
-// packages/control-plane/internal/authserver/revocation/store.go.
+// packages/control-plane/internal/identity/authserver/revocation/store.go.
 type RefreshStoreIface interface {
 	Insert(ctx context.Context, row *store.RefreshTokenRow) error
 	FindByTokenHash(ctx context.Context, hash []byte) (*store.RefreshTokenRow, bool, error)

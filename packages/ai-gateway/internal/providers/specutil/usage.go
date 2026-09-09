@@ -43,11 +43,21 @@ var cachedTokenAliases = []struct {
 	path     string
 	upstream string // for comments / debugging only; not used in matching
 }{
-	{"prompt_tokens_details.cached_tokens", "OpenAI canonical (2024-09+)"},
+	{"prompt_tokens_details.cached_tokens", "OpenAI canonical (2024-09+); also emitted by DeepSeek alongside its own flat pair"},
 	{"input_tokens_details.cached_tokens", "OpenAI Responses API (/v1/responses)"},
 	{"prompt_cache_hit_tokens", "DeepSeek"},
-	{"prompt_cache_tokens", "Moonshot explicit-cache API"},
-	{"cached_tokens", "Kimi K2 / K2.5 / K2.6 auto-prefix cache"},
+	// UNCONFIRMED. This entry has carried a Moonshot attribution, and a survey
+	// of the vendor's published reference plus live cache-hit responses found
+	// the name nowhere: what Moonshot actually emits on a hit is the flat
+	// `cached_tokens` below AND the nested `prompt_tokens_details.cached_tokens`
+	// above, together, with the same value. The path is left in the chain
+	// because removing it would be a behaviour change made on a negative search
+	// result, and because an unmatched alias costs one gjson probe on a body
+	// that reached the last two entries anyway — but the attribution must not
+	// read as an observation, since this file's contract is that every entry
+	// names the upstream it was seen on.
+	{"prompt_cache_tokens", "unconfirmed — no vendor reference or live response has been seen carrying it"},
+	{"cached_tokens", "Kimi K2 / K2.5 / K2.6 auto-prefix cache; emitted together with the nested path above"},
 }
 
 // reasoningTokenAliases is the same idea for reasoning / thinking

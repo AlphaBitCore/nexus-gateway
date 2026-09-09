@@ -8,7 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	iamengine "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
@@ -69,10 +69,7 @@ func (h *Handler) GetMe(c echo.Context) error {
 func buildMeResponse(c echo.Context, aa *auth.AdminAuth, users meUserLookup, groups meGroupLookup, logger *slog.Logger) error {
 	ctx := c.Request().Context()
 
-	iamPrincipalType := aa.AuthPrincipalType
-	if iamPrincipalType == "admin_user" {
-		iamPrincipalType = "nexus_user"
-	}
+	iamPrincipalType, _ := iamengine.NormalisePrincipalType(aa.AuthPrincipalType)
 	roles, err := groups.ListGroupNamesForPrincipal(ctx, iamPrincipalType, aa.KeyID)
 	if err != nil && logger != nil {
 		logger.Warn("list group names for principal", "principalType", iamPrincipalType, "principalId", aa.KeyID, "error", err)
@@ -180,10 +177,7 @@ func (h *Handler) GetMePermissions(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]any{"actions": []string{}})
 	}
 
-	pt := aa.AuthPrincipalType
-	if pt == "admin_user" {
-		pt = "nexus_user"
-	}
+	pt, _ := iamengine.NormalisePrincipalType(aa.AuthPrincipalType)
 
 	ctx := c.Request().Context()
 	condCtx := iamengine.ConditionContext{"nexus:SourceIp": c.RealIP()}

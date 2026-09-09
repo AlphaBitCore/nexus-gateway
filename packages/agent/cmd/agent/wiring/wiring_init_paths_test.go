@@ -315,11 +315,17 @@ func TestUploadDrainSpills_LocalfsToS3Success(t *testing.T) {
 	// Serve successful responses for both the mint and upload steps:
 	//   POST /api/internal/things/spill-uploads → {key, uploadUrl, backend:s3}
 	//   PUT  <uploadUrl> → 200
+	//
+	// TLS, and https below, are load-bearing rather than incidental: a
+	// presigned S3 URL is protected only by the token in its query string, so
+	// the uploader refuses an s3 target over plain HTTP. A fixture that
+	// mints an http:// s3 URL — a response no real Hub produces — would
+	// assert success against an input the upload path must reject.
 	var mintCalled bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/internal/things/spill-uploads" {
 			mintCalled = true
-			uploadURL := fmt.Sprintf("http://%s/upload/fake-key", r.Host)
+			uploadURL := fmt.Sprintf("https://%s/upload/fake-key", r.Host)
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"key":"fake-key","uploadUrl":%q,"backend":"s3","expiresAt":"2099-01-01T00:00:00Z"}`, uploadURL)
 			return

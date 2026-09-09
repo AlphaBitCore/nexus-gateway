@@ -48,13 +48,32 @@ func (db *DB) GetCredentialByID(ctx context.Context, id string) (*Credential, er
 	return &c, nil
 }
 
-// GetCredentialForProvider returns the first enabled active credential for a provider,
-// ordered by creation date (newest first).
+// GetCredentialForProvider returns the newest credential a provider may
+// actually use: enabled, active, and not drained to selectionWeight 0. The
+// predicate is deliberately identical to ListEnabledForProvider's — see the
+// note inside.
 func (db *DB) GetCredentialForProvider(ctx context.Context, providerID string) (*Credential, error) {
+	// The weight clause is NOT optional here, and its absence was a live defect:
+	// this query and ListEnabledForProvider below are the same question —
+	// "which credentials may serve this provider?" — and they answered it
+	// differently. The resolver falls back to this one whenever the list comes
+	// back empty, which is exactly what draining every credential to
+	// selectionWeight 0 produces, so the drained credential served traffic
+	// anyway while the console showed weight 0. An operator draining a
+	// compromised or over-quota key had no way to tell it had not taken effect.
+	//
+	// The same split existed in the CACHE LAYER, which is the implementation
+	// production actually runs (wiring builds the credential manager over
+	// cachelayer, never over this store directly) — see the matching note in
+	// cache/layer/loaders.go. Both pairs are aligned; either one drifting
+	// reopens the defect on its own.
 	row := db.pool.QueryRow(ctx, `
 		SELECT `+credentialColumns+`
 		FROM "Credential"
-		WHERE "providerId" = $1 AND enabled = true AND COALESCE(status, 'active') = 'active'
+		WHERE "providerId" = $1
+		  AND enabled = true
+		  AND COALESCE(status, 'active') = 'active'
+		  AND COALESCE("selectionWeight", 100) > 0
 		ORDER BY "createdAt" DESC
 		LIMIT 1
 	`, providerID)

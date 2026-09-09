@@ -123,8 +123,7 @@ func TestOpenAIImages_ResponseSummary_NoInlineB64(t *testing.T) {
 func TestOpenAIImages_ResponseURL_InertExternalRef(t *testing.T) {
 	// A provider-hosted, expiring image URL is never fetched — it must
 	// surface as an inert external MediaRef, not get flattened into an
-	// unstructured text marker (the defect this codec used to have, per
-	// the comment on the d.URL branch in openai_images.go).
+	// unstructured text marker — see the d.URL branch in openai_images.go.
 	n := NewOpenAIImagesNormalizer()
 	p, err := n.Normalize(context.Background(),
 		[]byte(`{"data":[{"url":"https://cdn.example/img.png"}]}`), respMeta("/v1/images/generations", "application/json"))

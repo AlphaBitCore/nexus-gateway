@@ -146,7 +146,7 @@ func TestPrepareNative_NonObjectCarveOut(t *testing.T) {
 		{"leading whitespace then array", "  \n[1,2]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, rw, _, err := a.prepareBodyFull(Request{
+			prep, err := a.prepareBodyFull(Request{
 				WireShape:  typology.WireShapeOpenAIChat,
 				BodyFormat: FormatOpenAI,
 				Body:       []byte(tc.body),
@@ -155,6 +155,7 @@ func TestPrepareNative_NonObjectCarveOut(t *testing.T) {
 			if err != nil {
 				t.Fatalf("carve-out must not error: %v", err)
 			}
+			got, rw := prep.Body, prep.Rewrites
 			if string(got) != tc.body {
 				t.Fatalf("non-object body must forward byte-verbatim:\n got=%q\nwant=%q", got, tc.body)
 			}
@@ -198,7 +199,7 @@ func TestPrepareBody_FastPathAllocs(t *testing.T) {
 		Target:     CallTarget{ProviderModelID: "gpt-4o"},
 	}
 	if n := testing.AllocsPerRun(200, func() {
-		if _, _, _, err := a.prepareBodyFull(fastReq); err != nil {
+		if _, err := a.prepareBodyFull(fastReq); err != nil {
 			t.Fatal(err)
 		}
 	}); n > 1 {
@@ -208,7 +209,7 @@ func TestPrepareBody_FastPathAllocs(t *testing.T) {
 	streamReq.Stream = true
 	streamReq.Body = []byte(`{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":true},"messages":[]}`)
 	if n := testing.AllocsPerRun(200, func() {
-		if _, _, _, err := a.prepareBodyFull(streamReq); err != nil {
+		if _, err := a.prepareBodyFull(streamReq); err != nil {
 			t.Fatal(err)
 		}
 	}); n > 4 {
@@ -232,7 +233,7 @@ func TestPrepareNative_ContractQuirkPath_MatchesLegacyBytes(t *testing.T) {
 	}, log: slog.Default()}
 
 	body := []byte(`{"model":"alias","messages":[],"temperature":0}`)
-	got, rw, _, err := a.prepareBodyFull(Request{
+	prep2, err := a.prepareBodyFull(Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       body,
@@ -242,7 +243,13 @@ func TestPrepareNative_ContractQuirkPath_MatchesLegacyBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rw) != 1 || rw[0] != "temperature→removed" {
+	got, rw := prep2.Body, prep2.Rewrites
+	// Two coercions, both caller-visible: the contract strips temperature for
+	// this model, and the streaming leg turns on include_usage, which adds a
+	// terminal chunk to the caller's stream. Filling `stream` itself is not
+	// listed — the caller asked to stream, this only spells it on the wire.
+	if len(rw) != 2 || rw[0] != "temperature→removed" ||
+		rw[1] != "stream_options.include_usage→true_for_usage_capture" {
 		t.Fatalf("contract rewrites = %v", rw)
 	}
 	for _, want := range []string{`"model":"quirk-model"`, `"stream":true`, `"include_usage":true`} {
@@ -256,7 +263,7 @@ func TestPrepareNative_ContractQuirkPath_MatchesLegacyBytes(t *testing.T) {
 
 	// A non-quirk model on the same adapter keeps the surgical path: no
 	// rewrites, temperature intact.
-	surgical, rw2, _, err := a.prepareBodyFull(Request{
+	prep3, err := a.prepareBodyFull(Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{"model":"alias","messages":[],"temperature":0}`),
@@ -265,6 +272,7 @@ func TestPrepareNative_ContractQuirkPath_MatchesLegacyBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	surgical, rw2 := prep3.Body, prep3.Rewrites
 	if rw2 != nil {
 		t.Fatalf("non-quirk model must not report rewrites, got %v", rw2)
 	}

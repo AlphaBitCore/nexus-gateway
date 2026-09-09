@@ -201,9 +201,9 @@ func (h *Handler) UpdateHookConfig(c echo.Context) error {
 	if body.Config != nil {
 		raw, err := json.Marshal(body.Config)
 		if err != nil {
-			// Swallowing this silently used to persist NULL / no-change — a
-			// hand-crafted config (bad numbers, unsupported types) would
-			// disappear with a 200 OK, hiding the error from the operator.
+			// Swallowing this silently persists NULL / no-change — a
+			// hand-crafted config (bad numbers, unsupported types)
+			// disappears with a 200 OK, hiding the error from the operator.
 			return c.JSON(http.StatusBadRequest, errJSON(
 				"config must be JSON-serializable: "+err.Error(),
 				"validation_error", "config"))

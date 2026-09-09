@@ -20,7 +20,7 @@ import (
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 const (
@@ -148,7 +148,7 @@ func NewPlatform(addr string) api.Platform {
 func (p *LinuxPlatform) Start(ctx context.Context, handler api.ConnectionHandler) error {
 	p.handler = handler
 
-	// Install SO_MARK on every transport built via shared/httpclient
+	// Install SO_MARK on every transport built via packages/httpclient
 	// (hubhttp, relay, enrollment, updater, thingclient HTTP fallback)
 	// and the proxy's MITM upstream dialer — they all consult
 	// nexushttp.GlobalDialControl(). The Linux agent is the only

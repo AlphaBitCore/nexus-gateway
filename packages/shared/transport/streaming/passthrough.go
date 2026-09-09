@@ -13,9 +13,9 @@ import (
 // tight on a slow trickle.
 const relayBufSize = 32 * 1024
 
-// relayBufPool reuses the relay read buffer across streams. Every SSE response
-// that reaches a passthrough relay used to allocate a fresh 32 KiB here, and a
-// proxy serving many short streams paid that repeatedly — measured as the
+// relayBufPool reuses the relay read buffer across streams. Without it every SSE
+// response reaching a passthrough relay allocates a fresh 32 KiB here, and a
+// proxy serving many short streams pays that repeatedly — measured as the
 // dominant per-stream cost on short replies.
 //
 // sync.Pool is the right primitive for this one (playbook §2.2): a plain byte

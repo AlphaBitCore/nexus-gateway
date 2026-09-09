@@ -70,3 +70,7 @@ require (
 // which Go 1.25 validates against the upstream Git remote even under
 // `go.work`). See CLAUDE.md → "replace directives in go.mod".
 replace github.com/AlphaBitCore/nexus-gateway/packages/shared => ../shared
+
+require github.com/AlphaBitCore/nexus-gateway/packages/httpclient v0.0.0
+
+replace github.com/AlphaBitCore/nexus-gateway/packages/httpclient => ../httpclient

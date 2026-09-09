@@ -9,11 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // clientHelloKey is the per-request context key under which the raw TLS
@@ -223,6 +224,34 @@ func (u *UpstreamTransport) ForwardRequest(ctx context.Context, req *http.Reques
 	// Remove hop-by-hop headers that must not be forwarded.
 	for _, h := range hopByHopHeaders {
 		outReq.Header.Del(h)
+	}
+
+	// Strip the whole X-Nexus-* namespace. These are ours: correlation ids,
+	// feature flags, attribution tags. This is a passive interception point —
+	// the request was addressed to the upstream, not to Nexus — so adding our
+	// own headers to it announces Nexus to a third party the caller never told
+	// about us, and leaks the ids we mint. The AI Gateway has denied the same
+	// prefix toward providers since forwardheader's prefixDenylist; this closes
+	// the same hole on the intercepting path.
+	//
+	// It removes what the CLIENT sent under these names too, which is correct:
+	// a client that speaks the Nexus vocabulary is addressing Nexus, and a
+	// header addressed to us has no business continuing to the provider.
+	//
+	// One header of ours does survive, deliberately: the per-request injector
+	// runs AFTER this loop and re-adds X-Nexus-Attestation. Its reader is the
+	// compliance proxy, and a bumped flow's target host does not say whether
+	// the next hop is the proxy or the provider — so an agent egressing
+	// directly hands it to the provider. Accepted: it is a signature over
+	// request metadata with no credential in it.
+	// delete(map) rather than Header.Del: Del canonicalises its argument before
+	// deleting, so a key written through a raw map index in a non-canonical
+	// spelling would survive the removal it just matched. Deleting during range
+	// is defined behaviour in Go.
+	for name := range outReq.Header {
+		if len(name) >= 8 && strings.EqualFold(name[:8], "X-Nexus-") {
+			delete(outReq.Header, name)
+		}
 	}
 
 	// Strip the client's Accept-Encoding so Go's transport owns compression

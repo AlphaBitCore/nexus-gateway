@@ -10,7 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
+	rollupstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
+	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 )
 
 const (
@@ -73,10 +74,14 @@ func (j *RollupRetentionJob) Run(ctx context.Context) error {
 		table string
 		days  int
 	}{
-		{"metric_rollup_5m", j.cfg.Rollup5mDays},
-		{"metric_rollup_1h", j.cfg.Rollup1hDays},
-		{"metric_rollup_1d", j.cfg.Rollup1dDays},
-		{"metric_rollup_1mo", j.cfg.Rollup1moDays},
+		// The declared constants, not the strings again. Re-spelling them here
+		// is what the constants exist to stop: the schema test asserts each one
+		// names a table the shipped DDL maps, and a literal typed a second time
+		// is outside that guarantee.
+		{metrics.TableRollup5m, j.cfg.Rollup5mDays},
+		{metrics.TableRollup1h, j.cfg.Rollup1hDays},
+		{metrics.TableRollup1d, j.cfg.Rollup1dDays},
+		{metrics.TableRollup1mo, j.cfg.Rollup1moDays},
 	}
 
 	var total int64

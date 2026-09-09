@@ -38,7 +38,7 @@ func TestLive_LoginAndRoundTrip(t *testing.T) {
 	hc := &http.Client{Timeout: 15 * time.Second}
 
 	a := NewAuthenticator(env, store, hc)
-	if err := a.LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := a.LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("headless login failed: %v", err)
 	}
 	tok, _ := store.Get("local", SecretAccessToken)
@@ -114,7 +114,7 @@ func TestLive_E2EFlow(t *testing.T) {
 	store := newMemStore()
 	hc := &http.Client{Timeout: 20 * time.Second}
 
-	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	c := NewClient(env, NewTokenSource(env, store, hc), hc)
@@ -195,7 +195,7 @@ func TestLive_ReadSurfaces(t *testing.T) {
 	env := liveEnv()
 	store := newMemStore()
 	hc := &http.Client{Timeout: 15 * time.Second}
-	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	c := NewClient(env, NewTokenSource(env, store, hc), hc)
@@ -248,7 +248,7 @@ func TestLive_VirtualKeyLifecycle(t *testing.T) {
 	env := liveEnv()
 	store := newMemStore()
 	hc := &http.Client{Timeout: 15 * time.Second}
-	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	c := NewClient(env, NewTokenSource(env, store, hc), hc)
@@ -352,7 +352,7 @@ func TestLive_KillSwitchPassthrough(t *testing.T) {
 	env := liveEnv()
 	store := newMemStore()
 	hc := &http.Client{Timeout: 15 * time.Second}
-	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	c := NewClient(env, NewTokenSource(env, store, hc), hc)
@@ -386,7 +386,7 @@ func TestLive_PassthroughEngageRoundTrip(t *testing.T) {
 	env := liveEnv()
 	store := newMemStore()
 	hc := &http.Client{Timeout: 15 * time.Second}
-	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "admin123"); err != nil {
+	if err := NewAuthenticator(env, store, hc).LoginHeadless(ctx, "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	c := NewClient(env, NewTokenSource(env, store, hc), hc)
@@ -399,7 +399,7 @@ func TestLive_PassthroughEngageRoundTrip(t *testing.T) {
 	}()
 
 	// Engage with only Enabled+BypassHooks — the client must fill expiresAt+reason
-	// so the server accepts it (this is the path that previously 400'd).
+	// so the server accepts it — omitting either is what the server 400s on.
 	if err := c.SetPassthroughGlobal(ctx, PassthroughGlobalRequest{Enabled: true, BypassHooks: true}); err != nil {
 		t.Fatalf("engage 400'd — the server validator rejected the request: %v", err)
 	}

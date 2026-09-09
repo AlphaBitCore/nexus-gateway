@@ -346,9 +346,9 @@ func buildDailyResponse(vkID string, start, end time.Time, rows []store.DailyMod
 }
 
 // writeDetailedError answers a usage-query failure through the single
-// gateway-error envelope. It used to stamp the constant "proxy_error" as the
-// type, which is not a value in any SDK's vocabulary and told a caller nothing
-// the status had not already said.
+// gateway-error envelope. Stamping the constant "proxy_error" as the
+// type puts a value no SDK models on the wire, and tells a caller nothing
+// the status has not already said.
 func writeDetailedError(w http.ResponseWriter, status int, code, message, hint string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

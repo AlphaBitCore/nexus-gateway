@@ -19,11 +19,11 @@ func tokStr(p *int) string {
 	return strconv.Itoa(*p)
 }
 
-// Finding R-10: no end-to-end test drove LivePipeline.Process with a usage accumulator
-// AND a usage trailer frame. WithUsageAccumulator was called only from the benchmarks, so
-// the one path C-31's validity gate and R-8's behaviour-delta concern both touch — a
-// trailer frame that carries token counts and NO delta content, flowing through the parser,
-// the accumulator, extractDeltaText and the checkpoint gate together — was never exercised.
+// LivePipeline.Process has to be driven with a usage accumulator AND a usage trailer frame
+// together. With WithUsageAccumulator called only from the benchmarks, the one path the
+// validity gate and the behaviour-delta question both touch — a trailer frame that carries
+// token counts and NO delta content, flowing through the parser, the accumulator,
+// extractDeltaText and the checkpoint gate together — goes unexercised.
 //
 // It matters because a usage trailer is where provider-truth token counts come from. Every
 // tier-1 accumulator reads them from a frame at the END of the stream, and the audit row's
@@ -69,7 +69,7 @@ func TestLivePipeline_UsageTrailer_EndToEnd(t *testing.T) {
 
 	// 3. The trailer contributed NO text to the transcript. It has no delta, so
 	//    extractDeltaText must return "" for it; if it instead returned the raw frame
-	//    (which is what the C-31 validity gate does for a frame it declines to decode),
+	//    (which is what the validity gate does for a frame it declines to decode),
 	//    the JSON would land in the scanned transcript — inflating checkpoint content and
 	//    showing hooks bytes that are not assistant output. Asserted on the client-visible
 	//    transcript rather than on the internal counter so it stays true through refactors.
@@ -79,9 +79,9 @@ func TestLivePipeline_UsageTrailer_EndToEnd(t *testing.T) {
 	}
 }
 
-// TestLivePipeline_UsageTrailer_BackslashBearing is the R-8 half. C-31's gate only engages
-// on frames containing a backslash, so a trailer that carries one takes the narrow path
-// through the validity check. A VALID such frame must still decode normally — the gate must
+// TestLivePipeline_UsageTrailer_BackslashBearing is the backslash half. The validity
+// gate only engages on frames containing a backslash, so a trailer that carries one takes
+// the narrow path through the check. A VALID such frame must still decode normally — the gate must
 // not turn a well-formed frame into raw-text passthrough, which would both lose the usage
 // and inject JSON into the transcript.
 func TestLivePipeline_UsageTrailer_BackslashBearing(t *testing.T) {

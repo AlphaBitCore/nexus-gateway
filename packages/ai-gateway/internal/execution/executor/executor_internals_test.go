@@ -655,9 +655,9 @@ func TestComputeBackoff_NegativeJitterClampedToZero(t *testing.T) {
 // TestClassify_NilRespNilErrIsUnclassified covers the final defensive return.
 // The branch fires when err==nil AND (resp==nil OR the status is not 2xx).
 //
-// The reported class is `unclassified`, not `network`. This test previously
-// asserted network while its own comment called the input "a degenerate adapter
-// contract violation" — which is exactly the point: nothing about it says the
+// The reported class is `unclassified`, not `network`. Asserting network here
+// would contradict this description of the input as "a degenerate adapter
+// contract violation" — which is the point: nothing about it says the
 // network failed, and an operator who reads network on a traffic row goes and
 // looks at the network. Recovery treats the two identically, so nothing about
 // failover changes; what changes is that the row stops asserting a cause we
@@ -776,10 +776,10 @@ func TestExecute_EmbeddingsBridgeTranslate_SkipsToNextTarget(t *testing.T) {
 // regression. A cross-format embeddings request (OpenAI ingress
 // → Gemini target) is translated by the bridge, which emits the codec's
 // endpoint-selection URLOverride (:embedContent vs :batchEmbedContents). The
-// executor MUST hand that override to adapter.ExecuteWithBody — previously it
-// called the plain attempt() (no override) and adapter.Execute's same-format
-// passthrough re-derived nothing, so the batch body went to :embedContent and
-// Gemini 400'd. This asserts the override actually arrives at the adapter for
+// executor MUST hand that override to adapter.ExecuteWithBody:
+// calling the plain attempt() (no override) leaves adapter.Execute's same-format
+// passthrough to re-derive nothing, so the batch body goes to :embedContent and
+// Gemini 400s. This asserts the override actually arrives at the adapter for
 // both single and batch inputs, and that single embeds carry no batch suffix.
 func TestExecute_EmbeddingsBridgeURLOverride_ReachesAdapter(t *testing.T) {
 	cases := []struct {

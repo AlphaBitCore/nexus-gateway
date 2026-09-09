@@ -5,6 +5,7 @@ import (
 	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
@@ -28,7 +29,7 @@ type VKAuthenticator interface {
 // requireVK enforces virtual-key authentication for the model-catalog
 // endpoints. The upstream provider /v1/models endpoints (OpenAI,
 // Anthropic, Cohere, …) all reject unauthenticated callers, and the
-// gateway must do the same: an anonymous caller previously received the
+// gateway must do the same: without it an anonymous caller receives the
 // full enabled-model catalog. On any auth failure this writes a 401 and
 // returns ok=false; the caller must return immediately.
 func requireVK(w http.ResponseWriter, r *http.Request, vkAuth VKAuthenticator) (*vkauth.VKMeta, bool) {
@@ -291,8 +292,8 @@ func buildAnthropicModelsResponse(rows []store.Model) map[string]any {
 }
 
 // writeJSONError answers a catalog failure through the single gateway-error
-// envelope. It used to hand-roll `{"error":{"message":...}}` with neither a
-// type nor a code, which left a caller nothing to branch on and disagreed with
+// envelope. Hand-rolling `{"error":{"message":...}}` with neither a
+// type nor a code leaves a caller nothing to branch on and disagrees with
 // every other error this gateway emits.
 func writeJSONError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	envelope.WriteGatewayError(w, r, status, code, message, "")
@@ -315,7 +316,16 @@ func ModelDetailHandler(models ModelLookup, vkAuth VKAuthenticator, logger *slog
 			return
 		}
 
-		modelID := r.PathValue("model")
+		// Trimmed for the same reason the proxy path trims in
+		// ExtractIngressModel: the string is compared byte-for-byte against
+		// Model.code, so `/v1/models/%20gpt-4o` would answer "model not found"
+		// about a model that exists. This is the OTHER client entrance for a
+		// model string — the proxy path has exactly one, and this retrieve
+		// route is a separate HTTP surface rather than a second copy of it.
+		//
+		// Whitespace-only trims to empty and takes the branch below, which is
+		// the honest answer: no model was named.
+		modelID := strings.TrimSpace(r.PathValue("model"))
 		if modelID == "" {
 			writeJSONError(w, r, http.StatusBadRequest, "MODEL_REQUIRED", "model id is required")
 			return

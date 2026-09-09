@@ -124,23 +124,24 @@ func TestRealtimeMetering_TwoResponseRows(t *testing.T) {
 	}
 
 	sess := sessions[0]
+	sessKey := sess.ExternalRequestID
 	// The primary key is minted per row. It is the hub's ON CONFLICT (id)
 	// idempotency key, so it must not be the client's X-Nexus-Request-Id —
 	// a client reusing one across calls would collapse two events into one
-	// row — nor the session trace, which every row in the session shares.
-	if sess.ID == "" || sess.ID == "rid-client-123" || sess.ID == sess.TraceID {
-		t.Errorf("session row id = %q, want a minted id distinct from the client header and the session trace", sess.ID)
+	// row — nor the session key, which every row in the session shares.
+	if sess.ID == "" || sess.ID == "rid-client-123" || sess.ID == sessKey {
+		t.Errorf("session row id = %q, want a minted id distinct from the client header and the session key", sess.ID)
 	}
 	if rA.ID == rB.ID || rA.ID == sess.ID {
 		t.Errorf("rows share an id (%q / %q / %q); ON CONFLICT (id) DO NOTHING would drop all but one",
 			sess.ID, rA.ID, rB.ID)
 	}
-	if sess.TraceID == "" || sess.TraceID == "rid-client-123" {
-		t.Errorf("session trace id %q must be server-minted, never the client header", sess.TraceID)
+	if sessKey == "" {
+		t.Error("session row carries no external_request_id — nothing would group the session's rows")
 	}
-	if rA.TraceID != sess.TraceID || rB.TraceID != sess.TraceID {
-		t.Errorf("trace ids differ: %q / %q / %q — all rows must share the session UUID",
-			rA.TraceID, rB.TraceID, sess.TraceID)
+	if rA.ExternalRequestID != sessKey || rB.ExternalRequestID != sessKey {
+		t.Errorf("external_request_id differs: %q / %q / %q — every row of one session must carry the upgrade request's id, which is what groups them",
+			rA.ExternalRequestID, rB.ExternalRequestID, sessKey)
 	}
 	if sess.EstimatedCostUsd != 0 || sess.PromptTokens != 0 || sess.TotalTokens != 0 {
 		t.Errorf("session row must be $0/zero-token (cost lives on response rows): %+v", sess)

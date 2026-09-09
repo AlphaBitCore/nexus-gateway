@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"errors"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/compliancestore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 )
 
@@ -31,7 +33,17 @@ func (h *Handler) ComplianceAuditDetail(c echo.Context) error {
 	id := c.Param("id")
 	evt, err := h.compliance.GetMatrixAuditEvent(c.Request().Context(), id)
 	if err != nil {
-		return c.JSON(http.StatusNotFound, errJSON("Audit event not found", "not_found", ""))
+		// Only "no such row" is a 404. This used to map EVERY store error to
+		// one, so a database outage told an auditor that a compliance event
+		// does not exist — on the surface whose entire purpose is answering
+		// whether something happened. "I cannot reach the record" and "there is
+		// no record" are opposite answers to that question.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return c.JSON(http.StatusNotFound, errJSON("Audit event not found", "not_found", ""))
+		}
+		h.logger.Error("compliance audit detail", "id", id, "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON(
+			"Could not read the audit event", "server_error", "INTERNAL_ERROR"))
 	}
 	return c.JSON(http.StatusOK, evt)
 }

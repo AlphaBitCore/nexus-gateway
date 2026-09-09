@@ -7,7 +7,7 @@ import "time"
 // Consumers (hub-db-writer, hub-alerting) deserialize from this.
 //
 // The hash chain (previousHash / integrityHash) is computed Hub-side in
-// packages/nexus-hub/internal/observability/audit/chain.go; sending hashes on the wire
+// packages/nexus-hub/internal/traffic/chain/chain.go; sending hashes on the wire
 // would let any CP replica fork the chain. The CP just formats + publishes.
 type AdminAuditMessage struct {
 	ID             string    `json:"id"`

@@ -96,7 +96,7 @@ const (
 	// Latency phase metrics. Mirrors the agent-local rollup keys so
 	// Hub-side and agent-local rollups share names. Hub rollup_5m job
 	// accumulates these from traffic_event's per-row upstream/hooks
-	// columns (see packages/nexus-hub/internal/jobs/rollup_5m.go).
+	// columns (see packages/nexus-hub/internal/jobs/defs/rollup/rollup_5m.go).
 	MetricLatencyUsSum             = "latency_us_sum"
 	MetricLatencyUsCount           = "latency_us_count"
 	MetricLatencyUpstreamTtfbSum   = "latency_upstream_ttfb_sum"
@@ -281,9 +281,85 @@ const (
 	Granularity1mo Granularity = "1mo"
 )
 
-// TableName returns the PostgreSQL table name for this granularity.
+// Rollup table names, WRITTEN rather than assembled.
+//
+// `"metric_rollup_" + string(g)` saved three lines and cost the names their
+// existence: `grep metric_rollup_5m` found nothing in Go, so neither a person
+// during an incident nor any tool that matches on table names could answer
+// "who writes this table".
+//
+// It also unlinked the code from the schema. The DDL creates
+// `metric_rollup_1mo`; the enum's underlying string is "1mo"; nothing connected
+// them. Renaming a constant's VALUE moved four tables at runtime with no
+// compile error and no failing test — the trap this replaces.
+//
+// Declared as constants rather than inlined in the switch so the retention job
+// and the schema test reference the same symbol instead of re-spelling the
+// string. TestRollupTableConstantsExistInSchema is the link concatenation
+// could not have.
+const (
+	TableRollup5m  = "metric_rollup_5m"
+	TableRollup1h  = "metric_rollup_1h"
+	TableRollup1d  = "metric_rollup_1d"
+	TableRollup1mo = "metric_rollup_1mo"
+
+	TableThingRollup5m  = "thing_metric_rollup_5m"
+	TableThingRollup1h  = "thing_metric_rollup_1h"
+	TableThingRollup1d  = "thing_metric_rollup_1d"
+	TableThingRollup1mo = "thing_metric_rollup_1mo"
+)
+
+// TableName returns the PostgreSQL table name for this granularity, or "" for
+// a value that is not one of the four tiers.
+//
+// Empty rather than a best guess: Granularity's underlying type is string, so
+// any string is a syntactically valid value, and concatenation happily produced
+// `metric_rollup_<anything>`.
+//
+// What rejects "" is PostgreSQL, not Go. Every call site interpolates the name
+// into a quoted identifier and none of them validates it, so the statement
+// reaches the server as `FROM ""` and the parser answers `zero-length delimited
+// identifier`. That is a real refusal and it can never be a valid statement —
+// but it is a property of the QUOTING, and an earlier version of this comment
+// claimed a caller-side check that does not exist. If a name is ever emitted
+// unquoted, `FROM  WHERE` becomes a different and less predictable failure with
+// nothing in Go to stop it.
+//
+// SelectGranularity's four branches are exhaustive with a default, so "" is
+// unreachable today. The empty return is the honest answer for a value this
+// package does not recognise, not a guard anybody relies on.
 func (g Granularity) TableName() string {
-	return "metric_rollup_" + string(g)
+	switch g {
+	case Granularity5m:
+		return TableRollup5m
+	case Granularity1h:
+		return TableRollup1h
+	case Granularity1d:
+		return TableRollup1d
+	case Granularity1mo:
+		return TableRollup1mo
+	}
+	return ""
+}
+
+// ThingTableName returns the per-Thing rollup table for this granularity, or
+// "" for an unknown tier.
+//
+// A method rather than `"thing_" + gran.TableName()` at three call sites: that
+// concatenated ON TOP of the first one, so the per-Thing names were two layers
+// away from any search, and two services carried their own copy of it.
+func (g Granularity) ThingTableName() string {
+	switch g {
+	case Granularity5m:
+		return TableThingRollup5m
+	case Granularity1h:
+		return TableThingRollup1h
+	case Granularity1d:
+		return TableThingRollup1d
+	case Granularity1mo:
+		return TableThingRollup1mo
+	}
+	return ""
 }
 
 // BucketDuration returns the duration of a single bucket for this

@@ -35,7 +35,16 @@ func (n *GeminiGenerateNormalizer) LooksLike(raw []byte, meta core.Meta) bool {
 		bytes.Contains(probe, []byte(`"contents"`)) &&
 		(bytes.Contains(probe, []byte(`"generationConfig"`)) ||
 			bytes.Contains(probe, []byte(`"systemInstruction"`)) ||
-			bytes.Contains(probe, []byte(`"safetySettings"`))) {
+			bytes.Contains(probe, []byte(`"safetySettings"`)) ||
+			// The protobuf spellings Google's JSON surface also accepts. A
+			// request that uses them carries none of the camelCase markers, so
+			// without these it is not sniffed as Gemini at all and the row
+			// loses its detectedSpec. The ai-gateway keeps this list in
+			// specutil.geminiwire; this package is in shared and cannot import
+			// it, which is why the spellings appear twice in the tree.
+			bytes.Contains(probe, []byte(`"generation_config"`)) ||
+			bytes.Contains(probe, []byte(`"system_instruction"`)) ||
+			bytes.Contains(probe, []byte(`"safety_settings"`))) {
 		return true
 	}
 	if !bytes.Contains(probe, []byte(`"candidates"`)) {

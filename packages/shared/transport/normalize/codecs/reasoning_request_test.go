@@ -6,9 +6,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// The three vendors express one intent three ways, and each parameter used to
-// reach only its own wire — so a caller posting Anthropic-shaped `thinking`
-// whose `auto` selected an OpenAI model lost the intent entirely. These pin the
+// The three vendors express one intent three ways. A parameter reaching only
+// its own wire loses the intent entirely for a caller posting Anthropic-shaped
+// `thinking` whose `auto` selected an OpenAI model. These pin the
 // DECODE half: what the caller said reaches the canonical, in their own terms,
 // with nothing derived.
 

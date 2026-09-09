@@ -37,7 +37,7 @@ type AgentPipeline struct {
 	// rulePacksByHookID maps boundHookId → installs to inject. The
 	// installed_rule_packs Cat B applier populates this; Apply*Hooks
 	// reads it to inject `_rulePackInstalls` into each hook's Config
-	// so shared/hooks/keyword_filter.go:42 routes the factory to
+	// so packages/shared/policy/hooks/validators/keyword_filter.go:42 routes the factory to
 	// NewRulePackEngine. Without this the rule packs reach the agent
 	// (and show up in the Policies UI) but the actual scan rules
 	// never fire. Empty map = no rule packs registered yet.
@@ -172,7 +172,7 @@ func (p *AgentPipeline) EvaluateConnection(ctx context.Context, in EvaluateConne
 	}
 	// Connection stage has no endpoint type; pass "" and nil modalities
 	// to preserve fail-open behavior.
-	pipe, err := resolver.BuildPipeline(
+	pipe, _, err := resolver.BuildPipeline(
 		"connection",
 		"AGENT",
 		"", nil,
@@ -247,8 +247,7 @@ func (p *AgentPipeline) ApplyHooksShadowState(ctx context.Context, raw json.RawM
 
 // ApplyRulePacksShadowState implements shadow.ShadowApplier for the
 // installed_rule_packs key. raw carries the {"installedRulePacks":[...]}
-// envelope packages/nexus-hub/internal/storage/store/catb_agent_installed_rule_packs.go
-// emits. Indexes the packs by boundHookId so ApplyHooksShadowState can
+// envelope the Hub emits. Indexes the packs by boundHookId so ApplyHooksShadowState can
 // inject `_rulePackInstalls` into each matching HookConfig.Config map
 // at hook reload time, which routes the keyword_filter factory to
 // NewRulePackEngine. After indexing we re-run hook reload so a pack
