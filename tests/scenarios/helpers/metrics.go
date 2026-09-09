@@ -1,6 +1,8 @@
 package helpers
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"bufio"
 	"context"
 	"fmt"
@@ -32,7 +34,10 @@ func (s *MetricSnapshot) At() time.Time { return s.at }
 // summary quantiles are skipped (scenarios that need them should ask
 // for the raw text endpoint separately). Times out after 5 s.
 func ScrapeMetrics(ctx context.Context, baseURL string) (*MetricSnapshot, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := nexushttp.New(nexushttp.Config{
+		Timeout: 5 * time.Second,
+		Caller:  "scenario-metrics",
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/metrics", nil)
 	if err != nil {
 		return nil, err
@@ -145,7 +150,7 @@ func splitLabels(body string) []string {
 	depth := 0
 	start := 0
 	inQ := false
-	for i := 0; i < len(body); i++ {
+	for i := range len(body) {
 		c := body[i]
 		switch c {
 		case '"':

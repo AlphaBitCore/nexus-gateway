@@ -18,20 +18,20 @@ import (
 
 // TestS103_AdminAuditExport — PM-grade e2e.
 //
-// BRAINSTORM (pre): the export endpoint is the bridge between
+// The export endpoint is the bridge between
 // runtime audit data and compliance review. Three invariants matter:
 //
-//   1. The export itself audits — calling export must write a new
-//      AdminAuditLog row with action=export, otherwise an admin can
-//      silently exfiltrate the entire trail without leaving a
-//      breadcrumb. This is the keystone trust property: "who looked
-//      at the logs?" must always be answerable.
-//   2. The 10k record cap surfaces as `truncated: true` so the UI can
-//      warn the operator. A missing truncated flag = silently
-//      partial export = compliance disaster.
-//   3. The envelope shape is stable: `exportedAt` RFC3339, `entries`
-//      array, `truncated` bool. Schema drift here breaks every
-//      external SIEM ingestion script.
+//  1. The export itself audits — calling export must write a new
+//     AdminAuditLog row with action=export, otherwise an admin can
+//     silently exfiltrate the entire trail without leaving a
+//     breadcrumb. This is the keystone trust property: "who looked
+//     at the logs?" must always be answerable.
+//  2. The 10k record cap surfaces as `truncated: true` so the UI can
+//     warn the operator. A missing truncated flag = silently
+//     partial export = compliance disaster.
+//  3. The envelope shape is stable: `exportedAt` RFC3339, `entries`
+//     array, `truncated` bool. Schema drift here breaks every
+//     external SIEM ingestion script.
 //
 // Cross-service: CP-only DB read + meta-audit write. PM-grade because
 // the alternative (200-status smoke) catches none of the above; the
@@ -39,11 +39,11 @@ import (
 // "doing security wrong while looking right" pattern.
 //
 // Assertions:
-//   1. GET export returns 200 with {exportedAt, truncated, entries}
-//      where exportedAt parses as RFC3339 and truncated is a bool.
-//   2. Within 10 s of the call, a new AdminAuditLog row exists with
-//      action=export AND entityType ILIKE %audit% (the meta-audit row).
-//   3. The number of returned entries is <= 10000 (the documented cap).
+//  1. GET export returns 200 with {exportedAt, truncated, entries}
+//     where exportedAt parses as RFC3339 and truncated is a bool.
+//  2. Within 10 s of the call, a new AdminAuditLog row exists with
+//     action=export AND entityType ILIKE %audit% (the meta-audit row).
+//  3. The number of returned entries is <= 10000 (the documented cap).
 func TestS103_AdminAuditExport(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()

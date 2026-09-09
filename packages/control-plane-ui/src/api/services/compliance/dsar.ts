@@ -51,12 +51,31 @@ export interface DSARFulfillResponse {
     vk: Array<Record<string, unknown>>;
     proxy: Array<Record<string, unknown>>;
   };
-  /** Present only for ERASURE requests. */
+  /**
+   * Present only for ERASURE requests. Mirrors the json tags on
+   * dsarstore.DSARErasureResult, which is what the handler returns as
+   * `outcome` -- NOT the map it persists to dsar_request.outcome, which
+   * carries extra keys (mode, fulfilledAt) that never reach this response.
+   *
+   * None of the names mode / vkRowsAnonymised /
+   * proxyRowsAnonymised / fulfilledAt exists on the
+   * wire, so declaring them makes every read undefined and the receipt report zero rows
+   * anonymised whatever the erasure actually did -- affirmative evidence of
+   * a no-op that did not occur, on the one screen an operator uses to
+   * confirm an Art.17 request was honoured. TypeScript cannot catch this:
+   * the response is parsed AS the declared type. A contract test in
+   * packages/control-plane/internal/governance/dsar/dsarstore now marshals
+   * the struct and asserts every name below is really emitted.
+   */
   outcome?: {
-    mode: 'erasure';
-    vkRowsAnonymised: number;
-    proxyRowsAnonymised: number;
-    fulfilledAt: string;
+    vkAnonymised: number;
+    agentAnonymised: number;
+    totalAnonymised: number;
+    payloadsScrubbed: number;
+    spillRefsOrphaned: number;
+    assistantErased: number;
+    accessOutcomesScrubbed: number;
+    accountDeleted: boolean;
   };
 }
 

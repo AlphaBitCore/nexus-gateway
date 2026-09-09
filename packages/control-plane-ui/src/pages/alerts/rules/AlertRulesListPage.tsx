@@ -2,7 +2,7 @@
  * AlertRulesListPage — browse and bulk-enable/disable unified alert rules.
  *
  * Hub seeds a builtin rule catalogue (see
- * `packages/nexus-hub/internal/alerting/rules/builtin.go`); this page lists
+ * `packages/nexus-hub/internal/alerts/engine/rules/builtin.go`); this page lists
  * them as registered on the server via `GET /api/admin/alerts/rules`. The
  * per-row `Switch` fires `updateRule(id, { enabled })` and refetches so the
  * state reflects Hub (which is the source of truth — no optimistic UI).
@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useMutation } from '@/hooks/useMutation';
+import { usePermission } from '@/hooks/usePermission';
 import { alertsApi } from '@/api/services';
 import type { AlertRule, AlertSeverity } from '@/api/services';
 import {
@@ -91,6 +92,10 @@ export function AlertRulesListPage() {
   // builtin rule catalogue is small enough that one page typically covers
   // every source type that exists.
   const sourceTypeOptions = Array.from(new Set((data?.rules ?? []).map((r) => r.sourceType))).sort();
+
+  // PUT /alerts/rules/:id enforces alert.update; the list itself is
+  // alert.read. Gate the only write on this page.
+  const canUpdate = usePermission('alert:update');
 
   const { mutate: toggleEnabled, loading: togglingEnabled } = useMutation<
     UpdateEnabledInput,
@@ -194,7 +199,7 @@ export function AlertRulesListPage() {
         <div onClick={(e) => e.stopPropagation()}>
           <Switch
             checked={r.enabled}
-            disabled={togglingEnabled}
+            disabled={togglingEnabled || !canUpdate}
             onCheckedChange={(next) => {
               toggleEnabled({ id: r.id, enabled: next });
             }}

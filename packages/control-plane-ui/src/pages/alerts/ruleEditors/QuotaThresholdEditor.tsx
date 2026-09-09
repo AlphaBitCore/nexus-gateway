@@ -5,7 +5,7 @@
  * representing a percent-of-limit crossing that should fire the alert.
  *
  * The schema's validity bounds are hardcoded client-side to match Hub's
- * builtin registry (`packages/nexus-hub/internal/alerting/rules/builtin.go`):
+ * builtin registry (`packages/nexus-hub/internal/alerts/engine/rules/builtin.go`):
  * integer, min 1, max 100, at least one item. We deliberately do not try to
  * re-derive these from the passed-in JSON Schema because the Hub side is the
  * source of truth on reject/accept — this editor's job is to nudge the user

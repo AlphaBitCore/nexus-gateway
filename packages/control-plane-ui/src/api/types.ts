@@ -474,8 +474,7 @@ export type ErrorClass = 'network' | 'timeout' | '429' | '5xx';
 
 /**
  * Per-rule retry override. Only the two fields the admin UI surfaces are
- * modeled here; backoff knobs are YAML-only by design (see
- * docs/users/api/openapi/admin/e34-s3-routing-retry-policy.yaml §6.3).
+ * modeled here; backoff knobs are YAML-only by design.
  *
  * Wire-shape semantics on PUT /api/admin/routing-rules/{id}:
  *   field absent       → backend leaves the column unchanged
@@ -673,11 +672,11 @@ export interface TrafficEvent {
    * gateway can stamp (audit.GatewayCacheSkipReason), one label per value in
    * `pages:traffic.detail.cache.gatewaySkip`.
    *
-   * This union had drifted to four values while the gateway emitted twenty, and
-   * it listed `not_cacheable`, which nothing has ever emitted. `disabled` means
+   * A union here drifts silently: four values against the gateway's twenty, and
+   * a `not_cacheable` nothing has ever emitted. `disabled` means
    * no cache TIER is on; `no_targets` means the tiers are on but routing
-   * produced nothing to key against — the two used to share the `disabled`
-   * label, so a config posture and a routing outcome read identically.
+   * produced nothing to key against — sharing one `disabled`
+   * label makes a config posture and a routing outcome read identically.
    */
   gatewayCacheSkipReason?:
     | 'disabled'
@@ -946,7 +945,6 @@ export interface AdminAuditEntry {
   entityId?: string;
   nexusRequestId?: string | null;
   /** Legacy rows only; new writes use gateway-resolved actor id only. */
-  clientRequestId?: string | null;
   clientUserId?: string | null;
   clientSessionId?: string | null;
 }

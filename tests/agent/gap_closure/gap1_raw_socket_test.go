@@ -64,8 +64,8 @@ func TestGap1RawSocket(t *testing.T) {
 
 	// 8. Assert the request body was captured. Together with the endpoint_type
 	//    assertion above — endpoint_type is itself a normalizer output — this is
-	//    the end-to-end claim that used to be made against the
-	//    traffic_event_normalized sidecar, which no longer exists: the projection
+	//    the end-to-end claim, made against this body rather than the
+	//    traffic_event_normalized sidecar, which does not exist: the projection
 	//    is recomputed at view time from exactly this body.
 	if row.RequestBody == nil {
 		t.Errorf("Gap 1: traffic_event_payload.inline_request_body is NULL; the flow should have been captured")

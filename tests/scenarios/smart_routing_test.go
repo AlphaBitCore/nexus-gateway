@@ -286,3 +286,182 @@ func TestS075_SmartRouting(t *testing.T) {
 			"not exercise gateway", reqDelta)
 	}
 }
+
+// TestS075B_SmartRoutingMultipleKeywords — a smart rule fires on EVERY keyword
+// it pins, and on nothing else.
+//
+// S-075 above pins the single literal "auto", which is what the operator-side
+// guard used to require. That shape cannot tell "the rule matched my keyword"
+// apart from "the rule matched everything", and it cannot see a second keyword
+// at all — so a guard that silently accepted only the first entry, or a matcher
+// that stopped after one, would have kept it green.
+//
+// Three arms, and the third is the one that makes the first two mean something:
+//
+//	A. model="<kw1>" fires the rule and resolves a concrete target.
+//	B. model="<kw2>" — a DIFFERENT pinned keyword — fires the SAME rule.
+//	C. model="<kw3>", pinned by nobody, does NOT fire it. Without C, a rule
+//	   that matched every request would pass A and B.
+//
+// The keywords are nonce-suffixed so a concurrent scenario cannot collide, and
+// matchConditions also pins virtualKeys for the same reason S-075 does.
+func TestS075B_SmartRoutingMultipleKeywords(t *testing.T) {
+	sc := setupScenarioNoVK(t)
+	ctx := context.Background()
+
+	token, err := helpers.CPLogin(ctx, sc.Env)
+	if err != nil {
+		t.Fatalf("CPLogin: %v", err)
+	}
+
+	nonce := time.Now().UnixNano()
+	vkName := fmt.Sprintf("s075b-%d", nonce)
+	vk, err := helpers.CreateMyVK(ctx, sc.Env, token, vkName)
+	if err != nil {
+		t.Fatalf("CreateMyVK: %v", err)
+	}
+	sc.Cleanup.Register("DeleteMyVK("+vk.ID+")", func() error {
+		return helpers.DeleteMyVK(context.Background(), sc.Env, token, vk.ID)
+	})
+
+	providerID, model8k, err := helpers.ProviderModelLookup(ctx, sc.Env, token,
+		"moonshot", "moonshot-v1-8k")
+	if err != nil {
+		t.Fatalf("ProviderModelLookup 8k: %v", err)
+	}
+	_, model32k, err := helpers.ProviderModelLookup(ctx, sc.Env, token,
+		"moonshot", "moonshot-v1-32k")
+	if err != nil {
+		t.Fatalf("ProviderModelLookup 32k: %v", err)
+	}
+
+	preApply, err := helpers.BaselineConfigApply(ctx, sc.Env, "routing_rules")
+	if err != nil {
+		t.Fatalf("BaselineConfigApply(routing_rules): %v", err)
+	}
+
+	config, _ := json.Marshal(map[string]any{
+		"type":              "smart",
+		"routerProviderId":  providerID,
+		"routerModelId":     model8k,
+		"defaultProviderId": providerID,
+		"defaultModelId":    model32k,
+		"maxTokens":         32,
+		"timeoutMs":         8000,
+	})
+
+	// Neither keyword is "auto", and there are two of them — the whole point.
+	// The admin API refused both of those shapes before this change.
+	kwFast := fmt.Sprintf("s075b-fast-%d", nonce)
+	kwCheap := fmt.Sprintf("s075b-cheap-%d", nonce)
+	kwUnclaimed := fmt.Sprintf("s075b-unclaimed-%d", nonce)
+	match, _ := json.Marshal(map[string]any{
+		"virtualKeys":            []string{vkName},
+		"requestedModelLiterals": []string{kwFast, kwCheap},
+	})
+
+	rule, err := helpers.CreateRoutingRule(ctx, sc.Env, token, helpers.CreateRoutingRuleOpts{
+		Name:            "s075b-smart-" + vk.ID[:8],
+		StrategyType:    "smart",
+		Config:          config,
+		MatchConditions: match,
+		Priority:        100,
+	})
+	if err != nil {
+		t.Fatalf("CreateRoutingRule with two non-auto keywords: %v — the operator-side "+
+			"guard must accept any number of keywords, and any keyword that is not an "+
+			"everything-glob", err)
+	}
+	sc.Cleanup.Register("DeleteRoutingRule("+rule.ID+")", func() error {
+		return helpers.DeleteRoutingRule(context.Background(), sc.Env, token, rule.ID)
+	})
+
+	if _, err := helpers.WaitForConfigApply(ctx, sc.Env, "routing_rules",
+		preApply, 15*time.Second); err != nil {
+		t.Fatalf("WaitForConfigApply(routing_rules): %v", err)
+	}
+
+	envForCall := *sc.Env
+	envForCall.TestVK = vk.RawKey
+	// Same relaxed client S-075 uses: smart routing pays a router-LLM round trip
+	// before the resolved model call, which can outrun the shared 30 s timeout.
+	client := &http.Client{
+		Timeout: 90 * time.Second,
+		Transport: &http.Transport{
+			Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:        16,
+			IdleConnTimeout:     30 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+
+	// Arms A and B — each pinned keyword fires the rule on its own.
+	for _, keyword := range []string{kwFast, kwCheap} {
+		body := mustMarshal(t, map[string]any{
+			"model": keyword,
+			"messages": []map[string]string{
+				// Distinct per keyword so a cache hit cannot answer the second
+				// arm with the first arm's response.
+				{"role": "user", "content": "Reply with exactly: HELLO_" + keyword},
+			},
+			"max_tokens":  8,
+			"temperature": 0,
+		})
+		status, respBody, postErr := intg.AIGwPostJSON(&envForCall, client, "/v1/chat/completions", body)
+		if postErr != nil {
+			t.Fatalf("AIGwPostJSON(%s): %v", keyword, postErr)
+		}
+		if status != 200 {
+			t.Fatalf("keyword %q: expected HTTP 200, got %d (body=%q)",
+				keyword, status, truncate(respBody, 200))
+		}
+
+		// model_name carries the literal the caller sent, so the row proves WHICH
+		// keyword travelled — not merely that some request hit the rule.
+		predicate := fmt.Sprintf(`source = 'ai-gateway'
+			 AND path = '/v1/chat/completions'
+			 AND status_code = 200
+			 AND identity->'vk'->>'id' = '%s'
+			 AND routing_rule_id = '%s'
+			 AND model_name = '%s'
+			 AND routed_model_id IS NOT NULL
+			 AND routed_model_id <> ''`, vk.ID, rule.ID, keyword)
+		row, waitErr := intg.WaitForRecentAuditEvent(
+			context.Background(), sc.DB, predicate, nil, 45*time.Second,
+		)
+		if waitErr != nil {
+			t.Fatalf("traffic_event poll failed for keyword %q: %v", keyword, waitErr)
+		}
+		if row == nil {
+			t.Fatalf("no traffic_event row for keyword %q (rule.ID=%s, vk.ID=%s) — the rule "+
+				"pins two keywords and must fire on each of them", keyword, rule.ID, vk.ID)
+		}
+	}
+
+	// Arm C — a keyword the rule does NOT pin must not reach it. Without this,
+	// a rule matching every request would have passed A and B.
+	//
+	// It names no catalogue model either, so the gateway has nothing to serve it
+	// with: any 2xx here means something matched that should not have.
+	body := mustMarshal(t, map[string]any{
+		"model": kwUnclaimed,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Reply with exactly: HELLO_" + kwUnclaimed},
+		},
+		"max_tokens":  8,
+		"temperature": 0,
+	})
+	status, respBody, err := intg.AIGwPostJSON(&envForCall, client, "/v1/chat/completions", body)
+	if err != nil {
+		t.Fatalf("AIGwPostJSON(unclaimed): %v", err)
+	}
+	if status == 200 {
+		t.Fatalf("keyword %q is pinned by no rule and names no catalogue model, so it must "+
+			"not be served — got HTTP 200 (body=%q). A rule matching every request would "+
+			"look exactly like this.", kwUnclaimed, truncate(respBody, 200))
+	}
+}

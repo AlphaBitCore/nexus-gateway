@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-// Spec 7: E68 cache thumbs-down (negative-feedback) flow.
+// Cache thumbs-down (negative-feedback) flow.
 //
 // Two paths covered:
 //   1. Traffic drawer — "Mark as bad cache hit" button renders only on

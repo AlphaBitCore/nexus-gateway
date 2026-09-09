@@ -21,7 +21,7 @@ import (
 
 // TestS026_RulePackInstallEffectiveMerge — PM-grade e2e.
 //
-// BRAINSTORM (pre): the effective-rules endpoint is the join layer
+// The effective-rules endpoint is the join layer
 // between pack rules and per-install overrides. Two PM-grade
 // invariants:
 //
@@ -39,8 +39,8 @@ import (
 //
 // The severity vocabulary is hard|soft|warn (rulepack.validateRules), so
 // the demotion under test is hard→warn: literally "block to warn". This
-// scenario used to send high/low, which are not severities at all — the
-// pack create 400'd before any of the merge logic was reached.
+// high/low are not severities at all: sending them 400s the pack create
+// before any of the merge logic is reached.
 //
 // Cross-service: CP-only (rulepack is CP-side). Hook binding doesn't
 // require a live hook engine for the merge test — the merge is a
@@ -198,7 +198,7 @@ func TestS026_RulePackInstallEffectiveMerge(t *testing.T) {
 			r2Severity)
 	}
 
-	// Invariant 3 (S-13): an override severity outside the closed hard|soft|warn
+	// Invariant 3: an override severity outside the closed hard|soft|warn
 	// enum must be REFUSED, not stored. severityEnforces() enforces only
 	// hard|soft and returns false for everything else, so persisting e.g. "high"
 	// silently converts a blocking rule into a non-blocking one: it still

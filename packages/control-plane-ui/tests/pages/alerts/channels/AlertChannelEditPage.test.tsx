@@ -19,6 +19,15 @@ import { alertsApi } from '@/api/services/alerts/alerts';
 import type { AlertChannel } from '@/api/services/alerts/alerts';
 import { AlertChannelEditPage, MASK_PREFIX } from '../../../../src/pages/alerts/channels/AlertChannelEditPage';
 
+// The alert write affordances gate on alert.update / .create / .delete while
+// the pages themselves load on alert.read. The set is mutable so a single arm
+// can take one grant away and prove the affordance is really gated; a blanket
+// `() => true` would leave every one of those gates untested.
+const denied = new Set<string>();
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: (key: string) => !denied.has(key),
+}));
+
 function pagerdutyChannel(): AlertChannel {
   return {
     id: 'chn-1',
@@ -79,6 +88,37 @@ describe('AlertChannelEditPage', () => {
         }),
       );
     });
+  });
+
+  // Save is a PUT on an existing channel and a POST on the new-channel route,
+  // so the grant it needs depends on which route rendered it.
+  it('leaves Save inert on an existing channel without alert.update', async () => {
+    denied.add('alert:update');
+    try {
+      const updateSpy = vi.spyOn(alertsApi, 'updateChannel');
+      const user = userEvent.setup();
+
+      renderEdit();
+      await screen.findByDisplayValue('oncall-pagerduty');
+
+      const save = screen.getByRole('button', { name: /^save$/i });
+      expect(save.hasAttribute('disabled')).toBe(true);
+      await user.click(save);
+      expect(updateSpy).not.toHaveBeenCalled();
+    } finally {
+      denied.delete('alert:update');
+    }
+  });
+
+  it('offers no Delete without alert.delete', async () => {
+    denied.add('alert:delete');
+    try {
+      renderEdit();
+      await screen.findByDisplayValue('oncall-pagerduty');
+      expect(screen.queryByRole('button', { name: /^delete$/i })).toBeNull();
+    } finally {
+      denied.delete('alert:delete');
+    }
   });
 
   it('clicking Change clears the masked field so the user can enter a new secret', async () => {

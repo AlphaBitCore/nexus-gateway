@@ -100,7 +100,7 @@ export interface Node {
 
 /**
  * Single per-config-key apply outcome as reported by a node and
- * persisted by Hub. See packages/shared/thingclient/outcomes.go for
+ * persisted by Hub. See packages/shared/transport/thingclient/outcomes.go for
  * the canonical contract.
  */
 export interface NodeAppliedOutcome {
@@ -173,6 +173,15 @@ export interface ScheduledJob {
   nextRun: string | null;
   runCount: number;
   errorCount: number;
+  /**
+   * Whether the Hub process serving this response has the job in its
+   * registry. Optional: a Hub older than this field omits it, and every
+   * check below uses `=== false` so an absent field never disables an
+   * action. An unregistered row is a real row -- it holds run history and
+   * the admin's enable/disable intent -- but nothing in THIS deployment
+   * will run it, and its Trigger / Enable answer 404.
+   */
+  registered?: boolean;
 }
 
 export interface JobRun {
@@ -205,8 +214,7 @@ export interface EnrollmentToken {
 }
 
 /**
- * Per-Thing config override row, mirrors `ThingOverride` schema in
- * docs/users/api/openapi/admin/e34-s1-thing-override-and-force-sync.yaml.
+ * Per-Thing config override row, mirrors the `ThingOverride` schema.
  * `stale` is server-computed (`currentTemplateVer > templateVerAtSet`).
  * Used by the override editor drawer and the global registry page.
  */

@@ -113,7 +113,7 @@ func TestS083_ComplianceProxyConnectPipeline(t *testing.T) {
 		t.Fatalf("request through proxy %s failed: %v (CONNECT/TLS-bump path)", proxyAddr, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		// Not every non-200 is "their problem". A 404 means we asked for a path
 		// that does not exist — a fixture or base-URL error on OUR side — and
 		// skipping on it hides exactly that mistake: a base URL missing its /v1
@@ -151,7 +151,7 @@ func TestS083_ComplianceProxyConnectPipeline(t *testing.T) {
 	const tries = 15
 	const interval = 2 * time.Second
 	var n int64
-	for i := 0; i < tries; i++ {
+	for range tries {
 		if scanErr := sc.DB.QueryRow(ctx, query, "%"+host+"%").Scan(&n); scanErr == nil && n >= 1 {
 			break
 		}

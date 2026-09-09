@@ -15,7 +15,7 @@ import (
 
 // TestS110_IAMViewerCannotWrite — PM-grade e2e.
 //
-// BRAINSTORM (pre): the seeded "NexusViewer" managed group attaches a
+// The seeded "NexusViewer" managed group attaches a
 // read-only policy to nexus-user-viewer (Diana). Plan §4 S-110 wants
 // "user in NexusViewer group can read but not write — POST returns
 // 403". Doing it via the actual HTTP path requires Diana's password
@@ -29,9 +29,9 @@ import (
 // in-memory iam.Engine.Evaluate → policy/attachment/group rows in DB.
 //
 // Assertions:
-//   1. simulate(viewer, virtual-key:create, ...) → Decision="Deny"
-//   2. simulate(viewer, virtual-key:read, ...)   → Decision="Allow"
-//   3. simulate(super-admin, virtual-key:create) → Decision="Allow"
+//  1. simulate(viewer, virtual-key:create, ...) → Decision="Deny"
+//  2. simulate(viewer, virtual-key:read, ...)   → Decision="Allow"
+//  3. simulate(super-admin, virtual-key:create) → Decision="Allow"
 //
 // Reason field is logged for traceability.
 func TestS110_IAMViewerCannotWrite(t *testing.T) {

@@ -17,6 +17,15 @@ import { alertsApi } from '@/api/services/alerts/alerts';
 import type { AlertRule } from '@/api/services/alerts/alerts';
 import { AlertRuleEditPage } from '../../../../src/pages/alerts/rules/AlertRuleEditPage';
 
+// The alert write affordances gate on alert.update / .create / .delete while
+// the pages themselves load on alert.read. The set is mutable so a single arm
+// can take one grant away and prove the affordance is really gated; a blanket
+// `() => true` would leave every one of those gates untested.
+const denied = new Set<string>();
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: (key: string) => !denied.has(key),
+}));
+
 function sampleRule(): AlertRule {
   return {
     id: 'quota.threshold',
@@ -89,6 +98,31 @@ describe('AlertRuleEditPage', () => {
         params: { thresholds: [80, 95] },
       });
     });
+  });
+
+  // Reaching this page needs only alert.read; both writes need alert.update.
+  it('leaves Save and Reset inert without alert.update', async () => {
+    denied.add('alert:update');
+    try {
+      const updateSpy = vi.spyOn(alertsApi, 'updateRule');
+      const resetSpy = vi.spyOn(alertsApi, 'resetRule');
+      const user = userEvent.setup();
+
+      renderWithRoute();
+      await screen.findByDisplayValue('80, 95');
+
+      const save = screen.getByRole('button', { name: /^save$/i });
+      const reset = screen.getByRole('button', { name: /reset/i });
+      expect(save.hasAttribute('disabled')).toBe(true);
+      expect(reset.hasAttribute('disabled')).toBe(true);
+
+      await user.click(save);
+      await user.click(reset);
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(resetSpy).not.toHaveBeenCalled();
+    } finally {
+      denied.delete('alert:update');
+    }
   });
 
   it('confirms then dispatches resetRule on Reset', async () => {

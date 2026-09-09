@@ -1,4 +1,4 @@
-// Cache pre-warm family (S-067) — verifies the E69 FAQ pre-warm L2 admin
+// Cache pre-warm family (S-067) — verifies the FAQ pre-warm L2 admin
 // API end-to-end. The admin POSTs a Q→A corpus to the Control Plane; the
 // CP forwards the batch to the AI Gateway's internal
 // /internal/semantic-prewarm endpoint where each entry is embedded and
@@ -272,7 +272,7 @@ func valkeyHasKeysWithPrefix(prefix string) (bool, int, error) {
 	return count > 0, count, nil
 }
 
-// TestS067_CachePrewarm — PM-grade e2e for E69 FAQ pre-warm L2 cache.
+// TestS067_CachePrewarm — PM-grade e2e for the FAQ pre-warm L2 cache.
 //
 // Arms:
 //
@@ -289,12 +289,12 @@ func valkeyHasKeysWithPrefix(prefix string) (bool, int, error) {
 //     semantic-cache singleton so the snapshot picks up the new
 //     baseUrl, wait briefly, then POST with dryRun=false and the same
 //     3 pairs. Expect:
-//       - HTTP 200
-//       - written == 3 (every entry was embedded + HSET'd)
-//       - skipped == 0 (no embedding_provider_error / dim_mismatch)
-//       - errors == 0
-//       - embeddingCalls == 3 (one embed per entry, no joiner)
-//       - Each entries[i].Written == true
+//     - HTTP 200
+//     - written == 3 (every entry was embedded + HSET'd)
+//     - skipped == 0 (no embedding_provider_error / dim_mismatch)
+//     - errors == 0
+//     - embeddingCalls == 3 (one embed per entry, no joiner)
+//     - Each entries[i].Written == true
 //
 //  3. valkey cross-check — SCAN the Valkey index prefix and confirm at
 //     least 3 keys exist tagged to this scenario's fingerprint. Uses
@@ -524,14 +524,15 @@ func TestS067_CachePrewarm(t *testing.T) {
 		t.Fatalf("Arm 3 lookup semantic cache index prefix: %v", err)
 	}
 	hasKeys, keyCount, scanErr := valkeyHasKeysWithPrefix(indexPrefix + ":")
-	if scanErr != nil {
+	switch {
+	case scanErr != nil:
 		// docker exec failure — log but do not fail; the Arm 2 written==3
 		// assertion above is already strong evidence the writes occurred.
 		t.Logf("Arm 3 valkey SCAN failed (non-fatal because Arm 2 wrote=3): %v", scanErr)
-	} else if !hasKeys || keyCount < len(entries) {
+	case !hasKeys || keyCount < len(entries):
 		t.Errorf("Arm 3 expected ≥%d keys under prefix %q in Valkey, got %d",
 			len(entries), indexPrefix+":", keyCount)
-	} else {
+	default:
 		t.Logf("Arm 3 OK: Valkey SCAN found %d keys under prefix %q", keyCount, indexPrefix+":")
 	}
 

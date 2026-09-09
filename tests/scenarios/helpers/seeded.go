@@ -54,7 +54,7 @@ func SeedDecision(ctx context.Context, count RowCounter, baselineTable, missingW
 			"fails instead of skipping.", n, baselineTable, missingWhat), nil
 }
 
-// RequireSeeded applies SeedDecision. Call it where a scenario used to skip on
+// RequireSeeded applies SeedDecision. Call it where a scenario would otherwise skip on
 // a row the seed guarantees.
 func RequireSeeded(t *testing.T, ctx context.Context, count RowCounter, baselineTable, missingWhat string) {
 	t.Helper()

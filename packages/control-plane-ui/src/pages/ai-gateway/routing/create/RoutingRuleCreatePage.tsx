@@ -11,7 +11,7 @@ import {
   Switch,
   Tooltip
 } from '@/components/ui';
-import { type StrategyType, validateSplitWeights, isTargetListStrategy } from '../_shared/routing-rule-config';
+import { type StrategyType, validateSplitWeights, isTargetListStrategy, smartLiteralsProblem } from '../_shared/routing-rule-config';
 import { ConditionalRoutingEditor } from '../editor/ConditionalRoutingEditor';
 import { RoutingPrimaryWinnerCallout } from '../_shared/RoutingPrimaryWinnerCallout';
 import { MatchConditionExtraFields } from '../editor/MatchConditionExtraFields';
@@ -45,9 +45,12 @@ export function RoutingRuleCreate() {
   const weightCheck = validateSplitWeights(h.entries);
   const weightSumInvalid = hasWeightTargets && !weightCheck.valid;
 
-  // Smart routing must pin matchConditions to the "auto" literal (backend guard).
-  const smartNeedsAutoMatch = h.strategyType === 'smart' &&
-    !(h.matchRequestedModelLiterals.length > 0 && h.matchRequestedModelLiterals.every((l) => l === 'auto'));
+  // Smart routing must pin matchConditions to request keywords it explicitly
+  // claims — any keywords, any number, but none that reach every request
+  // (backend guard; smartLiteralsProblem is the shared predicate).
+  const smartLiterals = h.strategyType === 'smart'
+    ? smartLiteralsProblem(h.matchRequestedModelLiterals)
+    : null;
   // Non-smart rule with empty match conditions matches every request (soft note).
   const matchIsEmpty = h.models.length === 0 && h.matchProviders.length === 0 && h.matchProjectIds.length === 0 &&
     h.matchRequestedModelLiterals.length === 0 && h.matchModelTypes.length === 0 && h.matchVirtualKeys.length === 0;
@@ -65,9 +68,19 @@ export function RoutingRuleCreate() {
         ? t('pages:routing.fallbackIncomplete', 'Finish or remove the partially-filled fallback target — set both provider and model.')
         : null;
     }
-    return smartNeedsAutoMatch
-      ? t('pages:routing.smartMatchAutoRequired', 'Smart routing must match the "auto" model literal — add it under Match conditions.')
-      : null;
+    if (smartLiterals === null) return null;
+    if (smartLiterals.kind === 'none-pinned') {
+      return t('pages:routing.smartMatchKeywordRequired',
+        'Smart routing must match at least one request keyword — add one (e.g. "auto") under Match conditions.');
+    }
+    if (smartLiterals.kind === 'blank') {
+      return t('pages:routing.smartMatchKeywordBlank',
+        '"{{literal}}" is not a request keyword — every entry must be a model string a caller can actually send.',
+        { literal: smartLiterals.literal });
+    }
+    return t('pages:routing.smartMatchKeywordCatchAll',
+      '"{{literal}}" matches every request — pin a keyword the caller sends (e.g. "auto", "fast") or a bounded glob (e.g. "gpt-4-*").',
+      { literal: smartLiterals.literal });
   };
   const currentStepHint = stepHint(currentStep);
   const allStepsValid = [0, 1, 2, 3].every((s) => stepHint(s) === null);
@@ -351,7 +364,7 @@ export function RoutingRuleCreate() {
           {currentStepHint && (
             <p className={styles.stepHint} role="alert">{currentStepHint}</p>
           )}
-          {isLastStep && matchIsEmpty && !smartNeedsAutoMatch && (
+          {isLastStep && matchIsEmpty && smartLiterals === null && (
             <p className={styles.stepNote}>
               {t('pages:routing.matchEmptyNote', 'No match conditions set — this rule will apply to all requests.')}
             </p>

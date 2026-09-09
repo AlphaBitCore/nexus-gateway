@@ -108,7 +108,7 @@ export function CostBreakdown({
   const monoRightStrong = { ...monoRight, fontWeight: 'var(--g-font-weight-semibold)' };
   const labelCell = (muted = false): CSSProperties => ({
     padding: 'var(--g-space-xs) 0',
-    color: muted ? 'var(--g-color-text-muted)' : undefined,
+    color: muted ? 'var(--color-text-muted)' : undefined,
     fontSize: 'var(--g-font-size-sm)',
   });
   const sectionHeader = {
@@ -116,7 +116,7 @@ export function CostBreakdown({
     fontSize: 'var(--g-font-size-xs)',
     textTransform: 'uppercase' as const,
     letterSpacing: '0.04em',
-    color: 'var(--g-color-text-muted)',
+    color: 'var(--color-text-muted)',
   };
 
   return (
@@ -137,7 +137,7 @@ export function CostBreakdown({
                   <td style={labelCell(true)}>
                     {formatTokens(uncachedT)} {inputPM != null ? <>× {fmtCost(inputPM)}/M</> : null}&nbsp;
                     <span style={{ fontSize: 'var(--g-font-size-xs)' }}>({t('pages:traffic.detail.costs.input')})</span>
-                    {inputPM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--g-color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
+                    {inputPM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
                   </td>
                   <td style={monoRight}>{uncachedCost != null ? fmtCost(uncachedCost) : '—'}</td>
                 </tr>
@@ -147,7 +147,7 @@ export function CostBreakdown({
                   <td style={labelCell(true)}>
                     {formatTokens(cacheReadT)} {cacheReadPM != null ? <>× {fmtCost(cacheReadPM)}/M</> : null}&nbsp;
                     <span style={{ fontSize: 'var(--g-font-size-xs)' }}>({t('pages:traffic.detail.costs.cacheRead')})</span>
-                    {cacheReadPM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--g-color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
+                    {cacheReadPM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
                   </td>
                   <td style={monoRight}>{cachedReadCost != null ? fmtCost(cachedReadCost) : '—'}</td>
                 </tr>
@@ -157,7 +157,7 @@ export function CostBreakdown({
                   <td style={labelCell(true)}>
                     {formatTokens(cacheCreationT)} {cacheWritePM != null ? <>× {fmtCost(cacheWritePM)}/M</> : null}&nbsp;
                     <span style={{ fontSize: 'var(--g-font-size-xs)' }}>({t('pages:traffic.detail.costs.cacheWrite')})</span>
-                    {cacheWritePM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--g-color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
+                    {cacheWritePM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
                   </td>
                   <td style={monoRight}>{cachedWriteCost != null ? fmtCost(cachedWriteCost) : '—'}</td>
                 </tr>
@@ -167,7 +167,7 @@ export function CostBreakdown({
                   <td style={labelCell(true)}>
                     {formatTokens(completionT)} {outputPM != null ? <>× {fmtCost(outputPM)}/M</> : null}&nbsp;
                     <span style={{ fontSize: 'var(--g-font-size-xs)' }}>({t('pages:traffic.detail.costs.output')})</span>
-                    {outputPM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--g-color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
+                    {outputPM == null && <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}> · {t('pages:traffic.detail.costs.priceUnknown')}</span>}
                   </td>
                   <td style={monoRight}>{outputCost != null ? fmtCost(outputCost) : '—'}</td>
                 </tr>
@@ -178,7 +178,7 @@ export function CostBreakdown({
                   <td style={monoRight}>{fmtCost(reasoning)}</td>
                 </tr>
               )}
-              <tr style={{ borderTop: '1px solid var(--g-color-border-subtle)' }}>
+              <tr style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
                 <td style={{ ...labelCell(), fontWeight: 'var(--g-font-weight-semibold)' }}>{t('pages:traffic.detail.costs.section.upstreamSubtotal')}</td>
                 <td style={monoRightStrong}>{fmtCost(primary)}</td>
               </tr>
@@ -200,7 +200,7 @@ export function CostBreakdown({
                 <td style={labelCell(true)}>{t('pages:traffic.detail.costs.modality')}</td>
                 <td style={monoRight}>{fmtCost(modalityCost)}</td>
               </tr>
-              <tr style={{ borderTop: '1px solid var(--g-color-border-subtle)' }}>
+              <tr style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
                 <td style={{ ...labelCell(), fontWeight: 'var(--g-font-weight-semibold)' }}>{t('pages:traffic.detail.costs.section.upstreamSubtotal')}</td>
                 <td style={monoRightStrong}>{fmtCost(modalityCost)}</td>
               </tr>
@@ -229,7 +229,7 @@ export function CostBreakdown({
                 <tr>
                   <td style={labelCell()}>
                     + {t('pages:traffic.detail.costs.embedding')}&nbsp;
-                    <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--g-color-text-muted)' }}>{t('pages:traffic.detail.costs.cacheTag')}</span>
+                    <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}>{t('pages:traffic.detail.costs.cacheTag')}</span>
                   </td>
                   <td style={monoRight}>+ {fmtCost(embedding)}</td>
                 </tr>
@@ -238,7 +238,7 @@ export function CostBreakdown({
                 <tr>
                   <td style={labelCell()}>
                     + {t('pages:traffic.detail.costs.aiGuard')}&nbsp;
-                    <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--g-color-text-muted)' }}>{t('pages:traffic.detail.costs.aiGuardTag')}</span>
+                    <span style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}>{t('pages:traffic.detail.costs.aiGuardTag')}</span>
                   </td>
                   <td style={monoRight}>+ {fmtCost(aiGuard)}</td>
                 </tr>
@@ -249,7 +249,7 @@ export function CostBreakdown({
                   <td style={monoRight}>+ {fmtCost(b.costUsd ?? 0)}</td>
                 </tr>
               ))}
-              <tr style={{ borderTop: '1px solid var(--g-color-border-subtle)' }}>
+              <tr style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
                 <td style={{ ...labelCell(), fontWeight: 'var(--g-font-weight-semibold)' }}>{t('pages:traffic.detail.costs.section.internalOpsSubtotal')}</td>
                 <td style={monoRightStrong}>+ {fmtCost(internalOpsCost)}</td>
               </tr>
@@ -257,7 +257,7 @@ export function CostBreakdown({
           )}
 
           {/* ─── Net total ─── */}
-          <tr style={{ borderTop: '2px solid var(--g-color-border)' }}>
+          <tr style={{ borderTop: '2px solid var(--color-border)' }}>
             <td style={{ ...labelCell(), fontWeight: 'var(--g-font-weight-bold)', paddingTop: 'var(--g-space-sm)' }}>
               {t('pages:traffic.detail.costs.netTotal')}
             </td>
@@ -288,7 +288,7 @@ export function CostBreakdown({
                 <td style={{ ...labelCell(), fontWeight: 'var(--g-font-weight-semibold)' }}>
                   {vsBaseline! < 0 ? t('pages:traffic.detail.costs.savedVsBaseline') : t('pages:traffic.detail.costs.paidMoreVsBaseline')}
                 </td>
-                <td style={{ ...monoRightStrong, color: vsBaseline! < 0 ? 'var(--g-color-success)' : undefined }}>
+                <td style={{ ...monoRightStrong, color: vsBaseline! < 0 ? 'var(--color-success)' : undefined }}>
                   {vsBaseline! < 0 ? '−' : '+'} {fmtCost(Math.abs(vsBaseline!))}
                 </td>
               </tr>
@@ -299,7 +299,7 @@ export function CostBreakdown({
       {/* Quota policy note — make it clear whether ai-guard
           / embedding count against this VK's quota. */}
       {(embedding !== 0 || aiGuard !== 0 || breakdownTotal !== 0) && (
-        <div style={{ marginTop: 'var(--g-space-sm)', fontSize: 'var(--g-font-size-xs)', color: 'var(--g-color-text-muted)' }}>
+        <div style={{ marginTop: 'var(--g-space-sm)', fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}>
           {t(internalOpsExcluded
             ? 'pages:traffic.detail.costs.internalOpsNoteExcluded'
             : 'pages:traffic.detail.costs.internalOpsNoteCounted')}

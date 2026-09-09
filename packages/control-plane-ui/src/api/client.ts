@@ -6,7 +6,7 @@
  *
  * Design points:
  *
- *   - The access / refresh tokens live in `sessionStorage` (see `auth/tokenStore.ts`).
+ *   - The access / refresh tokens live in `sessionStorage` (see `packages/control-plane-ui/src/auth/tokens/tokenStore.ts`).
  *     This module only reads / writes tokens through that module — it never
  *     touches storage keys directly.
  *

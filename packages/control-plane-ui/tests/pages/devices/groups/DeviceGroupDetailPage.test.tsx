@@ -8,7 +8,7 @@ import { DeviceGroupDetailPage } from '@/pages/devices/groups/DeviceGroupDetailP
 const svc = vi.hoisted(() => ({
   deviceGroupsApi: {
     get: vi.fn(), addMember: vi.fn(), removeMember: vi.fn(), delete: vi.fn(),
-    previewMembership: vi.fn(), setMembershipQuery: vi.fn(), bulkForceRefresh: vi.fn(), bulkRotateCert: vi.fn(),
+    previewMembership: vi.fn(), setMembershipQuery: vi.fn(), bulkForceRefresh: vi.fn(),
   },
   hubApi: { listNodes: vi.fn().mockResolvedValue({ nodes: [] }) },
 }));

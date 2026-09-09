@@ -12,7 +12,7 @@
  *                                             buckets for `nodeType=agent`.
  *
  * Wire shapes mirror the Go structs in
- * `packages/control-plane/internal/store/opsmetrics_store.go` (OpsMetricSample
+ * `packages/control-plane/internal/observability/opsmetrics/opsstore/opsmetrics_store.go` (OpsMetricSample
  * + OpsMetricBucket); the CP handler always wraps payloads in `{ data: [...] }`,
  * with `granularity` echoed back on the timeseries / fleet endpoints so the
  * UI can show how the server resolved an `auto` request.

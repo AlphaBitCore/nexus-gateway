@@ -160,7 +160,7 @@ func cpSideDecision(t testing.TB, cpAddr, domain string) domainDecision {
 
 	addr := cpAddr
 	if !strings.Contains(addr, ":") {
-		addr = addr + ":3128"
+		addr += ":3128"
 	}
 
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)

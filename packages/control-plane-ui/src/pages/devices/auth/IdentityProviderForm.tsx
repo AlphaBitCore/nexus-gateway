@@ -208,12 +208,17 @@ export interface IdentityProviderFormProps {
   mode: 'create' | 'edit';
   initial?: IdentityProvider;
   submitting: boolean;
+  /** When true the form renders but cannot be submitted — the caller holds
+   *  read access without the matching write grant. Save is the only
+   *  affordance gated here; the fields stay readable on purpose, because
+   *  inspecting an IdP's configuration is exactly what .read is for. */
+  readOnly?: boolean;
   submitError: string | null;
   onSubmit: (body: IdentityProviderWriteRequest) => void;
   onCancel: () => void;
 }
 
-export function IdentityProviderForm({ mode, initial, submitting, submitError, onSubmit, onCancel }: IdentityProviderFormProps) {
+export function IdentityProviderForm({ mode, initial, submitting, readOnly = false, submitError, onSubmit, onCancel }: IdentityProviderFormProps) {
   const { t } = useTranslation();
   const initialProtocol: Protocol = (initial?.type === 'saml' ? 'saml' : 'oidc');
   const [protocol, setProtocol] = useState<Protocol>(initialProtocol);
@@ -282,7 +287,7 @@ export function IdentityProviderForm({ mode, initial, submitting, submitError, o
   );
 
   const currentName = protocol === 'oidc' ? oidc.name : saml.name;
-  const canSave = currentName.trim().length > 0 && !submitting;
+  const canSave = currentName.trim().length > 0 && !submitting && !readOnly;
   const protocolPickerDisabled = mode === 'edit';
 
   return (

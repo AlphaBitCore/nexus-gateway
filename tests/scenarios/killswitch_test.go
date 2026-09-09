@@ -1,5 +1,5 @@
-// Killswitch family (S-030..S-034) — verifies the E48 emergency
-// passthrough 3-tier mechanism: global / adapter / provider. Scenarios
+// Killswitch family (S-030..S-034) — verifies the emergency passthrough
+// 3-tier mechanism: global / adapter / provider. Scenarios
 // in this family are inherently invasive on shared state — the chosen
 // scope must minimise blast radius (adapter-scoped over global) and
 // every scenario must clean up its toggle on the way out.
@@ -18,10 +18,10 @@ import (
 
 // TestS030_AdapterKillswitchBypassHooks — PM-grade e2e.
 //
-// BRAINSTORM (pre): plan §4 wording says "global kill-switch activates
+// Plan §4 wording says "global kill-switch activates
 // → all requests carry bypassHooks=true." Global is too wide for a
 // dev environment shared with parallel sessions. We narrow to the
-// adapter-scope tier (E48 3-tier model: global > adapter > provider),
+// adapter-scope tier (global > adapter > provider),
 // toggling moonshot only. Cross-service: CP (passthrough PUT writes
 // gateway_passthrough_config_adapter row) → Hub (broadcasts
 // gateway_passthrough) → AI Gw (thingclient apply →
@@ -31,13 +31,13 @@ import (
 // adapter passthrough so parallel scenarios don't see hook bypass.
 //
 // Assertions:
-//   1. PUT passthrough succeeds (DB row written, hub broadcasts).
-//   2. Subscribers hot-reload (config_applies counter ticks).
-//   3. AdminAuditLog has a row for the passthrough write.
-//   4. Chat through moonshot returns 200 AND traffic_event.passthrough_flags
-//      contains 'bypassHooks'.
-//   5. After cleanup PUT enabled=false, the adapter row reflects
-//      disabled state + a second hot-reload signal.
+//  1. PUT passthrough succeeds (DB row written, hub broadcasts).
+//  2. Subscribers hot-reload (config_applies counter ticks).
+//  3. AdminAuditLog has a row for the passthrough write.
+//  4. Chat through moonshot returns 200 AND traffic_event.passthrough_flags
+//     contains 'bypassHooks'.
+//  5. After cleanup PUT enabled=false, the adapter row reflects
+//     disabled state + a second hot-reload signal.
 func TestS030_AdapterKillswitchBypassHooks(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -106,11 +106,11 @@ func TestS030_AdapterKillswitchBypassHooks(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	}
 	if !auditFound {
-		// Soft signal — the E48 admin handler's audit emission path is
-		// in flux (memory: project_e48_emergency_passthrough). Log
-		// rather than fail so the scenario still gates on bypassHooks
-		// behavior; a separate spec audit covers this admin audit gap.
-		t.Logf("note: no AdminAuditLog row matched passthrough/killswitch — admin audit emission for E48 may be partial")
+		// Soft signal — the admin handler's audit emission for passthrough
+		// is not guaranteed. Log rather than fail so the scenario still
+		// gates on bypassHooks behavior; a separate spec audit covers this
+		// admin audit gap.
+		t.Logf("note: no AdminAuditLog row matched passthrough/killswitch — admin audit emission for passthrough may be partial")
 	}
 
 	// 5) Send a chat. The 30 s window we set should still be active.

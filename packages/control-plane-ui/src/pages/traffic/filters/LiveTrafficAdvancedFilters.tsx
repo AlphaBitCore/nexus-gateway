@@ -97,6 +97,16 @@ export function LiveTrafficAdvancedFilters({
               className={css.dtInputMono}
             />
           </FieldCompact>
+          <FieldCompact label={t('pages:traffic.labelTraceId')} tip={t('pages:traffic.tipTraceId')}>
+            <Input
+              type="text"
+              aria-label={t('pages:traffic.labelTraceId')}
+              value={v.traceId}
+              onChange={(e) => onPatch({ traceId: e.target.value })}
+              placeholder={t('pages:traffic.placeholderTraceId')}
+              className={css.dtInputMono}
+            />
+          </FieldCompact>
           <FieldCompact label={t('pages:traffic.labelEndUserId')} tip={t('pages:traffic.tipEndUserId')}>
             <Input
               type="text"

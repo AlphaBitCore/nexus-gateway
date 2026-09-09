@@ -17,21 +17,21 @@ import (
 
 // TestS132_PACFileGeneration — PM-grade e2e.
 //
-// BRAINSTORM (pre): the PAC endpoint must satisfy three contracts:
+// The PAC endpoint must satisfy three contracts:
 //
-//   1. Missing proxyHost / proxyPort returns 400 — the template
-//      requires both, an unguarded handler would emit a broken PAC
-//      that silently routes nothing.
-//   2. With valid params it returns the application/x-ns-proxy-autoconfig
-//      MIME type AND a body that contains:
-//        - a FindProxyForURL function declaration
-//        - a PROXY directive pointing at the supplied host:port
-//        - at least one host match clause (derived from the seeded
-//          interception_domain table)
-//   3. The body is a syntactically valid JavaScript fragment a
-//      browser PAC engine can parse — we approximate by checking for
-//      balanced braces and the canonical PAC API names
-//      (dnsDomainIs / FindProxyForURL).
+//  1. Missing proxyHost / proxyPort returns 400 — the template
+//     requires both, an unguarded handler would emit a broken PAC
+//     that silently routes nothing.
+//  2. With valid params it returns the application/x-ns-proxy-autoconfig
+//     MIME type AND a body that contains:
+//     - a FindProxyForURL function declaration
+//     - a PROXY directive pointing at the supplied host:port
+//     - at least one host match clause (derived from the seeded
+//     interception_domain table)
+//  3. The body is a syntactically valid JavaScript fragment a
+//     browser PAC engine can parse — we approximate by checking for
+//     balanced braces and the canonical PAC API names
+//     (dnsDomainIs / FindProxyForURL).
 //
 // Cross-service: CP-only — pure DB read of interception_domain rows
 // + template render. PM-grade because the failure mode is silent:
@@ -39,11 +39,11 @@ import (
 // DIRECT and the operator notices days later when audit traffic flatlines.
 //
 // Assertions:
-//   1. Missing params → 400.
-//   2. With params → 200, Content-Type application/x-ns-proxy-autoconfig.
-//   3. Body contains FindProxyForURL + PROXY proxyHost:proxyPort.
-//   4. Body contains at least one dnsDomainIs() call OR is the
-//      sentinel "no domains configured" PAC.
+//  1. Missing params → 400.
+//  2. With params → 200, Content-Type application/x-ns-proxy-autoconfig.
+//  3. Body contains FindProxyForURL + PROXY proxyHost:proxyPort.
+//  4. Body contains at least one dnsDomainIs() call OR is the
+//     sentinel "no domains configured" PAC.
 func TestS132_PACFileGeneration(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()

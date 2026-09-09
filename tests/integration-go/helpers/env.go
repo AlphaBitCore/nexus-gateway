@@ -117,7 +117,7 @@ func loadEnvOnce() (*Env, error) {
 		ProxyURL:        get("NEXUS_PROXY_URL", "http://localhost:3040"),
 		UIURL:           get("NEXUS_UI_URL", "http://localhost:3000"),
 		AdminEmail:      get("NEXUS_ADMIN_EMAIL", "admin@nexus.ai"),
-		AdminPassword:   get("NEXUS_ADMIN_PASSWORD", "admin123"),
+		AdminPassword:   get("NEXUS_ADMIN_PASSWORD", "nexus-demo"),
 		OAuthClientID:   get("NEXUS_OAUTH_CLIENT_ID", "cp-ui"),
 		OAuthRedirect:   get("NEXUS_OAUTH_REDIRECT_URI", "http://localhost:3000/auth/callback"),
 		HubServiceToken: get("NEXUS_HUB_SERVICE_TOKEN", "dev-service-token"),

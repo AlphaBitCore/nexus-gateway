@@ -2,8 +2,6 @@
 
 package gap_closure_test
 
-// gap2_quic_fallback_test.go — E74-S7 T7.3
-//
 // TestGap2QUICFallback verifies FR-7.2: pf blocks UDP/443 (forcing QUIC
 // happy-eyeballs fallback to TCP), and the resulting TCP flow is captured.
 //

@@ -22,7 +22,7 @@ import (
 
 // TestS093_AnalyticsCostSummaryContract — PM-grade e2e.
 //
-// BRAINSTORM (pre): /analytics/cost-summary is the Cost page's single
+// /analytics/cost-summary is the Cost page's single
 // source of truth. Internally it tries a rollup query first, then
 // falls back to a direct traffic_event SUM on rollup-miss. Either
 // path MUST preserve four invariants:
@@ -108,12 +108,11 @@ func TestS093_AnalyticsCostSummaryContract(t *testing.T) {
 	// Partition check: byOrg rows partition the total, so their sum cannot
 	// exceed it. This FAILS rather than logging.
 	//
-	// It used to log. The reason given was a rollup-emitter gap — per-org rows
-	// emitted without the global row — and the note named a follow-up
-	// investigation into metric_rollup_5m. That diagnosis was wrong, and the
-	// logging is what let it stand: the struct decoded `totalEstimatedCostUsd`,
-	// which this endpoint does not return, so the total was always 0 and the
-	// comparison always tripped. Against production the byOrg sum matches
+	// Logging instead is what lets a wrong diagnosis stand. Read as a
+	// rollup-emitter gap — per-org rows emitted without the global row — it
+	// sends a reader to metric_rollup_5m. The cause is the decode: reading
+	// `totalEstimatedCostUsd`, which belongs to the cache-roi endpoint and not
+	// this one, leaves the total 0 and the comparison always tripping. Against production the byOrg sum matches
 	// totalCostUsd exactly. A check that cannot fail cannot correct a wrong
 	// explanation of why it keeps tripping.
 	if sumByOrg > sum.TotalCostUsd+1e-6 {
@@ -127,7 +126,7 @@ func TestS093_AnalyticsCostSummaryContract(t *testing.T) {
 
 // TestS094_AnalyticsCacheROIMonotonicity — PM-grade e2e.
 //
-// BRAINSTORM (pre): /analytics/cache-roi exposes 14 totals + per-day
+// /analytics/cache-roi exposes 14 totals + per-day
 // + per-adapter breakdowns. The PM-grade invariants are the same
 // physical-impossibility checks: hits/savings/tokens are all
 // non-negative; cache_net_savings = read_savings - write_cost
@@ -211,7 +210,7 @@ func TestS094_AnalyticsCacheROIMonotonicity(t *testing.T) {
 	}
 
 	// Hits-imply-reads: if Gateway counted a hit, *some* cache_read_tokens
-	// must have flowed. (The inverse is not asserted — see BRAINSTORM.)
+	// must have flowed. The inverse does not hold; the branch below says why.
 	if roi.GatewayCacheHitCount > 0 && roi.TotalCacheReadTokens == 0 {
 		// Gateway response-cache hits don't necessarily produce
 		// cache_read_tokens (that's the provider-side prompt-cache
@@ -243,7 +242,7 @@ func TestS094_AnalyticsCacheROIMonotonicity(t *testing.T) {
 
 // TestS095_MetricsAggregatesWindow — PM-grade e2e.
 //
-// BRAINSTORM (pre): /metrics/aggregates is the workhorse query
+// /metrics/aggregates is the workhorse query
 // driving every sparkline + bar chart on the Operations page. It
 // takes (startTime, endTime) and returns rollup-bucketed time
 // series. The most common PM-grade failure: a window with no data

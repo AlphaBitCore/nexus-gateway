@@ -21,7 +21,6 @@ import { ComplianceTab } from './fleet-device-detail/ComplianceTab';
 import { ConfigurationTab } from './fleet-device-detail/ConfigurationTab';
 import { SystemTab } from './fleet-device-detail/SystemTab';
 import { ActivityTab } from './fleet-device-detail/ActivityTab';
-import { RotateCertDialog } from './fleet-device-detail/RotateCertDialog';
 import { RevokeDeviceDialog } from './fleet-device-detail/RevokeDeviceDialog';
 import { DiagModeDialog } from './fleet-device-detail/DiagModeDialog';
 
@@ -33,7 +32,6 @@ export function FleetDeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [activeTab, setActiveTab] = useState<Tab>('traffic');
   const [revokeOpen, setRevokeOpen] = useState(false);
-  const [rotateOpen, setRotateOpen] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
   const [diagPreset, setDiagPreset] = useState<'30m' | '2h' | '8h' | null>(null);
   const [diagReason, setDiagReason] = useState('');
@@ -42,7 +40,6 @@ export function FleetDeviceDetailPage() {
   // separate observability:read because the underlying rollup API enforces it.
   const canViewStats = usePermission('observability:read');
   const canForceResync = usePermission('agent-devices:force-resync');
-  const canRotateCert = usePermission('agent-devices:rotate');
   const canRevoke = usePermission('agent-devices:delete');
   const canDiag = usePermission('diagnostic-mode:update');
 
@@ -104,14 +101,6 @@ export function FleetDeviceDetailPage() {
   const { mutate: forceRefresh, loading: refreshing } = useMutation(
     () => devicesApi.forceRefresh(id!),
     { successMessage: t('pages:devices.forceRefreshDone') },
-  );
-
-  const { mutate: rotateCert, loading: rotatingCert } = useMutation(
-    () => devicesApi.rotateCert(id!),
-    {
-      onSuccess: () => { setRotateOpen(false); refetch(); },
-      successMessage: t('pages:fleet.rotateCertDone'),
-    },
   );
 
   const { mutate: revokeDevice, loading: revoking } = useMutation(
@@ -205,7 +194,7 @@ export function FleetDeviceDetailPage() {
                 {t('pages:devices.forceRefresh')}
               </Button>
             )}
-            {(canDiag || canRotateCert || canRevoke) && (
+            {(canDiag || canRevoke) && (
               <DropdownMenu>
                 <DropdownMenuTrigger>
                   <Button variant="primary" size="sm">{t('common:actions', 'Actions')} ▾</Button>
@@ -240,11 +229,6 @@ export function FleetDeviceDetailPage() {
                     ) : null,
                     <DropdownMenuSeparator key="sep-diag" />,
                   ]}
-                  {canRotateCert && (
-                    <DropdownMenuItem onSelect={() => setRotateOpen(true)}>
-                      {t('pages:fleet.rotateCert')}
-                    </DropdownMenuItem>
-                  )}
                   {canRevoke && (
                     <DropdownMenuItem onSelect={() => setRevokeOpen(true)} style={{ color: 'var(--color-danger)' }}>
                       {t('pages:fleet.revokeDevice')}
@@ -311,13 +295,6 @@ export function FleetDeviceDetailPage() {
           onAuditLimitChange={setAuditLimit}
         />
       )}
-
-      <RotateCertDialog
-        open={rotateOpen}
-        onOpenChange={setRotateOpen}
-        onConfirm={() => rotateCert(undefined)}
-        loading={rotatingCert}
-      />
 
       <RevokeDeviceDialog
         open={revokeOpen}

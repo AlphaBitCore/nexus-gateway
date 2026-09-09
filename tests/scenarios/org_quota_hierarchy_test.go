@@ -21,7 +21,7 @@ import (
 
 // TestS078_OrgQuotaHierarchyPropagation — PM-grade e2e.
 //
-// BRAINSTORM (pre): the cascade has three structural invariants the
+// The cascade has three structural invariants the
 // AI Gateway depends on. (1) Organization.parentId persists, and
 // CreateOrganization computes the materialized `path` column so
 // PolicyCache.Load can read the org tree. (2) A QuotaPolicy with
@@ -57,12 +57,12 @@ import (
 //     still holds when the handler drops the field entirely.
 //
 // costLimitUsd is the limit dimension because it is the only
-// enforceable one. This scenario used to send and assert "tokenLimit",
-// which exists nowhere on the path: the create/update request contract
-// has no such field (so the handler silently ignored it), QuotaPolicy
-// has no such column (so the read-back SELECT could only ever 42703),
+// enforceable one. Sending and asserting "tokenLimit" instead names a field
+// that exists nowhere on the path: the create/update request contract
+// has no such field (the handler silently ignores it), QuotaPolicy
+// has no such column (the read-back SELECT can only 42703),
 // and PolicyCache.Load selects costLimitUsd. The create's 400
-// ("costLimitUsd is required") was merely the first of the three to
+// ("costLimitUsd is required") is merely the first of the three to
 // fire.
 //  4. Cleanup deletes both policies and both orgs (LIFO order
 //     matters — child first because parent has children > 0 and

@@ -206,9 +206,10 @@ interface DimensionEditorProps {
   disabled?: boolean;
   addLabel: string;
   errorLabel: string;
+  placeholderLabel: string;
 }
 
-function DimensionEditor({ dimensions, onChange, disabled, addLabel, errorLabel }: DimensionEditorProps) {
+function DimensionEditor({ dimensions, onChange, disabled, addLabel, errorLabel, placeholderLabel }: DimensionEditorProps) {
   const [draft, setDraft] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
@@ -253,7 +254,7 @@ function DimensionEditor({ dimensions, onChange, disabled, addLabel, errorLabel 
             value={draft}
             onChange={(e) => { setDraft(e.target.value); setErr(null); }}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
-            placeholder="new dimension"
+            placeholder={placeholderLabel}
             type="number"
             className={capStyles.dimInput}
           />
@@ -331,6 +332,7 @@ export function ProviderModelCapabilitiesPanel({
             disabled={!editable}
             addLabel={t('providers.capabilities.addDimensionButton')}
             errorLabel={t('providers.capabilities.validationErrors.dimensionsRange')}
+            placeholderLabel={t('providers.capabilities.newDimensionPlaceholder')}
           />
         </div>
 

@@ -19,7 +19,7 @@ import (
 
 // TestS096_DSARLifecycle — PM-grade e2e.
 //
-// BRAINSTORM (pre): DSAR is the most regulated surface in the system.
+// DSAR is the most regulated surface in the system.
 // Two PM-grade invariants the test must catch:
 //
 //  1. Status state machine. The validDSARTransitions map only allows

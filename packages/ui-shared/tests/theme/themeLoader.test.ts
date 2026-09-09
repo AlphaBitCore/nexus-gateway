@@ -178,3 +178,46 @@ describe('applyFavicon', () => {
     expect((links[0] as HTMLLinkElement).href).toContain('/new.svg');
   });
 });
+
+// The base prefix is read from <base href>, which nginx injects when the
+// console is served under a sub-path. Its no-DOM guard had never been
+// exercised: every test here runs in jsdom, where document always exists, so
+// deleting the guard changed nothing the suite could see. It matters because
+// themeLoader is imported by ui-shared's entry point, and any consumer that
+// evaluates the module outside a browser — a Node-side render, a build-time
+// probe — would throw on `document` before reaching the fetch it was asked to
+// make.
+describe('loadTheme base prefix', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('falls back to the origin root when there is no document to read a <base> from', async () => {
+    vi.stubGlobal('document', undefined);
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'x', displayName: 'X' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await loadTheme('default');
+
+    expect(fetchMock).toHaveBeenCalledWith('/theme.json');
+  });
+
+  it('prefixes every asset path with the deployed sub-path', async () => {
+    // A single missing prefix here is a 404 for the theme, which the loader
+    // swallows — so the console silently renders the built-in default and
+    // nothing anywhere says the operator's theme was not applied.
+    const base = document.createElement('base');
+    base.setAttribute('href', '/nexus/');
+    document.head.appendChild(base);
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, false));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await loadTheme('morningstar');
+      expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+        '/nexus/theme.json',
+        '/nexus/themes/morningstar.json',
+        '/nexus/themes/default.json',
+      ]);
+    } finally {
+      base.remove();
+    }
+  });
+});

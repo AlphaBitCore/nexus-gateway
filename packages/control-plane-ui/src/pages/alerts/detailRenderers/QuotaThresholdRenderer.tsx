@@ -2,7 +2,7 @@
  * QuotaThresholdRenderer — presents a `quota.threshold` alert's evidence.
  *
  * Expected `alert.details` shape (from
- * `packages/nexus-hub/internal/jobs/quota_alert_check.go`):
+ * `packages/nexus-hub/internal/jobs/defs/quota/quota_alert_check.go`):
  *
  *   {
  *     pct:            number, // observed usage percent (e.g. 87.3)

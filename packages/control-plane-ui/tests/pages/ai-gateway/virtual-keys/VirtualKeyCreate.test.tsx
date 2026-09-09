@@ -160,10 +160,10 @@ describe('VirtualKeyCreate', () => {
  * Bulk selection in the model-access picker.
  *
  * The rule these pin: a bulk action may only touch what the admin can SEE.
- * "Select all" used to grant every model in the catalogue regardless of the
- * search box — filter to "claude", click it, and the key silently gained every
+ * A "select all" that ignores the search box grants every model in the
+ * catalogue — filter to "claude", click it, and the key silently gains every
  * OpenAI model too. That makes a key's real permissions differ from the list
- * being looked at, which is the same defect that made glob refs unacceptable,
+ * being looked at, the same defect that makes glob refs unacceptable
  * one layer up.
  */
 describe('VirtualKeyCreate — model-access bulk selection', () => {

@@ -191,8 +191,8 @@ export function getColumnsForSource(source: TrafficSourceFilter, t: (key: string
     label: t('pages:traffic.colHook'),
     render: (r: TrafficEvent) => r.requestHookDecision ?? '-',
   };
-  // Modality. EVERY row states its own, chat included. Chat rows used to render
-  // a dash "to keep the column quiet for the common case", which is the wrong
+  // Modality. EVERY row states its own, chat included. Rendering
+  // a dash for chat "to keep the column quiet for the common case" is the wrong
   // trade on an audit surface: a blank cell cannot be told apart from missing
   // data, so a reader has to already know the convention to interpret it. A dash
   // now means exactly one thing — this row carries no endpoint_type at all.

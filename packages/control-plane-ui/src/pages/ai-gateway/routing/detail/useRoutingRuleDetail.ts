@@ -168,14 +168,20 @@ export function useRoutingRuleDetail() {
 
     // The Routing preview's Model ID input mirrors what a real client would
     // send in `{model: "..."}`. The simulate API resolves that string against
-    // Model.code (a stable customer-facing identifier such as "gpt-4o"), or
-    // accepts the literal "auto" to trigger smart routing. matchConditions
-    // however stores Model.id (UUID) — using it raw here would never match.
+    // Model.code (a stable customer-facing identifier such as "gpt-4o"), or a
+    // request keyword the rules delegate on. matchConditions however stores
+    // Model.id (UUID) — using it raw here would never match.
+    const mc = parseMatchConditionsForm(rule.matchConditions);
+    // A smart rule is reached through the keywords IT pins, which are the
+    // operator's own words. Seeding the literal 'auto' was right only while
+    // that was the one keyword a smart rule could carry: for a rule pinned to
+    // ["fast","cheap"] it sends a string the rule does not match, and the
+    // preview answers that an enabled, correctly-configured rule matches
+    // nothing — on the screen opened to find out why routing is surprising.
     if (displayStrategy(rule.strategyType) === 'smart') {
-      setSimModelId('auto');
+      setSimModelId(mc.requestedModelLiterals[0] ?? 'auto');
       return;
     }
-    const mc = parseMatchConditionsForm(rule.matchConditions);
     const firstId = mc.models[0];
     if (!firstId) {
       setSimModelId('');
@@ -366,7 +372,24 @@ export function useRoutingRuleDetail() {
         modelId: simModelId.trim(),
         endpointType: simEndpointType,
       };
-      if (simModelId.trim() === 'auto') {
+      // A request that DELEGATES the model choice needs a prompt for the router
+      // to read. Testing the typed string against the literal 'auto' meant a
+      // rule pinned to any other keyword previewed with no messages, and the
+      // gateway then hands smart routing a nil payload, traces "not
+      // normalizable" and returns the rule's DEFAULT model — so the preview
+      // showed the fallback rather than the target the live gateway would pick.
+      //
+      // The predicate is "the typed string names no model in the catalogue",
+      // derived from the provider groups this page already holds. It is not the
+      // displayed rule's strategy: the preview evaluates the WHOLE rule set, so
+      // the rule that wins may not be the one on screen. And it is not
+      // unconditional, because a conditional rule's `when` clauses can read
+      // message content, and a canned prompt would decide those branches on
+      // text the operator never typed — a named model needs no prompt anyway.
+      const typed = simModelId.trim();
+      const namesACatalogModel = providerGroups.some((g) =>
+        (g.models ?? []).some((m) => m.providerModelId === typed));
+      if (typed !== '' && !namesACatalogModel) {
         body.messages = [{ role: 'user', content: 'Hello' }];
       }
       const payload = await routingApi.simulate(body);

@@ -249,3 +249,130 @@ describe('MediaCard hands over a usable file, not an encoded blob', () => {
     expect(container.querySelector('img')).toBeNull();
   });
 });
+
+// The metadata line and the remaining preview arm. None of it was reached:
+// every fixture above declares a mime and a 3–4 byte size, so the size
+// formatter only ever took its smallest branch and the mime-absent arm was
+// never rendered at all.
+describe('MediaCard metadata line', () => {
+  const withSize = (sizeBytes: number | undefined, mime?: string) =>
+    render(
+      <MediaCard
+        ref_={{ modality: 'file', mime, sizeBytes, source: 'captured', locator: 'body' } as MediaRef}
+        resolve={resolver}
+        labels={LABELS}
+      />,
+    );
+
+  it.each([
+    ['bytes below a kilobyte', 900, '900 B'],
+    ['kilobytes', 2048, '2.0 KB'],
+    ['megabytes', 3 * 1024 * 1024, '3.0 MB'],
+  ])('reports %s in a unit an operator can read', (_name, n, want) => {
+    withSize(n as number);
+    expect(screen.getByText(want as string)).toBeInTheDocument();
+  });
+
+  it('says the size is unknown rather than showing a confident zero', () => {
+    // A ref whose provider declared no length is not a zero-byte payload.
+    // "0 B" beside a working Download is a contradiction the operator has to
+    // resolve by clicking.
+    withSize(undefined);
+    expect(screen.getByText('size unknown')).toBeInTheDocument();
+    expect(screen.queryByText('0 B')).toBeNull();
+  });
+
+  it('omits the type entirely when the wire declared none', () => {
+    // An empty <span> where the mime goes reads as a type that is blank
+    // rather than a type nobody sent.
+    const { container } = withSize(900);
+    const spans = Array.from(container.querySelectorAll('span')).map((s) => s.textContent);
+    expect(spans).toEqual(['file', '900 B']);
+  });
+
+  it('shows the declared type when there is one', () => {
+    withSize(900, 'application/pdf');
+    expect(screen.getByText('application/pdf')).toBeInTheDocument();
+  });
+});
+
+describe('MediaCard preview arms and failure paths', () => {
+  it('previews captured video with a player, not a still frame', async () => {
+    // The third preview arm. image and audio were covered; video fell through
+    // to the same else-branch and nothing distinguished it, so routing video
+    // to <audio> would have gone unnoticed.
+    const mp4 = vi.fn(async () => ({
+      blob: new Blob([new Uint8Array([0, 0, 0, 1])], { type: 'video/mp4' }),
+      filename: 'clip.mp4',
+    }));
+    const { container } = render(
+      <MediaCard
+        ref_={{ modality: 'video', mime: 'video/mp4', sizeBytes: 4, source: 'captured', locator: 'body' }}
+        resolve={mp4}
+        labels={LABELS}
+      />,
+    );
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    expect(container.querySelector('audio')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('releases the previous object URL when the same card resolves a second ref', async () => {
+    // Without the revoke, a card that re-resolves holds every blob it has ever
+    // fetched for the lifetime of the page. The Agent Dashboard re-renders one
+    // card per selected event, so this is a leak per click, not per session.
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL');
+    const first = vi.fn(async () => ({
+      blob: new Blob([new Uint8Array([1])], { type: 'image/png' }),
+      filename: 'a.png',
+    }));
+    const { container, rerender } = render(
+      <MediaCard
+        ref_={{ modality: 'image', mime: 'image/png', sizeBytes: 1, source: 'captured', locator: 'body' }}
+        resolve={first}
+        labels={LABELS}
+      />,
+    );
+    const firstUrl = await waitFor(() => {
+      const img = container.querySelector('img');
+      expect(img).not.toBeNull();
+      return (img as HTMLImageElement).getAttribute('src');
+    });
+
+    revokeSpy.mockClear();
+    rerender(
+      <MediaCard
+        ref_={{ modality: 'image', mime: 'image/png', sizeBytes: 2, source: 'captured', locator: 'json:other' }}
+        resolve={first}
+        labels={LABELS}
+      />,
+    );
+    await waitFor(() => expect(revokeSpy).toHaveBeenCalledWith(firstUrl));
+    revokeSpy.mockRestore();
+  });
+
+  it('saves nothing and says so when the click itself cannot fetch the bytes', async () => {
+    // A non-previewable card resolves on click, so a resolver that throws
+    // reaches save() rather than the prefetch effect. Without the null check
+    // the handler would build an anchor pointing at undefined and "download"
+    // a file named undefined.
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+    const boom = vi.fn(async () => {
+      throw new Error('gone');
+    });
+    const { container } = render(
+      <MediaCard
+        ref_={{ modality: 'file', mime: 'application/pdf', sizeBytes: 4, source: 'captured', locator: 'body' }}
+        resolve={boom}
+        labels={LABELS}
+      />,
+    );
+    fireEvent.click(container.querySelector('button')!);
+    await waitFor(() => expect(screen.getByText('preview failed')).toBeInTheDocument());
+    expect(clickSpy).not.toHaveBeenCalled();
+    expect(container.querySelector('a[download]')).toBeNull();
+    clickSpy.mockRestore();
+  });
+});

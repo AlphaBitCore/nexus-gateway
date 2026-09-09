@@ -2,7 +2,7 @@
  * QuotaVkExpiringRenderer — presents a `quota.vk_expiring` alert's evidence.
  *
  * Expected `alert.details` shape (from
- * `packages/nexus-hub/internal/jobs/vk_expiry.go`):
+ * `packages/nexus-hub/internal/jobs/defs/expiry/vk_expiry.go`):
  *
  *   {
  *     vkId:      string,

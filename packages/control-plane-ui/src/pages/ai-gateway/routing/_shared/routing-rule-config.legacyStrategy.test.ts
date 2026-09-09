@@ -3,11 +3,11 @@ import { displayStrategy, mapLegacyStrategy } from './routing-rule-config';
 
 describe('mapLegacyStrategy', () => {
   // A strategy the gateway no longer dispatches has to be distinguishable from
-  // one it does. This used to fall back to 'single', so opening a stored
-  // `policy` rule rendered the picker as "Single" and saving ANY field — the
-  // name, the priority — persisted a single-shaped rule over the admin's
-  // configuration. The detail page meanwhile printed the stored value, so the
-  // two pages disagreed about what the rule was.
+  // one it does. Falling back to 'single' renders a stored
+  // `policy` rule as "Single" in the picker, and saving ANY field — the
+  // name, the priority — persists a single-shaped rule over the admin's
+  // configuration. The detail page meanwhile prints the stored value, so the
+  // two pages disagree about what the rule is.
   it('says it does not recognise a strategy the gateway dropped', () => {
     expect(mapLegacyStrategy('policy')).toBeNull();
     expect(mapLegacyStrategy('made-up')).toBeNull();

@@ -17,7 +17,7 @@ import (
 
 // TestS060_CacheHitOnRepeat — PM-grade e2e.
 //
-// BRAINSTORM (pre): the ai-gw response cache stores a normalised
+// The ai-gw response cache stores a normalised
 // request → response mapping. Two identical requests within TTL must
 // share the same response payload and ai-gw must signal "served from
 // cache" via either a response header or a stamp on the traffic_event
@@ -164,7 +164,7 @@ func TestS060_CacheHitOnRepeat(t *testing.T) {
 		  AND identity->'vk'->>'id' = $1
 		  AND "timestamp" > NOW() - INTERVAL '300 seconds'`
 	var disabledRows, totalRows int64
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		_ = sc.DB.QueryRow(ctx, skipQ, vk.ID).Scan(&disabledRows, &totalRows)
 		if totalRows >= 2 {
 			break

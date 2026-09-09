@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-// Spec: Cache ROI dashboard (E61) — verifies the analytics surface loads and
+// Cache ROI dashboard — verifies the analytics surface loads and
 // renders numeric stat cells. The route is `/cache-roi` (see
 // packages/control-plane-ui/src/routes/shellRouteConfig.tsx). Hero strip lives
 // in CacheROIDashboard.tsx; values come from analyticsApi.cacheROI().
@@ -12,8 +12,8 @@ import { test, expect } from '@playwright/test';
 test('cache ROI dashboard loads', async ({ page }) => {
   const resp = await page.goto('/cache-roi');
 
-  // Skip if the route is not registered (feature flagged off, or older
-  // build without E61).
+  // Skip if the route is not registered (feature flagged off, or a build
+  // predating the dashboard).
   if (resp && resp.status() === 404) {
     test.skip(true, 'cache ROI not available');
     return;

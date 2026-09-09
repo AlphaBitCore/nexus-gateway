@@ -1,11 +1,11 @@
-// FreshMark family (S-081) — verifies the E61-S1 time-sensitive
-// freshness gate skips both cache tiers when an admin-configured pattern
+// FreshMark family (S-081) — verifies the time-sensitive freshness gate
+// skips both cache tiers when an admin-configured pattern
 // matches the request prompt.
 //
-// BRAINSTORM (pre): the AI Gateway's response cache has two tiers
+// The AI Gateway's response cache has two tiers
 // (L1 extract / L2 semantic). For queries whose answer must be fresh
 // (stock prices, weather, "now/today" intent), serving a cached reply
-// would leak stale content. E61-S1 introduces a fleet-wide rule list
+// would leak stale content. A fleet-wide rule list
 // — `semantic_cache_config.time_sensitive_overrides` JSONB — managed via
 // `/api/admin/cache/time-sensitive-patterns`. Each rule carries a
 // keyword list (case-insensitive substring match), optional
@@ -32,15 +32,15 @@
 //     accidentally match any seeded rule. Register a DELETE cleanup that
 //     runs regardless of test outcome.
 //  3. Verify the rule fires end-to-end:
-//      (a) dry-run POST `/test` with a prompt containing the marker →
-//          assert `decision == "match"` and `matchedRuleId == <our id>`.
-//      (b) live POST `/v1/chat/completions` with the same marker →
-//          assert 200, then poll `traffic_event` until a row with
-//          `gateway_cache_skip_reason = 'time_sensitive'` shows up for
-//          our VK.
+//     (a) dry-run POST `/test` with a prompt containing the marker →
+//     assert `decision == "match"` and `matchedRuleId == <our id>`.
+//     (b) live POST `/v1/chat/completions` with the same marker →
+//     assert 200, then poll `traffic_event` until a row with
+//     `gateway_cache_skip_reason = 'time_sensitive'` shows up for
+//     our VK.
 //
-// Skip-graceful: if the freshness-rules endpoint 404s (E61-S6 T5e not
-// deployed at this target) we `t.Skipf` rather than fail.
+// Skip-graceful: if the freshness-rules endpoint 404s (not deployed at
+// this target) we `t.Skipf` rather than fail.
 package scenarios_test
 
 import (
@@ -54,8 +54,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/tests/scenarios/helpers"
 )
 
-// TestS081_FreshnessRuleSkipsCache — PM-grade e2e for the E61-S1
-// fleet-wide time-sensitive freshness gate.
+// TestS081_FreshnessRuleSkipsCache — PM-grade e2e for the fleet-wide
+// time-sensitive freshness gate.
 func TestS081_FreshnessRuleSkipsCache(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -360,7 +360,7 @@ func TestS081_FreshnessRuleSkipsCache(t *testing.T) {
 		// (and Arm 3a confirmed the rule matches via /test). If the
 		// live path still didn't stamp the skip column, the breakage is
 		// in classifyCachePreLookup → freshness.Detector → Hub-shadow
-		// propagation — a real regression in the E61-S1 live path, not
+		// propagation — a real regression in the live path, not
 		// an env precondition. Fail hard so the maintainer can chase
 		// the actual break.
 		gotCacheStatus := "<nil>"

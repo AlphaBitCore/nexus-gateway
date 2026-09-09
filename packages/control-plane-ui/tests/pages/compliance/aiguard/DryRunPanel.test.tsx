@@ -1,5 +1,5 @@
 /**
- * DryRunPanel (P-B Task 27) — fires `aiGuardApi.dryRun` and surfaces the
+ * DryRunPanel — fires `aiGuardApi.dryRun` and surfaces the
  * decision + latency + cache-hit metadata.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

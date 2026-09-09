@@ -5,8 +5,7 @@
  * `alert.details` payload in a human-readable form within
  * `AlertDetailDrawer`. Each renderer is bound to a rule ID by the registry in
  * `./index.ts`. Rules without a bespoke renderer fall through to
- * `GenericRenderer`, which pretty-prints the raw JSON — the same shape the
- * drawer used to render before the registry landed.
+ * `GenericRenderer`, which pretty-prints the raw JSON.
  *
  * Renderers pull fields out of `alert.details` (typed as
  * `Record<string, unknown>` on the wire) with runtime narrowing

@@ -16,20 +16,20 @@ import (
 
 // TestS045_QuotaAnalyticsContract — PM-grade e2e.
 //
-// BRAINSTORM (pre): three invariants the page depends on:
+// Three invariants the page depends on:
 //
-//   1. Scope enum gate. overview/top accept scope ∈ {user, vk,
-//      virtual_key, project, organization}; an unknown scope must
-//      return 400 (not silently default and return wrong-axis data,
-//      which is a worse failure mode — operators looking at "by
-//      user" would see "by org" with no UI signal).
-//   2. Trend's required-param gate: missing targetType+targetId
-//      returns 400 (don't aggregate an unbounded fleet by accident).
-//   3. Periods cap: trend's `periods` query is clamped to [1, 24];
-//      an out-of-range value must not crash the handler.
-//   4. Envelope: each endpoint returns JSON with the documented
-//      top-level shape; no 5xx on a valid request even when the
-//      backing rollup is empty.
+//  1. Scope enum gate. overview/top accept scope ∈ {user, vk,
+//     virtual_key, project, organization}; an unknown scope must
+//     return 400 (not silently default and return wrong-axis data,
+//     which is a worse failure mode — operators looking at "by
+//     user" would see "by org" with no UI signal).
+//  2. Trend's required-param gate: missing targetType+targetId
+//     returns 400 (don't aggregate an unbounded fleet by accident).
+//  3. Periods cap: trend's `periods` query is clamped to [1, 24];
+//     an out-of-range value must not crash the handler.
+//  4. Envelope: each endpoint returns JSON with the documented
+//     top-level shape; no 5xx on a valid request even when the
+//     backing rollup is empty.
 //
 // Cross-service: CP-only DB read. PM-grade because a regression in
 // the scope validator would silently mis-attribute quota dollars

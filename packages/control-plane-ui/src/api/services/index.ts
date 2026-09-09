@@ -163,8 +163,6 @@ export { proxyApi } from './infrastructure/misc/proxy';
 
 export { devicesApi } from './devices/devices';
 
-export { agentEventsApi } from './system/agent-events';
-export type { AgentEventExportResponse, AgentEventListRow } from './system/agent-events';
 
 export { fleetAnalyticsApi } from './overview/fleet-analytics';
 export type {

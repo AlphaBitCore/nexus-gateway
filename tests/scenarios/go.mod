@@ -2,14 +2,14 @@
 // for the API-endpoint → scenario coverage map, and
 // docs/_archive/2026-q2/programs/test-scenarios-program-plan.md for the program plan.
 //
-// Kept as a standalone module (not in go.work) for the same reasons as
-// tests/integration-go/: a broken scenario must not break repo-wide
+// Kept as a standalone module, outside go.work: a broken scenario must not
+// break repo-wide
 // `go build`, and the test module pins its own pgx/SDK versions
 // independent of the production services. Sibling helpers from
 // integration-go/ are pulled in via a workspace-sibling replace.
 module github.com/AlphaBitCore/nexus-gateway/tests/scenarios
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/AlphaBitCore/nexus-gateway/tests/integration-go v0.0.0
@@ -17,12 +17,16 @@ require (
 )
 
 require (
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )
 
 replace github.com/AlphaBitCore/nexus-gateway/tests/integration-go => ../integration-go
+
+require github.com/AlphaBitCore/nexus-gateway/packages/httpclient v0.0.0
+
+replace github.com/AlphaBitCore/nexus-gateway/packages/httpclient => ../../packages/httpclient

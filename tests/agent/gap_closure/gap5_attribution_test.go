@@ -2,8 +2,6 @@
 
 package gap_closure_test
 
-// gap5_attribution_test.go — E74-S7 T7.6
-//
 // TestGap5HelperProcessAttribution verifies FR-7.5: flows from Chrome helper
 // processes (Google Chrome Helper, Google Chrome Helper (Renderer), etc.) are
 // attributed to the parent bundle com.google.Chrome rather than the helper
@@ -19,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +99,7 @@ func TestGap5HelperProcessAttribution(t *testing.T) {
 	for time.Now().Before(dbDeadline) {
 		r1 := countTrafficEventsByHostSince(t, pool, "%openai.com%", testStart)
 		r2 := countTrafficEventsByHostSince(t, pool, "%chatgpt.com%", testStart)
-		rows = append(r1, r2...)
+		rows = slices.Concat(r1, r2)
 		if len(rows) >= wantRows {
 			break
 		}

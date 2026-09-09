@@ -51,16 +51,22 @@ interface LatencyMiniProps {
 // hex-literal source). Reads through getPhaseColors(resolvedMode) so the
 // palette flips with the active theme/mode.
 
-/** Short human description per phase — surfaced in the hover popup so
- *  operators see WHAT each segment is, not just the number. Technical
- *  jargon ("TTFB", "hooks") stays in English per the project i18n
- *  policy; the descriptions read at the same English-jargon register. */
-const PHASE_DESCRIPTIONS = {
-  reqHooks: 'Request-side compliance / rule-pack stages, summed.',
-  our: 'Nexus internal: auth, routing, caching, transform — the only column you can directly optimise.',
-  upstreamTtfb: 'Time waiting for the first byte to come back from the upstream provider.',
-  upstreamBody: 'Time receiving the streaming body bytes (TTFB → close).',
-  respHooks: 'Response-side compliance / signal-extraction stages, summed.',
+/** i18n key per phase for the label and the short description surfaced in
+ *  the hover popup, so operators see WHAT each segment is, not just the
+ *  number.
+ *
+ *  These were English literals, behind a comment claiming technical jargon
+ *  "stays in English per the project i18n policy". No such policy exists:
+ *  conventions.md states, binding, that every user-visible string goes
+ *  through t(). Whether zh keeps "TTFB" untranslated is a decision for the
+ *  zh bundle, which is where a translator can make it — not one a literal
+ *  here can make on every locale's behalf. */
+const PHASE_KEYS = {
+  reqHooks: 'reqHooks',
+  our: 'our',
+  upstreamTtfb: 'upstreamTtfb',
+  upstreamBody: 'upstreamBody',
+  respHooks: 'respHooks',
 } as const;
 
 interface ResolvedSegments {
@@ -209,8 +215,8 @@ interface PopupPosition {
 /** Hover popup body — renders the same phase rows as LatencyWaterfall's
  *  legend, plus a one-line description per row. Rendered through a
  *  React portal so it escapes any `overflow: hidden` / `overflow: auto`
- *  parent (DataTable rows, Card containers, etc. used to clip the
- *  previous absolute-positioned version when the trigger was near the
+ *  parent (DataTable rows and Card containers clip an
+ *  absolute-positioned version when the trigger is near the
  *  table top edge). Position is computed from the trigger's
  *  getBoundingClientRect with viewport-edge clamping + a flip to below
  *  when there's not enough space above. */
@@ -223,11 +229,11 @@ function HoverPopup({ segs, p, position }: { segs: ResolvedSegments; p: LatencyM
   const phase = getPhaseColors(resolvedMode);
 
   const rows: Array<{ key: keyof typeof phase; ms: number; label: string; desc: string; present: boolean }> = [
-    { key: 'reqHooks', ms: segs.reqHooks, label: 'Request Hooks', desc: PHASE_DESCRIPTIONS.reqHooks, present: p.requestHooksMs != null },
-    { key: 'our', ms: segs.our, label: 'Our Overhead', desc: PHASE_DESCRIPTIONS.our, present: true },
-    { key: 'ttfb', ms: segs.upTtfb, label: 'Upstream TTFB', desc: PHASE_DESCRIPTIONS.upstreamTtfb, present: p.upstreamTtfbMs != null },
-    { key: 'body', ms: segs.upBody, label: 'Upstream Body', desc: PHASE_DESCRIPTIONS.upstreamBody, present: p.upstreamTotalMs != null },
-    { key: 'respHooks', ms: segs.respHooks, label: 'Response Hooks', desc: PHASE_DESCRIPTIONS.respHooks, present: p.responseHooksMs != null },
+    { key: 'reqHooks', ms: segs.reqHooks, label: t(`common:charts.phase.${PHASE_KEYS.reqHooks}.label`), desc: t(`common:charts.phase.${PHASE_KEYS.reqHooks}.desc`), present: p.requestHooksMs != null },
+    { key: 'our', ms: segs.our, label: t(`common:charts.phase.${PHASE_KEYS.our}.label`), desc: t(`common:charts.phase.${PHASE_KEYS.our}.desc`), present: true },
+    { key: 'ttfb', ms: segs.upTtfb, label: t(`common:charts.phase.${PHASE_KEYS.upstreamTtfb}.label`), desc: t(`common:charts.phase.${PHASE_KEYS.upstreamTtfb}.desc`), present: p.upstreamTtfbMs != null },
+    { key: 'body', ms: segs.upBody, label: t(`common:charts.phase.${PHASE_KEYS.upstreamBody}.label`), desc: t(`common:charts.phase.${PHASE_KEYS.upstreamBody}.desc`), present: p.upstreamTotalMs != null },
+    { key: 'respHooks', ms: segs.respHooks, label: t(`common:charts.phase.${PHASE_KEYS.respHooks}.label`), desc: t(`common:charts.phase.${PHASE_KEYS.respHooks}.desc`), present: p.responseHooksMs != null },
   ];
   // Total summary at the top of the popup so the user can read it as
   // "total breakdown" rather than 5 disconnected numbers.
@@ -277,7 +283,7 @@ function HoverPopup({ segs, p, position }: { segs: ResolvedSegments; p: LatencyM
                   border: '1px solid var(--color-border-light)',
                   color: 'var(--color-text-muted)',
                 }}>
-                  no data
+                  {t('common:noData')}
                 </span>
               )}
             </span>

@@ -10,7 +10,7 @@ import { EMPTY_LIVE_TRAFFIC_FILTERS, type LiveTrafficFiltersState } from './live
  * merges its own `source` prop into the query).
  */
 export function correlationPivotPatch(
-  field: 'requestId' | 'endUserId' | 'sessionId',
+  field: 'requestId' | 'traceId' | 'endUserId' | 'sessionId',
   value: string,
 ): LiveTrafficFiltersState {
   // Fresh complianceTags array so the shared EMPTY constant's reference

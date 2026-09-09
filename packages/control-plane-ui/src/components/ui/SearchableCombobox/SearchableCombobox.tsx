@@ -236,8 +236,8 @@ export function SearchableCombobox({
           ) : options.length === 0 ? (
             <div className={styles.statusMessage} aria-live="polite">
               {allowEmptyQueryFetch || query.trim()
-                ? 'No matches'
-                : 'Type to search'}
+                ? t('common:noResults')
+                : t('common:comboboxTypeToSearch')}
             </div>
           ) : (
             options.map((opt, idx) => (

@@ -1,7 +1,7 @@
 //go:build mintvk
 
 // mint-test-vk — one-shot CLI that logs into the local CP with
-// admin@nexus.ai/admin123 via OAuth+PKCE, creates a permanent virtual
+// admin@nexus.ai/nexus-demo via OAuth+PKCE, creates a permanent virtual
 // key under "test-vk-readiness-<unix>", and prints the raw key to
 // stdout. Used by the readiness sign-off flow to refresh
 // tests/.env.local's NEXUS_TEST_VK after schema/seed changes.

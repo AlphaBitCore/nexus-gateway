@@ -38,9 +38,9 @@ describe('mapLegacyStrategy', () => {
   });
 
   // A name the gateway cannot dispatch resolves to NOTHING, and that is the
-  // whole point of the null. 'policy' used to map to 'single': opening such a
-  // rule in the editor rewrote it to a different strategy, and saving
-  // destroyed the config the admin had written. The editor now refuses to
+  // whole point of the null. Mapping 'policy' to 'single' rewrites such a
+  // rule to a different strategy on open, and saving
+  // destroys the config the admin wrote. The editor refuses to
   // load it and says so.
   it('resolves a strategy the gateway cannot dispatch to null, not to single', () => {
     expect(mapLegacyStrategy('policy')).toBeNull();

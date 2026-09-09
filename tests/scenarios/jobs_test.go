@@ -13,7 +13,7 @@ import (
 
 // TestS142_TriggerJobRun — PM-grade e2e.
 //
-// BRAINSTORM (pre): the Hub scheduler runs ~36 jobs on cron-style
+// The Hub scheduler runs ~36 jobs on cron-style
 // intervals; admins can force a run via POST /api/admin/jobs/:id/trigger.
 // We pick "audit-chain-verify" because it's lightweight (validates
 // audit-log integrity hashes; reads only, no upstream calls). The
@@ -26,10 +26,10 @@ import (
 // ResourceNode for hub-proxy verbs).
 //
 // Assertions:
-//   1. Trigger POST returns 2xx with a structured body.
-//   2. A fresh job_run row appears for jobId=audit-chain-verify
-//      within 15 s.
-//   3. AdminAuditLog records the trigger.
+//  1. Trigger POST returns 2xx with a structured body.
+//  2. A fresh job_run row appears for jobId=audit-chain-verify
+//     within 15 s.
+//  3. AdminAuditLog records the trigger.
 func TestS142_TriggerJobRun(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()

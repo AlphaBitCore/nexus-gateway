@@ -91,7 +91,7 @@ func TestS150_CostStampedAcrossIngress(t *testing.T) {
 	}
 
 	for _, a := range arms {
-		a := a
+
 		t.Run(a.name, func(t *testing.T) {
 			status, respBody, err := intg.AIGwPostJSON(&envForCall, client, a.path, a.body)
 			if err != nil {
@@ -124,7 +124,7 @@ func TestS150_CostStampedAcrossIngress(t *testing.T) {
 			const interval = 2 * time.Second
 			var estCost, embCost *float64
 			found := false
-			for i := 0; i < tries; i++ {
+			for range tries {
 				if scanErr := sc.DB.QueryRow(ctx, query, vk.ID, a.path).Scan(&estCost, &embCost); scanErr == nil {
 					found = true
 					break

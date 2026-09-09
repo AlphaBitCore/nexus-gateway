@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""C-32 regression: the normalize chokepoint, proved on all four public ingresses.
+"""Normalize-chokepoint regression, proved on all four public ingresses.
 
-C-32 swept ~30 goccy decode sites in shared/transport/normalize/codecs/** behind one
+Roughly 30 goccy decode sites in shared/transport/normalize/codecs/** sit behind one
 convergence point. The claim that needs a standing guard is not "normalization runs"
 but "**every** ingress wire shape converges on it and comes out canonical" — a codec
 that silently stopped extracting text for one ingress would leave the other three
@@ -212,7 +212,7 @@ def main() -> int:
     load_env()
     if not os.environ.get("NEXUS_TEST_VK"):
         sys.exit("NEXUS_TEST_VK not in tests/.env.local")
-    print(f"C-32 normalize chokepoint — gateway={GW}, model={MODEL}, "
+    print(f"normalize chokepoint — gateway={GW}, model={MODEL}, "
           f"{len(INGRESSES)} ingresses\n")
     specs: dict[str, str] = {}
     for name, path_of, body_of in INGRESSES:

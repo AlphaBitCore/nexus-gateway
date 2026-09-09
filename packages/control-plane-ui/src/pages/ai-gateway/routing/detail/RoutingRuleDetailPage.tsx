@@ -21,6 +21,7 @@ export function RoutingRuleDetailPage() {
     deleteRule,
     simModelId, setSimModelId, simEndpointType, setSimEndpointType,
     simLoading, simData, runSimulation,
+    matchRequestedModelLiterals,
   } = detail;
 
   if (loading) return <Skeleton.DetailPageSkeleton />;
@@ -73,6 +74,7 @@ export function RoutingRuleDetailPage() {
                   onChange={setSimModelId}
                   ariaLabel={t('pages:routing.simModelIdLabel')}
                   placeholder={t('pages:routing.simModelIdPlaceholder')}
+                  keywords={matchRequestedModelLiterals}
                 />
                 <Button
                   className={styles.simInlineButton}

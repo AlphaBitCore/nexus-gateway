@@ -116,9 +116,9 @@ describe('traffic Modality column', () => {
 
 // The Cost column recomputes from tokens × the price snapshot so it tracks
 // current catalog prices. Modality rows (image / tts / rerank) carry no
-// prompt/completion tokens, so that recompute is 0 and the cell used to show a
-// dash even though the gateway stamped a real per-unit cost. It now falls back
-// to estimated_cost_usd for exactly those rows.
+// prompt/completion tokens, so that recompute is 0. The cell falls back to
+// estimated_cost_usd for exactly those rows, rather than showing a dash while
+// the gateway stamped a real per-unit cost.
 function renderCost(row: Partial<TrafficEvent>): string {
   const col = getColumnsForSource('vk', t).find((c: any) => c.key === 'upstreamCostUsd');
   if (!col) throw new Error('the vk traffic table has no cost column');

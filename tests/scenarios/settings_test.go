@@ -16,7 +16,7 @@ import (
 
 // TestS130_SIEMTestEndpoint — PM-grade e2e.
 //
-// BRAINSTORM (pre): the SIEM integration test admin button
+// The SIEM integration test admin button
 // (POST /api/admin/settings/siem/test) POSTs a synthetic event to
 // the configured SIEM URL and returns {ok, error, statusCode, …}.
 // The endpoint normalises every outcome (reachable → 200 with
@@ -30,11 +30,11 @@ import (
 // system_metadata row "siem.config" persists the config.
 //
 // Assertions:
-//   1. PUT settings/siem persists the config.
-//   2. POST settings/siem/test returns 200 with {ok:false, error:...}
-//      (envelope contract: never crashes regardless of upstream).
-//   3. Cleanup restores the original config so parallel sessions
-//      don't see a flipped switch.
+//  1. PUT settings/siem persists the config.
+//  2. POST settings/siem/test returns 200 with {ok:false, error:...}
+//     (envelope contract: never crashes regardless of upstream).
+//  3. Cleanup restores the original config so parallel sessions
+//     don't see a flipped switch.
 func TestS130_SIEMTestEndpoint(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
