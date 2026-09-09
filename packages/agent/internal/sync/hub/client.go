@@ -16,7 +16,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,12 +23,14 @@ import (
 	"os"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/clienttls"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/catrust"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // maxResponseBytes is the per-response cap applied when the client decodes
@@ -103,11 +104,14 @@ type Config struct {
 // bytes_out / policy_rule_id / source_user) ride inside `details` —
 // they aren't first-class columns on traffic_event.
 type AuditEvent struct {
-	ID      string `json:"id"`
+	ID string `json:"id"`
+	// The intercepted client's own W3C trace id, empty when they sent no
+	// traceparent — which is most traffic.
 	TraceID string `json:"traceId,omitempty"`
-	// The caller's own x-request-id, carried through unchanged so an external
-	// system can join agent rows to its own logs the way it already can for
-	// gateway rows. Distinct from TraceID, which is ours.
+	// The request id, carried through unchanged so an external system can join
+	// agent rows to its own logs the way it already can for gateway rows, and
+	// so the several services on one request's path share a key. Distinct from
+	// TraceID, which belongs to the client's own tracing system.
 	ExternalRequestID string    `json:"externalRequestId,omitempty"`
 	Timestamp         time.Time `json:"timestamp"`
 	SourceIP          string    `json:"sourceIp,omitempty"`

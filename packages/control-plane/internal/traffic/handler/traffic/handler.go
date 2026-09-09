@@ -162,11 +162,20 @@ func (h *Handler) queryMetricsOrFallback(ctx context.Context, q metricspkg.Metri
 	} else {
 		rows, err = h.metrics.QueryRollupCascade(ctx, q)
 	}
-	if err == nil && len(rows) > 0 {
-		gran := metricspkg.SelectGranularity(q.StartTime, q.EndTime)
-		return metricspkg.BuildResult(q, rows, gran), nil
+	// A read ERROR and a genuinely-empty window are different answers, and
+	// returning (nil, nil) for both made them indistinguishable: every caller
+	// then answered HTTP 200 with an empty payload, so a broken read leg
+	// rendered as "no traffic" on the dashboard. There is no raw-query
+	// fallback behind these helpers despite the tryRollup* naming — the
+	// handler's next line is the zero-value response.
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	gran := metricspkg.SelectGranularity(q.StartTime, q.EndTime)
+	return metricspkg.BuildResult(q, rows, gran), nil
 }
 
 // strPtr returns a pointer to s. Tiny helper local copy.

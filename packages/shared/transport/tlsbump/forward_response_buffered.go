@@ -68,13 +68,12 @@ func (x *bumpedExchange) runBufferedResponseArm(
 		// long chat streams. Decided AFTER the read, on the bytes themselves, and
 		// raised on its own line only when true.
 		//
-		// It used to ride as one attribute among seven on a line that fired for
-		// every non-SSE response, computed from a chunked/no-Content-Length
-		// heuristic that is true for ordinary JSON responses. So the flag was
-		// always set and the line was always written: the condition worth alerting
-		// on was indistinguishable from the routine case, and the diagnostic
-		// carried no information at all. Surfacing it as its own signal is what
-		// made that visible — it fired on 4 of 4 ordinary completions.
+		// As one attribute among seven on a line that fires for every non-SSE
+		// response, computed from a chunked/no-Content-Length heuristic that is
+		// true for ordinary JSON responses, the flag is always set and the line is
+		// always written: the condition worth alerting on becomes indistinguishable
+		// from the routine case and the diagnostic carries no information at all.
+		// Measured that way it fired on 4 of 4 ordinary completions.
 		if bodyLooksLikeEventStream(decompressedBody) {
 			logger.Warn("buffered a response that is an event stream — the client saw nothing "+
 				"until the upstream finished; its Content-Type is not recognised by "+
@@ -97,7 +96,7 @@ func (x *bumpedExchange) runBufferedResponseArm(
 			// when no tier claims, the adapter's ExtractResponse
 			// → Segments chain recovers hookable text.
 			//
-			// Gated on a bound pipeline (finding C-18): respContent's only
+			// Gated on a bound pipeline: respContent's only
 			// consumer is respInput.Normalized below, and the audit row does not
 			// carry it — the emitter reads AuditInfo.ResponseNormalized, which
 			// the bumped path never stamps. With no response hooks the entire
@@ -143,9 +142,9 @@ func (x *bumpedExchange) runBufferedResponseArm(
 			captureBody := decompressedBody
 			// EmitDual: the response pipeline's decision belongs in the
 			// RESPONSE-stage columns; the request-stage result rides
-			// alongside. The single-stage Emit previously used here put a
+			// alongside. A single-stage Emit here puts a
 			// response-hook reject into the request column, so the Traffic
-			// page misattributed which stage blocked.
+			// page misattributes which stage blocked.
 			bo.auditEmitter.EmitDual(audCtx.input, audCtx.info, audCtx.requestPipelineResult, respResult, "BUMP_SUCCESS", resp.StatusCode, int(time.Since(x.requestStart).Milliseconds()), audCtx.requestBodyBytes(), captureBodyIfEnabled(audCtx.storeResponseBody, captureBody), usage)
 		}
 

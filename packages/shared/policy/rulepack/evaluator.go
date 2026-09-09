@@ -33,7 +33,7 @@ func Evaluate(pack Pack, rules []Rule, blocks []core.ContentBlock) []Match {
 // a rulepack learns that a pattern is broken instead of seeing it silently
 // "never match". A rule whose pattern fails to compile contributes a RuleError
 // (carrying its index, ruleId, and the compiler message) and is skipped for
-// matching — exactly the failure the dry-run API previously swallowed.
+// matching.
 //
 // compileErrs is nil (not an empty slice) when every rule compiled, so callers
 // can branch on `len(compileErrs) > 0` or `compileErrs == nil` interchangeably.

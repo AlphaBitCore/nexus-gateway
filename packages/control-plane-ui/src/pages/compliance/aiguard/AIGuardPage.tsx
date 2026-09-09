@@ -7,7 +7,7 @@
  * external-URL mode is selected because credentials + request bodies then
  * leave the platform.
  *
- * The dry-run probe lives in `DryRunPanel` (P-B Task 27) and is mounted
+ * The dry-run probe lives in `DryRunPanel` and is mounted
  * below the form.
  */
 import { useState, useEffect, type ChangeEvent } from 'react';
@@ -42,8 +42,7 @@ import styles from './AIGuardPage.module.css';
 
 const EMPTY_PROVIDER_GROUPS: AdminModelsByProvider[] = [];
 
-// Keep in sync with tools/db-migrate/seed/seed-aiguard.ts and
-// packages/ai-gateway/internal/aiguard/prompt.go DEFAULT_PROMPT.
+// Keep in sync with packages/ai-gateway/internal/policy/aiguard/prompt.go.
 const DEFAULT_PROMPT_TEMPLATE = `You are a security classifier for enterprise AI traffic. Analyze the
 provided CONTENT for the detector type {{.DetectorType}}. Return ONLY
 valid JSON matching this schema:

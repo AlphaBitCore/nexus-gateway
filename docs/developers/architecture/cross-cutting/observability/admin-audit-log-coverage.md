@@ -65,7 +65,7 @@ Schema in `tools/db-migrate/schema/admin.prisma`:
 | `entityId` | string? | nullable for actions that do not target a single row (e.g. `hook` bulk reorder) |
 | `beforeState` | Json? | |
 | `afterState` | Json? | |
-| `nexusRequestId` | string? | matches access logs / `x-nexus-request-id` response header |
+| `nexusRequestId` | string? | the request id — matches access logs and the `X-Nexus-Request-Id` response header |
 | `via` | string? | request channel — `"assistant"` for an AI-initiated write by the web assistant, NULL for a direct human/UI action. Hashed (omitempty) so the marker is tamper-evident; see §"AI-attribution marker (`via`)" below |
 | `previousHash` | string? | NULL only on the genesis row |
 | `integrityHash` | string | NOT NULL — SHA-256 over the canonical hashInput |

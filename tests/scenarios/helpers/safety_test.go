@@ -42,10 +42,10 @@ func TestGuardProdSafeE2E(t *testing.T) {
 	allowed := []struct{ method, path string }{
 		{"GET", "/api/admin/settings/streaming-compliance"}, // read of a shared surface is fine
 		{"HEAD", "/api/admin/nodes/abc"},
-		{"POST", "/api/admin/providers"},                 // own-object create
-		{"DELETE", "/api/admin/providers/my-test-id"},    // own-object delete
-		{"POST", "/api/admin/routing-rules"},             // own-object create
-		{"POST", "/api/my/virtual-keys"},                 // own-object create
+		{"POST", "/api/admin/providers"},              // own-object create
+		{"DELETE", "/api/admin/providers/my-test-id"}, // own-object delete
+		{"POST", "/api/admin/routing-rules"},          // own-object create
+		{"POST", "/api/my/virtual-keys"},              // own-object create
 	}
 	for _, c := range allowed {
 		if err := GuardProdSafeE2E(c.method, c.path); err != nil {

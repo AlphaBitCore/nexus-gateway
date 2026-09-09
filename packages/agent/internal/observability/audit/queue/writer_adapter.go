@@ -17,23 +17,23 @@ import (
 // shared/audit.Writer contract. Writes are non-blocking on the inspect
 // hot path: Enqueue does an O(ns) channel push, and a background flush
 // loop batches every 100 events (or every 100 ms, whichever fires
-// first) into a single SQLite transaction. Pre-async the writer ran
-// queue.Record inline — a ~1 ms WAL fsync per row, serialized by the
-// SQLite write lock under a burst of N concurrent inspect flows. That
-// added N ms of tail latency to user-visible page loads.
+// first) into a single SQLite transaction. Calling queue.Record inline instead
+// costs a ~1 ms WAL fsync per row, serialized by the SQLite write lock under a
+// burst of N concurrent inspect flows — N ms of tail latency on user-visible
+// page loads.
 //
 // Overflow: the channel is bounded (default 4096) and a full channel runs the CONFIGURED
-// overflow policy — see writer_overflow.go and shared/audit/lossmode. This comment previously
-// said Enqueue "drops the event with a WARN log", and that was true when dropping was the only
-// thing it could do; it is now one of four selectable modes, and the shipped default (spill)
-// writes the row durably off the caller's goroutine instead. Drops and durable overflow writes
-// are counted separately — Drops() and OverflowWrites() — because "under pressure but losing
-// nothing" and "discarding records" are very different situations for an operator to see.
+// overflow policy — see writer_overflow.go and shared/audit/lossmode. Dropping with a WARN
+// log is one of four selectable modes, not the only thing Enqueue can do; the shipped
+// default (spill) writes the row durably off the caller's goroutine instead. Drops and
+// durable overflow writes are counted separately — Drops() and OverflowWrites() — because
+// "under pressure but losing nothing" and "discarding records" are very different
+// situations for an operator to see.
 //
 // Crash safety: events sitting in the channel at hard-crash time are
 // lost (the durability boundary is sqlite, not the channel). Close() flushes pending events
-// synchronously so graceful shutdown does not drop. Whether overflow is allowed to lose records
-// is now a configuration question rather than a property of this type.
+// synchronously so graceful shutdown does not drop. Whether overflow is allowed to lose
+// records is a configuration question rather than a property of this type.
 type QueueWriter struct {
 	queue *Queue
 	ch    chan event.Event
@@ -130,8 +130,8 @@ func (w *QueueWriter) Enqueue(e sharedaudit.AuditEvent) {
 		// queued for the background flush loop — returns immediately
 	default:
 		// Channel full: run the configured overflow policy rather than always dropping.
-		// See writer_overflow.go — this branch used to BE lossmode.Drop with no way to
-		// select anything else.
+		// See writer_overflow.go — lossmode.Drop is one selectable policy here, not
+		// what this branch is.
 		w.handleOverflow(row)
 	}
 }

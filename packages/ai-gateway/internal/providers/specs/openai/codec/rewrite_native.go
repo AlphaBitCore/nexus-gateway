@@ -225,7 +225,7 @@ func (c *identityCodec) mapDoorGated(body []byte, target provcore.CallTarget, ru
 		}
 	}
 	if stream {
-		ensureStreamUsage(payload)
+		rewrites = append(rewrites, ensureStreamUsage(payload)...)
 	}
 	out, err := json.Marshal(payload)
 	if err != nil {
@@ -238,21 +238,42 @@ func (c *identityCodec) mapDoorGated(body []byte, target provcore.CallTarget, ru
 // streaming out-of-band and their canonical bodies may omit it — adding
 // stream_options without stream enabled is an upstream 400) and
 // stream_options.include_usage when the caller has not already set it.
-func ensureStreamUsage(payload map[string]any) {
+//
+// It returns what it set. include_usage is not an internal detail: it makes the
+// upstream emit an extra terminal chunk that reaches the caller's stream, so a
+// caller who did not ask for it sees a frame they did not send for. Every other
+// field this codec fills on the caller's behalf is reported through the coercion
+// ledger and out to the response header; these two were the exception, which
+// made the ledger read as exhaustive while it was not.
+func ensureStreamUsage(payload map[string]any) []string {
+	var coerced []string
 	if _, ok := payload["stream"]; !ok {
+		// Deliberately NOT recorded. This fires only for a cross-format ingress
+		// whose canonical body carries the streaming intent out of band: the
+		// caller did ask to stream, and this writes that same intent in the
+		// spelling this wire uses. Reporting it would put a coercion header on
+		// nearly every streaming request while telling the caller nothing they
+		// did not already decide.
 		payload["stream"] = true
 	}
 	// A present-but-non-object stream_options is replaced wholesale: the
 	// upstream would reject it anyway, and usage extraction needs the
-	// include_usage flag to survive.
-	opts, _ := payload["stream_options"].(map[string]any)
-	if opts == nil {
+	// include_usage flag to survive. Replacing it DISCARDS what the caller
+	// sent, so that case is recorded separately from "there was nothing here".
+	raw, hadKey := payload["stream_options"]
+	opts, isObject := raw.(map[string]any)
+	if !isObject {
 		opts = map[string]any{}
 		payload["stream_options"] = opts
+		if hadKey {
+			coerced = append(coerced, "stream_options→replaced_non_object")
+		}
 	}
 	if _, ok := opts["include_usage"]; !ok {
 		opts["include_usage"] = true
+		coerced = append(coerced, "stream_options.include_usage→true_for_usage_capture")
 	}
+	return coerced
 }
 
 // encodeResponsesNative is the one body behind both doors of the

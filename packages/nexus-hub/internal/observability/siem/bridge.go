@@ -368,7 +368,7 @@ func (b *Bridge) queryEvents(ctx context.Context, cursor bridgeCheckpoint, batch
 		       response_hook_decision, response_hook_reason, response_hook_reason_code,
 		       compliance_tags,
 		       details,
-		       trace_id
+		       external_request_id, trace_id, end_user_id, session_id
 		FROM traffic_event
 		WHERE (timestamp > $1 OR (timestamp = $1 AND id > $2))
 		  AND (request_hook_decision = 'block'
@@ -398,7 +398,7 @@ func (b *Bridge) queryEvents(ctx context.Context, cursor bridgeCheckpoint, batch
 			respHookDecision, respHookReason, respHookReasonCode *string
 			complianceTags                                       []string
 			details                                              *json.RawMessage
-			traceID                                              *string
+			externalRequestID, traceID, endUserID, sessionID     *string
 		)
 
 		if err := rows.Scan(
@@ -409,7 +409,7 @@ func (b *Bridge) queryEvents(ctx context.Context, cursor bridgeCheckpoint, batch
 			&respHookDecision, &respHookReason, &respHookReasonCode,
 			&complianceTags,
 			&details,
-			&traceID,
+			&externalRequestID, &traceID, &endUserID, &sessionID,
 		); err != nil {
 			return nil, bridgeCheckpoint{}, fmt.Errorf("scan traffic_event: %w", err)
 		}
@@ -420,10 +420,18 @@ func (b *Bridge) queryEvents(ctx context.Context, cursor bridgeCheckpoint, batch
 			"timestamp": ts.UTC().Format(time.RFC3339Nano),
 		}
 
-		// trace_id (the X-Nexus-Request-Id) is the cross-service correlation
-		// key; forward it so an external SIEM can stitch this event back to the
-		// other traffic_event rows for the same request.
+		// Every correlation id this row carries goes out, and the bridge picks
+		// none of them for the customer: which one their SIEM correlates on is
+		// their decision, and a bridge that forwarded only one would silently
+		// decide it for them. requestId stitches this event to the other
+		// traffic_event rows for the same request; traceId is the caller's own
+		// W3C trace, present only when they sent a traceparent; endUserId and
+		// sessionId are the caller-asserted attribution tags. Each is omitted
+		// when the row carries no value, rather than sent as null.
+		setIfNotNil(evt, "requestId", externalRequestID)
 		setIfNotNil(evt, "traceId", traceID)
+		setIfNotNil(evt, "endUserId", endUserID)
+		setIfNotNil(evt, "sessionId", sessionID)
 		setIfNotNil(evt, "sourceIp", sourceIP)
 		setIfNotNil(evt, "targetHost", targetHost)
 		setIfNotNil(evt, "method", method)

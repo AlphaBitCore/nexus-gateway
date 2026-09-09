@@ -1,6 +1,8 @@
 package cli
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"bytes"
 	"net/http"
 	"os"
@@ -39,10 +41,11 @@ func TestEnsureConfig_WiresLogger(t *testing.T) {
 	if a.Log == nil {
 		t.Fatal("a.Log is nil after ensureConfig")
 	}
-	// The default client wraps the LoggingTransport in a RetryTransport (which
-	// retries idempotent GETs on a dropped connection); the LoggingTransport in
-	// turn sits over the kernel's widened transport.
-	rt, ok := a.HTTP.Transport.(*local.RetryTransport)
+	// The client's outermost layer is the shared factory's logging wrapper;
+	// under it the RetryTransport (which retries idempotent GETs on a dropped
+	// connection) wraps the LoggingTransport, which sits over the kernel's
+	// widened transport. RetryTransport has no Unwrap, so Base stops there.
+	rt, ok := nexushttp.Base(a.HTTP.Transport).(*local.RetryTransport)
 	if !ok {
 		t.Fatalf("a.HTTP.Transport = %T, want *local.RetryTransport", a.HTTP.Transport)
 	}

@@ -35,7 +35,7 @@ type PgxPool interface {
 // pgx.BeginFunc / row-locking transactions and gets it separately.
 type Store struct {
 	pool   PgxPool
-	secret *ChannelSecretCipher // nil = passthrough; prod never reaches this (InitAlerts fails closed, FU-1)
+	secret *ChannelSecretCipher // nil = passthrough; prod never reaches this (InitAlerts fails closed)
 }
 
 // NewStore creates a Store backed by the given connection pool.
@@ -50,8 +50,8 @@ func NewStoreWithPgxPool(pool PgxPool) *Store { return &Store{pool: pool} }
 // secrets at rest. Returns the same Store for chaining. A nil cipher leaves the
 // Store in passthrough mode (secrets stored as cleartext); production never
 // reaches that state because InitAlerts fails the hub closed when the key is
-// unset (FU-1), so the passthrough mode exists only for unit tests that
-// construct a Store directly.
+// unset, so the passthrough mode exists only for unit tests that construct a
+// Store directly.
 func (s *Store) WithChannelSecretCipher(c *ChannelSecretCipher) *Store {
 	s.secret = c
 	return s

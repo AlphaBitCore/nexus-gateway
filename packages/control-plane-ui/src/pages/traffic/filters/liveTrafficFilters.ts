@@ -29,6 +29,8 @@ export interface LiveTrafficFiltersState {
   _projectLabel: string;
   _vkLabel: string;
   requestId: string;
+  /** The caller's own W3C trace id, from a traceparent they sent. */
+  traceId: string;
   /**
    * Caller-declared correlation tags (exact match, AI Gateway rows only).
    * endUserId = the caller's own customer id; sessionId = one conversation's
@@ -100,6 +102,7 @@ export const EMPTY_LIVE_TRAFFIC_FILTERS: LiveTrafficFiltersState = {
   _projectLabel: '',
   _vkLabel: '',
   requestId: '',
+  traceId: '',
   endUserId: '',
   sessionId: '',
   errorCode: '',
@@ -169,6 +172,7 @@ export function buildTrafficAuditLogQueryParams(
   setIf('projectId', t(filters.projectId));
   setIf('modelUsed', t(filters.modelUsed));
   setIf('requestId', t(filters.requestId));
+  setIf('traceId', t(filters.traceId));
   setIf('endUserId', t(filters.endUserId));
   setIf('sessionId', t(filters.sessionId));
   setIf('errorCode', t(filters.errorCode));

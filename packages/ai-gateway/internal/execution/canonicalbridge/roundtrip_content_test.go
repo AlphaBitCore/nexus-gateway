@@ -3,6 +3,8 @@ package canonicalbridge
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -26,36 +28,54 @@ import (
 // names every one of those parts. What the fixture does not carry, the gate
 // cannot defend, which is why the fixture is the load-bearing half.
 func richNativeChatBody(shape provcore.Format) string {
-	switch shape {
-	case provcore.FormatOpenAI:
-		return `{"model":"gpt-4o-mini","max_tokens":32,
-"tools":[{"type":"function","function":{"name":"get_weather","description":"w","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}],
-"messages":[
- {"role":"system","content":"be terse"},
- {"role":"user","content":[{"type":"text","text":"weather?"},{"type":"image_url","image_url":{"url":"https://ex.com/a.png"}},{"type":"file","file":{"file_data":"data:application/pdf;base64,JVBERi0x"}}]},
- {"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}}]},
- {"role":"tool","tool_call_id":"c1","content":"18C"},
- {"role":"user","content":"thanks"}]}`
-	case provcore.FormatAnthropic:
-		return `{"model":"claude-3-5-haiku-20240307","max_tokens":32,
-"system":"be terse",
-"tools":[{"name":"get_weather","description":"w","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],
-"messages":[
- {"role":"user","content":[{"type":"text","text":"weather?"},{"type":"image","source":{"type":"url","url":"https://ex.com/a.png"}},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0x"}}]},
- {"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"get_weather","input":{"city":"SF"}}]},
- {"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"18C"}]},
- {"role":"user","content":[{"type":"text","text":"thanks"}]}]}`
-	case provcore.FormatGemini:
-		return `{"systemInstruction":{"parts":[{"text":"be terse"}]},
-"tools":[{"functionDeclarations":[{"name":"get_weather","description":"w","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}]}],
-"contents":[
- {"role":"user","parts":[{"text":"weather?"},{"fileData":{"mimeType":"image/png","fileUri":"https://ex.com/a.png"}},{"inlineData":{"mimeType":"application/pdf","data":"JVBERi0x"}}]},
- {"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"SF"}}}]},
- {"role":"user","parts":[{"functionResponse":{"name":"get_weather","response":{"result":"18C"}}}]},
- {"role":"user","parts":[{"text":"thanks"}]}],
-"generationConfig":{"maxOutputTokens":32}}`
+	name, ok := richCorpusName[shape]
+	if !ok {
+		return ""
 	}
-	return ""
+	raw, err := os.ReadFile(filepath.Clean(
+		filepath.Join("testdata", "upstream-requests", name+".request.json")))
+	if err != nil {
+		// Not a t.Fatalf: this function has no *testing.T, and every caller
+		// fails loudly on an empty body anyway. The message is what matters —
+		// a missing capture must not read as "this wire has no fixture".
+		panic("read request corpus " + name + ": " + err.Error() +
+			"\nRe-capture with: python3 testdata/upstream-requests/capture.py " + name)
+	}
+	return string(raw)
+}
+
+// requestCorpus reads a capture by name, for the tests that want one specific
+// conversation rather than whichever one represents a wire.
+func requestCorpus(t *testing.T, name string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Clean(
+		filepath.Join("testdata", "upstream-requests", name+".request.json")))
+	if err != nil {
+		t.Fatalf("read request corpus %q: %v\n"+
+			"Re-capture with: python3 testdata/upstream-requests/capture.py %s", name, err, name)
+	}
+	return raw
+}
+
+// richCorpusName maps a wire to the captured conversation that exercises it.
+//
+// These fixtures used to be written out by hand here, and two of the things
+// they carried were not real: an `https://ex.com/a.png` image nobody can fetch
+// and a six-character `JVBERi0x` "PDF" no parser accepts. Both would have been
+// 400s upstream, which means the round trips they proved were round trips of a
+// conversation no provider would have taken. The captures each went to the
+// provider twice — turn 1 to get a real answer, turn 2 replaying that answer
+// verbatim — and only a 200 on both made them fixtures.
+//
+// What the swap immediately bought: the Gemini capture carries a
+// `thoughtSignature` part, the opaque token 2.5 requires echoed back to
+// continue a reasoning turn. No hand-written fixture had one, because I did
+// not know it existed.
+var richCorpusName = map[provcore.Format]string{
+	provcore.FormatOpenAI:    "openai_chat_rich_turn",
+	provcore.FormatAnthropic: "anthropic_rich_turn",
+	provcore.FormatGemini:    "gemini_rich_turn",
+	provcore.FormatCohere:    "cohere_rich_turn",
 }
 
 func TestShapeRoundTripIdentity_RichContent(t *testing.T) {
@@ -203,9 +223,16 @@ func richChatSignature(canonical []byte) string {
 				case "input_audio":
 					sig.WriteString(" audio=" + part.Get("input_audio.data").String())
 				case "file":
-					// Keyed on the bytes / locator, not the whole object: a
-					// filename is carried by only some wires, so requiring it
-					// would report a fidelity loss where none happened.
+					// Keyed on the bytes / locator, not the whole object.
+					// The filename is asserted separately, and it has to be:
+					// a wire with no slot for it (Gemini's inlineData) gets one
+					// supplied on the way back, which is CORRECT — OpenAI
+					// rejects a file part without one — and legitimately differs
+					// from the caller's. Requiring exact equality here would
+					// report that fill as a loss; requiring nothing at all, as
+					// this comment used to, hid a genuine 400.
+					// See TestFilePartAlwaysCarriesAFilename and
+					// TestFilenameSurvivesAWireThatCanCarryIt.
 					sig.WriteString(" file=" + firstNonEmpty(
 						part.Get("file.file_data").String(),
 						part.Get("file.file_url").String(),
@@ -216,7 +243,7 @@ func richChatSignature(canonical []byte) string {
 				return true
 			})
 		} else if role == "tool" {
-			sig.WriteString(" result=" + unwrapGeminiResultEnvelope(c.String()))
+			sig.WriteString(" result=" + canonJSON(unwrapGeminiResultEnvelope(c.String())))
 		} else if c.Exists() && c.Type != gjson.Null {
 			sig.WriteString(" text=" + c.String())
 		}

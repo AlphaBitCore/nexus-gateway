@@ -17,6 +17,42 @@
 /** @type {Array<{ name: string, code: string[], docs: string[], waiverHint?: string }>} */
 export default [
     {
+        // credentials-architecture.md names pool.go, resolver.go and the CP
+        // credential handler as its code (§7), but no entry pointed at it — so
+        // when the credential usability predicate changed, the doc's
+        // "single-credential caveat" went stale and CI could not see it. The
+        // credential lookups in the store and the cache layer are in scope for
+        // the same reason: they ARE the predicate that doc describes.
+        name: 'credential-pool-and-resolution',
+        code: [
+            'packages/ai-gateway/internal/credentials/**/*.go',
+            'packages/ai-gateway/internal/providers/target/*.go',
+            'packages/ai-gateway/internal/platform/store/credential.go',
+            'packages/ai-gateway/internal/cache/layer/loaders.go',
+            'packages/ai-gateway/internal/cache/layer/lookups_credential.go',
+            'packages/control-plane/internal/ai/providers/handler/credentials.go',
+            'packages/control-plane/internal/ai/providers/handler/credential_reliability.go',
+        ],
+        docs: [
+            'docs/developers/architecture/cross-cutting/safety/credentials-architecture.md',
+            'docs/users/api/openai-sdk-compatibility.md',
+        ],
+        waiverHint: 'Credential selection, circuit state and the usable-credential predicate are documented in credentials-architecture.md — update it (and openai-sdk-compatibility.md if the error a client sees changes) in the same PR.',
+    },
+    {
+        // The endpoint-kind vocabulary and its predicates are a coordinated
+        // surface: adding a kind or a predicate changes what every consumer
+        // (routing, cost, hooks, Prometheus labels) is allowed to do with it.
+        name: 'endpoint-typology',
+        code: [
+            'packages/shared/transport/typology/*.go',
+        ],
+        docs: [
+            'docs/developers/architecture/cross-cutting/foundation/endpoint-typology-architecture.md',
+        ],
+        waiverHint: 'EndpointKind / WireShape values and the predicates over them are inventoried in endpoint-typology-architecture.md — update its file inventory and the axis tables in the same PR.',
+    },
+    {
         name: 'resource-catalog-engine',
         code: [
             // The engine, not the specs it embeds. Everything under
@@ -292,7 +328,7 @@ export default [
         // Hub + compliance-proxy flat `{"error":"…"}` envelope emitters. The
         // error-taxonomy doc §9 catalogs every live error shape; editing one of
         // these emitters (e.g. changing the field set) must keep §9 accurate
-        // (F-0321). Scoped to the specific emitter files, not the whole handler
+        // Scoped to the specific emitter files, not the whole handler
         // trees, to avoid false lockstep failures on unrelated handler edits.
         name: 'error-envelope-service',
         code: [

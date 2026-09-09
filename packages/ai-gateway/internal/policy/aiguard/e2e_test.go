@@ -3,11 +3,12 @@ package aiguard
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"

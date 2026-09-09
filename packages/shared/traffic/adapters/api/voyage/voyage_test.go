@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
@@ -214,15 +215,40 @@ func TestDetectResponseUsage_MissingUsage(t *testing.T) {
 	}
 }
 
-func TestRewriteRequestBody_Unsupported(t *testing.T) {
+// Voyage serves the OpenAI embeddings request shape, so a redaction must reach
+// its wire the same way. This previously asserted ErrRewriteUnsupported, which
+// meant a redact rule matching a document embedded through Voyage could only
+// refuse the request — the callers fail closed rather than forward the original.
+func TestRewriteRequestBody_RedactsInput(t *testing.T) {
+	a := newAdapter()
+	body := []byte(`{"model":"voyage-3","input":["my SSN is 123-45-6789"]}`)
+	out, n, err := a.RewriteRequestBody(context.Background(), body, "",
+		traffic.NormalizedContent{Segments: []string{"my SSN is [REDACTED]"}})
+	if err != nil {
+		t.Fatalf("err=%v want nil", err)
+	}
+	if n != 1 {
+		t.Errorf("patched=%d want 1", n)
+	}
+	if strings.Contains(string(out), "123-45-6789") {
+		t.Errorf("the value survives the rewrite: %s", out)
+	}
+}
+
+// No segments means no redaction was decided: the body must come back untouched
+// rather than be rewritten with nothing.
+func TestRewriteRequestBody_NoSegmentsLeavesBodyAlone(t *testing.T) {
 	a := newAdapter()
 	body := []byte(`{"model":"voyage-3","input":"hi"}`)
-	out, _, err := a.RewriteRequestBody(context.Background(), body, "", traffic.NormalizedContent{})
-	if !errors.Is(err, traffic.ErrRewriteUnsupported) {
-		t.Fatalf("expected ErrRewriteUnsupported, got %v", err)
+	out, n, err := a.RewriteRequestBody(context.Background(), body, "", traffic.NormalizedContent{})
+	if err != nil {
+		t.Fatalf("err=%v want nil", err)
+	}
+	if n != 0 {
+		t.Errorf("patched=%d want 0", n)
 	}
 	if string(out) != string(body) {
-		t.Errorf("body must be returned unchanged on unsupported rewrite")
+		t.Errorf("body must be returned unchanged when nothing was redacted")
 	}
 }
 

@@ -8,9 +8,6 @@
 // providers package (Format strings come in as plain strings; the
 // caller maps to/from typed enums). This avoids an import cycle with
 // internal/providers, which is the primary consumer.
-//
-// See docs/developers/specs/e36/e36-s1-forward-header-yaml-request.md and
-// docs/developers/specs/e36/e36-s2-forward-header-yaml-response.md for the design.
 package forwardheader
 
 import (

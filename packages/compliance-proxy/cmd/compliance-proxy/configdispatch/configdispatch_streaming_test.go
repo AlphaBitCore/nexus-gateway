@@ -13,14 +13,15 @@ import (
 const streamingPolicyQuery = `SELECT value FROM system_metadata WHERE key = $1`
 
 // TestStreamingCompliance_EmptyTriggerReReadsSystemMetadata is the regression
-// guard for R-7.
+// guard.
 //
 // streaming_compliance is a Type-B key: the Hub pushes JSON null on every push.
-// This handler used to hand that null to ApplyShadowState, which decoded it into
+// Handing that null to ApplyShadowState decodes it into
 // DefaultPolicy() — passthrough, which neither accumulates nor can reject.
-// Measured on the proxy: boot installed the admin's chunked_async at
-// 10:30:50.045 and this handler replaced it with passthrough 70 ms later, after
-// which every SSE stream was relayed uninspected.
+// Observed on the proxy before the re-read existed: boot installed the
+// admin's chunked_async and the trigger overwrote it with passthrough 70 ms
+// later, after which every SSE stream relayed uninspected. Without the
+// re-read below this handler would do it again.
 //
 // The contract, stated in configuration-architecture.md and implemented by the
 // sibling registerPayloadCapture: a trigger means RE-READ.

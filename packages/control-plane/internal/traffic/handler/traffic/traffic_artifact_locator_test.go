@@ -232,9 +232,9 @@ func TestArtifact_FilenameCannotBeChosenByThePayload(t *testing.T) {
 // An iPhone photo submitted as a video input reference is a real wire shape:
 // multipartbound prefers the part's declared Content-Type, so image/heic is
 // recorded, the bytes are captured by handover, and generic_http makes them a
-// captured ref with locator "body". The endpoint then decides what to serve —
-// and it used to answer video/mp4, inline, named .mp4, while the Agent
-// Dashboard called the same bytes image/heic.
+// captured ref with locator "body". The endpoint then decides what to serve, and
+// answering from the ISOBMFF container alone gives video/mp4, inline, named .mp4,
+// while the Agent Dashboard calls the same bytes image/heic.
 func TestArtifact_ISOBMFFBrandsAreNotAllServedAsVideo(t *testing.T) {
 	brand := func(s string) []byte {
 		b := append([]byte{0, 0, 0, 0x1c}, append([]byte("ftyp"), []byte(s)...)...)

@@ -210,10 +210,10 @@ func (s *Store) CreateProviderWithChildren(
 
 	insertedModels := make([]modelstore.Model, 0, len(models))
 	for _, p := range models {
-		// One normalizer, shared with modelstore.CreateModel. This loop used to
-		// have its own, which defaulted every type to ["text"]/["text"] — so a
-		// wizard-created stt model landed declaring it accepts text — and never
-		// folded the legacy `vision` feature into the modality arrays.
+		// One normalizer, shared with modelstore.CreateModel. A loop with
+		// its own defaults every type to ["text"]/["text"] — so a
+		// wizard-created stt model lands declaring it accepts text — and never
+		// folds the legacy `vision` feature into the modality arrays.
 		p = modelstore.NormalizeCreateParams(p)
 		features, aliases := p.Features, p.Aliases
 		inputMod, outputMod := p.InputModalities, p.OutputModalities

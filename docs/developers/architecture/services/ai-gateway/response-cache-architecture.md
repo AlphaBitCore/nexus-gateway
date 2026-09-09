@@ -9,7 +9,7 @@ All response-cache configuration is fleet-wide. There is no per-route or per-rul
 Two singleton rows back the two tiers:
 
 - **`extract_cache_config`** (L1) — `enabled`, `ttl_seconds` (range `[60, 604800]`, default `3600`), and `apply_freshness_rules`. The freshness flag lives physically on the L1 row but its effect is fleet-wide across **both** tiers: when on, a time-sensitive request is skipped at L1 and L2 alike.
-- **`semantic_cache_config`** (L2) — the embedding provider/model/dimension (with a derived `embedding_fingerprint` and a versioned `redis_index_name`), `enabled`, the cosine `threshold` (default `0.96`), the isolation scope `vary_by` (`none` / `user` / `vk` / `org`, default `vk`), the `embed_strategy` (default `system_plus_last_user`), `allow_cross_model` (default `false`), and admin freshness-rule overrides in `time_sensitive_overrides`.
+- **`semantic_cache_config`** (L2) — the embedding provider/model/dimension (with a derived `embedding_fingerprint` and a versioned `redis_index_name`), `enabled`, the cosine `threshold` (default `0.96`), the isolation scope `vary_by` (`none` / `user` / `vk` / `org`, default `vk`; every value except `none` narrows to the virtual key when its own dimension is absent on a request — `user` has no value under an application key, and widening to fleet-wide there would turn a stricter-than-default choice into no isolation at all), the `embed_strategy` (default `system_plus_last_user`), `allow_cross_model` (default `false`), and admin freshness-rule overrides in `time_sensitive_overrides`.
 
 A couple of L1 knobs are yaml-only because changing them would invalidate existing entries: the Redis key `Prefix` and the per-entry `MaxEntryBytes` cap. Everything else is runtime-swappable.
 

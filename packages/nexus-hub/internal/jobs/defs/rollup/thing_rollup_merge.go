@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
+	rollupstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 )
 
@@ -49,7 +49,7 @@ func NewThingRollupMerge1h(pool *pgxpool.Pool, interval time.Duration, logger *s
 	}
 	cfg := thingRollupMergeConfig{
 		id:             "thing-merge-1h",
-		name:           "Per-Thing Rollup Merge (5 minute → 1 hour)",
+		name:           "Per-Node Rollup Merge (5 minute → 1 hour)",
 		description:    "Merges thing_metric_rollup_5m into thing_metric_rollup_1h every 5 minutes, mirroring merge-1h.",
 		watermarkName:  watermarkThingMerge1h,
 		sourceTable:    "thing_metric_rollup_5m",
@@ -66,7 +66,7 @@ func NewThingRollupMerge1d(pool *pgxpool.Pool, interval time.Duration, logger *s
 	}
 	cfg := thingRollupMergeConfig{
 		id:             "thing-merge-1d",
-		name:           "Per-Thing Rollup Merge (1 hour → 1 day)",
+		name:           "Per-Node Rollup Merge (1 hour → 1 day)",
 		description:    "Merges thing_metric_rollup_1h into thing_metric_rollup_1d every hour, mirroring merge-1d.",
 		watermarkName:  watermarkThingMerge1d,
 		sourceTable:    "thing_metric_rollup_1h",
@@ -83,7 +83,7 @@ func NewThingRollupMerge1mo(pool *pgxpool.Pool, interval time.Duration, logger *
 	}
 	cfg := thingRollupMergeConfig{
 		id:             "thing-merge-1mo",
-		name:           "Per-Thing Rollup Merge (1 day → 1 month)",
+		name:           "Per-Node Rollup Merge (1 day → 1 month)",
 		description:    "Merges thing_metric_rollup_1d into thing_metric_rollup_1mo daily with calendar-month bucket boundaries.",
 		watermarkName:  watermarkThingMerge1mo,
 		sourceTable:    "thing_metric_rollup_1d",

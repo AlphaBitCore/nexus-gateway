@@ -20,10 +20,11 @@ import (
 //
 // The build identity is given as the two raw inputs a service actually has —
 // its name and its `-ldflags` stamp — and resolved inside CaptureStaticInfo.
-// It used to be three pre-resolved fields, and every caller got them wrong:
-// three of five services reported a hardcoded "0.1.0" and all five reported an
-// empty BuildSHA, so no environment could be tied to a build. Taking the raw
-// inputs removes the opportunity rather than adding a lint that watches for it.
+// Three pre-resolved fields instead leaves every caller to get them right, and
+// they did not: three of five services reported a hardcoded "0.1.0" and all
+// five an empty BuildSHA, so no environment could be tied to a build. Taking
+// the raw inputs removes the opportunity rather than adding a lint that watches
+// for it.
 type BuildInfo struct {
 	// Service is the service's own name — "ai-gateway", "nexus-hub".
 	Service string

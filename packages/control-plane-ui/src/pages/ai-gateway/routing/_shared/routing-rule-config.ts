@@ -14,10 +14,8 @@ export type StrategyType =
   | 'latency';
 
 /**
- * The user-selectable routing strategy types, in canonical display order. This is
- * the single source of truth for every strategy picker and filter in the UI (the
- * Strategy Type dropdown on create/edit and the strategy filter on the list page),
- * so they never drift.
+ * User-selectable routing strategy types in display order. Single source of truth
+ * for every strategy picker and filter in the UI, so they never drift.
  */
 export const STRATEGY_TYPES: readonly StrategyType[] = [
   'single',
@@ -36,11 +34,9 @@ export interface ProviderModelEntry {
 }
 
 /**
- * Strategies whose stage-1 config is a flat provider/model target list authored
- * with the shared entry editor: fallback (ordered), loadbalance / ab_split
- * (weighted), latency (p95-ordered). Single/conditional/smart/policy have their
- * own editors. Single source of truth so the create + edit forms never drift on
- * which strategies render the target-list editor.
+ * Strategies whose stage-1 config is a flat target list in the shared entry editor:
+ * fallback (ordered), loadbalance / ab_split (weighted), latency (p95-ordered).
+ * Single/conditional/smart/policy have their own. Keeps create + edit from drifting.
  */
 export function isTargetListStrategy(strategyType: StrategyType): boolean {
   return (
@@ -52,13 +48,10 @@ export function isTargetListStrategy(strategyType: StrategyType): boolean {
 }
 
 /**
- * Weighted-target strategies (ab_split "Split %" and loadbalance "Weight")
- * present operators with per-target numbers that must sum to exactly 100, with
- * every target in 0..100. Both resolvers treat weights as *relative* (weighted
- * random over the sum), so 70+50 would silently become 58/42 — enforcing 100
- * makes the entered numbers truthful and the split predictable. Applied to any
- * strategy that shows the weight column; single/fallback/conditional/etc. have
- * no weights and are unaffected.
+ * Weighted targets (ab_split "Split %", loadbalance "Weight") must sum to exactly
+ * 100, each in 0..100. Both resolvers treat weights as RELATIVE — weighted random
+ * over the sum — so 70+50 silently becomes 58/42; requiring 100 makes the entered
+ * numbers truthful. Applies to any strategy showing the weight column.
  */
 export function validateSplitWeights(entries: ProviderModelEntry[]): { valid: boolean; total: number } {
   let total = 0;
@@ -79,14 +72,10 @@ export function validateSplitWeights(entries: ProviderModelEntry[]): { valid: bo
 
 /**
  * Map a stored strategyType onto one the editor can render, or `null` when the
- * gateway no longer dispatches it.
- *
- * The `null` is the point. This used to fall back to `'single'`, so opening a
- * rule whose type the gateway had dropped — `policy` — rendered the picker as
- * "Single" and saving ANY field persisted a single-shaped rule over the
- * admin's configuration, with no warning and no way back. The read view mean-
- * while printed the stored value, so the detail page said `policy` and the edit
- * page said Single.
+ * gateway no longer dispatches it. The `null` is the point: falling back to
+ * `'single'` renders a dropped type (`policy`) as "Single", and saving ANY field
+ * then persists a single-shaped rule over the admin's configuration with no
+ * warning and no way back — while the read view still prints `policy`.
  */
 export function mapLegacyStrategy(s: string): StrategyType | null {
   const map: Record<string, StrategyType> = {
@@ -106,12 +95,10 @@ export function mapLegacyStrategy(s: string): StrategyType | null {
 }
 
 /**
- * The editable form of a stored type: the mapping when it is dispatchable, and
- * `'single'` as a rendering placeholder when it is not.
- *
- * Callers that DISPLAY a rule use this so the page still renders; callers that
- * WRITE one must use mapLegacyStrategy and refuse on `null`, or they overwrite
- * an admin's configuration with the placeholder.
+ * The editable form of a stored type: the mapping when dispatchable, `'single'` as
+ * a rendering placeholder when not. Callers that DISPLAY use this; callers that
+ * WRITE must use mapLegacyStrategy and refuse on `null`, or they overwrite an
+ * admin's configuration with the placeholder.
  */
 export function displayStrategy(s: string): StrategyType {
   return mapLegacyStrategy(s) ?? 'single';
@@ -184,6 +171,30 @@ export function buildMatchConditionsPayload(state: MatchConditionsFormState): Re
     ...(state.projects.length > 0 && { projects: state.projects }),
     ...(state.virtualKeys.length > 0 && { virtualKeys: state.virtualKeys }),
   };
+}
+
+/** Why a smart rule's requestedModelLiterals cannot be saved, or null when they can.
+ *  Mirrors `rejectSmartLiteral` in control-plane/internal/ai/routing/handler; the two
+ *  must agree, and routing-rule-config-safety.test.ts pins each arm to the Go table.
+ *  The bar is REACH, not vocabulary — `auto`, `fast` and `gpt-4-*` all author the
+ *  same rule. Refused: a BLANK entry, empty or whitespace-only (the gateway trims
+ *  the client's model at admission and rejects what is left empty, so such a rule can
+ *  never fire), and one of nothing but `*` (compiles to `^.*$`, claims every
+ *  request) — reaching nothing, and reaching everything. */
+export type SmartLiteralsProblem =
+  | { kind: 'none-pinned' }
+  | { kind: 'blank'; literal: string }
+  | { kind: 'catch-all'; literal: string };
+
+export function smartLiteralsProblem(literals: string[]): SmartLiteralsProblem | null {
+  if (literals.length === 0) return { kind: 'none-pinned' };
+  for (const literal of literals) {
+    const trimmed = literal.trim();
+    if (trimmed === '') return { kind: 'blank', literal };
+    // Same test as the Go side's strings.Trim(trimmed, "*") == "".
+    if (/^\*+$/.test(trimmed)) return { kind: 'catch-all', literal };
+  }
+  return null;
 }
 
 export function resolveProviderModelIds(
@@ -793,7 +804,6 @@ export function buildRoutingApiConfig(input: {
   }
 }
 
-// Smart Strategy Helpers
 
 export interface SmartFormState {
   routerProvider: string;
@@ -820,13 +830,11 @@ export const DEFAULT_SMART_SYSTEM_PROMPT = `You are an AI model router for an en
 ## Output Format
 Return ONLY valid JSON: {"modelId": "<exact ID from list>", "reason": "<brief explanation>"}`;
 
-// The three numeric defaults below mirror the gateway's, which are the ones a
-// rule created outside this form gets: smartConfig.temperature, maxTokens() and
-// timeoutMs() in packages/ai-gateway/internal/routing/strategies. A form that
-// ships its own number means an admin who never touches the field gets a
-// different value depending on where the rule was created — which is what
-// happened to timeoutMs, at more than three times the gateway's budget on a
-// call that sits on the request hot path.
+// The three numeric defaults below mirror the gateway's own (smartConfig
+// .temperature, maxTokens(), timeoutMs() in ai-gateway/internal/routing/strategies),
+// which is what a rule created outside this form gets. A form shipping its own
+// number gives an untouched field a value that depends on where the rule was
+// created — as timeoutMs did, at 3x the gateway's budget on the hot path.
 export function parseSmartConfig(
   config: unknown,
   groups: AdminModelsByProvider[],
@@ -901,16 +909,12 @@ export function buildSmartConfig(
   };
 }
 
-// Inline Fallback Chain Helpers
 
 export interface FallbackEntry {
   provider: string;
   model: string;
 }
 
-/**
- * Parse an API fallbackChain into form-friendly entries.
- */
 export function parseFallbackChain(
   chain: unknown,
   groups: AdminModelsByProvider[],
@@ -926,9 +930,6 @@ export function parseFallbackChain(
     .filter((e): e is FallbackEntry => e !== null);
 }
 
-/**
- * Build API fallbackChain from form entries.
- */
 export function buildFallbackChainApi(
   entries: FallbackEntry[],
   groups: AdminModelsByProvider[],
@@ -939,15 +940,12 @@ export function buildFallbackChainApi(
     .filter((r): r is { providerId: string; modelId: string } => r !== null);
 }
 
-// SIMULATABLE_ENDPOINT_KINDS are the endpoint kinds a routing rule's outcome
-// actually depends on — the ones typology.EndpointKindAcceptsModelType
-// constrains. The four it leaves unconstrained (batch, job, models, guardrail)
-// accept any model type, so simulating them teaches nothing.
-//
-// The list is here because a <select> needs one, and it is held to the Go
-// predicate by TestSimulate_TheFormOffersEveryConstrainedEndpointKind: a second
-// vocabulary that can drift from the first is the defect this file already
-// produced once, with the router timeout.
+// The endpoint kinds a routing rule's outcome depends on — the ones
+// typology.EndpointKindAcceptsModelType constrains. The four it leaves
+// unconstrained (batch, job, models, guardrail) accept any model type, so
+// simulating them teaches nothing. Held to the Go predicate by
+// TestSimulate_TheFormOffersEveryConstrainedEndpointKind: a second vocabulary that
+// can drift is the defect this file already produced once, with the router timeout.
 export const SIMULATABLE_ENDPOINT_KINDS = [
   'chat',
   'responses',

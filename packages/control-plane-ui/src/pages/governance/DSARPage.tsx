@@ -158,7 +158,7 @@ export function DSARPage() {
       addToast(
         fulfilling.type === 'ACCESS'
           ? t('pages:security.dsar.exportedRows', { vk: result.export?.vk?.length ?? 0, proxy: result.export?.proxy?.length ?? 0 })
-          : t('pages:security.dsar.anonymisedRows', { vk: result.outcome?.vkRowsAnonymised ?? 0, proxy: result.outcome?.proxyRowsAnonymised ?? 0 }),
+          : t('pages:security.dsar.anonymisedRows', { vk: result.outcome?.vkAnonymised ?? 0, agent: result.outcome?.agentAnonymised ?? 0 }),
         'success',
       );
       refetch();
@@ -417,7 +417,7 @@ export function DSARPage() {
             )}
             {fulfilling?.type === 'ERASURE' && fulfillResult.outcome && (
               <div style={{ fontSize: 'var(--g-font-size-base)' }}>
-                {t('pages:security.dsar.anonymisedSummary', { vk: fulfillResult.outcome.vkRowsAnonymised, proxy: fulfillResult.outcome.proxyRowsAnonymised })}
+                {t('pages:security.dsar.anonymisedSummary', { vk: fulfillResult.outcome.vkAnonymised, agent: fulfillResult.outcome.agentAnonymised })}
               </div>
             )}
             <Stack direction="horizontal" gap="sm" justify="end">

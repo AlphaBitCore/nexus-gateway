@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
+import { usePermission } from '@/hooks/usePermission';
 import { fleetApi } from '@/api/services';
 import {
   PageHeader, Stack, Card, Button, Skeleton, ErrorBanner,
@@ -11,6 +12,10 @@ import styles from './DeviceAuthSettingsPage.module.css';
 export function DeviceAuthSettingsPage() {
   const { t } = useTranslation();
   const [mode, setMode] = useState('mtls-only');
+  // The page reads on settings.read; PUT /settings/device-auth enforces
+  // settings.update. Without this the read-only auditor who can now reach
+  // the page would be offered a Save that the server refuses.
+  const canUpdate = usePermission('settings:update');
 
   const { data, loading, error, refetch } = useApi(
     () => fleetApi.getDeviceAuthSettings(),
@@ -112,7 +117,7 @@ export function DeviceAuthSettingsPage() {
         </div>
       </Card>
       <div className={styles.actions}>
-        <Button className={styles.actionButton} onClick={() => save(undefined as never)} loading={saving} disabled={saveDisabled}>
+        <Button className={styles.actionButton} onClick={() => save(undefined as never)} loading={saving} disabled={saveDisabled || !canUpdate}>
           {t('common:save', 'Save')}
         </Button>
       </div>

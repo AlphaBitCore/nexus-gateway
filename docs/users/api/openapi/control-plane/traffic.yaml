@@ -123,12 +123,27 @@ paths:
                   description: >-
                     Filter by the value the gateway returned in the
                     X-Nexus-Request-Id response header (exact match on
-                    traffic_event.trace_id). This is a grouping key, not a row
-                    key: a realtime session's exchanges and an agent flow's
-                    cross-service rows share one value, so the filter can return
-                    several rows. It is empty for compliance-proxy passthrough
-                    traffic, which carries no trace. To fetch one row by its own
+                    traffic_event.external_request_id). The caller may have sent
+                    it under either spelling — X-Nexus-Request-Id or its
+                    X-Request-Id alias — and the gateway mints one when neither
+                    arrived, so every gateway row carries a value. This is a
+                    grouping key, not a row key: one request crossing agent,
+                    compliance proxy and gateway produces a row per service, and
+                    a realtime session produces a row per exchange, so the filter
+                    can return several rows. To fetch one row by its own
                     identifier use GET /traffic/{id}.
+                  in: query
+                  required: false
+                  schema:
+                    type: string
+                - name: traceId
+                  description: >-
+                    Filter by the caller's own W3C distributed-trace id (exact
+                    match on traffic_event.trace_id). This is how an operator
+                    arrives from the caller's APM holding a trace id. Only rows
+                    whose request carried a parseable traceparent have a value
+                    here, so this filter returns nothing for callers that run no
+                    tracing — which is most of them.
                   in: query
                   required: false
                   schema:
@@ -781,18 +796,31 @@ components:
                 latencyBreakdown:
                     description: arbitrary JSON value
                 traceId:
+                    description: >-
+                        The caller's W3C distributed-trace id, lifted from an inbound
+                        traceparent header so this row joins back to the caller's APM.
+                        Null when the caller sent no traceparent — the gateway never
+                        substitutes an id of its own here.
                     type:
                         - string
                         - "null"
                 externalRequestId:
+                    description: >-
+                        The request id: X-Nexus-Request-Id, or its X-Request-Id
+                        compatibility alias, or a value the gateway minted when neither
+                        arrived. Echoed on the response, so this is what a support ticket
+                        quotes, and it is the key that stitches together the rows one
+                        request produces across services.
                     type:
                         - string
                         - "null"
                 endUserId:
                     description: >-
-                        Caller-declared end-user id (X-Nexus-End-User-Id header or the
-                        ingress protocol's native user field). Opaque, VK-scoped, never
-                        joined to Nexus identities. Null for compliance-proxy / agent rows.
+                        Caller-declared end-user id, from the X-Nexus-End-User-Id header
+                        only — a protocol's native user field is addressed to the provider
+                        and answers a different question, so it is not read here. Opaque,
+                        VK-scoped, never joined to Nexus identities. Null for
+                        compliance-proxy / agent rows.
                     type:
                         - string
                         - "null"

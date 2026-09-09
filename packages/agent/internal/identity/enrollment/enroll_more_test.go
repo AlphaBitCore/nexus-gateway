@@ -749,8 +749,7 @@ func (s *stubHubEnroller) Deregister(_ context.Context, _, _, _ string) error {
 //
 // These tests inject a FakeFile through the createTempFn seam so the
 // Chmod/Write/Sync/Close error branches — unreachable when CreateTemp
-// returns a real *os.File on a healthy disk — are still asserted. Pattern
-// mirrors packages/agent/internal/identity/secretstore/fallback_seam_test.go.
+// returns a real *os.File on a healthy disk — are still asserted.
 
 // fakeFile is an osFile test double that lets each per-arm test choose
 // which mid-write call returns an error.

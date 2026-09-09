@@ -181,14 +181,14 @@ var upstreamResponses = map[typology.WireShape]string{
 // TestWire_NoInternalCarrierReachesTheClient is the downstream half: no codec's
 // DecodeResponse leaves a carrier in the canonical body it produces.
 //
-// SCOPE, corrected, because the sentence that used to stand here was backwards.
-// It said the OpenAI-wire egress "is the strongest place to put it… because
-// that egress is the identity". The identity is exactly why nothing can fail
-// there: on an OpenAI-family shape the adapter passes the upstream body through,
-// so this asserts on a fixture echoed back, and the fixtures contain no carrier
-// by construction. Proved by planting a leak in DecodeResponsesResponse — the
-// openai-responses arm stayed green while the same leak in Cohere's decode
-// reddened precisely.
+// SCOPE. The OpenAI-wire egress reads like "the strongest place to put it,
+// because that egress is the identity" — and the identity is exactly why
+// nothing can fail there: on an OpenAI-family shape the adapter passes the
+// upstream body through, so this asserts on a fixture echoed back, and the
+// fixtures contain no carrier by construction. Measured by planting a leak in
+// DecodeResponsesResponse — the openai-responses arm stays green while the
+// same leak in Cohere's decode reddens precisely, which is the difference
+// between covering a decoder and covering an echo.
 //
 // So what this test covers is the CROSS-FORMAT decoders, and that is worth
 // having. The identity shapes are covered by

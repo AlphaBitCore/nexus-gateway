@@ -1,6 +1,6 @@
 // Two cards bundled in one file so DeviceGroupDetailPage stays readable:
 // SmartMembershipCard (predicate editor + tag help) and
-// GroupBulkActionsCard (force-refresh / rotate-cert fan-outs). Each is
+// GroupBulkActionsCard (the force-refresh fan-out). Each is
 // self-contained — owns its own state, mutations, and dialogs.
 
 import { useState } from 'react';
@@ -235,13 +235,6 @@ export function GroupBulkActionsCard({ groupId, canUpdate }: GroupBulkActionsCar
     },
   );
 
-  const { mutate: rotateCert, loading: rotating } = useMutation(
-    () => deviceGroupsApi.bulkRotateCert(groupId),
-    {
-      onSuccess: (r) => setLastResult(r),
-      successMessage: t('pages:deviceGroups.bulkDone', 'Bulk action complete'),
-    },
-  );
 
   if (!canUpdate) return null;
 
@@ -259,9 +252,6 @@ export function GroupBulkActionsCard({ groupId, canUpdate }: GroupBulkActionsCar
         <Stack direction="horizontal" gap="sm">
           <Button className={styles.actionButtonText} variant="secondary" onClick={() => forceRefresh(undefined)} loading={refreshing}>
             {t('pages:deviceGroups.bulkForceRefresh', 'Force config refresh')}
-          </Button>
-          <Button className={styles.actionButtonText} variant="secondary" onClick={() => rotateCert(undefined)} loading={rotating}>
-            {t('pages:deviceGroups.bulkRotateCert', 'Rotate certs')}
           </Button>
         </Stack>
         {lastResult && (

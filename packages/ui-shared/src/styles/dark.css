@@ -96,6 +96,7 @@
   --color-status-warning:  var(--color-warning);
   --color-danger-text:     var(--g-red-300);
   --color-danger-border:   var(--g-red-700);
+  --color-success-border:  var(--g-green-700);
   --color-danger-700:      var(--g-red-300);
   --color-primary-light:   color-mix(in oklch, var(--primary) 18%, transparent);
   --color-primary-dark:    var(--color-primary-hover);

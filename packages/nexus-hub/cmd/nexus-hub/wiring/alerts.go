@@ -32,8 +32,8 @@ type AlertsResult struct {
 // provider "command" it is the UNWRAPPED plaintext, never the env-delivered
 // wrapped blob (feeding a blob here would make Hub read it as 64-hex and fail to
 // boot). The key is REQUIRED — nexus-hub fails closed at boot when it is unset
-// or malformed rather than silently persisting those secrets as cleartext
-// (FU-1). This mirrors the [MUST MATCH] contract the key already carries for
+// or malformed rather than silently persisting those secrets as cleartext.
+// This mirrors the [MUST MATCH] contract the key already carries for
 // control-plane / ai-gateway provider-credential encryption.
 func InitAlerts(
 	pool *pgxpool.Pool,

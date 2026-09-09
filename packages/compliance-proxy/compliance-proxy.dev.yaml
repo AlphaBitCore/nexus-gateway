@@ -23,7 +23,11 @@ ca:
 # --- PostgreSQL (top-level; env override: DATABASE_URL). Used by hook
 # configs, rule packs, and audit writes (replaces audit.database.dsn). ---
 database:
-  url: "postgresql://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
+  # Empty on purpose: a connection URL carries its credential in the userinfo
+  # segment, so this line is a SECRET even though the key is called `url`.
+  # The value comes from the DATABASE_URL env override (see .env.example);
+  # binding rule: CLAUDE.md "Secrets are env-only — never yaml".
+  url: ""
 
 # --- Redis (cert cache + cross-instance replication only) ---
 # Config invalidation rides the Hub WebSocket control channel via
@@ -97,8 +101,8 @@ upstream:
   dialTimeout: "10s"
 
 limits:
-  requestBodyLimit: "10MB"
-  responseBodyLimit: "10MB"
+  # Maximum bytes held while buffering an SSE response for inspection.
+  # Omit to use the streaming package default (8MB).
   sseBufferLimit: "8MB"
 
 # --- Observability ---
@@ -154,9 +158,13 @@ audit:
       exemptionDurationSeconds: 86400
 
 # --- Compliance pipeline (hooks loaded from DB via Control Plane) ---
-# Streaming mode + per-hook / total timeouts (when set) are shadow-overridable
-# via Hub admin UI (config_key: compliance_streaming); ProxyServer.SetStreamingTuning
-# atomic-swaps the snapshot for the next bumped CONNECT. The hooks themselves
+# Streaming MODE is shadow-overridable via the Hub admin UI (config_key:
+# streaming_compliance) and lands on the live ProxyServer through
+# SetStreamingPolicyGlobal. The per-hook / total TIMEOUTS below are not: they
+# are read once at startup. An earlier note here claimed
+# ProxyServer.SetStreamingTuning atomic-swapped them for the next bumped
+# CONNECT — that method had no caller and named the key with its two words
+# transposed; it is removed. The hooks themselves
 # live in the DB and load via hooks shadow. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
 compliance:
   enabled: true

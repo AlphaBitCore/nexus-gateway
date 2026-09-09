@@ -43,6 +43,12 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	if isRerankBody(body) {
 		return extractRerankRequest(body), nil
 	}
+	// Embed requests ({texts, model}, no messages) scan every document. Without
+	// this branch the messages check below answers ErrUnknownSchema and the hook
+	// pipeline scans nothing — see embeddings.go.
+	if isEmbedBody(body) {
+		return extractEmbedRequest(body), nil
+	}
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() {
 		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
@@ -270,6 +276,9 @@ func (a *Adapter) RewriteRequestBody(_ context.Context, body []byte, _ string, c
 	// chat does not (its redaction path runs via the OpenAI-canonical adapter).
 	if gjson.ValidBytes(body) && isRerankBody(body) {
 		return rewriteRerankRequest(body, content)
+	}
+	if gjson.ValidBytes(body) && isEmbedBody(body) {
+		return rewriteEmbedRequest(body, content)
 	}
 	return body, 0, traffic.ErrRewriteUnsupported
 }

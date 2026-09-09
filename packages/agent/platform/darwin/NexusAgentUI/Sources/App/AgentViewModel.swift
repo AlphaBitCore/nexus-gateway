@@ -6,8 +6,8 @@ import os
 /// Minimal menu-bar view model.
 ///
 /// Owns only the state the seven-item NSMenu actually reads. Every
-/// detail view that used to live inside a 320×520 popover moves to
-/// the Wails Dashboard. This file is deliberately small.
+/// detail view lives in the Wails Dashboard rather than in a
+/// 320×520 popover here. This file is deliberately small.
 ///
 /// Polling is a constant 2 s. The menu itself is built lazily via
 /// NSMenuDelegate.menuNeedsUpdate (see AppDelegate), so a poll that
@@ -389,8 +389,8 @@ class AgentViewModel: ObservableObject {
         //      shadow (compliance teams want exact wording for their
         //      org's policy reminder).
         //   2. Built-in localized fallback when admin hasn't enabled
-        //      a custom warning. Previously the dialog was suppressed
-        //      entirely in this case, which let users one-click stop
+        //      a custom warning. Suppressing the dialog
+        //      in this case would let users one-click stop
         //      the daemon without any "are you sure?" — wrong default
         //      for an enterprise security agent.
         let warningText = resolveShutdownWarning(self.shutdownWarning)

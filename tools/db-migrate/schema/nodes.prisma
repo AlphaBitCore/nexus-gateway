@@ -333,10 +333,16 @@ model ThingDiagEvent {
   source       String
   message      String
   messageHash  String   @map("message_hash")
-  /// Cross-service correlation id (X-Nexus-Request-Id). Populated by the
-  /// SlogSink auto-extract path on every new diag emit; NULL for legacy
-  /// rows written before the column existed.
-  traceId      String?  @map("trace_id")
+  /// The request id this diag line belongs to — X-Nexus-Request-Id, or its
+  /// X-Request-Id alias, or the value the service minted. The same value lands
+  /// on traffic_event.external_request_id, and joining the two is how a diag
+  /// line is tied to the request that produced it. Populated by the SlogSink
+  /// auto-extract path on every diag emit; NULL when the emit happened outside
+  /// any request scope.
+  ///
+  /// Not a trace id: traffic_event.trace_id holds the CALLER's W3C
+  /// distributed-trace id, which is a different value and usually absent.
+  externalRequestId String? @map("external_request_id")
   attrs        Json?
   stackTrace   String?  @map("stack_trace")
   repeatCount  Int      @default(1) @map("repeat_count")
@@ -349,7 +355,7 @@ model ThingDiagEvent {
   @@index([level, occurredAt(sort: Desc)])
   @@index([eventType, occurredAt(sort: Desc)])
   @@index([messageHash, occurredAt(sort: Desc)])
-  @@index([thingId, traceId, occurredAt(sort: Desc)])
+  @@index([thingId, externalRequestId, occurredAt(sort: Desc)])
   @@map("thing_diag_event")
 }
 

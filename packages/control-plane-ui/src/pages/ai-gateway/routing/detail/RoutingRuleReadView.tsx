@@ -267,7 +267,7 @@ function formatWhenClause(when: unknown): string[] {
 }
 
 // Visual read view for a conditional strategy: a default target plus an
-// ordered list of when→then branches. Previously this fell back to raw JSON,
+// ordered list of when→then branches. Without it this falls back to raw JSON,
 // the only strategy type without a form-style view.
 function ConditionalConfigView({
   config, providerGroups,

@@ -73,6 +73,12 @@ func adminAuthCtx(method, path string, body []byte, userID, principalType string
 // stubs: iamUserStore
 
 type stubUserStore struct {
+	defaultOrgID  string
+	defaultOrgErr error
+	// gotCreateOrgID records the organizationId the HANDLER passed down — the
+	// value that would reach the column. Nil means the create was never
+	// attempted.
+	gotCreateOrgID  *string
 	listResult      []userstore.NexusUserSafe
 	listTotal       int
 	listErr         error
@@ -95,14 +101,25 @@ type stubUserStore struct {
 	createKey       *userstore.AdminAPIKey
 	createKeyErr    error
 	createKeyCalled bool
+	// createKeyParams / updateKeyParams record what the handler actually asked
+	// the store to persist. Asserting the response alone cannot tell a parsed
+	// expiry apart from a discarded one, because both answer 2xx.
+	createKeyParams userstore.CreateAdminAPIKeyParams
+	updateKeyParams userstore.UpdateAdminAPIKeyParams
 	updateKey       *userstore.AdminAPIKey
 	updateKeyErr    error
 	regenErr        error
 	rotateResult    *userstore.RotateAdminAPIKeyResult
 	rotateErr       error
-	retireKey       *userstore.AdminAPIKey
-	retireErr       error
-	deleteKeyErr    error
+	// rotateCalled / regenCalled record whether key material was actually
+	// minted, so a ceiling test can assert the refusal landed BEFORE the mint
+	// rather than only that the status code was 403.
+	rotateCalled bool
+	regenCalled  bool
+	updateCalled bool
+	retireKey    *userstore.AdminAPIKey
+	retireErr    error
+	deleteKeyErr error
 }
 
 func (s *stubUserStore) ListNexusUsers(_ context.Context, _ userstore.NexusUserListParams) ([]userstore.NexusUserSafe, int, error) {
@@ -111,16 +128,27 @@ func (s *stubUserStore) ListNexusUsers(_ context.Context, _ userstore.NexusUserL
 func (s *stubUserStore) GetNexusUserSafe(_ context.Context, _ string) (*userstore.NexusUserSafe, error) {
 	return s.getSafeResult, s.getSafeErr
 }
+
+// defaultOrgID / defaultOrgErr drive FindDefaultOrganizationID. The zero value
+// is an empty id with no error, which is the "no organisation exists at all"
+// state — tests that create a user therefore have to say which org they expect,
+// rather than inheriting one by accident.
+func (s *stubUserStore) FindDefaultOrganizationID(_ context.Context) (string, error) {
+	return s.defaultOrgID, s.defaultOrgErr
+}
+
 func (s *stubUserStore) GetNexusUserOrgInfo(_ context.Context, _ string) (string, string, error) {
 	return s.orgID, s.orgName, s.orgErr
 }
 func (s *stubUserStore) FindNexusUserByID(_ context.Context, _ string) (*userstore.NexusUser, error) {
 	return s.findResult, s.findErr
 }
-func (s *stubUserStore) CreateNexusUser(_ context.Context, _ userstore.CreateNexusUserParams) (*userstore.NexusUserSafe, error) {
+func (s *stubUserStore) CreateNexusUser(_ context.Context, p userstore.CreateNexusUserParams) (*userstore.NexusUserSafe, error) {
+	s.gotCreateOrgID = p.OrganizationID
 	return s.createResult, s.createErr
 }
 func (s *stubUserStore) UpdateNexusUser(_ context.Context, _ string, _ userstore.UpdateNexusUserParams) (*userstore.NexusUserSafe, error) {
+	s.updateCalled = true
 	return s.updateResult, s.updateErr
 }
 func (s *stubUserStore) DeleteNexusUser(_ context.Context, _ string) error { return s.deleteErr }
@@ -130,17 +158,21 @@ func (s *stubUserStore) ListAdminAPIKeys(_ context.Context, _ string) ([]usersto
 func (s *stubUserStore) GetAdminAPIKey(_ context.Context, _ string) (*userstore.AdminAPIKey, error) {
 	return s.getKey, s.getKeyErr
 }
-func (s *stubUserStore) CreateAdminAPIKey(_ context.Context, _ userstore.CreateAdminAPIKeyParams) (*userstore.AdminAPIKey, error) {
+func (s *stubUserStore) CreateAdminAPIKey(_ context.Context, p userstore.CreateAdminAPIKeyParams) (*userstore.AdminAPIKey, error) {
 	s.createKeyCalled = true
+	s.createKeyParams = p
 	return s.createKey, s.createKeyErr
 }
-func (s *stubUserStore) UpdateAdminAPIKey(_ context.Context, _ string, _ userstore.UpdateAdminAPIKeyParams) (*userstore.AdminAPIKey, error) {
+func (s *stubUserStore) UpdateAdminAPIKey(_ context.Context, _ string, p userstore.UpdateAdminAPIKeyParams) (*userstore.AdminAPIKey, error) {
+	s.updateKeyParams = p
 	return s.updateKey, s.updateKeyErr
 }
 func (s *stubUserStore) RegenerateAdminAPIKey(_ context.Context, _, _, _, _ string) error {
+	s.regenCalled = true
 	return s.regenErr
 }
 func (s *stubUserStore) RotateAdminAPIKey(_ context.Context, _ userstore.RotateAdminAPIKeyParams) (*userstore.RotateAdminAPIKeyResult, error) {
+	s.rotateCalled = true
 	return s.rotateResult, s.rotateErr
 }
 func (s *stubUserStore) RetireAdminAPIKey(_ context.Context, _, _ string) (*userstore.AdminAPIKey, error) {
@@ -197,17 +229,23 @@ type stubIAMStore struct {
 	groupPolicyAttErr error
 	attachPPID        string
 	attachPPErr       error
-	detachPPErr       error
-	ppAttGID          string
-	ppAttPID          string
-	ppAttPolicyID     string
-	ppAttErr          error
-	ppAttachments     []iamstore.PrincipalPolicyAttachment
-	ppAttachmentsErr  error
-	policyNames       []string
-	policyNamesErr    error
-	groupNames        []string
-	groupNamesErr     error
+	// gotAttachPT / gotMemberPT record the principalType the HANDLER passed
+	// down, which is the value that would reach the column. The request's own
+	// spelling is not the interesting one — the whole defect was the two
+	// differing.
+	gotAttachPT      string
+	gotMemberPT      string
+	detachPPErr      error
+	ppAttGID         string
+	ppAttPID         string
+	ppAttPolicyID    string
+	ppAttErr         error
+	ppAttachments    []iamstore.PrincipalPolicyAttachment
+	ppAttachmentsErr error
+	policyNames      []string
+	policyNamesErr   error
+	groupNames       []string
+	groupNamesErr    error
 }
 
 func (s *stubIAMStore) ListIamPolicies(_ context.Context, _, _ string, _ *bool, _, _ int) ([]iamstore.PolicyRow, int, error) {
@@ -250,7 +288,8 @@ func (s *stubIAMStore) UpdateIamGroup(_ context.Context, _ string, _ iamstore.Up
 	return s.updatedGroup, nil
 }
 func (s *stubIAMStore) DeleteIamGroup(_ context.Context, _ string) error { return s.deleteGroupErr }
-func (s *stubIAMStore) AddGroupMember(_ context.Context, _, _, _ string) (string, error) {
+func (s *stubIAMStore) AddGroupMember(_ context.Context, _, principalType, _ string) (string, error) {
+	s.gotMemberPT = principalType
 	return s.memberID, s.memberErr
 }
 func (s *stubIAMStore) RemoveGroupMember(_ context.Context, _ string) error { return s.removeErr }
@@ -275,7 +314,8 @@ func (s *stubIAMStore) DetachGroupPolicy(_ context.Context, _ string) error {
 func (s *stubIAMStore) GetGroupPolicyAttachmentByID(_ context.Context, _ string) (string, string, error) {
 	return s.groupPolicyAttGID, s.groupPolicyAttPID, s.groupPolicyAttErr
 }
-func (s *stubIAMStore) AttachPrincipalPolicy(_ context.Context, _, _, _ string, _ *time.Time) (string, error) {
+func (s *stubIAMStore) AttachPrincipalPolicy(_ context.Context, principalType, _, _ string, _ *time.Time) (string, error) {
+	s.gotAttachPT = principalType
 	return s.attachPPID, s.attachPPErr
 }
 func (s *stubIAMStore) DetachPrincipalPolicy(_ context.Context, _ string) error {
@@ -678,7 +718,10 @@ func TestCreateUser_MissingFields_Returns400(t *testing.T) {
 
 func TestCreateUser_Success_Returns201(t *testing.T) {
 	email := "new@example.com"
-	us := &stubUserStore{createResult: &userstore.NexusUserSafe{ID: "u-new", DisplayName: "new", Email: &email, Status: "active"}}
+	us := &stubUserStore{
+		defaultOrgID: "org-1", // the deployment has an organisation to default to
+		createResult: &userstore.NexusUserSafe{ID: "u-new", DisplayName: "new", Email: &email, Status: "active"},
+	}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
 	body, _ := json.Marshal(map[string]any{"username": "new@example.com", "password": "secure-pass123", "email": "new@example.com"})
 	c, rec := adminAuthCtx(http.MethodPost, "/users", body, "admin", "admin_user")
@@ -691,7 +734,7 @@ func TestCreateUser_Success_Returns201(t *testing.T) {
 }
 
 func TestCreateUser_StoreError_Returns500(t *testing.T) {
-	us := &stubUserStore{createErr: errors.New("db")}
+	us := &stubUserStore{defaultOrgID: "org-1", createErr: errors.New("db")}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
 	body, _ := json.Marshal(map[string]any{"username": "u", "password": "pw"})
 	c, rec := adminAuthCtx(http.MethodPost, "/users", body, "admin", "admin_user")
@@ -1436,6 +1479,11 @@ func TestRegenerateAPIKey_Success_Returns200(t *testing.T) {
 	uid := "u1"
 	us := &stubUserStore{getKey: &userstore.AdminAPIKey{ID: "k1", Name: "Key", OwnerUserID: &uid}}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	// The grant ceiling now runs on this path: regenerate/rotate mint a
+	// credential for the key's owner, and a password write is impersonation.
+	// A super-admin caller is the production shape for a happy-path test; the
+	// refusal arms live in the escalation regression tests.
+	h.iamEngine = superAdminTestEngine()
 	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/regenerate", nil, "admin", "admin_user")
 	c.SetParamNames("id")
 	c.SetParamValues("k1")
@@ -4354,6 +4402,11 @@ func TestRegenerateAPIKey_RegenError_Returns500(t *testing.T) {
 		regenErr: errors.New("db"),
 	}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	// The grant ceiling now runs on this path: regenerate/rotate mint a
+	// credential for the key's owner, and a password write is impersonation.
+	// A super-admin caller is the production shape for a happy-path test; the
+	// refusal arms live in the escalation regression tests.
+	h.iamEngine = superAdminTestEngine()
 	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/regenerate", nil, "admin", "admin_user")
 	c.SetParamNames("id")
 	c.SetParamValues("k1")
@@ -5933,10 +5986,77 @@ func TestCreateProject_StoreError_Returns500(t *testing.T) {
 
 // UpdateUser: password hashing path
 
+// TestUpdateUser_PasswordCeilingBlocksStrongerTarget_Returns403 is the
+// escalation arm. Setting another user's local password is impersonation: the
+// caller signs in as them at /authserver/password and every later request runs
+// under THEIR policies. With the route gated on admin:user.update alone, a
+// delegated operator could take the super-admin's account this way.
+//
+// The assertion is that the WRITE did not happen, not just that the status was
+// 403 — a 403 returned after the hash landed would still hand over the account.
+func TestUpdateUser_PasswordCeilingBlocksStrongerTarget_Returns403(t *testing.T) {
+	// perPrincipalLoader, not scopedTestEngine: the ceiling asks whether the
+	// CALLER covers the TARGET, and an engine that hands every principal the
+	// same policy set makes that trivially true, so the test would pass against
+	// an unguarded handler.
+	loader := &perPrincipalLoader{byID: map[string][]cpiam.LoadedPolicy{
+		"nexus_user:weak":  {scopedPolicy("weak", []string{"admin:user.update"}, []string{"nrn:nexus:*:*:*/*"})},
+		"nexus_user:super": {allowAllPolicy("super")},
+	}}
+	us := &stubUserStore{updateResult: &userstore.NexusUserSafe{ID: "super", DisplayName: "Super"}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+	body, _ := json.Marshal(map[string]any{"password": "attacker-chosen"})
+	c, rec := adminAuthCtx(http.MethodPatch, "/users/super", body, "weak", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("super")
+	if err := h.UpdateUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "PRIVILEGE_ESCALATION_BLOCKED") {
+		t.Errorf("missing PRIVILEGE_ESCALATION_BLOCKED code; body=%s", rec.Body)
+	}
+	if us.updateCalled {
+		t.Error("the password write landed despite the ceiling refusing it")
+	}
+}
+
+// TestUpdateUser_NonPasswordFieldsSkipTheCeiling pins the scope decision. Only
+// the password field is gated: gating enabled / displayName / email as well
+// would take incident response — disabling a compromised super-admin — away
+// from every operator who does not out-rank them.
+func TestUpdateUser_NonPasswordFieldsSkipTheCeiling(t *testing.T) {
+	loader := &perPrincipalLoader{byID: map[string][]cpiam.LoadedPolicy{
+		"nexus_user:weak":  {scopedPolicy("weak", []string{"admin:user.update"}, []string{"nrn:nexus:*:*:*/*"})},
+		"nexus_user:super": {allowAllPolicy("super")},
+	}}
+	us := &stubUserStore{updateResult: &userstore.NexusUserSafe{ID: "super", DisplayName: "Super"}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+	body, _ := json.Marshal(map[string]any{"enabled": false, "displayName": "Renamed"})
+	c, rec := adminAuthCtx(http.MethodPatch, "/users/super", body, "weak", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("super")
+	if err := h.UpdateUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a non-password administration of a stronger principal was refused: code=%d body=%s", rec.Code, rec.Body)
+	}
+}
+
 func TestUpdateUser_WithPassword_Returns200(t *testing.T) {
 	user := &userstore.NexusUserSafe{ID: "u1", DisplayName: "User"}
 	us := &stubUserStore{updateResult: user}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	// The grant ceiling now runs on this path: regenerate/rotate mint a
+	// credential for the key's owner, and a password write is impersonation.
+	// A super-admin caller is the production shape for a happy-path test; the
+	// refusal arms live in the escalation regression tests.
+	h.iamEngine = superAdminTestEngine()
 	body, _ := json.Marshal(map[string]any{"password": "new-secure-password"})
 	c, rec := adminAuthCtx(http.MethodPatch, "/users/u1", body, "admin", "admin_user")
 	c.SetParamNames("id")
@@ -5956,6 +6076,11 @@ func TestUpdateUser_WithPassword_Returns200(t *testing.T) {
 func TestUpdateUser_SSOAccount_PasswordSetReturns400(t *testing.T) {
 	us := &stubUserStore{findResult: &userstore.NexusUser{ID: "u1", Source: "scim"}}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	// The grant ceiling now runs on this path: regenerate/rotate mint a
+	// credential for the key's owner, and a password write is impersonation.
+	// A super-admin caller is the production shape for a happy-path test; the
+	// refusal arms live in the escalation regression tests.
+	h.iamEngine = superAdminTestEngine()
 	body, _ := json.Marshal(map[string]any{"password": "admin-set-password"})
 	c, rec := adminAuthCtx(http.MethodPatch, "/users/u1", body, "admin", "admin_user")
 	c.SetParamNames("id")

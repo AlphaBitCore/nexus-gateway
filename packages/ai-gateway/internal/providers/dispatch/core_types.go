@@ -19,6 +19,7 @@ type AdapterSpec = core.AdapterSpec
 type Format = core.Format
 type CallTarget = core.CallTarget
 type Request = core.Request
+type PreparedBody = core.PreparedBody
 type Response = core.Response
 type Usage = core.Usage
 type EncodeResult = core.EncodeResult

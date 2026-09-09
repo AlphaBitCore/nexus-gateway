@@ -216,6 +216,7 @@ The usage extractor delegates to the shared normalize codecs (`packages/shared/t
 - **Reasoning tokens**: a wire-explicit count (`output_tokens_details.thinking_tokens` on Anthropic; `completion_tokens_details.reasoning_tokens` on OpenAI-compatible wires) always wins; the character-based derivation is only a fallback when the wire omits the count. The OpenAI-compatible `reasoning` field is an accepted wire alias of `reasoning_content` and feeds the same reasoning text accounting.
 - **`/v1/responses` native passthrough**: when a genuine Responses upstream streams verbatim on the non-enforced lane, the egress copier forwards each SSE frame byte-for-byte yet a usage tee still decodes the canonical `Usage` (Responses `input_tokens` / `output_tokens`) onto the same chunk, so cost and token stamping land unchanged — the raw-byte forwarding bypasses the re-encode, not the usage accounting. The two-signal egress model is described in [`provider-adapter-architecture.md`](./provider-adapter-architecture.md) (*Responses egress: two signals*).
  See [`sse-streaming-compliance-architecture.md`](../../cross-cutting/safety/sse-streaming-compliance-architecture.md) for the streaming dispatch contract.
+- **Refusal is a delivered channel, and it is not text.** The chat codec models `message.refusal` as its own canonical block rather than folding it into the visible answer, because it occupies its own wire slot and a consumer writing content back has to know which slot a block came from. It carries no usage of its own — a refused turn's `usage` block is read exactly like any other — so this changes what the canonical view SHOWS, never what the row is priced on. The visible consequence is the opposite one: a refusal-only turn (`content: null`, the shape `o3-mini` ships) used to read as an empty assistant message everywhere downstream, compliance scanning included.
 - **Lenient whole-struct decode**: the codecs decode captured payloads field-by-field when the whole-struct unmarshal fails on a type mismatch (see *Decode leniency* in [`normalization-architecture.md`](./normalization-architecture.md)). For usage extraction this only ADDS coverage — a mistyped unrelated scalar no longer zeroes the usage block along with the rest of the payload; a well-typed `usage` object is read identically on both decode paths.
 
 ### Normalized projection is not on the cost path — cost/field neutral
@@ -251,6 +252,28 @@ The gateway keeps three char→token estimators, each tuned for its own question
 - **Quota pre-check** — `proxy.estimateTokens` (`bytes/3`). A cheap, marginally-high admission estimate, also reconciled post-call.
 - **Fit / "will it fit the context window?"** — `inputstaging.EstimateTokensConservative`. An *upper bound* (non-ASCII weighted by UTF-8 byte length, the BPE byte-fallback ceiling), because under-counting admits a model the request overflows and hard-400s, while over-counting only picks a larger model. Used by smart routing, the router-LLM input budget, AI-Guard, and embedding staging.
 
+### What the count is taken over — the wire's own spellings
+
+A divisor gets scrutiny; the corpus it divides does not. Both are inputs, and a
+field the walk cannot see costs the estimate its whole content with nothing to
+show for it.
+
+Gemini is where this bites, because its JSON surface accepts the protobuf field
+names alongside the documented camelCase ones — `system_instruction` for
+`systemInstruction`, `generation_config` for `generationConfig`. The estimator's
+`contents` walk is spelling-neutral, but its system-instruction walk read only
+camelCase, so a protobuf-spelled request was counted short by the entire system
+prompt. The consequence is not confined to the estimate an operator reads: the
+same character count feeds `auto` prompt-size routing, so an under-count can
+route a large request to a small model.
+
+The spellings live in one list, `specutil.GeminiSystemInstructionPaths` and its
+siblings, read by every site that decides something about a Gemini request; a
+property test asserts the two spellings of one body produce identical answers
+from each of them. When adding a reader on this wire, take the list rather than
+a literal — the failure mode is silent, and a per-site literal is how it
+recurs.
+
 ## References
 
 - `packages/ai-gateway/internal/execution/estimator/` — cost formula registry + heuristic tokenizer (average-case, cost class).
@@ -259,3 +282,20 @@ The gateway keeps three char→token estimators, each tuned for its own question
 - `packages/ai-gateway/internal/cache/layer/pricing.go` — usage extractor + pricing lookup.
 - `packages/shared/transport/typology/endpointkind.go` — `EndpointKind` vocabulary.
 - `packages/shared/transport/inputstaging/tokenize.go` — `EstimateTokens` (average-case) + `EstimateTokensConservative` (fit upper-bound).
+
+## Prompt-cache marker accounting
+
+`traffic_event.cache_marker_injected` counts the prompt-cache markers the codec
+actually wrote into the body it sent — not what the operator configured. A caller
+that sent its own `cache_control` is forwarded untouched and reports 0, because the
+gateway added nothing. Under Anthropic's automatic caching the count is 0 or 1: one
+root marker per request. The value is reported by the codec that wrote it rather
+than recomputed downstream, since the decision depends on the caller's own body and
+a second copy of that predicate could disagree with the bytes on the wire.
+
+Whether the marker paid off is a different question, answered by columns the
+provider fills: `cache_read_tokens`, `cache_creation_tokens`, and the derived
+`cache_read_savings_usd` / `cache_write_cost_usd` / `cache_net_savings_usd`. A
+request below the model's minimum cacheable length is cached by nobody and returns
+zero for all of them, with no error — the marker is simply inert. See
+[prompt-cache-architecture.md](prompt-cache-architecture.md) §4.

@@ -16,9 +16,9 @@ import (
 
 // TestCreateHookConfig_NonObjectConfig_Returns400 is the regression test for
 // the fail-open restart bug: a hook config blob that is not a JSON object
-// used to be stored verbatim; every gateway / compliance-proxy config reload
-// then failed (freezing propagation at last-good), and a service restart
-// started the pipeline with an EMPTY hook config — a silent compliance
+// and stored verbatim fails every gateway / compliance-proxy config reload
+// (freezing propagation at last-good), and a service restart then
+// starts the pipeline with an EMPTY hook config — a silent compliance
 // bypass. The write boundary must reject the shape instead.
 func TestCreateHookConfig_NonObjectConfig_Returns400(t *testing.T) {
 	cases := []struct {

@@ -38,11 +38,25 @@ func stripNul(s string) string {
 	return strings.ReplaceAll(s, "\x00", "")
 }
 
+// stripNulPtr returns p unchanged when there is nothing to strip, which is every
+// field of nearly every event. Boxing a second pointer to a string this function
+// did not touch cost one allocation per call, and appendTrafficEventRow calls it
+// fifty-two times for every traffic_event the fleet produces — measured at 52 of
+// the row builder's 63 allocations, against a control arm that boxed the same
+// values with the stripping removed.
+//
+// The returned pointer aliases the caller's field. The row values are consumed
+// synchronously by the COPY load or the pgx.Batch inside flushBatch, and nothing
+// writes to the message between building the row and using it; the same path
+// already aliases (and rewrites in place) the caller's ComplianceTags slice.
 func stripNulPtr(p *string) *string {
 	if p == nil {
 		return nil
 	}
-	s := stripNul(*p)
+	if !strings.ContainsRune(*p, 0) {
+		return p
+	}
+	s := strings.ReplaceAll(*p, "\x00", "")
 	return &s
 }
 

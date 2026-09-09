@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // TestWithInsecureSkipHostCheck verifies that the option sets checkHost to nil

@@ -122,7 +122,7 @@ func TestPassthroughGlobalOn_BypassFlagsRideIntoRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 	// --bypass-cache / --bypass-normalize must add their tiers alongside the default
-	// hook bypass (previously these flags had no wire-level assertion).
+	// hook bypass, asserted at the wire.
 	if _, err := runCLI(t, newTestApp(srv, false), "passthrough", "global", "on", "--bypass-cache", "--bypass-normalize"); err != nil {
 		t.Fatalf("passthrough global on with bypass flags: err=%v", err)
 	}

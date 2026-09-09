@@ -74,16 +74,16 @@ func TestSlogSinkEmitsErrorAsDiagEvent(t *testing.T) {
 	}
 }
 
-// TestSlogSinkExtractsTraceID asserts the auto-extract contract: a slog
-// record that carries a `trace_id` string attr lands its value on
-// DiagEvent.TraceID (the typed column) and is consumed from the loose
+// TestSlogSinkExtractsExternalRequestID asserts the auto-extract contract: a slog
+// record that carries a `external_request_id` string attr lands its value on
+// DiagEvent.ExternalRequestID (the typed column) and is consumed from the loose
 // Attrs map so the JSON payload isn't carrying the same value twice.
 //
-// This is the load-bearing test for the "handler stamps trace_id once at
+// This is the load-bearing test for the "handler stamps the request id once at
 // request entry, every downstream slog emit picks it up" contract — if
-// the SlogSink ever stops lifting the key, the Hub thing_diag_event.trace_id
+// the SlogSink ever stops lifting the key, the Hub thing_diag_event.external_request_id
 // column goes silently NULL for new emits.
-func TestSlogSinkExtractsTraceID(t *testing.T) {
+func TestSlogSinkExtractsExternalRequestID(t *testing.T) {
 	captured := make(chan opsmetrics.DiagEvent, 4)
 	tc := &mockThingClient{push: func(_ context.Context, e opsmetrics.DiagEvent) error {
 		captured <- e
@@ -95,16 +95,16 @@ func TestSlogSinkExtractsTraceID(t *testing.T) {
 		ThingID:     "thing-1",
 		Source:      "test",
 	})
-	logger := slog.New(sink).With(TraceIDAttrKey, "trace-abc-123")
+	logger := slog.New(sink).With(ExternalRequestIDAttrKey, "trace-abc-123")
 	logger.Error("upstream timed out", "upstream", "api.openai.com:443")
 
 	select {
 	case evt := <-captured:
-		if evt.TraceID != "trace-abc-123" {
-			t.Errorf("TraceID = %q, want %q", evt.TraceID, "trace-abc-123")
+		if evt.ExternalRequestID != "trace-abc-123" {
+			t.Errorf("ExternalRequestID = %q, want %q", evt.ExternalRequestID, "trace-abc-123")
 		}
-		if _, dupe := evt.Attrs[TraceIDAttrKey]; dupe {
-			t.Errorf("Attrs still carries trace_id = %v; want consumed into typed field", evt.Attrs[TraceIDAttrKey])
+		if _, dupe := evt.Attrs[ExternalRequestIDAttrKey]; dupe {
+			t.Errorf("Attrs still carries external_request_id = %v; want consumed into typed field", evt.Attrs[ExternalRequestIDAttrKey])
 		}
 		if evt.Attrs["upstream"] != "api.openai.com:443" {
 			t.Errorf("non-trace attrs lost: %v", evt.Attrs)
@@ -115,7 +115,7 @@ func TestSlogSinkExtractsTraceID(t *testing.T) {
 }
 
 // TestSlogSinkTraceIDAbsent asserts that records emitted off any request
-// scope (no trace_id attr) land with an empty TraceID — not "" stamped
+// scope (no external_request_id attr) land with an empty request id — not "" stamped
 // from a malformed default, not panic. The Hub writer's "" → NULL pointer
 // indirection then keeps the column NULL.
 func TestSlogSinkTraceIDAbsent(t *testing.T) {
@@ -131,8 +131,8 @@ func TestSlogSinkTraceIDAbsent(t *testing.T) {
 
 	select {
 	case evt := <-captured:
-		if evt.TraceID != "" {
-			t.Errorf("TraceID = %q, want empty when no attr supplied", evt.TraceID)
+		if evt.ExternalRequestID != "" {
+			t.Errorf("ExternalRequestID = %q, want empty when no attr supplied", evt.ExternalRequestID)
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("no DiagEvent received within 1s")
@@ -140,7 +140,7 @@ func TestSlogSinkTraceIDAbsent(t *testing.T) {
 }
 
 // TestSlogSinkTraceIDNonString covers the defensive branch: a non-string
-// trace_id attr (e.g. logged as int by accident) does NOT crash, does NOT
+// external_request_id attr (e.g. logged as int by accident) does NOT crash, does NOT
 // stamp the typed field, and the malformed value survives in Attrs so the
 // operator can still find the offending log line.
 func TestSlogSinkTraceIDNonString(t *testing.T) {
@@ -152,15 +152,15 @@ func TestSlogSinkTraceIDNonString(t *testing.T) {
 
 	sink := NewSlogSink(SlogSinkConfig{ThingClient: tc, ThingID: "thing-1", Source: "test"})
 	logger := slog.New(sink)
-	logger.Error("malformed trace attr", slog.Int(TraceIDAttrKey, 42))
+	logger.Error("malformed trace attr", slog.Int(ExternalRequestIDAttrKey, 42))
 
 	select {
 	case evt := <-captured:
-		if evt.TraceID != "" {
-			t.Errorf("TraceID = %q, want empty for non-string attr", evt.TraceID)
+		if evt.ExternalRequestID != "" {
+			t.Errorf("ExternalRequestID = %q, want empty for non-string attr", evt.ExternalRequestID)
 		}
-		if evt.Attrs[TraceIDAttrKey] != int64(42) {
-			t.Errorf("malformed trace_id should survive in Attrs; got %v", evt.Attrs[TraceIDAttrKey])
+		if evt.Attrs[ExternalRequestIDAttrKey] != int64(42) {
+			t.Errorf("malformed external_request_id should survive in Attrs; got %v", evt.Attrs[ExternalRequestIDAttrKey])
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("no DiagEvent received within 1s")
@@ -322,7 +322,7 @@ func TestMapLevel_AllBranches(t *testing.T) {
 // contract: WithAttrs with a non-empty list returns a CLONE that prepends
 // the attrs onto every record at Handle time, so attrs added via
 // slog.Logger.With(...) are carried — exactly what producers need to stamp
-// trace_id once at request entry.
+// the request id once at request entry.
 // An empty-attrs call still returns the same handler (cheap fast-path).
 // WithGroup remains a no-op because DiagEvent.Attrs is a flat map.
 func TestSlogSink_WithAttrsClonesAndCarriesAttrs(t *testing.T) {
@@ -339,18 +339,18 @@ func TestSlogSink_WithAttrsClonesAndCarriesAttrs(t *testing.T) {
 		t.Errorf("WithAttrs(nil) should return identity; got %p vs %p", w, sink)
 	}
 	// Non-empty: clone diverges from the root pointer.
-	w := sink.WithAttrs([]slog.Attr{slog.String("trace_id", "tid-1")})
+	w := sink.WithAttrs([]slog.Attr{slog.String("external_request_id", "tid-1")})
 	if w == sink {
 		t.Errorf("WithAttrs(non-empty) returned the same handler; want clone")
 	}
 	// The clone must carry the attrs onto every record. Drive a real
-	// log.Error and assert the typed trace_id field is populated.
+	// log.Error and assert the typed request-id field is populated.
 	logger := slog.New(w)
 	logger.Error("boom", "k", "v")
 	select {
 	case evt := <-captured:
-		if evt.TraceID != "tid-1" {
-			t.Errorf("clone did not carry trace_id; got %q", evt.TraceID)
+		if evt.ExternalRequestID != "tid-1" {
+			t.Errorf("clone did not carry the request id; got %q", evt.ExternalRequestID)
 		}
 		if evt.Attrs["k"] != "v" {
 			t.Errorf("on-record attrs missing on clone: %v", evt.Attrs)

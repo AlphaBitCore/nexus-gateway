@@ -1,4 +1,4 @@
-// Extra tests for fleet/overrides package covering previously uncovered functions:
+// Tests for the fleet/overrides functions the main file does not reach:
 // MarshalJSON, UnmarshalJSON (OverrideState), GetOverride (not-found path),
 // ListOverridesByThing (happy + scan + rows.Err), ListAllOverrides (all filter
 // branches + happy path + row errors), ListExpiredOverrides (happy path + rows.Err),

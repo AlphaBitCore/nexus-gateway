@@ -297,6 +297,16 @@ func OpenAIChatCompletionToMessagesResponse(openaiBody []byte) ([]byte, error) {
 	if text != "" {
 		content = append(content, map[string]any{"type": "text", "text": text})
 	}
+	// A structured-outputs decline arrives on message.refusal INSTEAD of
+	// content, and Anthropic has no refusal channel of its own. It rides the
+	// text block so the caller sees the decline: dropping it hands an
+	// Anthropic-shaped client an EMPTY assistant turn where the model actually
+	// refused, and smart routing makes that pair ordinary — the caller asked for
+	// a model, the router picked an OpenAI-family provider, and the answer comes
+	// back on this wire. The classification is what is lost, not the words.
+	if refusal := msg.Get("refusal").String(); refusal != "" {
+		content = append(content, map[string]any{"type": "text", "text": refusal})
+	}
 	if len(content) == 0 {
 		content = append(content, map[string]any{"type": "text", "text": ""})
 	}

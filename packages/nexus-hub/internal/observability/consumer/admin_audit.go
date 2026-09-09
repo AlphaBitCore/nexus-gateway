@@ -229,7 +229,7 @@ func (w *AdminAuditWriter) flush(ctx context.Context, items []pendingAdminMessag
 // insertAdminEvents writes one batch of MQ-consumed admin audit events into
 // AdminAuditLog. Each row is hashed via chain.NextHash inside the same
 // transaction so the chain advisory lock serialises us against the Hub
-// in-tx writer (thingmgr/override.go). pgx.Batch is intentionally not used
+// in-tx writer (packages/nexus-hub/internal/fleet/manager/override.go). pgx.Batch is intentionally not used
 // here: the chain is sequence-dependent (each row's hash needs the prior
 // row's integrityHash committed-or-staged), so we run inserts one at a time
 // inside the tx — pgx batch pipelining cannot interleave the SELECT-then-

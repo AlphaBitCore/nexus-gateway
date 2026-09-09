@@ -17,7 +17,17 @@
 server:
   port: 3050
   readTimeout: "30s"
-  writeTimeout: "360s"
+  # 支持 ~30min 模型响应:代理每次写响应会把写截止改为 now()+上游预算,故本值只需 >0
+  # 且不小于单次响应上限;设 1860s(31min)给足余量。
+  writeTimeout: "1860s"
+
+# 上游(调 LLM provider)超时预算:支持 30 分钟 SSE。
+#   timeoutSec —— 非流式单次请求总预算;streamIdleTimeoutSec —— 流式"块间静默"预算
+#   (流式每收到一个 chunk 重置截止,故这是长思考/长静默模型的关键项)。均设 1860s。
+#   其余(dial/tls/idleConn)留空 = 用代码默认。
+upstream:
+  timeoutSec: 1860
+  streamIdleTimeoutSec: 1860
 
 database:
   url: ""
@@ -198,8 +208,8 @@ routing:
 #
 # Stated explicitly, and disabled, on purpose. This template previously carried NO
 # spill block at all, so the shipping posture of a compliance product was readable
-# only by inferring a Go default from source — the same silence finding S-3 exists
-# to remove, one layer up. `enabled: false` means every captured body stays inline
+# only by inferring a Go default from source — the same silence a runtime-source
+# report exists to remove, one layer up. `enabled: false` means every captured body stays inline
 # on traffic_event_payload, bounded by payloadCapture.maxInlineBodyBytes.
 #
 # The SHIPPING posture for a real deployment is `ai-gateway.prod.yaml.example`, which

@@ -108,11 +108,19 @@ func (a *canonicalStreamAccumulator) add(c provcore.Chunk) {
 }
 
 // canonicalBody renders the accumulation as a canonical OpenAI chat-completion
-// JSON body — the exact shape extractChatResponse / RewriteResponseBody expect
-// (choices[0].message.content + message.tool_calls[].function.arguments). The
-// reasoning channel is intentionally omitted: extractChatResponse does not scan
-// reasoning_content, so the non-stream canonical path never redacts it; the
-// buffer path preserves the same coverage and re-emits reasoning unredacted.
+// JSON body — the shape the response-stage hooks decode and the codec writes
+// redactions back into (choices[0].message.content, .reasoning_content,
+// .tool_calls[].function.arguments).
+//
+// Reasoning is IN that body. It used to be left out, on the stated grounds that
+// "extractChatResponse does not scan reasoning_content, so the non-stream
+// canonical path never redacts it; the buffer path preserves the same coverage".
+// That premise stopped being true when the response stage moved to the canonical
+// waist and began decoding reasoning as its own block — and this path, which
+// builds its canonical body by hand instead of through a codec, kept the old
+// coverage. The result was the one gateway path that still re-emitted a
+// reasoning channel no policy could touch, on exactly the models that put the
+// most content there.
 //
 // finish_reason carries the real observed value (defaulting to "stop" when the
 // stream never reported one) so the response-hook input — extractResponseForHooks
@@ -146,6 +154,14 @@ func (a *canonicalStreamAccumulator) canonicalBody() []byte {
 		}
 		msg["tool_calls"] = calls
 	}
+	if r := a.reasoning.String(); r != "" {
+		// The channel name is the one the canonical decode reads. nexus_thinking
+		// below is NOT a substitute: it is the provider-private exact-replay
+		// carrier for Anthropic thinking blocks and their signatures, stripped
+		// for targets that do not consume it, and no codec reads it as scannable
+		// text.
+		msg["reasoning_content"] = r
+	}
 	if len(a.thinking) > 0 {
 		msg["nexus_thinking"] = a.thinking
 	}
@@ -170,17 +186,19 @@ func (a *canonicalStreamAccumulator) canonicalBody() []byte {
 }
 
 // syntheticChunkFromCanonical decomposes a (redacted) canonical chat-completion
-// body back into a single canonical chunk for forward-encoding to the wire. The
-// masked content + masked tool-call arguments are read back from the rewritten
-// body; reasoning is carried through unchanged (it was never scanned, mirroring
-// the non-stream path). One synthetic chunk is sufficient: buffer mode delivers
-// the whole response after the end-of-stream checkpoint, and every stream
-// encoder produces a complete, valid wire stream from a single combined chunk.
-func syntheticChunkFromCanonical(body []byte, reasoning string) provcore.Chunk {
+// body back into a single canonical chunk for forward-encoding to the wire.
+// Content, reasoning and tool-call arguments all come from the REWRITTEN body,
+// so whatever a redaction changed is what the client receives. Reading reasoning
+// from anywhere else — the accumulator's own copy, say — would deliver the
+// pre-redaction text on the one channel the policy just masked. One synthetic
+// chunk is sufficient: buffer mode delivers the whole response after the
+// end-of-stream checkpoint, and every stream encoder produces a complete, valid
+// wire stream from a single combined chunk.
+func syntheticChunkFromCanonical(body []byte) provcore.Chunk {
 	msg := gjson.GetBytes(body, "choices.0.message")
 	ch := provcore.Chunk{
 		Delta:          msg.Get("content").String(),
-		ReasoningDelta: reasoning,
+		ReasoningDelta: msg.Get("reasoning_content").String(),
 		FinishReason:   gjson.GetBytes(body, "choices.0.finish_reason").String(),
 	}
 	msg.Get("tool_calls").ForEach(func(i, call gjson.Result) bool {

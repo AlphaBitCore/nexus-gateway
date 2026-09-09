@@ -2,8 +2,6 @@
 
 package gap_closure_test
 
-// gap3_load_test.go — E74-S7 T7.4
-//
 // TestGap3ContentCaptureRate verifies FR-7.3: under concurrent load
 // (default 10 goroutines × 60 s), ≥95% of captured flows have
 // request_normalized populated (fail-open content capture rate).
@@ -43,7 +41,7 @@ func TestGap3ContentCaptureRate(t *testing.T) {
 	deadline := time.Now().Add(time.Duration(durationS) * time.Second)
 
 	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		wg.Add(1)
 		workerIdx := i
 		go func() {
@@ -76,7 +74,7 @@ func TestGap3ContentCaptureRate(t *testing.T) {
 	dbDeadline := time.Now().Add(30 * time.Second)
 	var total, withContent int
 	for time.Now().Before(dbDeadline) {
-		total, withContent = countTrafficEventsByTraceIDs(t, pool, allIDs)
+		total, _ = countTrafficEventsByTraceIDs(t, pool, allIDs)
 		if total >= len(allIDs)/2 {
 			// Enough rows have arrived; stop waiting.
 			break

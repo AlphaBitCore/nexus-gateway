@@ -3,11 +3,12 @@ package routing
 import (
 	"bytes"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/labstack/echo/v4"
 
@@ -15,8 +16,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterRoutingRoutes registers routing rule CRUD routes.
@@ -142,16 +143,61 @@ func validateMatchConditions(raw json.RawMessage) (string, bool) {
 	return "", true
 }
 
-// smartGuardEmptyMsg is the operator-facing error when a smart-strategy
-// rule's matchConditions does not pin requestedModelLiterals = ["auto"].
-// The runbook reference is part of the message so an operator hitting
-// this in CI has a single link to follow.
-const smartGuardEmptyMsg = `matchConditions must include "requestedModelLiterals": ["auto"] for strategyType=smart — empty or unrestricted matchConditions can route non-auto traffic into smart routing and produce non-grounded decisions; see docs/operators/ops/runbooks/r-routing-rule-matchconditions-audit.md`
+// smartGuardEmptyMsg is the operator-facing error when a smart-strategy rule's
+// matchConditions pins no request keyword at all. The runbook reference is part
+// of the message so an operator hitting this in CI has a single link to follow.
+const smartGuardEmptyMsg = `matchConditions must pin "requestedModelLiterals" to at least one request keyword for strategyType=smart — empty or unrestricted matchConditions route unrelated traffic into smart routing and produce non-grounded decisions; see docs/operators/ops/runbooks/r-routing-rule-matchconditions-audit.md`
+
+// smartGuardRunbook is appended to every per-keyword rejection below.
+const smartGuardRunbook = ` — see docs/operators/ops/runbooks/r-routing-rule-matchconditions-audit.md`
+
+// rejectSmartLiteral reports why one requestedModelLiterals entry cannot serve
+// as a smart-rule trigger, or "" when it can.
+//
+// The guard is about REACH, not about which word an operator picked. Which
+// keyword delegates model choice is a deployment's own vocabulary — "auto" is
+// the OpenAI-side convention, and a fleet that spells it "fast" or hands a
+// whole model family over with "gpt-4-*" is authoring the same rule. What the
+// guard must refuse is a trigger that claims traffic the operator did not name,
+// since a smart rule reaching requests nobody pointed at it is the failure the
+// runbook exists for.
+//
+// Two shapes are refused, one for reaching nothing and one for reaching
+// everything.
+//
+// A BLANK entry — empty or whitespace-only — can never match: the gateway
+// trims the client's model string at admission (ExtractIngressModel) and
+// answers errModelRequired when nothing is left, so no request reaches the
+// matcher carrying one. Such a rule is inert, and an operator who believes
+// they authored a trigger has authored nothing.
+//
+// An entry of nothing but "*" is refused for the opposite reason:
+// matcher.MatchGlob quotes every character except "*", so a pattern of only
+// stars compiles to "^.*$" and claims the whole gateway.
+//
+// Anything else — a word, or a glob carrying one literal character — is
+// bounded, and bounded is the whole bar. Padding inside an entry is not
+// policed and needs no policing: admission trims the request side, so a
+// literal " auto" simply never matches and is the blank case's cousin rather
+// than a reach problem.
+func rejectSmartLiteral(lit string) string {
+	trimmed := strings.TrimSpace(lit)
+	if trimmed == "" {
+		return fmt.Sprintf(`matchConditions.requestedModelLiterals[*]=%q is not a request keyword; every entry must be a model string a caller can actually send (e.g. "auto", "fast", "gpt-4-*")`, lit) + smartGuardRunbook
+	}
+	if strings.Trim(trimmed, "*") == "" {
+		return fmt.Sprintf(`matchConditions.requestedModelLiterals[*]=%q matches every request, which is not safe for strategyType=smart; pin each entry to a keyword the caller sends (e.g. "auto", "fast") or a bounded glob (e.g. "gpt-4-*")`, lit) + smartGuardRunbook
+	}
+	return ""
+}
 
 // validateSmartRuleMatchConditions enforces the operator-side guard: a
-// smart-strategy RoutingRule must pin matchConditions to match only the
-// "auto" sentinel. Empty or non-"auto" matchConditions are rejected to
-// prevent a broadly-matched smart rule from firing on every request.
+// smart-strategy RoutingRule must pin matchConditions to request keywords it
+// explicitly claims. Empty matchConditions, an absent or empty
+// requestedModelLiterals, and any entry that reaches every request are
+// rejected, so a broadly-matched smart rule cannot fire on traffic nobody
+// pointed at it. Any number of keywords is accepted, and the keywords
+// themselves are the deployment's to choose.
 //
 // No-op for strategies other than "smart". Returns ("", true) on success;
 // returns (operator-facing message, false) on rejection.
@@ -181,8 +227,8 @@ func validateSmartRuleMatchConditions(strategyType string, raw json.RawMessage) 
 		return smartGuardEmptyMsg, false
 	}
 	for _, lit := range literals {
-		if lit != "auto" {
-			return fmt.Sprintf(`matchConditions.requestedModelLiterals[*]=%q is not safe for strategyType=smart; smart rules must match "auto" only — see docs/operators/ops/runbooks/r-routing-rule-matchconditions-audit.md`, lit), false
+		if msg := rejectSmartLiteral(lit); msg != "" {
+			return msg, false
 		}
 	}
 	return "", true
@@ -391,11 +437,11 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 
 	// The STORED type is validated too, not only a supplied one.
 	//
-	// A partial patch that omits strategyType used to skip the check entirely,
-	// so the one-click enable toggle on the rules list re-enabled a rule the
-	// upgrade migration had just disabled — a green "Rule updated" and a rule
+	// A partial patch that omits strategyType would otherwise skip the check,
+	// so the one-click enable toggle on the rules list re-enables a rule the
+	// upgrade migration just disabled — a green "Rule updated" and a rule
 	// shown Enabled that the resolver yields on every request forever. The
-	// migration's whole purpose was undone by a control that never mentions
+	// migration's whole purpose, undone by a control that never mentions
 	// strategies.
 	//
 	// The patch may still FIX such a rule: supplying a valid strategyType

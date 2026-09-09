@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// SnapshotInto reuses its destination across calls (finding C-22). These pin the two
+// SnapshotInto reuses its destination across calls. These pin the two
 // properties that makes it safe to substitute for Snapshot at the pre-hook call site,
 // plus the exported contract it must NOT have changed.
 

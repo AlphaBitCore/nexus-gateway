@@ -28,7 +28,7 @@ const inMemoryStoreTTL = 5 * time.Minute
 // harnesses inject a fake factory through MountWithFactory so they can drive
 // IdPStore.GetLocal — and therefore the post-success branch at the bottom of
 // Mount — without standing up a Postgres connection. Mirrors the PgxPool
-// seam in packages/control-plane/internal/authserver/revocation/store.go.
+// seam in packages/control-plane/internal/identity/authserver/revocation/store.go.
 type StoreFactory interface {
 	Clients() *store.ClientStore
 	Users() *store.UserStore

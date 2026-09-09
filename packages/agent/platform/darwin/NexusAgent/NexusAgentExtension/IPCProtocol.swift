@@ -29,6 +29,18 @@ import os.log
 /// Network framework's `NWConnection` (NOT POSIX socket — see file header
 /// comment for why).
 class AgentIPCClient {
+    // connection is written from THREE execution contexts — attemptConnect on
+    // the caller's thread, the NWConnection.stateUpdateHandler on `queue`, and
+    // disconnect() from anywhere — and read by the send and receive paths. It
+    // was the one piece of mutable state here NOT covered by stateLock, whose
+    // own comment claims to guard the connection state. An unsynchronised
+    // read of an object reference being reassigned is a data race, and a torn
+    // read crashes the extension — which, on this code path, is the whole
+    // Mac's network until someone unloads the provider by hand.
+    //
+    // Guarded by stateLock. Access it through currentConnection() /
+    // setConnection(_:) rather than directly, and never call out to Network
+    // framework while holding the lock: copy the reference, unlock, then act.
     private var connection: NWConnection?
     private let socketPath: String
     private let queue = DispatchQueue(label: "com.nexus-gateway.agent.ipc", qos: .userInitiated)
@@ -145,7 +157,7 @@ class AgentIPCClient {
             to: .unix(path: socketPath),
             using: .tcp
         )
-        self.connection = conn
+        self.setConnection(conn)
 
         let semaphore = DispatchSemaphore(value: 0)
         var settled = false
@@ -194,13 +206,13 @@ class AgentIPCClient {
         if waitResult == .timedOut {
             logger.error("attemptConnect: timed out after \(String(format: "%.1f", timeout))s (final state=\(String(describing: conn.state), privacy: .public)); cancelling")
             conn.cancel()
-            self.connection = nil
+            self.setConnection(nil)
             return false
         }
         if !connected {
             // We already cancelled implicitly via the .failed/.waiting/.cancelled paths above.
             conn.cancel()
-            self.connection = nil
+            self.setConnection(nil)
             return false
         }
 
@@ -224,8 +236,11 @@ class AgentIPCClient {
     /// timeout fallback below.
     func disconnect() {
         logger.info("disconnect: cancelling NWConnection")
-        connection?.cancel()
-        connection = nil
+        // Take the reference under the lock, clear it, release, THEN cancel.
+        // cancel() re-enters the state handler, which also touches this field.
+        let conn = currentConnection()
+        setConnection(nil)
+        conn?.cancel()
         setConnected(false)
 
         // Drain pending callbacks with a fail-open passthrough so any
@@ -258,6 +273,22 @@ class AgentIPCClient {
     func shutdown() {
         stateLock.lock(); shuttingDown = true; stateLock.unlock()
         disconnect()
+    }
+
+    /// currentConnection returns the live NWConnection under stateLock.
+    /// Callers act on the returned reference AFTER the lock is released, so a
+    /// Network-framework callout can never run while the lock is held.
+    private func currentConnection() -> NWConnection? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return connection
+    }
+
+    /// setConnection replaces the live NWConnection under stateLock. It does
+    /// NOT cancel the previous one — cancelling re-enters the state handler,
+    /// which takes this same lock.
+    private func setConnection(_ conn: NWConnection?) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        connection = conn
     }
 
     private func setConnected(_ up: Bool) {
@@ -396,7 +427,7 @@ class AgentIPCClient {
     // MARK: - Internal
 
     private func sendJSON<T: Encodable>(_ value: T) {
-        guard let conn = connection else {
+        guard let conn = currentConnection() else {
             logger.error("sendJSON: no connection (was disconnect() called?)")
             return
         }
@@ -418,7 +449,7 @@ class AgentIPCClient {
     /// after each chunk by recursively calling NWConnection.receive.
     /// Stops on error / peer-close / cancellation.
     private func receiveNext() {
-        guard let conn = connection else { return }
+        guard let conn = currentConnection() else { return }
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, err in
             guard let self else { return }
             if let err = err {

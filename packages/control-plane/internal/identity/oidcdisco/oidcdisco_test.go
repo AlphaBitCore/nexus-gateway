@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 func ctx() context.Context { return context.Background() }

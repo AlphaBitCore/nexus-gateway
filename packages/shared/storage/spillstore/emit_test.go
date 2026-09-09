@@ -68,9 +68,9 @@ func TestEmitBody_SpillAtThreshold(t *testing.T) {
 	}
 }
 
-// TestEmitBody_FallsBackToInlineOnPutError previously asserted only that the Kind was inline,
-// which passed whether the fallback kept 2 KiB or 200 MiB. Finding S-1 is precisely about the
-// SIZE, so the assertions below pin the bound and the honesty of the record.
+// Asserting only that the Kind is inline passes whether the fallback kept 2 KiB or
+// 200 MiB, and the defect is precisely about the SIZE — so the assertions below pin
+// the bound and the honesty of the record.
 func TestEmitBody_FallsBackToInlineOnPutError(t *testing.T) {
 	store := &fakeStore{failPut: true}
 	const threshold = 1024
@@ -117,13 +117,13 @@ func TestEmitBody_PutErrorBelowThresholdKeepsEverything(t *testing.T) {
 	}
 }
 
-// With no spill backend an oversize body is inlined — but BOUNDED (finding S-6).
+// With no spill backend an oversize body is inlined — but BOUNDED.
 //
-// This test previously asserted only Kind == "inline", which is true whether the
-// fallback keeps 2 KiB or 200 MiB, so it could not have caught the defect it sits
-// on: every *.config.yaml ships spill disabled, so this is the COMMON production
-// path, and it was storing whole bodies inline under a setting named
-// MaxInlineBodyBytes. Exactly the weakness S-1's test had on the failed-Put arm.
+// Asserting only Kind == "inline" is true whether the fallback keeps 2 KiB or 200
+// MiB, and so cannot catch the defect this test sits on: every *.config.yaml ships
+// spill disabled, making this the COMMON production path, and an unbounded arm
+// stores whole bodies inline under a setting named MaxInlineBodyBytes. The
+// failed-Put arm above has the same weakness if written that way.
 func TestEmitBody_NoStoreBoundsAnOversizeBody(t *testing.T) {
 	const threshold = 1024
 	body := make([]byte, 2048)

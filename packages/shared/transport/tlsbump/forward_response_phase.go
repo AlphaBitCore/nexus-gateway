@@ -59,19 +59,18 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 		isSSE = true
 	}
 
-	// Debug, and guarded (finding C-9). This fired at INFO on EVERY response with
-	// seven attributes, each of which slog boxes at the call site whether or not
-	// the level is enabled — the same double cost C-9 removed from the two
-	// runtimeNormalize lines and C-4 from the request-entry pair.
+	// Debug, and guarded. At INFO this fires on EVERY response with seven
+	// attributes, each of which slog boxes at the call site whether or not the level
+	// is enabled — the same double cost the two runtimeNormalize lines and the
+	// request-entry pair carry.
 	//
-	// It was kept at INFO on the argument that the SSE-vs-buffered fork must be
-	// answerable from agent.log alone after an incident. That argument is exactly
-	// the one the owner overruled when C-9 was reopened — "logs should carry only
-	// important information, do not grow the volume" — and it is weaker here than
-	// it looks: a line that fires on every single response is not something an
-	// operator greps for a rare mis-route, it is what they grep past. The one
-	// genuinely operational signal it carried is the buffered-stream smell, which
-	// is now raised on its own below, only when it is true.
+	// The argument for INFO is that the SSE-vs-buffered fork must be answerable from
+	// agent.log alone after an incident. It is weaker than it looks: a line that
+	// fires on every single response is not something an operator greps for a rare
+	// mis-route, it is what they grep past — and logs carry only important
+	// information rather than growing in volume. The one genuinely operational
+	// signal it carries is the buffered-stream smell, raised on its own below, only
+	// when it is true.
 	if logger.Enabled(x.r.Context(), slog.LevelDebug) {
 		logger.Debug("post-upstream response routing",
 			"path", x.r.URL.Path,
@@ -134,7 +133,7 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 		)
 		return false
 	}
-	respPipeline, pErr := bo.policyResolver.BuildPipeline(
+	respPipeline, _, pErr := bo.policyResolver.BuildPipeline(
 		"response", "COMPLIANCE_PROXY",
 		x.endpointType, nil,
 		bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
@@ -148,7 +147,7 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 	// with no hooks stays on the stream-through fast path.
 	needBuffer := respPipeline != nil || providerDetected
 
-	// Debug, and guarded (finding C-9), for the same reason as the routing line
+	// Debug, and guarded, for the same reason as the routing line
 	// above: seven attributes boxed on every non-SSE response to record which of
 	// three arms ran, which is a debugging aid rather than something an operator
 	// acts on. The outcome reaches the audit row.
@@ -180,14 +179,13 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 		// buffered on this fast path, so ResponseBody stays nil
 		// regardless of the capture flag.
 		//
-		// The emission is DEFERRED to after relayResponse (finding C-34). Emitting
-		// here — which is what this arm used to do — builds the row before a single
-		// response byte has been read, and two of its columns are populated off the
-		// body read: PhaseSink stamps upstream TTFB on the first Read returning
-		// content and refreshes upstream-total on every Read, so both landed as NULL
-		// for every stream-through row, forever. latency_ms was worse than NULL: it
-		// was computed before the transfer, so a large download's row under-reported
-		// its own duration by the whole transfer time.
+		// The emission is DEFERRED to after relayResponse. Emitting here builds the
+		// row before a single response byte has been read, and two of its columns
+		// are populated off the body read: PhaseSink stamps upstream TTFB on the
+		// first Read returning content and refreshes upstream-total on every Read,
+		// so both land as NULL for every stream-through row. latency_ms is worse
+		// than NULL: computed before the transfer, a large download's row
+		// under-reports its own duration by the whole transfer time.
 		//
 		// serveRequest invokes this with `defer`, not a straight-line call, so a
 		// panic in the relay cannot lose the row — which is what made deferring

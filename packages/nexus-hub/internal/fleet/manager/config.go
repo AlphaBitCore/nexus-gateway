@@ -296,8 +296,8 @@ func (m *Manager) publishHubSignal(ctx context.Context, thingType, configKey str
 	}
 	data, err := SignHubSignal(sig, m.signalSecret)
 	if err != nil {
-		// Previously this branch returned silently — a marshal failure
-		// stranded every peer-Hub Thing with no log and no metric, only
+		// Returning silently here means a marshal failure
+		// strands every peer-Hub Thing with no log and no metric, only
 		// surfacing as a lagging shadow.drift_things gauge after the 60s
 		// drift tick.
 		m.logger.Error("marshal hub signal failed",

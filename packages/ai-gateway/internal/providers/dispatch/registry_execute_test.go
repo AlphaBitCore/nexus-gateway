@@ -97,8 +97,8 @@ func (stubOpenAIAdapter) Execute(context.Context, Request) (*Response, error) {
 func (stubOpenAIAdapter) Probe(context.Context, CallTarget) (*ProbeResult, error) {
 	return &ProbeResult{OK: true}, nil
 }
-func (stubOpenAIAdapter) PrepareBody(r Request) ([]byte, []string, string, error) {
-	return r.Body, nil, "", nil
+func (stubOpenAIAdapter) PrepareBody(r Request) (PreparedBody, error) {
+	return PreparedBody{Body: r.Body}, nil
 }
 func (stubOpenAIAdapter) ExecuteWithBody(context.Context, Request, []byte, []string, string) (*Response, error) {
 	return &Response{StatusCode: 200}, nil
@@ -117,8 +117,8 @@ func (s formatStubAdapter) Execute(context.Context, Request) (*Response, error) 
 func (s formatStubAdapter) Probe(context.Context, CallTarget) (*ProbeResult, error) {
 	return &ProbeResult{OK: true}, nil
 }
-func (s formatStubAdapter) PrepareBody(r Request) ([]byte, []string, string, error) {
-	return r.Body, nil, "", nil
+func (s formatStubAdapter) PrepareBody(r Request) (PreparedBody, error) {
+	return PreparedBody{Body: r.Body}, nil
 }
 func (s formatStubAdapter) ExecuteWithBody(context.Context, Request, []byte, []string, string) (*Response, error) {
 	return &Response{StatusCode: 200}, nil
@@ -785,7 +785,7 @@ func TestDebugBody_EmptyStreamLogged(t *testing.T) {
 func TestPrepareBody_NonChatEndpoint_PassesBodyThrough(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, noopCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	body := []byte(`{"model":"foo"}`)
-	got, rw, _, err := ad.PrepareBody(Request{
+	gotPrep, err := ad.PrepareBody(Request{
 		WireShape:  typology.WireShapeOpenAIResponses,
 		BodyFormat: FormatOpenAI,
 		Body:       body,
@@ -794,6 +794,7 @@ func TestPrepareBody_NonChatEndpoint_PassesBodyThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	got, rw := gotPrep.Body, gotPrep.Rewrites
 	if !bytes.Equal(got, body) || rw != nil {
 		t.Errorf("non-chat endpoint: body must pass through unchanged; got %s rewrites=%v", got, rw)
 	}
@@ -807,7 +808,7 @@ func TestPrepareBody_NonChatEndpoint_PassesBodyThrough(t *testing.T) {
 func TestPrepareBody_NonOpenAIWire_NoRewrite(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, noopCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic), slog.Default())
 	body := []byte(`{"model":"claude-3-5-sonnet","messages":[]}`)
-	got, rw, _, err := ad.PrepareBody(Request{
+	gotPrep, err := ad.PrepareBody(Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatAnthropic,
 		Body:       body,
@@ -816,6 +817,7 @@ func TestPrepareBody_NonOpenAIWire_NoRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	got, rw := gotPrep.Body, gotPrep.Rewrites
 	if !bytes.Equal(got, body) || rw != nil {
 		t.Errorf("non-OpenAI-wire format: body must not be JSON-rewritten; got %s rewrites=%v", got, rw)
 	}
@@ -825,7 +827,7 @@ func TestPrepareBody_NonOpenAIWire_NoRewrite(t *testing.T) {
 // guard on the passthrough path.
 func TestPrepareBody_EmptyBodyShortCircuits(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
-	got, rw, _, err := ad.PrepareBody(Request{
+	gotPrep, err := ad.PrepareBody(Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       nil,
@@ -834,6 +836,7 @@ func TestPrepareBody_EmptyBodyShortCircuits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	got, rw := gotPrep.Body, gotPrep.Rewrites
 	if got != nil || rw != nil {
 		t.Errorf("empty body: want (nil,nil,nil); got body=%v rewrites=%v", got, rw)
 	}
@@ -844,7 +847,7 @@ func TestPrepareBody_EmptyBodyShortCircuits(t *testing.T) {
 func TestPrepareBody_NoProviderModelID_BodyUnchanged(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	body := []byte(`{"model":"original-id"}`)
-	got, rw, _, err := ad.PrepareBody(Request{
+	gotPrep, err := ad.PrepareBody(Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       body,
@@ -853,6 +856,7 @@ func TestPrepareBody_NoProviderModelID_BodyUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	got, rw := gotPrep.Body, gotPrep.Rewrites
 	if !bytes.Equal(got, body) || rw != nil {
 		t.Errorf("empty ProviderModelID: body must pass through unchanged; got %s rewrites=%v", got, rw)
 	}
@@ -1177,7 +1181,7 @@ func TestExecuteWithBody_CodecURLOverride_ThreadsThrough(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(tr, cd, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatGemini), slog.Default())
 
 	// PrepareBody surfaces the URLOverride the codec emitted.
-	body, _, urlOverride, err := ad.PrepareBody(Request{
+	prep, err := ad.PrepareBody(Request{
 		WireShape:  typology.WireShapeOpenAIEmbeddings,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{"model":"text-embedding-004","input":["a","b"]}`),
@@ -1185,6 +1189,7 @@ func TestExecuteWithBody_CodecURLOverride_ThreadsThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	body, urlOverride := prep.Body, prep.URLOverride
 	if urlOverride != ":batchEmbedContents" {
 		t.Fatalf("PrepareBody URLOverride = %q, want :batchEmbedContents", urlOverride)
 	}

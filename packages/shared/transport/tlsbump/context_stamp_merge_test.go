@@ -14,10 +14,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/openai"
 )
 
-// Finding C-3: the request phase's audit context and the CPMarker used to be two
-// separate WithContext stamps, and therefore two http.Request clones, even though
+// The request phase's audit context and the CPMarker ride in ONE http.Request
+// clone. Two separate WithContext stamps would mean two clones for no gain:
 // stampCPMarker runs immediately after the request phase with nothing reading the
-// context in between. They now ride in one clone.
+// context in between.
 //
 // The risk the merge carries is that one of the two silently stops arriving. Neither
 // absence raises an error: a missing CPMarker means the response quietly loses its

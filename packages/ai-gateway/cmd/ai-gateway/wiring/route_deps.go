@@ -16,6 +16,7 @@ import (
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/promptcache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
@@ -50,7 +51,7 @@ type RouteDeps struct {
 	RouterResolver *routing.Resolver
 	// CapCache is the router's capability snapshot, carried through so the
 	// proxy's explicit-model passthrough can apply the same guards the
-	// resolver does. Both read it; only the resolver used to have it.
+	// resolver does. Both read it.
 	CapCache *capability.Cache
 	Executor *executor.TargetExecutor
 	// Resolver is the shared (providerID, modelID) → CallTarget resolver
@@ -72,6 +73,7 @@ type RouteDeps struct {
 	FormatBridge      *canonicalbridge.Bridge
 	Allowlist         *forwardheader.Resolved
 	NormEngine        *wirerewrite.Engine
+	PromptCache       *promptcache.Settings
 	GeminiCacheMgrSet *geminicache.ManagerSet
 	PassthroughCache  *passthrough.Cache
 	Logger            *slog.Logger

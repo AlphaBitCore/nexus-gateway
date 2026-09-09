@@ -1023,7 +1023,7 @@ func TestEnrollWithJWT_ResolveThingIDError_Returns500(t *testing.T) {
 	}
 }
 
-// Tests: enrollWithJWT — resolveThingID error via rand seam (originally documented)
+// Tests: enrollWithJWT — resolveThingID error via the rand seam
 
 // Tests: enrollWithJWT — fingerprint dedupe
 

@@ -39,6 +39,5 @@
 // Normalizer implementations are pure functions of (raw bytes, meta) —
 // they do not touch the database, do not call the network, and do not
 // log. This makes byte-identical output across the three data-plane
-// services a provable property (verified by cross-service integration
-// tests in tests/integration/normalize_consistency_test.go).
+// services a provable property.
 package core

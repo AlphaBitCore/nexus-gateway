@@ -14,6 +14,7 @@ import (
 
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
@@ -89,10 +90,10 @@ type BridgeDeps struct {
 // logger — measured on a live containerized agent, so this comment states what
 // the log actually looks like rather than what the call site alone suggests.
 //
-// It previously passed 14 attributes
+// Passing all 14 attributes
 // (host, method, path, hook decision, bump status, domain rule, path action,
 // process, bundle, provider, model, latency), every one of which is a column
-// on the audit row this line announces — so they were duplicated into the log
+// on the audit row this line announces, duplicates every one of them into the log
 // on every intercepted request. That cost lands differently here than on a
 // server: the agent runs on user laptops with no admission control in front of
 // it, so a busy browsing session turns into thousands of 14-field structured
@@ -113,7 +114,7 @@ func (w *loggingQueueWriter) Enqueue(e sharedaudit.AuditEvent) {
 	}
 	logger.Info("audit emit (per-request)",
 		"event_id", e.ID,
-		"trace_id", e.TraceID,
+		diag.ExternalRequestIDAttrKey, e.ExternalRequestID,
 	)
 	if w.next != nil {
 		w.next.Enqueue(e)

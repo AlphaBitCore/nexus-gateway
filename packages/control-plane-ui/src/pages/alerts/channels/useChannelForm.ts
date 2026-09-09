@@ -12,10 +12,6 @@ import {
  * the four per-type config blocks (webhook / slack / email / pagerduty),
  * seeds state from the fetched channel, and serializes the per-type config
  * blob for save via `buildConfig`.
- *
- * Behavior is identical to the inline state that previously lived in
- * AlertChannelEditPage: same defaults, same masked-secret tracking, same
- * `buildConfig` switch and trimming.
  */
 export function useChannelForm(channel: AlertChannel | null | undefined, isNew: boolean) {
   /* ── Form state ────────────────────────────────────────────────────────── */

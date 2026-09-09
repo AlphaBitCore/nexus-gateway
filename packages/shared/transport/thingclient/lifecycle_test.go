@@ -135,7 +135,20 @@ func TestLifecycle_StartToConfigCallback(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	waitFor(t, 3*time.Second, func() bool { return c.Mode() == ModeWSConnected })
+	// Wait for the LAST thing this test asserts, not the first. One connection
+	// produces an ordered chain — setMode(ws_connected), applyConfig, the
+	// OnConfigChanged callback, sendShadowReport, reportedVer — and each link
+	// is separated from the next by real work. Waiting on any link but the last
+	// leaves every assertion past it reading state that is still on its way:
+	// the mode alone reports "callback not invoked", and the callback alone
+	// reports ReportedVer = 0. Both look like defects and neither is one.
+	// The mode flips first deliberately, because sendShadowReport drops the
+	// report while the mode is still ws_connecting.
+	waitFor(t, 3*time.Second, func() bool {
+		return c.Mode() == ModeWSConnected &&
+			callbackDesired.Load() != nil &&
+			c.ReportedVer() == 1
+	})
 
 	raw := callbackDesired.Load()
 	if raw == nil {

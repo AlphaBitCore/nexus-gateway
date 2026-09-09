@@ -17,7 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/token"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	jwtverifier "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/sso/handler"
+	sso "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/sso/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"

@@ -22,7 +22,7 @@ vi.mock('@/hooks/useMutation', () => ({
   }),
 }));
 const deviceApiMock = vi.hoisted(() => ({
-  forceRefresh: vi.fn(), rotateCert: vi.fn(), unenroll: vi.fn(),
+  forceRefresh: vi.fn(), unenroll: vi.fn(),
 }));
 vi.mock('@/api/services', async (orig) => ({
   ...(await orig<typeof import('@/api/services')>()),
@@ -90,19 +90,6 @@ describe('FleetDeviceDetailPage', () => {
     await waitFor(() => expect(deviceApiMock.forceRefresh).toHaveBeenCalledWith('dev-1'));
   });
 
-  it('Rotate certificate confirms then calls rotateCert', async () => {
-    deviceApiMock.rotateCert.mockResolvedValue({});
-    const user = userEvent.setup();
-    wrap();
-    // the device-actions dropdown trigger is the one carrying the ▾ caret
-    const triggers = screen.getAllByRole('button', { name: /actions/i });
-    await user.click(triggers.find((b) => b.textContent?.includes('▾')) ?? triggers[0]);
-    await user.click(await screen.findByText(i18n.t('pages:fleet.rotateCert')));
-    // confirm dialog → confirm button (same label) is the last match
-    const confirm = screen.getAllByRole('button', { name: i18n.t('pages:fleet.rotateCert') });
-    await user.click(confirm[confirm.length - 1]);
-    await waitFor(() => expect(deviceApiMock.rotateCert).toHaveBeenCalledWith('dev-1'));
-  });
 
   it('Revoke device confirms then unenrolls + navigates to the fleet list', async () => {
     deviceApiMock.unenroll.mockResolvedValue({});

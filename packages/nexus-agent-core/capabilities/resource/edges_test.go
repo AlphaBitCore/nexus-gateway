@@ -120,8 +120,9 @@ func TestUnbalancedBraceHandledGracefully(t *testing.T) {
 
 // TestSearchIndexesDescription proves the corpus indexes an operation's DESCRIPTION,
 // not just its summary: "pipeline" surfaces hookExecutionChain (summary "Get hook
-// execution chain", description mentions the pipeline visualiser) — previously that
-// op was invisible to the word "pipeline" and only listHookConfigs matched.
+// execution chain", description mentions the pipeline visualiser). Indexing summaries
+// alone leaves that op invisible to the word "pipeline", with only listHookConfigs
+// matching.
 func TestSearchIndexesDescription(t *testing.T) {
 	var sawChain bool
 	for _, op := range Search("pipeline", 8) {

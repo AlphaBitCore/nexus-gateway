@@ -21,7 +21,7 @@ import (
 // TestS070_SCIMTokenRoundTrip — PM-grade e2e for the SCIM provisioning
 // surface end-to-end.
 //
-// BRAINSTORM (pre): SCIM 2.0 is the de-facto enterprise identity
+// SCIM 2.0 is the de-facto enterprise identity
 // provisioning protocol (Okta, Azure AD, Google Workspace all speak
 // it). The Nexus Control Plane exposes it at /scim/v2/* gated by a
 // bearer token minted against an IdentityProvider row. This scenario
@@ -283,9 +283,8 @@ func TestS070_SCIMTokenRoundTrip(t *testing.T) {
 	scimUserID := createdUser.ID
 	sc.Cleanup.Register("scim-user:"+scimUserID, func() error {
 		st, body := scimDo(http.MethodDelete, "/scim/v2/Users/"+scimUserID, nil)
-		switch {
-		case st == http.StatusNoContent, st == http.StatusOK,
-			st == http.StatusNotFound, st == http.StatusUnauthorized:
+		switch st {
+		case http.StatusNoContent, http.StatusOK, http.StatusNotFound, http.StatusUnauthorized:
 			return nil
 		default:
 			return fmt.Errorf("delete SCIM user %s: status %d body=%q",
@@ -357,4 +356,3 @@ func scimMapKeys(m map[string]any) []string {
 	}
 	return out
 }
-

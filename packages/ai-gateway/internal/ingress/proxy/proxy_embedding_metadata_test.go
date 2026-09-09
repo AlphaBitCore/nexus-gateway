@@ -19,8 +19,9 @@
 package proxy
 
 import (
-	"github.com/goccy/go-json"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 func TestPreStampEmbeddingRequestMeta_singleStringInput(t *testing.T) {

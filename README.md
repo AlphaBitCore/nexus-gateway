@@ -197,7 +197,7 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 | Tool | Version | Notes |
 |---|---|---|
 | Node.js | **20+** | npm workspaces require npm 10+ |
-| Go | **1.25+** | All Go modules share `go.work` at the repo root |
+| Go | **1.26+** | All Go modules share `go.work` at the repo root, which pins `go 1.26.0` |
 | Docker | any recent | Hosts PostgreSQL, Valkey, NATS via `docker-compose.yml` |
 
 ### One-shot bootstrap
@@ -244,7 +244,7 @@ Each Go service tees logs to `packages/<service>/logs/<service>.log` in dev mode
 Browse to <http://localhost:3000> and sign in as the seeded super-admin:
 
 ```
-admin@nexus.ai / admin123
+admin@nexus.ai / nexus-demo
 ```
 
 Additional seeded roles (`alice@nexus.ai`, `carol@nexus.ai`, `bob@nexus.ai`, `diana@nexus.ai`) are defined in `tools/db-migrate/seed/seed.ts`.

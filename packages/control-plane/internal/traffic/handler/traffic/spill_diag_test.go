@@ -1,13 +1,13 @@
 package traffic
 
-// Spill-read failure diagnosis (S-2).
+// Spill-read failure diagnosis.
 //
-// The silent failure these tests guard: a spilled audit body that cannot be
-// fetched used to produce ONE generic "spill body fetch failed" log line for
-// every cause. On a multi-host deployment where each node runs its own localfs
-// spill root, EVERY spilled body is permanently unreadable from the Control
-// Plane — and it looked exactly like a transient S3 hiccup, so an operator had
-// no signal that the deployment shape itself was wrong.
+// The silent failure these tests guard: ONE generic "spill body fetch failed" log
+// line for every cause a spilled audit body can fail to be fetched for. On a
+// multi-host deployment where each node runs its own localfs spill root, EVERY
+// spilled body is permanently unreadable from the Control Plane — and it reads
+// exactly like a transient S3 hiccup, so an operator gets no signal that the
+// deployment shape itself is wrong.
 //
 // Each test therefore asserts the OBSERVABLE an operator acts on: the stable
 // cause label on the emitted log record, and — where the two are easy to

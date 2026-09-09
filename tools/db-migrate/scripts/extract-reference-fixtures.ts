@@ -32,7 +32,8 @@ const REFERENCE: { table: string; where?: string; orderBy: string }[] = [
   // rule-packs are installed (rule_pack_install FK → rule_pack + HookConfig).
   { table: 'HookConfig', orderBy: 'id' },
   { table: 'rule_pack_install', orderBy: 'id' },
-  { table: 'Job', orderBy: 'id' },
+  // Job is NOT extracted — see the note in seed/reference/index.ts. Leaving it
+  // here would regenerate the fixture the next time someone runs this script.
   { table: 'thing_config_template', orderBy: 'type, config_key' },
   { table: 'IamPolicy', where: `type = 'managed'`, orderBy: 'name' },
   // The standard local-password IdP — login's /authserver/* routes are skipped

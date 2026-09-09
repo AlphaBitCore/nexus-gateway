@@ -2,11 +2,12 @@ package infra
 
 import (
 	"bytes"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/labstack/echo/v4"
 
@@ -14,9 +15,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // configSyncUpdateDenied lists configKeys that MUST NOT be pushed through the
@@ -41,11 +42,10 @@ var configSyncUpdateDenied = map[string]string{
 // RegisterAdminNodeOverridesRoutes) — it supports both empty-body (whole-Thing
 // replay) and {"configKey": "..."} (single-key) forms, plus thing-type RBAC.
 func (h *Handler) RegisterNodeRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
-	// Nodes — gate on the `node` carve-out (audit #21 fix). Previously
-	// these routes used the overloaded `settings` resource, which
-	// granted node visibility to anyone with `settings.read` and made
-	// the carved-out `node.read` / `node.force-resync` verbs in the
-	// catalog inert.
+	// Nodes — gate on the `node` carve-out. The overloaded `settings`
+	// resource would grant node visibility to anyone with `settings.read`
+	// and leave the carved-out `node.read` / `node.force-resync` verbs in
+	// the catalog inert.
 	g.GET("/nodes", h.NodesList, iamMW(iam.ResourceNode.Action(iam.VerbRead)))
 	g.GET("/nodes/:id", h.NodesGet, iamMW(iam.ResourceNode.Action(iam.VerbRead)))
 	g.GET("/nodes/:id/device-assignments", h.GetNodeDeviceAssignments, iamMW(iam.ResourceNode.Action(iam.VerbRead)))
@@ -56,7 +56,7 @@ func (h *Handler) RegisterNodeRoutes(g *echo.Group, iamMW func(action string) ec
 	// any settings-reader can see. The write path pushes a config template to a
 	// node type, which is a node-level mutation: gate it on `node.update` so it
 	// matches the `node.update` audit row this handler already stamps (and the
-	// audit #21 carve-out that moved node visibility off the overloaded
+	// same carve-out that keeps node visibility off the overloaded
 	// `settings` resource). Gating it on `settings.update` would grant the
 	// node-config push to anyone with generic settings-write.
 	g.GET("/config-sync/out-of-sync", h.ConfigSyncOutOfSync, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
@@ -95,13 +95,25 @@ func (h *Handler) hubProxyClient() *http.Client {
 
 // hubForward proxies a Hub HTTP call, passing the response body through an
 // optional JSON rename function before returning to the admin client.
+// hubForward proxies one request to Hub and reports whether Hub answered 2xx.
+//
+// Returning only error says nothing about a refusal:
+// every failure path returns c.JSON(...), which is nil on a successful write,
+// so `if err := h.hubForward(...); err != nil` has a branch that can only
+// fire on a broken pipe, leaving callers that care about the outcome to read it
+// back off the response writer — c.Response().Status. Such a helper knows the
+// verdict and does not say it.
+//
+// ok is the upstream verdict, not "the write succeeded": err still carries a
+// genuine transport failure to echo. Callers with nothing to decide use
+// hubProxy below.
 func (h *Handler) hubForward(
 	c echo.Context,
 	method, hubPath string,
 	rename func([]byte) ([]byte, error),
-) error {
+) (ok bool, err error) {
 	if h.hub == nil || h.hub.BaseURL() == "" {
-		return c.JSON(http.StatusServiceUnavailable, errJSON("Hub is not configured", "server_error", "HUB_NOT_CONFIGURED"))
+		return false, c.JSON(http.StatusServiceUnavailable, errJSON("Hub is not configured", "server_error", "HUB_NOT_CONFIGURED"))
 	}
 	hubURL := h.hub.BaseURL() + hubPath
 
@@ -110,10 +122,10 @@ func (h *Handler) hubForward(
 		bodyReader = c.Request().Body
 	}
 
-	req, err := http.NewRequestWithContext(c.Request().Context(), method, hubURL, bodyReader)
-	if err != nil {
-		h.logger.Error("hub proxy: failed to create request", "method", method, "path", hubPath, "error", err)
-		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create proxy request", "server_error", ""))
+	req, reqErr := http.NewRequestWithContext(c.Request().Context(), method, hubURL, bodyReader)
+	if reqErr != nil {
+		h.logger.Error("hub proxy: failed to create request", "method", method, "path", hubPath, "error", reqErr)
+		return false, c.JSON(http.StatusInternalServerError, errJSON("Failed to create proxy request", "server_error", ""))
 	}
 	req.Header.Set("Authorization", "Bearer "+h.hub.Token())
 	if bodyReader != nil {
@@ -126,23 +138,23 @@ func (h *Handler) hubForward(
 	req.URL.RawQuery = c.QueryString()
 
 	start := time.Now()
-	resp, err := h.hubProxyClient().Do(req)
-	if err != nil {
-		h.logger.Warn("hub proxy: hub unreachable", "method", method, "path", hubPath, "duration", time.Since(start), "error", err)
-		return c.JSON(http.StatusBadGateway, errJSON("Hub unreachable", "server_error", "HUB_UNREACHABLE"))
+	resp, doErr := h.hubProxyClient().Do(req)
+	if doErr != nil {
+		h.logger.Warn("hub proxy: hub unreachable", "method", method, "path", hubPath, "duration", time.Since(start), "error", doErr)
+		return false, c.JSON(http.StatusBadGateway, errJSON("Hub unreachable", "server_error", "HUB_UNREACHABLE"))
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return c.JSON(http.StatusBadGateway, errJSON("Hub response read failed", "server_error", "HUB_READ_FAIL"))
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return false, c.JSON(http.StatusBadGateway, errJSON("Hub response read failed", "server_error", "HUB_READ_FAIL"))
 	}
 
 	if rename != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 && len(body) > 0 {
 		renamed, rerr := rename(body)
 		if rerr != nil {
 			h.logger.Error("hub proxy: rename failed", "path", hubPath, "error", rerr)
-			return c.JSON(http.StatusBadGateway, errJSON("Hub adapter failed", "server_error", "HUB_ADAPT_FAIL"))
+			return false, c.JSON(http.StatusBadGateway, errJSON("Hub adapter failed", "server_error", "HUB_ADAPT_FAIL"))
 		}
 		body = renamed
 	}
@@ -160,19 +172,33 @@ func (h *Handler) hubForward(
 	c.Response().Header().Set("Content-Type", "application/json")
 	c.Response().WriteHeader(resp.StatusCode)
 	_, _ = c.Response().Write(body)
-	return nil
+	return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
+}
+
+// hubProxy is hubForward for handlers that only relay: no audit row, nothing
+// to decide on Hub's verdict. Keeping the tail-position callers at
+// `return h.hubProxy(...)` is the point — threading a discarded bool through
+// eighteen one-line handlers would be noise, and a discarded value invites the
+// next reader to wonder what they were supposed to do with it.
+func (h *Handler) hubProxy(
+	c echo.Context,
+	method, hubPath string,
+	rename func([]byte) ([]byte, error),
+) error {
+	_, err := h.hubForward(c, method, hubPath, rename)
+	return err
 }
 
 func (h *Handler) NodesList(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/things", hub.RenameThingsList)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/things", hub.RenameThingsList)
 }
 
 func (h *Handler) NodesGet(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/things/"+url.PathEscape(c.Param("id")), hub.RenameNode)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/things/"+url.PathEscape(c.Param("id")), hub.RenameNode)
 }
 
 func (h *Handler) ConfigSyncOutOfSync(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/drift", hub.RenameDriftResponse)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/drift", hub.RenameDriftResponse)
 }
 
 func (h *Handler) ConfigSyncHistory(c echo.Context) error {
@@ -189,14 +215,14 @@ func (h *Handler) ConfigSyncHistory(c echo.Context) error {
 		q.Del("nodeType")
 		c.Request().URL.RawQuery = q.Encode()
 	}
-	return h.hubForward(c, http.MethodGet, "/api/hub/config/history", hub.RenameConfigHistoryResponse)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/config/history", hub.RenameConfigHistoryResponse)
 }
 
 // ConfigSyncCatalog proxies Hub's (thingType, configKey) catalog so the
 // admin Config Sync history filter can populate its Type / Config Key
 // selects from live template data. Response uses product-facing `nodeType`.
 func (h *Handler) ConfigSyncCatalog(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/config/catalog", hub.RenameConfigCatalogResponse)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/config/catalog", hub.RenameConfigCatalogResponse)
 }
 
 // ConfigSyncUpdate proxies the generic admin "push a config update" action to
@@ -253,10 +279,11 @@ func (h *Handler) ConfigSyncUpdate(c echo.Context) error {
 	c.Request().ContentLength = int64(len(hubBody))
 	c.Request().Header.Set("Content-Type", "application/json")
 
-	if err := h.hubForward(c, http.MethodPost, "/api/hub/config/update", hub.RenameConfigUpdateResponse); err != nil {
+	ok, err := h.hubForward(c, http.MethodPost, "/api/hub/config/update", hub.RenameConfigUpdateResponse)
+	if err != nil {
 		return err
 	}
-	if c.Response().Status >= 200 && c.Response().Status < 300 {
+	if ok {
 		ae := audit.EntryFor(c, iam.ResourceNode, iam.VerbUpdate)
 		if req.Action != "" {
 			ae.Action = req.Action
@@ -269,15 +296,15 @@ func (h *Handler) ConfigSyncUpdate(c echo.Context) error {
 }
 
 func (h *Handler) JobsList(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/jobs", nil)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/jobs", nil)
 }
 
 func (h *Handler) JobsGet(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/jobs/"+url.PathEscape(c.Param("id")), nil)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/jobs/"+url.PathEscape(c.Param("id")), nil)
 }
 
 func (h *Handler) JobsListRuns(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/jobs/"+url.PathEscape(c.Param("id"))+"/runs", nil)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/jobs/"+url.PathEscape(c.Param("id"))+"/runs", nil)
 }
 
 // JobsUpdate proxies PUT /api/hub/jobs/:id. Hub currently accepts only the
@@ -291,10 +318,11 @@ func (h *Handler) JobsUpdate(c echo.Context) error {
 	}
 	c.Request().Body = io.NopCloser(bytes.NewReader(body))
 
-	if err := h.hubForward(c, http.MethodPut, "/api/hub/jobs/"+url.PathEscape(id), nil); err != nil {
+	ok, err := h.hubForward(c, http.MethodPut, "/api/hub/jobs/"+url.PathEscape(id), nil)
+	if err != nil {
 		return err
 	}
-	if c.Response().Status >= 200 && c.Response().Status < 300 {
+	if ok {
 		var parsed map[string]any
 		_ = json.Unmarshal(body, &parsed)
 		ae := audit.EntryFor(c, iam.ResourceNode, iam.VerbUpdate)
@@ -309,10 +337,11 @@ func (h *Handler) JobsUpdate(c echo.Context) error {
 // audit entry so the admin ledger records who forced the run.
 func (h *Handler) JobsTrigger(c echo.Context) error {
 	id := c.Param("id")
-	if err := h.hubForward(c, http.MethodPost, "/api/hub/jobs/"+url.PathEscape(id)+"/trigger", nil); err != nil {
+	ok, err := h.hubForward(c, http.MethodPost, "/api/hub/jobs/"+url.PathEscape(id)+"/trigger", nil)
+	if err != nil {
 		return err
 	}
-	if c.Response().Status >= 200 && c.Response().Status < 300 {
+	if ok {
 		ae := audit.EntryFor(c, iam.ResourceNode, iam.VerbUpdate)
 		ae.EntityID = id
 		h.audit.LogObserved(c.Request().Context(), ae)
@@ -321,14 +350,15 @@ func (h *Handler) JobsTrigger(c echo.Context) error {
 }
 
 func (h *Handler) EnrollmentListTokens(c echo.Context) error {
-	return h.hubForward(c, http.MethodGet, "/api/hub/enrollment/tokens", nil)
+	return h.hubProxy(c, http.MethodGet, "/api/hub/enrollment/tokens", nil)
 }
 
 func (h *Handler) EnrollmentCreateToken(c echo.Context) error {
-	if err := h.hubForward(c, http.MethodPost, "/api/hub/enrollment/token", nil); err != nil {
+	ok, err := h.hubForward(c, http.MethodPost, "/api/hub/enrollment/token", nil)
+	if err != nil {
 		return err
 	}
-	if c.Response().Status >= 200 && c.Response().Status < 300 {
+	if ok {
 		ae := audit.EntryFor(c, iam.ResourceNode, iam.VerbCreate)
 		// Do not record token material from Hub; summary only.
 		ae.AfterState = map[string]any{"issued": true}

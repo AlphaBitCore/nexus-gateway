@@ -15,6 +15,15 @@ import { alertsApi } from '@/api/services/alerts/alerts';
 import type { AlertRule } from '@/api/services/alerts/alerts';
 import { AlertRulesListPage } from '../../../../src/pages/alerts/rules/AlertRulesListPage';
 
+// The alert write affordances gate on alert.update / .create / .delete while
+// the pages themselves load on alert.read. The set is mutable so a single arm
+// can take one grant away and prove the affordance is really gated; a blanket
+// `() => true` would leave every one of those gates untested.
+const denied = new Set<string>();
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: (key: string) => !denied.has(key),
+}));
+
 function sampleRule(overrides: Partial<AlertRule> = {}): AlertRule {
   return {
     id: 'quota.threshold',
@@ -85,5 +94,27 @@ describe('AlertRulesListPage', () => {
     await waitFor(() => {
       expect(updateSpy).toHaveBeenCalledWith('quota.threshold', { enabled: false });
     });
+  });
+
+  // The list loads on alert.read but PUT /alerts/rules/:id enforces
+  // alert.update, so a read-only principal offered a live Switch only gets
+  // a 403 they cannot act on.
+  it('leaves the Enabled Switch inert without alert.update', async () => {
+    denied.add('alert:update');
+    try {
+      const updateSpy = vi.spyOn(alertsApi, 'updateRule');
+      const user = userEvent.setup();
+
+      renderWithRouter(<AlertRulesListPage />);
+      await screen.findByText('Quota Threshold Crossed');
+
+      const switches = screen.getAllByRole('switch');
+      expect(switches[0].hasAttribute('disabled')).toBe(true);
+
+      await user.click(switches[0]);
+      expect(updateSpy).not.toHaveBeenCalled();
+    } finally {
+      denied.delete('alert:update');
+    }
   });
 });

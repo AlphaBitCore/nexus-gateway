@@ -70,7 +70,7 @@ func expectChainHead(mock pgxmock.PgxPoolIface, prev string) {
 // runNextHashInTx wraps a NextHash call inside a pgxmock transaction so
 // every test path goes through Begin / Exec advisory-lock / QueryRow head /
 // Commit — the same shape production callers (consumer/admin_audit.go,
-// thingmgr/override.go) use.
+// packages/nexus-hub/internal/fleet/manager/override.go) use.
 func runNextHashInTx(t *testing.T, mock pgxmock.PgxPoolIface, p HashPayload) (prev, integ string, hashInput []byte, err error) {
 	t.Helper()
 	ctx := context.Background()

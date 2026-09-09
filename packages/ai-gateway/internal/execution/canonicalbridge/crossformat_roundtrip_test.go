@@ -32,7 +32,7 @@ func TestWireShapeForTarget_APIMatchesHelper(t *testing.T) {
 //	request:  ingress body  → IngressChatToWire → non-empty target wire body
 //	response: canonical resp → ResponseCanonicalToIngress → caller's ingress shape
 //
-// This is the unit-level companion to the previously-failing
+// This is the unit-level companion to the
 // "unsupported endpoint \"openai-chat\" for codec" smoke cases
 // (openai-chat → anthropic / gemini), plus the reverse ingresses.
 func TestCrossFormatChatRoundTrip(t *testing.T) {
@@ -87,9 +87,9 @@ func TestCrossFormatChatRoundTrip(t *testing.T) {
 }
 
 // TestCrossFormatEmbeddingsRoundTrip locks the embeddings-kind cross-format
-// path the proxy/executor now wire (previously the IngressEmbeddingsToWire /
-// ResponseCanonicalToIngressEmbeddings bridge methods existed but had no
-// callers). Request: OpenAI /v1/embeddings ingress → routable target wire.
+// path the proxy and executor wire. The IngressEmbeddingsToWire /
+// ResponseCanonicalToIngressEmbeddings bridge methods have no other
+// caller. Request: OpenAI /v1/embeddings ingress → routable target wire.
 // Response: canonical → caller's ingress embeddings shape.
 func TestCrossFormatEmbeddingsRoundTrip(t *testing.T) {
 	b := testBridge(t)
@@ -133,8 +133,8 @@ func TestCrossFormatEmbeddingsRoundTrip(t *testing.T) {
 // for the Gemini embeddings codec selecting between the single
 // (:embedContent) and batch (:batchEmbedContents) upstream endpoints purely via
 // EncodeResult.URLOverride. IngressEmbeddingsToWire MUST surface that override
-// (it was previously discarded, so a batch body — {"requests":[…]} — was POSTed
-// to the single-embed URL and Gemini returned
+// (discarding it POSTs a batch body — {"requests":[…]} —
+// to the single-embed URL, and Gemini returns
 // `Unknown name "requests": Cannot find field`). This asserts the override
 // emitted by the bridge for an OpenAI /v1/embeddings ingress routed to a Gemini
 // target, the only reachable embeddings→Gemini path (no Gemini embeddings

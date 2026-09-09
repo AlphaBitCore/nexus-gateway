@@ -1,0 +1,25 @@
+{
+  "model": "gpt-4o-mini",
+  "stream": true,
+  "input": "weather in Paris? use the tool",
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "get weather",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "max_output_tokens": 200
+}

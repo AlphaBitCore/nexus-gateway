@@ -1,6 +1,6 @@
-// No-match passthrough fallback family (S-080) — verifies the AI
-// Gateway's E31-S3 behavior: when the routing pipeline resolves zero
-// targets for an incoming request, the gateway falls through to a
+// No-match passthrough fallback family (S-080) — when the routing
+// pipeline resolves zero targets for an incoming request, the gateway
+// falls through to a
 // passthrough path that looks up the requested model directly via the
 // VK-allowed providers + credentials. The traffic_event row carries
 // the literal sentinel rule ID "passthrough-fallback".
@@ -11,8 +11,6 @@
 // handler invokes resolveNoMatchPassthrough; on success it stamps
 // rec.RoutingRuleID = "passthrough-fallback" (a literal string, not a
 // UUID) and rec.RoutingTrace.targets[0].source = "passthrough-fallback".
-//
-// OpenAPI: docs/users/api/openapi/ai-gateway/e31-s3-routing-no-match-passthrough-fallback.yaml
 package scenarios_test
 
 import (
@@ -28,7 +26,7 @@ import (
 )
 
 // TestS080_NoMatchPassthroughFallback — PM-grade e2e for the
-// no-match passthrough fallback path (E31-S3).
+// no-match passthrough fallback path.
 //
 // Setup is hermetic: a fresh personal VK whose Name does not match any
 // existing rule's virtualKeys glob ensures only catch-all stage-1 rules
@@ -178,8 +176,8 @@ func TestS080_NoMatchPassthroughFallback(t *testing.T) {
 	}
 	if status != http.StatusOK {
 		// Non-200 on the catch-all-cleared path means the
-		// passthrough fallback isn't firing for a real reason:
-		// E48 kill-switch, broken dev credential, or unseeded
+		// passthrough fallback isn't firing for a real reason: the
+		// kill-switch, a broken dev credential, or an unseeded
 		// model code. Each is a real environment defect we want
 		// surfaced — not silently skipped.
 		t.Fatalf("expected HTTP 200 on no-match passthrough, got %d (body=%q)",

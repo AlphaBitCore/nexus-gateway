@@ -147,7 +147,7 @@ func TestSSEScanner_SkipsCommentsAndExtraBlankLines(t *testing.T) {
 // "some providers don't emit a final blank line before closing" branch:
 // when the underlying body EOFs with buffered data, that last frame
 // must still be flushed before the next Next() returns io.EOF. Losing
-// it here used to drop the last tool_call delta on Gemini.
+// it here drops the last tool_call delta on Gemini.
 func TestSSEScanner_TrailingEventWithoutBlankLine(t *testing.T) {
 	body := newBody("data: final\n") // no trailing blank line
 	s := NewSSEScanner(body)

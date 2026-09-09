@@ -20,7 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
-	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/promptcache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	creddecrypt "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/decrypt"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
@@ -28,6 +28,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/costing"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
+	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
@@ -35,7 +36,6 @@ import (
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/cacheconfig"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
@@ -65,7 +65,7 @@ func TestNewResolver_nonNilDepsReturnsResolver(t *testing.T) {
 	_, l := newLayerWithMock(t)
 	src := &stubCredSource{}
 	mgr := credmanager.NewManager(src, nil)
-	r := NewResolver(l, mgr, nil)
+	r := NewResolver(l, mgr, nil, nil)
 	if r == nil {
 		t.Fatal("expected non-nil PgResolver when both layer and credMgr are non-nil")
 	}
@@ -80,7 +80,7 @@ func TestNewResolver_withRedisClient(t *testing.T) {
 	_, l := newLayerWithMock(t)
 	src := &stubCredSource{}
 	mgr := credmanager.NewManager(src, nil)
-	r := NewResolver(l, mgr, rdb)
+	r := NewResolver(l, mgr, rdb, nil)
 	if r == nil {
 		t.Fatal("expected non-nil PgResolver with redis client")
 	}
@@ -268,73 +268,6 @@ func TestReliabilityConfig_Resolve_credentialFoundEmptyOverride(t *testing.T) {
 
 // ProjectCacheBlobToNormaliserConfig — anthropic/bedrock providers from layer
 
-// newTestCacheLayerWithAnthropicProvider creates a layer with an anthropic provider.
-func newTestCacheLayerWithAnthropicProvider(t *testing.T) (*cachelayer.Layer, pgxmock.PgxPoolIface) {
-	t.Helper()
-	mock, l := newLayerWithMock(t)
-	provRows := pgxmock.NewRows(providerColsForLayer).
-		AddRow("prov-anthropic", "anthropic", nil, "anthropic", "https://api.anthropic.com", "", (*string)(nil), (*string)(nil), true, (*bool)(nil)).
-		AddRow("prov-openai", "openai", nil, "openai", "https://api.openai.com", "", (*string)(nil), (*string)(nil), true, (*bool)(nil))
-	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
-	if err := l.ReloadProviders(context.Background()); err != nil {
-		t.Fatalf("ReloadProviders: %v", err)
-	}
-	return l, mock
-}
-
-// TestProjectCacheBlobToNormaliserConfig_withAnthropicProvider verifies the
-// provider projection: the anthropic provider's RESOLVED marker settings land
-// in cfg.Providers (that entry is now the engine's demand signal — with Tier 1
-// gone, a projected CacheMarkerInjectEnabled=true is the only thing that turns
-// the upstream rewrite on for a marker-only deployment). openai is not an
-// Anthropic-wire adapter and must be skipped entirely.
-func TestProjectCacheBlobToNormaliserConfig_withAnthropicProvider(t *testing.T) {
-	l, _ := newTestCacheLayerWithAnthropicProvider(t)
-
-	on := true
-	blob := cacheconfig.CacheConfigBlob{
-		Adapters: map[string]cacheconfig.AdapterConfig{
-			"anthropic": {MarkerInjectEnabled: &on, MarkerBoundary3Enabled: &on},
-		},
-	}
-	cfg := ProjectCacheBlobToNormaliserConfig(blob, l)
-
-	got, ok := cfg.Providers["prov-anthropic"]
-	if !ok {
-		t.Fatalf("anthropic provider must be projected, got %v", cfg.Providers)
-	}
-	if !got.CacheMarkerInjectEnabled || !got.CacheMarkerBoundary3Enabled {
-		t.Errorf("resolved marker settings not projected: %+v", got)
-	}
-	if _, ok := cfg.Providers["prov-openai"]; ok {
-		t.Errorf("openai is not an Anthropic-wire adapter and must be skipped, got %v", cfg.Providers)
-	}
-}
-
-// TestProjectCacheBlobToNormaliserConfig_withBedrockProvider verifies the
-// bedrock provider projection path: bedrock speaks the Anthropic Messages wire,
-// so it is projected too, and with no marker config anywhere it resolves to the
-// code default (inject OFF) — i.e. the projection never invents demand.
-func TestProjectCacheBlobToNormaliserConfig_withBedrockProvider(t *testing.T) {
-	mock, l := newLayerWithMock(t)
-	provRows := pgxmock.NewRows(providerColsForLayer).
-		AddRow("prov-bedrock", "bedrock", nil, "bedrock", "https://bedrock.aws.com", "", (*string)(nil), (*string)(nil), true, (*bool)(nil))
-	mock.ExpectQuery(`FROM "Provider"`).WillReturnRows(provRows)
-	if err := l.ReloadProviders(context.Background()); err != nil {
-		t.Fatalf("ReloadProviders: %v", err)
-	}
-
-	cfg := ProjectCacheBlobToNormaliserConfig(cacheconfig.CacheConfigBlob{}, l)
-
-	got, ok := cfg.Providers["prov-bedrock"]
-	if !ok {
-		t.Fatalf("bedrock provider must be projected (Anthropic Messages wire), got %v", cfg.Providers)
-	}
-	if got.CacheMarkerInjectEnabled || got.CacheMarkerBoundary3Enabled {
-		t.Errorf("empty blob must resolve to marker inject OFF (code default), got %+v", got)
-	}
-}
-
 // InitRedis — env addrs override path
 
 // TestInitRedis_envAddrsOverridesCfg verifies that when REDIS_ADDRS env var
@@ -411,11 +344,11 @@ func TestInitRouter_withNonNilCacheLayerAndPtResolver(t *testing.T) {
 	adapterReg := InitProviderRegistry(allowlist, discardLogger())
 	src := &stubCredSource{}
 	mgr := credmanager.NewManager(src, nil)
-	ptResolver := NewResolver(l, mgr, nil)
+	ptResolver := NewResolver(l, mgr, nil, nil)
 
 	ht := store.NewHealthTracker()
 	t.Cleanup(ht.Stop)
-	stratReg, healthRanker, resolver, capCache := InitRouter(context.Background(), l, ht, ptResolver, adapterReg, discardLogger(), false)
+	stratReg, healthRanker, resolver, capCache := InitRouter(context.Background(), l, ht, ptResolver, adapterReg, discardLogger(), false, nil)
 	if stratReg == nil {
 		t.Fatal("expected non-nil strategyReg")
 	}
@@ -1505,3 +1438,37 @@ func TestCredentialStoreAdapter_ResolveForProvider_withCredIDSuccess(t *testing.
 
 // Compile-time interface assertions for type stubs.
 var _ mq.Producer = nil // ensure mq import is used
+
+// The prompt-cache decision is a BODY EDIT, so the two legs that build a
+// CallTarget must resolve it from the same holder: the cache stage (which
+// builds the body whose bytes the cache key is hashed from) and the executor's
+// target resolver (which re-prepares that body on retry and failover). Two
+// holders would both start empty and could then diverge — only one of them
+// receives SetConfig from the `cache` shadow key — and the symptom is the one
+// this whole area exists to prevent: the admin UI shows markers on while the
+// bytes on the wire have none, or the cache key is built over bytes the
+// executor does not send.
+//
+// Asserting POINTER IDENTITY rather than "markers resolve the same" is
+// deliberate: a second promptcache.New() anywhere in the wiring passes any
+// value-based check while both holders are still empty, which is exactly the
+// window a cold start runs in.
+func TestNewResolver_SharesTheCallerPromptCacheHolder(t *testing.T) {
+	_, l := newLayerWithMock(t)
+	mgr := credmanager.NewManager(&stubCredSource{}, nil)
+	pc := promptcache.New()
+
+	r := NewResolver(l, mgr, nil, pc)
+	if r == nil {
+		t.Fatal("expected a resolver")
+	}
+	if r.PromptCache != provtarget.PromptCacheSettings(pc) {
+		t.Fatalf("the resolver must read the caller's holder, not a copy or a fresh one; got %#v", r.PromptCache)
+	}
+
+	// And a nil holder must leave the resolver answering "markers off" rather
+	// than panicking on the request path.
+	if r2 := NewResolver(l, mgr, nil, nil); r2 == nil || r2.PromptCache != nil {
+		t.Fatalf("a nil holder must stay nil on the resolver, got %#v", r2)
+	}
+}

@@ -82,14 +82,14 @@ func (r *RouteResult) Primary() RoutingTarget {
 // The quota downgrade is the caller: a key near its cap is served the cheapest
 // affordable model the plan can reach, which is frequently an entry from the
 // rule's chain rather than the strategy's first pick. Promoting rather than
-// truncating is deliberate; an earlier version cut the plan down to the single
-// downgraded target and made the next transient failure terminal, which is a
-// second penalty for being near a quota that nobody chose to impose.
+// truncating is deliberate: cutting the plan down to the single downgraded
+// target makes the next transient failure terminal, a second penalty for being
+// near a quota that nobody chose to impose.
 //
-// It lives here because the plan's shape is the pipeline's to know. The
-// downgrade used to rebuild the flat list itself, which made it a second
-// constructor of the thing the pipeline had just assembled — the divergence
-// that produces is silent, because both versions look like a list of targets.
+// It lives here because the plan's shape is the pipeline's to know. A downgrade
+// that rebuilds the flat list itself becomes a second constructor of the thing
+// the pipeline just assembled — and the divergence that produces is silent,
+// because both versions look like a list of targets.
 func (r *RouteResult) Promote(t RoutingTarget) {
 	out := make([]RoutingTarget, 0, len(r.Dispatch))
 	out = append(out, t)

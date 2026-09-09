@@ -4,44 +4,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"math"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	"github.com/coder/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// dialHTTPClient returns an *http.Client whose Transport carries the
-// process-wide [nexushttp.GlobalDialControl] callback (Linux agent
-// installs SO_MARK on every outbound socket). When no global control
-// is set (macOS, Windows, services that don't intercept their own
-// traffic), the returned client is functionally equivalent to
-// http.DefaultClient with a dialer tuned for short connection holds.
+// dialHTTPClient returns the client the Hub WebSocket dial hands to
+// websocket.Dial. It is NOT the HTTP fallback client — that one is
+// newHTTPClient in http.go, and it carries a 10s Timeout, as does the audit
+// batch upload that rides it.
+//
+// The process-wide [nexushttp.GlobalDialControl] callback — the Linux agent's
+// SO_MARK on every outbound socket — is picked up by the factory itself, so
+// there is nothing to branch on here.
+//
+// NoTimeout because a client-level deadline cannot mean anything useful on this
+// path: coder/websocket turns a non-zero HTTPClient.Timeout into a HANDSHAKE
+// deadline and zeroes the client's own Timeout so the live connection is never
+// cut, and the caller already wraps the dial in a 10s context. Splitting the
+// value on whether a dial control is installed made the handshake bound an
+// accident of platform — 30s on macOS and Windows, none on Linux — while
+// neither number was ever the one that applied.
 func dialHTTPClient() *http.Client {
-	control := nexushttp.GlobalDialControl()
-	if control == nil {
-		return nexushttp.New(nexushttp.Config{})
-	}
-	tr := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			Control:   control,
-		}).DialContext,
-		ForceAttemptHTTP2: true,
-	}
-	return &http.Client{Transport: tr}
+	return nexushttp.New(nexushttp.Config{
+		NoTimeout:   true,
+		DialTimeout: 30 * time.Second,
+		KeepAlive:   30 * time.Second,
+		Caller:      "thingclient",
+	})
 }
 
 // Config holds all settings for the Thing Client.
@@ -589,7 +592,7 @@ func (c *Client) runMetricsTicker(ctx context.Context) {
 //     Config.OpsMetricsSampler being configured).
 //   - Fire the registered OnHeartbeatTick callback so listeners can
 //     refresh "live liveness" fields (e.g. statusapi.lastHeartbeat
-//     which previously only moved on WS reconnect, masking a fully
+//     which otherwise only moves on WS reconnect, masking a fully
 //     healthy daemon as silent for hours).
 //
 // The callback fires even when OpsMetricsSampler is nil — heartbeat

@@ -15,11 +15,14 @@ import (
 // This asserts the predicate itself. The suite's broader filter tests stop
 // their pgxmock regex at "FROM traffic_event a WHERE", and pgxmock never
 // executes SQL, so swapping the column underneath them leaves them green.
-func TestBuildTrafficEventWhere_RequestIDMatchesTraceIDNotPrimaryKey(t *testing.T) {
+func TestBuildTrafficEventWhere_RequestIDMatchesExternalRequestIDNotPrimaryKey(t *testing.T) {
 	where, args, _ := buildTrafficEventWhere(TrafficEventListParams{RequestID: "rid-from-the-response-header"})
 
-	if !strings.Contains(where, "a.trace_id = $") {
-		t.Errorf("requestId filter must match trace_id; predicate was:\n%s", where)
+	if !strings.Contains(where, "a.external_request_id = $") {
+		t.Errorf("requestId filter must match external_request_id; predicate was:\n%s", where)
+	}
+	if strings.Contains(where, "a.trace_id = $") {
+		t.Errorf("requestId filter matches trace_id, which holds the caller's own W3C trace and is NULL for callers that run no tracing; predicate was:\n%s", where)
 	}
 	if strings.Contains(where, "a.id = $") {
 		t.Errorf("requestId filter still matches the primary key; predicate was:\n%s", where)

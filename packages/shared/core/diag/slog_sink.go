@@ -11,17 +11,17 @@ import (
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 )
 
-// TraceIDAttrKey is the canonical slog-attr key that the SlogSink lifts
-// into DiagEvent.TraceID (and the Hub diag writer persists into the
-// thing_diag_event.trace_id column). Producers must stamp their request-
+// ExternalRequestIDAttrKey is the canonical slog-attr key that the SlogSink lifts
+// into DiagEvent.ExternalRequestID (and the Hub diag writer persists into the
+// thing_diag_event.external_request_id column). Producers must stamp their request-
 // scoped logger with this exact key, e.g.:
 //
-//	logger = logger.With(diag.TraceIDAttrKey, traceID)
+//	logger = logger.With(diag.ExternalRequestIDAttrKey, requestID)
 //
 // The value MUST be a string; non-string values fall through into the
 // loose Attrs map so the operator can still see the malformed log line
 // but the typed column stays empty for that row.
-const TraceIDAttrKey = "trace_id"
+const ExternalRequestIDAttrKey = "external_request_id"
 
 // ThingClientPusher is the subset of *thingclient.Client that SlogSink
 // uses to ship diagnostic events to Hub. The real implementation is
@@ -83,8 +83,8 @@ type SlogSinkConfig struct {
 // withAttrs is the slice of attrs accumulated via slog.Logger.With()
 // across the handler-chain returned by WithAttrs. They are prepended onto
 // every record at Handle time so a request-scoped logger built via
-// `logger.With("trace_id", id)` actually carries the trace_id on every
-// downstream call — load-bearing for the DiagEvent.TraceID auto-extract
+// `logger.With("external_request_id", id)` actually carries it on every
+// downstream call — load-bearing for the DiagEvent.ExternalRequestID auto-extract
 // contract.
 //
 // parent points back at the original sink for WithAttrs-clones so the
@@ -138,25 +138,25 @@ func (s *SlogSink) Handle(ctx context.Context, r slog.Record) error {
 
 	// Walk both the chain-of-With attrs (accumulated via WithAttrs across
 	// every slog.Logger.With(...) call up to this point) and the on-record
-	// attrs. Pull the typed trace_id out into the DiagEvent's first-class
-	// field so downstream consumers (Hub thing_diag_event.trace_id column
+	// attrs. Pull the typed request id out into the DiagEvent's first-class
+	// field so downstream consumers (Hub thing_diag_event.external_request_id column
 	// + btree index) can query by trace without unpacking the JSONB Attrs
 	// map. The remaining attrs flow into the loose Attrs map exactly as
-	// before. The trace_id key is consumed — it does NOT appear duplicated
+	// before. The key is consumed — it does NOT appear duplicated
 	// in Attrs — so JSON payloads stay minimal and the typed column is
 	// the single source of truth.
 	//
 	// On-record attrs override With-chain attrs on the same key, matching
 	// slog's standard semantics ("most specific wins").
 	attrs := map[string]any{}
-	var traceID string
+	var requestID string
 	absorb := func(a slog.Attr) {
-		if a.Key == TraceIDAttrKey {
+		if a.Key == ExternalRequestIDAttrKey {
 			if v, ok := a.Value.Any().(string); ok {
-				traceID = v
+				requestID = v
 				return
 			}
-			// Defensive: a non-string trace_id (e.g. logged as int) still
+			// Defensive: a non-string value (e.g. logged as int) still
 			// flows into Attrs so the operator can see the malformed value.
 			attrs[a.Key] = a.Value.Any()
 			return
@@ -173,16 +173,16 @@ func (s *SlogSink) Handle(ctx context.Context, r slog.Record) error {
 
 	hash := md5.Sum([]byte(level + "|" + s.cfg.Source + "|" + r.Message))
 	evt := opsmetrics.DiagEvent{
-		ThingID:     s.cfg.ThingID,
-		OccurredAt:  r.Time,
-		Level:       level,
-		EventType:   opsmetrics.EventTypeError,
-		Source:      s.cfg.Source,
-		Message:     r.Message,
-		MessageHash: hex.EncodeToString(hash[:]),
-		TraceID:     traceID,
-		Attrs:       attrs,
-		RepeatCount: 1,
+		ThingID:           s.cfg.ThingID,
+		OccurredAt:        r.Time,
+		Level:             level,
+		EventType:         opsmetrics.EventTypeError,
+		Source:            s.cfg.Source,
+		Message:           r.Message,
+		MessageHash:       hex.EncodeToString(hash[:]),
+		ExternalRequestID: requestID,
+		Attrs:             attrs,
+		RepeatCount:       1,
 	}
 
 	// Serialize Submit/emit through the root sink so concurrent goroutines
@@ -242,8 +242,8 @@ func (s *SlogSink) routeLocked(ctx context.Context, e opsmetrics.DiagEvent) {
 }
 
 // WithAttrs returns a clone of this sink that carries the given attrs on
-// every subsequent record. This is what makes `logger.With("trace_id", id)`
-// reach every downstream log line — load-bearing for the DiagEvent.TraceID
+// every subsequent record. This is what makes `logger.With("external_request_id", id)`
+// reach every downstream log line — load-bearing for the DiagEvent.ExternalRequestID
 // auto-extract contract.
 //
 // The clone keeps the same cfg and resolves emit-serialization through

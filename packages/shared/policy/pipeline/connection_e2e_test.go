@@ -14,8 +14,8 @@ import (
 // three-end decision-uniformity contract established by P-A §3.2.
 //
 // Service-specific middleware tests live in each service's package:
-//   - ai-gateway:       internal/middleware/connection_stage_test.go
-//   - compliance-proxy: internal/proxy/listener_connection_stage_test.go
+//   - ai-gateway:       packages/ai-gateway/internal/platform/middleware/connection_stage_test.go
+//   - compliance-proxy: packages/compliance-proxy/internal/proxy/server/listener_connection_stage_test.go
 //   - agent:            internal/compliance/pipeline_connection_test.go
 //
 // This test sits at the resolver layer (below all three) to ensure the
@@ -36,7 +36,7 @@ func TestConnectionStage_UniformIngressDecision(t *testing.T) {
 	ingresses := []string{"AI_GATEWAY", "COMPLIANCE_PROXY", "AGENT"}
 	for _, ing := range ingresses {
 		t.Run(ing, func(t *testing.T) {
-			pipe, err := resolver.BuildPipeline("connection", ing, "", nil, 5*time.Second, 30*time.Second, false, false, logger)
+			pipe, _, err := resolver.BuildPipeline("connection", ing, "", nil, 5*time.Second, 30*time.Second, false, false, logger)
 			if err != nil {
 				t.Fatalf("BuildPipeline(%q) error: %v", ing, err)
 			}

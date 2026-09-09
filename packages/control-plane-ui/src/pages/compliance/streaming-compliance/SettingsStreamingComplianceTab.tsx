@@ -201,7 +201,7 @@ export function SettingsStreamingComplianceTab() {
           <div className={styles.switchField}>
             <div className={styles.switchTitle}>{t('pages:settingsStreamingCompliance.captureRequestTitle', 'Capture request body')}</div>
             <div className={styles.switchRow}>
-              <Switch checked={captureRequest} onCheckedChange={setCaptureRequest} aria-label="capture request body" />
+              <Switch checked={captureRequest} onCheckedChange={setCaptureRequest} aria-label={t('pages:settingsStreamingCompliance.captureRequestAria')} />
               <span className={styles.switchHelp}>{t('pages:settingsStreamingCompliance.captureRequestHelp', '(default; per-host can override)')}</span>
             </div>
           </div>
@@ -209,7 +209,7 @@ export function SettingsStreamingComplianceTab() {
           <div className={styles.switchField}>
             <div className={styles.switchTitle}>{t('pages:settingsStreamingCompliance.captureResponseTitle', 'Capture response body')}</div>
             <div className={styles.switchRow}>
-              <Switch checked={captureResponse} onCheckedChange={setCaptureResponse} aria-label="capture response body" />
+              <Switch checked={captureResponse} onCheckedChange={setCaptureResponse} aria-label={t('pages:settingsStreamingCompliance.captureResponseAria')} />
               <span className={styles.switchHelp}>{t('pages:settingsStreamingCompliance.captureResponseHelp', '(default; per-host can override)')}</span>
             </div>
           </div>

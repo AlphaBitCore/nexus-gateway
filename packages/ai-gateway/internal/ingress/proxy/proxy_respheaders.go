@@ -1,10 +1,8 @@
 package proxy
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
@@ -78,43 +76,79 @@ func writeForwardedResponseHeaders(w http.ResponseWriter, allowlist *forwardhead
 //
 // `attempts` is the total upstream attempt count for this request — 1 means
 // first-try success, 2+ means at least one L2 retry or L3 failover happened.
-// The header is emitted on every response (no `> 0` gate) so observers can
+// The header is emitted on every routed response (no `> 0` gate) so observers can
 // always tell whether failover engaged.
+// Canonical forms of the header names setResponseHeaders places directly into
+// the map. Computed rather than written out so a future addition cannot ship a
+// spelling that Get would never find.
+var (
+	hdrNexusMode     = http.CanonicalHeaderKey("X-Nexus-Mode")
+	hdrNexusAttempts = http.CanonicalHeaderKey("X-Nexus-Attempts")
+	hdrServerTiming  = http.CanonicalHeaderKey("Server-Timing")
+)
+
 func (h *Handler) setResponseHeaders(w http.ResponseWriter, rec *audit.Record, target routingcore.RoutingTarget, result *routingcore.RouteResult, start time.Time, attempts int) {
 	traffic.PrependVia(w.Header(), "ai-gateway")
-	// X-Nexus-Mode is reserved as an empty position so an outer hop
-	// (agent, compliance-proxy) preserves 1:1 alignment with X-Nexus-Via
-	// when it prepends its own mode value. AI Gateway has no mode concept.
-	w.Header().Set("X-Nexus-Mode", "")
 	// Customer-facing model identifier — the same string the caller
 	// sent in `{"model": "..."}`. Internal UUIDs stay out of the
 	// headers; correlation against the catalog uses the code.
 	if attempts < 1 {
 		attempts = 1 // defensive — should never be 0 if we reached this code path
 	}
-	w.Header().Set("X-Nexus-Attempts", strconv.Itoa(attempts))
 	if result.Substituted {
 		w.Header().Set("X-Nexus-Routed-Model", target.ModelCode)
 		w.Header().Set("X-Nexus-Routed-Provider", target.ProviderName)
 	}
 	// Server-Timing (RFC 8674) exposes gateway/upstream latency
 	// breakdowns. Native browser DevTools support; comma-separated tokens.
-	parts := make([]string, 0, 3)
+	//
+	// Built into one buffer rather than Sprintf-per-token plus Join. The value
+	// is three fixed names and three integers; the old form paid a []string, an
+	// []any box and a fresh string per token, then a fourth allocation to join
+	// them. 64 bytes covers the longest output this produces
+	// ("gw;dur=N, upstream-ttfb;dur=N, upstream-total;dur=N" with millisecond
+	// counts), and append grows it if a duration ever runs longer.
+	b := make([]byte, 0, 64)
+	appendToken := func(name string, ms int64) {
+		if len(b) > 0 {
+			b = append(b, ',', ' ')
+		}
+		b = append(b, name...)
+		b = append(b, ';', 'd', 'u', 'r', '=')
+		b = strconv.AppendInt(b, ms, 10)
+	}
 	gwTotalMs := time.Since(start).Milliseconds()
 	if rec.UpstreamTotalMs != nil {
 		gwOverhead := gwTotalMs - int64(*rec.UpstreamTotalMs)
 		if gwOverhead < 0 {
 			gwOverhead = 0
 		}
-		parts = append(parts, fmt.Sprintf("gw;dur=%d", gwOverhead))
+		appendToken("gw", gwOverhead)
 		if rec.UpstreamTtfbMs != nil {
-			parts = append(parts, fmt.Sprintf("upstream-ttfb;dur=%d", *rec.UpstreamTtfbMs))
+			appendToken("upstream-ttfb", int64(*rec.UpstreamTtfbMs))
 		}
-		parts = append(parts, fmt.Sprintf("upstream-total;dur=%d", *rec.UpstreamTotalMs))
+		appendToken("upstream-total", int64(*rec.UpstreamTotalMs))
 	} else {
-		parts = append(parts, fmt.Sprintf("gw;dur=%d", gwTotalMs))
+		appendToken("gw", gwTotalMs)
 	}
-	w.Header().Set("Server-Timing", strings.Join(parts, ", "))
+	// The three single-value headers this function owns, placed from one
+	// backing array. http.Header.Set stores []string{v} per key, so setting
+	// them one at a time is one allocation each.
+	//
+	// X-Nexus-Mode is deliberately empty: it reserves a position so an outer
+	// hop (agent, compliance-proxy) keeps 1:1 alignment with X-Nexus-Via when
+	// it prepends its own mode value. AI Gateway has no mode concept.
+	//
+	// Assigning into the map skips Set's key canonicalisation, so the keys are
+	// canonicalised once at init rather than by remembering to spell them
+	// correctly here — a non-canonical key would be invisible to Get and fail
+	// silently. Three-index slices keep cap == len, so a later hop appending
+	// to any of these reallocates instead of writing into its neighbour.
+	vals := []string{"", strconv.Itoa(attempts), string(b)}
+	hdr := w.Header()
+	hdr[hdrNexusMode] = vals[0:1:1]
+	hdr[hdrNexusAttempts] = vals[1:2:2]
+	hdr[hdrServerTiming] = vals[2:3:3]
 }
 
 // setResponseHeadersStream writes standard Nexus response headers for
@@ -124,7 +158,7 @@ func (h *Handler) setResponseHeaders(w http.ResponseWriter, rec *audit.Record, t
 //
 // `attempts` is the total upstream attempt count for this request — 1 means
 // first-try success, 2+ means at least one L2 retry or L3 failover happened.
-// The header is emitted on every response (no `> 0` gate) so observers can
+// The header is emitted on every routed response (no `> 0` gate) so observers can
 // always tell whether failover engaged.
 func (h *Handler) setResponseHeadersStream(w http.ResponseWriter, rec *audit.Record, target routingcore.RoutingTarget, result *routingcore.RouteResult, attempts int) {
 	traffic.PrependVia(w.Header(), "ai-gateway")

@@ -170,7 +170,7 @@ exec nexus-agent run --config /tmp/agent.yaml`, tok.Token)
 	const tries = 20
 	const interval = 3 * time.Second
 	var count int
-	for i := 0; i < tries; i++ {
+	for range tries {
 		if scanErr := sc.DB.QueryRow(ctx, query, deviceID).Scan(&count); scanErr == nil && count > 0 {
 			break
 		}

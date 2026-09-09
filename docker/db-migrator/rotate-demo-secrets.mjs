@@ -18,10 +18,9 @@
 // ── Row selection is EVIDENCE-BASED, not exclusion-based ───────────────────
 //
 // A row is rotated ONLY if its stored hash still equals the hash of the
-// KNOWN PUBLIC seed plaintext for that row's id. This is a deliberate change
-// from an earlier, exclusion-only version of this script ("rotate every
-// source='local' NexusUser except the bootstrap admin", "every VirtualKey
-// except the assistant VK", "every AdminApiKey") — that rule equals "only the
+// KNOWN PUBLIC seed plaintext for that row's id. An exclusion-only rule
+// ("rotate every source='local' NexusUser except the bootstrap admin", "every
+// VirtualKey except the assistant VK", "every AdminApiKey") equals "only the
 // demo rows" ONLY on a first boot against an empty database. This script runs
 // on EVERY `docker compose up` (db-migrator has no "already ran" gate, and
 // the documented upgrade path is literally `docker compose pull && docker
@@ -253,10 +252,10 @@ async function main() {
 
   // A row that cannot be rotated must not stop the rows after it, and above all
   // must not stop the CLASSES after it: the three loops below run in the order
-  // NexusUser, VirtualKey, AdminApiKey, so a single throw in the first one used
-  // to leave 12 published virtual keys and 5 published admin API keys — one of
-  // them a never-expiring member of the super-admins group — untouched in a
-  // database an operator's still-running containers are serving. Worse, when the
+  // NexusUser, VirtualKey, AdminApiKey, so a single throw in the first one would
+  // leave 12 published virtual keys and 5 published admin API keys — one of them
+  // a never-expiring member of the super-admins group — untouched in a database
+  // an operator's still-running containers are serving. Worse, when the
   // fault is deterministic (a missing helper, an unreadable fixture, a role
   // without UPDATE), every later `docker compose up` aborts at the same row and
   // those two classes are rotated on no run, ever. Failures are collected and

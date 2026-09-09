@@ -1,10 +1,10 @@
 package helpers
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"context"
-	"net"
 	"net/http"
-	"net/url"
 	"time"
 )
 
@@ -16,22 +16,17 @@ import (
 // silently rewrite localhost requests into 502s. The trap is documented
 // in tests/e2e-python/ai_judge/judge.py for the same reason.
 func LocalHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			// Returning nil here means "don't use any proxy" regardless
-			// of the environment.
-			Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			MaxIdleConns:        16,
-			IdleConnTimeout:     30 * time.Second,
-			TLSHandshakeTimeout: 10 * time.Second,
-			DisableCompression:  false,
-		},
-	}
+	// The factory's transport leaves Proxy nil, which is what "no proxy"
+	// is; only http.DefaultTransport reads HTTP_PROXY from the environment.
+	return nexushttp.New(nexushttp.Config{
+		Timeout:             30 * time.Second,
+		DialTimeout:         10 * time.Second,
+		KeepAlive:           30 * time.Second,
+		MaxIdleConns:        16,
+		IdleConnTimeout:     30 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		Caller:              "integration-local",
+	})
 }
 
 // DoJSON is a tiny wrapper that adds a context, an Authorization header,

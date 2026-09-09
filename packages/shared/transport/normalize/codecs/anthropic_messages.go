@@ -24,7 +24,7 @@ import (
 //     position [0] in Messages, so downstream hooks see a uniform list.
 //   - `thinking` content blocks (extended-thinking surface) survive as
 //     core.ContentBlock{Type: core.ContentReasoning} rather than being
-//     dropped — hooks can opt-in to scanning reasoning via TextProjectionWith.
+//     dropped, and the text projection scans them like any other content.
 //   - cache_creation_input_tokens / cache_read_input_tokens are mapped
 //     onto Usage.CacheCreationTokens / CacheReadTokens.
 type AnthropicMessagesNormalizer struct{}
@@ -303,8 +303,8 @@ func anthropicDecodeContent(raw json.RawMessage, base string) []core.ContentBloc
 
 // anthropicContentPart returns the blocks one wire part projects to. It is
 // a slice because a tool_result can carry media inside it: the result text
-// and each nested image are separate blocks, and the media must not be
-// flattened into the text the way it used to be.
+// and each nested image are separate blocks; the media must not be flattened
+// into the text.
 func anthropicContentPart(part map[string]any, path string) []core.ContentBlock {
 	return anthropicPartAtDepth(part, path, 0)
 }

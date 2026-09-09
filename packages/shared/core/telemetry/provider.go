@@ -64,6 +64,18 @@ var _ trace.TracerProvider = (*SwappableTracerProvider)(nil)
 // Init creates a SwappableTracerProvider and registers it as the global
 // OTEL TracerProvider via otel.SetTracerProvider.
 func Init(ctx context.Context, cfg Config, logger *slog.Logger) (*SwappableTracerProvider, error) {
+	// Register the W3C TraceContext + Baggage propagator FIRST, before the
+	// exporter is built. Propagation is not part of exporting: it is how an
+	// incoming trace continues into our spans and how outbound calls carry
+	// context onward, and it must survive a misconfigured OTLP endpoint. Built
+	// after newProvider, a failed exporter returned early and left the global
+	// propagator a no-op — every server span silently became a fresh root, on a
+	// single warning line.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
 	st, err := newProvider(ctx, cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("telemetry init: %w", err)
@@ -72,15 +84,6 @@ func Init(ctx context.Context, cfg Config, logger *slog.Logger) (*SwappableTrace
 	s := &SwappableTracerProvider{logger: logger}
 	s.current.Store(st)
 	otel.SetTracerProvider(s)
-
-	// Register the W3C TraceContext + Baggage propagator globally so the
-	// HTTP middleware's Extract and the outbound otelhttp transports actually
-	// carry trace context across service boundaries. Without this the global
-	// propagator is a no-op and every server span starts as a fresh root.
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
 
 	logger.Info("telemetry provider initialized",
 		"enabled", cfg.Enabled,

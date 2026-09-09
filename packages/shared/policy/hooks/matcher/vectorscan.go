@@ -149,6 +149,40 @@ type vectorscanMatcher struct {
 	db       *C.hs_database_t // read only under an inflight refcount; freed by Close
 	residual Matcher          // RE2 fallback for patterns Vectorscan cannot serve; nil if none
 
+	// streamDB is the same pattern set compiled in HS_MODE_STREAM, for the
+	// presence-only prefilter (see vectorscan_stream.go). nil when streaming
+	// mode could not compile the set, which makes OpenScanStream fail and
+	// callers keep accumulating — a missing optimisation, not a missing scan.
+	//
+	// Guarded by streamMu, because this is the one handle whose lifetime is NOT
+	// bounded by the inflight counter: the last release nils it, and
+	// OpenScanStream's own pre-check reads it before taking any reference. As a
+	// plain field those two are an unsynchronised read of a pointer being freed
+	// — the refcount keeps the free itself single, so the observable damage is
+	// bounded, but it is still a race, and -race reports it on roughly every
+	// other run of the lifecycle gate.
+	//
+	// A mutex rather than atomic.Pointer: hs_database_t is an opaque C type, so
+	// it cannot be a type argument. A uintptr would work but puts an
+	// unsafe.Pointer(uintptr) conversion on the path, which is exactly the shape
+	// vet's unsafeptr check exists to flag. The lock is taken once per stream
+	// open and once per release, never per write, so it is nowhere near the scan
+	// path.
+	streamMu sync.Mutex
+	streamDB *C.hs_database_t
+
+	// streamRefs is a reference count over streamDB: one held by the matcher
+	// itself and released by Close, plus one per live scan stream. Whoever drops
+	// the last one frees the database.
+	//
+	// Deliberately NOT the inflight counter. Close spin-waits on inflight, which
+	// is right for a Scan holding it for microseconds and wrong for a stream
+	// holding it for the length of a response: a config swap during live
+	// streaming would busy-wait on runtime.Gosched() for seconds. Counting
+	// streams separately lets Close return immediately, having handed the
+	// database's lifetime to the streams still using it.
+	streamRefs atomic.Int64
+
 	// idle is a GC-stable ring of reusable scratch spaces (Vectorscan scratch is
 	// not safe for concurrent use, so each in-flight Scan borrows its own). A
 	// buffered channel — not sync.Pool — because sync.Pool is cleared on every GC,
@@ -239,7 +273,16 @@ func CompileVectorscan(pats []Pattern) (Matcher, []BadPattern) {
 		residual, bad = CompileRE2(residualPats)
 	}
 
-	m := &vectorscanMatcher{db: db, residual: residual, idle: make(chan *C.hs_scratch_t, scratchRingSize)}
+	m := &vectorscanMatcher{
+		db:       db,
+		residual: residual,
+		idle:     make(chan *C.hs_scratch_t, scratchRingSize),
+	}
+	if sdb := compileStreamDB(prep); sdb != nil {
+		// No lock needed: m is not reachable by another goroutine yet.
+		m.streamDB = sdb
+		m.streamRefs.Store(1) // the matcher's own reference; Close drops it
+	}
 	return m, bad
 }
 
@@ -386,7 +429,22 @@ func (m *vectorscanMatcher) scanComplete(segments []string, firstOnly bool) ([]H
 	m.inflight.Add(1)
 	defer m.inflight.Add(-1)
 	if m.closed.Load() {
-		return nil, true
+		// A closed matcher never touched the database, so "zero matches" is not
+		// something this call learned — and ScanComplete's own contract says the
+		// redaction path MUST treat complete=false as fail-unsafe, because a
+		// dropped hit is unmasked PII. Reporting (nil, true) here handed back
+		// "scanned to completion, nothing found" for a scan that never ran.
+		//
+		// The window is precisely a rule-pack swap closing the old matcher while
+		// an in-flight request still holds it — which is when a redact hook is
+		// running. Its sibling below, the scratch-allocation failure, already
+		// returns false for the same reason.
+		//
+		// Reporting incomplete is cheap: the redact path re-localises every rule
+		// with its cached RE2 pattern instead of trusting the hit set, so the
+		// request pays a slower scan rather than losing its masking. Nothing
+		// blocks.
+		return nil, false
 	}
 
 	var hits []Hit
@@ -496,5 +554,36 @@ func (m *vectorscanMatcher) Close() error {
 		C.hs_free_database(m.db)
 		m.db = nil
 	}
+	// Drop the matcher's own reference to the streaming database. If streams are
+	// still open they hold their own, and the last one to close frees it — so
+	// this returns now instead of waiting out a 200 KB response.
+	m.releaseStreamDB()
 	return nil
+}
+
+// releaseStreamDB drops one reference and frees the streaming database when the
+// last one goes. Called by Close (for the matcher's own reference) and by each
+// stream's Close.
+func (m *vectorscanMatcher) releaseStreamDB() {
+	db := m.loadStreamDB()
+	if db == nil {
+		// Streaming mode never compiled, or the database is already freed. Either
+		// way there is no reference to give back.
+		return
+	}
+	if m.streamRefs.Add(-1) != 0 {
+		return
+	}
+	// Last reference, and exactly one goroutine can ever see this: acquireStreamDB
+	// refuses to lift the count back off zero, so the 1→0 transition happens once
+	// per matcher. Without that refusal two goroutines can both observe it and
+	// both free the same handle.
+	//
+	// Clear the field BEFORE the free so no reader can observe the field still
+	// holding a pointer hs_free_database has already been called on, and free the
+	// handle taken above rather than a re-read of a field now nil.
+	m.streamMu.Lock()
+	m.streamDB = nil
+	m.streamMu.Unlock()
+	C.hs_free_database(db)
 }

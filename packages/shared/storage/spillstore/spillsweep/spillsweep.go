@@ -29,15 +29,15 @@ const DefaultRetention = 30 * 24 * time.Hour
 // rather than lingering until its age window expires.
 //
 // HasSpillRefs is handed the age-eligible candidate keys in one batch and
-// returns the subset still referenced (value true). The canonical pgx
-// implementation runs:
-//
-//	SELECT DISTINCT spill_ref FROM "TrafficEvent"
-//	 WHERE spill_ref IS NOT NULL AND spill_ref = ANY($1)
+// returns the subset still referenced (value true).
 //
 // On error the sweep deletes nothing and logs — a DB hiccup must never be
-// read as "no rows reference these keys" (fail-safe). The wiring layer in
-// each service supplies the pgx-backed implementation.
+// read as "no rows reference these keys" (fail-safe).
+//
+// Use NewDBQuerier for the pgx-backed implementation, and do not describe this
+// interface with a SQL sketch: the references live on traffic_event_payload in
+// two JSONB columns, keyed under `key`, so a sketch naming a `spill_ref` column
+// on a "TrafficEvent" table describes neither.
 type DBQuerier interface {
 	HasSpillRefs(ctx context.Context, keys []string) (referenced map[string]bool, err error)
 }

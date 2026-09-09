@@ -117,12 +117,19 @@ func buildTrafficEventWhere(p TrafficEventListParams) (string, []any, int) {
 		}
 	}
 	if p.RequestID != "" {
-		// Matches trace_id, not the primary key. The value an operator has is
-		// the one the gateway returned in the X-Nexus-Request-Id response
-		// header, which lands on trace_id; traffic_event.id is a minted
-		// per-row key the caller never sees.
-		where += fmt.Sprintf(` AND a.trace_id = $%d`, argIdx)
+		// Matches external_request_id, not the primary key. The value an
+		// operator has is the one the gateway returned in the
+		// X-Nexus-Request-Id response header, which lands there;
+		// traffic_event.id is a minted per-row key the caller never sees, and
+		// trace_id holds the caller's own W3C trace, which is a different id
+		// and NULL for every caller that runs no tracing.
+		where += fmt.Sprintf(` AND a.external_request_id = $%d`, argIdx)
 		args = append(args, p.RequestID)
+		argIdx++
+	}
+	if p.TraceID != "" {
+		where += fmt.Sprintf(` AND a.trace_id = $%d`, argIdx)
+		args = append(args, p.TraceID)
 		argIdx++
 	}
 	if p.EndUserID != "" {

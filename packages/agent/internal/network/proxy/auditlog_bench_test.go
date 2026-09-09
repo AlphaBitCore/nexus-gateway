@@ -23,7 +23,7 @@ func (w *nopWriter) Close(context.Context) error    { return nil }
 func benchEvent() sharedaudit.AuditEvent {
 	return sharedaudit.AuditEvent{
 		ID:                  "evt_01HQ8Z3K7M2N4P6R8T0V2X4Y6A",
-		TraceID:             "9f2c1e77-3b4a-4d5e-8f6a-7b8c9d0e1f20",
+		ExternalRequestID:   "9f2c1e77-3b4a-4d5e-8f6a-7b8c9d0e1f20",
 		TargetHost:          "api.openai.com",
 		Method:              "POST",
 		Path:                "/v1/chat/completions",
@@ -61,8 +61,9 @@ func BenchmarkAuditEnqueue_Log(b *testing.B) { benchEnqueue(b, io.Discard) }
 
 // TestAuditEnqueue_LogCarriesCorrelationIDs pins the diagnostic contract the
 // line exists for: exactly one INFO entry per request, correlatable by event id
-// AND trace id. Whatever else is trimmed for cost, these two must survive —
-// they are what makes the line joinable to the audit row that holds the rest.
+// AND request id. Whatever else is trimmed for cost, these two must survive —
+// they are what makes the line joinable to the audit row that holds the rest,
+// and to the rows the other services wrote for the same request.
 func TestAuditEnqueue_LogCarriesCorrelationIDs(t *testing.T) {
 	var buf strings.Builder
 	next := &nopWriter{}
@@ -80,8 +81,13 @@ func TestAuditEnqueue_LogCarriesCorrelationIDs(t *testing.T) {
 	if !strings.Contains(got, e.ID) {
 		t.Errorf("event_id missing from the anchor line — the row cannot be joined:\n%s", got)
 	}
-	if !strings.Contains(got, e.TraceID) {
-		t.Errorf("trace_id missing from the anchor line — cross-service correlation is lost:\n%s", got)
+	// Guard the assertion itself: an empty fixture value would make the
+	// Contains check below pass against any log line at all.
+	if e.ExternalRequestID == "" {
+		t.Fatal("fixture carries no request id — the assertion below would pass vacuously")
+	}
+	if !strings.Contains(got, e.ExternalRequestID) {
+		t.Errorf("external_request_id missing from the anchor line — cross-service correlation is lost:\n%s", got)
 	}
 	// The wrapper must still forward to the real writer; a diagnostic change
 	// must never drop the audit row itself.

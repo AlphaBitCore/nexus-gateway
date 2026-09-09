@@ -3,7 +3,7 @@
  *
  * Surfaces the two fields of `RetryPolicy` that admins can override from the
  * UI (`maxAttemptsPerTarget`, `retryOn`). Backoff knobs are intentionally
- * omitted — they live in YAML only (see docs/users/api/openapi/admin/e34-s3-routing-retry-policy.yaml §6.3).
+ * omitted — they live in YAML only.
  *
  * Mode model:
  *   "default" — rule inherits the YAML default; submission sends `retryPolicy: null`

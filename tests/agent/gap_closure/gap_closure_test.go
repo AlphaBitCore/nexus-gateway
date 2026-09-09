@@ -424,11 +424,3 @@ func envDefaultInt(key string, def int) int {
 func uniqueTraceID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
-
-// percentStr formats a float as a percentage string with one decimal place.
-func percentStr(num, denom int) string {
-	if denom == 0 {
-		return "NaN"
-	}
-	return fmt.Sprintf("%.1f", float64(num)/float64(denom)*100)
-}

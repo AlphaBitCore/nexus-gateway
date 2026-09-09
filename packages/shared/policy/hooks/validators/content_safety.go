@@ -52,8 +52,13 @@ type ContentSafety struct {
 	cfg            *core.HookConfig
 	patCategory    []string // category attributed to each compiled pattern (by ID)
 	patSeverity    []string // severity tag for each compiled pattern (by ID)
-	matcher        matcher.Matcher
-	onMatch        core.OnMatchConfig
+	// pats is the pattern SOURCE, kept so a truncated accelerated scan can be
+	// re-confirmed with RE2 rather than silently approving. This hook consults
+	// the matched set as its decision, so an empty set from a scan that never
+	// ran would be a silent approve.
+	pats    []matcher.Pattern
+	matcher matcher.Matcher
+	onMatch core.OnMatchConfig
 }
 
 // NewContentSafety constructs a ContentSafety hook from declarative config.
@@ -152,6 +157,7 @@ func NewContentSafety(cfg *core.HookConfig) (core.Hook, error) {
 		cfg:            cfg,
 		patCategory:    patCategory,
 		patSeverity:    patSeverity,
+		pats:           pats,
 		matcher:        mtch,
 		onMatch:        onMatch,
 	}, nil
@@ -168,8 +174,8 @@ func (cs *ContentSafety) Execute(_ context.Context, input *core.HookInput) (*cor
 		Decision:         core.Approve,
 	}
 
-	segments := input.TextSegmentsWith(cs.cfg.ProjectionOptions())
-	matched := matchedSet(cs.matcher, segments)
+	segments := input.TextSegments()
+	matched := matchedSetOrConfirm(cs.matcher, cs.pats, segments)
 	core.ObserveContentScan(cs.cfg.ImplementationID, len(matched))
 
 	// Segment-major, pattern-minor first-match-wins: pattern IDs are assigned in

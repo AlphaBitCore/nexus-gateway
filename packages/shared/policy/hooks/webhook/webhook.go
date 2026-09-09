@@ -56,12 +56,11 @@ const (
 // the remote webhook decides what to do with the payload.
 type WebhookForward struct {
 	core.AnyEndpointAnyModality
-	endpoint       string
-	timeout        time.Duration
-	client         *http.Client
-	payloadMode    WebhookPayloadMode
-	onMatch        core.OnMatchConfig
-	projectionOpts normalize.TextProjectionOptions
+	endpoint    string
+	timeout     time.Duration
+	client      *http.Client
+	payloadMode WebhookPayloadMode
+	onMatch     core.OnMatchConfig
 	// internalToken is the X-RS-Token injected on the outbound request — but
 	// ONLY when the endpoint path is the AI-Guard compliance-webhook AND the
 	// endpoint's scheme+host match one of the trusted AI-Gateway bases
@@ -132,7 +131,7 @@ func (w *WebhookForward) Execute(ctx context.Context, input *core.HookInput) (*c
 			payload["normalized"] = input.Normalized
 		}
 	case WebhookPayloadRedacted:
-		if segs := input.TextSegmentsWith(w.projectionOpts); len(segs) > 0 {
+		if segs := input.TextSegments(); len(segs) > 0 {
 			payload["normalizedContent"] = segs
 		}
 	case WebhookPayloadMetadataOnly:

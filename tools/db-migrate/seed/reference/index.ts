@@ -29,7 +29,21 @@ export const REFERENCE_TABLES: { fixture: string; delegate: keyof PrismaClient; 
   // Required config: hooks, scheduled jobs, installed rule-packs.
   { fixture: 'HookConfig', delegate: 'hookConfig', key: 'id' },
   { fixture: 'rule_pack_install', delegate: 'rulePackInstall', key: 'id' },
-  { fixture: 'Job', delegate: 'job', key: 'id' },
+  // NO Job ENTRY, deliberately. `Job` was a reference fixture, so it ran as
+  // part of `npm run seed:prod`, and the reference upsert UPDATEs every fixture
+  // column over a live row — all 47 rows carried enabled:true, so a production
+  // re-seed re-enabled every job an operator had switched off, data-retention
+  // included. The Hub's own store refuses to do exactly this: jobs/store/job.go
+  // omits `enabled` from its update columns so "a restart must not clobber an
+  // admin's disable action". The seed was the one writer breaking the rule the
+  // rest of the system states.
+  //
+  // The rows carried nothing to lose: enabled:true is the schema default,
+  // name/description/intervalSec are overwritten at Hub boot by each job's own
+  // Go definition via SyncDefinitions, and the job_run FK is satisfied without
+  // them because wiring registers every job before Start() runs anything. What
+  // they DID add was rows for jobs a given deployment cannot run, which the Jobs
+  // page rendered as permanently "Not scheduled" with stale seed descriptions.
   { fixture: 'rule', delegate: 'rule', key: 'id' },
   { fixture: 'thing_config_template', delegate: 'thingConfigTemplate', key: 'type' },
   { fixture: 'IamPolicy', delegate: 'iamPolicy', key: 'name' },
@@ -186,17 +200,17 @@ async function seedTable(
  * Seed every reference table, then report. A table that fails does NOT stop the
  * ones after it.
  *
- * The loop used to abort on the first throw, which made one table's data
- * conflict a deployment outage: a live deployment aborted at `rule` (table 10 of
- * 26) and silently skipped IamPolicy, IdentityProvider, IamGroup,
- * IamGroupPolicyAttachment and OAuthClient — on a fresh install, no super-admin
- * and no way to log in. The blast radius had nothing to do with the table that
- * failed; it was decided by position in this list.
+ * Aborting on the first throw makes one table's data conflict a deployment
+ * outage: stopping at `rule` (table 10 of 26) silently skips IamPolicy,
+ * IdentityProvider, IamGroup, IamGroupPolicyAttachment and OAuthClient — on a
+ * fresh install, no super-admin and no way to log in. The blast radius has
+ * nothing to do with the table that failed; it is decided by position in this
+ * list.
  *
  * So a failure is collected and the loop continues. Downstream tables that
  * genuinely depend on a failed one (IamGroupPolicyAttachment on IamPolicy, rule
  * on rule_pack) fail too and are collected in turn — every real problem is still
- * reported, and one is no longer able to hide the others. The seed still fails
+ * reported, and none can hide the others. The seed still fails
  * overall: the aggregate throw at the end names every table, so this converts a
  * silent partial seed into a loud complete report, never into a green one.
  */

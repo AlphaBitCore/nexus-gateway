@@ -385,7 +385,7 @@ func TestHandleNonStreamWithSubscription_GenericError_Writes502(t *testing.T) {
 func TestCheckCompareRateLimit_AllowedPath_ReturnsNil(t *testing.T) {
 	// Named failure mode: per-VK CompareEndpointRateLimitRpm is positive and
 	// the limiter returns allowed=true → checkCompareRateLimit returns nil
-	// (line 1456), exercising the success path that was previously uncovered.
+	// exercising the success path.
 	rpm := 100
 	h := &Handler{deps: &Deps{RateLimiter: &fakeLimiter{allow: true, retryAfter: 0}}}
 	w := httptest.NewRecorder()

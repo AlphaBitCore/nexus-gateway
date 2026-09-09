@@ -24,19 +24,26 @@ import (
 // without touching the database. Production code wires a *store.UserStore
 // (which talks to PG); tests just need the contract.
 type fakeUserLookup struct {
-	userID     string
-	pwdHash    string
-	source     string // "local" | "oidc" | "scim"; empty defaults to "local"
+	userID  string
+	pwdHash string
+	source  string // "local" | "oidc" | "scim"; empty defaults to "local"
+	// Both columns that express "switched off" are carried and resolved the way
+	// the real store does; status is the one production actually writes.
+	status     string // "" defaults to store.StatusActive, mirroring the DB default
 	disabledAt *time.Time
 	err        error
 }
 
-func (f *fakeUserLookup) GetByEmail(_ context.Context, _ string) (string, string, string, *time.Time, error) {
+func (f *fakeUserLookup) GetByEmail(_ context.Context, _ string) (string, string, string, store.AuthDisposition, error) {
 	source := f.source
 	if source == "" {
 		source = "local" // mirror the NexusUser.source DB default
 	}
-	return f.userID, f.pwdHash, source, f.disabledAt, f.err
+	status := f.status
+	if status == "" {
+		status = store.StatusActive // mirror the NexusUser.status DB default
+	}
+	return f.userID, f.pwdHash, source, store.NewAuthDisposition(status, f.disabledAt), f.err
 }
 
 // hashOrFail is a tiny helper so test setup doesn't keep paying the bcrypt

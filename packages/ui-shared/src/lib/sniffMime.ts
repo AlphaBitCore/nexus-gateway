@@ -4,10 +4,9 @@
 // transport/normalize/locator is the other; they cannot share code across
 // the language boundary, so they share a vector table
 // (transport/normalize/locator/testdata/sniff-vectors.json) and both assert
-// against it. Before that table they disagreed, and the disagreement was
-// visible to a user: the server served an iPhone photo inline as video/mp4
-// and named the download .mp4 while this side called the same bytes
-// image/heic.
+// against it. Without the shared table the two drift, and the drift is visible
+// to a user: the server serves an iPhone photo inline as video/mp4 and names
+// the download .mp4 while this side calls the same bytes image/heic.
 //
 // The wire-declared mime is caller-controlled, so it must never decide how
 // bytes are rendered — a caller could label a script as an image. The type

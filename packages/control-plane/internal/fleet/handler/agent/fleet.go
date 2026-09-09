@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+
+	// cpiam is the ENGINE side (evaluation, candidate NRNs); iam above is the
+	// shared CATALOG side (resources and verbs). Both are needed here because
+	// this listing re-runs the middleware's own evaluation per row.
+	cpiam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 )
 
 // RegisterFleetRoutes registers fleet management routes for agent users and devices.
@@ -23,9 +29,11 @@ func (h *Handler) RegisterFleetRoutes(g *echo.Group, iamMW func(action string) e
 	g.POST("/agent-users/:id/suspend", h.SuspendAgentUser, iamMW(iam.ResourceAgentDevice.Action(iam.VerbUpdate)))
 	g.POST("/agent-users/:id/activate", h.ActivateAgentUser, iamMW(iam.ResourceAgentDevice.Action(iam.VerbUpdate)))
 
-	g.GET("/agent-devices/:id/audit", h.ListDeviceAudit, iamMW(iam.ResourceAgentDevice.Action(iam.VerbRead)))
-	g.GET("/agent-devices/:id/config", h.GetDeviceConfig, iamMW(iam.ResourceAgentDevice.Action(iam.VerbRead)))
-	g.GET("/agent-devices/:id/timeline", h.GetDeviceTimeline, iamMW(iam.ResourceAgentDevice.Action(iam.VerbRead)))
+	// The per-device reads — audit, config and timeline — live in
+	// RegisterAdminAgentDeviceRoutes with their six siblings, on the
+	// device-aware middleware. This function receives no device-scoped route
+	// at all, which is the point: the safe variant is the one you get by
+	// default rather than the one you have to remember.
 
 	// Self-service: current admin user's own enrolled agent devices.
 	// No IAM gate — the data is inherently scoped to the caller's
@@ -93,7 +101,74 @@ func (h *Handler) ListAgentUserDevices(c echo.Context) error {
 		h.logger.Error("list agent user devices", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", "INTERNAL_ERROR"))
 	}
-	return c.JSON(http.StatusOK, map[string]any{"data": devices, "total": total})
+
+	// This route is keyed on a USER, so no device-aware middleware can gate it:
+	// the device ids only exist after the query. Without a per-row check it
+	// returned every one of that user's devices regardless of which device
+	// groups the caller may see — the same fail-open hole the three per-device
+	// routes had, reached from the other direction. A caller holding an
+	// unscoped Allow plus a group-scoped Deny passes the route gate (the Deny
+	// does not match a wildcard target) and then reads the rows the Deny exists
+	// to withhold.
+	visible, ferr := h.visibleDevices(c, devices)
+	if ferr != nil {
+		h.logger.Error("scope agent user devices", "error", ferr)
+		return c.JSON(http.StatusInternalServerError, errJSON("Authorization service error", "server_error", "IAM_EVAL_ERROR"))
+	}
+	// total counts the user's assignments, not the visible subset: it comes
+	// from the same COUNT the pagination is built on, and recomputing it would
+	// mean evaluating every row of every page. A caller who cannot see a device
+	// learns only that some exist, never which.
+	return c.JSON(http.StatusOK, map[string]any{"data": visible, "total": total})
+}
+
+// visibleDevices drops rows the caller may not read, re-running the same
+// candidate-NRN evaluation RequireIAMPermissionForDevice would have run had the
+// route carried a device id.
+//
+// Fail-closed in three ways, each deliberate: no engine wired refuses the whole
+// listing rather than serving it unscoped; a group-lookup error treats the
+// device as having no memberships, so a group-scoped grant does not silently
+// match; and an evaluation error is surfaced as a 500 rather than dropped.
+func (h *Handler) visibleDevices(c echo.Context, devices []fleetstore.FleetUserDevice) ([]fleetstore.FleetUserDevice, error) {
+	if len(devices) == 0 {
+		return devices, nil
+	}
+	if h.iamEngine == nil {
+		return nil, fmt.Errorf("agent devices: no IAM engine wired; refusing to serve an unscoped device listing")
+	}
+	aa := middleware.AdminAuthFromContext(c)
+	if aa == nil {
+		return nil, fmt.Errorf("agent devices: no admin principal on an authenticated route")
+	}
+	principalType := aa.AuthPrincipalType
+	if principalType == "admin_user" {
+		principalType = "nexus_user"
+	}
+	action := iam.ResourceAgentDevice.Action(iam.VerbRead)
+	cond := cpiam.ConditionContext{"nexus:SourceIp": c.RealIP()}
+	ctx := c.Request().Context()
+
+	out := make([]fleetstore.FleetUserDevice, 0, len(devices))
+	for _, d := range devices {
+		var groups []string
+		if h.deviceGroups != nil {
+			if gs, err := h.deviceGroups.GroupsOfDevice(ctx, d.ID); err == nil {
+				groups = gs
+			}
+			// On error groups stays empty — fail closed, matching the
+			// middleware's own disposition.
+		}
+		res, err := h.iamEngine.EvaluateMulti(ctx, principalType, aa.KeyID, action,
+			cpiam.BuildDeviceCandidateNRNs(action, d.ID, groups), cond)
+		if err != nil {
+			return nil, err
+		}
+		if res.Decision == "Allow" {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 // ListMyAgentDevices returns agent devices enrolled to the currently

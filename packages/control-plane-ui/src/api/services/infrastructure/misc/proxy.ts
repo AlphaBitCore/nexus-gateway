@@ -60,9 +60,7 @@ export type ExemptionListTab = 'all' | ExemptionStatus;
 /**
  * Unified row returned by the exemption list endpoint. `kind` discriminates
  * grants (compliance_exemption_grant) from pending requests (exemption_request).
- * Per-kind fields are null on the opposite kind; see the OpenAPI spec at
- * docs/users/api/openapi/admin/e27-s1-compliance-exemption-grants.yaml for authoritative
- * nullability.
+ * Per-kind fields are null on the opposite kind.
  */
 export interface UnifiedExemptionRow {
   kind: 'grant' | 'pending';

@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 )
@@ -51,9 +52,14 @@ func NewIndexLifecycle(cache *ConfigCache, client *Client, log *slog.Logger) *In
 // EnsureIndex is idempotent so repeated calls with the same fingerprint are
 // safe (they will hit the "index already exists" path and log at debug).
 //
-// Errors from EnsureIndex are logged at WARN but do not propagate to the
-// caller — the shadow callback must not block.
-func (l *IndexLifecycle) OnConfigSnapshot(ctx context.Context, snap ConfigSnapshot) {
+// An EnsureIndex failure is RETURNED as well as un-recorded. The un-record
+// alone was not enough: the config handler above this reported success anyway,
+// so the shadow advanced its reported version past this key and short-circuited
+// every later push of it — the "next snapshot" the rollback waits for never
+// arrived, short of a process restart or a manual re-sync. Returning it leaves
+// the key un-reported so the loader's retry timer arms, and stops Config Sync
+// from showing a dead L2 index as applied and converged.
+func (l *IndexLifecycle) OnConfigSnapshot(ctx context.Context, snap ConfigSnapshot) error {
 	// Update the in-process cache unconditionally so the hot path always
 	// has the latest snapshot even if EnsureIndex is not needed.
 	l.cache.Set(snap)
@@ -64,7 +70,7 @@ func (l *IndexLifecycle) OnConfigSnapshot(ctx context.Context, snap ConfigSnapsh
 			"fingerprint", snap.Fingerprint,
 			"indexName", snap.RedisIndexName,
 		)
-		return
+		return nil
 	}
 
 	l.mu.Lock()
@@ -76,7 +82,7 @@ func (l *IndexLifecycle) OnConfigSnapshot(ctx context.Context, snap ConfigSnapsh
 			"fingerprint", snap.Fingerprint,
 			"indexName", snap.RedisIndexName,
 		)
-		return
+		return nil
 	}
 	l.lastFingerprint = snap.Fingerprint
 	l.lastIndexName = snap.RedisIndexName
@@ -96,10 +102,32 @@ func (l *IndexLifecycle) OnConfigSnapshot(ctx context.Context, snap ConfigSnapsh
 	)
 
 	if err := l.client.EnsureIndex(ctx, snap.RedisIndexName, snap.EmbeddingDimension); err != nil {
-		l.log.Warn("semantic/lifecycle: EnsureIndex failed",
+		// UN-RECORD the fingerprint. It was recorded above, before the call,
+		// which deduplicates concurrent snapshots — but it also meant that one
+		// failed EnsureIndex marked this fingerprint as handled forever: every
+		// later snapshot carrying it took the "unchanged; skipping" early
+		// return, so the index was never created and the semantic cache stayed
+		// dead for the lifetime of the process. A transient Redis blip or a
+		// momentarily-unavailable search module was enough.
+		//
+		// Only roll back if nothing has advanced past us in the meantime;
+		// otherwise a newer snapshot's record would be clobbered by an older
+		// call's failure.
+		l.mu.Lock()
+		if l.lastFingerprint == snap.Fingerprint && l.lastIndexName == snap.RedisIndexName {
+			l.lastFingerprint = lastFP
+			l.lastIndexName = lastIdx
+		}
+		l.mu.Unlock()
+
+		// ERROR, not WARN: from here until a retry succeeds the L2 semantic
+		// cache is silently off, and the hot path has no other way to say so.
+		l.log.Error("semantic/lifecycle: EnsureIndex failed; L2 semantic cache is unavailable until the next config snapshot retries it",
 			"indexName", snap.RedisIndexName,
 			"fingerprint", snap.Fingerprint,
 			"error", err,
 		)
+		return fmt.Errorf("semantic/lifecycle: EnsureIndex %q: %w", snap.RedisIndexName, err)
 	}
+	return nil
 }

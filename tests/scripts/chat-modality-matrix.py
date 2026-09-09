@@ -246,7 +246,7 @@ def call(gw, vk, body, timeout, request_id):
         capture_output=True, text=True)
     if p.returncode != 0 and not p.stdout:
         # curl itself failed: no connection, DNS, timeout. Not a statement about
-        # the model, and previously recorded as one with an empty reason string.
+        # the model, so it carries the transport error rather than an empty reason.
         return Answer(transport=(p.stderr or "curl exit %d" % p.returncode).strip()[:200])
     out = p.stdout.rsplit("\n", 1)
     if len(out) != 2:

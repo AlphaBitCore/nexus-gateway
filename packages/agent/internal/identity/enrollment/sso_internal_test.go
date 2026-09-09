@@ -19,8 +19,8 @@ import (
 // TestOpenBrowser_DarwinDispatch covers the darwin arm of openBrowser
 // (the runtime.GOOS=="darwin" → exec.Command("open", url) branch).
 // The seam ssoExecCommandStart is stubbed so no real `open` shell-out
-// happens — previously this test launched a real browser tab on every
-// run because the default seam shelled to `/usr/bin/open data:,`.
+// happens: the default seam shells to `/usr/bin/open data:,`, which
+// launches a real browser tab on every run.
 func TestOpenBrowser_DarwinDispatch(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skipf("darwin branch only reachable on darwin runner (current: %s)", runtime.GOOS)

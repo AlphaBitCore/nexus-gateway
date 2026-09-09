@@ -19,6 +19,7 @@ import (
 	"github.com/goccy/go-json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -148,7 +149,60 @@ func (u *Uploader) mint(ctx context.Context, req mintRequest) (mintResponse, err
 	if out.UploadURL == "" || out.Key == "" {
 		return mintResponse{}, fmt.Errorf("mint response missing uploadUrl/key")
 	}
+	if err := u.validateMintTarget(out); err != nil {
+		return mintResponse{}, err
+	}
 	return out, nil
+}
+
+// validateMintTarget checks where the agent is about to send captured customer
+// traffic. The PUT that follows carries request/response bodies under the
+// agent's own mTLS identity, and a check that the URL is merely
+// non-empty lets a Hub that is compromised, misconfigured, or simply buggy
+// redirect a fleet's captured bodies anywhere, with the agent
+// cooperating.
+//
+// The mint response arrives over mTLS from the Hub, so this is defence in
+// depth rather than a live hole. It is worth having on this path specifically
+// because the payload is the customer's traffic, and because the failure is
+// silent: an upload to the wrong host looks exactly like a successful one.
+//
+// Both branches fail CLOSED. The caller treats a mint error as
+// ErrFallbackInline, so a rejected target degrades to inline capture rather
+// than dropping the record.
+func (u *Uploader) validateMintTarget(m mintResponse) error {
+	target, err := url.Parse(m.UploadURL)
+	if err != nil {
+		return fmt.Errorf("mint uploadUrl is not a URL: %w", err)
+	}
+	if !target.IsAbs() || target.Host == "" {
+		return fmt.Errorf("mint uploadUrl %q is not absolute", m.UploadURL)
+	}
+
+	switch m.Backend {
+	case "s3":
+		// A presigned S3 URL is public: the token in the query string is the
+		// only thing protecting it, so it must not travel in clear text.
+		if target.Scheme != "https" {
+			return fmt.Errorf("mint s3 uploadUrl must be https, got %q", target.Scheme)
+		}
+	case "localfs":
+		// The dev/localfs backend is served by the Hub itself, so the URL must
+		// point at exactly the origin the agent already trusts. Anything else
+		// is the case this check exists for.
+		base, baseErr := url.Parse(strings.TrimRight(u.hub.BaseURL(), "/"))
+		if baseErr != nil || !base.IsAbs() || base.Host == "" {
+			return fmt.Errorf("cannot validate localfs uploadUrl: hub base URL %q is unusable",
+				u.hub.BaseURL())
+		}
+		if target.Scheme != base.Scheme || target.Host != base.Host {
+			return fmt.Errorf("mint localfs uploadUrl points at %s://%s, not the hub at %s://%s",
+				target.Scheme, target.Host, base.Scheme, base.Host)
+		}
+	default:
+		return fmt.Errorf("mint response names an unknown backend %q", m.Backend)
+	}
+	return nil
 }
 
 // put streams the body to the upload URL with Content-Length pinned to

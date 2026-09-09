@@ -92,7 +92,7 @@ func (s *proxyState) cacheNormalized() *normcore.NormalizedPayload {
 	meta := requestNormalizeMeta(s.r, s.resolved.BodyFormat, s.modelID)
 	payload, err := s.h.deps.NormalizeRegistry.Normalize(s.r.Context(), s.body, meta)
 	if err != nil {
-		s.logger.Warn("cache canonical: renormalize of rewritten body failed; skipping cache semantics", "error", err)
+		s.log().Warn("cache canonical: renormalize of rewritten body failed; skipping cache semantics", "error", err)
 		return nil
 	}
 	s.postHookNormalized = &payload
@@ -165,10 +165,22 @@ func (st cacheStage) run() bool {
 	canonicalMsgs := s.freshnessMessages(cacheEnabled)
 	// skipTimeSensitivePolicy reads the apply_freshness_rules gate
 	// so freshness-rule matches actually skip cache.
+	// The deprecated spelling is the only thing that gives the warning a
+	// logger to use, and it is absent on every request that does not still
+	// send it. Build the scoped logger only then: passing s.log()
+	// unconditionally made a warning that fires at most once per process cost
+	// one on every request — the opposite of the "zero steady-state cost"
+	// its own comment claims. Behaviour is unchanged: the callee already
+	// guards on logger != nil, so nil and a logger are the same answer when
+	// the header is absent.
+	var deprecatedNoCacheLogger *slog.Logger
+	if s.r.Header.Get("X-Nexus-Aigw-No-Cache") != "" {
+		deprecatedNoCacheLogger = s.log()
+	}
 	preLookupStatus, preLookupSkipReason := classifyCachePreLookup(
 		typology.KindFromWireShape(s.resolved.WireShape),
 		cacheEnabled,
-		noCacheRequestedWithWarn(s.r.Header, s.logger),
+		noCacheRequestedWithWarn(s.r.Header, deprecatedNoCacheLogger),
 		len(s.routeResult.AllTargets()) > 0,
 		passthroughBypassCache,
 		h.deps.FreshnessDetector,
@@ -245,7 +257,7 @@ func (st cacheStage) run() bool {
 					s.rec.ProviderCacheStatus = audit.ProviderCacheNA
 					h.deps.Cache.RecordHit(s.r.Context())
 					h.deps.CacheMetrics.RecordLookup("hit")
-					h.handleStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
+					h.handleStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.log())
 					return false
 				}
 			} else {
@@ -255,7 +267,7 @@ func (st cacheStage) run() bool {
 					s.rec.ProviderCacheStatus = audit.ProviderCacheNA
 					h.deps.Cache.RecordHit(s.r.Context())
 					h.deps.CacheMetrics.RecordLookup("hit")
-					h.handleNonStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
+					h.handleNonStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.log())
 					return false
 				}
 			}
@@ -282,7 +294,7 @@ func (st cacheStage) run() bool {
 			endpointType:  s.endpointType,
 			requestID:     s.requestID,
 			start:         s.start,
-			logger:        s.logger,
+			logger:        s.log(),
 			canonicalMsgs: func() []normcore.Message {
 				if np := s.cacheNormalized(); np != nil {
 					return np.Messages

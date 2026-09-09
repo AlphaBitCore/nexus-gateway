@@ -82,14 +82,22 @@ var AcceptHeaders = []string{
 	"x-api-key",      // Anthropic ingress
 	"x-goog-api-key", // Gemini ingress
 	"api-key",        // Azure OpenAI ingress
-	// Correlation. X-Nexus-Request-Id is honoured-or-generated; X-Request-Id
-	// carries the caller's own id to traffic_event.external_request_id;
-	// X-Nexus-End-User-Id carries the caller's end-user tag to
-	// traffic_event.end_user_id (header wins over the protocol-native field);
-	// X-Nexus-Session-Id carries the caller's session tag; X-Nexus-Client-Tags
-	// carries structured key=value pairs.
+	// Correlation. X-Nexus-Request-Id and X-Request-Id are two spellings of
+	// ONE id — the canonical name first, the industry-conventional alias when
+	// it is absent, a minted UUID when neither arrived — landing on
+	// traffic_event.external_request_id. traceparent is listed even though the
+	// OTel propagator reads it rather than a gateway read site: this slice is
+	// what seeds Access-Control-Allow-Headers, and a header missing from it is
+	// rejected at preflight, so a browser caller's whole trace context would
+	// never arrive and the omission would look like "that caller runs no
+	// tracing". The three tag headers carry caller-asserted attribution:
+	// X-Nexus-End-User-Id to traffic_event.end_user_id (header only — a
+	// protocol's native user field is addressed to the provider and means
+	// something else), X-Nexus-Session-Id to session_id, X-Nexus-Client-Tags to
+	// details.clientTags.
 	"X-Nexus-Request-Id",
 	"X-Request-Id",
+	"traceparent",
 	"X-Nexus-End-User-Id",
 	"X-Nexus-Session-Id",
 	"X-Nexus-Client-Tags",

@@ -200,7 +200,21 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 			rec.ErrorCode = pe.Code
 		}
 		h.recordUpstreamFailure(execResult.Terminal())
-		rec.ErrorReason = extractProviderErrorMessage(execResult.Body, execResult.StatusCode)
+		// The provider's own diagnostic always survives; only a VERBATIM QUOTE of
+		// the response body is subject to payload capture. The last branch of
+		// the extractor copies 300 raw bytes — a WAF or CDN page, or a
+		// text/plain body echoing the caller's own field — and would do so
+		// regardless of the operator's opt-out, putting the excluded body in the
+		// column beside the one the gate protects.
+		//
+		// Passing the permission rather than nilling the body is deliberate.
+		// Nilling it silences the structured branches too, and
+		// StoreResponseBody:false is payloadcapture.DefaultConfig() — so every
+		// upstream failure on a default deployment would read "provider returned
+		// HTTP 400" with no quota message, no model_not_found, no
+		// context_length_exceeded. That is a worse column than the leak.
+		pcCfgErr := h.payloadCaptureConfig()
+		rec.ErrorReason = extractProviderErrorMessage(execResult.Body, execResult.StatusCode, pcCfgErr.StoreResponseBody)
 		rec.RoutedProviderID = target.ProviderID
 		rec.RoutedProviderName = target.ProviderName
 		rec.RoutedModelID = target.ModelID
@@ -241,14 +255,13 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 		}
 
 		// Stamp the upstream error body to the audit Record so
-		// it lands in traffic_event.payloads.response_body. Previously
-		// only ErrorReason (extracted message string) was captured —
-		// the full body (with provider stack trace, request ID, etc.)
-		// was discarded, making 4xx/5xx triage from the Traffic drawer
-		// impossible. Mirrors the success-path stamp at line 2176
+		// it lands in traffic_event.payloads.response_body. Capturing
+		// only ErrorReason, the extracted message string, discards
+		// the full body — provider stack trace, request ID — and makes
+		// 4xx/5xx triage from the Traffic drawer
+		// impossible. Mirrors the success-path stamp
 		// (subject to the same StoreResponseBody payload-capture
 		// config so administrators can opt out for compliance reasons).
-		pcCfgErr := h.payloadCaptureConfig()
 		if len(errBody) > 0 && pcCfgErr.StoreResponseBody {
 			rec.ResponseBody = errBody
 			rec.ResponseContentType = "application/json"

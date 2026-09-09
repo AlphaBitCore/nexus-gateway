@@ -220,12 +220,12 @@ export function Traffic() {
     try { localStorage.setItem(REFRESH_STORAGE_KEY, String(refreshMs)); } catch { /* best-effort */ }
   }, [refreshMs]);
 
-  // #88 — Show selector + Since (time window) now BOTH push down into the
-  // daemon's SQL WHERE. The pre-#88 client-side AI filter over-fetched
-  // pageSize*4 and re-narrowed in JS, which (a) lost earlier AI rows
-  // when recent traffic had no AI, (b) showed total = all events not
-  // AI events, (c) had no time-window control at all. Now: ai_only +
-  // since URL params route to queue.QueryEventsFiltered → SQL.
+  // Show selector + Since (time window) BOTH push down into the daemon's SQL
+  // WHERE: ai_only + since URL params route to queue.QueryEventsFiltered.
+  // A client-side AI filter over-fetching pageSize*4 and re-narrowing in JS
+  // instead (a) loses earlier AI rows when recent traffic has no AI,
+  // (b) reports total = all events rather than AI events, and (c) has no
+  // time-window control at all.
   const serverAction = actionFilter === 'blocked' ? 'deny' : actionFilter === 'processed' ? 'inspect' : '';
   const aiOnly = actionFilter === 'ai';
 

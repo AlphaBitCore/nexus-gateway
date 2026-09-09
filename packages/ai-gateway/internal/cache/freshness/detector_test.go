@@ -347,11 +347,11 @@ var seedRuleCases = []seedRuleCase{
 		wantID:  "news",
 	},
 
-	// --- accepted-false-positives (post RequireQuestionMark=false change) ---
-	// These would have been "discourse particle" false-positive negatives under
-	// the old RequireQuestionMark=true policy. Now they fire intentionally:
-	// the cost (one extra upstream call) is dwarfed by the win on conversational
-	// prompts like "现在几点" that previously slipped through.
+	// --- accepted false positives, with RequireQuestionMark=false ---
+	// Under RequireQuestionMark=true these would be "discourse particle"
+	// false-positive negatives. They fire intentionally: the cost (one extra
+	// upstream call) is dwarfed by the win on conversational prompts like
+	// "现在几点", which slip through otherwise.
 	{
 		name:    "discourse 'now' (intentional false positive)",
 		text:    "Use this now to understand the flow.",
@@ -372,10 +372,10 @@ var seedRuleCases = []seedRuleCase{
 	},
 
 	// --- RequireEntity regression cases ---
-	// "当前中国有多少人口?" returned no_match previously because (a) the
-	// population rule had RequireEntity=true and (b) the entity heuristic
-	// does not recognise Chinese place names. Both gates are now off; both
-	// versions of the prompt fire.
+	// With RequireEntity=true the population rule returns no_match for
+	// "当前中国有多少人口?", because the entity heuristic does not recognise
+	// Chinese place names. Both gates are off, so both versions of the prompt
+	// fire.
 	{
 		name:    "regression: 当前中国有多少人口? — time-current fires first",
 		text:    "当前中国有多少人口?",

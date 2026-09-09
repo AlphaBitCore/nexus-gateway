@@ -35,14 +35,14 @@ This document covers the cost and cache half of the AI GATEWAY sidebar section: 
 The Gateway Cache tab renders, in order:
 
 - **Extract cache (L1 exact-match)** — an enabled switch and a TTL in seconds (60 to 604800).
-- **Semantic cache** — an embedding provider and model select with a "Run Probe" action, an enabled switch (disabled until a provider and model are set), a similarity `threshold` (0 to 1), an `allowCrossModel` flag, a `varyBy` selector, an `embedStrategy` selector, and a pre-warm modal that accepts JSON or CSV with a dry-run preview.
+- **Semantic cache** — an embedding provider and model select with a "Run Probe" action, an enabled switch (disabled until a provider and model are set), a similarity `threshold` (0 to 1), an `allowCrossModel` flag, a `varyBy` selector (the isolation scope — `none` shares cached answers fleet-wide, every other value isolates at least as strictly as the virtual key, narrowing to it when the chosen dimension has no value on a request), an `embedStrategy` selector, and a pre-warm modal that accepts JSON or CSV with a dry-run preview.
 - **Freshness rules** — an `applyFreshnessRules` toggle plus a table of rules (keyword, require-question-mark, require-entity, languages, enabled) with an add-rule modal and a test box; these rules skip the cache for time-sensitive prompts.
 - **Recent feedback** — a read-only table of reported bad cache hits.
 
 The Provider Prompt Cache tab renders, in order:
 
-- **Adapter defaults** — the per-adapter-family (Anthropic, Bedrock, Gemini, Vertex) prompt-cache knobs: the Gemini context-cache settings and the Anthropic/Bedrock `cache_control` marker-injection toggles. OpenAI-compatible adapters have no family-level knobs and are intentionally absent.
-- **Normalisation rules** — a table of the bundled upstream-rewrite rules across every adapter family, with an enable toggle per rule. These strip volatile bytes (for example Claude Code's billing nonce) from the body sent upstream. The rewrite engine is demand-driven: it runs only when a rule here is enabled or a provider has marker injection on — there is no separate global switch to remember.
+- **Adapter defaults** — the per-adapter-family (Anthropic, Bedrock, Gemini, Vertex) prompt-cache knobs: the Gemini context-cache settings and the Anthropic/Bedrock **Inject cache markers** toggle. Turning that on lets the gateway mark Anthropic-bound requests so the provider caches the prompt; Anthropic chooses and advances the cache boundary itself, so there is nothing further to tune. A request that already carries the caller's own cache marker is forwarded untouched. OpenAI-compatible adapters have no family-level knobs and are intentionally absent.
+- **Normalisation rules** — a table of the bundled upstream-rewrite rules across every adapter family, with an enable toggle per rule. These strip volatile bytes (for example Claude Code's billing nonce) from the body sent upstream. The rewrite engine is demand-driven: it runs only when a rule here is enabled — there is no separate global switch to remember. Cache markers are not part of this engine; they are set on the adapter defaults above.
 - **Active overrides** — the per-provider overrides of those adapter defaults.
 
 **Emergency cache-off — two surfaces, and when to use which.** The status strip's **Disable caches** dropdown can disable the semantic cache, the extract cache, or **all gateway cache** fleet-wide; each choice is confirmed in a dialog and gated on the caller's permission. It works by re-fetching the singleton config and resubmitting it with `enabled` false, preserving the other fields — so it is fast, one click, and **durable**: the cache stays off until someone turns it back on. Reach for it when the cache itself is the problem. The other surface is **Emergency Passthrough**'s `bypassCache` (below): **auditable and time-boxed** — mandatory reason, recorded operator, automatic revert within 8 hours, and it can be scoped to a single adapter or provider. Reach for that when you need a governed, self-reverting, or narrower bypass. Neither surface disables provider-side prompt caching, which only warms the upstream's own cache and never serves a stored gateway response.
@@ -50,6 +50,20 @@ The Provider Prompt Cache tab renders, in order:
 **Key concepts.** There are three distinct cache tiers. **Extract cache** is the L1 exact-match response cache; **Semantic cache** is the vector-similarity cache — these two are separate gateway-side tiers, and either one being on makes a request cache-eligible. **Provider Prompt Cache** is a third, provider-side tier configured on its own tab. `varyBy` is `none`, `user`, `vk`, or `org`. `embedStrategy` is `last_user`, `system_plus_last_user`, `recent_turns`, `head_plus_tail`, or `full_truncated`.
 
 **Where the data comes from.** `semanticCacheConfigApi` (`getConfig`, `saveConfig`, `runProbe`, pre-warm), `extractCacheConfigApi` (`getConfig`, `saveConfig`), `timeSensitivePatternsApi` (`list`, `create`, `update`, `delete`, `test`), `semanticFeedbackApi.listFeedback`, `analyticsApi.cacheROI`, `systemApi.listModels`, and `cacheApi` (adapter, rule, and provider-override reads/writes for the Provider Prompt Cache tab).
+
+## Reading a spend figure honestly
+
+A cost figure has three possible states and the surfaces distinguish them: a real
+amount, a genuinely quiet window, and **a number the platform could not compute**.
+The third used to render as `$0.00` — indistinguishable from the second, and the
+more dangerous of the two to be wrong about, because "we spent nothing last month"
+invites no follow-up while a missing figure does. A window whose aggregation is
+unavailable now says so rather than reporting a total it does not have.
+
+The same rule governs the analytics reads behind these pages. Where a faster
+pre-aggregated source is unavailable the page falls back to the slower
+authoritative one and still answers; where no correct answer is available at all
+it reports the failure instead of an empty one.
 
 ## Emergency Passthrough
 

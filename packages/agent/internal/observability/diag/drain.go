@@ -13,7 +13,7 @@ import (
 )
 
 // drainPath is the Hub HTTP endpoint that accepts crash-buffered DiagEvents.
-// See packages/nexus-hub/internal/handler/opsmetrics_diag.go.
+// See packages/nexus-hub/internal/observability/handler/diag/opsmetrics_diag.go.
 const drainPath = "/api/internal/things/diag-events:batch"
 
 // defaultBatchSize is the row count per HTTP POST. Tuned to stay well under

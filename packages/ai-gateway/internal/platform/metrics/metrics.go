@@ -390,7 +390,7 @@ type Cost struct {
 // Token bucket semantics:
 //   - PromptTokens is the TOTAL input including cached subset (OpenAI
 //     convention; Anthropic-shape input_tokens is normalized to this in
-//     shared/normalize/anthropic_messages.go).
+//     packages/shared/transport/normalize/codecs/anthropic_messages.go).
 //   - CachedTokens (read-side) and CacheCreationTokens (write-side) are
 //     subsets of PromptTokens.
 //   - CompletionTokens INCLUDES reasoning tokens (all three frontier

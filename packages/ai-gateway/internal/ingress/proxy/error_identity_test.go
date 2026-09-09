@@ -119,9 +119,9 @@ func TestGatewayRejections_EveryFailureNamesItself(t *testing.T) {
 					"and is the most useful thing to see when a request fails")
 			}
 			// error.type comes from the status, on OpenAI's vocabulary. Each of
-			// these writers used to invent its own value there — "unsupported_feature",
-			// "cross_format_stream_unsupported" — none of which any SDK models,
-			// which is the same defect AP-3 fixed for "proxy_error" on the
+			// these writers inventing its own value there — "unsupported_feature",
+			// "cross_format_stream_unsupported" — puts something no SDK models on
+			// the wire, the same defect as "proxy_error" on the
 			// writers next door. The identity of the failure belongs in
 			// error.code, which is where the rest of the surface puts it.
 			if got := gjson.GetBytes(w.Body.Bytes(), "error.type").String(); got != "invalid_request_error" {

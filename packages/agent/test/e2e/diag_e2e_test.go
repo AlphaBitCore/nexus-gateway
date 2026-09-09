@@ -309,7 +309,7 @@ func newAgentRig(t *testing.T, ctx context.Context, hub *mockHub, thingID string
 
 	// Open an in-memory SQLite (SQLCipher driver runs as plain SQLite when
 	// no PRAGMA key is set, matching the unit-test pattern in
-	// internal/diag/local_buffer_test.go).
+	// packages/agent/internal/observability/diag/local_buffer_test.go).
 	db, err := sql.Open("sqlite3", "file::memory:?cache=shared&_busy_timeout=5000")
 	if err != nil {
 		t.Fatalf("open in-memory db: %v", err)

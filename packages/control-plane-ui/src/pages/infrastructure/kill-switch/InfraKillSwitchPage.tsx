@@ -101,15 +101,27 @@ export default function InfraKillSwitchPage() {
   // agent has it engaged. This matches operator intent — once even one
   // node has stopped bumping, the operator's emergency action is in
   // flight and the UI should not mislead them with a "DISENGAGED" badge.
-  const fleetEngaged = useMemo(() => {
+  //
+  // Three states, not two. Reading no nodes at all is not the same as
+  // reading nodes that are all disengaged: an operator holding only
+  // kill-switch.toggle gets 403 on both node queries, and reporting
+  // "Normal operation — TLS bumping active" to them would be a confident
+  // answer this page does not have.
+  const fleetState = useMemo<'engaged' | 'disengaged' | 'unknown'>(() => {
     const allNodes = [...(proxyNodes?.nodes ?? []), ...(agentNodes?.nodes ?? [])];
+    if (proxyNodes == null && agentNodes == null) return 'unknown';
     for (const node of allNodes) {
       const applied = node.appliedConfig as Record<string, unknown> | null;
       const ks = applied?.killswitch as Record<string, unknown> | undefined;
-      if (ks?.engaged === true) return true;
+      if (ks?.engaged === true) return 'engaged';
     }
-    return false;
+    return 'disengaged';
   }, [proxyNodes, agentNodes]);
+
+  // The toggle's direction. From an unknown state the offered action is
+  // Engage: that is the emergency direction, and the POST carries only
+  // `{engaged: true}`, so re-engaging an already-engaged fleet is a no-op.
+  const fleetEngaged = fleetState === 'engaged';
 
   // Most-recent toggle metadata (changedBy / changedAt / reason) is
   // surfaced from the first node that carries an appliedConfig.killswitch
@@ -204,21 +216,39 @@ export default function InfraKillSwitchPage() {
   // Show a non-fatal banner if EITHER per-type query failed, but still
   // render the page using whichever data did arrive — operators may
   // need to engage the kill switch even when one fleet is unreachable.
+  //
+  // Returning an ErrorBanner INSTEAD of the page when both
+  // queries fail contradicts the sentence above: the toggle is
+  // fleet-wide (`POST /api/admin/compliance/killswitch` takes only
+  // `{engaged}` and targets no node), so the node list is situational
+  // awareness, never a precondition. Replacing the page also means the
+  // emergency operator that `kill-switch.toggle` exists to create — who
+  // has no node.read and so 403s on both queries — can never reach the
+  // button at all.
   const fleetError = proxyNodesError ?? agentNodesError;
-  if (fleetError && !proxyNodes && !agentNodes) {
-    return <ErrorBanner message={fleetError.message} onRetry={() => { refetchProxyNodes(); refetchAgentNodes(); }} />;
-  }
 
   return (
     <Stack gap="lg">
+      {fleetError && (
+        <ErrorBanner
+          message={
+            proxyNodes == null && agentNodes == null
+              ? t('infrastructure.killSwitchFleetUnreachable')
+              : fleetError.message
+          }
+          onRetry={() => { refetchProxyNodes(); refetchAgentNodes(); }}
+        />
+      )}
       <div className={styles.pageHeader}>
         <div className={styles.headerText}>
           <div className={styles.titleRow}>
             <h1 className={styles.pageTitle}>{t('infrastructure.killSwitchTitle')}</h1>
-          <Badge variant={fleetEngaged ? 'danger' : 'success'}>
-            {fleetEngaged
-              ? t('infrastructure.killSwitchEngaged', 'ENGAGED')
-              : t('infrastructure.killSwitchDisengaged', 'Normal operation')}
+          <Badge variant={fleetEngaged ? 'danger' : fleetState === 'unknown' ? 'warning' : 'success'}>
+            {fleetState === 'engaged'
+              ? t('infrastructure.killSwitchEngaged')
+              : fleetState === 'unknown'
+                ? t('infrastructure.killSwitchStateUnknown')
+                : t('infrastructure.killSwitchDisengaged')}
           </Badge>
           </div>
           <p className={styles.pageSubtitle}>{t('infrastructure.killSwitchDescription')}</p>

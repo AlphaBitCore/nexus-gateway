@@ -2,8 +2,10 @@
 // providers. It combines weighted random selection with per-VK stickiness
 // (consistent hashing) and circuit breaker awareness so that:
 //
-//   - A given virtual key always resolves to the same upstream credential
-//     (maximizing provider-side prompt cache hits).
+//   - A given virtual key resolves to the same upstream credential (maximizing
+//     provider-side prompt cache hits) — with one bounded exception: while a
+//     HALF_OPEN credential is in the pool, its weight share of requests is drawn
+//     per request so the probe is actually exercised. See stickyPickWithProbe.
 //   - Credentials whose circuit is OPEN are excluded from selection.
 //   - HALF_OPEN credentials receive a single probe slot (weight = 1).
 //   - Weighted random selection is used when no sticky key is provided.
@@ -15,9 +17,7 @@ package credpool
 
 import (
 	"context"
-	"hash/fnv"
 	"math/rand"
-	"sort"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -135,15 +135,28 @@ func BulkCircuitStates(ctx context.Context, rdb redis.Cmdable, ids []string) map
 // circuit state.
 //
 // Selection rules:
+//
 //  1. Entries with Circuit == credstate.CircuitOpen or Weight == 0 are
 //     excluded.
+//
 //  2. Entries with Circuit == credstate.CircuitHalfOpen are included with
 //     effective weight = 1.
-//  3. If stickyKey is non-empty: consistent FNV32a hash mod eligible count.
-//     This ensures the same VK always routes to the same credential,
-//     maximising provider-side cache reuse. If the sticky target is
-//     ineligible (OPEN), falls through to weighted random among remaining
-//     eligible entries.
+//
+//  3. If stickyKey is non-empty: WEIGHTED RENDEZVOUS HASHING over the eligible
+//     entries (see stickyPick). The same VK routes to the same credential for
+//     as long as that credential stays eligible, maximising provider-side cache
+//     reuse; when it becomes ineligible only the keys that were pinned to it
+//     move.
+//
+//     EXCEPT while a HALF_OPEN probe is present. Stickiness is then
+//     probabilistic for that pool: the probe takes its weight share of REQUESTS
+//     (the weight-1 clamp means ~0.5% at the default selectionWeight of 100) and
+//     the remaining credentials keep the deterministic map among themselves. The
+//     clamp is a statement about traffic, and rendezvous hashing divides keys —
+//     at the handful of virtual keys a real fleet has, a key-share of 0.5%
+//     rounds to zero and the probe is never exercised, so its circuit can never
+//     close. See stickyPickWithProbe.
+//
 //  4. If stickyKey is empty: weighted random among eligible entries.
 //
 // Returns nil when no eligible candidate exists (all OPEN or pool is empty).
@@ -154,24 +167,69 @@ func Select(candidates []Entry, stickyKey string) *Entry {
 	}
 
 	if stickyKey != "" {
-		// Sort eligible candidates by credential ID so the hash index maps
-		// to a stable position regardless of the map-iteration order that
-		// produced `candidates` (callers build the slice from a map range).
-		// Without this sort the same VK could resolve to a different
-		// credential on each call, defeating per-VK stickiness and the
-		// provider-side prompt-cache reuse it exists to maximise.
-		sort.Slice(eligible, func(i, j int) bool { return eligible[i].ID < eligible[j].ID })
-		h := fnv.New32a()
-		_, _ = h.Write([]byte(stickyKey))
-		// Reduce modulo in uint32 space before converting to int: int(Sum32())
-		// can be negative on 32-bit platforms (Sum32 occupies the full 32-bit
-		// range), and Go's `%` follows the dividend's sign, so a negative
-		// dividend would yield a negative index and panic on slice access.
-		idx := int(h.Sum32() % uint32(len(eligible)))
-		return &eligible[idx]
+		return stickyPickWithProbe(eligible, stickyKey)
 	}
 
 	return weightedRandom(eligible)
+}
+
+// stickyPickWithProbe is the sticky path when a HALF_OPEN probe is in the pool.
+//
+// The weight-1 clamp expresses a trickle of REQUESTS, and that is what the
+// non-sticky path gives it: weightedRandom draws per request, so a probe at 1
+// against two credentials at the DB default of 100 receives ~0.5% of calls and
+// its circuit closes on the first success. Rendezvous hashing divides KEYS, not
+// requests, and the sticky key is a virtual key id — a single-tenant fleet has
+// a handful of those, not thousands. 0.5% of ten keys is zero keys, so the
+// probe received nothing at all, and since the ONLY exit from HALF_OPEN is a
+// 2xx recorded against that credential (there is no background prober and no
+// TTL on the circuit hash), the pool lost a third of its capacity until an
+// operator hit circuit-reset by hand. The automatic recovery the state exists
+// for could not happen.
+//
+// So the probe is drawn per REQUEST here too, at exactly the share its weight
+// asks for, and the steady credentials keep the deterministic map among
+// themselves. Two things improve at once: the probe's share stops depending on
+// how many virtual keys a deployment happens to have, and the steady map no
+// longer reshuffles when a probe joins or leaves it — which is the fleet-wide
+// remap stickyPick was written to eliminate.
+//
+// The cost is that ~0.5% of a pinned key's calls land off its pinned credential
+// while a probe is live. That is the same 0.5% the non-sticky path has always
+// paid, it lasts only until the circuit resolves, and it buys back a credential
+// that would otherwise stay dark.
+func stickyPickWithProbe(eligible []Entry, stickyKey string) *Entry {
+	probeWeight, steadyWeight := 0, 0
+	for i := range eligible {
+		if eligible[i].Circuit == credstate.CircuitHalfOpen {
+			probeWeight += eligible[i].Weight
+			continue
+		}
+		steadyWeight += eligible[i].Weight
+	}
+	// No probe in the pool, or nothing but probes: one rendezvous over the whole
+	// eligible set is both correct and the cheapest thing to do.
+	if probeWeight == 0 || steadyWeight == 0 {
+		return stickyPick(eligible, stickyKey)
+	}
+	if rand.Intn(probeWeight+steadyWeight) < probeWeight {
+		return weightedRandom(filterCircuit(eligible, true))
+	}
+	return stickyPick(filterCircuit(eligible, false), stickyKey)
+}
+
+// filterCircuit returns the HALF_OPEN entries when halfOpen is true, and every
+// other eligible entry when it is false. Callers rely on the result being
+// non-empty, which stickyPickWithProbe establishes by checking both weight sums
+// before splitting.
+func filterCircuit(entries []Entry, halfOpen bool) []Entry {
+	out := make([]Entry, 0, len(entries))
+	for i := range entries {
+		if (entries[i].Circuit == credstate.CircuitHalfOpen) == halfOpen {
+			out = append(out, entries[i])
+		}
+	}
+	return out
 }
 
 // filterEligible returns entries usable in selection (not OPEN, weight > 0).

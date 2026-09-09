@@ -7,7 +7,7 @@ import { SmartMembershipCard, GroupBulkActionsCard } from '@/pages/devices/group
 const dg = vi.hoisted(() => ({
   deviceGroupsApi: {
     previewMembership: vi.fn(), setMembershipQuery: vi.fn(),
-    bulkForceRefresh: vi.fn(), bulkRotateCert: vi.fn(),
+    bulkForceRefresh: vi.fn(),
   },
 }));
 vi.mock('@/api/services', () => dg);
@@ -94,7 +94,6 @@ describe('GroupBulkActionsCard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dg.deviceGroupsApi.bulkForceRefresh.mockResolvedValue({ total: 2, results: [] });
-    dg.deviceGroupsApi.bulkRotateCert.mockResolvedValue({ total: 2, results: [] });
   });
 
   it('renders nothing without update permission', () => {
@@ -102,12 +101,10 @@ describe('GroupBulkActionsCard', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('runs the force-refresh + rotate-cert bulk actions for the group', async () => {
+  it('runs the force-refresh bulk action for the group', async () => {
     render(<I18n><GroupBulkActionsCard groupId="g1" canUpdate /></I18n>);
     const buttons = screen.getAllByRole('button');
     fireEvent.click(buttons[0]);
     await waitFor(() => expect(dg.deviceGroupsApi.bulkForceRefresh).toHaveBeenCalledWith('g1'));
-    fireEvent.click(buttons[1]);
-    await waitFor(() => expect(dg.deviceGroupsApi.bulkRotateCert).toHaveBeenCalledWith('g1'));
   });
 });

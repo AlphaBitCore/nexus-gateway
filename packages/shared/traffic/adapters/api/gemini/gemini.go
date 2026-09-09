@@ -41,6 +41,14 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
 	}
 
+	// The embedding wires carry their text under `content` (singular) or
+	// `requests[].content`, neither of which has a `contents` array — so without
+	// this branch the check below answers ErrUnknownSchema and the hook pipeline
+	// scans nothing. See embeddings.go.
+	if isEmbedBody(body) {
+		return extractEmbedRequest(body), nil
+	}
+
 	contents := gjson.GetBytes(body, "contents")
 	if !contents.Exists() {
 		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
@@ -49,7 +57,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	var segments, reasoning, toolCalls []string
 
 	// System instruction parts (camelCase newer or snake_case older).
-	for _, key := range []string{"systemInstruction.parts", "system_instruction.parts"} {
+	for _, key := range systemInstructionKeys {
 		sys := gjson.GetBytes(body, key)
 		if sys.IsArray() {
 			sys.ForEach(func(_, part gjson.Result) bool {
@@ -75,7 +83,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 			// thought=true. Keep them off Segments to mirror Anthropic
 			// thinking + OpenAI reasoning_content semantics.
 			if text := part.Get("text"); text.Type == gjson.String {
-				if part.Get("thought").Bool() {
+				if isReasoningPart(part) {
 					if text.Str != "" {
 						reasoning = append(reasoning, text.Str)
 					}
@@ -147,7 +155,7 @@ func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (tra
 		if parts.IsArray() {
 			parts.ForEach(func(_, part gjson.Result) bool {
 				if text := part.Get("text"); text.Type == gjson.String {
-					if part.Get("thought").Bool() {
+					if isReasoningPart(part) {
 						if text.Str != "" {
 							reasoning = append(reasoning, text.Str)
 						}
@@ -205,7 +213,7 @@ func (a *Adapter) ExtractStreamChunk(_ context.Context, chunk []byte, _ string) 
 			if parts.IsArray() {
 				parts.ForEach(func(_, part gjson.Result) bool {
 					if text := part.Get("text"); text.Type == gjson.String && text.Str != "" {
-						if part.Get("thought").Bool() {
+						if isReasoningPart(part) {
 							reasoning = append(reasoning, text.Str)
 						} else {
 							segments = append(segments, text.Str)

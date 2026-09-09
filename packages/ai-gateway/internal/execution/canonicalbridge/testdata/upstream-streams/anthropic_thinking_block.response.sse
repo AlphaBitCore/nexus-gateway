@@ -1,0 +1,51 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CeWwHsjiXf5ViwWjznrr4","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":60,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}             }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"This"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is a classic riddle that plays on how people interpret the phrase \"all but 9.\"\n\nLet me think through this carefully:\n- The"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" farmer has 17 sheep\n- \"All but 9 run away\"\n\nThe phrase \"all but 9\" means \"all except 9\" - so 9"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" sheep did NOT run away.\n\nIf all but 9 ran away, that means 9 sheep stayed/are"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" left.\n\nThe answer is 9 sheep are left."}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EtIECpsBCBEYAipAGq6+q8N7o9wAJHQ5Pm+wj10HSNEPlNjLDKQX6l4FWK6IaaFUvGsa/NKZgQ4SZxH2gWdv2trMOu7Gm18pQ/9h6DIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDhlZjI0ZjlkLWZlZWEtNDExMS1hODUyLTcyNDY3ZTlmOTNkZqgBlPzK1AYSDNwviQNohEBWVNwwTxoM18Y3SOWbP/259LNxIjBhzeGRFdNwNZ79QcaZ7btPFFXvlSjF+Y24GSv/+J2LymAnZV7chK0UzcArck6w4K0q4wIjO5NOIhYH51lpZH3b5VG6E8JGHaYnKvsRPd+rsoUsKTs54wTbmDxsUGplOOKPCPh0O0/KDlRFuVnkqH8c1cKvTQ7Bl75ZcrRD5/aaPqHQWHf97myunxKOH3srJD7sQUqgoYRbrnuQI+epLOErGi/HT5hv2s3DVliuGpuwTkxzER+4IVtDzM4Pgk1XjiiVDWkL/LaF84oWHSJT6rMvl7xPqbzB7j+7kwvGIQCK1bpNwKgBKgEITdFIxrsyXWdA3kiET7G4jWhFQ+SzDjTtpRarQxaisvBBAGKg7HG4gMiHFipGgiXmA6A4SLOWjtAF2szrEQX9oHl4WFY/mwPor43bzd9CteWPLqEoB9uud++Tg5T7sDfmJAhiDx2b9QX8F+CrLXTEPkjqDu6sS4uoCuB/gAKeqCeFnQjjJiZzCe1wCGlKbdEgteYFDgWLlB/eSVsVw7kLjN46vvXXFnjH5DBJtyIaGAE="}            }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0  }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"# 9 sheep are left\n\nThe key is in the phrase \"**"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"all but 9** run away.\"\n\n\"All but 9\" means \"all *except* 9\" - so 9 sheep did **not** run away and remained with the farmer.\n\nThis is a common"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" riddle that tricks people into subtracting 9 from 17, but the correct interpretation is that 9 sheep are still there."}             }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1        }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":60,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":211,"output_tokens_details":{"thinking_tokens":112}}        }
+
+event: message_stop
+data: {"type":"message_stop" }
+

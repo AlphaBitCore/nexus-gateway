@@ -29,6 +29,21 @@ func defaultDiskDLQDir() string {
 	return filepath.Join(os.TempDir(), "nexus-hub-dlq")
 }
 
+// defaultDiskDLQMaxBytes bounds one dead-letter file.
+//
+// The file had NO bound at all: it is append-only, holds raw MQ payloads
+// (request/response bodies, source_ip, end_user_id) and nothing ever
+// truncated or rotated it, so a sustained DB outage grew it until the host
+// ran out of disk — and every byte written stayed for the life of the host.
+//
+// Refusing past the cap rather than rotating is deliberate, and it is the
+// behaviour append already documents: an error means the caller keeps the
+// message on the BROKER, which is itself durable and bounded by the broker's
+// own retention. Rotating would silently discard the oldest dead letters,
+// which is the one thing this sink exists to prevent. So the failure mode is
+// backpressure, not loss.
+const defaultDiskDLQMaxBytes = 256 << 20 // 256 MiB
+
 // diskDLQRecord is one persisted dead-letter entry. Payload is the raw MQ
 // message bytes; encoding/json base64-encodes []byte, so binary/SSE payloads
 // round-trip cleanly. The shape intentionally mirrors the traffic_event_dlq
@@ -55,9 +70,13 @@ type diskDLQRecord struct {
 type diskDLQ struct {
 	dir      string
 	fileName string
+	maxBytes int64
 
 	mu sync.Mutex
 	f  *os.File
+	// size tracks the file's byte count so the cap costs one Stat at open
+	// rather than one per append.
+	size int64
 }
 
 // newDiskDLQ returns a disk DLQ rooted at dir writing the default traffic
@@ -78,12 +97,13 @@ func newDiskDLQNamed(dir, fileName string) *diskDLQ {
 	if fileName == "" {
 		fileName = diskDLQFileName
 	}
-	return &diskDLQ{dir: dir, fileName: fileName}
+	return &diskDLQ{dir: dir, fileName: fileName, maxBytes: defaultDiskDLQMaxBytes}
 }
 
 // append durably records one dead-letter entry. Returns an error only when the
-// record could not be persisted at all (mkdir/open/marshal/write failure), in
-// which case the caller falls back to keeping the message on the broker.
+// record could not be persisted at all (mkdir/open/marshal/write failure, or
+// the file is at its size cap), in which case the caller falls back to keeping
+// the message on the broker.
 func (d *diskDLQ) append(rec diskDLQRecord) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -101,6 +121,11 @@ func (d *diskDLQ) append(rec diskDLQRecord) error {
 			return fmt.Errorf("disk-dlq open: %w", err)
 		}
 		d.f = f
+		// Adopt the on-disk size so a restart does not reset the cap and let
+		// an already-full file keep growing.
+		if st, err := f.Stat(); err == nil {
+			d.size = st.Size()
+		}
 	}
 
 	line, err := json.Marshal(rec)
@@ -108,7 +133,13 @@ func (d *diskDLQ) append(rec diskDLQRecord) error {
 		return fmt.Errorf("disk-dlq marshal: %w", err)
 	}
 	line = append(line, '\n')
-	if _, err := d.f.Write(line); err != nil {
+	if d.maxBytes > 0 && d.size+int64(len(line)) > d.maxBytes {
+		return fmt.Errorf("disk-dlq full: %s is at its %d-byte cap; message stays on the broker",
+			d.path(), d.maxBytes)
+	}
+	n, err := d.f.Write(line)
+	d.size += int64(n)
+	if err != nil {
 		return fmt.Errorf("disk-dlq write: %w", err)
 	}
 	return nil

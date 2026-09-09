@@ -108,7 +108,7 @@ func TestBuildRequestBody_MultimodalContent_FlattensTextBlocksOnly(t *testing.T)
 // TestParseResponse_ProviderID covers the optional providerId
 // disambiguator returned by router LLMs that need to distinguish models
 // sharing a code across providers (e.g. "gpt-4o" on OpenAI vs Azure).
-// Moved from router/strategy_smart_catalog_test.go alongside the
+// Moved from packages/ai-gateway/internal/routing/strategies/strategy_smart_catalog_test.go alongside the
 // underlying function.
 func TestParseResponse_ProviderID(t *testing.T) {
 	envelope := `{"choices":[{"message":{"content":"{\"modelId\":\"m1\",\"providerId\":\"p-openai\",\"reason\":\"ok\"}"}}]}`

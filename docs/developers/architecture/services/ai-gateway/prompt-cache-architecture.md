@@ -46,9 +46,90 @@ The tiers keep their historical numbering because a **Tier 1 used to exist**: a 
 
 `Resolve(blob, providerID, adapterType)` composes the tiers into a flat `ProviderEffective`: pointer fields are nil when "not set at this tier", so a knob inherits Tier 3 → Tier 2 → code default, and each resolved value records which tier supplied it. The whole `CacheConfigBlob` (`{adapters, providers}`) reaches the gateway over the Hub shadow key `cache`; the dispatch handler feeds it to `ManagerSet.SetConfig` and reloads the wire-rewrite config from the same blob.
 
-## 4. Relationship to Anthropic prompt caching
+## 4. Anthropic prompt-cache markers
 
-The same config blob's Tier-2/Tier-3 rows also carry the Anthropic prompt-cache marker toggles (`marker_inject_enabled`, `marker_boundary3_enabled`). Anthropic prompt caching works by injecting `cache_control` breakpoints into the request rather than by uploading a separate cache object, so its mechanism lives in the wire-rewrite layer rather than in this manager. See [shared-wirerewrite-architecture.md](../../cross-cutting/shared/shared-wirerewrite-architecture.md). The provider-reported prompt-cache token and cost stamping (cache-read / cache-creation tokens, provider cache status) is covered in [cost-estimation-architecture.md](cost-estimation-architecture.md) and [normalization-architecture.md](normalization-architecture.md).
+Anthropic prompt caching works by marking the request rather than by uploading a
+separate cache object, so it has no manager and no lifecycle — the whole mechanism
+is one field on the outbound body.
+
+The gateway uses Anthropic's **automatic caching**: a single `cache_control` at the
+ROOT of the request. Anthropic then places the cache breakpoint on the last
+cacheable block itself and advances it as the conversation grows, so the cached
+prefix covers the whole request instead of a position the gateway guessed.
+
+This replaced an explicit two-breakpoint scheme that stamped the last system text
+block and, optionally, the second-to-last user message. Measured against every
+Anthropic model the gateway routes to, one arm per request so no arm could read
+what another wrote, the root marker cached the system prompt **and** the message
+turn while the system-block marker cached only the system prompt — 14597 vs 12489
+tokens on Sonnet 4.6, 27529 vs 23573 on Opus 4.7, the same ratio on all ten. The
+scheme's second breakpoint fared worse still: anchored one turn behind the request,
+it wrote a new entry almost every turn and rarely read one back.
+
+**Where it lives.** `cache_control` is a field of the Anthropic Messages wire, so
+the marker is written by the codec that speaks that wire
+(`providers/specs/anthropic/codec/prompt_cache.go`), on **both** of that codec's
+doors — `EncodeRequest` for a cross-format caller (an OpenAI `/v1/chat/completions`
+request routed to Claude) and `RewriteNative` for a same-spec one (`/v1/messages`).
+Which door a request takes is decided by the caller's ingress, something the codec
+cannot see, so a rule on one door only would turn caching on for part of production
+and nothing would notice.
+
+**Caller intent wins.** A body that already carries any `cache_control` is
+forwarded untouched. This is not politeness: Anthropic answers 400 when the last
+block's marker names a different TTL than the root one, and again when four
+explicit breakpoints already occupy every slot.
+
+**Bedrock is excluded.** Its codec clears the flag before delegating. AWS documents
+its InvokeModel Claude integration answering 400 for a root `cache_control`, and
+nothing here has been measured against a live Bedrock endpoint — an unverified
+field on a wire documented to reject it turns every request into a 400.
+
+**Configuration.** The operator toggle is `marker_inject_enabled` on the same
+three-tier blob, resolved Tier 3 → Tier 2 → code default. The AI Gateway holds the
+blob in `internal/cache/promptcache` and resolves per request, so no provider list
+is precomputed and the order the config loader applies shadow keys in cannot
+disable markers. The resolved answer reaches the codec on
+`CallTarget.PromptCacheMarkers`; the cache stage and the executor's target resolver
+read the same holder, because the marker is a body edit and a leg that disagreed
+would build the cache key over bytes the other leg does not send.
+
+**The second breakpoint (`marker_boundary3_enabled`, off by default).** The
+automatic breakpoint writes one entry, at the last cacheable block, and finds the
+previous turn's entry by walking backward — but only 20 blocks. A turn that
+appends more than that, which an agent round with many tool_use / tool_result
+blocks does routinely, pushes the previous write out of reach and the conversation
+stops hitting with no error to notice. This knob adds a second, explicit
+breakpoint at the end of the previous assistant turn: a position that is stable
+(finished content the next turn will not edit) and sits behind whatever the
+current turn appended, however much that was.
+
+Measured on the live wire with a turn appending 26 blocks, two arms with
+independent session identities:
+
+| turn | root marker only | root + second breakpoint |
+|---|---|---|
+| 1 | creation 11765, read 0 | creation 11767, read 0 |
+| 2 (+26 blocks) | creation 14242, **read 0** | creation 2477, **read 11767** |
+| 3 | creation 14512, **read 0** | creation 2747, **read 11767** |
+
+Root-only stops hitting entirely once the lookback is exceeded and re-creates the
+whole prefix every turn; the second breakpoint reads it back and writes only the
+delta — about 4x cheaper on that turn at 1.25x write against 0.1x read.
+
+Its historical anchor was the second-to-last USER message, which staging traffic
+measured writing 2.8 tokens of cache for every token it read: that position moved
+every turn and cached a prefix one turn shorter than the automatic breakpoint
+already covered. The anchor above replaced it. `thinking` blocks are skipped —
+they cannot carry `cache_control` and marking one is a 400.
+
+Provider-reported prompt-cache token and cost stamping (cache-read / cache-creation
+tokens, provider cache status) is covered in
+[cost-estimation-architecture.md](cost-estimation-architecture.md) and
+[normalization-architecture.md](normalization-architecture.md). The count of markers
+the codec actually wrote reaches the audit row as
+`traffic_event.cache_marker_injected` — what was sent, not what was configured: a
+caller that sent its own marker is forwarded untouched and reports 0.
 
 ## References
 
@@ -57,7 +138,9 @@ The same config blob's Tier-2/Tier-3 rows also carry the Anthropic prompt-cache 
 - `packages/ai-gateway/internal/cache/gemini/client.go` — Gemini `cachedContents` REST client
 - `packages/ai-gateway/internal/cache/gemini/key.go` — content-hash key derivation and JSON canonicalization
 - `packages/ai-gateway/internal/cache/gemini/config.go` — manager config and defaults
-- `packages/shared/storage/cacheconfig/` — three-tier config types and `Resolve`
-- `packages/ai-gateway/cmd/ai-gateway/configdispatch/configdispatch.go` — `cache` shadow-key dispatch into the manager set and normaliser
+- `packages/shared/storage/cacheconfig/` — three-tier config types, `Resolve`, and the allocation-free `MarkerInjectEnabledFor`
+- `packages/ai-gateway/internal/cache/promptcache/` — the live cache-config holder the request path reads
+- `packages/ai-gateway/internal/providers/specs/anthropic/codec/prompt_cache.go` — the root `cache_control` marker, on both codec doors
+- `packages/ai-gateway/cmd/ai-gateway/configdispatch/configdispatch.go` — `cache` shadow-key dispatch into the manager set, the prompt-cache holder, and the normaliser
 - `packages/ai-gateway/internal/ingress/proxy/proxy.go` — Gemini inject integration and stale-ref invalidation hook
 - `packages/shared/schemas/configkey/configkey.go` — `cache` shadow key

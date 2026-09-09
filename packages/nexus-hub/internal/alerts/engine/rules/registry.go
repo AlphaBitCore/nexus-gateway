@@ -3,16 +3,17 @@
 // POST /api/v1/admin/alerts/rules/{id}/reset endpoint: reset writes these
 // values back to the AlertRule DB row, discarding any operator edits.
 //
-// The TS seed at tools/db-migrate/seed/seed-alerting.ts plants the same
-// definitions at `prisma db seed` time. Both files must stay in lockstep;
-// TestBuiltinRulesMatchSeed is the lockstep gate.
+// tools/db-migrate/seed/fixtures/AlertRule.json plants the same definitions at
+// seed time. Both must stay in lockstep; TestBuiltinRulesAppearInSeed and
+// TestSeedRulesAppearInBuiltin gate it in both directions.
 package rules
 
 import (
 	"fmt"
+
 	"github.com/goccy/go-json"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
+	alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 )
 
 // RuleDef is the code-owned default definition of a built-in alert rule.

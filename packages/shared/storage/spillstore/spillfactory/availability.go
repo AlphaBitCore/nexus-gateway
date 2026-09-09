@@ -141,10 +141,9 @@ type Residency struct {
 const residencyTimeout = 2 * time.Second
 
 // DescribeWithResidency is Describe plus a bounded Stat of what the backend
-// currently holds. It is the first production consumer of SpillStore.Stat, which
-// previously had none on a shipped interface — the reason it had none is that
-// neither backend bounded its scan, so the obvious consumer could not safely be
-// the first one. Both bound now, and this call adds its own deadline on top.
+// currently holds. It is the first production consumer of SpillStore.Stat. An
+// unbounded backend scan is what makes such a consumer unsafe; both backends
+// bound theirs, and this call adds its own deadline on top.
 //
 // A Stat failure never fails the description: the caller asked where bodies go,
 // and that answer does not depend on being able to count them.

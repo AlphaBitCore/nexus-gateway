@@ -29,45 +29,75 @@ import (
 // unreachable case must still recover fast — a fix that slows both down trades
 // this defect for an outage after every Hub restart.
 func TestReconnect_AuthRejectionIsNotRetriedLikeAnOutage(t *testing.T) {
-	const window = 700 * time.Millisecond
+	// The window is anchored on observed work, not on the wall clock.
+	//
+	// A flat 700ms for both arms makes the test a
+	// measure of the machine as much as of the client: under `go test ./...`,
+	// where every package in this module runs at once, a single dial can eat
+	// the whole budget, no upgrade is recorded, and the vacuity guard below
+	// fires with `rejected == 0`. Green in isolation, red under load — which is
+	// the orchestration showing through the test rather than a defect in the
+	// client.
+	//
+	// Raising the constant would only move the cliff, and would pay for it in
+	// every run. Instead the unreachable arm runs until it has drawn a known
+	// number of attempts, and the time IT took becomes the window the rejecting
+	// arm is given. A slow machine lengthens both arms together, so the
+	// comparison the test actually makes — a rate against a rate — holds at any
+	// speed, and the hard cap only ever fires when the client has stopped
+	// dialling altogether, which is itself the finding.
+	const (
+		pace = 5                // attempts that define the window
+		cap_ = 15 * time.Second // only reached if the client stops dialling
+	)
 
-	attempts := func(t *testing.T, status int) int64 {
+	// serve counts WebSocket upgrade attempts against a server answering
+	// `status`, stopping at `stopAt` attempts or when `budget` elapses.
+	//
+	// Count ONLY the upgrades. The first version counted every request, which
+	// the HTTP-fallback path also makes — so the "unreachable" arm was inflated
+	// by a different mechanism and the comparison passed with the fix removed.
+	serve := func(t *testing.T, status int, stopAt int64, budget time.Duration) (int64, time.Duration) {
 		t.Helper()
-		// Count ONLY the WebSocket upgrade attempts. The first version counted
-		// every request to the server, which the HTTP-fallback path also hits —
-		// so the "unreachable" arm was inflated by a different mechanism and the
-		// comparison passed with the fix removed. The defect is a rate of
-		// UPGRADE attempts; that is what has to be counted.
 		var n atomic.Int64
+		ctx, cancel := context.WithTimeout(context.Background(), budget)
+		defer cancel()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/ws") {
-				n.Add(1)
+				// Count first, unconditionally. Folding the increment into the
+				// stop condition short-circuits it away on the arm that has no
+				// stop, and that arm then reports zero attempts however many it
+				// made — indistinguishable from a client that never dialled.
+				seen := n.Add(1)
+				if stopAt > 0 && seen >= stopAt {
+					cancel()
+				}
 			}
 			w.WriteHeader(status)
 		}))
 		defer srv.Close()
 
 		c := clientAgainst(t, srv.URL)
-		ctx, cancel := context.WithTimeout(context.Background(), window)
-		defer cancel()
+		start := time.Now()
 		c.runLoop(ctx)
-		return n.Load()
+		return n.Load(), time.Since(start)
 	}
 
-	rejected := attempts(t, http.StatusUnauthorized)
-	unreachable := attempts(t, http.StatusServiceUnavailable)
+	unreachable, window := serve(t, http.StatusServiceUnavailable, pace, cap_)
+	if unreachable < 2 {
+		t.Fatalf("an unavailable Hub drew only %d attempt(s) in %v — the transient path must "+
+			"still recover quickly, or every Hub restart becomes an outage", unreachable, window)
+	}
 
+	rejected, _ := serve(t, http.StatusUnauthorized, 0, window)
 	if rejected == 0 {
-		t.Fatal("the client never dialled at all; this measured nothing")
+		t.Fatalf("the client never dialled at all in %v, a window in which an unreachable Hub "+
+			"drew %d attempts; this measured nothing", window, unreachable)
 	}
 	if rejected >= unreachable {
-		t.Errorf("a permanently-rejecting Hub drew %d attempts and an unavailable one %d — a "+
-			"refused credential must be retried far less often than a transient failure, or a "+
-			"stale agent hammers the auth path forever", rejected, unreachable)
-	}
-	if unreachable < 2 {
-		t.Errorf("an unavailable Hub drew only %d attempt(s) in %v — the transient path must "+
-			"still recover quickly, or every Hub restart becomes an outage", unreachable, window)
+		t.Errorf("a permanently-rejecting Hub drew %d attempts and an unavailable one %d in %v — "+
+			"a refused credential must be retried far less often than a transient failure, or a "+
+			"stale agent hammers the auth path forever", rejected, unreachable, window)
 	}
 }
 

@@ -1,0 +1,25 @@
+{
+  "id": "5fbaa11f-d592-4f69-afe3-99be92268b8b",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The red in the image is quite bright and vivid, so it would be classified as a light red rather than a dark shade."
+      }
+    ]
+  },
+  "finish_reason": "COMPLETE",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 295,
+      "output_tokens": 26
+    },
+    "tokens": {
+      "input_tokens": 574,
+      "output_tokens": 27,
+      "image_tokens": 259
+    },
+    "cached_tokens": 512
+  }
+}

@@ -2,11 +2,12 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
-	"strings"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
@@ -100,10 +101,20 @@ func appendHookTrace(existing []audit.HookExecRecord, stage string, results []ho
 	return out
 }
 
-// extractRequestContentForHooks pulls the canonical request content
-// blocks out of the ingress body via the format-aware traffic
-// adapter. Failures here are non-fatal — hook input is best-effort
-// and the pipeline is allowed to run with partial or empty data.
+// extractRequestContentForHooks pulls request content blocks out of the ingress
+// body via the format-aware traffic adapter.
+//
+// It is no longer the chat lane's extractor — canonicalRequestForHooks is, and
+// it hands hooks the canonical spec. This one serves the two cases that lane
+// does not: endpoint kinds the canonical CHAT shape does not model (embeddings,
+// images, rerank, audio, video), and a chat body the chat codecs cannot read.
+// Its output model is flat — `Segments []string` — so it cannot represent a tool
+// result, a reasoning turn, or a refusal at all. That is a real limitation and
+// the reason the chat lane moved off it; keeping it here is deliberate, because
+// the alternative for those cases is no scan whatsoever.
+//
+// Failures here are non-fatal — hook input is best-effort and the pipeline is
+// allowed to run with partial or empty data.
 //
 // The returned blocks are all text segments in the adapter's
 // extraction order. Role is left empty because NormalizedContent does
@@ -133,46 +144,65 @@ func (h *Handler) extractRequestContentForHooks(ctx context.Context, adapter tra
 	return hookcore.PayloadFromExtracted(extracted.Segments, extracted.ToolCallSegments)
 }
 
-// extractResponseForHooks pulls the canonical content blocks, model
-// name, and finish reason out of a non-streaming response body via the
-// active traffic adapter. Failures here are non-fatal — hook input is
-// best-effort and the pipeline is allowed to run with partial data.
-func (h *Handler) extractResponseForHooks(ctx context.Context, adapter traffic.Adapter, ingressFormat string, body []byte, path string, logger *slog.Logger) (*normcore.NormalizedPayload, string, string) {
-	if adapter == nil || len(body) == 0 {
+// extractResponseForHooks decodes a CANONICAL response body into the canonical
+// payload the hooks scan, plus the model name and finish reason.
+//
+// The body reaching this function is already canonical — the caller
+// canonicalized it. Decoding it with the normalize registry is what makes the
+// hook input the canonical spec rather than a second, weaker shape.
+//
+// It used to run the canonical body back through the format-aware TRAFFIC
+// adapter, whose output model is flat: `Segments []string` plus a
+// `ReasoningSegments` list nothing read. Rebuilt through PayloadFromExtracted
+// that yields only ContentText and ContentToolUse, so reasoning and refusal —
+// both delivered to the caller — were invisible to every scanning hook on this
+// service, while the compliance-proxy, which decodes properly, saw them. The
+// canonical structure was being discarded one line after it was obtained.
+//
+// A nil registry or a decode failure returns nil, which the pipeline reads as
+// "no content available": content hooks abstain, metadata hooks are unaffected.
+// There is deliberately no fallback to the flat model — that fallback IS the
+// defect, and a quiet downgrade to a shape that cannot represent two delivered
+// channels is worse than a hook that abstains visibly.
+func (h *Handler) extractResponseForHooks(ctx context.Context, ingressFormat string, body []byte, path string, logger *slog.Logger) (*normcore.NormalizedPayload, string, string) {
+	if h == nil || h.deps == nil || h.deps.NormalizeRegistry == nil || len(body) == 0 {
 		if h != nil && h.deps != nil && h.deps.Metrics != nil {
 			h.deps.Metrics.RecordTrafficExtract(ingressFormat, "response", "skipped")
 		}
 		return nil, "", ""
 	}
-	extracted, err := adapter.ExtractResponse(ctx, body, path)
+	payload, err := h.deps.NormalizeRegistry.Normalize(ctx, body, normcore.Meta{
+		AdapterType:  string(provcore.FormatOpenAI),
+		Direction:    normcore.DirectionResponse,
+		EndpointPath: path,
+		ContentType:  "application/json",
+	})
+	// A decode error and a decode by the WRONG codec are the same outcome, and in
+	// practice only the second happens: the registry sniffs, and its last resort
+	// is the generic HTTP-JSON codec, which succeeds on any object. A body the
+	// chat codec cannot read comes back as kind "http-json" with no messages — a
+	// decode that succeeded while decoding nothing this lane can use. Accepting
+	// it hands a hook something that is not the canonical spec, and worse, makes
+	// it NON-NIL, so the fail-closed guard downstream (which keys on a nil
+	// payload) reads the most dangerous case as a healthy one.
+	if err == nil && payload.Protocol != openAIChatProtocol && payload.Protocol != openAIResponsesProtocol {
+		err = fmt.Errorf("registry decoded the canonical response as %q, which is neither %q nor %q",
+			payload.Protocol, openAIChatProtocol, openAIResponsesProtocol)
+	}
 	if err != nil {
-		logExtractFailure(logger, "response", adapter.ID(), path, len(body), err)
-		if h != nil && h.deps != nil && h.deps.Metrics != nil {
+		logExtractFailure(logger, "response", "canonical", path, len(body), err)
+		if h.deps.Metrics != nil {
 			h.deps.Metrics.RecordTrafficExtract(ingressFormat, "response", "error")
 		}
 		return nil, "", ""
 	}
-	if h != nil && h.deps != nil && h.deps.Metrics != nil {
+	if h.deps.Metrics != nil {
 		h.deps.Metrics.RecordTrafficExtract(ingressFormat, "response", "success")
 	}
-	model, finish := "", ""
-	if extracted.Metadata != nil {
-		model = extracted.Metadata["model"]
-		// finish_reason is stamped by the traffic adapter's ExtractResponse
-		// (openai.go: choices[].finish_reason → Metadata["finish_reason"]) so
-		// the response-hook input carries the real terminal reason instead of a
-		// fabricated default. Multi-choice responses join with "," — the first
-		// element is the canonical single-choice value.
-		if fr := extracted.Metadata["finish_reason"]; fr != "" {
-			finish = fr
-			if i := strings.IndexByte(fr, ','); i >= 0 {
-				finish = fr[:i]
-			}
-		}
-	}
-	// PayloadFromExtracted carries assistant tool-call arguments into the
-	// hook pipeline so response-side tool-arg PII is scanned and masked.
-	return hookcore.PayloadFromExtracted(extracted.Segments, extracted.ToolCallSegments), model, finish
+	// Model and finish reason come off the canonical payload itself; the codec
+	// already resolved the first choice's terminal reason, so there is no
+	// comma-joined multi-choice string to split any more.
+	return &payload, payload.Model, payload.FinishReason
 }
 
 // usageInt returns the pointer's dereferenced value, or 0 when nil.

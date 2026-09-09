@@ -282,8 +282,8 @@ export async function seedDemo(prisma: PrismaClient): Promise<void> {
   // the local `npm run seed` path, which has no rotation step.
   //
   // The admin login is deliberately absent: admin@nexus.ai belongs to the
-  // bootstrap tier, not this one. A lookup for it in the demo fixture used to
-  // sit here and never matched, so those two lines never printed.
+  // bootstrap tier, not this one, so a lookup for it in the demo fixture would
+  // never match and its two lines would never print.
   const vks = JSON.parse(
     readFileSync(resolve(FIXTURES_DEMO, 'VirtualKey.json'), 'utf8'),
   ) as Array<{ id: string; name: string }>

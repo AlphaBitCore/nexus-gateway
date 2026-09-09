@@ -10,15 +10,15 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
 
-// TestWalkState_EveryFactTravelsWithItsTarget is a structural assertion, and it
-// is here because the hazard it replaces was invisible at compile time.
+// TestWalkState_EveryFactTravelsWithItsTarget is a structural assertion, and the
+// hazard it rules out is invisible at compile time.
 //
-// The walk used to carry four slices indexed by target position — attempt
-// counts, eliminated, restable, explained — plus the targets themselves.
-// selectNext took two of them as adjacent `[]bool` parameters, so passing them
-// in the wrong order compiled cleanly and silently changed which targets could
-// be tried again. An adversarial review found that the guards those slices
-// encoded could be removed without a single test noticing.
+// Carrying four slices indexed by target position — attempt counts, eliminated,
+// restable, explained — alongside the targets themselves puts two adjacent
+// `[]bool` parameters on selectNext, so passing them in the wrong order compiles
+// cleanly and silently changes which targets can be tried again. The guards
+// those slices encode can then be removed without a single test noticing, which
+// is what an adversarial review of this walk found.
 //
 // One struct per target makes the mistake unspeakable: there is no ordering to
 // get wrong, and a new fact about a target cannot be added anywhere except
@@ -101,7 +101,7 @@ func TestWalkState_ATargetsBackoffScheduleDoesNotRestartWithItsTurn(t *testing.T
 	w := newWalk([]routingcore.RoutingTarget{{ProviderID: "p", ModelID: "m"}}, 2)
 
 	// Two waits inside the first turn, then the turn ends and the walk comes
-	// back — the third wait is the one that used to restart.
+	// back — the third wait is the one at risk of restarting.
 	first := w[0].nextBackoff(p)
 	second := w[0].nextBackoff(p)
 	w[0].attempts++ // the turn ended; the next wait is the way back into a new one

@@ -33,7 +33,6 @@ func (e *RulePackEngine) addressedSegments(input *core.HookInput) []addressedTex
 	if input == nil || input.Normalized == nil {
 		return nil
 	}
-	projOpts := e.cfg.ProjectionOptions()
 	var out []addressedText
 	if input.Normalized.Kind == normalize.KindAIEmbedding {
 		for ii, inp := range input.Normalized.Inputs {
@@ -48,9 +47,20 @@ func (e *RulePackEngine) addressedSegments(input *core.HookInput) []addressedTex
 			switch b.Type {
 			case normalize.ContentText:
 				out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d", mi, ci), text: b.Text, blockType: "text"})
-			case normalize.ContentReasoning:
-				if projOpts.IncludeReasoning && b.Text != "" {
+			case normalize.ContentRefusal:
+				// Assistant-visible on the wire (choices[].message.refusal) and
+				// carried by the traffic adapters in both directions, so it holds
+				// a positional slot like ordinary text.
+				if b.Text != "" {
 					out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d", mi, ci), text: b.Text, blockType: "text"})
+				}
+			case normalize.ContentReasoning:
+				// Scanned and addressed, but NOT positional — the adapters put
+				// chain-of-thought on ReasoningSegments and the rewrite path walks
+				// Segments only. See the blockType doc: a slot taken here is a slot
+				// the consumer never offers.
+				if b.Text != "" {
+					out = append(out, addressedText{address: fmt.Sprintf("messages.%d.content.%d", mi, ci), text: b.Text, blockType: "reasoning"})
 				}
 			case normalize.ContentToolResult:
 				if b.ToolResult != nil {

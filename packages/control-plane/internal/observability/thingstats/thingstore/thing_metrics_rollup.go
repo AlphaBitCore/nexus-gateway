@@ -46,7 +46,7 @@ func (store *Store) QueryThingRollup(ctx context.Context, q ThingMetricsQuery) (
 	}
 
 	gran := metrics.SelectGranularity(q.StartTime, q.EndTime)
-	table := "thing_" + gran.TableName()
+	table := gran.ThingTableName()
 
 	where := `"thing_id" = $1 AND "bucketStart" >= $2 AND "bucketStart" < $3`
 	args := []any{q.ThingID, q.StartTime, q.EndTime}
@@ -99,7 +99,7 @@ func (store *Store) ThingRollupHasAnyRecent(ctx context.Context, thingID string,
 		return false, ErrThingMetricsQueryNoThingID
 	}
 	gran := metrics.SelectGranularity(start, end)
-	table := "thing_" + gran.TableName()
+	table := gran.ThingTableName()
 	var exists bool
 	q := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM "%s" WHERE "thing_id" = $1 AND "bucketStart" >= $2 AND "bucketStart" < $3)`, table)
 	if err := store.pool.QueryRow(ctx, q, thingID, start, end).Scan(&exists); err != nil {

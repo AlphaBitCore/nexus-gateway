@@ -39,9 +39,9 @@ type ComplianceResult struct {
 	SpillAvailability spillfactory.Availability
 	// MatcherEngine records which content-scanning engine THIS BINARY compiled
 	// in. It is a build-tag choice with an order-of-magnitude latency
-	// consequence on large bodies, and it was previously answerable only by
+	// consequence on large bodies, and without it the question is answerable only by
 	// inspecting the build — a cross-compiled binary that lost its cgo engine
-	// looked identical at runtime.
+	// looks identical at runtime.
 	MatcherEngine matcher.Engine
 	// SpillStore + SpillConfig are carried so the storage.spill introspection
 	// source can measure RESIDENCY when it is read, not once at boot: "how much is
@@ -79,6 +79,35 @@ func InitCompliance(cfg *config.Config, cacheManager *cache.Manager, auditWriter
 	// disabled, so it is built before the enabled gate. Construction does no
 	// I/O — resolution is lazy at first use.
 	result.PeerResolver = peerurl.New(cfg.Registry.NexusHubURL, cfg.Auth.InternalServiceToken)
+
+	// Streaming tuning is pure config arithmetic — no I/O, no database — so
+	// it is built before the enabled gate, like the peer resolver above. That
+	// is not cosmetic: it puts the block on a path a unit test can reach, and
+	// the defect being fixed here is precisely that nothing observed what
+	// reached streaming.LiveConfig.
+	//
+	// MaxBufferSize used to be left at zero, so the shared streaming package
+	// fell back to its own 8 MB default and limits.sseBufferLimit had no
+	// effect whatever an operator wrote. Validation made that worse rather
+	// than better: a malformed value fails the boot, which reads to the
+	// operator as confirmation that the value took effect.
+	//
+	// Zero still means "use the package default" — the parse runs only when
+	// the operator set something, and Validate has already rejected a
+	// malformed or non-positive value by this point.
+	checkpointChars := cfg.Compliance.CheckpointChars
+	if checkpointChars <= 0 {
+		checkpointChars = 500
+	}
+	live := streaming.LiveConfig{CheckpointChars: checkpointChars}
+	if raw := cfg.Limits.SSEBufferLimit; raw != "" {
+		sz, err := config.ParseByteSize(raw)
+		if err != nil {
+			return result, fmt.Errorf("limits.sseBufferLimit: %w", err)
+		}
+		live.MaxBufferSize = int(sz)
+	}
+	result.LiveConfig = live
 
 	if !cfg.Compliance.Enabled {
 		slog.Info("compliance kernel disabled")
@@ -190,8 +219,8 @@ func InitCompliance(cfg *config.Config, cacheManager *cache.Manager, auditWriter
 
 	result.Resolver = result.HookConfigCache.Resolver(context.Background())
 
-	// Describe the spill posture unconditionally. It used to sit inside the
-	// audit branch below, so a node with audit disabled served an empty `effect`
+	// Describe the spill posture unconditionally. Inside the
+	// audit branch below, a node with audit disabled serves an empty `effect`
 	// from the storage.spill runtime source — no explanation at all, even with a
 	// real backend configured. Whether audit is on does not change where an
 	// oversize body would go, and the gateway already describes unconditionally.
@@ -246,14 +275,6 @@ func InitCompliance(cfg *config.Config, cacheManager *cache.Manager, auditWriter
 	result.PerHookTmout = time.Duration(perHookMs) * time.Millisecond
 	result.TotalTmout = time.Duration(totalMs) * time.Millisecond
 	result.Parallel = cfg.Compliance.ParallelHooks
-
-	checkpointChars := cfg.Compliance.CheckpointChars
-	if checkpointChars <= 0 {
-		checkpointChars = 500
-	}
-	result.LiveConfig = streaming.LiveConfig{
-		CheckpointChars: checkpointChars,
-	}
 
 	slog.Info("compliance kernel initialized",
 		"source", "database via HookConfigCache",

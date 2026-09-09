@@ -1,0 +1,36 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CeWwGWU1TbLhSjMeQM1rK","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":29,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}            }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"#"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Calculating 17 × 23\n\n## Step-by-Step Solution\n\n**Method: Breaking down using distributive property**\n\nStep 1: Break down 23 into (20 + 3)\n$$17 \\times 23 "}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"= 17 \\times (20 + 3)$$\n\nStep 2: Distribute the multiplication\n$$17 \\times 20 + 17 \\times 3$$\n\nStep 3: Calculate each part\n- $17 \\times 20 = 340$\n- $17 \\times 3 = 51$\n\nStep 4"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":": Add the results\n$$340 + 51 = 391$$\n\n## Answer: **391**\n\n## Explanation\n\nTo multiply 17 by 23, I split 23 into 20 and 3, then multiplied 17 by each part separately (getting 340 and "}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"51) before adding them together. This distributive approach breaks a harder multiplication problem into two simpler ones, confirming that 17 × 23 equ"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"als **391**."}    }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0      }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":29,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":297,"output_tokens_details":{"thinking_tokens":0}}               }
+
+event: message_stop
+data: {"type":"message_stop"          }
+

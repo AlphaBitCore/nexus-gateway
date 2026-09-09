@@ -56,7 +56,7 @@ func TestRouteExplain_EndpointForwarded(t *testing.T) {
 		_, _ = io.WriteString(w, `{"substituted":false,"targets":[],"warnings":[]}`)
 	}))
 	defer srv.Close()
-	// --endpoint must forward as EndpointType (previously unasserted at the wire).
+	// --endpoint must forward as EndpointType, asserted at the wire.
 	if _, err := runCLI(t, newTestApp(srv, false), "route", "explain", "--model", "m", "--endpoint", "responses"); err != nil {
 		t.Fatalf("route explain --endpoint: err=%v", err)
 	}

@@ -5,15 +5,16 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
-	"github.com/goccy/go-json"
 	"math/big"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"golang.org/x/sync/singleflight"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // defaultJWKSTTL is the cache lifetime for a successfully fetched JWKS

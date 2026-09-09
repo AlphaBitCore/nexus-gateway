@@ -184,8 +184,8 @@ func TestAudioMimeFromFormat_MapsTheBareWireWord(t *testing.T) {
 }
 
 func TestOpenAIChat_InputAudioAndFileParts(t *testing.T) {
-	// Both used to hit the default branch, which JSON-marshalled the payload
-	// into a text block — binary flowing through redaction as if it were prose.
+	// Neither may reach the default branch: it JSON-marshals the payload into a
+	// text block, sending binary through redaction as if it were prose.
 	body := `{"model":"gpt-audio","messages":[{"role":"user","content":[
 		{"type":"input_audio","input_audio":{"data":"YWJjZA==","format":"wav"}},
 		{"type":"file","file":{"file_data":"YWJjZA==","filename":"n.pdf"}},
@@ -251,8 +251,8 @@ func TestOpenAIResponses_InputFileCustodyPrecedence(t *testing.T) {
 }
 
 func TestGeminiUnknownPart_LeavesATrace(t *testing.T) {
-	// A part matching no known case used to yield nothing at all, which is
-	// how fileData media disappeared without any record it had been sent.
+	// A part matching no known case must not yield nothing — that is how
+	// fileData media disappears with no record it was ever sent.
 	body := `{"contents":[{"role":"user","parts":[
 		{"executableCode":{"language":"PYTHON","code":"print(1)"}},
 		{"text":"hi"}]}]}`

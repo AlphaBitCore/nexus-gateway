@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Correctness gate for the header-copy fast path in copyResponse (finding C-6). The
+// Correctness gate for the header-copy fast path in copyResponse. The
 // claim is "same headers on the wire, less work per header", so the test does not
 // restate what the headers should be — it runs the ORIGINAL Add-per-value loop beside
 // the current implementation and requires the resulting header maps to be identical,
@@ -49,7 +49,7 @@ func headerCorpus() []http.Header {
 	}
 }
 
-// TestCopyResponse_HeadersMatchReference is the primary C-6 correctness proof: the
+// TestCopyResponse_HeadersMatchReference is the primary correctness proof: the
 // header map the client sees is identical to what the Add-per-value loop produced.
 func TestCopyResponse_HeadersMatchReference(t *testing.T) {
 	for i, src := range headerCorpus() {

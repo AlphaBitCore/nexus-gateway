@@ -19,12 +19,8 @@ import (
 //     [{type:"text", text:"…"}, …] shapes.
 //   - /responses — input as string OR array of items whose content is a
 //     string or an array of parts with type in {"input_text","text"}.
-//
-// /embeddings is intentionally unsupported: its content is a top-level
-// `input` field (a single or list of arbitrary user strings) — rewriting a
-// redacted variant end-to-end is not yet implemented. Returning
-// ErrRewriteUnsupported makes the AG proxy fall through to forwarding the
-// original body with a warn log instead of 500ing.
+//   - /embeddings — the top-level `input`, in both the single-string and
+//     array-of-strings shapes.
 func (a *Adapter) RewriteRequestBody(_ context.Context, body []byte, path string, content traffic.NormalizedContent) ([]byte, int, error) {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
@@ -32,7 +28,7 @@ func (a *Adapter) RewriteRequestBody(_ context.Context, body []byte, path string
 	case strings.Contains(path, "/responses"):
 		return rewriteResponsesCreate(body, content)
 	case strings.Contains(path, "/embeddings"):
-		return nil, 0, traffic.ErrRewriteUnsupported
+		return RewriteEmbeddingsInput(body, content)
 	default:
 		return nil, 0, traffic.ErrRewriteUnsupported
 	}

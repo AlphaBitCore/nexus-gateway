@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -843,7 +844,7 @@ func WaitForAdminAuditRow(
 		switch {
 		case err == nil:
 			return &row, nil
-		case err == pgx.ErrNoRows:
+		case errors.Is(err, pgx.ErrNoRows):
 			// retry
 		default:
 			return nil, fmt.Errorf("AdminAuditLog query: %w", err)

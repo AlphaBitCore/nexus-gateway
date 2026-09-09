@@ -62,7 +62,7 @@ func (s *stubProbeAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*pro
 func (s *stubProbeAdapter) Execute(context.Context, provcore.Request) (*provcore.Response, error) {
 	panic("stubProbeAdapter.Execute should not be invoked from the probe handler")
 }
-func (s *stubProbeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
+func (s *stubProbeAdapter) PrepareBody(req provcore.Request) (provcore.PreparedBody, error) {
 	panic("stubProbeAdapter.PrepareBody should not be invoked from the probe handler")
 }
 func (s *stubProbeAdapter) ExecuteWithBody(context.Context, provcore.Request, []byte, []string, string) (*provcore.Response, error) {

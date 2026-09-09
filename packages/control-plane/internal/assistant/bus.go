@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// bus.go is the command/data-stream split. Previously a single
-// POST both started a turn AND was the SSE stream, so a dropped connection killed the
-// turn and there was no reconnect. The bus detaches the two:
+// bus.go is the command/data-stream split. A single
+// POST that both starts a turn AND is the SSE stream loses the
+// turn on a dropped connection, with no reconnect. The bus detaches the two:
 //   - POST /sessions/:id/chat starts a turn in a BACKGROUND goroutine (it outlives the
 //     POST request) and returns immediately.
 //   - GET  /sessions/:id/stream is a long-lived SSE channel that attaches to the turn's

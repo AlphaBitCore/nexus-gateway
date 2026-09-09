@@ -21,19 +21,19 @@ import (
 //
 // These four writers build their bodies through envelope.GatewayErrorBodyWith
 // rather than going through writeIngressError, because each carries one field
-// no other refusal supplies. Each used to set only StatusCode and
-// HookReasonCode. Production therefore carried /v1/responses and
-// /v1/audio/transcriptions 400s whose error_code AND error_reason were both
-// null — rows nothing could group, alert on, or count, and whose only trace of
-// what happened was a body nobody had stored. The body is stamped for the same
+// no other refusal supplies. Setting only StatusCode and
+// HookReasonCode leaves /v1/responses and
+// /v1/audio/transcriptions 400s whose error_code AND error_reason are both
+// null — rows nothing can group, alert on, or count, and whose only trace of
+// what happened is a body nobody stored. The body is stamped for the same
 // reason writeIngressError stamps it: a gateway-generated error envelope carries
 // no user content and is the most useful thing to see when a request fails.
 //
 // auditCode is SCREAMING_SNAKE to match error_code across the rest of the
 // gateway, and the wire `code` inside the body is the same string. Two of these
 // writers put no code on the wire at all while naming one on the row, and the
-// other two spelled it differently there — so a caller could not branch on a
-// failure the row could name.
+// other two spell it differently there — so a caller cannot branch on a
+// failure the row can name.
 func rejectWithBespokeEnvelope(w http.ResponseWriter, rec *audit.Record,
 	status int, auditCode, reason string, body []byte) {
 	rec.StatusCode = status

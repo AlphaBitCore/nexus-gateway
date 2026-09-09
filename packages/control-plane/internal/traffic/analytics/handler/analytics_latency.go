@@ -12,7 +12,6 @@ import (
 
 // AnalyticsLatencyPhases returns per-phase P50/P95/P99 latency aggregates
 // grouped by the requested dimension over the requested time window.
-// OpenAPI: docs/users/api/openapi/admin/e50-s6-latency-phases.yaml.
 //
 // Query params:
 //
@@ -81,8 +80,7 @@ func latencyPhasesGroupColumn(groupBy string) (string, bool) {
 }
 
 // latencyPhasesRow is the JSON shape for one entry in the response `rows`
-// array. Matches docs/users/api/openapi/admin/e50-s6-latency-phases.yaml schema
-// `LatencyPhaseRow`. Percentile fields are pointers so a NULL P95 (all
+// array. Percentile fields are pointers so a NULL P95 (all
 // historical rows in the window had NULL upstream_total_ms) reaches the
 // client as `null` rather than `0`.
 type latencyPhasesRow struct {

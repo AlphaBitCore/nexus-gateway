@@ -231,9 +231,9 @@ func (b *Bridge) EmbeddingsRoutable(ingress, target provcore.Format) bool {
 // gate stays in lockstep with the rest of the pipeline: request
 // canonicalization (proxy.go IngressChatToCanonical) and egress reshape
 // (ResponseCanonicalToIngress) both classify the endpoint via
-// KindFromWireShape. A hardcoded per-WireShape switch previously routed only
-// WireShapeOpenAIChat through ChatRoutable, so every OTHER chat-kind ingress
-// (anthropic-messages, gemini / vertex generate-content) fell into a
+// KindFromWireShape. A hardcoded per-WireShape switch routes only
+// WireShapeOpenAIChat through ChatRoutable, dropping every OTHER chat-kind ingress
+// (anthropic-messages, gemini / vertex generate-content) into a
 // same-format-only default — silently blocking the cross-provider routing
 // those ingresses are otherwise fully built to serve. Dispatching by Kind
 // closes that drift: any chat-kind WireShape gets ChatRoutable.

@@ -95,9 +95,9 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 	// 1. Candidate models come from the prepared routing context, which
 	// resolved them once for the whole request.
 	//
-	// This strategy used to fetch its own and then narrow it by the virtual key
-	// itself, so the same snapshot was read twice and the same allowlist
-	// applied in two places — a second answer to a question that already had
+	// Fetching its own and then narrowing it by the virtual key here reads
+	// the same snapshot twice and applies the same allowlist
+	// in two places — a second answer to a question that already has
 	// one.
 	//
 	// No self-fetch: the wiring hands the SAME store to the resolver's pool
@@ -300,6 +300,17 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		return smartFallback(ctx, cfg, s.deps, trace, start, candidates)
 	}
 
+	// 7. Session affinity. The router has chosen from a pool already filtered
+	// for this request, so if this conversation's previous model is still IN
+	// that pool it is still allowed to serve — and keeping it there is what
+	// preserves the provider's prompt cache, which is keyed per model on the
+	// request prefix. Only reorders inside the pool; never adds a candidate.
+	// Requires the caller to have sent X-Nexus-Session-Id (strategy_smart_affinity.go).
+	selectedID, affinityHeld := applySessionAffinity(ctx, s.deps.SessionAffinity, rctx, candidates, selectedID)
+	if affinityHeld {
+		reason = "session affinity: kept this conversation on its cached model (router preferred " + decision.ModelID + ")"
+	}
+
 	// 8. Find the candidate and resolve the target.
 	var selected *core.SmartModelRow
 	for i := range candidates {
@@ -329,6 +340,11 @@ func (s *SmartStrategy) Evaluate(ctx context.Context, node core.StrategyNode, rc
 		Decision:     fmt.Sprintf("selected %s [%s/%s] — %s", core.FormatTargetFriendly(target), selected.ProviderID, selected.ModelID, reason),
 		DurationMs:   durationMs,
 	}, decision, cfg.RouterModelID))
+
+	// Record what was actually dispatched, affinity or not, so a conversation
+	// whose previous model legitimately left the pool starts tracking the new
+	// one instead of re-testing a dead entry every turn.
+	rememberSessionModel(ctx, s.deps.SessionAffinity, rctx, selected.ModelID)
 
 	targets := s.appendReselectionPool(ctx, candidates, selected, target, trace, start)
 	return s.armContextUpgrade(ctx, candidates, selected, targets, trace, start), nil

@@ -652,13 +652,13 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER_ENV" -d "$POSTGRES_DB_EN
 echo "    inserted operator-style NexusUser (${OPERATOR_EMAIL})"
 
 echo "==> [smoke] checking an operator's OWN 'nexus-demo' password (non-demo org) is not swept by rotation..."
-# F-4.1 regression test. rotate-demo-secrets.mjs's NexusUser predicate used
-# to be password-verification ALONE ("stored passwordHash verifies against
-# the public plaintext DEMO_PASSWORD"). That check alone cannot distinguish
-# a genuine demo row from an operator who deliberately set their OWN
-# account's password to the literal string "nexus-demo" — nothing stops an
-# operator from doing that, and the resulting hash verifies identically
-# either way. The fix adds an org-membership condition: demo NexusUser rows
+# Regression test for the rotation predicate. A NexusUser predicate that is
+# password-verification ALONE ("stored passwordHash verifies against the
+# public plaintext DEMO_PASSWORD") cannot distinguish a genuine demo row from
+# an operator who deliberately set their OWN account's password to the literal
+# string "nexus-demo" — nothing stops an operator from doing that, and the
+# resulting hash verifies identically either way. So the predicate also carries
+# an org-membership condition: demo NexusUser rows
 # only ever live in demo orgs (fixture ids "10000000-*" / "5fabaad6-...",
 # derived at runtime from tools/db-migrate/seed/fixtures/demo/
 # Organization.json — see rotate-demo-secrets.mjs loadDemoOrgIds()), so a row
@@ -693,10 +693,10 @@ echo "    inserted operator-style NexusUser with password literally 'nexus-demo'
 echo "==> [smoke] making the demo rows look operator-owned before the rerun..."
 # The demo tier is sample data a deployment OWNS once it has it: an operator
 # revokes a demo key, or pastes a real provider key into one of the pre-wired
-# "*-prod" Credential rows. The seed used to send every non-id column as the
-# update payload on every run, which reverted both — the revoked key came back
-# enabled, and the real provider key was replaced by the fixture placeholder,
-# unrecoverably. Stamp both states here and assert them after the rerun.
+# "*-prod" Credential rows. A seed that sends every non-id column as the update
+# payload on every run reverts both — the revoked key comes back enabled, and
+# the real provider key is replaced by the fixture placeholder, unrecoverably.
+# Stamp both states here and assert them after the rerun.
 docker compose exec -T postgres psql -U "$POSTGRES_USER_ENV" -d "$POSTGRES_DB_ENV" -v ON_ERROR_STOP=1 -c "
   UPDATE \"Credential\" SET \"encryptedKey\" = 'operator-pasted-provider-key' WHERE name = 'openai-prod';
   UPDATE \"AdminApiKey\" SET enabled = false WHERE id = '${DEMO_SUPER_ADMIN_KEY_ID}';

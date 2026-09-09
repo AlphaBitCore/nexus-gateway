@@ -97,6 +97,10 @@ type SmartDeps struct {
 	Lookup    core.TargetLookup
 	RouterLLM llm.Decider
 	Logger    *slog.Logger
+	// SessionAffinity keeps one conversation on one model while the provider's
+	// prompt cache for it is warm. Nil disables the behaviour entirely, which is
+	// the default — see strategy_smart_affinity.go.
+	SessionAffinity SessionAffinityStore
 }
 
 // RegisterAllStrategies registers all built-in strategy implementations.

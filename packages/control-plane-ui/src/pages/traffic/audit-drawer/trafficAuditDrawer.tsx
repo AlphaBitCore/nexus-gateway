@@ -704,11 +704,13 @@ export function TrafficEventDrawer({
                       label={t('pages:traffic.detail.hooks.requestPipeline')}
                       rows={e.requestHooksPipeline}
                       emptyLabel={t('pages:traffic.detail.hooks.noRequestHooks')}
+                      unnamedLabel={t('pages:traffic.unnamedHook')}
                     />
                     <PipelineTimeline
                       label={t('pages:traffic.detail.hooks.responsePipeline')}
                       rows={e.responseHooksPipeline}
                       emptyLabel={t('pages:traffic.detail.hooks.noResponseHooks')}
+                      unnamedLabel={t('pages:traffic.unnamedHook')}
                     />
                   </Stack>
                 ) : (

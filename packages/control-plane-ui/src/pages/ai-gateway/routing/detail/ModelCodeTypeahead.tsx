@@ -15,15 +15,18 @@ export interface ModelCodeTypeaheadProps {
   onChange: (value: string) => void;
   placeholder?: string;
   ariaLabel?: string;
+  /** Request keywords the rule being previewed delegates on. These name no
+   *  catalogue model, so no code should be suggested for them. */
+  keywords?: string[];
 }
 
 const SUGGESTION_LIMIT = 8;
 
 // Free-text input with model-code suggestions. Free-text is the source of
-// truth (so operators can type "auto" or any code the catalog doesn't yet
+// truth (so operators can type a routing keyword, or any code the catalog doesn't yet
 // know about); suggestions are a convenience that fill the input with
 // Model.code on click.
-export function ModelCodeTypeahead({ value, onChange, placeholder, ariaLabel }: ModelCodeTypeaheadProps) {
+export function ModelCodeTypeahead({ value, onChange, placeholder, ariaLabel, keywords = [] }: ModelCodeTypeaheadProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<ModelSuggestion[]>([]);
@@ -31,7 +34,16 @@ export function ModelCodeTypeahead({ value, onChange, placeholder, ariaLabel }: 
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const trimmed = value.trim();
-  const skipSuggest = trimmed === '' || trimmed.toLowerCase() === 'auto';
+  // Don't suggest catalogue codes for a string that is a routing KEYWORD — it
+  // names no model, so every suggestion offered is an offer to replace the
+  // operator's keyword with something else. `auto` is the built-in convention;
+  // the rest come from the rule being previewed, because a deployment's
+  // keywords are its own. Before this the list was `auto` alone, so any other
+  // keyword fired a query per keystroke and, where it shared a substring with
+  // real codes, popped a list whose click silently overwrote it.
+  const skipSuggest = trimmed === '' ||
+    trimmed.toLowerCase() === 'auto' ||
+    keywords.some((k) => k.trim() === trimmed);
   const debouncedQuery = useDebouncedValue(skipSuggest ? '' : trimmed, 200);
 
   useEffect(() => {

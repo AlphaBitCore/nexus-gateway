@@ -8,46 +8,37 @@ import (
 // TextProjection returns the flat list of text fragments hooks scan for
 // content matches. The projection is intentionally narrow:
 //
-//   - AI kinds: one entry per ContentBlock whose Type is ContentText or
-//     ContentToolResult (text payload). System / user / assistant /
-//     tool roles all flow into the same flat list — regex-based hooks
-//     do not need to distinguish them. Reasoning blocks are excluded by
-//     default (their text is "internal model thinking" and is rarely
-//     what a compliance hook should match against; future per-hook
-//     config can opt-in via IncludeReasoning).
+//   - AI kinds: one entry per ContentBlock whose Type is ContentText,
+//     ContentToolResult (text payload) or ContentReasoning. System / user /
+//     assistant / tool roles all flow into the same flat list — regex-based
+//     hooks do not need to distinguish them.
+//
+//     Reasoning used to be excluded unless a hook opted in, on the reasoning
+//     that it is "internal model thinking". It is not internal: the gateway
+//     encodes it onto the wire as `delta.reasoning_content` and the client
+//     displays it. A card number the model writes while thinking reached the
+//     caller unscanned, and the opt-in that would have covered it had no UI,
+//     no admin API, no documentation and no persisted column — nobody could
+//     turn it on. What is delivered is what is scanned.
+//
 //   - HTTP kinds: BodyView.Text is returned as a single entry. Form
 //     fields are flattened to "key=value" lines. SSE frames project one
 //     entry per frame (verbatim DataText, or the re-marshaled Data tree)
 //     so content hooks scan stream payloads the same as inline bodies.
 //     A JSON tree projects as its compact re-marshaled document.
+//
 //   - http-binary / unsupported / redacted payloads: empty slice.
 //
-// One projection serves every regex-based hook in shared/hooks; per-hook
-// configuration (e.g. PII-detector wanting to scan reasoning too) can
-// supply a TextProjectionOptions when invoking TextProjectionWith.
+// One projection serves every regex-based hook in shared/hooks. There is no
+// per-hook variant: a knob deciding which delivered text a compliance rule may
+// see is a knob that can be set wrong, and the only setting that was ever
+// correct is "all of it".
 func (p *NormalizedPayload) TextProjection() []string {
 	if p == nil || p.Redacted {
 		return nil
 	}
-	return p.TextProjectionWith(TextProjectionOptions{})
-}
-
-// TextProjectionOptions tunes the projection.
-type TextProjectionOptions struct {
-	// IncludeReasoning, when true, adds ContentReasoning blocks to the
-	// projection. Default false: reasoning is informational metadata,
-	// not user-spoken content.
-	IncludeReasoning bool
-}
-
-// TextProjectionWith returns the text fragments under the supplied
-// options. Most callers should use TextProjection().
-func (p *NormalizedPayload) TextProjectionWith(opts TextProjectionOptions) []string {
-	if p == nil || p.Redacted {
-		return nil
-	}
 	if p.Kind.IsAI() {
-		return aiTextProjection(p, opts)
+		return aiTextProjection(p)
 	}
 	if p.Kind.IsHTTP() {
 		return httpTextProjection(p)
@@ -55,7 +46,7 @@ func (p *NormalizedPayload) TextProjectionWith(opts TextProjectionOptions) []str
 	return nil
 }
 
-func aiTextProjection(p *NormalizedPayload, opts TextProjectionOptions) []string {
+func aiTextProjection(p *NormalizedPayload) []string {
 	// KindAIEmbedding payloads carry text in Inputs (not Messages).
 	// Include all non-empty input strings so content-scanning hooks
 	// (PII detector, keyword filter, safety scanner) can inspect embedding
@@ -73,7 +64,10 @@ func aiTextProjection(p *NormalizedPayload, opts TextProjectionOptions) []string
 	for _, m := range p.Messages {
 		for _, b := range m.Content {
 			switch b.Type {
-			case ContentText:
+			case ContentText, ContentRefusal:
+				// A refusal is assistant text the caller reads. It differs from
+				// ContentText only in which wire slot it came from, which is a
+				// rewriter's concern, not a scanner's.
 				if b.Text != "" {
 					out = append(out, b.Text)
 				}
@@ -98,7 +92,7 @@ func aiTextProjection(p *NormalizedPayload, opts TextProjectionOptions) []string
 					}
 				}
 			case ContentReasoning:
-				if opts.IncludeReasoning && b.Text != "" {
+				if b.Text != "" {
 					out = append(out, b.Text)
 				}
 			}

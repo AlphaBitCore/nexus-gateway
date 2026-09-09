@@ -97,12 +97,21 @@ func (h *Handler) rollupCacheROITotals(ctx context.Context, since, until time.Ti
 		StartTime: since,
 		EndTime:   until,
 	}
-	rows, err := h.metrics.QueryRollupCascade(ctx, q)
-	if err != nil || len(rows) == 0 {
+	result, err := h.queryMetricsOrFallback(ctx, q)
+	// A read FAILURE and an empty window are different answers. Both
+	// fall back to the direct scan below — that is the design, and it
+	// is why this is a log rather than a 5xx — but only one of them is
+	// a fault. Collapsing them meant a broken rollup leg silently sent
+	// every request to a full traffic_event scan with nothing to say
+	// so. The empty case stays silent on purpose: a fresh install and
+	// a quiet window would otherwise log on every request.
+	if err != nil {
+		h.logger.Error("cache roi: rollup totals read failed; falling back to a direct scan", "error", err)
 		return CacheROISummary{}, false
 	}
-	gran := metrics.SelectGranularity(since, until)
-	result := metrics.BuildResult(q, rows, gran)
+	if result == nil {
+		return CacheROISummary{}, false
+	}
 	s := result.Summary
 	var total CacheROISummary
 	total.TotalEstimatedCostUSD = s[metrics.MetricEstimatedCostUSD]
@@ -133,8 +142,21 @@ func (h *Handler) rollupCacheROIDaily(ctx context.Context, since, until time.Tim
 		StartTime: since,
 		EndTime:   until,
 	}
+	// Not queryMetricsOrFallback: this one buckets the RAW rows by UTC day
+	// itself, and that helper returns a built MetricsResult.
 	rows, err := h.metrics.QueryRollupCascade(ctx, q)
-	if err != nil || len(rows) == 0 {
+	// A read FAILURE and an empty window are different answers. Both
+	// fall back to the direct scan below — that is the design, and it
+	// is why this is a log rather than a 5xx — but only one of them is
+	// a fault. Collapsing them meant a broken rollup leg silently sent
+	// every request to a full traffic_event scan with nothing to say
+	// so. The empty case stays silent on purpose: a fresh install and
+	// a quiet window would otherwise log on every request.
+	if err != nil {
+		h.logger.Error("cache roi: rollup daily read failed; falling back to a direct scan", "error", err)
+		return nil
+	}
+	if len(rows) == 0 {
 		return nil
 	}
 

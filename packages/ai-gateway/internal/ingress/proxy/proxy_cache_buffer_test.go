@@ -118,9 +118,10 @@ func newRejectingResponseHookCache(t *testing.T) *compliance.HookConfigCache {
 func bufferTestState(t *testing.T, cache *compliance.HookConfigCache, ingress Ingress, transcoder canonicalbridge.StreamTranscoder, chunks []provcore.Chunk) (*streamState, *testWriter, *chunkUsageHolder) {
 	t.Helper()
 	h := &Handler{deps: &Deps{
-		HookConfigCache: cache,
-		TrafficAdapter:  &openai.Adapter{},
-		Logger:          noopLogger(),
+		NormalizeRegistry: canonicalRegistry(),
+		HookConfigCache:   cache,
+		TrafficAdapter:    &openai.Adapter{},
+		Logger:            noopLogger(),
 	}}
 	w := &testWriter{Buffer: &bytes.Buffer{}, header: http.Header{}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -281,8 +282,8 @@ func TestCanonicalBuffer_HardBlock_ZeroContent(t *testing.T) {
 // masks a redact, mergeResults now carries the redact's ModifiedContent, so the LOCUS
 // (keyed on CarriesRedaction(), not Decision==Modify) APPLIES the redaction and delivers
 // the masked body — the original PII never reaches the client and the stream is not
-// blocked. Before the #13 fix the dropped ModifiedContent produced a no-op rewrite that
-// failed closed on this canonical path.
+// blocked. Dropping the ModifiedContent produces a no-op rewrite that fails closed
+// on this canonical path.
 func TestCanonicalBuffer_BlockSoftMaskedRedact_RedactDelivers(t *testing.T) {
 	cache := newBlockSoftPlusRedactResponseHookCache(t)
 	chunks := []provcore.Chunk{
@@ -482,7 +483,7 @@ func TestCanonicalStreamAccumulator_BuildsCanonicalBody(t *testing.T) {
 	}
 
 	// syntheticChunkFromCanonical round-trips the (redacted) body back to chunk.
-	ch := syntheticChunkFromCanonical(body, acc.reasoning.String())
+	ch := syntheticChunkFromCanonical(body)
 	if ch.Delta != "hello" {
 		t.Errorf("synthetic Delta = %q, want hello", ch.Delta)
 	}
@@ -505,7 +506,7 @@ func TestCanonicalStreamAccumulator_PreservesProviderCarriers(t *testing.T) {
 	if gjson.GetBytes(body, "choices.0.message.nexus_thinking.0.index").Exists() {
 		t.Fatalf("stream-local index leaked into canonical carrier: %s", body)
 	}
-	ch := syntheticChunkFromCanonical(body, acc.reasoning.String())
+	ch := syntheticChunkFromCanonical(body)
 	if len(ch.NexusThinking) != 1 || ch.NexusThinking[0].Signature != "sig-1" || len(ch.ToolCallDeltas) != 1 || ch.ToolCallDeltas[0].ThoughtSignature != "sig-gem" {
 		t.Fatalf("synthetic replay lost carriers: %+v %+v", ch.NexusThinking, ch.ToolCallDeltas)
 	}

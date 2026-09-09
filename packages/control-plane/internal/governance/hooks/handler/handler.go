@@ -1,7 +1,5 @@
 // Package hooks owns the Control Plane admin API for hook config CRUD
 // — list / get / create / update / delete / reorder / force-refresh.
-// R6 third domain extracted from the flat handler/ package; recipe
-// documented in docs/_archive/2026-q2/programs/r6-handler-decomp-runbook.md.
 package hooks
 
 import (

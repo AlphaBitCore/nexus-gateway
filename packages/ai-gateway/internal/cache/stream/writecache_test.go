@@ -65,8 +65,8 @@ func drainSub(t *testing.T, sub ChunkSubscription) []string {
 // TestRegistry_NoDedup_EachCallerLeadsAndStillFills verifies the WithDedup(false)
 // path (cache.broker=false): same-key concurrent callers do NOT coalesce — each
 // is its own leader (leaderFn runs per caller) — yet the cache is STILL filled.
-// This is the #7 fix: broker=false previously meant the response was never
-// written, so an admin-enabled L1 tier silently never filled. Contrast
+// Without that, broker=false means the response is never written and an
+// admin-enabled L1 tier silently never fills. Contrast
 // TestRegistry_ConcurrentSecondSubscriberJoins (dedup=true: one leader, joiners).
 func TestRegistry_NoDedup_EachCallerLeadsAndStillFills(t *testing.T) {
 	c, _ := newTestCacheForStreamcache(t)

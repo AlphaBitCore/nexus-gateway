@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/hmackeyring"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 )

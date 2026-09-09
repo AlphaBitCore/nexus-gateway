@@ -7,10 +7,10 @@ import styles from './ModelFormDrawer.module.css';
 /**
  * The Capabilities section of the model form, shared by create and edit.
  *
- * It renders for EVERY model type. It used to render only for chat and
- * embedding, and for chat it rendered a paragraph explaining that it had no
- * content — so an audio or image model, precisely the kind whose modalities
- * differ from the type default, had no section at all and nowhere to say what
+ * It renders for EVERY model type. Rendering only for chat and
+ * embedding — with a paragraph for chat explaining that it has no
+ * content — leaves an audio or image model, precisely the kind whose modalities
+ * differ from the type default, with no section at all and nowhere to say what
  * it accepts. Modalities apply to all types; the numeric-limits panel keeps
  * its own narrower condition because only chat and embedding have limits it
  * knows how to render.

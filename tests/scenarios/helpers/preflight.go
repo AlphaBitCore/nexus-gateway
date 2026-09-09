@@ -1,6 +1,8 @@
 package helpers
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"context"
 	"fmt"
 	"net/http"
@@ -57,7 +59,10 @@ func WaitForServices(env *intg.Env) {
 		probes = append(probes, servicProbe{Name: "Proxy", URL: env.ProxyURL + "/"})
 	}
 
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := nexushttp.New(nexushttp.Config{
+		Timeout: 3 * time.Second,
+		Caller:  "scenario-preflight",
+	})
 	for tick := 1; ; tick++ {
 		statuses := make([]string, 0, len(probes))
 		allUp := true

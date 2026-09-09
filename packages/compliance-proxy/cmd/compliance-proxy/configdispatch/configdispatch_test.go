@@ -17,14 +17,13 @@ import (
 
 // BuildConfigLoader is a wiring function — the most useful guarantee
 // we can lock in without spinning Hub/DB/proxy is "every key the
-// proxy used to handle in its giant switch is still registered". A
+// proxy handles is registered". A
 // missing key here would silently degrade the proxy back to the
 // default-echo branch and Hub would never see it apply.
 //
-// The canonical list comes from the pre-refactor switch statement (11
-// cases plus the default catch-all); the default is preserved by the
-// main.go wrapper, not by the loader. `streaming_compliance` was added
-// to close the missing-receiver gap for streaming_compliance.
+// The canonical list is `want` below — the keys the proxy consumes. The
+// default catch-all is separate and is preserved by the main.go wrapper,
+// not by the loader.
 func TestBuildConfigLoader_AllKeysRegistered(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	tracker := thingclient.NewOutcomeTracker()

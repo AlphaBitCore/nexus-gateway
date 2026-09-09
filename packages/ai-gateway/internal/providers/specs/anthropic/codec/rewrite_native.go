@@ -67,7 +67,25 @@ func (Codec) RewriteNative(_ typology.WireShape, nativeBody []byte, target provc
 		}
 		rewrites = append(rewrites, thinkRewrites...)
 	}
-	return provcore.EncodeResult{Body: out, ContentType: "application/json", Rewrites: rewrites}, nil
+	// Prompt caching, same-spec door. The cross-format door adds the identical
+	// marker under the identical predicate (prompt_cache.go); a rule that holds
+	// on one door and not the other is the §2 two-doors failure this file's
+	// header names, and the door a request takes is decided by the caller's
+	// ingress, not by anything the codec can see.
+	promptCacheMarked := promptCacheMarkerApplies(out, target.PromptCacheMarkers)
+	if promptCacheMarked {
+		marked, serr := sjson.SetRawBytes(out, "cache_control", promptCacheMarkerRaw)
+		if serr != nil {
+			return provcore.EncodeResult{}, serr
+		}
+		out = marked
+		bounded, berr := applyPromptCacheBoundary(out, target.PromptCacheBoundary)
+		if berr != nil {
+			return provcore.EncodeResult{}, berr
+		}
+		out = bounded
+	}
+	return provcore.EncodeResult{Body: out, ContentType: "application/json", Rewrites: rewrites, PromptCacheMarked: promptCacheMarked}, nil
 }
 
 // reconcileNativeThinkingBudget applies fitThinkingBudget to a native body,

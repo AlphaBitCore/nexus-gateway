@@ -9,14 +9,15 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"sync"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // ErrCacheEmpty is returned when no keys have ever been successfully loaded.

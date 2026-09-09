@@ -69,6 +69,16 @@ const (
 	ContentToolUse    ContentType = "tool_use"
 	ContentToolResult ContentType = "tool_result"
 	ContentReasoning  ContentType = "reasoning"
+	// ContentRefusal is the assistant's decline — the text a model returns
+	// INSTEAD of an answer when a safety or structured-output refusal fires.
+	// It is delivered to the caller like any other assistant text and must be
+	// scanned like any other assistant text, but it is NOT ContentText: it
+	// occupies its own wire slot (`message.refusal` on the chat wire), and a
+	// consumer that writes a redaction back has to know which slot a block
+	// came from. Collapsing it into ContentText is what forces a rewriter to
+	// infer the mapping from ordinal position, which is how a redacted channel
+	// ends up written over a different channel's text.
+	ContentRefusal ContentType = "refusal"
 )
 
 // NormalizedPayload is the canonical representation of one captured

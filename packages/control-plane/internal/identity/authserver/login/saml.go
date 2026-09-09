@@ -152,6 +152,18 @@ func (d SAMLDeps) resolveOrProvision(ctx context.Context, idp *store.IdentityPro
 		return "", errInternal
 	}
 	if found {
+		if fi.Account.Blocked() {
+			// Same hole the OIDC callback had: the assertion proves identity,
+			// not admission. Offboarding and SCIM active:false write the status
+			// this verdict reads, so without the check a departed employee kept
+			// signing in through SAML. Answered with the unprovisioned code so
+			// the response does not separate the two cases for a caller — the
+			// reason goes to the log instead, mirroring the OIDC callback so an
+			// operator can tell the two refusals apart server-side.
+			slog.Default().Warn("authserver: SAML ACS refused a blocked account",
+				"idp", idp.ID, "user_id", fi.UserID, "reason", fi.Account.Reason())
+			return "", "user_not_provisioned"
+		}
 		_ = d.Federated.UpdateRawClaims(ctx, fi.ID, map[string]any{"sub": subject, "email": email})
 		// Refresh the user's displayName + email on re-login: a real name the
 		// IdP only began emitting after first JIT (or one corrected upstream)

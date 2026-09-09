@@ -287,6 +287,39 @@ loses the extra loop protection; it never blocks a flow because of it).
   where it claims flows it cannot bridge.
 - A bundle on `bypassBundles` is declined (native routing) and never bridged; an
   empty/absent list exempts nothing.
+- A relayed flow reaches its natural end. Half-close and connection lifetime are
+  part of fail-open, not separate concerns — see below.
+
+## Relay lifetime: the flow must be allowed to finish
+
+Three properties of the relay itself belong with the fail-open rules, because
+breaking any of them presents to the user as "the network is broken" even
+though every decision above was correct.
+
+**Half-close must propagate.** When the remote finishes writing, the relay
+closes only its own read half; the app is never sent EOF, so it waits for data
+that will never come and the request hangs until some higher-level timeout
+fires. A protocol that signals completion by closing one direction — the shape
+every plain HTTP/1.1 response without `Content-Length` relies on — cannot
+complete at all. The remote's EOF has to reach the app.
+
+**A watchdog must not outlive what it guards.** A timer that guards
+*establishment* has to be cancelled once the connection is established.
+Otherwise it fires later, mid-transfer, and resets a connection that was
+working — the failure is indistinguishable from packet loss to the user, and it
+gets worse the longer the connection is useful, which is exactly backwards.
+
+**The IPC connection is touched from more than one thread.** The provider's
+flow handlers run concurrently; a reference to the daemon connection that is
+read and reassigned without a lock is a data race, and the observable symptom
+is not a clean error but a crash of the extension — which takes the host's
+networking down with it.
+
+**The SNI peek must validate the TLS version byte, not just the record type.**
+A record whose first byte happens to be 0x16 is not necessarily a TLS
+handshake; checking the major-version byte as well is what stops arbitrary
+traffic from being parsed as one and mis-attributed to a host it never
+addressed.
 
 ## Source attribution and the per-flow verdict
 

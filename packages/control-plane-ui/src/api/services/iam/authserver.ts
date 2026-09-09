@@ -2,7 +2,7 @@
  * authApi — SPA client for the unauthenticated login endpoints at
  * /authserver/*. These sit outside the bearer-token path used by the
  * admin API client, so we issue plain fetch calls and parse the typed
- * error codes defined by docs/users/api/openapi/auth/authserver-login.yaml.
+ * error codes the authserver returns.
  */
 import { withPrefix } from '@/lib/deploymentPrefix';
 

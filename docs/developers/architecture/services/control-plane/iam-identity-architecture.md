@@ -115,7 +115,7 @@ catalog), and `NexusIncidentResponse`. The catalog documents which service each
 role owns — the provider-admin role owns the gateway service, the security-admin
 role owns compliance and agent, and the viewer role reads across the catalog.
 
-The `agent-device` resource (service: `agent`) exposes fleet-management verbs: `create`, `read`, `update`, `delete`, and `force-resync`.
+The `agent-device` resource (service: `agent`) exposes fleet-management verbs: `create`, `read`, `update`, `delete`, and `force-resync`. That list is exhaustive, and `AllActions()` is what makes it so — a policy naming a verb outside it grants nothing at all, silently. The group-scoped device-admin managed policy used to include `admin:agent-device.rotate`, which is not a defined action: certificate rotation is not a separate verb on this resource, so the grant was inert while reading as a capability. A gate now asserts every value in the UI `ACTION_MAP` resolves to a member of `AllActions()`, so the two cannot drift apart again.
 
 ### Grant ceiling (no privilege escalation)
 

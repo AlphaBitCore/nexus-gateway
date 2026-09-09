@@ -19,18 +19,22 @@
  * documents intent by echoing a label in its message string is code, not a
  * comment, and is out of scope.
  *
- * Forbidden families (each low-false-positive by construction):
- *   - `PR #123`                       pull-request reference
- *   - `E60`, `E91-S3`                 Epic / Epic-Story id (E + 2+ digits)
- *   - `SEC-W2-03`                     security-audit finding code
- *   - `F-0198`                        finding code
- *   - `commit a1b2c3d`               commit SHA cited in prose
- *   - `bug #45` / `issue #45`         tracker reference
- *   - `Task 0.3`                      plan task id
+ * The forbidden families are the PATTERNS table below, each carrying its own
+ * example. They live there rather than in a prose list here because this file
+ * is scanned like any other: a catalogue of the shapes being banned, written
+ * as a comment, is nine violations of its own rule. As data they are string
+ * literals, which are deliberately out of scope.
  *
  * Deliberately NOT flagged: bare `#123` ordinals (list items, external-project
  * issues like `litellm #24339`), "Phase 1/2" (real in-code init-step labels),
- * URLs, RFC numbers. Add genuine exceptions to scripts/.comment-ref-allowlist.
+ * URLs, RFC numbers.
+ *
+ * There is no allowlist file, and that is the design: the one thing that ever
+ * looked like an exception here — this header's own catalogue of the shapes it
+ * bans — was the same list written twice, and it now rides the PATTERNS table
+ * as data. A genuine exception should change a pattern, not accumulate beside
+ * it. (`loadAllowlist` still reads the path if someone creates it, so the
+ * escape hatch exists; it is empty on purpose.)
  *
  * Usage:
  *   scripts/check-comment-program-refs.mjs            # warn (non-strict)
@@ -42,18 +46,37 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 
 const PATTERNS = [
-  { re: /\bPR #\d+/, label: 'pr-ref' },
-  { re: /\bE\d{2,}(?:-S\d+)?\b/, label: 'epic-ref' },
-  { re: /\bSEC-[A-Z]\d+(?:-\d+)?\b/, label: 'sec-finding-code' },
-  { re: /\bF-\d{3,4}\b/, label: 'finding-code' },
-  { re: /\bcommit [0-9a-f]{7,40}\b/, label: 'commit-sha' },
-  { re: /\b(?:bug|issue) #\d+/i, label: 'bug-issue-ref' },
-  { re: /\bTask \d+\.\d+\b/, label: 'task-ref' },
+  { re: /\bPR #\d+/, label: 'pr-ref', eg: 'PR #' + '123' },
+  { re: /\bE\d{2,}(?:-S\d+)?\b/, label: 'epic-ref', eg: 'E' + '60, E' + '91-S3' },
+  { re: /\bSEC-[A-Z]\d+(?:-\d+)?\b/, label: 'sec-finding-code', eg: 'SEC-' + 'W2-03' },
+  { re: /\bF-\d{3,4}\b/, label: 'finding-code', eg: 'F-' + '0198' },
+  { re: /\bcommit [0-9a-f]{7,40}\b/, label: 'commit-sha', eg: 'commit ' + 'a1b2c3d' },
+  { re: /\b(?:bug|issue) #\d+/i, label: 'bug-issue-ref', eg: 'bug #' + '45' },
+  // The fractional part is optional: a plan numbers its tasks 0.3 or 16 with
+  // equal ease, and a pattern that demands the dot reaches neither.
+  { re: /\bTask \d+(?:\.\d+)?\b/, label: 'task-ref', eg: 'Task ' + '0.3, Task ' + '16' },
+  // Comment-initial only: a review label opens the sentence. An algorithm
+  // that genuinely has rounds says so mid-sentence, and the allowlist takes
+  // the rest.
+  { re: /^\s*Round \d+[.,]/, label: 'review-round', eg: 'Round ' + '3, HIGH.' },
+  // The letter is the review's own axis, not a fixed one: this tree alone
+  // carries A-4, C-30, L-7 and S-4. Pinning a single letter is how 56 of these
+  // sat green in a gate whose stated purpose is to forbid them.
+  { re: /\bfindings? [A-Z]-\d+/i, label: 'review-finding-code', eg: 'findings ' + 'C-18' },
+  // A bare `#123` stays unflagged — list ordinals and external-project issues
+  // (`litellm #24339`) both look like that. These two shapes do not: a finding
+  // number carried as a noun phrase, and one qualifying a fix.
+  { re: /\b(?:the|pre-|post-|pins|audit)\s?#\d+/i, label: 'finding-number', eg: 'the #' + '13, pre-#' + '88' },
+  { re: /#\d+[a-z]?\s+(?:fix|finding|leak|flag|gate|invariant|regression|policy|defen[cs]e)\b/i,
+    label: 'finding-number', eg: '#' + '13 fix' },
 ];
 
 const STRICT = process.argv.includes('--strict') || process.env.STRICT === '1';
 const STAGED = process.argv.includes('--staged');
-const EXT_RE = /\.(go|ts|tsx)$/;
+// .mjs/.js were in the file listing from the start and dropped here, so no
+// JavaScript was ever scanned — including every gate under scripts/, which
+// is where the patterns being banned are written down and quoted.
+const EXT_RE = /\.(go|ts|tsx|mjs|cjs|js|jsx)$/;
 // Hash-comment files. Dockerfiles carry no extension, so they are matched by
 // name; the YAML set is scoped to the surfaces that describe how this project
 // is built and deployed rather than to every yaml in the tree.
@@ -159,7 +182,15 @@ function isAllowlisted(file, text) {
 function listFiles() {
   const cmd = STAGED
     ? 'git diff --cached --name-only --diff-filter=ACM'
+    // The same trees --staged already reaches. Globbing packages/** alone let
+    // the same reference pass the sweep and fail a commit, depending on which
+    // tree it lived in.
     : 'git ls-files "packages/**/*.go" "packages/**/*.ts" "packages/**/*.tsx" ' +
+      '"tests/**/*.go" "tests/**/*.ts" "tools/**/*.ts" "tools/**/*.mjs" ' +
+      // NOT scripts/**/*.mjs: git's `**` needs a directory to match, so that
+      // pathspec listed ZERO files and this gate had never read its own
+      // directory — including its own documentation of the patterns it bans.
+      '"scripts/*.mjs" ' +
       '"*.sh" "**/*.sh" "Dockerfile*" "**/Dockerfile*" ' +
       '"docker-compose*.yml" "**/docker-compose*.yml" ".github/workflows/*.yml"';
   // A git failure (e.g. .git/index.lock held by a parallel session) must fail
@@ -221,6 +252,23 @@ function main() {
         }
       }
     }
+  }
+
+  // A clean run and a run that reached nothing print the same OK, so the sweep
+  // asserts its reach rather than reporting it. ~5500 files today; a glob that
+  // stops matching one of the trees drops it by hundreds at a time.
+  //
+  // Full sweep only. --staged is scoped to a commit, where a handful of files
+  // is the normal case and a floor would block every small commit.
+  const MIN_FILES = 3000;
+  if (!STAGED && files.length < MIN_FILES) {
+    console.error(
+      `[check:comment-program-refs] FAILED -- only ${files.length} file(s) reached, ` +
+        `expected at least ${MIN_FILES}. The sweep is not seeing the tree, so a clean ` +
+        `result here would mean nothing.`,
+    );
+    process.exitCode = 1;
+    return;
   }
 
   if (hits.length === 0) {

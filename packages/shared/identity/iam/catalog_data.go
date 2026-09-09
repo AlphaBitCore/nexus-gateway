@@ -78,7 +78,7 @@ var Catalog = []ResourceDef{
 	{Name: "device-group", Service: ServiceAgent, Verbs: crud()},
 	// device-assignment.update is an audit-only action emitted when Hub's
 	// IdentityEnricher binds an agent device to a user (see
-	// packages/control-plane/internal/handler/fleet.go). No admin
+	// packages/control-plane/internal/fleet/handler/agent). No admin
 	// handler iamMW() gates on it — admin users never invoke this path
 	// directly — but the resource stays in the catalog so the audit
 	// stream carries a stable, queryable action label for compliance

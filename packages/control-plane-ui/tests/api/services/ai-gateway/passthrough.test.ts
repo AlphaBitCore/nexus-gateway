@@ -5,7 +5,7 @@ vi.mock('../../../../src/api/client', () => ({ api: { get: vi.fn().mockResolvedV
 const m = api as unknown as Record<'get' | 'post' | 'put' | 'patch' | 'delete', ReturnType<typeof vi.fn>>;
 beforeEach(() => Object.values(m).forEach((f) => f.mockClear()));
 describe('passthroughApi', () => {
-  it('global/adapter/provider/effective routes (adapter id encoded)', () => {
+  it('global/adapter/provider routes (adapter id encoded)', () => {
     passthroughApi.getSnapshot();
     passthroughApi.getGlobal();
     passthroughApi.putGlobal({} as never);
@@ -15,12 +15,10 @@ describe('passthroughApi', () => {
     passthroughApi.getProvider('p1');
     passthroughApi.putProvider('p1', {} as never);
     passthroughApi.deleteProvider('p1');
-    passthroughApi.getEffective('p1');
     expect(m.get).toHaveBeenCalledWith('/api/admin/passthrough/snapshot');
     expect(m.put).toHaveBeenCalledWith('/api/admin/passthrough/global', {});
     expect(m.get).toHaveBeenCalledWith('/api/admin/passthrough/adapter/a%2Fb');
     expect(m.delete).toHaveBeenCalledWith('/api/admin/passthrough/adapter/a%2Fb');
-    expect(m.get).toHaveBeenCalledWith('/api/admin/passthrough/effective/p1');
   });
 });
 describe('validatePassthroughPayload', () => {

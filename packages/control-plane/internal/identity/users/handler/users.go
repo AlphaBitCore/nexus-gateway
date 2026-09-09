@@ -1,12 +1,16 @@
 package iam
 
 import (
+	"errors"
 	"net/http"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/fleetstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
@@ -116,6 +120,63 @@ func (h *Handler) GetUser(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
+// writeConstraintError classifies a Postgres constraint violation raised by an
+// admin write into an error that names what the caller got wrong. Returns a
+// zero status when err is not a constraint violation, so the caller falls
+// through to its own 500.
+//
+// The three codes are the ones a caller can actually cause: a missing required
+// column, a duplicate, and a reference to something that does not exist.
+// Anything else is genuinely ours and stays a 500.
+//
+// ONE mapper, parameterised, rather than one per handler. Reporting a
+// caller-tripped constraint as a broken server has now been found four separate
+// times in this tree, each in a handler that had not yet been given its own
+// copy — so a per-handler mapper is the shape of the defect, not the fix. The
+// two things that legitimately differ are passed in: `subject` names the thing
+// being written for the duplicate message, `duplicateCode` is the machine code
+// for it, and `referenceHint` names the field a caller most often gets wrong so
+// a foreign-key failure points somewhere.
+func writeConstraintError(err error, subject, duplicateCode, referenceHint string) (message, code string, status int) {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return "", "", 0
+	}
+	switch pgErr.Code {
+	case "23502": // not_null_violation
+		col := pgErr.ColumnName
+		if col == "" {
+			col = "a required field"
+		}
+		return "Missing required field: " + col, "FIELD_REQUIRED", http.StatusBadRequest
+	case "23505": // unique_violation
+		return "A " + subject + " with those details already exists", duplicateCode, http.StatusConflict
+	case "23503": // foreign_key_violation
+		msg := "A referenced record does not exist"
+		if referenceHint != "" {
+			msg += " (check " + referenceHint + ")"
+		}
+		return msg, "REFERENCE_NOT_FOUND", http.StatusBadRequest
+	}
+	return "", "", 0
+}
+
+// userWriteConstraintError is writeConstraintError bound to the users handler's
+// vocabulary. Kept as a named helper because both user write paths use it and
+// the binding is the thing worth naming, not the call.
+func userWriteConstraintError(err error) (message, code string, status int) {
+	return writeConstraintError(err, "user", "USER_EXISTS", "organizationId")
+}
+
+// apiKeyWriteConstraintError is the same for admin API keys. ownerUserId is the
+// hint because AdminApiKey_ownerUserId_fkey is the constraint a caller trips:
+// naming a principal that does not exist — an empty string included —
+// otherwise comes back as 500 "Failed to create API key" with an empty code, which cannot
+// be told apart from the route being broken.
+func apiKeyWriteConstraintError(err error) (message, code string, status int) {
+	return writeConstraintError(err, "API key", "API_KEY_EXISTS", "ownerUserId")
+}
+
 func (h *Handler) CreateUser(c echo.Context) error {
 	var body struct {
 		Username              string  `json:"username"`
@@ -151,16 +212,54 @@ func (h *Handler) CreateUser(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Password hashing failed", "server_error", ""))
 	}
 
+	// Resolve the organisation the same way every other provisioning path does
+	// — SCIM, OIDC-JIT and agent enrollment all call FindDefaultOrganizationID
+	// for a user arriving with no org binding. This path was the one that did
+	// not, and let the column DEFAULT apply instead. That default is
+	// `'default'::text` and the seed has never created an Organization with
+	// that id — it seeds a UUID whose CODE is "DEFAULT" — so relying on it
+	// could not work on any deployment, fresh or otherwise: the insert tripped
+	// the foreign key every time. The resolver's own docstring already said as
+	// much.
+	orgID := body.OrganizationID
+	if orgID == nil || *orgID == "" {
+		resolved, resolveErr := h.users.FindDefaultOrganizationID(c.Request().Context())
+		if resolveErr != nil {
+			return c.JSON(http.StatusInternalServerError, errJSON("Failed to resolve organization", "server_error", ""))
+		}
+		if resolved == "" {
+			// No organisation exists at all. Say that, rather than letting the
+			// insert fail on a foreign key and reporting a reference the caller
+			// never made.
+			return c.JSON(http.StatusBadRequest, errJSON(
+				"organizationId is required: this deployment has no organization to default to",
+				"validation_error", "NO_DEFAULT_ORGANIZATION"))
+		}
+		orgID = &resolved
+	}
+
 	user, err := h.users.CreateNexusUser(c.Request().Context(), userstore.CreateNexusUserParams{
 		DisplayName:           body.Username,
 		Email:                 email,
 		PasswordHash:          &hashedPw,
 		CanAccessControlPlane: &canAccessCP,
-		OrganizationID:        body.OrganizationID,
+		OrganizationID:        orgID,
 		CreatedBy:             createdBy,
 		Source:                "local",
 	})
 	if err != nil {
+		// A constraint the CALLER tripped is a bad request, not a broken
+		// server. Reported as server_error, the field name lived only in the
+		// log: a create without an organisation answered
+		// `500 Failed to create user` while the log carried
+		// `null value in column "organizationId" … (SQLSTATE 23502)`. An
+		// operator has no way to tell that from an outage.
+		//
+		// Same shape the providers handler already uses for 23505.
+		if msg, code, status := userWriteConstraintError(err); status != 0 {
+			h.logger.Warn("create user rejected", "code", code, "error", err)
+			return c.JSON(status, errJSON(msg, "validation_error", code))
+		}
 		h.logger.Error("create user", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create user", "server_error", ""))
 	}
@@ -195,6 +294,31 @@ func (h *Handler) UpdateUser(c echo.Context) error {
 		CanAccessControlPlane: body.CanAccessControlPlane,
 	}
 	if body.Password != nil && *body.Password != "" {
+		// Grant ceiling, scoped to the password field ONLY.
+		//
+		// Setting another user's local password is impersonation: the caller
+		// then signs in as them at /authserver/password and every later request
+		// is evaluated under THEIR policies. With the route gated on
+		// admin:user.update and nothing else, a delegated operator could read
+		// the super-admin's id off the users list, PUT a password of their
+		// choosing, and log in with full authority — bypassing the whole
+		// ceiling apparatus not by out-granting the owner but by becoming them.
+		//
+		// The other five fields are deliberately NOT gated, each checked rather
+		// than assumed: local login resolves by email but still demands the
+		// password, and federated login binds on (idp, subject) rather than
+		// matching an existing account by email, so an email change alone opens
+		// nothing; policies attach to principals and groups, never to
+		// organization membership, so a move narrows which resource NRNs a
+		// policy matches rather than widening them; and enabled / displayName /
+		// canAccessControlPlane withhold access rather than granting it. Gating
+		// those would take incident response — disabling a compromised
+		// super-admin — away from any operator who does not out-rank them,
+		// which is a worse product than the hole it would close.
+		if blocked, resp := h.ceilingBlocksPrincipal(c, "nexus_user", id,
+			"Cannot set the password of a user whose permission you do not hold"); blocked {
+			return resp
+		}
 		// Externally-provisioned (SSO) accounts have no local password — they
 		// sign in through their identity provider. Refuse to set one here with
 		// an actionable message rather than silently creating a shadow password.
@@ -211,6 +335,17 @@ func (h *Handler) UpdateUser(c echo.Context) error {
 
 	user, err := h.users.UpdateNexusUser(c.Request().Context(), id, params)
 	if err != nil {
+		// Same three answers as create. This path had the blanket 500 too, and
+		// it is the one an admin UI actually drives — a duplicate email or a
+		// stale id both arrived as "server_error" with the cause only in the
+		// log. The classifier lived two functions away and was not called.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return c.JSON(http.StatusNotFound, errJSON("User not found", "not_found", ""))
+		}
+		if msg, code, status := userWriteConstraintError(err); status != 0 {
+			h.logger.Warn("update user rejected", "code", code, "error", err)
+			return c.JSON(status, errJSON(msg, "validation_error", code))
+		}
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to update user", "server_error", ""))
 	}
 
@@ -238,6 +373,14 @@ func (h *Handler) UpdateUser(c echo.Context) error {
 func (h *Handler) DeleteUser(c echo.Context) error {
 	id := c.Param("id")
 	if err := h.users.DeleteNexusUser(c.Request().Context(), id); err != nil {
+		// DeleteNexusUser does not merely happen to return ErrNoRows — it
+		// checks counts.AccountDeleted and returns it deliberately, with the
+		// comment "report not-found, preserving the prior contract". The
+		// handler was discarding a contract the store had gone out of its way
+		// to state.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return c.JSON(http.StatusNotFound, errJSON("User not found", "not_found", ""))
+		}
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to delete user", "server_error", ""))
 	}
 

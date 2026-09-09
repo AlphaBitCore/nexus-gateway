@@ -4,6 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '@/test/test-utils';
 
+// Both panels write through hook:update. The set is mutable so one arm can
+// take the grant away and prove the affordance is actually gated — a blanket
+// `() => true` would leave the gate itself untested.
+const denied = new Set<string>();
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: (key: string) => !denied.has(key),
+}));
+
 vi.mock('@/api/services', () => ({
   rulePacksApi: {
     effectiveRules: vi.fn().mockResolvedValue({
@@ -39,6 +47,31 @@ describe('OverridesPanel', () => {
 
     const { rulePacksApi } = await import('@/api/services');
     await waitFor(() => expect(rulePacksApi.upsertOverrides).toHaveBeenCalled());
+  });
+
+  // The server refuses this write without hook:update, so offering an enabled
+  // Save button only produces a 403 the operator cannot act on.
+  it('disables Save and writes nothing without hook:update', async () => {
+    denied.add('hook:update');
+    try {
+      const { rulePacksApi } = await import('@/api/services');
+      vi.mocked(rulePacksApi.upsertOverrides).mockClear();
+      const user = userEvent.setup();
+
+      renderWithProviders(<OverridesPanel installId="i1" />);
+
+      await waitFor(() => expect(screen.getByText('pi-io-001')).toBeDefined());
+      // Make a real change first. Without it Save is disabled because nothing
+      // is pending, and the assertion below would hold for the wrong reason.
+      await user.click(screen.getAllByRole('checkbox')[0]);
+      const save = screen.getByRole('button', { name: /save/i });
+      expect(save.hasAttribute('disabled')).toBe(true);
+
+      await user.click(save);
+      expect(rulePacksApi.upsertOverrides).not.toHaveBeenCalled();
+    } finally {
+      denied.delete('hook:update');
+    }
   });
 });
 

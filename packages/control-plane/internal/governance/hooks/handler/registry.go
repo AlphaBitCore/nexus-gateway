@@ -17,7 +17,7 @@ type hookRegistryEntry struct {
 }
 
 // HookImplRegistry mirrors the Go factory registrations in
-// packages/shared/policy/hooks/registry.go and the ai-gateway-local factories
+// packages/shared/policy/hooks/core/registry.go and the ai-gateway-local factories
 // (webhook-forward, quality-checker). If an implementationId is advertised
 // here but not registered as a factory, PolicyResolver will warn-log-and-skip
 // every row that uses it — so these two lists MUST stay in sync.

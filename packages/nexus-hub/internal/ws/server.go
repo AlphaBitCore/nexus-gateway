@@ -217,18 +217,34 @@ func (s *Server) authenticate(r *http.Request) (thingID, thingType string, err e
 		// shared service token — per-service revocation is structurally
 		// ineffective without per-service tokens, but the status check at
 		// least prevents a revoked Thing from re-promoting itself to online
-		// on reconnect. Skip the check when the validator is nil
+		// on reconnect. A MISSING row is a different thing from a revoked one
+		// and is admitted, so this handshake can enrol a Thing on its first
+		// connection. Skip the check entirely when the validator is nil
 		// (test harnesses that wire no store).
 		if s.validator != nil {
 			st, stErr := s.validator.GetThingStatus(r.Context(), thingID)
-			// Fail closed on DB errors and on "revoked". Any other status
-			// (online, offline, enrolled, drift) is admitted. If a new
-			// exclusionary status is added in future (e.g. "suspended"),
-			// extend this condition rather than adding an allow-list, so
-			// unknown statuses are admitted by default — a connect from a
-			// Thing in an unknown status is preferable to breaking the fleet
-			// during a rolling deploy that adds the new status.
-			if stErr != nil || st == "revoked" {
+			switch {
+			case errors.Is(stErr, store.ErrNotFound):
+				// Unknown id — never enrolled, not barred. Admit it: the
+				// RegisterThing call below performs the first-time enrollment,
+				// which is exactly what the HTTP register path already grants
+				// this same credential. Treating "no row" as a rejection made
+				// the WS handshake unable to bootstrap a Thing at all, and the
+				// client's auth-rejected branch retries WS forever without ever
+				// reaching the HTTP fallback that could create the row — so a
+				// service booting against a healthy Hub, or one whose row an
+				// operator deleted, stayed off the fleet permanently. It only
+				// appeared to work because at first boot Hub is usually still
+				// starting too: that dial fails with connection-refused, which
+				// DOES count toward the fallback threshold.
+			case stErr != nil || st == "revoked":
+				// Fail closed on DB errors and on "revoked". Any other status
+				// (online, offline, enrolled, drift) is admitted. If a new
+				// exclusionary status is added in future (e.g. "suspended"),
+				// extend this condition rather than adding an allow-list, so
+				// unknown statuses are admitted by default — a connect from a
+				// Thing in an unknown status is preferable to breaking the fleet
+				// during a rolling deploy that adds the new status.
 				return "", "", errUnauthorized
 			}
 		}

@@ -32,7 +32,7 @@ import (
 // TestS073_DiagnosticModeLifecycle — PM-grade e2e covering the four-endpoint
 // diagnostic-mode lifecycle for a single agent Thing.
 //
-// BRAINSTORM (pre): the diag-mode surface is unusual in that its primary
+// The diag-mode surface is unusual in that its primary
 // state lives on TWO related tables (thing_diag_mode_window for history +
 // thing.metadata.diagModeUntil for the agent shadow read-path), and the
 // listing endpoint computes "active" purely from ended_at > now() on
@@ -102,9 +102,9 @@ func TestS073_DiagnosticModeLifecycle(t *testing.T) {
 	).Scan(&thingID)
 	if err != nil {
 		// pgx returns ErrNoRows here. The diagnostic-mode surface is
-		// structurally untestable without an enrolled agent — fail hard
-		// (per the E86 hardening rule: precondition gaps are fixed in
-		// setup, not silently skipped). Recovery: seed an agent Thing row
+		// structurally untestable without an enrolled agent — fail hard,
+		// because a precondition gap is fixed in setup, not silently
+		// skipped. Recovery: seed an agent Thing row
 		// (see tools/db-migrate/seed) or run an agent registration.
 		t.Fatalf("S-073 precondition unmet: no agent Thing in DB. Seed one via tools/db-migrate (thing row with type='agent') or register a local agent before re-running (err=%v)", err)
 	}
@@ -141,8 +141,8 @@ func TestS073_DiagnosticModeLifecycle(t *testing.T) {
 		t.Fatalf("enable diag-mode: %v", err)
 	}
 	if status == http.StatusNotFound {
-		// Per E86 hardening: race conditions are real failures the test
-		// suite must surface. If the agent Thing vanished between SELECT
+		// A race condition is a real failure the suite must surface. If the
+		// agent Thing vanished between SELECT
 		// and POST, that's a setup leak — fail hard so the maintainer can
 		// investigate the concurrent-cleanup source.
 		t.Fatalf("enable diag-mode: agent %s returned 404 after SELECT. Likely concurrent cleanup leak; fix the scenario that deletes shared agent rows before re-running", thingID)

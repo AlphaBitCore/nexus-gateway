@@ -1,10 +1,10 @@
-// proxy_l2_serve_test.go — coverage for the previously-untested REACHABLE
+// proxy_l2_serve_test.go — coverage for the REACHABLE
 // branches of proxy_l2.go (tryL2Lookup serve paths + credential-skip guards,
 // resolveL1CacheScope empty-id fail-safes, buildEmbeddingInput empty-plan) and
 // the writeIngressError hint branch in proxy_errors.go.
 //
-// The L2 HIT *serve* paths (handleStreamHit / handleNonStreamHit) were marked
-// "integration-only" by a prior coverage pass; they are in fact reachable in a
+// The L2 HIT *serve* paths (handleStreamHit / handleNonStreamHit) look
+// integration-only and are not: they are reachable in a
 // unit test by driving tryL2Lookup with a stub SemanticReader that returns a
 // valid Entry over the fully-wired makeOpenAIDeps harness. Each test asserts an
 // observable outcome (the served wire body, the stamped audit fields, the
@@ -266,14 +266,22 @@ func TestScheduleL2Write_CredError(t *testing.T) {
 // falls back to fleet-wide ("") rather than emitting a "user:" / "vk:" token
 // with an empty id (which would collide across all such records).
 
-func TestResolveL1CacheScope_UserVaryBy_EmptyUserID_FallsFleetWide(t *testing.T) {
+// An application virtual key owns no NexusUser, so vary_by="user" has no value
+// to isolate on. It narrows to the virtual key rather than widening to
+// fleet-wide: a setting chosen to be STRICTER than the default must never end
+// up sharing cached answers across tenants.
+func TestResolveL1CacheScope_UserVaryBy_EmptyUserID_NarrowsToTheVirtualKey(t *testing.T) {
 	cc := newConfigCacheVaryBy("user")
-	rec := &audit.Record{VirtualKeyID: "vk-1"} // no UserID
-	if got := resolveL1CacheScope(cc, rec); got != "" {
-		t.Errorf("user vary_by with empty user id: got %q, want empty (fleet-wide)", got)
+	rec := &audit.Record{VirtualKeyID: "vk-1"} // application key: no UserID
+	if got := resolveL1CacheScope(cc, rec); got != "vk:vk-1" {
+		t.Errorf("user vary_by with empty user id: got %q, want the virtual-key fallback %q", got, "vk:vk-1")
 	}
 }
 
+// The one case where fleet-wide is still correct: there is no virtual key to
+// narrow to. Every authenticated request carries one, so this is the unreachable
+// tail — but the branch must not emit a "vk:" token with an empty id, which
+// would be a scope every keyless record shared.
 func TestResolveL1CacheScope_VKVaryBy_EmptyVKID_FallsFleetWide(t *testing.T) {
 	cc := newConfigCacheVaryBy("vk")
 	rec := &audit.Record{UserID: "u-1"} // no VirtualKeyID

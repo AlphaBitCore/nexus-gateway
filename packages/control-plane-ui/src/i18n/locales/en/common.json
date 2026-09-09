@@ -218,7 +218,29 @@
     "selectModel": "Select a model…"
   },
   "charts": {
-    "totalLatency": "Total latency"
+    "totalLatency": "Total latency",
+    "phase": {
+      "reqHooks": {
+        "label": "Request Hooks",
+        "desc": "Request-side compliance / rule-pack stages, summed."
+      },
+      "our": {
+        "label": "Our Overhead",
+        "desc": "Nexus internal: auth, routing, caching, transform — the only column you can directly optimise."
+      },
+      "upstreamTtfb": {
+        "label": "Upstream TTFB",
+        "desc": "Time waiting for the first byte to come back from the upstream provider."
+      },
+      "upstreamBody": {
+        "label": "Upstream Body",
+        "desc": "Time receiving the streaming body bytes (TTFB → close)."
+      },
+      "respHooks": {
+        "label": "Response Hooks",
+        "desc": "Response-side compliance / signal-extraction stages, summed."
+      }
+    }
   },
   "hookConfig": {
     "redactExamplePlaceholder": "[REDACTED_<RULE_ID>]"
@@ -231,5 +253,7 @@
     "passwordsDoNotMatch": "New passwords do not match",
     "passwordTooShort": "New password must be at least {{count}} characters",
     "currentPasswordRequired": "Current password is required"
-  }
+  },
+  "comboboxTypeToSearch": "Type to search",
+  "unsavedChanges": "unsaved changes"
 }

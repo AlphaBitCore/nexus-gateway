@@ -1,8 +1,8 @@
 // Package codec — Gemini embedding request encoding and response decoding.
 //
 // Architecture references:
-//   - docs/dev/architecture/provider-adapter-architecture.md §3a Rules 1-7
-//   - docs/dev/architecture/endpoint-typology-architecture.md §2
+//   - docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md §3a Rules 1-7
+//   - docs/developers/architecture/cross-cutting/foundation/endpoint-typology-architecture.md §2
 //
 // Gemini exposes two separate REST surfaces for embeddings:
 //   - :embedContent   — single string input → {"embedding":{"values":[...]}}

@@ -12,17 +12,16 @@ import (
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 )
 
-// The SSE path builds ONE response pipeline per request (finding C-19). The scope
+// The SSE path builds ONE response pipeline per request. The scope
 // routing builds it to decide the streaming mode, and live, buffer and Model A all
 // reuse that instance instead of rebuilding it with identical arguments.
 //
-// These tests pin the two properties that made the deduplication safe, because
-// neither was covered before: the invariant the live branch now relies on, and the
-// fact that a reused pipeline still executes.
+// These tests pin the two properties that make the deduplication safe: the invariant
+// the live branch relies on, and the fact that a reused pipeline still executes.
 
 // countingHook records how many times the pipeline executed it, so a test can tell
 // "the pipeline ran" from "the pipeline was wired to nil and silently did nothing" —
-// which is exactly how finding C-17 hid for as long as it did.
+// which is the shape a silently-unwired pipeline takes.
 type countingHook struct {
 	runs *atomic.Int64
 }
@@ -76,7 +75,7 @@ func countingResolver(t *testing.T, runs *atomic.Int64) *compliance.PolicyResolv
 func TestNonStrictBuildPipeline_NeverErrors_FailOpenByConstruction(t *testing.T) {
 	resolver := unbuildableFailClosedResolver(t, "response")
 
-	pipeline, err := resolver.BuildPipeline(
+	pipeline, _, err := resolver.BuildPipeline(
 		"response", "COMPLIANCE_PROXY",
 		"", nil,
 		time.Second, time.Second, false,
@@ -94,7 +93,7 @@ func TestNonStrictBuildPipeline_NeverErrors_FailOpenByConstruction(t *testing.T)
 
 	// The same resolver under the appliance's strict posture DOES error — that is the
 	// asymmetry the single build depends on, so both halves are asserted together.
-	if _, strictErr := resolver.BuildPipeline(
+	if _, _, strictErr := resolver.BuildPipeline(
 		"response", "COMPLIANCE_PROXY",
 		"", nil,
 		time.Second, time.Second, false,
@@ -106,12 +105,12 @@ func TestNonStrictBuildPipeline_NeverErrors_FailOpenByConstruction(t *testing.T)
 	}
 }
 
-// TestSSE_LiveMode_ReusedPipelineStillExecutes is the equivalence proof for the C-19
-// deduplication. The live branch no longer calls BuildPipeline; it uses the instance
+// TestSSE_LiveMode_ReusedPipelineStillExecutes is the equivalence proof for the
+// pipeline deduplication. The live branch no longer calls BuildPipeline; it uses the instance
 // the scope routing built. If that wiring were wrong the pipeline would be nil, the
 // stream would still be relayed byte-for-byte, and nothing would look broken from
-// the client's side — the hook would simply never run. That is precisely the failure
-// mode of finding C-17, so it is asserted on the hook's own execution count.
+// the client's side — the hook would simply never run. Nothing but the hook's own
+// execution count can tell the two apart, so that is what is asserted.
 func TestSSE_LiveMode_ReusedPipelineStillExecutes(t *testing.T) {
 	var runs atomic.Int64
 	writer := &recordingAuditWriter{}

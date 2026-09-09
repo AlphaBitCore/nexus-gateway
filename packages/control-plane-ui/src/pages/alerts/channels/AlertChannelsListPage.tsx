@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
+import { usePermission } from '@/hooks/usePermission';
 import { alertsApi } from '@/api/services';
 import type { AlertChannel, AlertSeverity } from '@/api/services';
 import {
@@ -76,6 +77,13 @@ export function AlertChannelsListPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<AlertChannel | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+
+  // The list is alert.read. Its writes split across three verbs the way
+  // handler.go registers them: PUT :id and POST :id/test are update,
+  // DELETE :id is delete, POST /channels is create.
+  const canUpdate = usePermission('alert:update');
+  const canDelete = usePermission('alert:delete');
+  const canCreate = usePermission('alert:create');
 
   const { mutate: toggleEnabled, loading: togglingEnabled } = useMutation<
     UpdateEnabledInput,
@@ -179,7 +187,7 @@ export function AlertChannelsListPage() {
         <div onClick={(e) => e.stopPropagation()}>
           <Switch
             checked={r.enabled}
-            disabled={togglingEnabled}
+            disabled={togglingEnabled || !canUpdate}
             onCheckedChange={(next) => {
               toggleEnabled({ id: r.id, enabled: next });
             }}
@@ -232,12 +240,14 @@ export function AlertChannelsListPage() {
           </RowActionIconButton>
           <RowActionIconButton
             label={t('pages:alerts.channels.actions.test')}
-            disabled={testingId === r.id}
+            disabled={testingId === r.id || !canUpdate}
             onAction={() => void onTest(r)}
           >
             <TestActionIcon />
           </RowActionIconButton>
-          <RowDeleteAction label={t('common:delete')} onAction={() => setDeleteTarget(r)} />
+          {canDelete && (
+            <RowDeleteAction label={t('common:delete')} onAction={() => setDeleteTarget(r)} />
+          )}
         </RowActions>
       ),
     },
@@ -249,9 +259,11 @@ export function AlertChannelsListPage() {
         title={t('pages:alerts.channels.title')}
         subtitle={t('pages:alerts.channels.subtitle')}
         action={
-          <Button variant="primary" onClick={onNew}>
-            {t('pages:alerts.channels.newChannel')}
-          </Button>
+          canCreate ? (
+            <Button variant="primary" onClick={onNew}>
+              {t('pages:alerts.channels.newChannel')}
+            </Button>
+          ) : undefined
         }
       />
       <Card padding="none">

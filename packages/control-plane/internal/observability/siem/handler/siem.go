@@ -2,17 +2,18 @@ package siem
 
 import (
 	"bytes"
-	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterSIEMRoutes registers SIEM settings routes.
@@ -156,11 +157,17 @@ func (h *Handler) UpdateSIEMConfig(c echo.Context) error {
 		cfg.Headers = preserveSecretHeaders(cfg.Headers, prev.Headers)
 	}
 
+	// "unknown" was a FABRICATED actor: a siem-config row that names nobody
+	// while looking like it names someone. In production this branch is
+	// unreachable (the admin group is behind AdminAuth), which is why it went
+	// unnoticed — and why eight tests here were driving the handler with no
+	// principal, exercising an arm production never takes.
 	aa := middleware.AdminAuthFromContext(c)
-	updatedBy := "unknown"
-	if aa != nil {
-		updatedBy = aa.KeyID
+	if aa == nil || aa.KeyID == "" {
+		return c.JSON(http.StatusUnauthorized,
+			errJSON("Authentication required", "unauthorized", "UNAUTHENTICATED"))
 	}
+	updatedBy := aa.KeyID
 
 	if err := h.db.SetSystemMetadata(c.Request().Context(), siemConfigKey, cfg, updatedBy); err != nil {
 		h.logger.Error("update siem config", "error", err)

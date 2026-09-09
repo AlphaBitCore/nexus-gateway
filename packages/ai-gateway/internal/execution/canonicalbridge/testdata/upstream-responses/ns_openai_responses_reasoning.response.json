@@ -1,0 +1,105 @@
+{
+  "id": "resp_04ea4e6da076ee61006a92cf84e39087d0a9acde160b13e453",
+  "object": "response",
+  "created_at": 1788006276,
+  "status": "completed",
+  "background": false,
+  "billing": {
+    "payer": "developer"
+  },
+  "completed_at": 1788006282,
+  "error": null,
+  "frequency_penalty": 0.0,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": 600,
+  "max_tool_calls": null,
+  "model": "gpt-5-mini-2025-08-07",
+  "moderation": null,
+  "output": [
+    {
+      "id": "rs_04ea4e6da076ee61006a92cf85804887d0baf0cb81e13172ad",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqks-Kw0vXcNqv2tOQc1fJpxKKHMYMJ-9PCebJTWuCmoo8uCjElBuuSAIQZWk8bO56E-0h5XjTmhBTyBRNwgCuOfSk3yF75mICelQ_jGHBifZc-3YR_mshd1fpJKk-CLN8CtG5cfmTxxkl5nT5VmGzbWfXCVoEKbPndPAvv-ZA6oefKXQgRPdM0r60D1x_BjK4B2YwN0CtLk6UOWuVvd4LERlkM_IFd5UfJbr_HMdoyCpUjqpEqfbg0rWASKxDKgEojP5m_238IKFh62JjgKUDg4EAPCE2ZaYWj2S6ri6GpatG3-4iyTwB4m7V-W2H8tniO2wsihJ4HWuVVF5EomJsQhoUk_BRPo1c82ZEzvOX2HPAqOp5vAyocLZW_qtiA5wEMfN0vXkXUIh7nouTD6EkOjxPCjtbZbLrvu7ug0Ajvi8LcsTTJPuImmhe9xRj_Um__tyWYBAqTxDLKWICIEC8i3_JPgdVh6xAYfYVeyvFmeP1VwafzvNf_gfHm5IxuCZaVGlwQpHzal0QMOex7zWB6ho7ta9Ad4UynQnMW5OZbK_tPdfC6OldkDt4_vJupbU4FhuNDGUYLQmKSUBRkjyXl8pWolygjb9OsNHG0-x3NjkIhlJDahc_9YFWnX8k3ocb6IsjTNnhSJppCd4mHOKswFIFeWvLeFxY9GUCBwYVnsEeGviK-nlraz7MR1GkH2cOmaUEh5o6ChRJKry7mpPZ1wwE6rb_Ju084eNYxLcV6XkU4VcF_oZFaLedQCEq1-aBFLF1k-ipPiVP66tslvZVNoDuGZ6c2nqVJsFM01Hvn7T2Y2zlB6O9UHSW37czLUzqTwmPNx7sVSqONZrdQcQDoPtNWmLk7Blc_Ee3OhgM3SJyykat8cgioiWbAuQ0ROc4UPiAaT-1bjBHXUCfrguebt_4Z964Es-YvViWsh4U2a5AG6-9OM11sFH_Qcde28kueT74O_opJETqWGGVdoLcfkdjM2Pu0ins-TmhL3y2AVxiGE8r4W71WDaSbiDo16-yYjZawBgvYN_xZemyfBCEjiBD01bk_zKNpRoHd3hLd1juDtm6uMKuSjrx1OGoHkxlr3NWsqYr0tzQSWHF0oAjD0V-x6HWyttzEycCPoXk9Sz5IVDiUMvSmrY5BxdRhO8V2rmqu0vzun24SiCCDOi9zigZ92mW3egpQIcToVSp1T0lYPYfD7PK_xzTABwdzfhHJPJb03rnt79zZ6Kk4PFctXIFsKhhwP516IvINvg0evyfdp6fxJwv_XUpj8ZksNXEkUl3X8kT8cytz8-ZfSlh0PRJ-O7O2ROQf1l_1RYeXgdMkYDY8t2YZXv8fG-kFJLVZdASq3EkQutyMWKpAAh0-pupfFIk50eefGOAg9aRmZgSCE5QsuTd-_GZQbhlN3b4M4qfgJDQ8lmfxbPnWhT1B7HjS09HocQlb4kopMk-P08UiIIrnTkQnagDuNgAVgXVwfhJPeykKaEmQ5p0DeHKaFUNEdsqfjm7WawNTOeeMsugC0def1H1zAfHijfUNoFQMl3tRYGwEhew6Z_khJ8nwudQdjujUhz-kLthmyF7Uc-bGY7XSQajtI1vzhCerBfmpaR1lmagVctwZ_AkdVVv4Cs4-XaBP6W45yx0_MgWmptFAFIU9oYC1t84mYm0SEE7UL0wwG25_MVyDqdgisCvnHTqoJTBn-S5sPlQVWLxgHs0q3-v0P7PLlOeD0HcME6ouCOHCzziXrRkZ_JPoBFZEhE782QXg0zVIIyMb7PIrloR7KLOge3wIhCRi95DYwE-sZzjfuLAGtLSiGvSPzDTWO100jN6gUu4Hesx4_o7pPzxXB0FRTByfX__MXkDGWJ7AgGxv9MfFVXMq-jpoVa9UFvAvv2_ukqeW9QgGV_yiP7R_TCZWx8Mh0d6zd3M-IPVNlHeU7rH7NUqupgRv6uLpuBe1srr3eqRGPQ7GnohBCDTxD1-a15T3zmnT0H4kcuX9iahIaa0qanVZZ90znmpNA5YlLrnpnKfWxV1mOKrDqWgq9AQNIaTectGANNDD72_xVBN",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "**Explaining multiplication steps**\n\nThe user wants me to compute 17*23 step-by-step. I can break it down simply: 17*23 equals 17 multiplied by (20 + 3), which gives 340 + 51, resulting in 391.\n\nI could also show long multiplication: 17*3 equals 51, write 1 as a carry of 5; then, 17*2 tens (which is 34), shift it to get 340, and finally, sum these for the same total of 391.  \n\nI\u2019ll include both approaches briefly for clarity!"
+        }
+      ]
+    },
+    {
+      "id": "msg_04ea4e6da076ee61006a92cf89c4b887d0910a839538488fdd",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "Step 1: Break 23 into 20 + 3.\nStep 2: 17 \u00d7 20 = 340.\nStep 3: 17 \u00d7 3 = 51.\nStep 4: 340 + 51 = 391.\n\nSo 17 \u00d7 23 = 391."
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "presence_penalty": 0.0,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "prompt_cache_retention": "in_memory",
+  "reasoning": {
+    "context": "current_turn",
+    "effort": "medium",
+    "mode": "standard",
+    "summary": "detailed"
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": true,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  },
+  "tool_choice": "auto",
+  "tool_usage": {
+    "image_gen": {
+      "input_tokens": 0,
+      "input_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "output_tokens": 0,
+      "output_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "total_tokens": 0
+    },
+    "web_search": {
+      "num_requests": 0
+    }
+  },
+  "tools": [],
+  "top_logprobs": 0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 14,
+    "input_tokens_details": {
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+    },
+    "output_tokens": 257,
+    "output_tokens_details": {
+      "reasoning_tokens": 128
+    },
+    "total_tokens": 271
+  },
+  "user": null,
+  "metadata": {}
+}

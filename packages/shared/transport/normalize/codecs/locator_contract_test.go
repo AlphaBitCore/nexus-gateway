@@ -297,10 +297,10 @@ func allRefs(p core.NormalizedPayload) []*core.MediaRef {
 	return out
 }
 
-// The STT case, end to end. The gateway now hands the audio to the audit
+// The STT case, end to end. The gateway hands the audio to the audit
 // record instead of only fingerprinting it, and the generic binary path
 // already turns a body with a real content type into an addressable ref —
-// so the modality that could previously only be PROVEN untampered can now
+// so a modality that could otherwise only be PROVEN untampered can
 // also be opened, with no codec written for it.
 func TestWholeBodyAudioIsCapturedAndAddressable(t *testing.T) {
 	// A minimal MP3 frame header: enough that a served artifact sniffs as

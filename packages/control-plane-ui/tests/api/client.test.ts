@@ -507,10 +507,10 @@ describe('api client — refresh edge branches', () => {
   });
 
   it('does not latch the in-flight slot after a no-refresh-token failure (regression)', async () => {
-    // Regression for the refreshInFlight latch bug: a 401 with no refresh
-    // token used to leave a resolved-false promise in `refreshInFlight`
-    // forever (the early return sat outside the try/finally), so every later
-    // refresh short-circuited and the user could never recover even after
+    // Regression for the refreshInFlight latch: a 401 with no refresh
+    // token leaves a resolved-false promise in `refreshInFlight`
+    // forever when the early return sits outside the try/finally, so every later
+    // refresh short-circuits and the user can never recover even after
     // re-authenticating. First trip with no refresh token, then a fresh login
     // must be able to rotate again.
     let tokenCalls = 0;

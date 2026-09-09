@@ -29,7 +29,7 @@ import (
 
 // TestS115_UserAPIKeyLifecycle — PM-grade e2e.
 //
-// BRAINSTORM (pre): the user-self-service API key flow has four
+// The user-self-service API key flow has four
 // transitions (create → use → regenerate → delete) and one
 // zero-knowledge contract (list never re-exposes raw). All five must
 // hold simultaneously or the operator-trust model breaks. The most

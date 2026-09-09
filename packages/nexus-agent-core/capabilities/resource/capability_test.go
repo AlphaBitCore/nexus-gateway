@@ -32,7 +32,7 @@ func TestCapabilitiesDesignDocExamples(t *testing.T) {
 		// row reviewed — an RPC action, not a CRUD verb — so it renders
 		// action:review.
 		"analytics": {"report", "action:review"},
-		// full CRUD (incl. PATCH dup that used to render "update update") + simulate RPC
+		// full CRUD (the PATCH duplicate must not render "update update") + simulate RPC
 		"routing-rules": {"crud", "action:simulate"},
 		// root GET+PUT pair absorbs `list`; sub-pairs config; event-types GET report; siem/test RPC
 		"settings": {"config", "report", "action:test"},

@@ -387,7 +387,7 @@ func (r *rawCapturingChecker) IsRevoked(_ context.Context, c *jwtverifier.Claims
 
 // TestVerify_RawPrePopulatedBeforeRevocationCheck asserts that Claims.Raw is
 // set to the original token string before RevCheck.IsRevoked is called.
-// Previously c.Raw = raw was placed AFTER the IsRevoked call, making
+// Placing c.Raw = raw AFTER the IsRevoked call makes
 // introspect-based checkers see an empty Raw and short-circuit to allow.
 func TestVerify_RawPrePopulatedBeforeRevocationCheck(t *testing.T) {
 	t.Parallel()

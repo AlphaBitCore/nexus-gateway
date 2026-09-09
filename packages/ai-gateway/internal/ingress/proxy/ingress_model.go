@@ -79,5 +79,23 @@ func ExtractIngressModel(in Ingress, r *http.Request, body []byte) (modelID stri
 		return "", false, fmt.Errorf("unsupported ingress format %q", in.BodyFormat)
 	}
 
-	return modelID, isStream, nil
+	// Trimmed ONCE here, at the single exit, rather than in each branch above.
+	// Every branch produces the same thing — the model string as the client
+	// spelled it — so surrounding whitespace is one question with one answer,
+	// and five copies of TrimSpace would be five chances for a new ingress to
+	// forget it.
+	//
+	// Trimming is not cosmetic. Untrimmed, the string is compared byte-for-byte
+	// in three places that each fail differently: the catalogue lookup
+	// (`" gpt-4o"` resolves to nothing, so a caller with a stray space is told
+	// their model does not exist), routing's requestedModelLiterals glob (a
+	// rule pinned to `auto` does not claim `" auto"`, so the request quietly
+	// misses the rule written for it), and the audit row's model_name (which
+	// then carries the padding and splits one model across two analytics keys).
+	//
+	// A model that is whitespace-only trims to empty and takes the caller's
+	// path below — errModelRequired, which is the honest answer: they named no
+	// model. Before this it passed admission and reached the matcher, where
+	// only a rule someone had pinned to whitespace could serve it.
+	return strings.TrimSpace(modelID), isStream, nil
 }

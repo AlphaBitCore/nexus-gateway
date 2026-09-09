@@ -48,9 +48,9 @@ import (
 //	±0%; treat `ns/op` as inconclusive unless the effect clears the null control.
 
 // benchDiscardLogger keeps log handling out of the measurement. Note this hides
-// exactly the cost finding C-4 is about — slog boxes its arguments at the call site
-// whether or not the level is enabled — so the C-4 arm below uses a real handler at
-// a level that discards, which is the production shape.
+// exactly the cost the log-boxing arms are about — slog boxes its arguments at the
+// call site whether or not the level is enabled — so those arms below use a real
+// handler at a level that discards, which is the production shape.
 func benchDiscardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 }
@@ -84,11 +84,11 @@ func benchRequest() *http.Request {
 // clone, the phaseBreakdown map, the payload-capture snapshot, the correlation-id
 // mint, the URL rewrite, and the seven-argument entry Debug.
 //
-// It is the arm for findings C-2 (the map, allocated per request and usually left
-// completely empty because tls_handshake_ms is stamped at most once per tunnel via
-// sync.Once), C-3 (the WithContext clones — this covers the two in newExchange and
-// prepare), C-4 (the Debug boxing its arguments regardless of level) and C-7 (the
-// per-request uuid when the client sent no correlation header).
+// Four per-request costs land in this one arm: the phaseBreakdown map, allocated per
+// request and usually left completely empty because tls_handshake_ms is stamped at most
+// once per tunnel via sync.Once; the WithContext clones, of which this covers the two in
+// newExchange and prepare; the Debug boxing its arguments regardless of level; and the
+// per-request uuid minted when the client sent no correlation header.
 func BenchmarkBumpedExchange_Prepare(b *testing.B) {
 	logger := benchDiscardLogger()
 	flow := benchFlow(logger)
@@ -105,8 +105,8 @@ func BenchmarkBumpedExchange_Prepare(b *testing.B) {
 	}
 }
 
-// BenchmarkBumpedExchange_Prepare_ClientSuppliedID is the other half of C-7: an
-// agent-intercepted flow seeds X-Nexus-Request-Id, so the uuid is not minted. The
+// BenchmarkBumpedExchange_Prepare_ClientSuppliedID is the other half of the uuid
+// arm: an agent-intercepted flow seeds X-Nexus-Request-Id, so none is minted. The
 // delta between this arm and the one above is what a correlation header saves, and
 // therefore what generating one costs.
 func BenchmarkBumpedExchange_Prepare_ClientSuppliedID(b *testing.B) {
@@ -137,8 +137,8 @@ func (benchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-// BenchmarkUpstream_ForwardRequest is the arm for finding C-5: ForwardRequest clones
-// the whole request and then deletes the hop-by-hop headers one at a time plus
+// BenchmarkUpstream_ForwardRequest prices the request clone: ForwardRequest clones the
+// whole request and then deletes the hop-by-hop headers one at a time plus
 // Accept-Encoding. Driving the real method through a stub RoundTripper keeps the
 // clone and the delete loop in the measurement while leaving the wire out.
 func BenchmarkUpstream_ForwardRequest(b *testing.B) {
@@ -155,9 +155,9 @@ func BenchmarkUpstream_ForwardRequest(b *testing.B) {
 	}
 }
 
-// BenchmarkUpstream_ForwardRequest_ManyHeaders scales the header count. C-5's cost
-// has two components — the clone, which is linear in header count, and the fixed
-// delete loop — and a single-shape arm cannot tell them apart. The delta against the
+// BenchmarkUpstream_ForwardRequest_ManyHeaders scales the header count. The clone's
+// cost has two components — the copy, linear in header count, and the fixed delete
+// loop — and a single-shape arm cannot tell them apart. The delta against the
 // arm above is the clone's share.
 func BenchmarkUpstream_ForwardRequest_ManyHeaders(b *testing.B) {
 	u := &UpstreamTransport{transport: benchRoundTripper{}}
@@ -197,7 +197,7 @@ func benchUpstreamResponse(extra int) *http.Response {
 	}
 }
 
-// BenchmarkCopyResponse is the arm for finding C-6: copyResponse re-canonicalizes
+// BenchmarkCopyResponse prices the response header copy: copyResponse re-canonicalizes
 // header keys that are already canonical by going through Header().Add. The header
 // count is the variable that matters, so both a typical provider response and a
 // header-heavy one are measured.
@@ -249,7 +249,7 @@ func BenchmarkCopyResponse_FixtureOnly_ManyHeaders(b *testing.B) {
 
 // Same control for the ForwardRequest arms, for the same reason: ForwardRequest
 // clones and mutates the request it is given, so benchRequest() runs inside the
-// timed loop and its cost is included in every C-5 number.
+// timed loop and its cost is included in every ForwardRequest number.
 func BenchmarkUpstream_FixtureOnly(b *testing.B) {
 	b.ReportAllocs()
 	for range b.N {
@@ -311,9 +311,9 @@ func (benchDiscardAuditWriter) Enqueue(audit.AuditEvent)    {}
 func (benchDiscardAuditWriter) Flush(context.Context) error { return nil }
 func (benchDiscardAuditWriter) Close(context.Context) error { return nil }
 
-// BenchmarkHandleSSEResponse_Live_NonStrict is the finding C-19 arm for the agent's
-// posture: the SSE path used to build the response pipeline twice per request (the
-// scope routing, then the mode branch) with byte-identical arguments.
+// BenchmarkHandleSSEResponse_Live_NonStrict measures the agent's posture, where the
+// hazard is building the response pipeline twice per request — once at the scope
+// routing, once at the mode branch — with byte-identical arguments.
 func BenchmarkHandleSSEResponse_Live_NonStrict(b *testing.B) {
 	benchRunSSE(b, benchSSEBumpOptions(b, false))
 }
@@ -359,11 +359,11 @@ func benchAdapterDomainEngine(b *testing.B, adapterID string) *domain.Engine {
 	return eng
 }
 
-// BenchmarkForwardHandler_NoHooks is the finding C-18 arm: an intercepted, adapter-
-// matched request whose scope binds NO hooks. This is the production-common shape on a
-// monitored host — most traffic matches a domain rule but only some scopes carry hooks —
-// and it used to pay the full Tier 1+2+3 normalize decode on both the request and the
-// response body, then discard both results because nothing consumed them.
+// BenchmarkForwardHandler_NoHooks drives an intercepted, adapter-matched request
+// whose scope binds NO hooks. This is the production-common shape on a monitored
+// host — most traffic matches a domain rule but only some scopes carry hooks — and
+// it is where an ungated normalize pays the full Tier 1+2+3 decode on both the
+// request and the response body, then discards both because nothing consumes them.
 //
 // The audit row is still emitted, so this measures the skip and not a disabled path.
 func BenchmarkForwardHandler_NoHooks(b *testing.B) {
@@ -390,10 +390,10 @@ func BenchmarkForwardHandler_NoHooks(b *testing.B) {
 	}
 }
 
-// BenchmarkForwardHandler_WithHook is the finding C-9 arm. C-18's arm above measures the
-// no-hooks shape, where the normalize call is now skipped entirely and C-9's log lines
+// BenchmarkForwardHandler_WithHook prices the per-normalize log lines. The no-hooks arm
+// above cannot: with no hook bound the normalize call is skipped entirely and those lines
 // never run. This arm binds one approve-only hook so the normalize path — and therefore
-// the two per-normalize log lines this finding demotes — is actually on it.
+// the two log lines demoted to Debug — is actually on it.
 func BenchmarkForwardHandler_WithHook(b *testing.B) {
 	logger := benchDiscardLogger()
 	areg := traffic.NewAdapterRegistry("bench")
@@ -413,10 +413,10 @@ func BenchmarkForwardHandler_WithHook(b *testing.B) {
 		auditEmitter:    compliance.NewAuditEmitter(benchDiscardAuditWriter{}, logger),
 		domainEngine:    benchAdapterDomainEngine(b, "openai-compat"),
 		adapterRegistry: areg,
-		// A REAL normalize registry, not nil. The two log lines this finding demotes
+		// A REAL normalize registry, not nil. The two log lines this change demotes
 		// live inside runtimeNormalize's `if reg != nil` arm, so a nil registry takes
 		// the adapter-extraction fallback and the arm measures a path that does not
-		// contain the change at all. Same harness class as findings R-12 / C-5 / C-24.
+		// contain the change at all.
 		normalizeRegistry: normalize.BuildRegistry(),
 	}
 	h := buildForwardHandler(context.Background(), "api.example.com:443", &UpstreamTransport{transport: benchRoundTripper{}}, logger, bo)
@@ -430,8 +430,8 @@ func BenchmarkForwardHandler_WithHook(b *testing.B) {
 	}
 }
 
-// BenchmarkContextPlumbing_Ceiling is finding C-3's ceiling, measured before deciding
-// whether the refactor is worth its risk. It performs exactly the four
+// BenchmarkContextPlumbing_Ceiling is the ceiling on the context-clone refactor,
+// measured before deciding whether it is worth its risk. It performs exactly the four
 // WithContext+WithValue pairs a bumped request pays — clientHello, PhaseSink, CPMarker,
 // requestAuditCtx — on a realistic request, so its allocation count is the MOST the
 // context-holder refactor could possibly recover. It deliberately does not model the
@@ -451,8 +451,8 @@ func BenchmarkContextPlumbing_Ceiling(b *testing.B) {
 }
 
 // benchSinkRequest keeps the final request alive so escape analysis cannot delete the
-// clones the arm exists to measure — the failure that made findings R-12 and C-24 report
-// zero allocations for work that really happens in production.
+// clones the arm exists to measure — the failure that makes a benchmark report zero
+// allocations for work that really happens in production.
 var benchSinkRequest *http.Request
 
 // BenchmarkContextPlumbing_FixtureOnly subtracts benchRequest()'s own cost, since the
@@ -466,14 +466,14 @@ func BenchmarkContextPlumbing_FixtureOnly(b *testing.B) {
 }
 
 // ---------------------------------------------------------------------------
-// Finding C-11: the bumped path's request and response body reads.
+// The bumped path's request and response body reads.
 //
 // The arms above deliberately use a 72-byte request body and an EMPTY upstream response,
-// because they were built to price header and pipeline work. Neither half of C-11 is
+// because they were built to price header and pipeline work. Neither body read is
 // measurable on them: at 72 bytes io.ReadAll's first 512-byte allocation already fits, and
-// http.NoBody means the response read never happens at all. Measuring C-11 there would have
-// reported "no win" for a harness reason — the fifth time this program would have made that
-// mistake, so the arm is built to the shape the finding is actually about.
+// http.NoBody means the response read never happens at all. Measuring the reads there
+// reports "no win" for a harness reason, so this arm is built to the shape they are
+// actually about.
 //
 // A real bumped request on a monitored host is a chat completion: a system prompt plus a few
 // turns, reliably several KiB, with a Content-Length the client already computed. The response
@@ -514,10 +514,10 @@ func (c11RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-// BenchmarkForwardHandler_RealisticBodies is finding C-11's arm. One approve-only request hook
-// is bound so the request normalize is on the path, and providerDetected plus the real response
-// body put the response read on it too — so a single iteration pays both reads that C-11
-// changes, at production sizes.
+// BenchmarkForwardHandler_RealisticBodies is that arm. One approve-only request hook is
+// bound so the request normalize is on the path, and providerDetected plus the real response
+// body put the response read on it too — so a single iteration pays both body reads, at
+// production sizes.
 func BenchmarkForwardHandler_RealisticBodies(b *testing.B) {
 	logger := benchDiscardLogger()
 	areg := traffic.NewAdapterRegistry("bench")

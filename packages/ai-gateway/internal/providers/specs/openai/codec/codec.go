@@ -45,7 +45,7 @@ func ErrorNormalizerInstance() provcore.ErrorNormalizer { return specerrors.Erro
 // delegates to provcore.ExtractUsage (shared/normalize Tier-1 normalizer).
 // The alias chain (Kimi flat cached_tokens, DeepSeek prompt_cache_hit_tokens,
 // Moonshot prompt_cache_tokens, OpenAI Responses-shape fallbacks) lives in
-// shared/normalize/openai_chat.go's extractCanonicalUsage method.
+// packages/shared/transport/normalize/codecs/openai_chat.go's extractCanonicalUsage method.
 type identityCodec struct {
 	chat           ruleSet
 	responses      ruleSet

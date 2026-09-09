@@ -19,7 +19,7 @@ import (
 
 // TestS066_CacheNegativeFeedback — PM-grade e2e for negative-feedback eviction.
 //
-// BRAINSTORM (pre): the L2 semantic cache exposes a "thumbs-down" admin
+// The L2 semantic cache exposes a "thumbs-down" admin
 // channel (POST /api/admin/cache/semantic-feedback) that adds an
 // (entryKey, vkScope) pair to a Redis-backed poison list. Subsequent
 // L2 lookups against a poisoned entry are forced to MISS (see
@@ -162,7 +162,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 	{
 		const tries = 5
 		const interval = 6 * time.Second
-		for i := 0; i < tries; i++ {
+		for i := range tries {
 			err := sc.DB.QueryRow(ctx, `
 				SELECT id FROM traffic_event
 				WHERE source = 'ai-gateway'
@@ -199,7 +199,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 	// fails hard so the regression is caught at this layer rather than
 	// papered over with a re-derived key that might match by coincidence.
 	var l2EntryKey string
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		err := sc.DB.QueryRow(ctx,
 			`SELECT COALESCE(gateway_cache_l2_entry_key, '')
 			   FROM traffic_event
@@ -294,7 +294,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 
 	// id3 != id2 is the load-bearing observable proof that
 	// the poison fired — the perturbed-prompt request fell through to a
-	// fresh upstream call. Previously this was only logged; now hard.
+	// fresh upstream call. Asserted, not logged.
 	if id3 == id2 {
 		t.Fatalf("S-066 eviction did not fire: id3=%s == id2=%s — poison marker present at %s but the L2 lookup still returned the cached entry; check IsPoisoned wiring at lookup.go:508",
 			id3, id2, expectedPoisonKey)

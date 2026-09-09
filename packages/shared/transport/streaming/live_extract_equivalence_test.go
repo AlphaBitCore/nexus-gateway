@@ -9,8 +9,8 @@ import (
 	"github.com/goccy/go-json"
 )
 
-// This file is the correctness gate for the extractDeltaText cheap-reject
-// (finding C-16). The optimization's whole claim is "same answer, less work", so
+// This file is the correctness gate for the extractDeltaText cheap-reject.
+// The optimization's whole claim is "same answer, less work", so
 // the test does not re-state what the answer should be — it runs the ORIGINAL
 // implementation next to the current one and requires them to agree, byte for
 // byte, on every input.
@@ -27,7 +27,7 @@ import (
 //
 // The recover is not defensive padding — it is part of the oracle's contract.
 // The old implementation could PANIC rather than return, because goccy v0.10.6
-// overruns its own buffer on a truncated escape sequence (finding C-31), and the
+// overruns its own buffer on a truncated escape sequence, and the
 // `[]byte(data)` conversion it used was one of the allocation shapes that
 // triggers it. So the oracle has two outcomes, "returned x" and "panicked", and
 // the differential assertion below is stated over both.
@@ -183,9 +183,9 @@ func extractEquivalenceCorpus() []string {
 	}
 }
 
-// TestExtractDeltaText_MatchesReferenceOnCorpus is the primary C-16 correctness
-// proof: identical output to the pre-optimization implementation on every
-// behaviourally significant frame shape.
+// TestExtractDeltaText_MatchesReferenceOnCorpus is the primary correctness proof
+// for the fast extractor: identical output to the reference implementation on
+// every behaviourally significant frame shape.
 func TestExtractDeltaText_MatchesReferenceOnCorpus(t *testing.T) {
 	for _, data := range extractEquivalenceCorpus() {
 		for _, done := range []bool{false, true} {
@@ -225,8 +225,8 @@ func crasherFixtures() []struct {
 	}
 }
 
-// TestExtractDeltaText_MalformedEscapeIsSafe is the C-31 regression test: these
-// bytes used to fault the decoder — a recoverable panic in a normal build, an
+// TestExtractDeltaText_MalformedEscapeIsSafe pins the bytes that, without the
+// validity gate, fault the decoder — a recoverable panic in a normal build, an
 // uncatchable checkptr throw under -race, which is how CI runs. Under -race a
 // missing gate takes the test binary down rather than failing this test, so the
 // deterministic guard against gate removal is
@@ -255,8 +255,8 @@ func TestExtractDeltaText_MalformedEscapeIsSafe(t *testing.T) {
 }
 
 // TestExtractDeltaText_ValidityGateIsPresent is the deterministic guard on the
-// C-31 fix, and it exists because removing the gate is otherwise INVISIBLE to the
-// whole named-test suite: for malformed input the decoder's error path returns the
+// validity gate, and it exists because removing the gate is otherwise INVISIBLE to
+// the whole named-test suite: for malformed input the decoder's error path returns the
 // raw data too, so the answer is unchanged and only the fault distinguishes them.
 //
 // The discriminator has to satisfy three things at once: carry a backslash (or it
@@ -294,7 +294,7 @@ func TestExtractDeltaText_ValidityGateIsPresent(t *testing.T) {
 	}
 }
 
-// TestExtractDeltaText_DeepNestingDoesNotOverflow is the R-7 regression test.
+// TestExtractDeltaText_DeepNestingDoesNotOverflow is the deep-nesting regression test.
 //
 // The validity gate shipped with gjson.Valid, which is mutually recursive with no
 // depth limit and burns ~128 B of stack per nesting level, so a deep payload became
@@ -351,7 +351,7 @@ func FuzzExtractDeltaText_MatchesReference(f *testing.F) {
 	for _, data := range extractEquivalenceCorpus() {
 		f.Add(data)
 	}
-	f.Add(`{"\`) // the C-31 counterexample this fuzzer found
+	f.Add(`{"\`) // the truncated-escape counterexample this fuzzer found
 	f.Fuzz(func(t *testing.T, data string) {
 		assertExtractEquivalent(t, data, false)
 	})

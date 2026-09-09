@@ -24,7 +24,7 @@ func newFederatedMock(t *testing.T) (pgxmock.PgxPoolIface, *store.FederatedStore
 
 var federatedRowCols = []string{
 	"id", "userId", "idpId", "externalSubject", "externalEmail",
-	"rawClaims", "linkedAt", "lastLoginAt",
+	"rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
 }
 
 // TestFederatedStore_FindByIdPSubject_HappyPath asserts every column
@@ -42,6 +42,7 @@ func TestFederatedStore_FindByIdPSubject_HappyPath(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(federatedRowCols).AddRow(
 			"fi_1", "u_1", "idp_1", "sub_1", &email,
 			[]byte(`{"groups":["admins"]}`), linked, &last,
+			"active", (*time.Time)(nil),
 		))
 
 	fi, found, err := s.FindByIdPSubject(ctx, "idp_1", "sub_1")
@@ -75,6 +76,7 @@ func TestFederatedStore_FindByIdPSubject_EmptyRawClaims(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(federatedRowCols).AddRow(
 			"fi_2", "u_2", "idp_2", "sub_2", (*string)(nil),
 			[]byte{}, linked, (*time.Time)(nil),
+			"active", (*time.Time)(nil),
 		))
 
 	fi, found, err := s.FindByIdPSubject(ctx, "idp_2", "sub_2")
@@ -138,6 +140,7 @@ func TestFederatedStore_FindByIdPSubject_InvalidRawClaims(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(federatedRowCols).AddRow(
 			"fi_5", "u_5", "idp_5", "sub_5", (*string)(nil),
 			[]byte(`{not-json`), linked, (*time.Time)(nil),
+			"active", (*time.Time)(nil),
 		))
 
 	fi, found, err := s.FindByIdPSubject(ctx, "idp_5", "sub_5")

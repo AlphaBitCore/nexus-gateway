@@ -831,7 +831,7 @@ func TestApproveRequest_NotPending_Conflict(t *testing.T) {
 
 func TestApproveRequest_ApproveErr_NoRows_Conflict(t *testing.T) {
 	fd := &fakeData{
-		getExReq:   &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"},
+		getExReq:   &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240},
 		approveErr: pgx.ErrNoRows,
 	}
 	h := newHandler(fd, &fakeHub{})
@@ -845,7 +845,7 @@ func TestApproveRequest_ApproveErr_NoRows_Conflict(t *testing.T) {
 
 func TestApproveRequest_ApproveErr_Generic(t *testing.T) {
 	fd := &fakeData{
-		getExReq:   &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"},
+		getExReq:   &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240},
 		approveErr: errors.New("oops"),
 	}
 	h := newHandler(fd, &fakeHub{})
@@ -859,7 +859,7 @@ func TestApproveRequest_ApproveErr_Generic(t *testing.T) {
 
 func TestApproveRequest_ApproveReturnsNilGrant_NotFound(t *testing.T) {
 	fd := &fakeData{
-		getExReq:     &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"},
+		getExReq:     &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240},
 		approveGrant: nil,
 	}
 	h := newHandler(fd, &fakeHub{})
@@ -873,7 +873,7 @@ func TestApproveRequest_ApproveReturnsNilGrant_NotFound(t *testing.T) {
 
 func TestApproveRequest_Happy(t *testing.T) {
 	fd := &fakeData{
-		getExReq:     &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"},
+		getExReq:     &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240},
 		approveGrant: &store.ComplianceExemptionGrant{ID: "g-1"},
 	}
 	hub := &fakeHub{}
@@ -937,7 +937,7 @@ func TestRejectRequest_NotPending(t *testing.T) {
 
 func TestRejectRequest_MarkErr_NoRows_Conflict(t *testing.T) {
 	fd := &fakeData{
-		getExReq:      &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"},
+		getExReq:      &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240},
 		markRejectErr: pgx.ErrNoRows,
 	}
 	h := newHandler(fd, nil)
@@ -951,7 +951,7 @@ func TestRejectRequest_MarkErr_NoRows_Conflict(t *testing.T) {
 
 func TestRejectRequest_MarkErr_Generic(t *testing.T) {
 	fd := &fakeData{
-		getExReq:      &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"},
+		getExReq:      &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240},
 		markRejectErr: errors.New("oops"),
 	}
 	h := newHandler(fd, nil)
@@ -964,7 +964,7 @@ func TestRejectRequest_MarkErr_Generic(t *testing.T) {
 }
 
 func TestRejectRequest_Happy(t *testing.T) {
-	fd := &fakeData{getExReq: &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"}}
+	fd := &fakeData{getExReq: &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240}}
 	h := newHandler(fd, nil)
 	c, rec := ctxWithAuth(http.MethodPost, "/", "")
 	withParam(c, "id", "ex-1")
@@ -1128,7 +1128,7 @@ func TestInvalidateExemptions_AuditPath_Default(t *testing.T) {
 // audit.Writer wiring — non-nil branches in 6 handlers + syncShadow
 
 func TestRejectRequest_WithAudit(t *testing.T) {
-	fd := &fakeData{getExReq: &store.ExemptionRequest{ID: "ex-1", Status: "PENDING"}}
+	fd := &fakeData{getExReq: &store.ExemptionRequest{ID: "ex-1", Status: "PENDING", DurationMinutes: 240}}
 	h := newHandler(fd, nil)
 	h.audit = noopAuditWriter()
 	c, rec := ctxWithAuth(http.MethodPost, "/", "")

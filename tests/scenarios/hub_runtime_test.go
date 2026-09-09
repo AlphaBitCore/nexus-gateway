@@ -18,7 +18,7 @@ import (
 
 // TestS144_NodeRuntimeIntrospection — PM-grade e2e.
 //
-// BRAINSTORM (pre): the Runtime State tab loads runtime introspection
+// The Runtime State tab loads runtime introspection
 // for every node admins click into. Two failure modes the smoke needs
 // to catch:
 //

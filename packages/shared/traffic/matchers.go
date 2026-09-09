@@ -20,7 +20,26 @@ func matchHost(host, pattern string, matchType interception.HostMatchType) bool 
 		matched, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(host))
 		return matched
 	case interception.HostMatchTypeRegex:
-		return matchRegex(pattern, host)
+		// Regex was the only host match type that did not fold case, while
+		// Exact, Prefix and Glob all lowercase both sides — and hostnames are
+		// case-insensitive per RFC 4343.
+		//
+		// THE FOLD IS NOT PURELY "CASE ONLY", and the limit is worth stating
+		// rather than glossing: RE2 folds a character class's RANGES before
+		// negating it, so under (?i) a pattern containing [^a-z] stops matching
+		// A-Z. A host pattern relying on a negated ASCII-letter class therefore
+		// matches strictly less than it did. The alternative — lowercasing the
+		// input and leaving the pattern verbatim — has the mirror problem: it
+		// silently kills any pattern an admin wrote with a capital in it, so the
+		// rule never fires and the host is relayed uninspected.
+		//
+		// shared/policy/domain's Engine, the matcher on the live CONNECT path,
+		// takes the same (?i) side for the same reason. The two are fed the
+		// same config rows and must agree on them.
+		//
+		// Paths keep the verbatim matchRegex: paths ARE case-sensitive, and a
+		// test pins that so the fold cannot spread.
+		return matchRegexFold(pattern, host)
 	default:
 		return false
 	}
@@ -86,6 +105,14 @@ func matchRegex(pattern, input string) bool {
 	regexMu.Unlock()
 
 	return compiled.MatchString(input)
+}
+
+// matchRegexFold matches case-insensitively by compiling the pattern with the
+// inline (?i) flag. The prefixed pattern is what reaches the cache, so a host
+// rule and a path rule sharing the same pattern text stay separate entries
+// rather than one of them inheriting the other's flags.
+func matchRegexFold(pattern, input string) bool {
+	return matchRegex("(?i)"+pattern, input)
 }
 
 // HostMatchSpecificity returns a rank for host match type tiebreaking.

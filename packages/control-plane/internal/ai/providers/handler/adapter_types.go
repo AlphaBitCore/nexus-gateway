@@ -4,9 +4,9 @@ package providers
 // values accepted by the admin API. Each entry matches the AI Gateway
 // providers.Format enum and the non-fallback IDs in
 // shared/traffic/adapters. Keep this list in lockstep with
-// packages/ai-gateway/internal/providers/types.go (Format / AllFormats);
+// packages/ai-gateway/internal/providers/core/format.go (Format / AllFormats);
 // no DB CHECK enforces the enum, so the Control Plane handler is the
-// validation gate (mirrored in docs/users/api/openapi/ai-gateway/e30-s2-provider-adapter-type.yaml).
+// validation gate.
 var ValidAdapterTypes = []string{
 	"openai",
 	"anthropic",
@@ -29,6 +29,9 @@ var ValidAdapterTypes = []string{
 	"together",
 	"fireworks",
 	"moonshot",
+	// Embeddings / rerank adapter with its own codec — not an OpenAI-compat
+	// re-user; IsOpenAIFamily() excludes it.
+	"voyage",
 }
 
 // IsValidAdapterType reports whether v is one of the canonical

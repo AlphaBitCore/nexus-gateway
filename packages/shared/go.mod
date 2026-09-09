@@ -85,3 +85,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.82.1 // indirect
 )
+
+require github.com/AlphaBitCore/nexus-gateway/packages/httpclient v0.0.0
+
+replace github.com/AlphaBitCore/nexus-gateway/packages/httpclient => ../httpclient

@@ -42,6 +42,17 @@ func (h *Handler) RegisterAdminAgentDeviceRoutes(
 	// Free-form tags. PUT replaces the full set; tags compose into
 	// smart-group predicates (`tags_contains`) and UI filters.
 	g.PUT("/agent-devices/:id/tags", h.PutDeviceTags, iamMWDevice(iam.ResourceAgentDevice.Action(iam.VerbUpdate), "id"))
+
+	// Adopted from RegisterFleetRoutes, where they were registered under the
+	// PLAIN middleware. That fails OPEN, not closed, and silently: the plain
+	// middleware evaluates against the wildcard resource, and a policy
+	// statement scoped to a device group never matches a wildcard target — so
+	// an administrator's group-scoped Deny is not merely outranked, it never
+	// enters the tally at all, and whatever unscoped Allow exists carries the
+	// request. Their handlers stay in fleet.go; only the gate moves.
+	g.GET("/agent-devices/:id/audit", h.ListDeviceAudit, iamMWDevice(iam.ResourceAgentDevice.Action(iam.VerbRead), "id"))
+	g.GET("/agent-devices/:id/config", h.GetDeviceConfig, iamMWDevice(iam.ResourceAgentDevice.Action(iam.VerbRead), "id"))
+	g.GET("/agent-devices/:id/timeline", h.GetDeviceTimeline, iamMWDevice(iam.ResourceAgentDevice.Action(iam.VerbRead), "id"))
 }
 
 func (h *Handler) ListAgentDevices(c echo.Context) error {

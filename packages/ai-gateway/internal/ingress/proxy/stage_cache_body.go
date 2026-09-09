@@ -19,7 +19,7 @@ import (
 // codec translation (PrepareBody, idempotent with the executor's own run),
 // setting s.cachePreparedBody/Rewrites/URLOverride. It exists APART from the
 // cache lookup because the prepared body also feeds the upstream-body
-// normaliser (provider cache_control / cachedContent injection) — a request
+// normaliser (volatile-byte strips) and the Gemini cachedContent injection — a request
 // the SEMANTIC cache skips (time-sensitive, disabled, client no-cache) must still get
 // its provider-side cache markers, or skipping one cache silently disables
 // the other (live incident: ~0% Anthropic prompt-cache on the assistant's
@@ -57,7 +57,7 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 	// openairesponses.identityCodec (identity), which forwards it
 	// verbatim and the upstream 400s.
 	prepReq := buildProviderRequest(s.r, s.resolved, s.body, s.isStream, h.payloadCaptureConfig().MaxResponseBytes)
-	prepReq.Target = bodyPrepCallTarget(primary)
+	prepReq.Target = bodyPrepCallTarget(primary, h.deps.PromptCache)
 	// Cross-format canonicalization: "cross-format" depends on
 	// the endpoint shape, not just the wire format string:
 	//   - chat-completions ingress → canonicalize iff target wire
@@ -232,7 +232,7 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 		prepReq.Body = h.deps.CanonicalBridge.StripInternalCarriersForTarget(prepReq.Body, targetFmt)
 	}
 	prepStart := time.Now()
-	finalBody, finalRewrites, finalURLOverride, err := adapter.PrepareBody(prepReq)
+	prep, err := adapter.PrepareBody(prepReq)
 	if err != nil {
 		// Routing happened, so record which model it chose even though the codec
 		// refused before a byte left the gateway. Measured — an upstream refusal
@@ -243,9 +243,16 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 		return false, false
 	}
 	s.phaseTimer.MarkBetween(traffic.PhaseReqAdapter, time.Since(prepStart))
-	s.cachePreparedBody = finalBody
-	s.cachePreparedRewrites = finalRewrites
-	s.cachePreparedURLOverride = finalURLOverride
+	s.cachePreparedBody = prep.Body
+	s.cachePreparedRewrites = prep.Rewrites
+	s.cachePreparedURLOverride = prep.URLOverride
+	s.cachePreparedCacheMarked = prep.PromptCacheMarked
+	// Stamped from the codec's own report rather than from the operator's
+	// setting: a caller that sent its own cache_control is forwarded
+	// untouched, and the row must say so.
+	if prep.PromptCacheMarked {
+		s.rec.CacheMarkerInjected = 1
+	}
 	return true, true
 }
 
@@ -264,17 +271,33 @@ func (st cacheStage) prepareUpstreamBody() (ok bool, prepared bool) {
 // responses-serving target takes the RewriteNative differential), so it is a
 // body-shaping field — omitting it here would make the cache-prep and
 // executor legs triage the same request differently.
-func bodyPrepCallTarget(t routingcore.RoutingTarget) provcore.CallTarget {
+//
+// PromptCacheMarkers is in for the same reason, and comes from the same live
+// settings the executor's resolver reads rather than from the routing
+// snapshot: the marker is a body edit, so a leg that disagrees about it would
+// build the cache key over bytes the other leg does not send. Resolving both
+// legs from one source leaves only the window where an admin changes the
+// setting mid-request, which costs that request a cache miss, not an error.
+func bodyPrepCallTarget(t routingcore.RoutingTarget, pc promptCacheSettings) provcore.CallTarget {
 	return provcore.CallTarget{
-		ProviderID:         t.ProviderID,
-		ProviderName:       t.ProviderName,
-		Format:             provcore.Format(t.AdapterType),
-		ProviderModelID:    t.ProviderModelID,
-		BaseURL:            t.BaseURL,
-		MaxOutputTokens:    t.MaxOutputTokens,
-		Reasons:            t.Reasons,
-		ServesResponsesAPI: t.ServesResponsesAPI,
+		ProviderID:          t.ProviderID,
+		ProviderName:        t.ProviderName,
+		Format:              provcore.Format(t.AdapterType),
+		ProviderModelID:     t.ProviderModelID,
+		BaseURL:             t.BaseURL,
+		MaxOutputTokens:     t.MaxOutputTokens,
+		Reasons:             t.Reasons,
+		ServesResponsesAPI:  t.ServesResponsesAPI,
+		PromptCacheMarkers:  pc != nil && pc.MarkersEnabled(t.ProviderID, t.AdapterType),
+		PromptCacheBoundary: pc != nil && pc.BoundaryEnabled(t.ProviderID, t.AdapterType),
 	}
+}
+
+// promptCacheSettings is the cache stage's view of the live prompt-cache
+// configuration — the same one question the executor's resolver asks.
+type promptCacheSettings interface {
+	MarkersEnabled(providerID, adapterType string) bool
+	BoundaryEnabled(providerID, adapterType string) bool
 }
 
 // stampRoutedTarget serves every path ending a request after routing resolved

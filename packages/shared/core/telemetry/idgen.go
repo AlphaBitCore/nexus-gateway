@@ -8,12 +8,18 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
-// requestIDGenerator derives the OTel trace ID for a root span from the
-// X-Nexus-Request-Id carried on the request context, so an exported span and
-// the trace_id stamped on traffic_event / diag rows share one 128-bit value.
+// requestIDGenerator derives the OTel trace ID for a root span from the request
+// id carried on the request context, so a span exported for a caller who runs
+// no tracing of their own is still findable from the id we handed that caller
+// back.
+//
+// This value is NOT what lands in traffic_event.trace_id — that column holds
+// the caller's own W3C trace and stays NULL when they sent no traceparent. A
+// root span only exists here when the caller sent none; when they did, the
+// propagator continues THEIR trace and this generator never runs.
 //
 // The request id is a UUID, which is exactly the 16 bytes of an OTel trace ID,
 // so the mapping is a direct copy — the only difference is the rendered form
@@ -23,7 +29,7 @@ import (
 //
 // Only root spans call NewIDs; child spans inherit the trace id from the
 // propagated parent context, so a request that crosses services under one
-// X-Nexus-Request-Id resolves to one trace id everywhere.
+// request id resolves to one trace id everywhere in the collector.
 type requestIDGenerator struct{}
 
 var _ sdktrace.IDGenerator = requestIDGenerator{}

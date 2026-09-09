@@ -33,7 +33,7 @@ func (st streamHooksStage) run() bool {
 	hookRunner := func(ctx context.Context, input *hookcore.HookInput) *hookcore.CompliancePipelineResult {
 		input.EndpointType = streamEpType
 		input.OutputModality = streamModalities
-		pipeline, err := h.deps.HookConfigCache.Resolver(ctx).BuildPipeline(
+		pipeline, _, err := h.deps.HookConfigCache.Resolver(ctx).BuildPipeline(
 			"response", "AI_GATEWAY",
 			streamEpType,
 			streamModalities,
@@ -70,7 +70,7 @@ func (st streamHooksStage) run() bool {
 	responseHooksActive := true
 	var enforcingBlock, enforcingRedact bool
 	if h.deps != nil && h.deps.HookConfigCache != nil {
-		probe, probeErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
+		probe, _, probeErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
 			"response", "AI_GATEWAY",
 			streamEpType,
 			streamModalities,

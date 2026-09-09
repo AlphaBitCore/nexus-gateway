@@ -25,9 +25,12 @@ import { IDP_LIST_ROUTE } from './idpRoutes';
 import { IdentityProviderForm } from './IdentityProviderForm';
 import { ScimTokenSection, GroupMappingSection } from './IdentityProviderPage';
 import detailStyles from '../../iam/_shared/Iam.module.css';
+import { usePermission } from '@/hooks/usePermission';
 
 export function IdentityProviderDetailPage() {
   const { t } = useTranslation();
+  const canUpdate = usePermission('identity-provider:update');
+  const canDelete = usePermission('identity-provider:delete');
   const navigate = useNavigate();
   const params = useParams<{ id: string }>();
   const idpId = params.id ?? '';
@@ -54,6 +57,11 @@ export function IdentityProviderDetailPage() {
     },
   );
 
+  // Every mutation reachable from this page is separately gated on the Go
+  // side — PUT enforces identity-provider.update, DELETE .delete, and the
+  // SCIM-token routes .update. The page had NO check at all, and a seeded role
+  // holding .read alone can reach it, so each control answered 403 only after
+  // the operator filled the form in.
   if (loading && !data) return <Skeleton.ListPageSkeleton />;
   if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
   if (!data) return null;
@@ -80,7 +88,7 @@ export function IdentityProviderDetailPage() {
               </Badge>
             </div>
           </div>
-          {!isLocal && (
+          {!isLocal && canDelete && (
             <div className={detailStyles.detailHeaderActions}>
             <Button variant="danger" onClick={() => setConfirmDelete(true)}>
               {t('common:delete', 'Delete')}
@@ -101,13 +109,15 @@ export function IdentityProviderDetailPage() {
           <IdentityProviderForm
             mode="edit"
             initial={data}
+            readOnly={!canUpdate}
             submitting={updating}
             submitError={submitError}
             onSubmit={(body) => { setSubmitError(null); void doUpdate(body); }}
             onCancel={() => navigate(IDP_LIST_ROUTE)}
           />
 
-          <ScimTokenSection idp={data} />
+          {/* SCIM token create/revoke both enforce identity-provider.update. */}
+          {canUpdate && <ScimTokenSection idp={data} />}
 
           <GroupMappingSection idp={data} />
         </>

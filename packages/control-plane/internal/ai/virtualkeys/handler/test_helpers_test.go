@@ -192,7 +192,7 @@ func assertErrorEnvelope(t *testing.T, rec *httptest.ResponseRecorder, wantCode,
 	}
 }
 
-// vkCols mirrors the SELECT in store/virtual_key.go::vkColumns.
+// vkCols mirrors the SELECT in packages/control-plane/internal/ai/virtualkeys/vkstore/virtual_key.go::vkColumns.
 var vkCols = []string{
 	"id", "name", "keyHash", "keyPrefix", "projectId", "sourceApp", "enabled",
 	"expiresAt", "rateLimitRpm", "compareEndpointRateLimitRpm",

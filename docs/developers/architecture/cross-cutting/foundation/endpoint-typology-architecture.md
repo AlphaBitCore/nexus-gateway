@@ -86,7 +86,7 @@ Downstream of dispatch, no consumer needs the path string. The Compliance Proxy 
 | File | Contents |
 |---|---|
 | `typology.go` | Package doc — the 3-axis principle and the package's "single source of truth" role |
-| `endpointkind.go` | `EndpointKind` type, 12 constants, `AllEndpointKinds`, `IsValid()`, `String()` |
+| `endpointkind.go` | `EndpointKind` type, 13 constants, `AllEndpointKinds`, `EndpointKindAcceptsModelType()` (the routing modality guard), `EndpointKindSupportsStreaming()` (the allowlist of kinds that may take the streaming response path), `IsValid()`, `String()` |
 | `wireshape.go` | `WireShape` type, 23 constants + `WireShapeNone`, `AllWireShapes`, `IsValid()`, `String()`, `KindFromWireShape` |
 | `classify.go` | `Rule` struct, `ClassifyPath(method, path)`, the internal `matchPath` / `globMatch` / `equalFold` helpers |
 | `defaults.go` | The 34-rule built-in table consumed by `ClassifyPath` |

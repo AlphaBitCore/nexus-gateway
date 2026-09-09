@@ -24,7 +24,7 @@ const CLASS_API_KEY_VIRTUAL_KEY = 'nexus/apikey/virtual-key/v1';
 const CLASS_API_KEY_ADMIN = 'nexus/apikey/admin/v1';
 
 function adminHmacSecret(): string {
-  // SEC-M9-01: no committed-constant fallback. The seed must hash keys under the
+  // No committed-constant fallback. The seed must hash keys under the
   // SAME ADMIN_KEY_HMAC_SECRET the running services use, or seeded admin keys /
   // VKs would never verify. dev-start.sh propagates a per-developer value into
   // tools/db-migrate/.env before seeding; fail loud if it is somehow absent.

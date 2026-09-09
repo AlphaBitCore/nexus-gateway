@@ -3,11 +3,11 @@ package aggregators
 import (
 	"bytes"
 	"fmt"
-	"github.com/goccy/go-json"
 	"strings"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
+	alerteval "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
+	"github.com/goccy/go-json"
 )
 
 // hookExecRecord mirrors the per-stage struct that ai-gateway and

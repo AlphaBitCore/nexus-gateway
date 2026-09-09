@@ -59,10 +59,10 @@ type Handler struct {
 	// config changes. Nil in unit tests; production wiring sets it via
 	// NewHandler so every mutating endpoint can fan out
 	// `hooks` invalidation to the three data-plane Thing types
-	// after a successful DB write. Previously omitted from this struct,
-	// which made rule-pack edits silently ignored by the running
-	// gateway / proxy / agent until restart — the original `pii-hooks
-	// not blocking PII` prod bug.
+	// after a successful DB write. Omitted from this struct,
+	// rule-pack edits are silently ignored by the running
+	// gateway / proxy / agent until restart — the `pii-hooks
+	// not blocking PII` shape.
 	hub HubInvalidator
 }
 
@@ -333,9 +333,9 @@ func (h *Handler) Create(c echo.Context) error {
 	}
 	// Route through the SAME validator as YAML Import — compile every pattern,
 	// check severity ∈ {hard,soft,warn}, require a category, enforce name/
-	// version/maintainer shape. Previously Create checked only non-empty
-	// ruleId/pattern/severity and called ImportPack directly, so a typo'd
-	// regex authored via the JSON form returned 201 and that rule never fired
+	// version/maintainer shape. Checking only non-empty
+	// ruleId/pattern/severity and calling ImportPack directly lets a typo'd
+	// regex authored via the JSON form return 201 while that rule never fires
 	// (the evaluator silently skips uncompilable patterns).
 	if len(body.Rules) == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "at least one rule required"})

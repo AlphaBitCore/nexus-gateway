@@ -27,7 +27,27 @@ source "$_dir/lib/db.sh"
 # shellcheck disable=SC1091
 source "$_dir/lib/http.sh"
 
-: "${NEXUS_TEST_VK:?NEXUS_TEST_VK must be set in tests/.env.test}"
+# No VK is a SKIP, not a failure — and not a pass either.
+#
+# tests/.env.prod deliberately carries no NEXUS_TEST_VK: a virtual key's
+# plaintext is unrecoverable server-side, so putting one in an env template
+# arms every run against that target with a live credential. With ${VAR:?} this
+# suite hard-failed instead, which made `run-all --target prod` permanently red
+# — and a gate that is always red is a gate nobody reads.
+#
+# 77 is the GNU convention for "skipped"; tests/smoke/run-all.sh counts it
+# separately so a skip can never be mistaken for a pass.
+if [[ -z "${NEXUS_TEST_VK:-}" ]]; then
+  printf 'SKIP: NEXUS_TEST_VK unset — the /v1 surface needs a live virtual key.\n'
+  printf '      Mint one, approve it (a new application VK is created pending),\n'
+  printf '      export NEXUS_TEST_VK, and re-run; revoke it afterwards.\n'
+  # 77 alone is not enough to claim a skip: curl exits 77 on "Problem reading
+  # the SSL CA cert", and under `set -eu` that becomes this script's status —
+  # a TLS failure against prod would be filed as "did not run". The marker is
+  # what makes the skip a statement rather than a coincidence.
+  [[ -n "${NEXUS_SKIP_MARKER:-}" ]] && : >"$NEXUS_SKIP_MARKER"
+  exit 77
+fi
 
 printf '== test-ai-gateway (/v1 surface) ==\n'
 

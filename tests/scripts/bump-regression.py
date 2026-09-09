@@ -145,8 +145,8 @@ def row_for_marker(cols: str, mark: str, timeout: float = 90) -> str:
 def arm_nonstream() -> None:
     """tlsbump/forward_*.go + audit emitter: a bumped request produces an audit row.
 
-    Proves: the CONNECT+bump path completes, and C-3/C-34's upstream timings are
-    stamped (they were the sibling program's deferred-audit-row change).
+    Proves: the CONNECT+bump path completes, and the upstream timings the deferred
+    audit row exists to carry are stamped.
     """
     mark = marker("BUMP-NS")
     code, raw = chat({"model": "gpt-4o-mini",
@@ -168,7 +168,7 @@ def arm_nonstream() -> None:
         return
     status, ttfb, total, latency = row.split("|")
     if ttfb == "NULL" or total == "NULL":
-        record("nonstream", FAIL, f"row exists but upstream timings NULL (ttfb={ttfb} total={total}) — C-34 regressed")
+        record("nonstream", FAIL, f"row exists but upstream timings NULL (ttfb={ttfb} total={total}) — the audit row is being emitted before the relay again")
         return
     ok_lat = latency != "NULL" and int(latency) >= int(total)
     record("nonstream", PASS if ok_lat else FAIL,
@@ -179,9 +179,9 @@ def arm_nonstream() -> None:
 def arm_sse() -> None:
     """streaming/{parser,live,serialize,locked_buffer}.go + tlsbump/sse*.go.
 
-    Proves the whole SSE chain the sibling program rewrote (C-30 reader-goroutine
-    removal, C-12 pooled scan buffer, C-21 serializer, C-20 usage accumulator):
-    frames arrive, [DONE] terminates, and the usage trailer survives.
+    Proves the whole SSE chain — merged reader goroutine, pooled scan buffer,
+    serializer, usage accumulator: frames arrive, [DONE] terminates, and the usage
+    trailer survives.
     """
     mark = marker("BUMP-SSE")
     frames, saw_done, usage = 0, False, None
@@ -224,15 +224,14 @@ def arm_sse() -> None:
     if not saw_done:
         problems.append("no [DONE] terminator")
     if usage is None:
-        problems.append("usage trailer missing (C-20 accumulator)")
+        problems.append("usage trailer missing (accumulator)")
     if "8" not in joined:
         problems.append(f"content looks truncated: {joined[:60]!r}")
 
-    # The audit row is an assertion, not a note. It is the only evidence that S-13's
-    # redact-gate fix holds on the STREAMING path — the proxy persisted no response
-    # body at all before it — and the 5b checklist cites exactly these columns. It
-    # previously reported "no-row" without failing, which is how a NULL that was
-    # really the recency trap got read as a defect.
+    # The audit row is an assertion, not a note. It is the only evidence that the
+    # redact gate holds on the STREAMING path, where an ungated proxy persists no
+    # response body at all. Reporting "no-row" without failing is how a NULL that is
+    # really the recency trap gets read as a defect.
     row = row_for_marker(
         "COALESCE(te.prompt_tokens::text,'NULL')||'|'||COALESCE(te.completion_tokens::text,'NULL')"
         "||'|'||COALESCE(p.response_size_bytes::text,'NULL')", mark)
@@ -247,7 +246,7 @@ def arm_sse() -> None:
                             "was parsed on the wire but never reached the row")
         if rbytes == "NULL" or int(rbytes) <= 0:
             problems.append(f"audit row carries no response body (response_size_bytes={rbytes}) "
-                            "— S-13 regressed on the streaming path")
+                            "— the redact gate regressed on the streaming path")
 
     if problems:
         record("sse", FAIL, "; ".join(problems))
@@ -259,7 +258,7 @@ def arm_sse() -> None:
 
 
 def arm_large_body() -> None:
-    """shared/transport/bodyread (C-11) + spillstore emit.
+    """shared/transport/bodyread + spillstore emit.
 
     Proves the bounded reader returns the WHOLE body — the 160x-amplification fix
     bounded growth to a doubling, and a regression there shows up as a truncated
@@ -348,7 +347,7 @@ def arm_scan_scale() -> None:
 
 
 def arm_spill_readback() -> None:
-    """spillstore write + the Control Plane read path, end to end (S-1/S-2/S-3).
+    """spillstore write + the Control Plane read path, end to end.
 
     This arm used to claim "proves a spilled body is fetchable end to end" and then
     check only that some .bin files existed on disk with a size, never reading a
@@ -435,11 +434,11 @@ def arm_spill_readback() -> None:
 
 
 def arm_exemption() -> None:
-    """compliance-proxy/internal/exemption/{match,store}.go (C-26) — persistence only.
+    """compliance-proxy/internal/exemption/{match,store}.go — persistence only.
 
     Scope stated honestly: this arm reads the DB table the grants live in. It proves
     the grant surface is queryable; it does NOT touch the proxy's in-memory store, so
-    it cannot say anything about C-26's lock-free read path. The arm that does is
+    it cannot say anything about the lock-free read path. The arm that does is
     exemption-rebuild below.
     """
     n = sql("SELECT count(*) FROM compliance_exemption_grant")
@@ -473,9 +472,9 @@ def cp_admin(path: str, *args: str) -> str:
 
 
 def arm_exemption_rebuild() -> None:
-    """compliance-proxy/internal/exemption/store.go (C-26) under a CONCURRENT rebuild.
+    """compliance-proxy/internal/exemption/store.go under a CONCURRENT rebuild.
 
-    C-26 replaced the store's sync.RWMutex with copy-on-write behind an atomic.Pointer:
+    The store uses copy-on-write behind an atomic.Pointer rather than a sync.RWMutex:
     IsExempt loads a snapshot with no lock while Rebuild builds a new one and swaps it.
     The failure modes that shape can have are (a) a reader observing a snapshot that is
     not internally consistent, and (b) a swap disturbing an interception already in
@@ -526,7 +525,7 @@ def arm_exemption_rebuild() -> None:
                         "-d", json.dumps({"sourceIP": "127.0.0.1",
                                           "targetHost": "api.openai.com",
                                           "durationMinutes": 10,
-                                          "reason": "bump-regression C-26 concurrent rebuild"}))
+                                          "reason": "bump-regression concurrent rebuild"}))
         try:
             grant_id = (json.loads(resp).get("grant") or {}).get("id", "")
         except json.JSONDecodeError:
@@ -599,38 +598,39 @@ def arm_exemption_rebuild() -> None:
 
 
 def arm_log_volume() -> None:
-    """Log volume on the bumped path (C-9 / C-4 / A-2 / C-14 / C-23).
+    """Log volume on the bumped path.
 
-    Five findings cut per-request logging. Their common failure mode is a regression
-    nothing else notices: a line demoted to Debug gets restored to Info, or a new one is
-    added, and the only symptom is that a busy proxy writes several times more log than it
-    should. No test fails, no metric moves. On the agent — same shared code — it is battery
-    and disk on a user's laptop.
+    Per-request logging is cut in five places, and the common failure mode is a
+    regression nothing else notices: a line demoted to Debug gets restored to Info, or
+    a new one is added, and the only symptom is that a busy proxy writes several times
+    more log than it should. No test fails, no metric moves. On the agent — same shared
+    code — it is battery and disk on a user's laptop.
 
     So the observation is a COUNT, measured on the real path, plus the absence of each
-    specific message these findings removed from default level. Read by byte offset from
-    the live structured log, so nothing from an earlier run can be counted.
+    specific message that belongs below default level. Read by byte offset from the live
+    structured log, so nothing from an earlier run can be counted.
 
-    C-23's guarantee is checked directly rather than by proxy: a marker carried in the
-    request prompt must appear NOWHERE in the log at any level. The SSE diagnostics used to
-    echo up to 1 MiB of remotely-controlled bytes per offending line, which on a
-    compliance/DLP product is a path for prompt text to reach the logs.
+    The no-content guarantee is checked directly rather than by proxy: a marker carried
+    in the request prompt must appear NOWHERE in the log at any level. SSE diagnostics
+    that echo the offending line can carry up to 1 MiB of remotely-controlled bytes,
+    which on a compliance/DLP product is a path for prompt text to reach the logs.
     """
     if not os.path.exists(PROXY_LOG):
         record("log-volume", SKIP, f"proxy structured log absent at {PROXY_LOG}")
         return
 
-    # Messages these findings took off the default level. Each is asserted absent at INFO
-    # by its own name, so a partial regression names itself instead of moving a total.
+    # Messages that belong below the default level, each paired with the stage it comes
+    # from. Each is asserted absent at INFO by its own name, so a partial regression
+    # names itself instead of moving a total.
     DEMOTED = [
-        ("post-upstream response routing", "C-9"),
-        ("response stage: non-SSE arm", "C-9"),
-        ("runtimeNormalize: Registry.Normalize CLAIM", "C-9"),
-        ("Registry.Normalize FELL-THROUGH", "C-9"),
-        ("request entry", "C-4"),
-        ("domain/path resolved", "C-4"),
-        ("SSE parser: unrecognized field", "C-14"),
-        ("SSE parser: malformed retry", "C-14"),
+        ("post-upstream response routing", "response stage"),
+        ("response stage: non-SSE arm", "response stage"),
+        ("runtimeNormalize: Registry.Normalize CLAIM", "response stage"),
+        ("Registry.Normalize FELL-THROUGH", "response stage"),
+        ("request entry", "request stage"),
+        ("domain/path resolved", "request stage"),
+        ("SSE parser: unrecognized field", "SSE parser"),
+        ("SSE parser: malformed retry", "SSE parser"),
     ]
 
     offset = os.path.getsize(PROXY_LOG)
@@ -642,7 +642,7 @@ def arm_log_volume() -> None:
                              "max_tokens": 5}, timeout=60)
         if code == 200:
             requests += 1
-    # One SSE request too: C-14/C-23 live on the streaming parser, so a non-stream-only
+    # One SSE request too: both parser guarantees live on the streaming path, so a non-stream-only
     # sample would leave exactly the noisiest path unmeasured.
     code, _ = curl_chat({"model": "gpt-4o-mini",
                          "messages": [{"role": "user", "content": f"{mark}-sse count to 5"}],
@@ -663,10 +663,10 @@ def arm_log_volume() -> None:
     err = [ln for ln in lines if "level=ERROR" in ln]
 
     problems = []
-    for msg, finding in DEMOTED:
+    for msg, stage in DEMOTED:
         hits = sum(1 for ln in info if msg in ln)
         if hits:
-            problems.append(f"{finding}: {hits} INFO lines still say {msg!r} — it was demoted to "
+            problems.append(f"{stage}: {hits} INFO lines still say {msg!r} — it belongs at "
                             "Debug and is back at default level")
     # The bound is per REQUEST, not absolute, so the arm keeps meaning if the request count
     # changes. Connection lifecycle is 2 lines (CONNECT accepted + connection closed
@@ -681,7 +681,7 @@ def arm_log_volume() -> None:
                         f"frequent: {top}")
     if mark in appended:
         problems.append(f"the request's own prompt marker {mark} appears in the proxy log — "
-                        "wire content is being echoed (C-23)")
+                        "wire content is being echoed")
     if err:
         problems.append(f"{len(err)} ERROR lines: {err[0][:160]}")
 
@@ -699,7 +699,7 @@ def arm_log_volume() -> None:
 
 
 def arm_runtime_source() -> None:
-    """compliance-proxy wiring/health.go: the storage.spill runtime source (S-3)."""
+    """compliance-proxy wiring/health.go: the storage.spill runtime source."""
     tok = os.environ.get("INTERNAL_SERVICE_TOKEN") or os.environ.get("NEXUS_HUB_SERVICE_TOKEN", "")
     req = urllib.request.Request("http://127.0.0.1:9090/debug/runtime",
                                  headers={"Authorization": f"Bearer {tok}"})
@@ -716,7 +716,7 @@ def arm_runtime_source() -> None:
         return
     v = src.get("value") or {}
     if not v.get("effect"):
-        record("runtime-source", FAIL, f"storage.spill has an EMPTY effect (S-10 regressed): {v}")
+        record("runtime-source", FAIL, f"storage.spill has an EMPTY effect: {v}")
         return
     record("runtime-source", PASS,
            f"configured={v.get('configured')} backend={v.get('backend')!r} "

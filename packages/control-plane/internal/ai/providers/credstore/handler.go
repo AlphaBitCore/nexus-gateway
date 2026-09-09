@@ -22,7 +22,7 @@ type Store struct{ pool PgxPool }
 func New(pool PgxPool) *Store { return &Store{pool: pool} }
 
 // ilikeEscaper escapes the 3 chars PostgreSQL LIKE/ILIKE treats as
-// wildcards; copied from store/sqlutil.go per R8-B18 helper-copy.
+// wildcards; copied from packages/control-plane/internal/platform/pgx/sqlutil.go per R8-B18 helper-copy.
 var ilikeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 func escapeILIKE(s string) string { return ilikeEscaper.Replace(s) }

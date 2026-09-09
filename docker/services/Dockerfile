@@ -62,15 +62,22 @@ RUN mkdir -p /out/state
 # TestHSSelfTest is the one that fails unless /secret/ matches once. Keep this
 # list in step with scripts/release/build-tarball.sh, which gates the tarball
 # binaries the same way.
+#
+# The list now proves TWO properties, not one: that the linked libhs actually
+# scans, and that a matcher closed underneath an in-flight request reports the
+# scan as INCOMPLETE rather than as "scanned, nothing found". The second is what
+# stops a rule-pack swap from silently approving a payload the hook never looked
+# at, and it belongs here because no CI job compiles this build tag at all —
+# these image and tarball builds are the only automated path that does.
 RUN set -eu; \
     out="$(go test -tags vectorscan -count=1 -v \
-      -run '^(TestHSSelfTest|TestVectorscan_ScanUnderCgoLimit|TestVectorscan_ScanComplete_ReportsCompletion)$' \
+      -run '^(TestHSSelfTest|TestVectorscan_ScanUnderCgoLimit|TestVectorscan_ScanComplete_ReportsCompletion|TestVectorscan_ScanComplete_ClosedMatcherReportsIncomplete)$' \
       ./packages/shared/policy/hooks/matcher/ 2>&1)" \
       || { printf '%s\n' "$out" >&2; echo "ERROR: Vectorscan self-test failed — the linked libhs does not scan (FAT_RUNTIME=ON?); these binaries would pass PII through UNREDACTED" >&2; exit 1; }; \
     printf '%s\n' "$out"; \
     passed="$(printf '%s\n' "$out" | grep -c '^--- PASS: ' || true)"; \
-    if [ "$passed" != 3 ]; then \
-      echo "ERROR: expected 3 Vectorscan firing self-tests to pass, got ${passed} — the gate selected the wrong tests (renamed? removed?), so nothing proves the linked libhs scans" >&2; \
+    if [ "$passed" != 4 ]; then \
+      echo "ERROR: expected 4 Vectorscan self-tests to pass, got ${passed} — the gate selected the wrong tests (renamed? removed?), so nothing proves the linked libhs scans" >&2; \
       exit 1; \
     fi
 

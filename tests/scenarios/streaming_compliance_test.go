@@ -18,7 +18,7 @@ import (
 
 // TestS131_StreamingComplianceConfig — PM-grade e2e.
 //
-// BRAINSTORM (pre): streaming-compliance is the data-plane policy
+// Streaming-compliance is the data-plane policy
 // admins use to decide whether streaming AI responses get
 // passthrough'd unchecked vs buffered for hook evaluation vs chunked
 // for async review. The endpoint:

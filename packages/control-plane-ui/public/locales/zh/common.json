@@ -218,7 +218,29 @@
     "selectModel": "选择模型…"
   },
   "charts": {
-    "totalLatency": "总延迟"
+    "totalLatency": "总延迟",
+    "phase": {
+      "reqHooks": {
+        "label": "请求侧 Hooks",
+        "desc": "请求侧合规 / 规则包各阶段耗时之和。"
+      },
+      "our": {
+        "label": "Nexus 自身开销",
+        "desc": "Nexus 内部：鉴权、路由、缓存、转换 —— 唯一可以直接优化的一段。"
+      },
+      "upstreamTtfb": {
+        "label": "上游 TTFB",
+        "desc": "等待上游供应商返回首字节的时间。"
+      },
+      "upstreamBody": {
+        "label": "上游响应体",
+        "desc": "接收流式响应体字节的时间（TTFB → 关闭）。"
+      },
+      "respHooks": {
+        "label": "响应侧 Hooks",
+        "desc": "响应侧合规 / 信号提取各阶段耗时之和。"
+      }
+    }
   },
   "hookConfig": {
     "redactExamplePlaceholder": "[REDACTED_<RULE_ID>]"
@@ -231,5 +253,7 @@
     "passwordsDoNotMatch": "两次输入的新密码不一致",
     "passwordTooShort": "新密码长度至少为 {{count}} 个字符",
     "currentPasswordRequired": "当前密码为必填项"
-  }
+  },
+  "comboboxTypeToSearch": "输入以搜索",
+  "unsavedChanges": "未保存的更改"
 }

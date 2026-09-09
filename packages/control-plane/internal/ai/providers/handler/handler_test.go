@@ -24,9 +24,13 @@ import (
 )
 
 func TestIsValidAdapterType(t *testing.T) {
-	// Every canonical entry must pass — drift between this list and the
-	// AI Gateway Format enum would silently accept invalid provider
-	// configs through the admin API.
+	// This half is a tautology and says so: IsValidAdapterType is built from
+	// ValidAdapterTypes, so it passes whatever the slice happens to say. The
+	// real invariant — that the slice equals the gateway's AllFormats() and the
+	// published spec's adapterType enums — cannot be a Go test, because the
+	// gateway enum lives under ai-gateway/internal in another module. It is
+	// scripts/check-adapter-type-lockstep.mjs. What IS worth pinning here is the
+	// matching: exact, case-sensitive, no trimming.
 	for _, v := range ValidAdapterTypes {
 		if !IsValidAdapterType(v) {
 			t.Errorf("ValidAdapterTypes contains %q but IsValidAdapterType returned false", v)
@@ -51,8 +55,8 @@ func TestIsValidAdapterType(t *testing.T) {
 
 // conflictForUniqueViolation: every provider-create unique index must map to
 // its own machine code so the UI can point at the offending field. The
-// regression this guards: a Credential_name_key collision used to surface as
-// PROVIDER_NAME_EXISTS, so changing the provider name never cleared the error.
+// regression this guards: a Credential_name_key collision surfacing as
+// PROVIDER_NAME_EXISTS, so changing the provider name never clears the error.
 func TestConflictForUniqueViolation(t *testing.T) {
 	tests := []struct {
 		name        string

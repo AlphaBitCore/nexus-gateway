@@ -6,6 +6,29 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
+// PreparedBody is everything [Adapter.PrepareBody] produces for one request
+// apart from the error: the wire bytes, and the facts about them that only the
+// codec that built them knows.
+//
+// URLOverride is the EncodeResult.URLOverride the codec emitted for this body
+// (e.g. the Gemini embedding codec selects ":embedContent" vs
+// ":batchEmbedContents" by input shape). Callers that reuse the prepared body
+// on the cache-MISS fast path MUST pass it back into ExecuteWithBody so the
+// override reaches the dispatched URL — without it a batch-shaped Gemini body
+// lands on the single-embed action and 400s.
+//
+// PromptCacheMarked says the codec turned on the provider's prompt cache for
+// this body. It rides here rather than being re-derived by the caller because
+// the decision depends on whether the CALLER already sent a cache marker,
+// which only the codec inspects — a second copy of that predicate outside the
+// codec is a second copy that can disagree with the bytes actually sent.
+type PreparedBody struct {
+	Body              []byte
+	Rewrites          []string
+	URLOverride       string
+	PromptCacheMarked bool
+}
+
 // Adapter is the uniform contract every provider implementation exposes
 // to the rest of the gateway. The concrete implementation is the
 // composed [specAdapter] that wraps an [AdapterSpec].
@@ -36,19 +59,8 @@ type Adapter interface {
 	Probe(ctx context.Context, target CallTarget) (*ProbeResult, error)
 
 	// PrepareBody is the pure-function part of Execute up to but
-	// excluding the network call. Returns the final body to send to
-	// upstream, the list of in-place rewrites applied (for the
-	// x-nexus-coerced header), and the codec's URLOverride (empty when
-	// the transport's default URL applies). Idempotent; no side effects.
-	//
-	// urlOverride is the EncodeResult.URLOverride the codec emitted for
-	// this body (e.g. the Gemini embedding codec selects ":embedContent"
-	// vs ":batchEmbedContents" by input shape). Callers that reuse the
-	// prepared body on the cache-MISS fast path MUST pass it back into
-	// ExecuteWithBody so the override reaches the dispatched URL — without
-	// it a batch-shaped Gemini body lands on the single-embed action and
-	// 400s.
-	PrepareBody(req Request) (body []byte, rewrites []string, urlOverride string, err error)
+	// excluding the network call. Idempotent; no side effects.
+	PrepareBody(req Request) (PreparedBody, error)
 
 	// ExecuteWithBody is Execute with the body already prepared by
 	// PrepareBody. The cache layer calls this on a MISS so PrepareBody

@@ -90,8 +90,7 @@ func (h *SpillUploadAPI) now() time.Time {
 	return time.Now()
 }
 
-// SpillUploadMintRequest mirrors the OpenAPI schema in
-// docs/users/api/openapi/admin/e37-s2-agent-presigned-spill.yaml.
+// SpillUploadMintRequest mirrors the OpenAPI schema.
 type SpillUploadMintRequest struct {
 	EventID     string `json:"eventId"`
 	Direction   string `json:"direction"`

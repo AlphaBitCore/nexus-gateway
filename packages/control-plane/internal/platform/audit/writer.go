@@ -45,7 +45,7 @@ type Entry struct {
 type FailureObserver func(action string)
 
 // Writer publishes admin audit log entries to MQ. Hash chain computation
-// happens Hub-side (packages/nexus-hub/internal/observability/audit/chain.go) so the CP
+// happens Hub-side (packages/nexus-hub/internal/traffic/chain/chain.go) so the CP
 // is now a pure formatter+publisher; concurrent admin actions across CP
 // replicas no longer need a shared chain head here.
 type Writer struct {

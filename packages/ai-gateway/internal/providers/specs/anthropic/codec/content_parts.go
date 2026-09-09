@@ -101,6 +101,15 @@ func openAIPartsToAnthropicContent(content gjson.Result) ([]map[string]any, erro
 					err = berr
 					return false
 				}
+				// The filename rides on `title`, which is where the ingress
+				// direction already reads it from. Without it the name is lost
+				// on the way out and cannot come back — and OpenAI REJECTS a
+				// file part carrying file_data with no filename, so an
+				// openai → anthropic → openai hop returned a 400 for a request
+				// that was valid when it arrived.
+				if name := file.Get("filename").String(); name != "" {
+					block["title"] = name
+				}
 				parts = append(parts, carryCacheControl(block, part))
 			case file.Get("file_url").Exists():
 				parts = append(parts, carryCacheControl(map[string]any{

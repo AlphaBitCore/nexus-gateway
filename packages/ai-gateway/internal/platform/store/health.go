@@ -83,8 +83,8 @@ type healthMsg struct {
 // Concurrency model: a single background writer owns the mutable windows; the
 // per-response hot path (record) only does a non-blocking channel send, so it
 // never contends a mutex. GetHealth reads an immutable snapshot published via an
-// atomic.Pointer, so routing reads are lock-free. This removes the process-wide
-// mutex that every upstream response previously serialized on.
+// atomic.Pointer, so routing reads are lock-free. There is no process-wide
+// mutex for every upstream response to serialize on.
 type HealthTracker struct {
 	ch       chan healthMsg
 	stop     chan struct{}

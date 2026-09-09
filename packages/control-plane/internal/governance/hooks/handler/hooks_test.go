@@ -98,7 +98,7 @@ func newMockStore(t *testing.T) (pgxmock.PgxPoolIface, *systemmetastore.Store) {
 	return mock, systemmetastore.New(mock)
 }
 
-// hookConfigCols mirrors store/hook_config_test.go.
+// hookConfigCols mirrors packages/nexus-hub/internal/compliance/catbagent/hook_config_test.go.
 var hookConfigCols = []string{
 	"id", "name", "type", "implementationId", "stage", "category", "endpoint", "script",
 	"config", "priority", "timeoutMs", "failBehavior", "enabled", "applicableIngress",

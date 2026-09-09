@@ -29,7 +29,7 @@ import (
 
 // TestS077_NodeOverrideHierarchy — PM-grade e2e.
 //
-// BRAINSTORM (pre): the override path is one of the rare admin actions
+// The override path is one of the rare admin actions
 // whose Hub-side write produces both a thing_override row AND an
 // admin_audit_log row in one transaction. CP forwards verbatim — its
 // only job is local RBAC + body validation. So the scenario tests:

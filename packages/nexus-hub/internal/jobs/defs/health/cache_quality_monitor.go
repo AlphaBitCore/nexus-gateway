@@ -56,7 +56,11 @@ func (j *CacheQualityMonitorJob) Run(ctx context.Context) error {
 	window := time.Now().UTC().Add(-30 * time.Minute)
 
 	// Count normalised requests and their error rate in the last 30 minutes.
-	// A request is "normalised" if the normaliser touched it (strip or inject).
+	// A request is "normalised" if the normaliser CHANGED its body. A dry-run
+	// rule forwards the body untouched and the producer therefore stamps zero
+	// strip counts (stage_execute.go), so dry-run rows fall out of this filter
+	// on their own — which is what lets this job observe its own remediation
+	// after it flips rules to dry_run_always.
 	//
 	// Baseline is computed over NON-normalised rows only (the fourth and fifth
 	// columns exclude rows where the normaliser fired). Including normalised rows
@@ -65,15 +69,19 @@ func (j *CacheQualityMonitorJob) Run(ctx context.Context) error {
 	// the 3× trigger that should detect normaliser-induced regressions.
 	var totalNorm, errorNorm, totalBaseline, errorBaseline int64
 	err := j.pool.QueryRow(ctx, `
+		WITH classified AS (
+			SELECT
+				status_code,
+				(normalized_strip_count > 0 OR cache_marker_injected > 0) AS modified
+			FROM traffic_event
+			WHERE timestamp >= $1
+		)
 		SELECT
-			COUNT(*) FILTER (WHERE (normalized_strip_count > 0 OR cache_marker_injected > 0)),
-			COUNT(*) FILTER (WHERE (normalized_strip_count > 0 OR cache_marker_injected > 0)
-			                   AND status_code >= 400),
-			COUNT(*) FILTER (WHERE (COALESCE(normalized_strip_count, 0) = 0 AND COALESCE(cache_marker_injected, 0) = 0)),
-			COUNT(*) FILTER (WHERE (COALESCE(normalized_strip_count, 0) = 0 AND COALESCE(cache_marker_injected, 0) = 0)
-			                   AND status_code >= 400)
-		FROM traffic_event
-		WHERE timestamp >= $1
+			COUNT(*) FILTER (WHERE modified),
+			COUNT(*) FILTER (WHERE modified AND status_code >= 400),
+			COUNT(*) FILTER (WHERE NOT modified),
+			COUNT(*) FILTER (WHERE NOT modified AND status_code >= 400)
+		FROM classified
 	`, window).Scan(&totalNorm, &errorNorm, &totalBaseline, &errorBaseline)
 	if err != nil {
 		return fmt.Errorf("cache quality monitor: stats query: %w", err)

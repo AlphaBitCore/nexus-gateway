@@ -26,7 +26,7 @@ It deliberately does **not** do anomaly detection (that is the alerting subsyste
 
 Three tables. `ThingDiagEvent` and `ThingDiagModeWindow` are mirrored as Go structs under `packages/shared/schemas/configtypes/observability/`; `DiagSilence`'s struct lives in the Control Plane `diagstore` package.
 
-- **`thing_diag_event`** (`ThingDiagEvent`) — one row per captured event: `thingId`, `thingType`, `occurredAt`, `receivedAt`, `level`, `eventType`, `source`, `message`, `messageHash`, `traceId`, `attrs` (JSONB), `stackTrace`, `repeatCount`, `agentVersion`, `osInfo`. `traceId` is a first-class column (the cross-service `X-Nexus-Request-Id`) with a `(thingId, traceId, occurredAt DESC)` btree index, so "every diag row for trace X" hits a real index rather than probing the JSONB map. Indexes also cover `(thingId, occurredAt)`, `(level, occurredAt)`, `(eventType, occurredAt)`, and `(messageHash, occurredAt)`.
+- **`thing_diag_event`** (`ThingDiagEvent`) — one row per captured event: `thingId`, `thingType`, `occurredAt`, `receivedAt`, `level`, `eventType`, `source`, `message`, `messageHash`, `externalRequestId`, `attrs` (JSONB), `stackTrace`, `repeatCount`, `agentVersion`, `osInfo`. `externalRequestId` is a first-class column (the cross-service request id — `X-Nexus-Request-Id` or its `X-Request-Id` alias, minted when neither arrived) with a `(thingId, externalRequestId, occurredAt DESC)` btree index, so "every diag row for request X" hits a real index rather than probing the JSONB map. Indexes also cover `(thingId, occurredAt)`, `(level, occurredAt)`, `(eventType, occurredAt)`, and `(messageHash, occurredAt)`.
 - **`thing_diag_mode_window`** (`ThingDiagModeWindow`) — per-Thing audit history of a diagnostic-mode window: `thingId`, `startedAt`, `endedAt`, `setBy`, `reason`. This is the record the admin list endpoint reads; it is not the delivery channel (see §5).
 - **`diag_silence`** (`DiagSilence`) — `messageHash`, `level`, `silencedBy`, `silencedAt`, `expiresAt` (nullable), `reason`, with a `(messageHash, level)` lookup index.
 
@@ -38,7 +38,7 @@ On each record the sink:
 
 - Gates on `Level >= cfg.Level`, which defaults to `ERROR`. `IncludeInfo` defaults to false, so info-level records are dropped unless explicitly enabled.
 - Maps the slog level to the `opsmetrics` vocabulary via `mapLevel`: `>= ERROR+4 → fatal`, `>= ERROR → error`, `>= WARN → warn`, else `info`.
-- Lifts a `trace_id` attribute (key `TraceIDAttrKey`) — walking both the `WithAttrs` chain and the record's own attrs — into the typed `DiagEvent.TraceID` field. A non-string `trace_id` falls through into the loose `Attrs` map so a malformed value is still visible. The key is consumed, not duplicated into `Attrs`.
+- Lifts an `external_request_id` attribute (key `diag.ExternalRequestIDAttrKey`) — walking both the `WithAttrs` chain and the record's own attrs — into the typed `DiagEvent.ExternalRequestID` field. A non-string value falls through into the loose `Attrs` map so a malformed value is still visible. The key is consumed, not duplicated into `Attrs`.
 - Computes `messageHash = md5(level | source | message)` — the dedup key.
 - Runs the event through `opsmetrics.Dedup` when configured: a 60-second collapse window over 100 distinct active message hashes, folding duplicates into a single emit carrying `repeatCount`. The collapsed count is exported as `diag.dedup_collapsed_total{thing_type, severity}`, with `thing_type` pinned to the sink's `Source`.
 - Routes the result (`routeLocked`): when the WebSocket transport is up, push directly via `thingclient.PushDiagEvent`; when it is down, queue in the bounded in-process `ReconnectBuffer` (`reconnect_buffer.go`) for replay on reconnect.
@@ -54,7 +54,7 @@ The `DiagEvent` envelope (`packages/shared/core/metrics/registry/types.go`) carr
 
 **Agent crash buffer.** `LocalBuffer` (`packages/agent/internal/observability/diag/local_buffer.go`) is a SQLCipher-backed `pending_diag_event` table. The slog sink inserts `FATAL` events into it (the panic-recovery path does so before re-panicking); a duplicate primary key is a no-op so a redelivered crash event stays idempotent. Drain reads oldest-first and deletes on successful upload.
 
-**Hub writer.** `DiagWriterImpl` (`packages/nexus-hub/internal/observability/opsmetrics/diag_writer.go`) is a bounded-channel batch writer (defaults: 100 events / 100 ms) that issues `pgx.CopyFrom` into `thing_diag_event`. On queue overflow the event is dropped and `diag.dropped_total{reason="queue_overflow"}` increments. The writer backfills `messageHash` server-side via `ComputeMessageHash` when a client omits it, and maps empty `traceId` / `stackTrace` / `agentVersion` to SQL NULL so `WHERE trace_id IS NULL` filters cleanly.
+**Hub writer.** `DiagWriterImpl` (`packages/nexus-hub/internal/observability/opsmetrics/diag_writer.go`) is a bounded-channel batch writer (defaults: 100 events / 100 ms) that issues `pgx.CopyFrom` into `thing_diag_event`. On queue overflow the event is dropped and `diag.dropped_total{reason="queue_overflow"}` increments. The writer backfills `messageHash` server-side via `ComputeMessageHash` when a client omits it, and maps empty `externalRequestId` / `stackTrace` / `agentVersion` to SQL NULL so `WHERE external_request_id IS NULL` filters cleanly.
 
 ## 5. Log-level control: services vs agent
 
@@ -100,7 +100,7 @@ A silence's only effect is the `silenced` flag on `ListDiagGroups`: it marks the
 
 - **Anomaly / trend detection is not here.** Provider error-rate spikes, hook-latency regressions, and traffic drops are the alerting subsystem's job — see [alerting-architecture.md](alerting-architecture.md). Diag stays narrow: capture slog records and surface them for human triage.
 - **Diag and audit are sibling pipelines.** Operational events flow through diag; governance/admin events flow through the audit pipeline — see [audit-pipeline-architecture.md](audit-pipeline-architecture.md).
-- **Correlation is by `trace_id`** at query time, joining diag rows to traffic and audit rows that share the same request id.
+- **Correlation is by the request id** at query time (`thing_diag_event.external_request_id` against `traffic_event.external_request_id`), joining diag rows to the traffic and audit rows for the same request. Note that `traffic_event.trace_id` is a different column holding the caller's W3C trace id, and is not what these joins use.
 
 ## References
 

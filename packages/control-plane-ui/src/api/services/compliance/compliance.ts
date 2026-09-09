@@ -8,8 +8,7 @@
  *   - grant create / patch / delete; approve & reject of pending requests
  *
  * The unified list endpoint returns rows discriminated by `kind`; per-kind
- * fields are nullable on the opposite kind. See OpenAPI spec at
- * docs/users/api/openapi/admin/e27-s1-compliance-exemption-grants.yaml.
+ * fields are nullable on the opposite kind.
  *
  * Alert channels, thresholds, and custom checks have moved to the unified
  * alerting surface under `/api/admin/alerts/*` — see `./alerts` (`alertsApi`).

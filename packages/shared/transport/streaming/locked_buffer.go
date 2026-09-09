@@ -45,7 +45,7 @@ func (l *LockedByteBuffer) Snapshot() []byte {
 // is large enough, and returns the filled prefix. It is the allocation-free sibling of
 // Snapshot for callers that hand the result to a consumer which does not retain it.
 //
-// Why this exists (finding C-22): LivePipeline snapshots at EVERY checkpoint, and each
+// Why this exists: LivePipeline snapshots at EVERY checkpoint, and each
 // snapshot copied the entire transcript accumulated so far. Because the checkpoint count
 // also grows with the stream, total allocation was quadratic in stream length. Reusing
 // one destination makes it amortized O(final size) while the copy itself (a memmove)

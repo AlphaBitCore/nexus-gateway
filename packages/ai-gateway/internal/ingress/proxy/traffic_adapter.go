@@ -26,7 +26,20 @@ import (
 // caller falls back to `generic-jsonpath`.
 func formatToTrafficAdapterID(f provcore.Format) string {
 	switch f {
-	case provcore.FormatOpenAI:
+	case provcore.FormatOpenAI, provcore.FormatOpenAIResponses:
+		// Both ride the openai traffic adapter: it dispatches on the request
+		// PATH, so /v1/responses reaches extractResponsesCreate and the Responses
+		// input items are extracted like any other wire's messages.
+		//
+		// FormatOpenAIResponses was missing here, and the default arm handed
+		// /v1/responses to generic-jsonpath, which does not know that shape. The
+		// request-stage extraction produced no segments, every content hook
+		// abstained, and the request was APPROVED with its content never scanned
+		// — measured on prod with a redact policy in force: decision APPROVE, and
+		// the stored request body carrying the value verbatim while the same body
+		// on /v1/chat/completions was redacted. It is easy to miss because
+		// AllFormats() deliberately omits this format (it has no standalone
+		// spec), so every gate that iterates AllFormats is blind to it.
 		return "openai-compat"
 	case provcore.FormatDeepSeek:
 		return "deepseek"

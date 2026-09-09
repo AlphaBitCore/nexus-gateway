@@ -26,12 +26,13 @@ func TestUserStore_GetByEmail(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM "NexusUser" WHERE id=$1`, id) })
 
-	got, pwd, source, disabledAt, err := s.GetByEmail(ctx, email)
+	got, pwd, source, account, err := s.GetByEmail(ctx, email)
 	if err != nil {
 		t.Fatalf("GetByEmail: %v", err)
 	}
-	if got != id || pwd != "argon2id$...$hash" || disabledAt != nil {
-		t.Fatalf("unexpected result: id=%q pwd=%q disabledAt=%v", got, pwd, disabledAt)
+	if got != id || pwd != "argon2id$...$hash" || account.Blocked() {
+		t.Fatalf("unexpected result: id=%q pwd=%q blocked=%v reason=%q",
+			got, pwd, account.Blocked(), account.Reason())
 	}
 	if source != "local" {
 		t.Fatalf("source: got %q, want local (DB default)", source)

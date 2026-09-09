@@ -88,6 +88,18 @@ func primeCascadeEmpty(mp pgxmock.PgxPoolIface, segArgN int) {
 		WillReturnRows(pgxmock.NewRows([]string{"id", "bucketStart", "metricName", "dimensionKey", "subDimension", "value", "metadata", "updatedAt"}))
 }
 
+// primeCascadeError makes a QueryRollupCascade call FAIL (watermarks missing,
+// then the 5m segment query errors). QueryRollupCascade returns the segment
+// error verbatim, so this is the read-failure the callers must distinguish
+// from primeCascadeEmpty's legitimate no-data answer.
+func primeCascadeError(mp pgxmock.PgxPoolIface, segArgN int) {
+	mp.ExpectQuery(`rollup_watermark`).WithArgs("merge-1mo").WillReturnError(errors.New("none"))
+	mp.ExpectQuery(`rollup_watermark`).WithArgs("merge-1d").WillReturnError(errors.New("none"))
+	mp.ExpectQuery(`rollup_watermark`).WithArgs("merge-1h").WillReturnError(errors.New("none"))
+	mp.ExpectQuery(`FROM "metric_rollup_5m"`).WithArgs(anyArgs(segArgN)...).
+		WillReturnError(errors.New("rollup table unavailable"))
+}
+
 // ---- ListMatrixAuditEvents ----
 
 var matrixCols = []string{"id", "tx", "sip", "host", "method", "path", "sc", "hd", "hrc", "lat", "ts", "tags"}
@@ -512,5 +524,40 @@ func TestGetComplianceDashboard_RollupEmpty(t *testing.T) {
 	dash, err := s.GetComplianceDashboard(context.Background(), tStart, tEnd)
 	if err != nil || dash == nil || len(dash.TopBlocked.ByTarget) != 0 {
 		t.Fatalf("dashboard rollup-empty: %+v %v", dash, err)
+	}
+}
+
+// The TLS-coverage KPI is a ratio, so a leg that fails to read shrinks the
+// DENOMINATOR as well as the numerator. Absorbing the failure published a
+// percentage over the surviving sources as if it covered the fleet.
+func TestGetComplianceDashboard_TLSCoverageReadFailureSurfaces(t *testing.T) {
+	s, pool, mp := metricsBackedStore(t)
+	dashTrinity(pool)
+	primeCascadeError(mp, 7) // TLS proxy leg fails
+	if _, err := s.GetComplianceDashboard(context.Background(), tStart, tEnd); err == nil {
+		t.Fatal("a failed TLS-coverage read answered 200 with a coverage percentage " +
+			"computed over the sources that happened to respond")
+	}
+}
+
+// A partial rollup is worse than no rollup: it both publishes a percentage
+// over part of the fleet AND suppresses the direct scan that would have
+// answered correctly. The assertion is on the VALUE, not on err == nil --
+// 5 is the direct scan's answer, 10 is what the one surviving rollup leg
+// had already accumulated, so it distinguishes "fell back" from "published
+// the partial".
+func TestGetComplianceCoverage_PartialRollupFallsBackToDirect(t *testing.T) {
+	s, pool, mp := metricsBackedStore(t)
+	primeCascade(mp, 8)      // proxy leg succeeds: bump_success_count = 10
+	primeCascadeError(mp, 8) // agent leg fails
+	pool.ExpectQuery(`GROUP BY bump_status`).WithArgs(tStart, tEnd).
+		WillReturnRows(pgxmock.NewRows([]string{"status", "count"}).AddRow("BUMP_SUCCESS", 5))
+	cov, err := s.GetComplianceCoverage(context.Background(), tStart, tEnd)
+	if err != nil {
+		t.Fatalf("the direct fallback must answer: %v", err)
+	}
+	if got := cov.Breakdown["BUMP_SUCCESS"]; got != 5 {
+		t.Errorf("BUMP_SUCCESS = %d, want 5 (the direct scan); 10 means the "+
+			"surviving rollup leg was published as the whole fleet's coverage", got)
 	}
 }

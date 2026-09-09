@@ -14,9 +14,9 @@ import (
 )
 
 // Strategy evaluation does not recurse: a multi-target strategy's children are
-// provider+model leaves it resolves directly. The depth limit that used to
-// bound recursion is gone with the recursion — the hazard is unrepresentable in
-// the Strategy interface rather than caught by a counter.
+// provider+model leaves it resolves directly. There is no depth limit because
+// there is no recursion to bound — the hazard is unrepresentable in the Strategy
+// interface rather than caught by a counter.
 
 // StrategyNode is a discriminated union representing one node in a strategy tree.
 // The Type field determines which struct fields are populated.
@@ -135,10 +135,10 @@ type RoutingContext struct {
 	// ModelPool is the catalogue of models this request may be served by,
 	// resolved once when the routing context is prepared.
 	//
-	// Every strategy that needs a pool reads this one. `smart` used to fetch
-	// its own and narrow it by the virtual key itself, so the same question was
-	// asked twice per request against the same snapshot — and two answers to
-	// one question is how the defects this program keeps finding begin.
+	// Every strategy that needs a pool reads this one. A strategy that fetches
+	// its own and narrows it by the virtual key itself asks the same question
+	// twice per request against the same snapshot — and two answers to one
+	// question is where this class of defect begins.
 	//
 	// Nil means it was not prepared, which is not the same as empty: a strategy
 	// that names its own targets (single, loadbalance) never needs a pool, so
@@ -327,14 +327,13 @@ func (e *NoCompatibleProviderError) Error() string {
 // ModelNotAllowedError is returned when the caller NAMED a model their virtual
 // key is not permitted to use.
 //
-// The gateway previously served such a request whenever a routing rule
-// redirected it: only the target the rule chose was checked, on the reasoning
-// that the rule decides what runs and the caller's string does not. That is
-// true of what RUNS and false of what the caller was told. A key restricted to
-// one model, with a rule redirecting everything to that model, answered a
-// client hard-coded to `gpt-4o` with a 200 — so the client's own configuration
-// was silently overridden and every response was attributed to a model the key
-// could not use.
+// Checking only the target a routing rule chose serves such a request whenever
+// a rule redirects it, on the reasoning that the rule decides what runs and the
+// caller's string does not. That is true of what RUNS and false of what the
+// caller was told. A key restricted to one model, with a rule redirecting
+// everything to that model, answers a client hard-coded to `gpt-4o` with a 200 —
+// so the client's own configuration is silently overridden and every response is
+// attributed to a model the key cannot use.
 //
 // It applies ONLY when the caller named a single catalog model. `auto` is not a
 // catalog model and can never appear on an allow list; a code that fans out to

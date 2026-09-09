@@ -3,9 +3,7 @@
  * channel editor (webhook | slack | email | pagerduty).
  *
  * Receives the whole form object from `useChannelForm` and fans the relevant
- * fields out to the matching config subcomponent. Behavior and rendered output
- * are identical to the inline block that previously lived in
- * AlertChannelEditPage; this file only relocates that block.
+ * fields out to the matching config subcomponent.
  */
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui';

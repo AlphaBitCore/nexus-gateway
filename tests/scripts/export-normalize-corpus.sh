@@ -36,9 +36,9 @@ source "$REPO_ROOT/tests/lib/loadenv.sh" prod
 # Format: <traffic_event_id>|<side:request|response>|<case_dir>|<meta_json>
 CASES=(
   '2a9a971c-353f-40a1-bef2-2d0ec5e40c7a|response|anthropic-sse-tooluse-only|{"adapterType":"anthropic","direction":"response","endpointPath":"/v1/messages","stream":true}'
-  # Originally exported as "anthropic-sse-text", but the captured stream has
-  # 0 text_delta / 12 input_json_delta frames (a Bash tool command stream) —
-  # renamed to describe what it pins. The genuine text-delta case
+  # Named for what it pins: the captured stream has 0 text_delta / 12
+  # input_json_delta frames (a Bash tool command stream), so "anthropic-sse-text"
+  # would describe the wrong thing. The genuine text-delta case
   # (corpus/anthropic-sse-text) is a LOCAL gateway capture documented in
   # corpus/BASELINE.md: prod holds no pure text-delta /v1/messages stream
   # (the only two matches are tool-dominated mixed streams).

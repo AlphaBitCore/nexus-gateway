@@ -42,7 +42,7 @@ func TestStrictFailClosed_UnknownImpl(t *testing.T) {
 	// (a) strict=true + fail-closed unbuildable → error.
 	t.Run("strict_failclosed_returns_error", func(t *testing.T) {
 		r := NewPolicyResolver(failClosedCfg, registry, testLogger())
-		pipe, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
+		pipe, _, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
 			time.Second, 5*time.Second, false, true, testLogger())
 		if err == nil {
 			t.Fatalf("expected error for fail-closed unbuildable hook under strict, got pipe=%v", pipe)
@@ -62,7 +62,7 @@ func TestStrictFailClosed_UnknownImpl(t *testing.T) {
 	// left so BuildPipeline returns nil,nil — the "nothing to run" signal).
 	t.Run("strict_failopen_still_skipped", func(t *testing.T) {
 		r := NewPolicyResolver(failOpenCfg, registry, testLogger())
-		pipe, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
+		pipe, _, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
 			time.Second, 5*time.Second, false, true, testLogger())
 		if err != nil {
 			t.Fatalf("fail-OPEN hook must be skipped even under strict, not error: %v", err)
@@ -77,7 +77,7 @@ func TestStrictFailClosed_UnknownImpl(t *testing.T) {
 	// interceptor must NEVER refuse.
 	t.Run("nonstrict_failclosed_still_skipped", func(t *testing.T) {
 		r := NewPolicyResolver(failClosedCfg, registry, testLogger())
-		pipe, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
+		pipe, _, err := r.BuildPipeline("request", "AI_GATEWAY", "", nil,
 			time.Second, 5*time.Second, false, false, testLogger())
 		if err != nil {
 			t.Fatalf("strict=false MUST preserve fail-open skip even for a fail-closed hook (host-network safety); got error: %v", err)
@@ -205,7 +205,7 @@ func TestStrictFailClosed_ComplianceProxyAppliance(t *testing.T) {
 	// Compliance-proxy appliance: strict=true → REFUSE (error, nil pipeline).
 	t.Run("compliance_proxy_refuses", func(t *testing.T) {
 		r := NewPolicyResolver(cfg, registry, testLogger())
-		pipe, err := r.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil,
+		pipe, _, err := r.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil,
 			time.Second, 5*time.Second, false, true, testLogger())
 		if err == nil || pipe != nil {
 			t.Fatalf("compliance-proxy must refuse an unbuildable fail-closed hook; got pipe=%v err=%v", pipe, err)
@@ -218,7 +218,7 @@ func TestStrictFailClosed_ComplianceProxyAppliance(t *testing.T) {
 	// Agent NE host-packet path: strict=false → STILL fail-open (skip, build ok).
 	t.Run("agent_ne_stays_fail_open", func(t *testing.T) {
 		r := NewPolicyResolver(cfg, registry, testLogger())
-		pipe, err := r.BuildPipeline("request", "AGENT", "", nil,
+		pipe, _, err := r.BuildPipeline("request", "AGENT", "", nil,
 			time.Second, 5*time.Second, false, false, testLogger())
 		if err != nil {
 			t.Fatalf("agent NE host path must stay fail-open (skip), not refuse; got error: %v", err)

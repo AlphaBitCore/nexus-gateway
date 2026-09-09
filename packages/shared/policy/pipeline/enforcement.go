@@ -115,9 +115,7 @@ func (p *Pipeline) MayBlock() bool {
 //   - its parsed onMatch action equals want;
 //   - its onMatch is unparseable. A malformed config is treated conservatively
 //     as enforcing — mirroring hookIsEnforcing — so a misconfigured hook routes
-//     to buffer instead of leaking onto the unbuffered live path. (The two
-//     predicates previously disagreed here: anyOnMatchAction skipped a parse
-//     error while hookIsEnforcing counted it.)
+//     to buffer instead of leaking onto the unbuffered live path.
 func (p *Pipeline) anyOnMatchAction(want decision.Action) bool {
 	for i := range p.hooks {
 		if esc, ok := p.hooks[i].hook.(core.RuntimeEscalatable); ok && esc.MayExceedOnMatch() {

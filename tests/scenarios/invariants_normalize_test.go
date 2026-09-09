@@ -132,7 +132,7 @@ func TestS152_CrossIngressNormalizeParity(t *testing.T) {
 		t.Errorf("normalizeVersion diverges across ingresses: chat=%q responses=%q", chatN.NormalizeVersion, respN.NormalizeVersion)
 	}
 	t.Logf("S-152 OK: kind=%s normalizeVersion=%s userText parity=%v (chat & responses normalize to one canonical shape)",
-		chatN.Kind, chatN.NormalizeVersion, chatText == respText && chatText == prompt)
+		chatN.Kind, chatN.NormalizeVersion, chatText == respText && respText == prompt)
 }
 
 // fetchNormalizedRequest resolves the traffic_event for a VK+path and reads its
@@ -154,7 +154,7 @@ func fetchNormalizedRequest(t *testing.T, sc *scenarioCtx, ctx context.Context, 
 	const tries = 20
 	const interval = 2 * time.Second
 	var eventID string
-	for i := 0; i < tries; i++ {
+	for range tries {
 		if scanErr := sc.DB.QueryRow(ctx, query, vkID, path).Scan(&eventID); scanErr == nil && eventID != "" {
 			break
 		}

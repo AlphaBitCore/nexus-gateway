@@ -1,8 +1,12 @@
 package mq_test
 
 import (
+	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
@@ -21,29 +25,65 @@ func TestNewConsumer_UnknownDriver(t *testing.T) {
 	}
 }
 
+// metricsNamespaceSeq makes each NewMetrics call in this package use a namespace
+// nothing has registered before.
+//
+// The previous constant namespace was labelled "unique to avoid duplicate
+// Prometheus registration across test runs" and was not: promauto registers into
+// a process-wide registry, so the SECOND run of this test in one process — any
+// `-count=2`, which is how a flaky suite gets shaken out — panicked on duplicate
+// registration. A constant is unique across processes, and the collision is
+// within one.
+var metricsNamespaceSeq atomic.Uint64
+
 func TestNewMetrics_RegistersAllCounters(t *testing.T) {
-	// Unique namespace to avoid duplicate Prometheus registration across test runs.
-	m := mq.NewMetrics("test_mq_s1_counters")
-	if m.PublishedTotal == nil {
-		t.Error("PublishedTotal is nil")
+	ns := fmt.Sprintf("test_mq_counters_%d", metricsNamespaceSeq.Add(1))
+	m := mq.NewMetrics(ns)
+
+	// Assert the counters are REGISTERED under the names an operator's dashboard
+	// queries, not merely that the struct fields are non-nil. A field can be
+	// non-nil while carrying the wrong namespace, subsystem or name — which is
+	// exactly the kind of change that silently empties a dashboard, and the kind a
+	// nil-check cannot see.
+	want := []string{
+		ns + "_mq_published_total",
+		ns + "_mq_enqueued_total",
+		ns + "_mq_consumed_total",
+		ns + "_mq_acked_total",
+		ns + "_mq_naked_total",
+		ns + "_mq_deferred_total",
+		ns + "_mq_errors_total",
 	}
-	if m.EnqueuedTotal == nil {
-		t.Error("EnqueuedTotal is nil")
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
 	}
-	if m.ConsumedTotal == nil {
-		t.Error("ConsumedTotal is nil")
+	registered := map[string]bool{}
+	for _, f := range families {
+		registered[f.GetName()] = true
 	}
-	if m.AckedTotal == nil {
-		t.Error("AckedTotal is nil")
+	for _, name := range want {
+		if !registered[name] {
+			t.Errorf("%s is not registered — the counter exists on the struct but nothing "+
+				"scraping this process can see it", name)
+		}
 	}
-	if m.NakedTotal == nil {
-		t.Error("NakedTotal is nil")
-	}
-	if m.DeferredTotal == nil {
-		t.Error("DeferredTotal is nil")
-	}
-	if m.ErrorsTotal == nil {
-		t.Error("ErrorsTotal is nil")
+
+	// The struct must also hand each counter back, or the code that increments it
+	// writes to a nil pointer at runtime.
+	for name, c := range map[string]prometheus.Counter{
+		"PublishedTotal": m.PublishedTotal,
+		"EnqueuedTotal":  m.EnqueuedTotal,
+		"ConsumedTotal":  m.ConsumedTotal,
+		"AckedTotal":     m.AckedTotal,
+		"NakedTotal":     m.NakedTotal,
+		"DeferredTotal":  m.DeferredTotal,
+		"ErrorsTotal":    m.ErrorsTotal,
+	} {
+		if c == nil {
+			t.Errorf("%s is nil", name)
+		}
 	}
 }
 

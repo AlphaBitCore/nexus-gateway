@@ -69,6 +69,15 @@ func (c *credStore) ListForProvider(_ context.Context, _ string) ([]CredentialCa
 	return c.candidates, c.listErr
 }
 
+// oneUsableCredential is the default posture for tests that are not about
+// credential availability. An empty candidate list is no longer a neutral
+// default: it now means "every credential is disabled, retired, or drained",
+// which is a refusal, so a test that leaves it empty by accident is asserting
+// something it did not intend.
+func oneUsableCredential() []CredentialCandidate {
+	return []CredentialCandidate{{ID: "c-1", Name: "cred-1", Weight: 100}}
+}
+
 // TestResolve_NilReceiver_ReturnsWiringError ensures Resolve guards against
 // callers that forgot to fully wire dependencies.
 func TestResolve_NilReceiver_ReturnsWiringError(t *testing.T) {
@@ -187,7 +196,7 @@ func TestResolve_CredentialError(t *testing.T) {
 	r := NewPgResolver(
 		&configurableProviderStore{row: ProviderRow{ID: "p-1", AdapterType: "openai"}},
 		&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "x"}},
-		&credStore{resolveErr: errors.New("vault locked")},
+		&credStore{resolveErr: errors.New("vault locked"), candidates: oneUsableCredential()},
 	)
 	_, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{})
 	if err == nil || !strings.Contains(err.Error(), "credential") || !strings.Contains(err.Error(), "vault locked") {
@@ -209,7 +218,7 @@ func TestResolve_CopiesExtrasAndAddsDeploymentHint(t *testing.T) {
 				Extras:      map[string]string{"azure.apiVersion": "2024-06-01"},
 			}},
 			&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "gpt-4o"}},
-			&credStore{resolveKey: "sk-azure", resolveID: "c-1", resolveName: "primary"},
+			&credStore{resolveKey: "sk-azure", resolveID: "c-1", resolveName: "primary", candidates: oneUsableCredential()},
 		)
 		target, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{Deployment: "prod-gpt-4o"})
 		if err != nil {
@@ -230,7 +239,7 @@ func TestResolve_CopiesExtrasAndAddsDeploymentHint(t *testing.T) {
 		r := NewPgResolver(
 			&configurableProviderStore{row: ProviderRow{ID: "p-1", AdapterType: "azure-openai"}},
 			&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "gpt-4o"}},
-			&credStore{resolveKey: "sk", resolveID: "c-1"},
+			&credStore{resolveKey: "sk", resolveID: "c-1", candidates: oneUsableCredential()},
 		)
 		target, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{Deployment: "dep-x"})
 		if err != nil {
@@ -256,7 +265,7 @@ func TestResolve_PropagatesMaxOutputTokens(t *testing.T) {
 		r := NewPgResolver(
 			&configurableProviderStore{row: ProviderRow{ID: "p-1", Name: "anthropic", AdapterType: "anthropic"}},
 			&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "claude-opus-4-7", MaxOutputTokens: 128000}},
-			&credStore{resolveKey: "sk", resolveID: "c-1"},
+			&credStore{resolveKey: "sk", resolveID: "c-1", candidates: oneUsableCredential()},
 		)
 		target, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{})
 		if err != nil {
@@ -271,7 +280,7 @@ func TestResolve_PropagatesMaxOutputTokens(t *testing.T) {
 		r := NewPgResolver(
 			&configurableProviderStore{row: ProviderRow{ID: "p-1", Name: "anthropic", AdapterType: "anthropic"}},
 			&configurableModelStore{row: ModelRow{ID: "m-1", ProviderID: "p-1", ProviderModelID: "claude-nocap"}},
-			&credStore{resolveKey: "sk", resolveID: "c-1"},
+			&credStore{resolveKey: "sk", resolveID: "c-1", candidates: oneUsableCredential()},
 		)
 		target, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{})
 		if err != nil {
@@ -309,9 +318,18 @@ func TestResolveCredential_ListError_FallsBackToDefault(t *testing.T) {
 	}
 }
 
-// TestResolveCredential_EmptyList_FallsBackToDefault is the sibling path:
-// no error but no candidates.
-func TestResolveCredential_EmptyList_FallsBackToDefault(t *testing.T) {
+// TestResolveCredential_EmptyList_IsARefusalNotAFallback.
+//
+// Asserting the opposite is how the defect
+// survives: an empty candidate list falls through to the same single-credential
+// query the LIST ERROR path uses, and that query has no selectionWeight
+// predicate. So draining every credential to weight 0 — the operator action
+// that empties this list — resolves a drained credential and keeps serving
+// traffic, while the console showed weight 0.
+//
+// An empty list is an ANSWER: nothing this provider owns is usable. It must
+// refuse, and it must not reach for a credential the list already excluded.
+func TestResolveCredential_EmptyList_IsARefusalNotAFallback(t *testing.T) {
 	cs := &credStore{resolveKey: "sk", resolveID: "c-default", candidates: nil}
 	r := NewPgResolver(
 		&configurableProviderStore{row: ProviderRow{ID: "p-1", AdapterType: "openai"}},
@@ -319,11 +337,15 @@ func TestResolveCredential_EmptyList_FallsBackToDefault(t *testing.T) {
 		cs,
 	)
 	_, err := r.Resolve(context.Background(), "p-1", "m-1", ResolveHints{})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+	if err == nil {
+		t.Fatal("an empty candidate list resolved a credential — a drained credential is still serving traffic")
 	}
-	if cs.lastCredID != "" {
-		t.Fatalf("empty-list fallback should pass empty credID; got %q", cs.lastCredID)
+	if !strings.Contains(err.Error(), "no usable credential") {
+		t.Errorf("err = %v, want it to name the condition an operator can act on", err)
+	}
+	if cs.resolveCalls != 0 {
+		t.Errorf("ResolveForProvider was called %d time(s) after an empty list — the fallback query is exactly what the list already excluded",
+			cs.resolveCalls)
 	}
 }
 

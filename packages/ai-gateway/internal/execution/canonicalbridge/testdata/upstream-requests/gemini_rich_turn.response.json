@@ -1,0 +1,40 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "I'm sorry, I can only get the current weather conditions, not future forecasts.",
+            "thoughtSignature": "CvkBARFNMg8+Wh4ZUT+59Fa0FnHp4bshjxa/epTxxrPlS5GlxH5A+gCqpiYX5vdp4WgVv8Zj0QHoR9n7VisTd9eJeYs2brnJ8oRrcTbhtYu3mu5qDlsY5iEfFJ4nEMunaqa22Gc0k3pq4cPr9Wejn6GZHilm6BhwBBxMhKz0LblPoUdVxrtrf6jPY3N4uK04lw7+C3Kvj/JAhnsEVHHM61yOVWter6OWNbS4oJc02UpY+lI3PA4A3kv1TQOIhHslbGKhqViG/c7b8k/G62yubFuYesoT5Ed51emRO8ntEtaXyBy89xhHFQ9Sudvvrj3AyojBOgNK4zV9Hnf6"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 623,
+    "candidatesTokenCount": 18,
+    "totalTokenCount": 689,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 107
+      },
+      {
+        "modality": "IMAGE",
+        "tokenCount": 258
+      },
+      {
+        "modality": "DOCUMENT",
+        "tokenCount": 258
+      }
+    ],
+    "thoughtsTokenCount": 48,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "sN2SatinFt3a1e8PssGp0Ao"
+}

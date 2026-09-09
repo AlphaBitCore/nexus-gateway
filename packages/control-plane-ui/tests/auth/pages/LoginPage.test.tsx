@@ -3,8 +3,17 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { renderWithRouter, server } from '@/test/test-utils';
+import { useLocation } from 'react-router-dom';
 import { LoginPage } from '../../../src/auth/pages/LoginPage';
-import { clearTokens } from '../../../src/auth/tokens/tokenStore';
+
+// "No password form" is satisfied by a page that navigated away AND by a page
+// that never rendered, so it cannot tell the two apart. This reports where the
+// router actually went.
+function Where() {
+  const l = useLocation();
+  return <span data-testid="where">{`${l.pathname}${l.search}`}</span>;
+}
+import { clearTokens, setTokens } from '../../../src/auth/tokens/tokenStore';
 
 describe('LoginPage', () => {
   const originalLocation = window.location;
@@ -227,5 +236,107 @@ describe('LoginPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
     // expired authctx → silent OAuth restart (assign to /oauth/authorize), no error text
     await waitFor(() => expect(assignCalls.some((u) => new URL(String(u)).pathname === '/oauth/authorize')).toBe(true));
+  });
+
+  // The already-signed-in arm: `nexus login` opens a browser tab at /login with
+  // an authctx while the console session is still live. Nothing here was tested.
+  // The whole point of the arm is that the CLI's loopback listener is waiting on
+  // a redirect that only this page can produce — navigate to "/" instead and the
+  // CLI hangs with no error on either side, which is what it did before this arm
+  // existed.
+  describe('LoginPage — an operator who is already signed in', () => {
+    const signIn = () => setTokens({ accessToken: 'at', refreshToken: 'rt' });
+
+    it('approves the pending authorize with the live session and hands the CLI its redirect', async () => {
+      let sentAuthctx = '';
+      let sentAuth = '';
+      server.use(
+        http.post('/authserver/approve', async ({ request }) => {
+          sentAuth = request.headers.get('Authorization') ?? '';
+          sentAuthctx = ((await request.json()) as { authctx: string }).authctx;
+          return HttpResponse.json({ redirectUri: 'http://127.0.0.1:51234/cb?code=abc&state=xyz' });
+        }),
+      );
+      signIn();
+      renderWithRouter(<LoginPage />, { route: '/login?authctx=cli-ctx' });
+
+      await waitFor(() => expect(assignCalls).toHaveLength(1));
+      expect(assignCalls[0]).toBe('http://127.0.0.1:51234/cb?code=abc&state=xyz');
+      // The existing session is what authorises the approval — sending the
+      // authctx without it would make this endpoint mint a code for an
+      // unauthenticated caller.
+      expect(sentAuth).toBe('Bearer at');
+      expect(sentAuthctx).toBe('cli-ctx');
+      // No login form: the operator is signed in and is not asked again.
+      expect(screen.queryByLabelText(/password/i)).toBeNull();
+    });
+
+    it('goes to the app rather than the CLI when there is no authorize to approve', async () => {
+      // A signed-in operator who simply navigates to /login. There is nothing to
+      // approve, so the page must get out of the way instead of showing a form
+      // to someone who is already authenticated.
+      let approveCalls = 0;
+      server.use(
+        http.post('/authserver/approve', () => {
+          approveCalls += 1;
+          return HttpResponse.json({ redirectUri: 'http://unwanted.invalid/' });
+        }),
+      );
+      signIn();
+      renderWithRouter(
+        <>
+          <LoginPage />
+          <Where />
+        </>,
+        { route: '/login' },
+      );
+
+      // The probe mounting is what proves the page rendered at all, so the
+      // navigation below is a navigation rather than a blank screen.
+      expect(screen.getByTestId('where').textContent).toBe('/login');
+      await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/'));
+      expect(approveCalls).toBe(0);
+      expect(assignCalls).toHaveLength(0);
+    });
+
+    it('restarts the whole dance when the authctx has already been consumed', async () => {
+      // An authctx is one-shot and short-lived. Reloading the tab replays a
+      // spent one; stranding the operator on /login with a dead context is a
+      // dead end they cannot get out of by trying again.
+      server.use(
+        http.post('/authserver/approve', () =>
+          HttpResponse.json({ error: 'authctx_expired', message: 'expired' }, { status: 400 }),
+        ),
+      );
+      signIn();
+      renderWithRouter(<LoginPage />, { route: '/login?authctx=spent-ctx' });
+
+      await waitFor(() => expect(assignCalls).toHaveLength(1));
+      expect(String(assignCalls[0])).toContain('/oauth/authorize');
+    });
+
+    it('sends the operator home on any other approval failure instead of retrying forever', async () => {
+      // A 500 from the authserver is not something a fresh authctx fixes. The
+      // page must not restart the dance into the same error; the operator
+      // re-runs `nexus login` when they are ready.
+      server.use(
+        http.post('/authserver/approve', () =>
+          HttpResponse.json({ error: 'internal_error', message: 'boom' }, { status: 500 }),
+        ),
+      );
+      signIn();
+      renderWithRouter(
+        <>
+          <LoginPage />
+          <Where />
+        </>,
+        { route: '/login?authctx=cli-ctx' },
+      );
+
+      await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/'));
+      // Home, not another trip through /oauth/authorize — a fresh authctx does
+      // not fix a 500, and restarting would loop the operator through it.
+      expect(assignCalls.filter((u) => String(u).includes('/oauth/authorize'))).toHaveLength(0);
+    });
   });
 });

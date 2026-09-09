@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-// Spec: Cache Hub page (E59 fleet config UI + E69 prewarm modal).
+// Cache Hub page — fleet config UI plus prewarm modal.
 //
 // Covers three idempotent, read-mostly assertions:
 //   1. Page loads with heading + at least one section card rendered.

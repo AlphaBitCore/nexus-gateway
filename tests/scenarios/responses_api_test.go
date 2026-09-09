@@ -20,7 +20,7 @@ import (
 // TestS062_ResponsesAPI_NonStreamAndError — PM-grade e2e for the
 // /v1/responses ingress, covering three arms in one scenario.
 //
-// BRAINSTORM (pre): the Responses API is Nexus's OpenAI-shape ingress
+// The Responses API is Nexus's OpenAI-shape ingress
 // for the stateless Responses surface. The adapter is wired
 // in packages/ai-gateway/internal/providers/specs/openai/codec and the
 // hub_ingress handler stamps path='/v1/responses' on the
@@ -180,7 +180,7 @@ func TestS062_ResponsesAPI_NonStreamAndError(t *testing.T) {
 	// builds; Arms A + B both produce a row, so 1 is the safe floor.
 	// ------------------------------------------------------------------
 	var responsesRows int64
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err := sc.DB.QueryRow(ctx, `
 			SELECT COUNT(*) FROM traffic_event
 			WHERE identity->'vk'->>'id' = $1 AND path = '/v1/responses'

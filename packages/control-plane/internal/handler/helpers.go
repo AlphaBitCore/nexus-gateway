@@ -2,22 +2,23 @@ package handler
 
 import (
 	"context"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/goccy/go-json"
+
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 
 	cachehandler "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/cache/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/aiguard/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/exemptions/handler"
+	aiguard "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/aiguard/handler"
+	exemption "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/exemptions/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/patternperf"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/rulepacks/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	rulepacks "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/rulepacks/handler"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/iamstore"
@@ -32,9 +33,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	metricspkg "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // ProxyConfig holds BFF proxy settings for data-plane services. Peer base

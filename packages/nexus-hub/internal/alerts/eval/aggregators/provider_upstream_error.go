@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
+	alerteval "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/errorcode"
 )
 
@@ -13,16 +13,16 @@ import (
 //
 // The question it has to answer is "did the upstream break, or did we reject
 // this before ever calling it" — a provider must not be blamed for our own
-// routing, quota or auth decisions. It used to answer that with
-// `error_code IS NULL`, on the contract that Nexus leaves upstream failures
+// routing, quota or auth decisions. Answering it with
+// `error_code IS NULL` assumes Nexus leaves upstream failures
 // unclassified and stamps a code only on its own rejects.
 //
 // The gateway does not honour that contract: it classifies every upstream
-// failure too, so error_code was never NULL on one and this rule counted
-// nothing. It had never fired in production — verified 2026-07-15 against the
+// failure too, so error_code is never NULL on one and such a rule counts
+// nothing. Written that way it never fired in production — verified against the
 // live database, where zero 5xx rows carry an empty error_code.
 //
-// The distinction is now drawn where it actually lives: which vocabulary the
+// The distinction is drawn where it actually lives: which vocabulary the
 // code belongs to. errorcode.IsUpstream reports whether the upstream answered
 // and rejected us, as opposed to a gateway-side decision (ROUTING_NO_MATCH,
 // QUOTA_EXCEEDED, …) or a routing failure that never reached one

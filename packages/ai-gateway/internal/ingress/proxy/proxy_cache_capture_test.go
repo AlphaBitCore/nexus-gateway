@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"

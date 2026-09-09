@@ -136,14 +136,14 @@ func TestStore_ApplyShadowState_ValidPayload(t *testing.T) {
 }
 
 // TestStore_ApplyShadowState_EmptyKeepsCurrent — an empty payload KEEPS the
-// current policy. It used to assert the opposite ("empty resets to default"),
-// and that assertion is what the live defect looked like from inside the suite.
+// current policy. Asserting the opposite ("empty resets to default") is what
+// the live defect looked like from inside the suite.
 //
 // streaming_compliance is a Type-B key in configkey.go — "invalidation trigger —
 // state stays null/{}" — so an empty payload is not "no configuration", it is
-// what the Hub sends on EVERY push. Resetting on it meant: the compliance proxy
-// loaded the admin's chunked_async at boot (10:30:50.045) and this path replaced
-// it with the built-in passthrough 70 ms later, after which every SSE stream was
+// what the Hub sends on EVERY push. Resetting on it means the compliance proxy
+// loads the admin's chunked_async at boot and this path replaces
+// it with the built-in passthrough milliseconds later, after which every SSE stream is
 // relayed uninspected — passthrough neither accumulates nor can reject.
 //
 // The receiver's job on a trigger is to re-read its authoritative source. The

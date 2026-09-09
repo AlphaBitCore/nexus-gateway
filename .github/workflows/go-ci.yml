@@ -13,6 +13,8 @@ on:
       - 'packages/nexus-cli/**'
       - 'packages/nexus-agent-core/**'
       - 'tests/integration-go/**'
+      - 'tests/scenarios/**'
+      - 'tests/agent/gap_closure/**'
       - 'tools/db-migrate/schema/**'
       - 'go.work'
       - '.github/workflows/go-ci.yml'
@@ -31,6 +33,8 @@ on:
       - 'packages/nexus-cli/**'
       - 'packages/nexus-agent-core/**'
       - 'tests/integration-go/**'
+      - 'tests/scenarios/**'
+      - 'tests/agent/gap_closure/**'
       - 'tools/db-migrate/schema/**'
       - 'go.work'
       - '.github/workflows/go-ci.yml'
@@ -52,6 +56,12 @@ jobs:
       # in dedicated jobs, not the Linux matrix; gate them on their own path.
       agent-ui: ${{ steps.detect.outputs.agent-ui }}
       integration: ${{ steps.detect.outputs.integration }}
+      # tests/scenarios and tests/agent/gap_closure are outside go.work, so the
+      # matrix cannot reach them and every Go command needs GOWORK=off.
+      test-modules-offwork: ${{ steps.detect.outputs.test-modules-offwork }}
+      # The macOS Network Extension is Swift, so no Go job can reach it; it
+      # compiles in its own macOS job gated on its own path.
+      agent-darwin: ${{ steps.detect.outputs.agent-darwin }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -111,6 +121,15 @@ jobs:
           fi
           echo "agent-ui=$AGENT_UI" >> "$GITHUB_OUTPUT"
 
+          # The macOS NE extension + menu-bar app (Swift, SwiftPM) compile on a
+          # macOS runner in their own job; gate on the darwin platform path or a
+          # workflow change.
+          AGENT_DARWIN=false
+          if echo "$CHANGED" | grep -qE '^(packages/agent/platform/darwin/|\.github/workflows/go-ci\.yml$)'; then
+            AGENT_DARWIN=true
+          fi
+          echo "agent-darwin=$AGENT_DARWIN" >> "$GITHUB_OUTPUT"
+
           # tests/integration-go compiles in its own job (live run is the
           # manual e2e gate, not CI); gate on its own path or a workspace /
           # workflow change.
@@ -119,6 +138,12 @@ jobs:
             INTEGRATION=true
           fi
           echo "integration=$INTEGRATION" >> "$GITHUB_OUTPUT"
+
+          OFFWORK=false
+          if echo "$CHANGED" | grep -qE '^(tests/scenarios/|tests/agent/gap_closure/|\.golangci\.yml$|\.github/workflows/go-ci\.yml$)'; then
+            OFFWORK=true
+          fi
+          echo "test-modules-offwork=$OFFWORK" >> "$GITHUB_OUTPUT"
 
           # Test scope: broad. If shared or go.work changed, run all matrix modules.
           if echo "$CHANGED" | grep -qE '^(packages/shared/|go\.work$|\.github/workflows/go-ci\.yml$)'; then
@@ -278,6 +303,39 @@ jobs:
           # a fresh batch too big to absorb in a single PR.
           only-new-issues: false
 
+  agent-darwin:
+    name: Agent macOS — Network Extension compile
+    needs: detect-modules
+    if: needs.detect-modules.outputs.agent-darwin == 'true'
+    # This job exists because NOTHING compiled this Swift before it. The
+    # extension is a NETransparentProxyProvider in the host's outbound packet
+    # path: CLAUDE.md's own words are that a hang or panic there takes down the
+    # entire Mac's network — DNS, DHCP, mDNS, NTP, Apple Push, VPN — and that
+    # recovery is a manual `launchctl unload` plus deleting the plist. The only
+    # automated coverage naming these files was a review gate that produces
+    # prose. A call to a method that does not exist would reach a release build.
+    #
+    # A compile is not a test, and this does not pretend otherwise. It is the
+    # failure with the widest blast radius and the least excuse, and it costs
+    # about four seconds. Unit tests need the pure-logic files split out of the
+    # executable target into a library first, which is its own change.
+    #
+    # This is NOT a release build: Skill('build-agent') remains the single
+    # source of truth for signing, provisioning, notarization and packaging.
+    # Nothing here signs anything.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: swift version
+        run: swift --version
+
+      # Both targets: the extension is the safety-critical one, and the menu-bar
+      # app is what installs and talks to it, so a break in either is a broken
+      # install.
+      - name: swift build (extension + menu-bar app)
+        run: cd packages/agent/platform/darwin && swift build
+
   agent-ui:
     name: Agent UI — Wails (macOS)
     needs: detect-modules
@@ -348,11 +406,57 @@ jobs:
         run: cd tests/integration-go && go build ./...
 
       # Compile the test binaries without running them. The suite drives a
-      # live service stack + Postgres (setupOrSkip skips when NEXUS_TEST_VK
-      # is unset), so CI validates that the tests COMPILE; the live run is
-      # the manual e2e gate (tests/run-all.sh), not this workflow.
+      # live service stack + Postgres, so CI validates that the tests COMPILE;
+      # the live run is the manual e2e gate (tests/run-all.sh), not this
+      # workflow. `-c` is what makes "no run" true: `-run='^$'` filters test
+      # FUNCTIONS and still executes TestMain and every package init.
       - name: go test (compile only — no run)
-        run: cd tests/integration-go && go test -run='^$' -count=1 ./...
+        run: cd tests/integration-go && go test -c -o /dev/null ./...
+
+  test-modules-offwork:
+    name: Test modules outside go.work — lint + compile
+    needs: detect-modules
+    if: needs.detect-modules.outputs.test-modules-offwork == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [tests/scenarios, tests/agent/gap_closure]
+    # Both modules carry their own go.mod and are deliberately absent from
+    # go.work. Without this, every Go command resolves against the workspace and
+    # dies with "directory prefix . does not contain modules listed in go.work"
+    # — which reads like a broken job rather than an unlintable module, and is
+    # why neither was ever checked.
+    env:
+      GOWORK: off
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: go vet
+        run: cd ${{ matrix.module }} && go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          skip-cache: true
+          working-directory: ${{ matrix.module }}
+          only-new-issues: false
+
+      # Compile the test binaries without running them: both suites drive a live
+      # stack, so CI checks that they COMPILE and lint. The live run is the
+      # manual e2e gate.
+      #
+      # `-c` is load-bearing. `-run='^$'` selects zero test functions but still
+      # runs TestMain, and tests/scenarios' TestMain refuses to start on a
+      # non-TTY without NEXUS_TEST_TARGET and then blocks forever in
+      # WaitForServices — so the step named "no run" did run, and failed.
+      - name: go test (compile only — no run)
+        run: cd ${{ matrix.module }} && go test -c -o /dev/null ./...
 
   workspace-verify:
     name: Workspace integrity
@@ -363,13 +467,25 @@ jobs:
         with:
           go-version: '1.26.6'
 
+      # Repo-wide by construction: the AST gate walks every module, so it has to
+      # run in a job that is not scoped to the modules a change happens to
+      # touch. Scoped to packages/shared — where the test lives — it would miss
+      # every violation added anywhere else.
+      - name: No bare http.Client construction
+        run: bash scripts/check-bare-http-client.sh
+
       - name: gofmt (repo-wide)
         run: |
           # Every committed Go file must be gofmt-formatted. gofmt -l lists
           # files that differ from canonical formatting; a non-empty list fails.
-          out=$(gofmt -l packages/ tools/ | grep -vE 'node_modules|/vendor/' || true)
+          #
+          # tests/ is named here because it was not: the sweep globbed
+          # packages/ and tools/ only, and the pre-commit gate sees staged
+          # files, so thirteen files under tests/scenarios stayed unformatted
+          # with every gate reporting clean.
+          out=$(gofmt -l packages/ tools/ tests/ | grep -vE 'node_modules|/vendor/' || true)
           if [ -n "$out" ]; then
-            echo "::error::These Go files are not gofmt-formatted. Run: gofmt -w packages/ tools/"
+            echo "::error::These Go files are not gofmt-formatted. Run: gofmt -w packages/ tools/ tests/"
             echo "$out"
             exit 1
           fi
@@ -377,11 +493,22 @@ jobs:
 
       - name: go work sync (check for drift)
         run: |
+          # `go work sync` writes the workspace's selected versions back into
+          # every member's go.mod, not only into go.work — so diffing go.work
+          # alone passes while a member drifts. Diff what the command writes.
           go work sync
-          if ! git diff --exit-code go.work; then
-            echo "::error::go.work is out of sync — run 'go work sync' locally and commit"
+          if ! git diff --exit-code go.work packages/*/go.mod packages/*/*/go.mod; then
+            echo "::error::go.work or a member go.mod is out of sync — run 'go work sync' locally and commit"
             exit 1
           fi
+
+      - name: One version per shared dependency, including modules outside go.work
+        run: |
+          # `go work sync` reaches only the modules go.work lists. tests/scenarios
+          # and tests/agent/gap_closure are outside it on purpose, and that is
+          # where versions drifted — x/sync v0.17.0 and pgx v5.9.2 against a repo
+          # on v0.22.0 and v5.10.0.
+          node scripts/check-dep-version-unity.mjs
 
       - name: Check for non-sibling replace directives in go.mod files
         run: |

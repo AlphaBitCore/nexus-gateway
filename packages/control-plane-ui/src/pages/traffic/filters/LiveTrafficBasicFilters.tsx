@@ -244,7 +244,7 @@ export function LiveTrafficBasicFilters({
                   };
                   const out: ComboboxOption[] = [];
                   for (const g of res.data ?? []) {
-                    const pn = g.provider?.name ?? 'provider';
+                    const pn = g.provider?.name ?? t('pages:traffic.unnamedProvider');
                     for (const m of g.models ?? []) {
                       const apiId = (m.providerModelId ?? '').trim() || m.id;
                       out.push({ id: apiId, label: `${pn} / ${m.name}` });

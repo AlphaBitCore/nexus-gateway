@@ -397,9 +397,9 @@ func TestCreateVirtualKey_EmptyName(t *testing.T) {
 
 // TestCreateVirtualKey_OmittedVKType_HitsApprovalGate verifies that
 // an OMITTED vkType defaults to "application" and MUST be routed through the same
-// approval gate (projectId + expiresAt required, status → pending). Previously
-// the gate keyed off the literal request field, so an omitted vkType skipped it
-// and minted an immediately-active application key, bypassing the :approve verb.
+// approval gate (projectId + expiresAt required, status → pending). A gate
+// keyed off the literal request field lets an omitted vkType skip it
+// and mint an immediately-active application key, bypassing the :approve verb.
 func TestCreateVirtualKey_OmittedVKType_HitsApprovalGate(t *testing.T) {
 	h, _, _, _ := newHandlerWithMockDB(t)
 	// No vkType, no projectId/expiresAt — must be rejected, not silently created.

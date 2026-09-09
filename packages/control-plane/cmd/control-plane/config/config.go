@@ -125,9 +125,9 @@ type AuthServerConfig struct {
 	// checker polls on MQ reconnect. Defaults to Issuer +
 	// "/api/internal/revocations" when empty — the INTERNAL route, gated by
 	// rstokenauth, because the checker authenticates with the internal service
-	// token and holds no IAM identity. It used to default to
-	// "/api/admin/revocations", whose admin:revocation.read gate a service token
-	// cannot satisfy, so catchup answered 401 on every poll. An override pointing
+	// token and holds no IAM identity. Defaulting to
+	// "/api/admin/revocations" instead answers 401 on every poll: a service token
+	// cannot satisfy its admin:revocation.read gate. An override pointing
 	// at the admin route will still 401 for the same reason.
 	RevocationReplayURL string `yaml:"revocationReplayUrl"`
 }

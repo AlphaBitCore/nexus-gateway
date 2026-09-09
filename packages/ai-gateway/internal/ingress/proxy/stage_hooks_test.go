@@ -128,8 +128,8 @@ func TestServeProxy_RequestHookModify_ForwardsRewrittenBodyUpstream(t *testing.T
 }
 
 // TestServeProxy_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream is the
-// end-to-end #13 leak-#4 regression: a redact hook co-firing with a soft-block hook
-// resolves to Decision=BLOCK_SOFT, which the pre-#13 `Decision==Modify` gate skipped —
+// end-to-end request-side regression: a redact hook co-firing with a soft-block hook
+// resolves to Decision=BLOCK_SOFT, which a `Decision==Modify` gate skips —
 // forwarding the caller's ORIGINAL request body (PII intact) upstream. With the gate on
 // CarriesRedaction(), the upstream provider must receive the masked body and never the
 // original email.

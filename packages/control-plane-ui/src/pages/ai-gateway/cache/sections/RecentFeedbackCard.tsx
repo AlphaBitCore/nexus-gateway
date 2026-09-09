@@ -34,7 +34,7 @@ export function RecentFeedbackCard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
           <div>
             <h3>{t('pages:aiGateway.cache.recentFeedback.title')}</h3>
-            <p style={{ color: 'var(--g-color-text-muted)', fontSize: 'var(--g-font-size-sm)' }}>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--g-font-size-sm)' }}>
               {t('pages:aiGateway.cache.recentFeedback.subtitle')}
             </p>
           </div>
@@ -46,7 +46,7 @@ export function RecentFeedbackCard() {
         {loading && <Skeleton.Box width="100%" height={120} />}
         {error && <ErrorBanner message={error.message} />}
         {!loading && !error && (data?.entries.length ?? 0) === 0 && (
-          <div style={{ color: 'var(--g-color-text-muted)', padding: 'var(--g-space-md)' }}>
+          <div style={{ color: 'var(--color-text-muted)', padding: 'var(--g-space-md)' }}>
             {t('pages:aiGateway.cache.recentFeedback.empty')}
           </div>
         )}
@@ -72,7 +72,7 @@ export function RecentFeedbackCard() {
                       {entry.vkScope ? (
                         <Badge variant="default">{entry.vkScope}</Badge>
                       ) : (
-                        <span style={{ color: 'var(--g-color-text-muted)' }}>—</span>
+                        <span style={{ color: 'var(--color-text-muted)' }}>—</span>
                       )}
                     </td>
                     <td style={cellBody}>{entry.reason}</td>
@@ -90,12 +90,12 @@ const cellHead = {
   textAlign: 'left' as const,
   padding: 'var(--g-space-sm)',
   fontSize: 'var(--g-font-size-sm)',
-  color: 'var(--g-color-text-muted)',
-  borderBottom: '1px solid var(--g-color-border-subtle)',
+  color: 'var(--color-text-muted)',
+  borderBottom: '1px solid var(--color-border-subtle)',
 };
 
 const cellBody = {
   padding: 'var(--g-space-sm)',
   fontSize: 'var(--g-font-size-sm)',
-  borderBottom: '1px solid var(--g-color-border-subtle)',
+  borderBottom: '1px solid var(--color-border-subtle)',
 };

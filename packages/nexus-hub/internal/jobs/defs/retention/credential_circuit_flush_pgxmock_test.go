@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pashagolub/pgxmock/v4"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
 )
@@ -325,5 +326,113 @@ func TestCredentialCircuitFlush_ReconcileOrphans_SkipsInFlight(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// transitionsFor reads the transitions_total counter for one label pair out of
+// a registry, so the assertions below are about the METRIC an operator sees
+// rather than about a call having happened.
+func transitionsFor(t *testing.T, reg *prometheus.Registry, to, reason string) float64 {
+	t.Helper()
+	fams, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, fam := range fams {
+		if fam.GetName() != "nexus_credential_circuit_flush_transitions_total" {
+			continue
+		}
+		for _, m := range fam.GetMetric() {
+			var gotTo, gotReason string
+			for _, l := range m.GetLabel() {
+				switch l.GetName() {
+				case "to":
+					gotTo = l.GetValue()
+				case "reason":
+					gotReason = l.GetValue()
+				}
+			}
+			if gotTo == to && gotReason == reason {
+				return m.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+// A counter named "transitions" incremented on every WRITE is not a transition
+// counter. Two production paths write a state the row already holds: a
+// credential sitting in the dirty set while only its nextProbeAt moved — and
+// nextProbeAt advances on EVERY probe while a circuit stays open — and a
+// partial-failure cycle, which replays the whole in-flight set so one failing
+// entry re-counts every entry that already succeeded. Either way an operator
+// alerting on the rate of circuit opens reads a number driven by flush cadence.
+func TestCredentialCircuitFlush_ReWritingTheSameStateIsNotATransition(t *testing.T) {
+	mini, rdb := newMiniredisRdb(t)
+	mini.HSet(credstate.CircuitKey("cred-9"), credstate.CircuitFieldState, "open")
+	mini.HSet(credstate.CircuitKey("cred-9"), credstate.CircuitFieldOpenReason, "rate_limit")
+
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+	// The row ALREADY holds "open" — only nextProbeAt moved.
+	mock.ExpectQuery(`SELECT "circuitState" FROM "Credential" WHERE id = \$1`).
+		WithArgs("cred-9").
+		WillReturnRows(pgxmock.NewRows([]string{"circuitState"}).AddRow("open"))
+	// id and destination state pinned; the timestamps are not what this
+	// test is about.
+	mock.ExpectExec(`UPDATE "Credential"`).
+		WithArgs("cred-9", "open", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	reg := prometheus.NewRegistry()
+	j := &CredentialCircuitFlushJob{
+		pool: mock, rdb: rdb, hubID: "hub-1",
+		logger: testLogger(), metrics: NewCircuitFlushMetrics(reg),
+	}
+	if err := j.flushOne(context.Background(), "cred-9"); err != nil {
+		t.Fatalf("flushOne: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+
+	if got := transitionsFor(t, reg, "open", "rate_limit"); got != 0 {
+		t.Errorf("re-writing the state the row already holds counted %v transition(s); "+
+			"the counter tracks flush cadence rather than circuit opens", got)
+	}
+}
+
+// The write stays UNCONDITIONAL — writeClosed exists partly to repair a row
+// that is already closed but whose reason/openedAt columns were left behind,
+// and a state-gated write would skip exactly that row. Only the count is gated,
+// so a genuine change must still be counted.
+func TestCredentialCircuitFlush_AGenuineChangeIsCounted(t *testing.T) {
+	mini, rdb := newMiniredisRdb(t)
+	mini.HSet(credstate.CircuitKey("cred-8"), credstate.CircuitFieldState, "open")
+	mini.HSet(credstate.CircuitKey("cred-8"), credstate.CircuitFieldOpenReason, "rate_limit")
+
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+	mock.ExpectQuery(`SELECT "circuitState" FROM "Credential" WHERE id = \$1`).
+		WithArgs("cred-8").
+		WillReturnRows(pgxmock.NewRows([]string{"circuitState"}).AddRow("closed"))
+	mock.ExpectExec(`UPDATE "Credential"`).
+		WithArgs("cred-8", "open", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	reg := prometheus.NewRegistry()
+	j := &CredentialCircuitFlushJob{
+		pool: mock, rdb: rdb, hubID: "hub-1",
+		logger: testLogger(), metrics: NewCircuitFlushMetrics(reg),
+	}
+	if err := j.flushOne(context.Background(), "cred-8"); err != nil {
+		t.Fatalf("flushOne: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+
+	if got := transitionsFor(t, reg, "open", "rate_limit"); got != 1 {
+		t.Errorf("closed -> open must count exactly one transition; got %v", got)
 	}
 }

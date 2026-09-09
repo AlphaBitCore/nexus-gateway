@@ -325,7 +325,7 @@ func handleRefresh(c echo.Context, d TokenDeps) error {
 			slog.String("user_id", parent.UserID), slog.Any("err", err))
 		return writeTokenError(c, ErrServerError, "user lookup failed", http.StatusInternalServerError)
 	}
-	if user.DisabledAt != nil {
+	if user.Auth.Blocked() {
 		return writeTokenError(c, ErrInvalidGrant, "user disabled", http.StatusBadRequest)
 	}
 

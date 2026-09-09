@@ -11,7 +11,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/pashagolub/pgxmock/v4"
 	"github.com/tidwall/gjson"
@@ -276,21 +277,21 @@ func TestProxy_StreamCaptureTee_NegativeCap(t *testing.T) {
 }
 
 func TestProxy_ExtractProviderErrorMessage(t *testing.T) {
-	if got := extractProviderErrorMessage(nil, 500); !strings.Contains(got, "HTTP 500") {
+	if got := extractProviderErrorMessage(nil, 500, true); !strings.Contains(got, "HTTP 500") {
 		t.Errorf("empty body fallback: %q", got)
 	}
-	if got := extractProviderErrorMessage([]byte(`{"error":{"message":"oops"}}`), 400); got != "oops" {
+	if got := extractProviderErrorMessage([]byte(`{"error":{"message":"oops"}}`), 400, true); got != "oops" {
 		t.Errorf("error.message: %q", got)
 	}
-	if got := extractProviderErrorMessage([]byte(`{"message":"top-level"}`), 400); got != "top-level" {
+	if got := extractProviderErrorMessage([]byte(`{"message":"top-level"}`), 400, true); got != "top-level" {
 		t.Errorf("message: %q", got)
 	}
 	long := strings.Repeat("x", 400)
-	got := extractProviderErrorMessage([]byte(long), 400)
+	got := extractProviderErrorMessage([]byte(long), 400, true)
 	if !strings.HasSuffix(got, "...") || len(got) != 303 {
 		t.Errorf("long fallback truncation broken: len=%d ends_with_ellipsis=%v", len(got), strings.HasSuffix(got, "..."))
 	}
-	if got := extractProviderErrorMessage([]byte("short raw"), 502); got != "short raw" {
+	if got := extractProviderErrorMessage([]byte("short raw"), 502, true); got != "short raw" {
 		t.Errorf("short raw fallback: %q", got)
 	}
 }
@@ -552,13 +553,32 @@ func TestProxy_ReadBody_ModelRequired(t *testing.T) {
 	}
 }
 
-func TestProxy_ReadBody_AutoEmbeddingsRejected(t *testing.T) {
+// TestProxy_ReadBody_AutoOnEmbeddingsIsAdmitted — this arm used to assert the
+// opposite, and it was the only thing holding the veto in place.
+//
+// readBody refused `model: "auto"` on /v1/embeddings, a line born in the commit
+// that first added smart routing when the strategy was a chat-only LLM
+// task-router. Everything under it moved since: prepareModelPool reads
+// ListEnabledCandidates(kind), SmartStrategy short-circuits non-chat kinds to
+// modalityAutoTargets, the modality guard drops cross-modality targets, and the
+// embeddings capability pre-filter runs whatever strategy produced the plan.
+//
+// Measured on prod 2026-09-03 against one smart rule pinned to
+// [auto, janus:default]: the other keyword already served embeddings
+// (text-embedding-3-small, 1536 dims), rerank (rerank-english-v3.0) and image
+// generation (gemini-3.1-flash-lite-image) — all on that one rule. So the veto
+// stopped a spelling, not a risk, and admission is not where per-endpoint
+// keyword policy belongs.
+func TestProxy_ReadBody_AutoOnEmbeddingsIsAdmitted(t *testing.T) {
 	h := &Handler{deps: &Deps{}}
-	body := []byte(`{"model":"auto"}`)
+	body := []byte(`{"model":"auto","input":"hello"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", bytes.NewReader(body))
-	_, _, _, _, err := h.readBody(req, Ingress{WireShape: typology.WireShapeOpenAIEmbeddings, BodyFormat: provcore.FormatOpenAI})
-	if err == nil || !strings.Contains(err.Error(), "auto") {
-		t.Errorf("err=%v want auto-rejection", err)
+	_, _, modelID, _, err := h.readBody(req, Ingress{WireShape: typology.WireShapeOpenAIEmbeddings, BodyFormat: provcore.FormatOpenAI})
+	if err != nil {
+		t.Fatalf("admission must not veto a delegation keyword per endpoint; got %v", err)
+	}
+	if modelID != "auto" {
+		t.Errorf("modelID = %q, want \"auto\" — routing decides what to do with it", modelID)
 	}
 }
 

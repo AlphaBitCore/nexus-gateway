@@ -575,11 +575,8 @@ func (BatchExecuteDetector) decodeResponse(body []byte) (ChatDetection, bool) {
 	return det, true
 }
 
-// extractFromBatchChunk + extractFromBatchInner are the inline-copied
-// implementations of the same helpers in
-// packages/shared/traffic/adapters/geminiweb/normalize.go — kept in
-// the extract package so the detector has no upward dependency on
-// adapters.
+// extractFromBatchChunk + extractFromBatchInner live in the extract package
+// so the detector has no upward dependency on adapters.
 func extractFromBatchChunk(chunk []byte) (text, model string) {
 	var outerArr []json.RawMessage
 	if err := json.Unmarshal(chunk, &outerArr); err != nil {

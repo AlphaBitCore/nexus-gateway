@@ -3,13 +3,14 @@ package senders
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+	alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 )
 
 // Slack delivers alerts to Slack via either an incoming webhook URL or the

@@ -19,7 +19,7 @@ import (
 
 // TestS140_ConfigSyncSurface — PM-grade e2e.
 //
-// BRAINSTORM (pre): the Config Sync admin page hits three CP endpoints
+// The Config Sync admin page hits three CP endpoints
 // that all forward into Hub via the hubadapter.Rename* family. The
 // adapters do two PM-critical things: (1) rename `drifted` → `outOfSync`
 // at the envelope level and `thingType` → `nodeType` per item, so the
@@ -33,15 +33,15 @@ import (
 // `thingType` as undefined). This scenario exercises the live three
 // endpoints against a running Hub + Postgres, asserting:
 //
-//   1. /config-sync/catalog returns the canonical (nodeType,
-//      configKeys[]) mapping for every Thing type we wire in
-//      ConfigKeyServices (the harness's runtime-state checker), proving
-//      the BFF data feeding the page filters is real, not stub.
-//   2. /config-sync/out-of-sync uses the renamed envelope key
-//      `outOfSync`, never the upstream `drifted`.
-//   3. /config-sync/history paginates and returns a recognisable
-//      envelope shape (`data` or `entries` array + cursor/nextCursor)
-//      so the admin history view paginates correctly.
+//  1. /config-sync/catalog returns the canonical (nodeType,
+//     configKeys[]) mapping for every Thing type we wire in
+//     ConfigKeyServices (the harness's runtime-state checker), proving
+//     the BFF data feeding the page filters is real, not stub.
+//  2. /config-sync/out-of-sync uses the renamed envelope key
+//     `outOfSync`, never the upstream `drifted`.
+//  3. /config-sync/history paginates and returns a recognisable
+//     envelope shape (`data` or `entries` array + cursor/nextCursor)
+//     so the admin history view paginates correctly.
 //
 // Cross-service: CP admin → Hub /api/hub/{config/catalog, drift,
 // applies}. Pure read-path — no Hub config push. PM-grade because the

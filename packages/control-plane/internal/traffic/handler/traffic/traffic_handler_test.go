@@ -556,16 +556,41 @@ func TestExportAdminAuditLogs_DBError_Returns500(t *testing.T) {
 
 // compliance_reports.go — handler tests
 
-func TestComplianceAuditDetail_DBError_Returns404(t *testing.T) {
+// A STORE FAILURE is a 500, not a 404.
+//
+// Asserting 404 for any error is how that defect survives: a database outage
+// then tells an auditor that a compliance event does not exist, on the surface
+// whose entire purpose is answering whether something happened. "I cannot reach
+// the record" and "there is no record" are opposite answers to that question,
+// and only one of them ends an audit.
+func TestComplianceAuditDetail_DBError_Returns500(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
-	mock.ExpectQuery("FROM traffic_event").WillReturnError(errors.New("not found"))
+	mock.ExpectQuery("FROM traffic_event").WillReturnError(errors.New("connection refused"))
 
 	c, rec := echoCtx(http.MethodGet, "/compliance/audit/abc")
 	c.SetParamNames("id")
 	c.SetParamValues("abc")
 	_ = h.ComplianceAuditDetail(c)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for a store failure, got %d — a query error must not read as 'this event does not exist'", rec.Code)
+	}
+}
+
+// The sibling: a genuinely absent row is still a 404. Without this, "500 on
+// everything" would satisfy the arm above while losing the distinction it
+// exists to make.
+func TestComplianceAuditDetail_NoSuchEvent_Returns404(t *testing.T) {
+	h, mock := newHandlerWithMock(t)
+	// Zero rows is how the DB reports "no such event"; pgxmock's QueryRow turns
+	// an empty result into pgx.ErrNoRows the same way pgx does.
+	mock.ExpectQuery("FROM traffic_event").WithArgs("missing").WillReturnRows(pgxmock.NewRows([]string{"id"}))
+
+	c, rec := echoCtx(http.MethodGet, "/compliance/audit/missing")
+	c.SetParamNames("id")
+	c.SetParamValues("missing")
+	_ = h.ComplianceAuditDetail(c)
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
+		t.Errorf("expected 404 for an absent row, got %d", rec.Code)
 	}
 }
 

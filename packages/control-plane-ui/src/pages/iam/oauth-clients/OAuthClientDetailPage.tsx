@@ -178,7 +178,7 @@ export function OAuthClientDetailPage() {
                 </Tooltip>
               ) : (
                 <span className={styles.fieldValueInline}>
-                  <span className={styles.secretMask} aria-label="masked secret">
+                  <span className={styles.secretMask} aria-label={t('pages:oauthClients.maskedSecretAria')}>
                     {t('pages:iam.oauthClients.secretMasked')}
                   </span>
                   <span className={styles.lastRotated}>

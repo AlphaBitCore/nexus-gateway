@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestDeletedRoutes_Return404 is the compliance gate for Task 16: every
+// TestDeletedRoutes_Return404 is the compliance gate on the runtime API: every
 // legacy mutating surface (/killswitch*, /exemptions*, /alerts/*) must be
 // fully removed from the runtime API. The test hits each known legacy path
 // with the method it used to accept and asserts the server returns 404 (or

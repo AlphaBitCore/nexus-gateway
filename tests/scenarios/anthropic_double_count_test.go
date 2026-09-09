@@ -37,7 +37,7 @@ import (
 
 // TestS079_AnthropicDoubleCountFix — PM-grade regression guard.
 //
-// BRAINSTORM (pre): the bug double-billed Anthropic provider prompt-cache
+// The bug double-billed Anthropic provider prompt-cache
 // savings because the joiner row (gateway cache HIT_INFLIGHT / HIT) used
 // the same upstream usage envelope the leader already accounted for. The
 // fix clears the provider-side savings on the joiner and instead stamps
@@ -112,13 +112,13 @@ func TestS079_AnthropicDoubleCountFix(t *testing.T) {
 	// burning an upstream call — saves a 30-s upstream timeout on envs without
 	// Anthropic credentials wired.
 	//
-	// The catalogue is the OPPOSITE way round from what this comment used to
-	// claim ("the dev/local catalogue seeds models with the provider-versioned
-	// code suffix"): `Model.code` is the bare `claude-haiku-4-5`, and the dated
-	// `claude-haiku-4-5-20251001` lives in `Model.aliases`. So the exact-match
-	// lookup on the dated string could never have found a row, and the
-	// precondition's own remedy ("re-run prisma db seed") could not have fixed
-	// it — reseeding produces exactly the shape that was already there.
+	// The catalogue is the OPPOSITE way round from the obvious guess. It is not
+	// that "the dev/local catalogue seeds models with the provider-versioned
+	// code suffix": `Model.code` is the bare `claude-haiku-4-5`, and the dated
+	// `claude-haiku-4-5-20251001` lives in `Model.aliases`. So an exact-match
+	// lookup on the dated string finds no row, and the
+	// obvious remedy ("re-run prisma db seed") does not fix
+	// it — reseeding produces exactly that shape.
 	//
 	// The REQUEST deliberately keeps sending the dated alias: alias resolution
 	// on the way to the provider is real coverage, and losing it would be a
@@ -192,7 +192,7 @@ func TestS079_AnthropicDoubleCountFix(t *testing.T) {
 	// 30 copies × ~120 tokens ≈ 3600 tokens — well above the 1024-token
 	// minimum for claude-haiku-4-5 cache_control engagement.
 	var sysBuf strings.Builder
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		sysBuf.WriteString(longSystemPrefix)
 	}
 	longSystem := sysBuf.String()
@@ -271,9 +271,9 @@ func TestS079_AnthropicDoubleCountFix(t *testing.T) {
 		// path the fix lives in. Hardened scenario treats this as a real
 		// regression: the gateway response cache for /v1/messages must
 		// serve req2 from the leader's entry.
-		// The remedy names the REAL knob. It used to say "check
-		// ResponseCacheConfig", a table that does not exist in the schema —
-		// a precondition message pointing at a nonexistent setting costs the
+		// The remedy names the REAL knob. A message pointing at "check
+		// ResponseCacheConfig", which is not a table in the schema, is
+		// a precondition pointing at a nonexistent setting, and costs the
 		// reader exactly as much as no message at all. The L1 exact-match tier
 		// is `extract_cache_config.enabled`, admin-facing at
 		// PUT /api/admin/extract-cache/config, and it ships DEFAULT OFF
@@ -336,7 +336,7 @@ func TestS079_AnthropicDoubleCountFix(t *testing.T) {
 			ORDER BY created_at ASC
 			LIMIT 4`
 		var rows []ev
-		for i := 0; i < tries; i++ {
+		for i := range tries {
 			rows = rows[:0]
 			r, qErr := sc.DB.Query(ctx, query, vk.ID)
 			if qErr != nil {

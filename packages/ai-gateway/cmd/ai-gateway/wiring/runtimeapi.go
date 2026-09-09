@@ -216,9 +216,9 @@ func InitIntrospectRegistry(deps IntrospectDeps, mux *http.ServeMux) *runtimeint
 
 // MountRuntimeAPI mounts the /runtime/* API surface when thingClient is
 // available. The surface is gated on the same INTERNAL_SERVICE_TOKEN that
-// guards /debug/runtime and the Hub WS/HTTP transport. Previously it
-// read a separate AI_GATEWAY_API_TOKEN env var that config.validate never
-// enforced — a 4th introspection token with no boot check. Folding /runtime/*
+// guards /debug/runtime and the Hub WS/HTTP transport. Reading
+// a separate AI_GATEWAY_API_TOKEN env var that config.validate never
+// enforces would add a 4th introspection token with no boot check. Folding /runtime/*
 // onto InternalServiceToken removes that unvalidated config surface; the token
 // is already required at boot (config.validate), so /runtime/* is always
 // gated on a real, validated secret rather than silently rejecting every

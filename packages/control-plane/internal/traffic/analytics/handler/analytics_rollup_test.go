@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"errors"
 	"github.com/goccy/go-json"
 	"net/http"
 	"testing"
@@ -368,12 +369,41 @@ func TestQueryMetricsOrFallback_TimeSeriesPath(t *testing.T) {
 func TestQueryMetricsOrFallback_NoData(t *testing.T) {
 	t.Parallel()
 	mock, h := newMockHandler(t)
-	expectCascadeAllEmpty(mock)
+	// This query issues 3 positional args (1 metric + 2 times), so it needs
+	// the arg-count-aware empty cascade. Calling the 12-arg
+	// expectCascadeAllEmpty never matches, so the mock returns an
+	// ERROR and a (nil, nil)-on-error contract turns that into "no
+	// data" — a test named NoData exercising the error path
+	// and never reaching the empty path at all.
+	expectCascade5mEmptyN(mock, 3)
 	q := metrics.MetricsQuery{Metrics: []string{metrics.MetricRequestCount},
 		StartTime: time.Now().Add(-time.Hour), EndTime: time.Now()}
 	res, err := h.queryMetricsOrFallback(context.Background(), q)
-	if err != nil || res != nil {
-		t.Errorf("want nil/nil, got %v / %v", res, err)
+	if err != nil {
+		t.Fatalf("an empty window is not an error: %v", err)
+	}
+	if res != nil {
+		t.Errorf("want nil result on an empty window, got %v", res)
+	}
+}
+
+// The companion the old contract made impossible to write: a READ FAILURE
+// must surface, not masquerade as an empty window.
+func TestQueryMetricsOrFallback_ReadErrorSurfaces(t *testing.T) {
+	t.Parallel()
+	mock, h := newMockHandler(t)
+	expectWatermarksMissing(mock)
+	mock.ExpectQuery(`FROM "metric_rollup_5m"`).
+		WillReturnError(errors.New("rollup table unavailable"))
+	q := metrics.MetricsQuery{Metrics: []string{metrics.MetricRequestCount},
+		StartTime: time.Now().Add(-time.Hour), EndTime: time.Now()}
+	res, err := h.queryMetricsOrFallback(context.Background(), q)
+	if err == nil {
+		t.Fatal("a failed rollup read reported success; every caller then answers " +
+			"HTTP 200 with an empty payload and a broken read leg renders as \"no traffic\"")
+	}
+	if res != nil {
+		t.Errorf("want nil result alongside the error, got %v", res)
 	}
 }
 
@@ -382,7 +412,7 @@ func TestTryRollupSummary_NoData(t *testing.T) {
 	mock, h := newMockHandler(t)
 	expectCascadeAllEmpty(mock)
 	c, _ := echoCtx("GET", "/?start=2026-01-01T00:00:00Z&end=2026-01-02T00:00:00Z")
-	if h.tryRollupSummary(c) {
+	if served, _ := h.tryRollupSummary(c); served {
 		t.Error("want false on empty rollup")
 	}
 }
@@ -410,7 +440,7 @@ func TestTryRollupSummary_HappyAndPhases(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"us", "ttfb", "total"}).AddRow(&a, &b, &cVal))
 
 	c, rec := echoCtx("GET", "/?start=2026-01-01T00:00:00Z&end=2026-01-02T00:00:00Z")
-	if !h.tryRollupSummary(c) {
+	if served, _ := h.tryRollupSummary(c); !served {
 		t.Fatal("want true")
 	}
 	body := jsonBody(t, rec)
@@ -429,7 +459,7 @@ func TestTryRollupGroupBy_UnknownKey(t *testing.T) {
 	t.Parallel()
 	_, h := newMockHandler(t)
 	c, _ := echoCtx("GET", "/")
-	_, ok := h.tryRollupGroupBy(c, "nonsense", "tokens")
+	_, ok, _ := h.tryRollupGroupBy(c, "nonsense", "tokens")
 	if ok {
 		t.Error("want false for unknown groupKey")
 	}
@@ -441,7 +471,7 @@ func TestTryRollupGroupBy_NoData(t *testing.T) {
 	// tokens: 4 metrics + 2 time + 1 dim = 7
 	expectCascade5mEmptyN(mock, 7)
 	c, _ := echoCtx("GET", "/")
-	_, ok := h.tryRollupGroupBy(c, "modelUsed", "tokens")
+	_, ok, _ := h.tryRollupGroupBy(c, "modelUsed", "tokens")
 	if ok {
 		t.Error("want false when rollup empty")
 	}
@@ -460,7 +490,7 @@ func TestTryRollupGroupBy_HappyTokens(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "name"}).AddRow("m1", "gpt-4"))
 	c, _ := echoCtx("GET", "/")
-	got, ok := h.tryRollupGroupBy(c, "modelUsed", "tokens")
+	got, ok, _ := h.tryRollupGroupBy(c, "modelUsed", "tokens")
 	if !ok || len(got) != 1 {
 		t.Fatalf("ok=%v got=%v", ok, got)
 	}
@@ -480,7 +510,7 @@ func TestTryRollupGroupBy_DefaultMetrics(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "name"}).AddRow("m1", "gpt-4"))
 	c, _ := echoCtx("GET", "/")
-	_, ok := h.tryRollupGroupBy(c, "modelUsed", "other-default")
+	_, ok, _ := h.tryRollupGroupBy(c, "modelUsed", "other-default")
 	if !ok {
 		t.Error("want true")
 	}
@@ -492,7 +522,7 @@ func TestTryRollupByProvider_NoData(t *testing.T) {
 	// 5 metrics + 2 time + 1 dim = 8
 	expectCascade5mEmptyN(mock, 8)
 	c, _ := echoCtx("GET", "/")
-	if h.tryRollupByProvider(c) {
+	if served, _ := h.tryRollupByProvider(c); served {
 		t.Error("want false when rollup empty")
 	}
 }
@@ -517,7 +547,7 @@ func TestTryRollupByProvider_Happy(t *testing.T) {
 			AddRow("OpenAI", &x, &y, &z))
 
 	c, rec := echoCtx("GET", "/")
-	if !h.tryRollupByProvider(c) {
+	if served, _ := h.tryRollupByProvider(c); !served {
 		t.Fatal("want true")
 	}
 	body := jsonBody(t, rec)
@@ -537,7 +567,7 @@ func TestTryRollupRouting_NoData(t *testing.T) {
 	// 1 metric + 2 time + 1 dim = 4
 	expectCascade5mEmptyN(mock, 4)
 	c, _ := echoCtx("GET", "/")
-	got := h.tryRollupRouting(c)
+	got, _ := h.tryRollupRouting(c)
 	if got != nil {
 		t.Errorf("want nil, got %v", got)
 	}
@@ -552,7 +582,7 @@ func TestTryRollupRouting_Happy(t *testing.T) {
 			[]byte(nil), bucket)
 	expectCascade5mRows(mock, rows, 4)
 	c, _ := echoCtx("GET", "/")
-	got := h.tryRollupRouting(c)
+	got, _ := h.tryRollupRouting(c)
 	if len(got) != 1 || got[0].RequestCount != 5 {
 		t.Errorf("got %+v", got)
 	}
@@ -564,7 +594,7 @@ func TestTryRollupRoutingFallbacks_NoData(t *testing.T) {
 	// 1 metric + 2 time + 1 dim = 4
 	expectCascade5mEmptyN(mock, 4)
 	c, _ := echoCtx("GET", "/")
-	if got := h.tryRollupRoutingFallbacks(c); got != nil {
+	if got, _ := h.tryRollupRoutingFallbacks(c); got != nil {
 		t.Errorf("want nil, got %v", got)
 	}
 }
@@ -578,7 +608,7 @@ func TestTryRollupRoutingFallbacks_Happy(t *testing.T) {
 			[]byte(nil), bucket)
 	expectCascade5mRows(mock, rows, 4)
 	c, _ := echoCtx("GET", "/")
-	got := h.tryRollupRoutingFallbacks(c)
+	got, _ := h.tryRollupRoutingFallbacks(c)
 	if len(got) != 1 || got[0].RequestCount != 7 {
 		t.Errorf("got %+v", got)
 	}
@@ -590,7 +620,7 @@ func TestTryRollupCostReport_NoData(t *testing.T) {
 	// 3 metrics + 2 time + 1 dim = 6
 	expectCascade5mEmptyN(mock, 6)
 	c, _ := echoCtx("GET", "/")
-	if got := h.tryRollupCostReport(c); got != nil {
+	if got, _ := h.tryRollupCostReport(c); got != nil {
 		t.Errorf("want nil, got %v", got)
 	}
 }
@@ -607,7 +637,7 @@ func TestTryRollupCostReport_Happy(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "name"}).AddRow("o1", "Acme"))
 	c, _ := echoCtx("GET", "/")
-	got := h.tryRollupCostReport(c)
+	got, _ := h.tryRollupCostReport(c)
 	if len(got) != 1 || got[0].TotalCostUsd != 15 {
 		t.Errorf("got %+v", got)
 	}
@@ -619,7 +649,7 @@ func TestTryRollupQuality_NoData(t *testing.T) {
 	// 2 metrics + 2 time = 4
 	expectCascade5mEmptyN(mock, 4)
 	c, _ := echoCtx("GET", "/")
-	if h.tryRollupQuality(c) {
+	if served, _ := h.tryRollupQuality(c); served {
 		t.Error("want false when empty")
 	}
 }
@@ -633,7 +663,7 @@ func TestTryRollupQuality_Happy(t *testing.T) {
 		AddRow("b", bucket, metrics.MetricQualityAnomalyCount, "", "", float64(2), []byte(nil), bucket), 4)
 
 	c, rec := echoCtx("GET", "/")
-	if !h.tryRollupQuality(c) {
+	if served, _ := h.tryRollupQuality(c); !served {
 		t.Fatal("want true")
 	}
 	body := jsonBody(t, rec)
@@ -655,7 +685,7 @@ func TestTryRollupMetricsAggregates_NoData(t *testing.T) {
 		WithArgs(matchManyArgs(18)...).
 		WillReturnRows(pgxmock.NewRows(rollupCols))
 	c, _ := echoCtx("GET", "/")
-	if h.tryRollupMetricsAggregates(c) {
+	if served, _ := h.tryRollupMetricsAggregates(c); served {
 		t.Error("want false on empty")
 	}
 }
@@ -690,7 +720,7 @@ func TestTryRollupMetricsAggregates_Happy(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id", "name"}).AddRow("prov-1", "OpenAI"))
 
 	c, rec := echoCtx("GET", "/")
-	if !h.tryRollupMetricsAggregates(c) {
+	if served, _ := h.tryRollupMetricsAggregates(c); !served {
 		t.Fatal("want true")
 	}
 	body := jsonBody(t, rec)
@@ -721,4 +751,91 @@ func TestRegisterRoutes_MountsAll(t *testing.T) {
 	h.RegisterMetricsRoutes(g, iamMWNoop)
 	// If we got here, no panic.
 	_ = http.StatusOK
+}
+
+// The endpoint-level half of the contract. A rollup read FAILURE used to take
+// the same branch as a genuinely-empty window, so AnalyticsSummary answered
+// HTTP 200 with a zero-value summary and the dashboard rendered "no traffic"
+// while the read leg was down. There is no raw-query fallback behind these
+// helpers despite the tryRollup* naming — the handler's next line IS the
+// zero-value response.
+func TestAnalyticsSummary_ReadFailureIsNotNoTraffic(t *testing.T) {
+	t.Parallel()
+	mock, h := newMockHandler(t)
+	expectWatermarksMissing(mock)
+	mock.ExpectQuery(`FROM "metric_rollup_5m"`).
+		WillReturnError(errors.New("rollup table unavailable"))
+
+	c, rec := echoCtx("GET", "/?start=2026-01-01T00:00:00Z&end=2026-01-02T00:00:00Z")
+	if err := h.AnalyticsSummary(c); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
+	}
+	if rec.Code == 200 {
+		t.Errorf("a failed rollup read answered HTTP 200; body=%s\n"+
+			"an operator cannot tell this from a quiet window", rec.Body.String())
+	}
+	if rec.Code < 500 {
+		t.Errorf("status = %d, want 5xx for a read failure", rec.Code)
+	}
+}
+
+// The other side of the same contract: a genuinely-empty window must still be
+// a 200 with the zero-value summary, not an error.
+func TestAnalyticsSummary_EmptyWindowIsStill200(t *testing.T) {
+	t.Parallel()
+	mock, h := newMockHandler(t)
+	// 11 metrics + 2 times. expectCascadeAllEmpty is the 12-arg variant and
+	// would not match, which under the old contract was indistinguishable
+	// from an empty window — the trap this whole change is about.
+	expectCascade5mEmptyN(mock, 13)
+
+	c, rec := echoCtx("GET", "/?start=2026-01-01T00:00:00Z&end=2026-01-02T00:00:00Z")
+	if err := h.AnalyticsSummary(c); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
+	}
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 — an empty window is a real answer, not a failure", rec.Code)
+	}
+}
+
+// Every analytics endpoint that reads a rollup must answer 5xx when the read
+// FAILS. Before this contract they all answered 200 with an empty payload, so
+// a broken read leg was indistinguishable from a quiet window on every one of
+// them at once — which is what makes this a table rather than one arm.
+func TestAnalyticsEndpoints_ReadFailureIsAlways5xx(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		call func(h *Handler, c echo.Context) error
+	}{
+		{"MetricsAggregates", func(h *Handler, c echo.Context) error { return h.MetricsAggregates(c) }},
+		{"AnalyticsByProvider", func(h *Handler, c echo.Context) error { return h.AnalyticsByProvider(c) }},
+		{"AnalyticsUsage", func(h *Handler, c echo.Context) error { return h.AnalyticsUsage(c) }},
+		{"AnalyticsCost", func(h *Handler, c echo.Context) error { return h.AnalyticsCost(c) }},
+		{"AnalyticsCostReport", func(h *Handler, c echo.Context) error { return h.AnalyticsCostReport(c) }},
+		{"AnalyticsRouting", func(h *Handler, c echo.Context) error { return h.AnalyticsRouting(c) }},
+		{"AnalyticsRoutingFallbacks", func(h *Handler, c echo.Context) error { return h.AnalyticsRoutingFallbacks(c) }},
+		{"AnalyticsQuality", func(h *Handler, c echo.Context) error { return h.AnalyticsQuality(c) }},
+		{"AnalyticsSparkline", func(h *Handler, c echo.Context) error { return h.AnalyticsSparkline(c) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock, h := newMockHandler(t)
+			expectWatermarksMissing(mock)
+			mock.ExpectQuery(`FROM "metric_rollup`).
+				WillReturnError(errors.New("rollup table unavailable"))
+
+			c, rec := echoCtx("GET", "/?start=2026-01-01T00:00:00Z&end=2026-01-02T00:00:00Z")
+			if err := tc.call(h, c); err != nil {
+				t.Fatalf("handler returned a transport error: %v", err)
+			}
+			if rec.Code < 500 {
+				t.Errorf("status = %d, want 5xx; a failed rollup read answered %d with body %s — "+
+					"an operator cannot tell that from a quiet window",
+					rec.Code, rec.Code, rec.Body.String())
+			}
+		})
+	}
 }

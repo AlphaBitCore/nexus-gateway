@@ -3,7 +3,17 @@
 package matcher
 
 /*
-#include <hs/hs.h>
+// <hs.h>, not <hs/hs.h> — matching vectorscan.go next door, so the two files
+// agree on one include form.
+//
+// WHERE IT BREAKS IS PLATFORM-SPECIFIC. Under Homebrew, pkg-config's libhs
+// cflags point AT the hs directory (…/include/hs), so the qualified form needs
+// a parent include path nothing supplies and the whole `vectorscan`-tagged
+// package fails to compile — a developer on macOS cannot run any test in it.
+// The release container installs libhs under /usr/local (docker/buildbase),
+// where /usr/local/include makes <hs/hs.h> resolve, so the release self-tests
+// have always run. Both forms build there; only one builds on both.
+#include <hs.h>
 #include <stdlib.h>
 
 static int nexus_selftest_cb(unsigned int id, unsigned long long from,

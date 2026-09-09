@@ -16,17 +16,16 @@ var (
 	benchSinkLogger *slog.Logger
 )
 
-// Per-CONNECT cost benchmarks (finding C-24).
+// Per-CONNECT cost benchmarks.
 //
-// C-24 was filed as "per-CONNECT costs in compliance-proxy's own server — uuid,
-// logger.With, WithContext, BuildPipeline — effectively per-request for
-// one-tunnel-per-exchange clients". Three of those four are the same constructs
-// already priced elsewhere in this program, so re-measuring them here would just
-// double-count:
+// Four costs are per-CONNECT here — uuid, logger.With, WithContext, BuildPipeline —
+// and for a one-tunnel-per-exchange client that is effectively per-request. Three of
+// the four are the same constructs already priced elsewhere, so re-measuring them
+// here would double-count:
 //
-//	uuid.New().String()  1 allocation      — same construct as C-7, measured there
-//	r.WithContext(...)   2 allocations      — same construct as C-3, measured there
-//	BuildPipeline        11 allocations     — measured in session 1's
+//	uuid.New().String()  1 allocation      — priced with the bumped-exchange arms
+//	r.WithContext(...)   2 allocations      — priced with the context-clone arms
+//	BuildPipeline        11 allocations     — priced in
 //	                                          policy_buildpipeline_bench_test.go
 //
 // What is NOT priced anywhere else is the connection-scoped logger derivation and
@@ -44,7 +43,7 @@ func benchConnectLogger() *slog.Logger {
 
 // BenchmarkConnect_LoggerWith prices the connection-scoped logger every CONNECT
 // derives. It is a real cost rather than a diagnostic that can be demoted: the
-// shared SlogSink lifts trace_id out of these attrs into DiagEvent.TraceID, so every
+// shared SlogSink lifts the request id out of these attrs into DiagEvent.ExternalRequestID, so every
 // thing_diag_event row emitted during the CONNECT carries the typed correlation
 // column. Removing it would drop that column, not just a log line.
 func BenchmarkConnect_LoggerWith(b *testing.B) {
@@ -54,7 +53,7 @@ func BenchmarkConnect_LoggerWith(b *testing.B) {
 		benchSinkLogger = logger.With(
 			"source", "203.0.113.7:54321",
 			"target", "api.openai.com:443",
-			"trace_id", "3f7c1e90-8a2b-4c5d-9e6f-0a1b2c3d4e5f",
+			"external_request_id", "3f7c1e90-8a2b-4c5d-9e6f-0a1b2c3d4e5f",
 		)
 	}
 }
@@ -76,7 +75,7 @@ func BenchmarkConnect_LoggerWithTypedAttrs(b *testing.B) {
 		benchSinkLogger = logger.With(
 			slog.String("source", "203.0.113.7:54321"),
 			slog.String("target", "api.openai.com:443"),
-			slog.String("trace_id", "3f7c1e90-8a2b-4c5d-9e6f-0a1b2c3d4e5f"),
+			slog.String("external_request_id", "3f7c1e90-8a2b-4c5d-9e6f-0a1b2c3d4e5f"),
 		)
 	}
 }

@@ -343,6 +343,7 @@ paths:
                                     normalizedScrubbed: 0   # deprecated, always 0
                                     spillRefsOrphaned: 3
                                     assistantErased: 12
+                                    dlqEventsDeleted: 2   # dead-lettered events belonging to the subject
                                     accessOutcomesScrubbed: 1
                                     vkOwnedDeleted: 2
                                     adminApiKeysDeleted: 1

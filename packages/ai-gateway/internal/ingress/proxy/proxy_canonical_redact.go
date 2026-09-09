@@ -17,9 +17,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/requestcontext"
-	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -188,7 +188,7 @@ func (h *Handler) redactCanonicalBuffer(
 
 	// Build the response pipeline first — its gating inputs (endpoint kind +
 	// modality) come from the Ingress, not the body; when nil, skip extraction.
-	pipeline, pErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
+	pipeline, unbuildable, pErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
 		"response", "AI_GATEWAY",
 		epType,
 		outputModality,
@@ -202,27 +202,59 @@ func (h *Handler) redactCanonicalBuffer(
 		return out
 	}
 
-	// formatLabel keeps per-ingress metric labelling; the extractor + path are
-	// CANONICAL (OpenAI) because the body is canonical at this stage.
+	// formatLabel keeps per-ingress metric labelling; the decode + path are
+	// CANONICAL (OpenAI) because the body is canonical at this stage. The
+	// per-format traffic adapter is deliberately NOT involved: compliance reads
+	// the canonical spec, and running an already-canonical body back through a
+	// wire-format extractor is what hid reasoning and refusal from every hook on
+	// this service.
 	formatLabel := string(ingress.BodyFormat)
-	if pipeline == nil {
-		if h.deps.Metrics != nil {
-			h.deps.Metrics.RecordTrafficExtract(formatLabel, "response", "skipped")
-		}
-		return out
-	}
-
-	extractor := h.trafficAdapterFor(provcore.FormatOpenAI)
-	// Canonical body is OpenAI chat-completions (`choices[]`) in the common case;
-	// a native /v1/responses passthrough is `output[]`-shape. SNIFF the body (not
-	// the ingress shape) so a cross-format cache HIT — canonical chat served to a
-	// /v1/responses reader — still dispatches the OpenAI rewriter's right branch.
+	// The canonical body is chat-completions (`choices[]`) in the common case and
+	// the Responses shape (`output[]`) on the native passthrough lane. SNIFF the
+	// body rather than the ingress, because a cross-format cache HIT serves
+	// canonical chat to a /v1/responses reader and the bytes are what decide.
+	// This picks the decode; the rewrite picks its arm from the payload the
+	// decode produced, so the two cannot disagree.
 	canonicalPath := "/v1/chat/completions"
 	if !gjson.GetBytes(canonicalBody, "choices").Exists() && gjson.GetBytes(canonicalBody, "output").Exists() {
 		canonicalPath = "/v1/responses"
 	}
+	if pipeline == nil {
+		if h.deps.Metrics != nil {
+			h.deps.Metrics.RecordTrafficExtract(formatLabel, "response", "skipped")
+		}
+		// "Nothing configured" and "everything configured is broken" both arrive
+		// here as a nil pipeline. The tag that tells them apart normally rides
+		// the merge, and with no pipeline the merge never runs — so stamp it
+		// directly, or a response that nobody scanned is indistinguishable in
+		// the audit from a tenant who asked for no scanning.
+		rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, compliance.UnbuildableTags(unbuildable))
+		return out
+	}
 
-	respContent, respModel, respFinish := h.extractResponseForHooks(r.Context(), extractor, formatLabel, canonicalBody, canonicalPath, logger)
+	respContent, respModel, respFinish := h.extractResponseForHooks(r.Context(), formatLabel, canonicalBody, canonicalPath, logger)
+
+	// A hook configured to scan content, and content it cannot be shown, is the
+	// half of fail-closed that was missing. The existing guard covers "a
+	// redaction was decided and could not be applied"; it cannot cover this,
+	// because with a nil payload every content hook abstains and no redaction is
+	// ever decided — the response goes out with an approve stamp on a scan that
+	// did not happen, which reads exactly like a clean response.
+	//
+	// Both conditions are required. Refusing whenever the canonical is missing
+	// would reject bodies with nothing to scan, and refusing when nothing is
+	// configured to scan would cost availability for no compliance gain.
+	if respContent == nil && pipeline.HasContentScanningHook() &&
+		(canonicalBodyHasContent(canonicalBody)) {
+		logger.Error("response carries scannable content but no canonical payload reached the hooks — failing closed",
+			slog.String("path", canonicalPath))
+		rec.ResponseHookDecision = string(hookcore.RejectHard)
+		rec.ResponseHookReasonCode = hookcore.ReasonRedactInflightUnsupported
+		out.failClosed = true
+		out.errStatus = http.StatusInternalServerError
+		out.errMsg = "response content could not be scanned"
+		return out
+	}
 	respInput := &hookcore.HookInput{
 		RequestID:      requestID,
 		Stage:          "response",
@@ -277,13 +309,21 @@ func (h *Handler) redactCanonicalBuffer(
 		// rewrite carrying only TransformSpans (tool-arg masking) with empty
 		// ModifiedContent still has real work to apply, so a len(ModifiedContent)>0
 		// gate would silently drop it and return the original unredacted body.
-		redacted, n, rErr := extractor.RewriteResponseBody(r.Context(), canonicalBody, canonicalPath, rewriteContentWithToolArgs(hookResult.ModifiedContent, respContent, hookResult.TransformSpans))
+		// Apply the redaction to the canonical payload, then let the codec write
+		// the edited CONTENT back into the body it was decoded from. Spans
+		// address canonical blocks, and the codec pairs each wire slot with the
+		// block type that belongs in it, so a reasoning redaction cannot land on
+		// `content` the way a flat positional segment list allowed.
+		//
+		// The envelope is untouched by construction: the rewrite writes only the
+		// content channels, so id / usage / system_fingerprint / finish_reason
+		// stay exactly as the upstream sent them.
+		redacted, n, rErr := h.applyCanonicalRedaction(canonicalBody, respContent, hookResult.TransformSpans)
 		if rErr != nil {
-			// On canonical the rewrite is always supported: the sniff above only
-			// ever yields /v1/chat/completions or /v1/responses, both handled by the
-			// OpenAI RewriteResponseBody (only /embeddings + the default arm return
-			// ErrRewriteUnsupported, neither reachable here). A genuine rewrite error
-			// therefore fails closed.
+			// Every body reaching the rewrite is canonical chat by construction —
+			// the responses shape was decoded above — so there is no unsupported
+			// shape left to tolerate. A rewrite error is a genuine failure and
+			// fails closed.
 			logger.Error("canonical response rewrite failed", slog.String("error", rErr.Error()))
 			out.failClosed = true
 			out.errStatus = http.StatusInternalServerError
@@ -316,6 +356,8 @@ func (h *Handler) redactCanonicalBuffer(
 		// which misrepresents the outcome — the disposition is redact, the Decision is
 		// the (soft-block) ceiling.
 		rec.ResponseAction = hookcore.ActionRedact
+		// No re-encode: the rewrite edited the body the caller's shape already
+		// uses, so what comes back IS that shape.
 		out.body = redacted
 		out.rewritten = true
 		return out

@@ -65,7 +65,7 @@ func TestSharedGoHooksPipeline(t *testing.T) {
 	}
 
 	// Build and execute pipeline.
-	pipeline, err := resolver.BuildPipeline(
+	pipeline, _, err := resolver.BuildPipeline(
 		"request",
 		"COMPLIANCE_PROXY",
 		"", nil, // endpoint/modality unknown in integration test
@@ -130,7 +130,7 @@ func TestSharedGoApprove(t *testing.T) {
 		Normalized:  core.PayloadFromTextSegments([]string{"this is perfectly fine content"}),
 	}
 
-	pipeline, err := resolver.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 15*time.Second, false, false, logger)
+	pipeline, _, err := resolver.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 15*time.Second, false, false, logger)
 	if err != nil {
 		t.Fatalf("BuildPipeline: %v", err)
 	}

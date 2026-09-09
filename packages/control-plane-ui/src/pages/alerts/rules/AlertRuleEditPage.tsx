@@ -29,6 +29,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
+import { usePermission } from '@/hooks/usePermission';
 import { alertsApi, deviceGroupsApi } from '@/api/services';
 import type { AlertRule, AlertSeverity } from '@/api/services';
 import {
@@ -90,6 +91,10 @@ export function AlertRuleEditPage() {
     setParams(rule.params ?? {});
     setGroupIdFilter(rule.groupIdFilter ?? '');
   }, [rule]);
+
+  // Reaching this page needs alert.read; both writes on it (PUT :id and
+  // POST :id/reset) enforce alert.update.
+  const canUpdate = usePermission('alert:update');
 
   const { mutate: saveRule, loading: saving } = useMutation<void, AlertRule>(
     () =>
@@ -252,10 +257,10 @@ export function AlertRuleEditPage() {
 
       {/* Footer */}
       <Stack direction="horizontal" gap="sm" className={styles.footerActions}>
-        <Button className={styles.footerButton} variant="secondary" onClick={() => setResetOpen(true)} disabled={resetting}>
+        <Button className={styles.footerButton} variant="secondary" onClick={() => setResetOpen(true)} disabled={resetting || !canUpdate}>
           {t('pages:alerts.rules.edit.reset')}
         </Button>
-        <Button className={styles.footerButton} onClick={onSave} disabled={saving} loading={saving}>
+        <Button className={styles.footerButton} onClick={onSave} disabled={saving || !canUpdate} loading={saving}>
           {t('common:save')}
         </Button>
       </Stack>

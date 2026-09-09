@@ -23,7 +23,7 @@ type Loader interface {
 // window plus a single-flight load under contention keeps the hot path
 // allocation-light.
 //
-// Invalidation is push-based: a shadow listener (Task 35) calls Invalidate
+// Invalidation is push-based: a shadow listener calls Invalidate
 // the moment Admin UI saves a new config, so the effective TTL acts as a
 // safety net rather than the primary refresh mechanism.
 type ConfigCache struct {

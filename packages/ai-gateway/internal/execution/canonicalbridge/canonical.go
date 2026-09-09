@@ -83,6 +83,14 @@ const CanonicalResponseSubset = "see SubsetFields response list"
 //   - choices[].index, choices[].delta, choices[].finish_reason (nullable)
 //   - delta.role (first chunk), delta.content
 //   - delta.refusal (structured outputs / reasoning models)
+//   - delta.reasoning_content — the chain-of-thought channel. It is NOT an
+//     OpenAI-documented chunk field, and it is in this list anyway: every
+//     thinking model emits it under some name (DeepSeek/Kimi
+//     reasoning_content, xAI/OpenRouter reasoning, Gemini thought:true parts,
+//     Anthropic thinking_delta), every cross-format encoder maps it to the
+//     target's spelling, and the response pipeline scans it. Leaving it
+//     undeclared is how a load-bearing channel gets deleted by a later pass
+//     that implements the list faithfully.
 //   - delta.tool_calls[].index, id, function.name, function.arguments (fragments)
 //   - service_tier, system_fingerprint (chunk-level passthrough)
 //   - trailing usage chunk when stream_options.include_usage; then data: [DONE]
@@ -155,6 +163,7 @@ func SubsetFields() (request, response, stream []string) {
 		"choices[].delta.role",
 		"choices[].delta.content",
 		"choices[].delta.refusal",
+		"choices[].delta.reasoning_content",
 		"choices[].delta.tool_calls",
 		"choices[].finish_reason",
 		"service_tier",

@@ -60,7 +60,26 @@ func SpansFromModifiedContent(input *HookInput, modified []ContentBlock, source 
 				}
 				continue
 			}
-			if b.Type != normalize.ContentText && b.Type != normalize.ContentToolResult {
+			// A block occupies a projection slot ONLY when it contributed text
+			// (aiTextProjection skips empties), and this walk has to consume
+			// slots in exactly the same order or every span after the first
+			// mismatch carries another block's text and masks the wrong bytes.
+			// Mirror the projection block for block rather than approximating
+			// it: an empty ContentText used to consume a slot here and produce
+			// none there.
+			var addr string
+			switch b.Type {
+			case normalize.ContentText, normalize.ContentReasoning, normalize.ContentRefusal:
+				if b.Text == "" {
+					continue
+				}
+				addr = fmt.Sprintf("messages.%d.content.%d", mi, ci)
+			case normalize.ContentToolResult:
+				if b.ToolResult == nil || b.ToolResult.Output == "" {
+					continue
+				}
+				addr = fmt.Sprintf("messages.%d.content.%d.toolResult", mi, ci)
+			default:
 				continue
 			}
 			if idx >= limit {
@@ -71,10 +90,6 @@ func SpansFromModifiedContent(input *HookInput, modified []ContentBlock, source 
 			idx++
 			if origText == newText {
 				continue
-			}
-			addr := fmt.Sprintf("messages.%d.content.%d", mi, ci)
-			if b.Type == normalize.ContentToolResult {
-				addr = fmt.Sprintf("messages.%d.content.%d.toolResult", mi, ci)
 			}
 			spans = append(spans, normalize.TransformSpan{
 				Source:         source,

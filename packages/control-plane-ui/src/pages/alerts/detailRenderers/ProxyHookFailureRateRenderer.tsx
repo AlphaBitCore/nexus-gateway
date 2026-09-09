@@ -2,8 +2,7 @@
  * ProxyHookFailureRateRenderer — presents a `proxy.hook_failure_rate` or
  * `proxy.hook_timeout_rate` alert's evidence.
  *
- * Both rules ship the same details shape from the compliance-proxy evaluator
- * (`packages/compliance-proxy/cmd/compliance-proxy/init.go`):
+ * Both rules ship the same details shape from the compliance-proxy evaluator:
  *
  *   proxy.hook_failure_rate:
  *     { failures: number, decisions: number, ratePct: number }

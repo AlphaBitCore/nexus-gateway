@@ -54,12 +54,11 @@ var structuredOutputProbe = map[string]bool{
 	"deepseek-v4-flash": false, // 400 This response_format type is unavailable now
 	"deepseek-v4-pro":   false, // 400 This response_format type is unavailable now
 
-	// Round 2, same day. The first sweep probed the model codes the replay
-	// corpus named and left every OTHER enabled chat row untagged — and an
-	// untagged row that declares any other feature is DROPPED by the filter,
+	// An untagged row that declares any other feature is DROPPED by the filter,
 	// because the row-level fail-open only rescues rows declaring nothing at
-	// all. Six enabled rows were being excluded from structured-output routing
-	// on no evidence either way; these are their measurements.
+	// all. Probing only the model codes the replay corpus names leaves six
+	// enabled rows excluded from structured-output routing on no evidence
+	// either way; these are their measurements.
 	"moonshot-v1-8k-vision-preview": true, "moonshot-v1-32k-vision-preview": true,
 	"moonshot-v1-128k-vision-preview": true, "kimi-k2.7-code-highspeed": true,
 

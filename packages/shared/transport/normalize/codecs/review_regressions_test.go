@@ -19,7 +19,7 @@ import (
 // why each round rediscovered the previous round's mistakes by hand. These
 // pin them: a regression fails here instead of surviving to another review.
 
-// Round 3, HIGH. The depth cap used to json.Marshal the remaining subtree
+// The depth cap must not json.Marshal the remaining subtree
 // into a text block — 120 KB of base64 into the stream that feeds compliance
 // scanning, with the media element gone. The headline defect, behind a gate.
 func TestAnthropicDeepNesting_NeitherLeaksPayloadNorDropsSilently(t *testing.T) {
@@ -70,7 +70,7 @@ func TestAnthropicDeepNesting_NeitherLeaksPayloadNorDropsSilently(t *testing.T) 
 	}
 }
 
-// Round 3, LOW. A non-array `source.content` used to be marshalled, yielding
+// A non-array `source.content` must not be marshalled: it yields
 // text blocks reading literally `null` or a quoted string — fabricated prose
 // entering the scanned text.
 func TestAnthropicNestedContent_NonArrayIsDescribedNotSerialised(t *testing.T) {
@@ -96,7 +96,7 @@ func TestAnthropicNestedContent_NonArrayIsDescribedNotSerialised(t *testing.T) {
 	}
 }
 
-// Round 2, HIGH. The no-silent-drop marker fired for `text` — the most
+// The no-silent-drop marker fired for `text` — the most
 // recognised type of all — fabricating assistant prose that then reached
 // compliance scanning.
 func TestAnthropicStreamMarker_OnlyForGenuinelyUnknownBlocks(t *testing.T) {
@@ -134,7 +134,7 @@ func TestAnthropicStreamMarker_OnlyForGenuinelyUnknownBlocks(t *testing.T) {
 	}
 }
 
-// Round 2. Files-API URIs are https, so a scheme check inverted custody. The
+// Files-API URIs are https, so a scheme check inverted custody. The
 // replacement must not be spoofable by a host that merely embeds the string.
 func TestGeminiFileDataCustody_HostNotSubstring(t *testing.T) {
 	for uri, want := range map[string]string{
@@ -151,7 +151,7 @@ func TestGeminiFileDataCustody_HostNotSubstring(t *testing.T) {
 	}
 }
 
-// Round 2. A data URI reaching MediaRef.URL is the headline defect. The guard
+// A data URI reaching MediaRef.URL is the headline defect. The guard
 // lives in externalMedia because six callers pass client-controlled strings.
 func TestExternalMedia_DataURINeverReachesURL(t *testing.T) {
 	got := externalMedia("", "data:audio/wav;base64,QUJD", "")
@@ -171,7 +171,7 @@ func TestExternalMedia_DataURINeverReachesURL(t *testing.T) {
 	}
 }
 
-// Round 2. The block type is the authority on modality: an image block is an
+// The block type is the authority on modality: an image block is an
 // image whatever media_type claims, or capability routing loses needsVision.
 func TestAnthropicModality_BlockTypeIsAuthoritative(t *testing.T) {
 	img := `{"type":"image","source":{"type":"base64","media_type":"application/octet-stream","data":"QUJD"}}`
@@ -189,10 +189,10 @@ func TestAnthropicModality_BlockTypeIsAuthoritative(t *testing.T) {
 	}
 }
 
-// Round 3. A streamed responses image cannot carry a json: locator: the
+// A streamed responses image cannot carry a json: locator: the
 // stored body is the event stream, so the locator would address a fold that
-// exists only in memory, and the download would 404. Round 3 also settled
-// that a record with no digest is not a "fingerprint".
+// exists only in memory, and the download would 404. A record with no digest
+// is not a "fingerprint".
 func TestResponsesImageOut_StreamedIsHonestNonStreamedIsAddressable(t *testing.T) {
 	obj := `{"object":"response","model":"gpt-5","status":"completed",` +
 		`"output":[{"type":"image_generation_call","result":"QUJD"}],` +
@@ -228,7 +228,7 @@ func TestResponsesImageOut_StreamedIsHonestNonStreamedIsAddressable(t *testing.T
 	}
 }
 
-// Round 3. computer_screenshot is in the endpoint's own supported set, and
+// computer_screenshot is in the endpoint's own supported set, and
 // dropping it took the whole input item with it.
 func TestResponsesComputerScreenshot_SurvivesInAllThreeShapes(t *testing.T) {
 	for _, tc := range []struct{ part, wantSource string }{
@@ -252,7 +252,7 @@ func TestResponsesComputerScreenshot_SurvivesInAllThreeShapes(t *testing.T) {
 	}
 }
 
-// Round 3. Streamed chat audio spans frames, so no locator addresses it. It
+// Streamed chat audio spans frames, so no locator addresses it. It
 // is not a fingerprint either — nothing is hashed.
 func TestOpenAIChatStream_AudioIsAbsentWithACause(t *testing.T) {
 	sse := `data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"audio":{"data":"QUJD","transcript":"hi"}}}]}` + "\n\n" +
@@ -281,7 +281,7 @@ func TestOpenAIChatStream_AudioIsAbsentWithACause(t *testing.T) {
 	}
 }
 
-// Round 2. The gemini marker belongs in its own block, not spliced into the
+// The gemini marker belongs in its own block, not spliced into the
 // concatenated text builder where it would corrupt the assistant's words.
 func TestGeminiStreamMarker_IsItsOwnBlock(t *testing.T) {
 	sse := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[` +
@@ -315,7 +315,7 @@ func TestGeminiStreamMarker_IsItsOwnBlock(t *testing.T) {
 	}
 }
 
-// Round 2. container_upload is a provider-held file reference, not prose.
+// container_upload is a provider-held file reference, not prose.
 func TestAnthropicContainerUpload_IsProviderHeld(t *testing.T) {
 	var part map[string]any
 	_ = json.Unmarshal([]byte(`{"type":"container_upload","file_id":"file-xyz"}`), &part)
@@ -329,7 +329,7 @@ func TestAnthropicContainerUpload_IsProviderHeld(t *testing.T) {
 	}
 }
 
-// Round 3, open item. Server-side tool blocks carry their payload over
+// Server-side tool blocks carry their payload over
 // input_json_delta. Those frames were counted as recognised — raising the
 // confidence score — and then dropped at stitch time because the block type
 // did not match: content loss wearing the appearance of coverage.
@@ -366,7 +366,7 @@ func TestAnthropicStream_ServerToolPayloadIsNotDropped(t *testing.T) {
 	}
 }
 
-// Round 4, HIGH x2. The payload-into-scanned-text defect was reachable
+// The payload-into-scanned-text defect was reachable
 // through every default branch, not just the one each round happened to be
 // shown. This drives all of them at once: whatever the door, no payload may
 // come through it.
@@ -432,7 +432,7 @@ func TestNoPayloadReachesTextThroughAnyDefaultBranch(t *testing.T) {
 	}
 }
 
-// Round 4. The url-safe case in the alphabet test was length 6, so the %4
+// The url-safe case in the alphabet test was length 6, so the %4
 // guard rejected it before the alphabet check ran — the test passed for the
 // wrong reason. These lengths are ≡ 0 mod 4, so only the alphabet can reject.
 func TestValidBase64_UrlSafeAlphabetRejectedOnItsOwnMerits(t *testing.T) {
@@ -446,7 +446,7 @@ func TestValidBase64_UrlSafeAlphabetRejectedOnItsOwnMerits(t *testing.T) {
 	}
 }
 
-// Round 4. The streamed-image test pinned the cause and the missing path
+// The streamed-image test pinned the cause and the missing path
 // but never the custody state the fix is named for.
 func TestResponsesStreamedImage_IsExplicitlyAbsent(t *testing.T) {
 	obj := `{"object":"response","model":"gpt-5","status":"completed",` +
@@ -465,7 +465,7 @@ func TestResponsesStreamedImage_IsExplicitlyAbsent(t *testing.T) {
 	}
 }
 
-// Round 4. Two fixes were wholly unpinned: nested images inside a
+// Two fixes were wholly unpinned: nested images inside a
 // tool_result, and a responses input_image carrying a data URI — the latter
 // being the payload-in-URL defect on an ingress whose sibling branch was
 // already pinned.
@@ -503,7 +503,7 @@ func TestPreviouslyUnpinnedMediaPaths(t *testing.T) {
 	})
 }
 
-// Round 5, HIGH. A per-value length cap does not bound the output: a payload
+// A per-value length cap does not bound the output: a payload
 // split across many short strings, hidden in JSON keys, or written as an
 // array of integers walks straight through one. Measured at 32 KB — worse
 // than the defect the cap was meant to close. The bound that holds is a
@@ -548,12 +548,12 @@ func deepNest(n int) any {
 	return v
 }
 
-// Round 5. The fix for server_tool_use kept its payload verbatim, creating a
+// The fix for server_tool_use kept its payload verbatim, creating a
 // sixth leaking site — safe on the non-stream path, unsafe on the stream.
 func TestAnthropicStream_ServerToolPayloadIsBounded(t *testing.T) {
-	// The block TYPE is wire-controlled too, and payloadSafeText originally
-	// bounded only the payload it was concatenated with — the guard against
-	// unbounded text grew an unbounded path on its own line.
+	// The block TYPE is wire-controlled too, and a payloadSafeText that
+	// bounds only the payload it is concatenated with leaves the guard against
+	// unbounded text with an unbounded path on its own line.
 	t.Run("wire-controlled block type is bounded", func(t *testing.T) {
 		huge := strings.Repeat("T", 65536)
 		sse := "event: message_start\n" +
@@ -597,7 +597,7 @@ func TestAnthropicStream_ServerToolPayloadIsBounded(t *testing.T) {
 	}
 }
 
-// Round 5. Mutating the path's trailing field survived on four of five
+// Mutating the path's trailing field survived on four of five
 // ingresses: only Anthropic's path was pinned. A locator that resolves to
 // the wrong field means every inline-media download from those ingresses is
 // dead while the card still offers the button — the disagreement between
@@ -672,7 +672,7 @@ func TestLocatorAddressesTheExactWireField(t *testing.T) {
 	}
 }
 
-// Round 5. The gemini stream fold grouped blocks by kind, so text arriving
+// The gemini stream fold grouped blocks by kind, so text arriving
 // on either side of a tool call fused into one utterance: "A" + "B" became
 // "AB". That is not an ordering nicety — it changes what the record says the
 // model said. A sibling fold in the same package keeps arrival order, so the
@@ -732,7 +732,7 @@ func TestGeminiStream_CoalescesConsecutiveTextDeltas(t *testing.T) {
 	}
 }
 
-// Round 6. The ordered accumulator skipped reasoning parts, so text arriving
+// The ordered accumulator skipped reasoning parts, so text arriving
 // either side of a thinking pass stayed adjacent and fused — the A+B→AB
 // defect the accumulator existed to remove, surviving on the one kind it
 // did not cover.
@@ -762,7 +762,7 @@ func TestGeminiStream_ReasoningKeepsItsPlaceInTheOrder(t *testing.T) {
 	}
 }
 
-// Round 7. The unrecognised-part marker was appended raw, so it became a
+// The unrecognised-part marker was appended raw, so it became a
 // coalescing target and the next text delta fused into it: the model's word
 // glued to synthetic text, and one projection entry where there should be
 // two. Same class as the reasoning fix, on the kind that sweep skipped.
@@ -791,8 +791,8 @@ func TestGeminiStream_MarkerDoesNotSwallowTheNextDelta(t *testing.T) {
 	}
 }
 
-// Round 7. Every round-6 leak fix was correct and unfalsifiable: mutations
-// reverting them all survived. These drive each guarded site with a
+// The leak fixes were correct but unfalsifiable — mutations reverting them
+// all survived. These drive each guarded site with a
 // wire-controlled value large enough that an unrouted path is unmistakable.
 func TestSyntheticRenderingsAreBoundedAtEverySite(t *testing.T) {
 	huge := strings.Repeat("T", 65536)
@@ -862,7 +862,7 @@ func assertAllTextBounded(t *testing.T, p core.NormalizedPayload, err error) {
 	}
 }
 
-// Round 7. Replicate serves every model on its platform, and the codec piped
+// Replicate serves every model on its platform, and the codec piped
 // `output` into a text block whatever it was: a data URI became a 20 KB text
 // block with no MediaRef, and a generated-image URL became prose with no
 // custody record. The headline defect and its inverted-custody sibling,
@@ -946,7 +946,7 @@ func TestReplicateOutput_MediaIsNotProse(t *testing.T) {
 		}
 		// A clean data URI must classify as media, so no text block should
 		// exist at all — asserted directly rather than by a size ceiling,
-		// which was the observation-tool mistake that originally hid the
+		// which is the observation-tool mistake that hid the
 		// Anthropic PDF defect.
 		for _, m := range p.Messages {
 			for _, b := range m.Content {
@@ -974,7 +974,7 @@ func TestReplicateOutput_MediaIsNotProse(t *testing.T) {
 	})
 }
 
-// Round 8, D7. The bounds sliced by byte, so truncation split a multi-byte
+// The bounds sliced by byte, so truncation split a multi-byte
 // character. Invalid UTF-8 is rejected outright by a Postgres text column,
 // so a wire-controlled value with any non-ASCII in it would fail the audit
 // write rather than merely render oddly.
@@ -1009,7 +1009,7 @@ func TestSyntheticRenderingsAreValidUTF8(t *testing.T) {
 	}
 }
 
-// Round 8, D2 and D3. Two coalescing edges the suite could not see: the
+// Two coalescing edges the suite could not see: the
 // seal must RESET after the block that follows a marker (or coalescing is
 // disabled for the rest of that candidate), and a merge must target the
 // TRAILING block (or a delta lands in a media block's Text field).
@@ -1060,7 +1060,7 @@ func TestGeminiStream_CoalescingEdges(t *testing.T) {
 	})
 }
 
-// Round 9. D7 was pinned only at payloadSafeText; the budgetWriter call site
+// Byte-sliced truncation was pinned only at payloadSafeText; the budgetWriter call site
 // — where the budget runs out mid-render — was never reached, so reverting
 // its rune-safe truncation failed nothing. Many SHORT multi-byte values are
 // what drive it: each fits under the per-value cap, so nothing is elided and
@@ -1118,7 +1118,7 @@ func TestBudgetTruncationIsRuneSafe(t *testing.T) {
 	}
 }
 
-// Round 9. The caption-ordering claim in replicateOutputBlocks was unpinned:
+// The caption-ordering claim in replicateOutputBlocks was unpinned:
 // the existing test collected texts and media into separate slices and
 // compared each independently, so captions landing after the artifacts —
 // and fusing into one — failed nothing.
@@ -1153,7 +1153,7 @@ func TestReplicateOutput_CaptionsKeepTheirPlace(t *testing.T) {
 	}
 }
 
-// Round 9. mimeFromURLPath added eight mappings and executed none of them,
+// mimeFromURLPath added eight mappings and executed none of them,
 // so a generated artifact's modality was unverified on every extension.
 func TestReplicateURLMimeDrivesModality(t *testing.T) {
 	for ext, want := range map[string]string{
@@ -1454,11 +1454,10 @@ func TestGeminiStreamNonSSEBodyDefaultsRole(t *testing.T) {
 	}
 }
 
-// Round 11. payloadSafeRaw's unparseable arm is the same guard, the same
-// magnitude and the same door as the leak that started this: a body whose
-// content array does not decode falls back to verbatim wire bytes. Round 10
-// audited payloadSafeText's bounds and never looked at the structurally
-// identical bound twelve lines above it.
+// payloadSafeRaw's unparseable arm is the same guard, the same magnitude and
+// the same door: a body whose content array does not decode falls back to
+// verbatim wire bytes. An audit of payloadSafeText's bounds passes straight
+// over the structurally identical bound twelve lines above it.
 //
 // Reaching the arm needs a sub-document the JSON decoder hands back
 // unvalidated — a whole-body parse failure is rejected earlier — so the
@@ -1509,9 +1508,9 @@ func TestUnparseableBodyIsBoundedNotEchoed(t *testing.T) {
 	}
 }
 
-// Round 11. Converging the two role defaults changed behaviour, not only
-// shape: the non-SSE arm used to map first and override the RESULT, so a
-// candidate declaring a role other than model was overridden too. Only the
+// Converging the two role defaults changed behaviour, not only
+// shape: an arm that maps first and overrides the RESULT overrides a
+// candidate declaring a role other than model too. Only the
 // empty-role default was pinned, in both arms — the passthrough in neither,
 // which is the half the convergence actually altered.
 func TestGeminiStreamCandidateRoleIsCarriedNotOverridden(t *testing.T) {
@@ -1537,7 +1536,7 @@ func TestGeminiStreamCandidateRoleIsCarriedNotOverridden(t *testing.T) {
 	}
 }
 
-// Round 11. The recursion depth cap was unpinned: deleting it left the
+// The recursion depth cap was unpinned: deleting it left the
 // budget as the only stop, so a pathologically nested value walked ~1024
 // levels instead of 8 before the output filled. The budget makes it
 // survivable, not free — this is the guard that keeps the walk shallow.
@@ -1558,19 +1557,18 @@ func TestPayloadSafeJSONStopsDescendingAtTheDepthCap(t *testing.T) {
 	}
 }
 
-// Round 13. `output` is a DECLARED text field — the model's own answer —
+// `output` is a DECLARED text field — the model's own answer —
 // and this package's rule for those is that they survive verbatim
-// (media.go, payloadSafeMaxValue). Two attempts to bound a base64 run
-// inside it each deleted the model's words:
+// (media.go, payloadSafeMaxValue). Two ways to bound a base64 run inside it
+// each delete the model's words:
 //
-//   - Round 11 unwrapped line breaks to reclassify the value as media.
-//     `…QUJD\nDone` fused, because D, o, n and e are base64 characters, and
-//     produced a VALID-looking 6-byte capture of something that is not the
-//     image. Two adjacent URIs fused into a third that never existed.
-//   - Round 12 elided the run instead. The run must cross line breaks to
-//     cover a wrapped payload, and once it does it eats the base64-alphabet
-//     word after the break: `…\nDone` lost `Done`, `…\nThe image is ready`
-//     lost `The`.
+//   - Unwrapping line breaks to reclassify the value as media fuses
+//     `…QUJD\nDone`, because D, o, n and e are base64 characters, and
+//     produces a VALID-looking 6-byte capture of something that is not the
+//     image. Two adjacent URIs fuse into a third that never existed.
+//   - Eliding the run instead: it must cross line breaks to cover a wrapped
+//     payload, and once it does it eats the base64-alphabet word after the
+//     break — `…\nDone` loses `Done`, `…\nThe image is ready` loses `The`.
 //
 // Neither is a tuning problem. Nothing separates "payload the classifier
 // missed" from "base64 the model chose to emit" — segment lengths and the
@@ -1661,7 +1659,7 @@ func TestReplicateDeclaredTextSurvivesVerbatim(t *testing.T) {
 	}
 }
 
-// Round 12. A data URI may declare no mime at all. When it does, the FIELD
+// A data URI may declare no mime at all. When it does, the FIELD
 // it arrived in is the better evidence — `image_url` says image whatever
 // the URI omits — and without the override modalityFromMime("") would call
 // it a file, so the card renders a download instead of a preview.
@@ -1701,7 +1699,7 @@ func TestFieldModalityWinsWhenTheDataURIDeclaresNoMime(t *testing.T) {
 	}
 }
 
-// Round 14. The whole-value doctrine — a reference is the ENTIRE value, never
+// The whole-value doctrine — a reference is the ENTIRE value, never
 // a prefix or a substring — was carried only by cases containing spaces, so
 // the whitespace guard decided them and the doctrine itself was never
 // exercised. These have no whitespace at all, so nothing but the doctrine
@@ -1747,8 +1745,8 @@ func TestReplicateReferenceMustBeTheWholeValue(t *testing.T) {
 	}
 }
 
-// Round 14. A non-string element used to vanish from the array with no
-// marker, while Confidence still reported a good parse — the no-silent-drop
+// A non-string element must not vanish from the array with no
+// marker while Confidence still reports a good parse — the no-silent-drop
 // rule, broken in the one codec whose output field is polymorphic.
 func TestReplicateArrayKeepsUnrecognisedElements(t *testing.T) {
 	p, err := NewReplicateNormalizer().Normalize(context.Background(),
@@ -1782,7 +1780,7 @@ func TestReplicateArrayKeepsUnrecognisedElements(t *testing.T) {
 	}
 }
 
-// Round 14. Every prefix test in the media builders runs against a
+// Every prefix test in the media builders runs against a
 // client-controlled string, so an untrimmed comparison is not a guard at
 // all: one leading space walked a whole data URI past both of them and
 // parked 20 023 characters in MediaRef.URL — a reference field holding the
@@ -1817,7 +1815,7 @@ func TestPaddedDataURIDoesNotReachTheURLField(t *testing.T) {
 	}
 }
 
-// Round 14. The unrecognised-element marker renders wire structure, not
+// The unrecognised-element marker renders wire structure, not
 // declared text, so it is bounded — the distinction the whole
 // declared-text-is-verbatim rule turns on. A 40 KB element must not echo.
 func TestUnrecognisedArrayElementMarkerIsBounded(t *testing.T) {
@@ -1838,9 +1836,9 @@ func TestUnrecognisedArrayElementMarkerIsBounded(t *testing.T) {
 			}
 		}
 	}
-	// Assert the marker EXISTS before sizing it. Both assertions used to
-	// sit inside the Contains check, so deleting the marker entirely left
-	// the test green — it could not tell "bounded" from "absent".
+	// Assert the marker EXISTS before sizing it. Both assertions inside one
+	// Contains check cannot tell "bounded" from "absent": deleting the marker
+	// leaves the test green.
 	if marker == "" {
 		t.Fatal("no marker emitted; a dropped element must be named")
 	}
@@ -1849,7 +1847,7 @@ func TestUnrecognisedArrayElementMarkerIsBounded(t *testing.T) {
 	}
 }
 
-// Round 15. Three discriminators in a row were walked past one equivalence
+// Three discriminators in a row were walked past one equivalence
 // class at a time - a bare prefix test, then the same after TrimSpace, then
 // that after aligning the whitespace set. Unicode format characters are not
 // White_Space, and `DATA:` is a legal spelling of the same URI under RFC
@@ -1904,7 +1902,7 @@ func TestReferenceFieldNeverHoldsAPayload(t *testing.T) {
 	}
 }
 
-// Round 15. JSON null unmarshals into a string without error, so it reached
+// JSON null unmarshals into a string without error, so it reached
 // the empty-string skip and vanished - fusing the text either side into one
 // utterance that was never sent. ["a",null,"c"] produced exactly the same
 // payload as ["a","c"], with Confidence still reporting a good parse.
@@ -1948,7 +1946,7 @@ func TestReplicateNullElementIsNamedNotDropped(t *testing.T) {
 	}
 }
 
-// Round 15. The marker names what it saw. Wrapping it in payloadSafeText as
+// The marker names what it saw. Wrapping it in payloadSafeText as
 // well as payloadSafeRaw elided the content at 96 characters, so a marker
 // for an eight-key object said "[elided 202-char value]" - it reported that
 // something was unrecognised while destroying the evidence of what.
@@ -1992,7 +1990,7 @@ func TestUnrecognisedMarkerShowsTheShapeItSaw(t *testing.T) {
 	}
 }
 
-// Round 15. The scheme fold in parseDataURI is reachable only on the
+// The scheme fold in parseDataURI is reachable only on the
 // CAPTURED path - externalMedia recovers a mime hint with its own parsing,
 // so every earlier case exercised that copy and left this one unpinned. A
 // case-sensitive test here would hand a legal `DATA:` URI back to a caller
@@ -2012,16 +2010,16 @@ func TestUppercaseSchemeStillCapturesItsBytes(t *testing.T) {
 	}
 }
 
-// Round 16. The class fix landed in media.go, and this codec never reaches
+// The class fix landed in media.go, and this codec never reaches
 // it: replicateMediaElement pre-filters with its own normalisation, so both
 // equivalence classes stayed open here after being closed at the class site.
 // Worse than the reference-field case it mirrors — the fall-through here is
 // the verbatim declared-text channel, unbounded by design, so the payload
 // went whole into a block the compliance hooks scan.
 //
-// Entered at the WIRE, not at the helper. The round-15 tests called
-// externalMedia and inlineOrExternal directly, which is why they proved the
-// helpers read every spelling without proving the class was closed.
+// Entered at the WIRE, not at the helper. Tests calling externalMedia and
+// inlineOrExternal directly prove the helpers read every spelling without
+// proving the class is closed.
 func TestReplicateWirePathReadsEverySpelling(t *testing.T) {
 	big := strings.Repeat("QUJD", 5000)
 	for _, tc := range []struct{ name, value string }{
@@ -2077,7 +2075,7 @@ func TestReplicateWirePathReadsEverySpelling(t *testing.T) {
 	}
 }
 
-// Round 16. An oversized value is truncated with its cause named, not
+// An oversized value is truncated with its cause named, not
 // blanked. Blanking made it indistinguishable from "the provider sent no
 // media" and destroyed the only thing worth keeping — which host was
 // referenced, which is the evidence a compliance reader needs.
@@ -2115,8 +2113,8 @@ func TestOversizedURLKeepsItsEvidence(t *testing.T) {
 	}
 }
 
-// Round 16. A url-typed source carrying no url used to become an external
-// card referencing nothing. Both sibling builders already degrade to absent.
+// A url-typed source carrying no url must not become an external
+// card referencing nothing; both sibling builders degrade to absent.
 func TestEmptyURLDegradesToAbsent(t *testing.T) {
 	got := externalMedia("image/png", "   ", core.ModalityImage)
 	if got.Source != core.MediaAbsent {

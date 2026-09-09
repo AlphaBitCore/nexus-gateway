@@ -10,8 +10,8 @@ import { LatencyMini } from '@/components/charts/LatencyMini';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '../../../constants/admin-api';
 import styles from './ProviderHealthPage.module.css';
 
-// One severity decision, three colour lookups. The three used to repeat the
-// status list, and the list they repeated was not the one the backend emits —
+// One severity decision, three colour lookups. Three copies of the
+// status list drift from the one the backend emits —
 // see providerHealthSeverity.
 function statusDotColor(status: string): string {
   switch (providerHealthSeverity(status)) {

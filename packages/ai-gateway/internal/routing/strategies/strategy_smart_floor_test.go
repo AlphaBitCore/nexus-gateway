@@ -53,12 +53,11 @@ func TestFilterByCapability_KeepsItWhenTheRequestCarriesTheModality(t *testing.T
 // audio-requiring models cannot serve a text request, and answering "none can"
 // is true where keeping them routes the request to a model that replies 400.
 //
-// This test previously asserted the opposite, on the same fail-open reasoning
-// the acceptance dimensions use. It was not stale about fail-open being right
-// THERE; it was applying it to the one dimension whose emptiness is not about
-// the catalogue. The recovery-side filter has always read the floor this way,
-// so the old behaviour also made this the U-series defect: one question, two
-// answers, in two places.
+// Asserting the opposite, on the same fail-open reasoning the acceptance
+// dimensions use, applies that reasoning to the one dimension whose emptiness
+// is not about the catalogue. Fail-open is right THERE; it is wrong here. The
+// recovery-side filter reads the floor this way, so the two would answer one
+// question differently in two places.
 func TestFilterByCapability_TheFloorDoesNotRelaxWhenItEmptiesThePool(t *testing.T) {
 	kept, dropped, skipped := filterByCapability(
 		[]core.SmartModelRow{row("a", "audio"), row("b", "audio")},

@@ -16,7 +16,7 @@ var jsonUnmarshal = json.Unmarshal
 
 // TestS092_AlertChannelTest — PM-grade e2e.
 //
-// BRAINSTORM (pre): the channel "Test channel" admin button is the
+// The channel "Test channel" admin button is the
 // canonical operator-facing smoke for alert delivery — it inserts a
 // synthetic Alert row, dispatches via the configured Sender, and
 // records an AlertDispatch row regardless of whether the upstream
@@ -133,7 +133,7 @@ func decodeJSON(b []byte, v any) error {
 
 // TestS091_AlertBuiltinSeedLockstep — PM-grade e2e.
 //
-// BRAINSTORM (pre): the Hub alert engine's *defaults* live in
+// The Hub alert engine's *defaults* live in
 // `packages/nexus-hub/internal/alerts/engine/rules/builtin.go` as a Go
 // slice; the DB `AlertRule` table is seeded from prod-data.sql and is
 // what the runtime actually evaluates rules from. If the Go set ever

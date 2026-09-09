@@ -1,7 +1,6 @@
-// Device-group smart-membership family (S-071 — gap-matrix entry from
-// the E86 catalog row "device groups: smart membership query →
-// effective config"). Smart groups are E52-S2: instead of hand-adding
-// devices one by one, the admin saves a membership *query* (e.g.
+// Device-group smart-membership family (S-071) — a smart group is a saved
+// membership query rather than a hand-added device list. Instead of adding
+// devices one by one, the admin saves a query (e.g.
 // `{tag: "macos-laptop"}`) and the Hub eval-loop materialises matching
 // devices into the group's effective member set. The query feeds the
 // cascade resolver that produces the per-device applied-config view.
@@ -33,7 +32,7 @@ import (
 
 // TestS071_DeviceGroupMembershipQuery — PM-grade e2e.
 //
-// BRAINSTORM (pre): smart-group membership has three admin surfaces
+// Smart-group membership has three admin surfaces
 // the CP-UI calls in sequence — preview (POST), persist (PUT
 // membership-query), inspect (GET group detail with embedded
 // memberships). They share the same query DSL, so a regression in

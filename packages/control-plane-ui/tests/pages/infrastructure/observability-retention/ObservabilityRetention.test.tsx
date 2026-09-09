@@ -152,4 +152,86 @@ describe('ObservabilityRetention', () => {
       expect(body.diag_fatal).toBe(365);
     });
   });
+
+  // ── A layer the server has NO value for ────────────────────────────────
+  //
+  // The page filled the box with the spec default and treated that default as
+  // the layer's current value. Two consequences, and the second is what makes
+  // the page unusable rather than merely misleading:
+  //
+  //   1. The operator reads a retention window that is not in force. This is
+  //      the surface whose entire job is saying how long data is kept.
+  //   2. "Changed" compared the box against that same default, so the layer
+  //      counted as unchanged and Save was DISABLED — on exactly the layers
+  //      that had never been configured. The number was visible and could not
+  //      be committed.
+
+  it('TestRetentionPage_UnconfiguredLayer_IsNotPresentedAsInForce', async () => {
+    const partial = { retention: { ...seedRetention.retention } };
+    delete (partial.retention as Record<string, unknown>).diag_warn;
+    server.use(
+      http.get('/api/admin/observability/retention', () => HttpResponse.json(partial)),
+    );
+
+    renderPage();
+
+    const input = await screen.findByLabelText('diag_warn');
+    // The box still shows the default so the row is usable...
+    expect((input as HTMLInputElement).value).toBe('30');
+    // ...but it is marked as NOT a setting in force.
+    await waitFor(() => {
+      expect(input.getAttribute('data-unconfigured')).toBe('true');
+    });
+    // And a configured sibling is not marked.
+    expect(screen.getByLabelText('diag_error').getAttribute('data-unconfigured')).toBeNull();
+  });
+
+  it('TestRetentionPage_UnconfiguredLayer_CanBeSavedWithoutEditingIt', async () => {
+    const partial = { retention: { ...seedRetention.retention } };
+    delete (partial.retention as Record<string, unknown>).diag_warn;
+
+    let putBody: unknown = null;
+    server.use(
+      http.get('/api/admin/observability/retention', () => HttpResponse.json(partial)),
+      http.put('/api/admin/observability/retention', async ({ request }) => {
+        putBody = await request.json();
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByLabelText('diag_warn');
+
+    // Save must be enabled with NO edit at all — persisting the default is a
+    // real change from "nothing stored".
+    const save = await screen.findByRole('button', { name: /^save$/i });
+    await waitFor(() => {
+      expect((save as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    await user.click(save);
+    await waitFor(() => {
+      expect(putBody).not.toBeNull();
+    });
+    expect(JSON.stringify(putBody)).toContain('diag_warn');
+  });
+
+  // The sibling: when every layer IS configured and nothing is edited, Save
+  // stays disabled. Without this, "always enable Save" would satisfy the arm
+  // above while removing the dirty-tracking the page relies on.
+  it('TestRetentionPage_AllConfiguredAndUntouched_SaveStaysDisabled', async () => {
+    server.use(
+      http.get('/api/admin/observability/retention', () => HttpResponse.json(seedRetention)),
+    );
+
+    renderPage();
+    await screen.findByLabelText('diag_warn');
+
+    const save = await screen.findByRole('button', { name: /^save$/i });
+    await waitFor(() => {
+      expect((save as HTMLButtonElement).disabled).toBe(true);
+    });
+  });
 });

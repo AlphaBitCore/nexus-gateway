@@ -218,7 +218,29 @@
     "selectModel": "Seleccione un modelo…"
   },
   "charts": {
-    "totalLatency": "Latencia total"
+    "totalLatency": "Latencia total",
+    "phase": {
+      "reqHooks": {
+        "label": "Hooks de solicitud",
+        "desc": "Suma de las etapas de cumplimiento / paquetes de reglas del lado de la solicitud."
+      },
+      "our": {
+        "label": "Sobrecarga propia",
+        "desc": "Interno de Nexus: autenticación, enrutamiento, caché, transformación — la única columna que puedes optimizar directamente."
+      },
+      "upstreamTtfb": {
+        "label": "TTFB del proveedor",
+        "desc": "Tiempo de espera hasta el primer byte devuelto por el proveedor."
+      },
+      "upstreamBody": {
+        "label": "Cuerpo del proveedor",
+        "desc": "Tiempo de recepción de los bytes del cuerpo en streaming (TTFB → cierre)."
+      },
+      "respHooks": {
+        "label": "Hooks de respuesta",
+        "desc": "Suma de las etapas de cumplimiento / extracción de señales del lado de la respuesta."
+      }
+    }
   },
   "hookConfig": {
     "redactExamplePlaceholder": "[REDACTED_<RULE_ID>]"
@@ -231,5 +253,7 @@
     "passwordsDoNotMatch": "Las nuevas contraseñas no coinciden",
     "passwordTooShort": "La nueva contraseña debe tener al menos {{count}} caracteres",
     "currentPasswordRequired": "La contraseña actual es obligatoria"
-  }
+  },
+  "comboboxTypeToSearch": "Escribe para buscar",
+  "unsavedChanges": "cambios sin guardar"
 }

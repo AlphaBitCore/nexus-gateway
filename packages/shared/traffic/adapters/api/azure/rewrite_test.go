@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -28,15 +29,28 @@ func TestRewriteRequestBody_DelegatesToOpenAI(t *testing.T) {
 	}
 }
 
-func TestRewriteRequestBody_EmbeddingsUnsupported(t *testing.T) {
-	body := []byte(`{"model":"text-embedding-3-small","input":"x"}`)
+// A redaction on an Azure embeddings deployment must reach the wire. Azure
+// serves the OpenAI embeddings shape under a deployment-scoped path, so the
+// delegation has to survive the path rewriting too.
+//
+// This previously asserted ErrRewriteUnsupported. The callers fail CLOSED on an
+// unsupported rewrite, so declining meant a redact rule matching an embedded
+// document could only refuse the request, never mask it.
+func TestRewriteRequestBody_EmbeddingsRedacts(t *testing.T) {
+	body := []byte(`{"model":"text-embedding-3-small","input":"my SSN is 123-45-6789"}`)
 
 	a := &Adapter{}
-	_, _, err := a.RewriteRequestBody(context.Background(), body,
+	out, n, err := a.RewriteRequestBody(context.Background(), body,
 		"/openai/deployments/emb/embeddings?api-version=2024-02-01",
-		traffic.NormalizedContent{Segments: []string{"y"}})
-	if !errors.Is(err, traffic.ErrRewriteUnsupported) {
-		t.Errorf("expected ErrRewriteUnsupported, got %v", err)
+		traffic.NormalizedContent{Segments: []string{"my SSN is [REDACTED]"}})
+	if err != nil {
+		t.Fatalf("err=%v want nil", err)
+	}
+	if n != 1 {
+		t.Errorf("patched=%d want 1", n)
+	}
+	if strings.Contains(string(out), "123-45-6789") {
+		t.Errorf("the value survives the rewrite: %s", out)
 	}
 }
 

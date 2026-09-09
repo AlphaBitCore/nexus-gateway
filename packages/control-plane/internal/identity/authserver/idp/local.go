@@ -4,16 +4,16 @@ import (
 	"context"
 	"crypto/rand"
 	"strings"
-	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 )
 
 // UserLookup is the subset of the NexusUser store the Local adapter needs.
 // The signature matches store.UserStore.GetByEmail exactly so production
 // code can pass the real store and tests can pass a fake.
 type UserLookup interface {
-	GetByEmail(ctx context.Context, email string) (userID string, pwdHash string, source string, disabledAt *time.Time, err error)
+	GetByEmail(ctx context.Context, email string) (userID string, pwdHash string, source string, account store.AuthDisposition, err error)
 }
 
 // Local is the password-based adapter backed by NexusUser.passwordHash.
@@ -81,7 +81,7 @@ func (l *Local) Authenticate(ctx context.Context, input map[string]string) (*Aut
 		return nil, ErrInvalidCredentials
 	}
 
-	uid, hash, source, disabledAt, err := l.users.GetByEmail(ctx, email)
+	uid, hash, source, account, err := l.users.GetByEmail(ctx, email)
 	if err != nil {
 		// Burn time against the dummy so missing users take as long as present
 		// ones. Ignore the boolean result.
@@ -107,13 +107,15 @@ func (l *Local) Authenticate(ctx context.Context, input map[string]string) (*Aut
 		_ = auth.VerifyPassword(password, dummyHash)
 		return nil, ErrInvalidCredentials
 	}
-	if disabledAt != nil {
-		// A disabled local account returns the SAME generic invalid-credentials
-		// error as a wrong password / SSO-only / nonexistent account so an
-		// anonymous caller cannot enumerate disabled accounts. Burning
-		// time against the dummy keeps the timing profile uniform. A genuinely
-		// disabled user who knows their password is guided by support out of
-		// band; the login page never reveals account state to anonymous callers.
+	if account.Blocked() {
+		// A switched-off local account returns the SAME generic
+		// invalid-credentials error as a wrong password / SSO-only /
+		// nonexistent account so an anonymous caller cannot enumerate disabled
+		// accounts — which is also why the disposition's Reason is not put on
+		// the wire here. Burning time against the dummy keeps the timing
+		// profile uniform. A genuinely disabled user who knows their password
+		// is guided by support out of band; the login page never reveals
+		// account state to anonymous callers.
 		_ = auth.VerifyPassword(password, dummyHash)
 		return nil, ErrInvalidCredentials
 	}

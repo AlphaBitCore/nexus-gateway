@@ -77,15 +77,17 @@ func TestBuildIdentity_WireShape(t *testing.T) {
 	}
 }
 
-// TestBuildDetails_WireShape pins the serialized details object. The ten base
+// TestBuildDetails_WireShape pins the serialized details object. The eight base
 // keys are always present (empty strings as "", nil any-values as null); the
 // four hook-rewrite keys appear iff their stage rewrote — including the
-// hookRewriteCount:0 edge when a rewrite left the count at zero, which the old
-// map emitted unconditionally inside the rewrite branch.
+// hookRewriteCount:0 edge when a rewrite left the count at zero.
+//
+// No correlation id appears here, and the record below sets RequestID and
+// ClientRequestID precisely so that stays asserted: those ids have real columns,
+// and a JSONB copy of a column is a second place for the same fact to drift,
+// shipped to the customer's SIEM as an undocumented duplicate.
 func TestBuildDetails_WireShape(t *testing.T) {
 	base := map[string]any{
-		"requestId":              "r1",
-		"clientRequestId":        "cr1",
 		"sourceApp":              "app",
 		"cacheKey":               "ck",
 		"responseHookReason":     "rhr",

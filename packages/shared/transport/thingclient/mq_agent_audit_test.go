@@ -2,7 +2,6 @@ package thingclient
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +19,10 @@ import (
 // response decoded, retries on transient failure.
 
 func TestUploadAgentAudit_Success(t *testing.T) {
-	want := AuditBatchResponse{Ack: true, ConfirmedIDs: []string{"a", "b"}}
+	// Verbatim wire bytes from Hub's /things/agent-audit handler, which
+	// returns {"accepted": [ids]}. Written as a literal on purpose: a fake
+	// that re-encodes the struct under test asserts nothing about the tags.
+	const wantWire = `{"accepted":["a","b"]}`
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/internal/things/agent-audit" {
 			t.Errorf("path = %q, want /api/internal/things/agent-audit", r.URL.Path)
@@ -33,7 +35,7 @@ func TestUploadAgentAudit_Success(t *testing.T) {
 			t.Errorf("body should be raw JSON array, got: %q", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(want)
+		_, _ = w.Write([]byte(wantWire))
 	}))
 	defer ts.Close()
 
@@ -42,8 +44,11 @@ func TestUploadAgentAudit_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UploadAgentAudit: %v", err)
 	}
-	if !resp.Ack || len(resp.ConfirmedIDs) != 2 {
-		t.Errorf("response: %+v", resp)
+	if len(resp.Accepted) != 2 || resp.Accepted[0] != "a" || resp.Accepted[1] != "b" {
+		t.Errorf("accepted must decode from the route's own `accepted` list; got %+v", resp.Accepted)
+	}
+	if len(resp.Rejected) != 0 {
+		t.Errorf("rejected must be nil when the route omits it; got %+v", resp.Rejected)
 	}
 }
 
@@ -62,14 +67,14 @@ func TestUploadAgentAudit_HTTPError(t *testing.T) {
 
 func TestUploadAgentAuditWithRetry_RetriesOnFailure(t *testing.T) {
 	var calls atomic.Int32
-	want := AuditBatchResponse{Ack: true, ConfirmedIDs: []string{"id-1"}}
+	const wantWire = `{"accepted":["id-1"]}`
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) < 2 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(want)
+		_, _ = w.Write([]byte(wantWire))
 	}))
 	defer ts.Close()
 
@@ -78,8 +83,8 @@ func TestUploadAgentAuditWithRetry_RetriesOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UploadAgentAuditWithRetry: %v", err)
 	}
-	if !resp.Ack || len(resp.ConfirmedIDs) != 1 {
-		t.Errorf("response: %+v", resp)
+	if len(resp.Accepted) != 1 || resp.Accepted[0] != "id-1" {
+		t.Errorf("accepted must decode from the route's own `accepted` list; got %+v", resp.Accepted)
 	}
 	if calls.Load() < 2 {
 		t.Errorf("expected at least 2 calls (1 fail + 1 retry), got %d", calls.Load())

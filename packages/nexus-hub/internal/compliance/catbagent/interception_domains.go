@@ -31,7 +31,7 @@ func NewAgentInterceptionDomainsLoader(db pgxQuerier, logger *slog.Logger) *Agen
 // Field tags below duplicate InterceptionDomainDTO / InterceptionPathDTO
 // to keep the wire contract at the SQL scan site. The SELECT columns
 // are copied (not imported) from
-// packages/control-plane/internal/store/interception_domain.go's
+// packages/control-plane/internal/governance/interception/interceptionstore/interception_domain.go's
 // ListEnabledInterceptionDomains to avoid a cp -> hub dependency cycle.
 // Any schema change to interception_domain / interception_path must
 // update both sites.

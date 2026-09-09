@@ -5,7 +5,7 @@
  *
  * Source of truth: the Hub aggregator (`packages/nexus-hub/internal/jobs/
  * thing_rollup_5m.go`) and the agent local aggregator (`packages/agent/
- * internal/localrollup/localrollup.go`). When new metrics are added there,
+ * packages/agent/internal/observability/localrollup/localrollup.go`). When new metrics are added there,
  * mirror them here so the Stats UI renders them.
  *
  * The catalog also encodes intentional differences across Thing types:
@@ -107,8 +107,7 @@ export interface ThingStatsCatalogEntry {
 }
 
 // Hub rollup_5m emits status counts with `_count` suffix
-// (status_2xx_count / status_4xx_count / status_5xx_count) — see
-// packages/shared/metrics/types.go. Earlier code read the unsuffixed
+// (status_2xx_count / status_4xx_count / status_5xx_count). Earlier code read the unsuffixed
 // names and silently returned null on every Thing, leaving the Stats
 // tab Success rate KPI empty across prod.
 const SUCCESS_RATE = (sums: Record<string, number>): number | null => {
@@ -388,11 +387,11 @@ export const THING_STATS_CATALOG: Record<ThingTypeKey, ThingStatsCatalogEntry> =
         valueColumnKey: 'pages:thingStats.breakdown.tokensColumn',
       },
       {
-        // `routed_provider`, not `provider`. The rollup pipeline used to emit
-        // `provider=<requested>` but OpenAI-style requests carry no requested
-        // provider, so the dim was always empty and was retired in favour of
-        // `routed_provider` (the provider that actually handled the call).
-        // See packages/nexus-hub/internal/jobs/rollup_5m.go::buildEventDims.
+        // `routed_provider`, not `provider`. The rollup pipeline emits
+        // the provider that actually handled the call: OpenAI-style requests carry no
+        // requested provider, so a `provider=<requested>` dim is always
+        // empty.
+        // See packages/nexus-hub/internal/jobs/defs/rollup/rollup_5m.go::buildEventDims.
         id: 'topProviders',
         dimensionKey: 'routed_provider',
         metric: 'request_count',

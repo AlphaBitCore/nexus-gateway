@@ -16,7 +16,7 @@ export default async function globalSetup(_config: FullConfig) {
 
   const baseURL = process.env.NEXUS_UI_URL ?? 'http://localhost:3000';
   const email = process.env.NEXUS_ADMIN_EMAIL ?? 'admin@nexus.ai';
-  const password = process.env.NEXUS_ADMIN_PASSWORD ?? 'admin123';
+  const password = process.env.NEXUS_ADMIN_PASSWORD ?? 'nexus-demo';
 
   // The workstation HTTP_PROXY env var (127.0.0.1:10080) intercepts localhost
   // requests. Clear it before launching Chromium so direct connections work.

@@ -12,13 +12,15 @@ import (
 
 	"context"
 	"fmt"
-	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"log/slog"
+
+	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 
 	"github.com/redis/go-redis/v9"
 
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/promptcache"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
@@ -141,7 +143,7 @@ func (c *credentialStoreAdapter) ListForProvider(ctx context.Context, providerID
 // during degraded startup; callers must guard against a nil return.
 // rdb is optional; when non-nil it enables circuit-state awareness in
 // multi-credential pool selection.
-func NewResolver(layer *cachelayer.Layer, credMgr *credmanager.Manager, rdb redis.Cmdable) *provtarget.PgResolver {
+func NewResolver(layer *cachelayer.Layer, credMgr *credmanager.Manager, rdb redis.Cmdable, pc *promptcache.Settings) *provtarget.PgResolver {
 	if layer == nil || credMgr == nil {
 		return nil
 	}
@@ -151,6 +153,12 @@ func NewResolver(layer *cachelayer.Layer, credMgr *credmanager.Manager, rdb redi
 		&credentialStoreAdapter{mgr: credMgr},
 	)
 	r.Redis = rdb
+	// The executor's leg of the prompt-cache decision. The cache stage reads
+	// the same settings for its own leg; both must agree or the cache key
+	// would be built over bytes the executor does not send.
+	if pc != nil {
+		r.PromptCache = pc
+	}
 	return r
 }
 

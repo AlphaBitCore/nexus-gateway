@@ -97,7 +97,7 @@ func TestLoginHeadless_Success(t *testing.T) {
 	store := newMemStore()
 	a := NewAuthenticator(Env{Name: "local", CPBaseURL: srv.URL, OAuthClientID: "cp-ui", OAuthRedirectURI: "http://localhost:3000/auth/callback"}, store, srv.Client())
 
-	if err := a.LoginHeadless(context.Background(), "admin@nexus.ai", "admin123"); err != nil {
+	if err := a.LoginHeadless(context.Background(), "admin@nexus.ai", "nexus-demo"); err != nil {
 		t.Fatalf("LoginHeadless: %v", err)
 	}
 	if got, _ := store.Get("local", SecretAccessToken); got != at {

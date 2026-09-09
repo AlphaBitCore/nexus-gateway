@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	hooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 
 	"github.com/tidwall/gjson"
 )
@@ -331,3 +331,37 @@ type nonFlushableWriter struct{}
 func (nonFlushableWriter) Header() http.Header         { return http.Header{} }
 func (nonFlushableWriter) Write(p []byte) (int, error) { return len(p), nil }
 func (nonFlushableWriter) WriteHeader(_ int)           {}
+
+// TestRequestID_AliasOnlyIsEchoedUnderTheCanonicalName closes the gap between
+// "the two spellings are one id" and what a caller actually reads back.
+//
+// A caller who sends only the conventional x-request-id has said nothing about
+// Nexus. They still get the resolved id on X-Nexus-Request-Id — the same value
+// they sent — because that is the header the docs tell them to quote and the
+// one every downstream read site uses. Minting a second id here instead would
+// make the response disagree with the audit row for the very caller the alias
+// exists to accommodate.
+func TestRequestID_AliasOnlyIsEchoedUnderTheCanonicalName(t *testing.T) {
+	var seenByHandler string
+	h := RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seenByHandler = r.Header.Get("X-Nexus-Request-Id")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("X-Request-Id", "conventional-only")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Nexus-Request-Id"); got != "conventional-only" {
+		t.Errorf("response X-Nexus-Request-Id = %q, want the alias value echoed under the canonical name", got)
+	}
+	if got := rec.Header().Get("X-Request-Id"); got != "conventional-only" {
+		t.Errorf("response X-Request-Id = %q, want the caller's own spelling echoed too", got)
+	}
+	// Downstream read sites only look at the canonical name, so the middleware
+	// has to write the resolved value back onto the request as well — otherwise
+	// the response and the audit row would carry different ids.
+	if seenByHandler != "conventional-only" {
+		t.Errorf("handler saw X-Nexus-Request-Id = %q, want the resolved value written back onto the request", seenByHandler)
+	}
+}

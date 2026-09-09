@@ -77,7 +77,8 @@ const asyncBackstop = 30 * time.Second
 // the delete ran BEFORE the write, the goroutine then wrote the key, the next
 // Inject found a cache hit, Resolve was never called again, and the wait for the
 // second call hung until its own deadline. It read as a timing flake in the
-// outer wait. It was this race.
+// outer wait. It was this race — one of two with this symptom. Waiting for the
+// write does not address write-before-RELEASE; see injectUntilCall.
 func waitForKey(t *testing.T, rdb redis.UniversalClient, key string) {
 	t.Helper()
 	deadline := time.Now().Add(asyncBackstop)
@@ -116,6 +117,42 @@ func (c *captureResolver) waitForCalls(t *testing.T, n int64) {
 				"which is a hang rather than a slow machine", n, c.calls.Load(), asyncBackstop)
 		}
 	}
+}
+
+// injectUntilCall re-issues Inject until the n-th Resolve has happened.
+//
+// One Inject is not enough: waitForKey observes the Redis write, but the key
+// leaves the singleflight group only when the create's function returns, so an
+// Inject issued in between is collapsed and never calls Resolve. Same-key reuse
+// is the property under test, so the two-distinct-bodies trick the sibling
+// circuit-breaker test uses is unavailable here.
+//
+// Retrying costs the assertion nothing: if the key never leaves the group, no
+// number of retries produces the n-th call and the backstop still fires.
+func injectUntilCall(t *testing.T, m *Manager, res *captureResolver, body []byte, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(asyncBackstop)
+	for time.Now().Before(deadline) {
+		if _, _, err := m.Inject(context.Background(), "p1", "gemini-2.0-flash", body); err != nil {
+			t.Fatalf("Inject while waiting for call %d: %v", n, err)
+		}
+		if res.calls.Load() >= n {
+			return
+		}
+		// Wake on the signal Resolve already fires, with a short ceiling so a
+		// collapsed Inject is retried once the group has had a chance to
+		// release rather than waiting for a signal that will never come.
+		select {
+		case <-res.done:
+		case <-time.After(20 * time.Millisecond):
+		}
+		if res.calls.Load() >= n {
+			return
+		}
+	}
+	t.Fatalf("injectUntilCall: wanted %d Resolve calls, got %d after %s — the key never "+
+		"left the singleflight group, so an evicted entry could never be regenerated",
+		n, res.calls.Load(), asyncBackstop)
 }
 
 // config.go — exercise zero-value fallback branches
@@ -641,10 +678,11 @@ func TestAsyncCreate_CollapseReleasesKeyAfterCompletion(t *testing.T) {
 	rk := contentHash("p1", "gemini-2.0-flash", `{"parts":[{"text":"regenerate me"}]}`, "", "")
 
 	for i := 1; i <= 2; i++ {
-		if _, _, err := m.Inject(context.Background(), "p1", "gemini-2.0-flash", body); err != nil {
-			t.Fatalf("Inject %d: %v", i, err)
-		}
-		res.waitForCalls(t, int64(i))
+		// Retry rather than Inject once: the second miss has to be able to
+		// land AFTER the first create leaves the singleflight group, and the
+		// moment of that release is not observable from here. See
+		// injectUntilCall.
+		injectUntilCall(t, m, res, body, int64(i))
 		// The eviction below must not race the write it is evicting.
 		waitForKey(t, rdb, rk)
 		// Simulate a Gemini-side eviction so the next request misses again.
@@ -702,9 +740,9 @@ func TestAsyncCreate_ResolverError_RecordsFailure(t *testing.T) {
 	// Resolve is CALLED — the attempt is still in flight, still holding the
 	// group key. A second Inject with the same body arriving in that window is
 	// deduplicated, never calls Resolve, and the wait for a second call hangs
-	// until its deadline. That is what CI kept reporting. The subject here is
-	// the circuit-breaker threshold, not key identity, so two failing attempts
-	// on two keys exercise it exactly as well and cannot collapse.
+	// until its deadline. The subject here is the circuit-breaker threshold,
+	// not key identity, so two failing attempts on two keys exercise it
+	// exactly as well and cannot collapse.
 	body1 := []byte(`{"systemInstruction":{"parts":[{"text":"x"}]},"contents":[]}`)
 	body2 := []byte(`{"systemInstruction":{"parts":[{"text":"y"}]},"contents":[]}`)
 	if _, _, err := m.Inject(context.Background(), "p", "m", body1); err != nil {

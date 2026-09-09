@@ -1,0 +1,17 @@
+{
+  "model": "claude-sonnet-5",
+  "stream": true,
+  "max_tokens": 3000,
+  "thinking": {
+    "type": "adaptive"
+  },
+  "output_config": {
+    "effort": "high"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Work out 17*23 step by step, then explain the result in two sentences."
+    }
+  ]
+}

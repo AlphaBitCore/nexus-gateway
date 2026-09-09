@@ -52,8 +52,7 @@ const (
 type RuleType string
 
 const (
-	RuleTypeStrip              RuleType = "strip"
-	RuleTypeCacheControlInject RuleType = "cache_control_inject"
+	RuleTypeStrip RuleType = "strip"
 )
 
 // Rule describes a single normalisation rule.
@@ -77,27 +76,41 @@ type Rule struct {
 	// only applied in NormalizeUpstream.
 	KeyNormalizeSafe bool
 
-	// strip-rule fields
-	BodyPath string         // gjson path selector applied before the regex
-	Regex    *regexp.Regexp // compiled pattern to remove from matched values
+	// strip-rule fields.
+	//
+	// BodyPaths lists every gjson selector the regex is applied at. A wire
+	// field can legitimately arrive in more than one JSON shape, and a rule
+	// that names only one of them is silently absent on the others: Anthropic's
+	// `system` is an ARRAY of content blocks when a native client sends it, and
+	// a plain STRING when this gateway's own codec rebuilds it on the
+	// cross-format leg. A rule declaring only "system.#.text" therefore worked
+	// for a /v1/messages caller and did nothing at all for the same body
+	// arriving through /v1/chat/completions.
+	//
+	// The selectors are applied in order and are expected to be mutually
+	// exclusive — each no-ops on a shape it does not match — so listing both
+	// costs one failed gjson lookup, not a double strip.
+	BodyPaths []string       // gjson path selectors applied before the regex
+	Regex     *regexp.Regexp // compiled pattern to remove from matched values
 }
 
 // Config is the runtime configuration projected from the `cache` config-key
 // blob (configkey.Cache) that the AI Gateway watches on its shadow. The zero
 // value is a safe default (all off).
 type Config struct {
-	// The upstream rewrite (L3 strip + L4 marker inject) is demand-driven:
-	// the engine derives a hasWork gate at Reload from the resolved rules and
-	// per-Provider inject settings below. There is no global on/off knob —
-	// enabling a rule or a Provider's marker injection IS the demand.
-	// NormalizeKey (L0 cache-key) is always active regardless.
+	// The upstream rewrite (L3 strip) is demand-driven: the engine derives a
+	// hasWork gate at Reload from the resolved rules below. There is no global
+	// on/off knob — enabling a rule IS the demand. NormalizeKey (L0 cache-key)
+	// is always active regardless.
+	//
+	// The same blob also carries per-provider prompt-cache settings. Those are
+	// NOT projected here: the marker they control is written by the codec that
+	// owns the wire carrying it, which reads the live blob per request. This
+	// engine holds no per-provider state at all, which is what makes it immune
+	// to the order the config loader happens to apply shadow keys in.
 
 	// Rules maps adapter_type → (rule_id → RuleOverride).
 	Rules map[string]map[string]RuleOverride `json:"rules,omitempty"`
-	// Providers carries per-Provider cache settings keyed by Provider UUID.
-	Providers map[string]ProviderCacheConfig `json:"providers,omitempty"`
-	// Global holds platform-wide cache settings.
-	Global GlobalCacheConfig `json:"global,omitempty"`
 }
 
 // RuleOverride carries the operator-configurable per-rule toggles.
@@ -106,37 +119,20 @@ type RuleOverride struct {
 	DryRunAlways *bool `json:"dry_run_always,omitempty"`
 }
 
-// ProviderCacheConfig holds per-Provider marker injection settings.
-type ProviderCacheConfig struct {
-	// CacheMarkerInjectEnabled enables L4 cache_control injection for
-	// Anthropic-wire requests routed to this Provider.
-	CacheMarkerInjectEnabled bool `json:"cache_marker_inject_enabled"`
-	// CacheMarkerBoundary3Enabled enables the conversation-history boundary
-	// (messages[-2]) when CacheMarkerInjectEnabled is true.
-	CacheMarkerBoundary3Enabled bool `json:"cache_marker_boundary3_enabled"`
-}
-
-// GlobalCacheConfig holds platform-wide settings.
-type GlobalCacheConfig struct {
-	// ExtendedTTLEnabled is retained for JSON deserialization compatibility
-	// but no longer affects injection behavior — all markers use "ephemeral".
-	ExtendedTTLEnabled bool `json:"extended_ttl_enabled"`
-}
-
 // Result is the normalisation outcome returned by NormalizeUpstream.
 type Result struct {
-	StripCount      int
-	StripBytes      int
-	MarkersInjected int
-	// DryRun is true when all active rules ran in dry-run mode and the
-	// returned body equals the input body.
+	StripCount int
+	StripBytes int
+	// DryRun is true when every active rule ran in dry-run mode, which means
+	// the returned body equals the input body and StripCount / StripBytes
+	// describe what WOULD have been removed. An audit row that carries the
+	// counts without this bit cannot tell a measurement from an edit.
 	DryRun bool
 
 	// TransformSpans is the byte-level audit record of every strip /
 	// inject this engine performed. Source values:
 	//   cache-normaliser     — strips that removed bytes from the
 	//                          upstream-bound body (L3).
-	//   cache-control-inject — cache_control markers added (L4).
 	//   cache-key-strip      — L0 strips that affect only the cache key.
 	// Spans are consumed in-process (cache-key derivation, strip metrics);
 	// they are not persisted to traffic_event_normalized.

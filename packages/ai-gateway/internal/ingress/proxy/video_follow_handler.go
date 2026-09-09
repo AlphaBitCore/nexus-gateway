@@ -34,6 +34,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store/asyncjob"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	geminicodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/codec"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -174,11 +176,11 @@ func (h *Handler) ServeVideoUnsupported(in Ingress, code, message, hint string) 
 // newVideoFollowRecord builds the audit record shared by the poll and delete
 // arms.
 func newVideoFollowRecord(r *http.Request, in Ingress, start time.Time) *audit.Record {
-	requestID := r.Header.Get("X-Nexus-Request-Id")
+	requestID := traffic.ResolveRequestID(r.Header)
 	rec := &audit.Record{
 		RequestID:       requestID,
-		ClientRequestID: r.Header.Get("x-request-id"),
-		TraceID:         requestID,
+		ClientRequestID: r.Header.Get(traffic.HeaderRequestIDAlias),
+		TraceID:         telemetry.InboundTraceID(r.Context()),
 		Timestamp:       start,
 		Method:          r.Method,
 		Path:            r.URL.Path,

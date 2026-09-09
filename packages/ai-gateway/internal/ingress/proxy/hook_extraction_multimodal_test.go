@@ -3,8 +3,8 @@
 //
 // Named failure modes tested:
 //   - image prompt / TTS input reach the hook pipeline as scannable text
-//     (previously the shared adapter returned ErrUnknownSchema → nothing
-//     was ever scanned on these routes)
+//     (a shared adapter returning ErrUnknownSchema means nothing is
+//     scanned on these routes at all)
 //   - D7 conformance: every user-text slot of the supported OpenAI wire
 //     schemas is covered by multimodalUserTextPaths; non-text knobs are not
 //   - PII in an image prompt fires the redact hook and FAILS CLOSED (403,

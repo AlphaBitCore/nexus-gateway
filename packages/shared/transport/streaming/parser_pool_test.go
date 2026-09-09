@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Correctness gate for the pooled scan buffer (finding C-12). The risk pooling
+// Correctness gate for the pooled scan buffer. The risk pooling
 // introduces is not a wrong answer on the happy path — it is one stream observing
 // another stream's bytes after the buffer is recycled. On a compliance product that
 // would splice one tenant's payload into another's audit record, so the tests below

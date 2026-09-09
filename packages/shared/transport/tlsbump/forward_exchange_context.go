@@ -8,20 +8,19 @@ import (
 
 // Context stamping for a bumped exchange.
 //
-// Split out of forward_exchange.go along the seam finding C-3 created: every value the
-// request phases hand to the post-upstream write sites travels the request context, and
-// each stamp costs an http.Request clone, so how many stamps there are and when they run
-// is a cost decision as much as a plumbing one. Keeping them in one file makes the count
-// visible.
+// Split out of forward_exchange.go: every value the request phases hand to the
+// post-upstream write sites travels the request context, and each stamp costs an
+// http.Request clone, so how many stamps there are and when they run is a cost decision
+// as much as a plumbing one. Keeping them in one file makes the count visible.
 //
 // The remaining stamps on a bumped request, in execution order:
 //
 //	newExchange  clientHelloKey   (conditional; read by UpstreamTransport.DialTLSContext)
 //	this file    PhaseSink + CPMarker + requestAuditCtx, in ONE clone
 //
-// Two clones per bumped request, down from four. The PhaseSink stamp used to be its own
-// clone in prepare(); it moved here once the reader set was checked. Nothing between
-// prepare() and this function reads the sink OFF A CONTEXT — the in-package phases hold
+// Two clones per bumped request. Giving PhaseSink its own clone in prepare() would make
+// it three, and nothing between prepare() and this function reads the sink OFF A
+// CONTEXT — the in-package phases hold
 // x.phaseSink directly, and the only context reader in the repo that matters here is the
 // tracing RoundTripper (shared/traffic/tracing.go), which runs inside forwardUpstream. Both
 // of the repo's ForwardRequest call sites are downstream of this stamp or bypass prepare()
@@ -59,8 +58,8 @@ func (x *bumpedExchange) stampCPMarker() {
 	x.r = x.r.WithContext(ctx)
 }
 
-// runDeferredAudit emits the audit row the stream-through arm parked for after the relay
-// (finding C-34), and is a no-op on every other arm. It runs exactly once: the closure is
+// runDeferredAudit emits the audit row the stream-through arm parked for after the
+// relay, and is a no-op on every other arm. It runs exactly once: the closure is
 // cleared before it is called, so a caller that both defers this and calls it directly
 // cannot double-write a row — a duplicate audit row is worse than a late one, because
 // nothing downstream deduplicates them.

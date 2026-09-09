@@ -2,8 +2,8 @@ package codecs
 
 // usage_only.go — fast-path usage extraction for providers.ExtractUsage.
 //
-// ExtractUsage previously ran the full Tier-1 Normalize and discarded everything
-// but np.Usage, so it parsed and allocated the entire content projection
+// Running the full Tier-1 Normalize and discarding everything
+// but np.Usage parses and allocates the entire content projection
 // (choices[]/content[]/message/tool_calls, including kilobyte-scale visible text)
 // on every call — and ExtractUsage runs per response AND per usage-bearing stream
 // chunk. The UsageOnlyExtractor fast path parses only the usage block (Anthropic
@@ -21,9 +21,18 @@ package codecs
 // bodies; the producer-side ai-gateway smoke is the final cost/token gate.
 
 import (
+	"bytes"
+
 	json "github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+)
+
+// reasoningNeedle and backslashNeedle gate the OpenAI shortcut above. Package
+// vars so the slices are built once rather than per call.
+var (
+	reasoningNeedle = []byte("reasoning")
+	backslashNeedle = []byte(`\`)
 )
 
 // UsageOnlyExtractor is the optional fast path a normalizer implements to pull
@@ -53,6 +62,41 @@ func (n *OpenAIChatNormalizer) ExtractUsageOnly(raw []byte) (*core.Usage, bool) 
 	if looksLikeOpenAIEventStream(raw) {
 		return nil, false
 	}
+	// choices[] is projected below for one reason: the reasoning-content
+	// estimate, which applies only when a message carries reasoning_content or
+	// reasoning AND the usage block reported no reasoning_tokens. A body that
+	// contains neither spelling anywhere cannot trigger it, so the projection —
+	// a slice, a struct per choice, and a string per reasoning field — is pure
+	// cost on every ordinary OpenAI response.
+	//
+	// The backslash test is what makes the shortcut exact rather than likely.
+	// JSON's only escape mechanism is the backslash, so a body with none cannot
+	// spell either key any way but literally; without that test a provider
+	// emitting "\u0072easoning_content" would silently lose its estimate, and
+	// ReasoningTokens is billing-adjacent. Ordered so that a body which does
+	// carry reasoning short-circuits before the second scan.
+	if !bytes.Contains(raw, reasoningNeedle) && !bytes.Contains(raw, backslashNeedle) {
+		var usageOnly struct {
+			Usage *openAIUsage `json:"usage"`
+		}
+		if err := json.Unmarshal(raw, &usageOnly); err != nil {
+			return nil, false
+		}
+		if usageOnly.Usage == nil {
+			// Matches the full path: no usage block yields nil Usage, and with
+			// no reasoning text there is no estimate to invent one.
+			return nil, true
+		}
+		return usageOnly.Usage.extractCanonicalUsage(), true
+	}
+	return extractOpenAIUsageProjected(raw)
+}
+
+// extractOpenAIUsageProjected is the path that projects choices[] so the
+// reasoning-content estimate can run. Split out so the shortcut above has an
+// oracle the differential test can call directly: a test that reimplemented
+// this would be a second copy free to drift from the one it is meant to prove.
+func extractOpenAIUsageProjected(raw []byte) (*core.Usage, bool) {
 	var slim struct {
 		Usage   *openAIUsage `json:"usage"`
 		Choices []struct {

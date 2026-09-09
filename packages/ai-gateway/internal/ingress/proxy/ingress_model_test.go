@@ -181,3 +181,95 @@ func TestExtractIngressModel_Responses_FromBody(t *testing.T) {
 		t.Errorf("non-stream Responses: model=%q stream=%v (want gpt-4o, false)", model2, stream2)
 	}
 }
+
+// TestExtractIngressModel_TrimsTheClientString — the model string is compared
+// byte-for-byte in three places that each fail differently when it carries
+// padding: the catalogue lookup answers "does not exist" about a model that
+// does, routing's requestedModelLiterals glob misses the rule written for the
+// request, and the audit row's model_name splits one model across two analytics
+// keys. Trimmed once at the single exit so a new ingress format cannot forget.
+func TestExtractIngressModel_TrimsTheClientString(t *testing.T) {
+	for _, tc := range []struct {
+		name, sent, want string
+	}{
+		{"leading and trailing spaces", `{"model":"  gpt-4o  "}`, "gpt-4o"},
+		{"tab and newline", "{\"model\":\"\\tgpt-4o\\n\"}", "gpt-4o"},
+		{"a keyword with padding", `{"model":" auto "}`, "auto"},
+		{"already clean is untouched", `{"model":"gpt-4o"}`, "gpt-4o"},
+		{"whitespace only becomes empty", `{"model":"   "}`, ""},
+		{"inner spaces are preserved", `{"model":"my model"}`, "my model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := Ingress{BodyFormat: provcore.FormatOpenAI}
+			got, _, err := ExtractIngressModel(in, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), []byte(tc.sent))
+			if err != nil {
+				t.Fatalf("ExtractIngressModel: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("model = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A whitespace-only model must be REFUSED, not routed. Nothing downstream
+// trimmed it before, so it passed admission and reached the matcher, where only
+// a rule someone had pinned to whitespace could serve it. Now it trims to empty
+// and takes the caller's own errModelRequired path.
+func TestExtractIngressModel_WhitespaceOnlyIsIndistinguishableFromAbsent(t *testing.T) {
+	in := Ingress{BodyFormat: provcore.FormatOpenAI}
+	blank, _, err := ExtractIngressModel(in, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), []byte(`{"model":"   "}`))
+	if err != nil {
+		t.Fatalf("ExtractIngressModel: %v", err)
+	}
+	absent, _, err := ExtractIngressModel(in, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), []byte(`{}`))
+	if err != nil {
+		t.Fatalf("ExtractIngressModel (absent): %v", err)
+	}
+	if blank != absent {
+		t.Errorf("a whitespace-only model must reach admission as the absent case "+
+			"(readBody answers errModelRequired on \"\"); got %q vs %q", blank, absent)
+	}
+}
+
+// TestReadBody_DelegationKeywordsAreNotSpecialCasedByEndpoint — admission does
+// not decide, per endpoint, which delegation keywords are allowed. It used to,
+// for exactly one string on exactly one endpoint: `model: "auto"` on
+// /v1/embeddings was refused outright.
+//
+// That line was born with smart routing, when the strategy was a chat-only LLM
+// task-router. Since then prepareModelPool reads ListEnabledCandidates(kind),
+// SmartStrategy short-circuits non-chat kinds to modalityAutoTargets, the
+// modality guard drops cross-modality targets, and the embeddings capability
+// pre-filter runs on whatever strategy produced the plan. Measured on prod
+// 2026-09-03 with one rule pinned to [auto, janus:default]: the OTHER keyword
+// already served embeddings (text-embedding-3-small, 1536 dims), rerank and
+// image generation too. Only "auto" was held back, so the line refused a
+// spelling rather than a risk.
+//
+// This is the shape of the assertion rather than a full request roundtrip:
+// ExtractIngressModel is the sole model entrance, and if it or readBody ever
+// reintroduces a per-endpoint keyword veto, the extracted value for an
+// embeddings-shaped request stops matching the chat-shaped one.
+func TestReadBody_DelegationKeywordsAreNotSpecialCasedByEndpoint(t *testing.T) {
+	body := []byte(`{"model":"auto","input":"hello"}`)
+	for _, shape := range []struct {
+		name string
+		wire typology.WireShape
+	}{
+		{"chat", typology.WireShapeOpenAIChat},
+		{"embeddings", typology.WireShapeOpenAIEmbeddings},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			in := Ingress{WireShape: shape.wire, BodyFormat: provcore.FormatOpenAI}
+			got, _, err := ExtractIngressModel(in, httptest.NewRequest(http.MethodPost, "/v1/x", nil), body)
+			if err != nil {
+				t.Fatalf("%s: ExtractIngressModel: %v", shape.name, err)
+			}
+			if got != "auto" {
+				t.Errorf("%s: model = %q, want \"auto\" — the endpoint must not filter which "+
+					"delegation keyword reaches routing", shape.name, got)
+			}
+		})
+	}
+}

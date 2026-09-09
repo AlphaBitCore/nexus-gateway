@@ -24,7 +24,7 @@ import (
 
 // TestS001_HelloWorld_FreshVK — PM-grade e2e scenario.
 //
-// BRAINSTORM (pre-impl): the canonical onboarding flow is "create VK →
+// The canonical onboarding flow is "create VK →
 // gateway sees it → first request 200 → all downstream artefacts
 // appear." A "fake green" pass would skip any of: gateway hot-reload
 // verification (admin DB write != runtime cache update), AdminAuditLog
@@ -175,15 +175,8 @@ func TestS001_HelloWorld_FreshVK(t *testing.T) {
 	// nexus_requests_total{endpoint=…,status="2xx"} — the counter the gateway
 	// actually exports, registered since the initial commit.
 	//
-	// This assertion used to bind nexus_normalize_total, which HAS NEVER EXISTED:
-	// the only normalize counters are nexus_normalize_panic_total and
-	// nexus_prehook_normalize_drop_total. The switch was made deliberately, with a
-	// comment calling nexus_requests_total "absent" — and the probe that concluded
-	// that was almost certainly unauthenticated, because /metrics answers 401
-	// without a service token and an unauthenticated scrape shows every metric as
-	// absent. So a 401 talked an earlier session into replacing a working metric
-	// name with one that could never match, and ScrapeMetrics then 401'd too, so
-	// the broken assertion never ran and nobody found out.
+	// Not nexus_normalize_total, which has never existed — see embeddings_test.go
+	// for how an unauthenticated /metrics probe argues for a name like that.
 	labels := map[string]string{"endpoint": "chat", "status": "2xx"}
 	normDelta := postMetrics.CounterSum("nexus_requests_total", labels) -
 		preMetrics.CounterSum("nexus_requests_total", labels)
@@ -210,7 +203,7 @@ func TestS001_HelloWorld_FreshVK(t *testing.T) {
 // already-credentialed providers).
 // TestS002_ProviderLifecycle — PM-grade e2e.
 //
-// BRAINSTORM (pre): provider CRUD is a push-broadcast config_key per
+// Provider CRUD is a push-broadcast config_key per
 // thing_config_template (ai-gateway subscribes to `providers`). The
 // full e2e expectation:
 //  1. POST /api/admin/providers writes Provider row in DB + audit row.
@@ -401,7 +394,7 @@ var s003AdapterTypes = []string{
 // TestS003_AdapterTypeMatrix — PM-grade e2e for the §3a 7-rule contract
 // surface across all 19 adapterType slugs.
 //
-// BRAINSTORM (pre): the admin API claims to validate 19 adapter slugs;
+// The admin API claims to validate 19 adapter slugs;
 // each provider create must (a) accept the slug, (b) round-trip via GET,
 // (c) the provider's adapter-specific probe wiring must produce a
 // structured envelope on unreachable-upstream (never crash). Runtime
@@ -430,7 +423,7 @@ func TestS003_AdapterTypeMatrix(t *testing.T) {
 	createdIDs := make([]string, 0, len(s003AdapterTypes))
 
 	for _, adapter := range s003AdapterTypes {
-		adapter := adapter
+
 		t.Run(adapter, func(t *testing.T) {
 			cleanup := helpers.NewCleanup(t)
 			providerName := fmt.Sprintf("s003-%s-%d", adapter, time.Now().UnixNano())

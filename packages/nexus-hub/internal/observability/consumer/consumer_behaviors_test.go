@@ -139,6 +139,37 @@ func TestStripNulPtr_NilStaysNilNonNilStrippedInPlace(t *testing.T) {
 	}
 }
 
+// The row builder calls stripNulPtr fifty-two times per traffic_event, and
+// virtually no field contains a NUL, so returning a second pointer to a string
+// the helper did not touch was 52 of the builder's 63 allocations. The saving is
+// the identity below, not a smaller string: assert the pointer, because a
+// version that boxes a copy still passes every value-equality check while
+// costing exactly what this exists to avoid.
+func TestStripNulPtr_ReturnsTheCallersPointerWhenNothingToStrip(t *testing.T) {
+	s := "no-nul-here"
+	got := stripNulPtr(&s)
+	if got != &s {
+		t.Fatalf("returned a different pointer for a string with no NUL — the caller's "+
+			"pointer is reusable and boxing a second one is what this path pays for "+
+			"(deref = %q)", *got)
+	}
+}
+
+// The returned pointer aliases the caller's field, which is safe only because the
+// row values are consumed synchronously by flushBatch. Pinning it here means a
+// future change that starts retaining rows past the flush has to look at this
+// test rather than discover the aliasing in production.
+func TestStripNulPtr_AliasingIsDeliberateNotIncidental(t *testing.T) {
+	s := "no-nul-here"
+	got := stripNulPtr(&s)
+	s = "rewritten by the caller"
+	if *got != s {
+		t.Fatalf("the returned pointer stopped tracking the caller's field (%q vs %q) — "+
+			"if this helper is ever changed to copy, the comment on flushBatch's "+
+			"synchronous-consumption contract is the thing to update", *got, s)
+	}
+}
+
 func TestStripNulJSON_PreservesCleanAndStripsTainted(t *testing.T) {
 	if got := stripNulJSON(nil); len(got) != 0 {
 		t.Errorf("nil raw: got %q", got)

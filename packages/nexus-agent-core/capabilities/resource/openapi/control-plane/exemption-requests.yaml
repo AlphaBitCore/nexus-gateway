@@ -17,9 +17,12 @@ paths:
                 The request is recorded with status PENDING and later approved
                 or rejected by a reviewer. The handler validates that
                 transactionId, sourceIp, targetHost, and reason are all present
-                and non-empty; durationMinutes defaults to 240 when omitted and
-                requestedBy defaults to "employee" when omitted. On success the
-                persisted request row is returned.
+                and non-empty; durationMinutes defaults to 240 when omitted,
+                must be a whole number in (0, 10080] — the same 7-day ceiling the
+                admin grant endpoint applies, because approval turns this number
+                into a live compliance bypass — and requestedBy defaults to
+                "employee" when omitted. On success the persisted request row is
+                returned.
             x-nexus-iam-action: iam.ResourceComplianceExemption.Action(iam.VerbUpdate)
             x-nexus-tier: confirm
             requestBody:
@@ -43,7 +46,9 @@ paths:
                                     description: Human-readable justification for the exemption.
                                 durationMinutes:
                                     type: integer
-                                    description: Requested exemption duration in minutes. Defaults to 240 when omitted.
+                                    minimum: 1
+                                    maximum: 10080
+                                    description: Requested exemption duration in minutes. Defaults to 240 when omitted. Must be a whole number in (0, 10080]; anything else is rejected with 400 rather than truncated.
                                 requestedBy:
                                     type: string
                                     description: Identity of the requester. Defaults to "employee" when omitted.
@@ -61,7 +66,7 @@ paths:
                             requestedBy: jdoe
             responses:
                 "400":
-                    description: Bad Request — body could not be parsed, or one of transactionId, sourceIp, targetHost, reason is missing or empty.
+                    description: Bad Request — body could not be parsed, one of transactionId, sourceIp, targetHost, reason is missing or empty, or durationMinutes is not a whole number in (0, 10080].
                     content:
                         application/json:
                             schema:

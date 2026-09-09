@@ -66,3 +66,46 @@ type Matcher interface {
 type CompleteScanner interface {
 	ScanComplete(segments []string, firstOnly bool) (hits []Hit, complete bool)
 }
+
+// StreamScanner is an optional capability of a Matcher that can carry match
+// state ACROSS successive writes, so content arriving in pieces is scanned once
+// rather than re-scanned from the beginning on every new piece.
+//
+// The distinction is not an optimisation detail, it decides how much of a
+// streamed response must be withheld from the client. A matcher without it can
+// only answer "does this whole buffer match", so a caller watching a stream has
+// to re-scan the accumulation — which is O(n²) over the response, forces the
+// scan to be batched, and forces a tail to be held undelivered long enough to
+// cover the batch. A matcher WITH it answers "has anything matched so far"
+// after each piece, at the cost of that piece alone, so the caller need withhold
+// only the piece it is currently deciding on.
+//
+// A Matcher that does not implement it is not deficient — RE2 has no streaming
+// mode — and callers must keep the accumulate-and-rescan path for that case.
+//
+// Scoped to presence, deliberately. A stream reports only whether some pattern
+// could have matched; it never reports WHERE. Match positions are what a
+// redaction needs, and locating them is the expensive, heavily-constrained part
+// of streaming regex engines. The division of labour that follows is the point:
+// the cheap streaming prefilter says "look closer", and the existing block-mode
+// Scan does the locating, on accumulated text, only when something said so.
+type StreamScanner interface {
+	// OpenScanStream begins a scan whose state persists across writes. The
+	// caller must Close it; an unclosed stream leaks engine state.
+	OpenScanStream() (ScanStream, error)
+}
+
+// ScanStream accumulates match state over content delivered in arrival order.
+type ScanStream interface {
+	// Write feeds the next piece of content and reports whether any pattern may
+	// have matched ANY of the content written so far, this piece included. A
+	// pattern spanning a boundary between two writes is found: that is the whole
+	// reason the state is carried.
+	//
+	// Once it reports true it may keep reporting true; callers treat the first
+	// true as the signal to run the authoritative scan.
+	Write(chunk []byte) (mayMatch bool, err error)
+
+	// Close releases the engine state. Safe to call once; idempotent.
+	Close() error
+}

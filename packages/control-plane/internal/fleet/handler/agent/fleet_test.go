@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
+
+	cpiam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 )
 
 // TestRegisterFleetRoutes_MountsAll locks the fleet route map.
@@ -26,9 +28,11 @@ func TestRegisterFleetRoutes_MountsAll(t *testing.T) {
 		"GET /api/admin/agent-users/:id/audit",
 		"POST /api/admin/agent-users/:id/suspend",
 		"POST /api/admin/agent-users/:id/activate",
-		"GET /api/admin/agent-devices/:id/audit",
-		"GET /api/admin/agent-devices/:id/config",
-		"GET /api/admin/agent-devices/:id/timeline",
+		// The per-device audit / config / timeline reads moved to
+		// RegisterAdminAgentDeviceRoutes, where the device-aware middleware is
+		// in scope. Their mount is asserted there, alongside their six
+		// siblings, and TestDeviceScopedRoutesUseTheDeviceAwareMiddleware
+		// enforces tree-wide that no /agent-devices/:id route comes back here.
 		"GET /api/admin/me/agent-devices",
 	}
 	seen := map[string]bool{}
@@ -184,22 +188,26 @@ func TestGetAgentUser_DBError(t *testing.T) {
 	}
 }
 
+// TestListAgentUserDevices_Happy drives the PRODUCTION shape: an IAM engine and
+// a device-group lookup are wired, and an authenticated admin is on the context.
+// Running with neither is a configuration production never has —
+// and with the per-row scope check in place "no engine" correctly refuses
+// rather than serving the listing unscoped (pinned by
+// TestListAgentUserDevices_NoEngineRefusesRatherThanServingUnscoped).
 func TestListAgentUserDevices_Happy(t *testing.T) {
 	mock := newMockPool(t)
-	h := newHandlerForTest(mock, &fakeHub{}, nil)
-	now := nowFixture()
-	mock.ExpectQuery(`COUNT\(\*\)\s+FROM "DeviceAssignment"`).WithArgs("u-1").
-		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
-	mock.ExpectQuery(`FROM "DeviceAssignment" da\s+JOIN thing t`).WithArgs("u-1", 50, 0).
-		WillReturnRows(pgxmock.NewRows(fleetUserDeviceCols).AddRow(makeFleetUserDeviceRow(now)...))
-
-	e := echo.New()
-	e.GET("/agent-users/:id/devices", h.ListAgentUserDevices)
-	req := httptest.NewRequest(http.MethodGet, "/agent-users/u-1/devices", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
+	h := scopedHandler(mock,
+		[]cpiam.LoadedPolicy{
+			policy("wide", "Allow", []string{"admin:agent-device.read"}, []string{"nrn:nexus:*:*:*/*"}),
+		},
+		&groupsStub{},
+	)
+	rec := listUserDevices(t, h, mock)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if n := rowCount(t, rec); n != 1 {
+		t.Fatalf("got %d rows, want 1", n)
 	}
 }
 

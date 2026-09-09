@@ -82,14 +82,13 @@ func TestAccepts_NilSnapshotIsPermissive(t *testing.T) {
 // The floor decides whether a model that REQUIRES something can serve a request
 // that may not carry it — gpt-audio-mini needs audio, and a text-only request
 // will 400 upstream no matter how well-formed it is. Until now the only test
-// asserting these semantics lived in the proxy package, written for a different
-// property; a mutation removing the rule entirely from this package went
-// unnoticed here, in the strategies, and in the resolver.
+// asserting these semantics lives in the proxy package and was written for a
+// different property, so a mutation removing the rule entirely from this package
+// goes unnoticed there, in the strategies, and in the resolver.
 //
-// Text carries the weight of the recent change. It used to be skipped
-// unconditionally, because the carried set was built from media blocks only and
-// could never report it. Now the builder reports it and no requirement is
-// special.
+// Text carries the weight. A carried set built from media blocks only can never
+// report text, so a text floor would be skipped unconditionally; the builder
+// reports it, and no requirement is special.
 func TestMissingFloor(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -104,8 +103,8 @@ func TestMissingFloor(t *testing.T) {
 		{"audio required, text-only request", []string{"audio"}, []string{"text"}, []string{"audio"}},
 		{"audio required, nothing carried", []string{"audio"}, nil, []string{"audio"}},
 
-		// The semantics that changed. A model declaring a text floor is checked
-		// like any other; previously it was admitted whatever the request held.
+		// A model declaring a text floor is checked like any other, rather than
+		// admitted whatever the request holds.
 		{"text required and carried", []string{"text"}, []string{"text"}, nil},
 		{"text required, image-only request", []string{"text"}, []string{"image"}, []string{"text"}},
 

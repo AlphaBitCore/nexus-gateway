@@ -121,12 +121,12 @@ else
   # contents go back, so the failure costs a run instead of the volume.
   #
   # The cost is honest: holding both trees at once needs roughly twice the free
-  # space the old delete-then-move needed, so an upgrade with between one and
-  # two trees of headroom now fails where it used to succeed. That is the trade
-  # taken deliberately — the old code's version of "succeeds" was to destroy a
-  # working dependency set on any partial failure, which left the stack
-  # unstartable at ANY version until the npm registry was reachable again, and
-  # recovering from THIS failure is just re-running with more disk.
+  # space a delete-then-move needs, so an upgrade with between one and two trees
+  # of headroom fails here where delete-then-move would have "succeeded". That
+  # trade is taken deliberately — that version of "succeeds" destroys a working
+  # dependency set on any partial failure, leaving the stack unstartable at ANY
+  # version until the npm registry is reachable again, and recovering from THIS
+  # failure is just re-running with more disk.
   mkdir -p "$PREV_DIR"
   find node_modules -mindepth 1 -maxdepth 1 ! -name .previous-install -exec mv -t "$PREV_DIR/" {} +
   moved_aside="$(find "$PREV_DIR" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
@@ -211,12 +211,21 @@ echo "==> [migrator] seeding..."
 # containers serving :8080 and :3050 for as long as it takes an operator to
 # notice the migrator failed. The exit code is unchanged — the rotation just
 # happens before it.
+#
+# SEED_DEMO is NOT parsed here. This used to read
+# `if [ "${SEED_DEMO:-true}" = "true" ]`, a second, differently-written parse of
+# the same variable that seed.ts also parses — and the two disagreed on every
+# spelling but `true` and unset. `SEED_DEMO=1` skipped the demo tier here and
+# seeded it in `npm run seed`; `SEED_DEMO=maybe` silently picked a side in both.
+# `seed:prod` is only `SEED_DEMO=false npm run seed`, so the branch decided
+# nothing this variable does not already decide one layer down. Passing the
+# value through unread leaves ONE reader of it: seed.ts, which accepts both
+# directions in the spellings anyone would write and REFUSES anything else
+# rather than guessing about a tier whose credential plaintexts are derivable
+# from the OSS repository. A refusal exits non-zero, which lands in seed_failed
+# below exactly like any other seed failure.
 seed_failed=0
-if [ "${SEED_DEMO:-true}" = "true" ]; then
-  npm run seed || seed_failed=1
-else
-  npm run seed:prod || seed_failed=1
-fi
+npm run seed || seed_failed=1
 if [ "$seed_failed" = 1 ]; then
   echo "==> [migrator] the seed FAILED (see the [seed] output above). Continuing to credential rotation so no public seed credential is left live; this run will exit non-zero at the end." >&2
 fi

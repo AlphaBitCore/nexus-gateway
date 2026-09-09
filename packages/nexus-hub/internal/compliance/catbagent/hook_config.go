@@ -39,8 +39,8 @@ type pgxQuerier interface {
 // rules bound — admin-configured rule packs have zero effect on
 // agent behavior. ai-gateway + compliance-proxy already enrich
 // hooks the same way before building their pipelines (see
-// packages/ai-gateway/cmd/ai-gateway/main.go and
-// packages/compliance-proxy/cmd/compliance-proxy/init.go).
+// packages/ai-gateway/cmd/ai-gateway/wiring/hooks.go and
+// packages/compliance-proxy/cmd/compliance-proxy/wiring/compliance.go).
 type AgentHookConfigLoader struct {
 	db            pgxQuerier
 	rulePackStore rulepack.InstallLister
@@ -58,7 +58,7 @@ func NewAgentHookConfigLoader(db pgxQuerier, rulePackStore rulepack.InstallListe
 }
 
 // agentHookConfigSelect duplicates the enabled-hook SELECT shape used
-// by packages/control-plane/internal/store/hook_config.go. Copied
+// by packages/control-plane/internal/governance/hooks/hookstore/hook_config.go. Copied
 // (not imported) to avoid a cp -> hub dependency cycle; any schema
 // change to HookConfig must update both sites.
 //

@@ -210,4 +210,4 @@ open listener, then waits for the worker pool to finish under a timeout.
 - `packages/agent/internal/platform/catrust/catrust_linux.go` — distro-aware OS trust-store install (Debian/RHEL/Arch/Alpine anchor dirs + refresh commands)
 - `packages/agent/internal/network/proxy/proxy.go` — `PeekSNI` and `Relay`
 - `packages/agent/internal/network/proxy/bridge.go` — `BumpFlow`, the entry into the shared TLS-bump pipeline
-- `packages/shared/transport/http` — the global dial-control hook the agent's HTTP clients consult for `SO_MARK`
+- `packages/httpclient` — the global dial-control hook the agent's HTTP clients consult for `SO_MARK`

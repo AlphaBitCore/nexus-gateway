@@ -27,22 +27,22 @@ import (
 
 // TestS076_AgentHeartbeatFreshness — PM-grade e2e.
 //
-// BRAINSTORM (pre): the heartbeat round-trip is "Thing emits heartbeat
+// The heartbeat round-trip is "Thing emits heartbeat
 // → Hub TouchThingSession → UPDATE thing SET last_seen_at = NOW() →
 // admin GET /api/admin/nodes shows fresh row". Two failure modes the
 // scenario needs to cover:
 //
-//	1. DB-side: at least one of the locally-connected Things stamped a
-//	   last_seen_at within the last 2 minutes. Local dev always runs the
-//	   four server Things (Hub, CP, AI Gateway, compliance-proxy), so
-//	   zero fresh rows is a heartbeat-write regression, not an env state
-//	   — fail hard.
-//	2. API-side: GET /api/admin/nodes returns the documented envelope
-//	   `{ nodes: [...] }` with a `status` field per entry, AND the
-//	   most-recent-heartbeat Thing observed in arm 1 is present in that
-//	   list. Cross-checking the same ID across both arms catches BFF
-//	   filtering regressions (e.g. a future "hide offline nodes" toggle
-//	   that accidentally hides every node).
+//  1. DB-side: at least one of the locally-connected Things stamped a
+//     last_seen_at within the last 2 minutes. Local dev always runs the
+//     four server Things (Hub, CP, AI Gateway, compliance-proxy), so
+//     zero fresh rows is a heartbeat-write regression, not an env state
+//     — fail hard.
+//  2. API-side: GET /api/admin/nodes returns the documented envelope
+//     `{ nodes: [...] }` with a `status` field per entry, AND the
+//     most-recent-heartbeat Thing observed in arm 1 is present in that
+//     list. Cross-checking the same ID across both arms catches BFF
+//     filtering regressions (e.g. a future "hide offline nodes" toggle
+//     that accidentally hides every node).
 //
 // NOTE on column name: the user-facing concept is "heartbeat", but the
 // canonical DB column is `last_seen_at` — the Hub's TouchThingSession

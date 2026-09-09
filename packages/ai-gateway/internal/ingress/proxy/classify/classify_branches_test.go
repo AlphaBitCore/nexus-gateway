@@ -10,11 +10,12 @@ package classify
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/labstack/echo/v4"
 

@@ -89,26 +89,22 @@ class NexusProxyProvider: NETransparentProxyProvider {
         )
         settings.includedNetworkRules = [anyRule]
 
-        // Layer 1 architecture: catch-all .any (above) captures all TCP +
-        // all UDP. Layer 2 (below): excludedNetworkRules tells macOS NECP
-        // to NEVER route the following critical-system UDP ports through
-        // our proxy, even when the catch-all includedRule would otherwise
-        // match. Without this exclusion list, mDNSResponder /
-        // configd / dhcpcd / apsd / ntpd outbound UDP packets all enter
-        // handleNewFlow; our code does `return false` for non-browser
-        // bundles, but the CLAUDE.md binding warns this return-false
-        // behaviour under `.any` includedRule is NOT a guaranteed
-        // fall-back-to-native — macOS may drop the flow instead of
-        // routing natively, breaking DNS / DHCP / mDNS / NTP / Apple
-        // Push. Live RCA 2026-05-24: user reported "page froze" + curl
-        // getaddrinfo timeout because mDNSResponder UDP/53 queries
-        // were being silently dropped. excludedNetworkRules is the only
-        // OS-level mechanism to guarantee these critical packets never
-        // reach our process. Browser h3 (UDP/443) is NOT excluded — it
-        // still enters handleNewFlow and gets QUIC-killed there so
-        // Chrome / Edge fall back to HTTP/2 over TCP / 443 (captured by
-        // the TCP catch-all path). See memory:
-        // feedback_macos_mdns_flush_after_ne_state_change.
+        // Layer 1: the catch-all .any above captures all TCP and UDP.
+        // Layer 2 below: excludedNetworkRules tells NECP never to route
+        // these critical-system UDP ports here, even though the catch-all
+        // would match. Without it, mDNSResponder / configd / dhcpcd /
+        // apsd / ntpd UDP all enters handleNewFlow — and `return false`
+        // under an `.any` includedRule is NOT a guaranteed fall-back to
+        // native: macOS may drop the flow instead, breaking DNS / DHCP /
+        // mDNS / NTP / Apple Push. RCA 2026-05-24: "page froze" + curl
+        // getaddrinfo timeout, because mDNSResponder UDP/53 was being
+        // silently dropped. excludedNetworkRules is the ONLY OS-level
+        // guarantee that these packets never reach this process.
+        //
+        // Browser h3 (UDP/443) is deliberately NOT excluded: it enters
+        // handleNewFlow and is QUIC-killed there so Chrome / Edge fall
+        // back to HTTP/2 over TCP/443, which the TCP catch-all captures.
+        // See memory: feedback_macos_mdns_flush_after_ne_state_change.
         let criticalUDPPorts = [
             "53",    // DNS
             "5353",  // mDNS
@@ -235,33 +231,27 @@ class NexusProxyProvider: NETransparentProxyProvider {
             return false
         }
 
-        // Self-intercept guard: NE intercepts ALL outbound traffic
+        // Self-intercept guard: NE intercepts ALL outbound traffic,
         // including the agent daemon's own connections.
         //
-        // A claim + direct-relay approach for daemon self-traffic was
-        // tried and abandoned — NE's createTCPConnection in self-intercept context
-        // returns "read: errno 403" during TLS handshake, breaking
-        // both daemon's bootstrap to Hub AND tlsbump's upstream
-        // forward (browser → chatgpt.com → bridge → daemon HTTP
-        // client → claim+relay → upstream fail → 502 to browser).
-        // Reverted to `return false` as the least-bad option.
+        // MUST NOT become a claim+relay path. That was tried and
+        // abandoned: createTCPConnection in self-intercept context fails
+        // the TLS handshake with "read: errno 403", breaking both the
+        // daemon's bootstrap to Hub and tlsbump's upstream forward
+        // (browser → bridge → daemon HTTP client → relay → 502). The
+        // synchronous `return false` is the correct fail-open behaviour,
+        // not a placeholder.
         //
-        // Known consequence: with includedNetworkRules.protocol=.any,
-        // NECP routes daemon's outbound to the proxy; `return false`
-        // drops the flow. Daemon's HTTP client will retry, and an
-        // early-boot race window sometimes lets a request through
-        // before NE fully claims the daemon PID (this is how the
-        // existing WebSocket gets established + reconnects).
+        // Consequence: with includedNetworkRules.protocol=.any NECP
+        // routes daemon outbound to the proxy and `return false` drops
+        // it. The daemon's HTTP client retries, and an early-boot window
+        // before NE claims the daemon PID is how the WebSocket gets
+        // established and reconnects.
         //
-        // Known limitation / future option: the
-        // clean fix would use NETransparentProxyNetworkSettings.
-        // excludedNetworkRules to tell NECP not to route daemon-bound
-        // traffic to the proxy at the IP level. That needs the daemon
-        // to DNS-resolve Hub + key upstreams at startup and push the IP
-        // list to the extension via ne.sock. Until that lands, the
-        // synchronous `return false` above remains the correct fail-open
-        // behavior — it is not a placeholder and must not be flipped to
-        // a claim+relay path (which returns "read: errno 403" here).
+        // Clean fix, when someone takes it: excludedNetworkRules, so
+        // NECP never routes daemon-bound traffic here at the IP level.
+        // Needs the daemon to resolve Hub + key upstreams at startup and
+        // push the IP list over ne.sock.
         let sourcePid = extractPID(from: flow)
         if daemonPIDFilter.isDaemon(pid: sourcePid) {
             logger.debug("handleNewFlow: skipping self-intercept from daemon PID \(sourcePid)")
@@ -381,11 +371,11 @@ class NexusProxyProvider: NETransparentProxyProvider {
         flowLock.unlock()
 
         // Peek the TLS ClientHello BEFORE asking the daemon
-        // for a decision. Previously we sent `host` (which is the IP
+        // for a decision. Sending `host` directly (it is the IP
         // literal for callers like Cursor/curl/Claude Desktop that
-        // pre-resolve DNS) directly — daemon Engine.Evaluate would
+        // pre-resolve DNS) has daemon Engine.Evaluate
         // never match an interception_domain pattern → passthrough →
-        // user sees their inspect rules silently bypassed. Now we
+        // the user sees their inspect rules silently bypassed. We
         // peek for SNI first; the daemon receives the real hostname
         // and Engine sees the right target. The 500ms timeout means
         // server-speaks-first protocols (SSH, SMTP, plain HTTP after
@@ -741,7 +731,11 @@ class NexusProxyProvider: NETransparentProxyProvider {
                 }
                 self.relayFlowToRemote(flowId: flowId, flow: flow, remote: remoteConn)
             }
-            relayRemoteToFlow(flowId: flowId, flow: flow, remote: remoteConn)
+            // Guard threaded here too (symmetric with the no-peek branch):
+            // the peek-write completion was the only disarm, so a
+            // server-speaks-first upstream that had already sent bytes was
+            // still reset when its ACK ran past relayEstablishTimeout.
+            relayRemoteToFlow(flowId: flowId, flow: flow, remote: remoteConn, establishGuard: establishGuard)
         } else {
             // No peek bytes (timed-out/non-TLS peek): there is no upstream
             // write to anchor establishment on, so thread the guard into
@@ -853,12 +847,17 @@ class NexusProxyProvider: NETransparentProxyProvider {
             _ = establishGuard?.tryFire()
             if let error = error {
                 self?.logger.debug("Remote→App read done for \(flowId): \(error.localizedDescription)")
+                // BOTH halves: the app blocks on the write half, so closing
+                // only the read half left it waiting out its own timeout.
                 flow.closeReadWithError(nil)
+                flow.closeWriteWithError(nil)
                 self?.completeFlow(flowId: flowId)
                 return
             }
             guard let data = data, !data.isEmpty else {
+                // Remote EOF — both halves, as above.
                 flow.closeReadWithError(nil)
+                flow.closeWriteWithError(nil)
                 self?.completeFlow(flowId: flowId)
                 return
             }

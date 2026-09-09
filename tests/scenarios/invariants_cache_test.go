@@ -94,7 +94,7 @@ func TestS151_CacheMandatoryAcrossIngress(t *testing.T) {
 	}
 
 	for _, a := range arms {
-		a := a
+
 		t.Run(a.name, func(t *testing.T) {
 			// Request 1 — cache MISS (writes the entry).
 			s1, b1, err := intg.AIGwPostJSON(&envForCall, client, a.path, a.body)
@@ -139,7 +139,7 @@ func TestS151_CacheMandatoryAcrossIngress(t *testing.T) {
 			const tries = 20
 			const interval = 2 * time.Second
 			var total, hits int64
-			for i := 0; i < tries; i++ {
+			for range tries {
 				_ = sc.DB.QueryRow(ctx, q, vk.ID, a.path).Scan(&total, &hits)
 				if total >= 2 && hits >= 1 {
 					break

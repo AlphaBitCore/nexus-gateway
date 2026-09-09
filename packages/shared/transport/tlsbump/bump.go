@@ -391,23 +391,52 @@ func serveHTTP2(tlsConn *tls.Conn, handler http.Handler, logger *slog.Logger) er
 }
 
 // singleConnListener is a net.Listener that yields exactly one connection
-// and then blocks on Accept until closed. This lets us use http.Server
-// to serve a single hijacked connection using HTTP/1.1.
+// and then blocks on Accept until that connection is done. This lets us use
+// http.Server to serve a single hijacked connection using HTTP/1.1.
+//
+// "until that connection is done" is load-bearing, and is not "until closed"
+// by something that never closes it. http.Server calls Accept in a loop; a
+// second call blocking on a `done` channel nothing ever closes means Serve
+// never returns and neither does serveHTTP1 — one goroutine stranded per
+// bumped HTTP/1.1 tunnel, for the life of the process.
+//
+// Returning an error from the second Accept immediately would not do either:
+// Serve does not wait for in-flight connections, so serveHTTP1 would report the
+// tunnel finished while the request was still being served. Instead the
+// connection handed out is wrapped so that http.Server closing it — which is
+// what "this connection is done" means — closes the listener, and the blocked
+// Accept returns. serveHTTP1 then returns exactly when its doc says it does.
 type singleConnListener struct {
 	conn net.Conn
 	ch   chan net.Conn
 	done chan struct{}
+	once sync.Once
 }
 
 // newSingleConnListener creates a listener that yields conn exactly once.
 func newSingleConnListener(conn net.Conn) *singleConnListener {
-	ch := make(chan net.Conn, 1)
-	ch <- conn
-	return &singleConnListener{
+	l := &singleConnListener{
 		conn: conn,
-		ch:   ch,
+		ch:   make(chan net.Conn, 1),
 		done: make(chan struct{}),
 	}
+	l.ch <- &closeNotifyConn{Conn: conn, onClose: l.Close}
+	return l
+}
+
+// closeNotifyConn reports the served connection's close back to the listener
+// that handed it out. Close is idempotent for the caller's purposes: net.Conn
+// Close may be invoked more than once, and only the first is forwarded.
+type closeNotifyConn struct {
+	net.Conn
+	once    sync.Once
+	onClose func() error
+}
+
+func (c *closeNotifyConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { _ = c.onClose() })
+	return err
 }
 
 func (l *singleConnListener) Accept() (net.Conn, error) {
@@ -423,12 +452,7 @@ func (l *singleConnListener) Accept() (net.Conn, error) {
 }
 
 func (l *singleConnListener) Close() error {
-	select {
-	case <-l.done:
-		// Already closed.
-	default:
-		close(l.done)
-	}
+	l.once.Do(func() { close(l.done) })
 	return nil
 }
 

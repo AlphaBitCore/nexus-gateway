@@ -11,7 +11,6 @@ describe('devicesApi', () => {
     devicesApi.getEvents('d1', { offset: '0' });
     devicesApi.getAssignments('d1');
     devicesApi.forceRefresh('d1');
-    devicesApi.rotateCert('d1');
     devicesApi.setTags('d1', ['x']);
     devicesApi.generateEnrollToken('host');
     devicesApi.unenroll('d1');
@@ -23,7 +22,6 @@ describe('devicesApi', () => {
     expect(m.get).toHaveBeenCalledWith('/api/admin/agent-devices/d1/events', { offset: '0' });
     expect(m.get).toHaveBeenCalledWith('/api/admin/agent-devices/d1/assignments', undefined);
     expect(m.post).toHaveBeenCalledWith('/api/admin/agent-devices/d1/force-refresh');
-    expect(m.post).toHaveBeenCalledWith('/api/admin/agent-devices/d1/rotate-cert');
     expect(m.put).toHaveBeenCalledWith('/api/admin/agent-devices/d1/tags', { tags: ['x'] });
     expect(m.post).toHaveBeenCalledWith('/api/admin/agent-devices/enroll-token', { hostname: 'host' });
     expect(m.post).toHaveBeenCalledWith('/api/admin/agent-devices/d1/unenroll');

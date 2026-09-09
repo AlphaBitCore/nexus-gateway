@@ -95,7 +95,9 @@ func TestUpload_SuccessfulRoundTrip(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(mintResponse{
 			UploadURL: "http://" + r.Host + "/upload/abc",
 			Key:       "spill/abc",
-			Backend:   "s3",
+			// The test server IS the Hub and speaks http, which is the
+			// localfs shape. A presigned S3 URL is always https.
+			Backend:   "localfs",
 			ExpiresAt: time.Now().Add(5 * time.Minute),
 		})
 	})
@@ -154,7 +156,7 @@ func TestUpload_SuccessfulRoundTrip(t *testing.T) {
 	}
 
 	// Returned SpillRef must carry all derived fields.
-	if ref.Backend != "s3" {
+	if ref.Backend != "localfs" {
 		t.Errorf("ref.Backend: %q", ref.Backend)
 	}
 	if ref.Key != "spill/abc" {
@@ -244,7 +246,7 @@ func TestUpload_PutConflictTreatedAsTerminal(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(mintResponse{
 			UploadURL: "http://" + r.Host + "/upload",
 			Key:       "k",
-			Backend:   "s3",
+			Backend:   "localfs",
 		})
 	})
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, _ *http.Request) {
@@ -316,7 +318,7 @@ func TestUpload_PutURLMalformedFallsBack(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(mintResponse{
 			UploadURL: "ht!tp://bad url with spaces\x00\x01", // unparseable
 			Key:       "k",
-			Backend:   "s3",
+			Backend:   "localfs",
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -350,7 +352,9 @@ func TestUpload_PutURLUnreachableFallsBack(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/internal/things/spill-uploads", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(mintResponse{
-			UploadURL: "http://127.0.0.1:1/upload", // port 1 is unbound on macOS/Linux
+			// https so it passes the mint-target check (a presigned S3 URL
+			// always is); port 1 is unbound on macOS/Linux so the dial fails.
+			UploadURL: "https://127.0.0.1:1/upload",
 			Key:       "k",
 			Backend:   "s3",
 		})
@@ -450,5 +454,85 @@ func TestMintResponse_JSONFieldStability(t *testing.T) {
 	}
 	if resp.UploadURL != "u" || resp.Key != "k" || resp.Backend != "s3" {
 		t.Errorf("decoded: %+v", resp)
+	}
+}
+
+// The PUT that follows a mint carries captured customer request/response
+// bodies under the agent's own mTLS identity, and a check that the URL is
+// merely non-empty lets a Hub that is compromised, misconfigured or
+// simply buggy redirect a fleet's captured traffic anywhere, with the
+// agent cooperating — silently, because an upload to the wrong host looks
+// exactly like a successful one.
+//
+// Each arm must fall back to inline rather than uploading: refusing must not
+// cost the record.
+func TestUpload_RefusesAMintTargetItCannotTrust(t *testing.T) {
+	cases := []struct {
+		name      string
+		uploadURL string
+		backend   string
+		wantErr   string
+	}{
+		{
+			name:      "localfs pointing somewhere other than the hub",
+			uploadURL: "http://attacker.example/collect",
+			backend:   "localfs",
+			wantErr:   "not the hub",
+		},
+		{
+			name:      "s3 over cleartext http",
+			uploadURL: "http://bucket.s3.amazonaws.com/k?sig=x",
+			backend:   "s3",
+			wantErr:   "must be https",
+		},
+		{
+			name:      "a backend nobody implements",
+			uploadURL: "https://bucket.s3.amazonaws.com/k?sig=x",
+			backend:   "gcs",
+			wantErr:   "unknown backend",
+		},
+		{
+			name:      "a relative upload url",
+			uploadURL: "/upload/abc",
+			backend:   "s3",
+			wantErr:   "not absolute",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var putCalled atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/internal/things/spill-uploads", func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(mintResponse{
+					UploadURL: tc.uploadURL,
+					Key:       "k",
+					Backend:   tc.backend,
+				})
+			})
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut {
+					putCalled.Add(1)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			u := New(&fakeHub{srv: srv})
+			_, err := u.Upload(context.Background(), "evt", "request", "application/json", []byte("body"))
+			if err == nil {
+				t.Fatalf("uploaded captured traffic to %q (%s) without refusing", tc.uploadURL, tc.backend)
+			}
+			if !errors.Is(err, ErrFallbackInline) {
+				t.Errorf("a refused target must degrade to inline, not drop the record: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error should say %q; got %v", tc.wantErr, err)
+			}
+			if putCalled.Load() != 0 {
+				t.Errorf("the body was PUT %d time(s) despite the target being refused", putCalled.Load())
+			}
+		})
 	}
 }

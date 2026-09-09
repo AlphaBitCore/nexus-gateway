@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,13 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // OIDCDeps carries the collaborators for the OIDC begin + callback handlers.
@@ -206,6 +207,20 @@ func OIDCCallbackHandler(d OIDCDeps) echo.HandlerFunc {
 
 		switch {
 		case found:
+			if fi.Account.Blocked() {
+				// The IdP asserting who this is says nothing about whether this
+				// deployment still admits them. Without this the SSO door was
+				// wide open for an account every other surface calls disabled:
+				// offboarding and SCIM active:false both write the status this
+				// verdict reads, and a departed employee kept signing in.
+				//
+				// Refused with the same code an unprovisioned subject gets, so
+				// the response does not tell an anonymous caller which of the
+				// two it hit. The reason is logged, never returned.
+				slog.Default().Warn("authserver: OIDC callback refused a blocked account",
+					"idp", idp.ID, "user_id", fi.UserID, "reason", fi.Account.Reason())
+				return c.JSON(http.StatusUnauthorized, errorResponse{Error: "user_not_provisioned"})
+			}
 			userID = fi.UserID
 			fiID = fi.ID
 			_ = d.Federated.UpdateRawClaims(ctx, fiID, map[string]any{

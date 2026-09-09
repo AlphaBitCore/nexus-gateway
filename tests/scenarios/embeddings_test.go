@@ -5,7 +5,7 @@
 //
 // Hardening 2026-05-22: every env-shape skip was promoted to a hard
 // failure. text-embedding-3-small is a baseline seed in
-// tools/db-migrate/prisma/seed.ts and the dev compose stack provisions
+// tools/db-migrate/seed/seed.ts and the dev compose stack provisions
 // the openai-embeddings adapter unconditionally — a 400 from arm A
 // is a regression in routing, codec, or seed, never an "env not
 // ready" state. The metric-delta assertion binds nexus_requests_total
@@ -28,7 +28,7 @@ import (
 
 // TestS063_EmbeddingsHappyPath — PM-grade e2e for /v1/embeddings.
 //
-// BRAINSTORM (pre): the embeddings endpoint is a sibling of
+// The embeddings endpoint is a sibling of
 // /v1/chat/completions but lives on its own audit endpoint_type
 // ("embeddings") and emits a different response envelope:
 // {"object":"list","data":[{"index":i,"embedding":[...]}],"model":...}.
@@ -46,7 +46,7 @@ import (
 // the strongest "this really hit the embeddings code path" signal.
 //
 // Failure semantics: text-embedding-3-small is required by the dev
-// seed (tools/db-migrate/prisma/seed.ts) and the openai-embeddings
+// seed (tools/db-migrate/seed/seed.ts) and the openai-embeddings
 // adapter is wired unconditionally in the AI Gateway. A 400 from arm A
 // is a real regression — either the seed lost the model row, the
 // routing-resolver dropped the embeddings endpoint, or the codec is
@@ -116,7 +116,7 @@ func TestS063_EmbeddingsHappyPath(t *testing.T) {
 		t.Helper()
 		const tries = 5
 		const interval = 6 * time.Second
-		for i := 0; i < tries; i++ {
+		for i := range tries {
 			var count int
 			err := sc.DB.QueryRow(ctx, `
 				SELECT COUNT(*) FROM traffic_event
@@ -242,15 +242,12 @@ func TestS063_EmbeddingsHappyPath(t *testing.T) {
 	// nexus_requests_total{endpoint=…,status="2xx"} — the counter the gateway
 	// actually exports, registered since the initial commit.
 	//
-	// This assertion used to bind nexus_normalize_total, which HAS NEVER EXISTED:
-	// the only normalize counters are nexus_normalize_panic_total and
-	// nexus_prehook_normalize_drop_total. The switch was made deliberately, with a
-	// comment calling nexus_requests_total "absent" — and the probe that concluded
-	// that was almost certainly unauthenticated, because /metrics answers 401
-	// without a service token and an unauthenticated scrape shows every metric as
-	// absent. So a 401 talked an earlier session into replacing a working metric
-	// name with one that could never match, and ScrapeMetrics then 401'd too, so
-	// the broken assertion never ran and nobody found out.
+	// Not nexus_normalize_total, which HAS NEVER EXISTED: the only normalize
+	// counters are nexus_normalize_panic_total and nexus_prehook_normalize_drop_total.
+	// Binding it is an easy mistake to make from a probe that answered "absent" for
+	// everything, which is what an unauthenticated /metrics scrape does — it 401s,
+	// and every metric reads as missing. A broken assertion built that way then
+	// never runs, because ScrapeMetrics 401s too.
 	//
 	// The label is `endpoint`, not `adapter`: the exported series carries
 	// provider/model/endpoint/status, and endpoint takes the same vocabulary as

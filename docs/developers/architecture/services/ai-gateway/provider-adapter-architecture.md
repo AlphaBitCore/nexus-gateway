@@ -275,7 +275,7 @@ When a new family ships a wire deprecation, add the rule to the adapter that own
 - `EncodeRequest(shape, canonicalBody, target)` — canonical in; full translation plus the per-model quirks (the cross-format leg).
 - `RewriteNative(shape, nativeBody, target, stream)` — native in; applies ONLY the differential the second codec pass would have applied (the resolved-model stamp, the per-model quirks, protocol back-fills like streaming `stream_options.include_usage`) and never re-translates, which is what preserves native-only features the canonical subset cannot express. The fast path returns the same slice. **Every codec implements it explicitly — there is deliberately no embeddable default** (a silent verbatim default would let a new model-in-body codec skip the stamp and 404 every aliased model); model-in-URL wires (Gemini, Bedrock) write a one-line verbatim return stating that rationale.
 
-Dispatch owns zero vendor knowledge: it runs the guards (nexus-strip on the native leg; the non-object carve-out — a stated exception where the body is forwarded verbatim and the codec is not called, because a JSON edit on a non-object fabricates a synthetic body and wire must equal audit; and a degenerate-target return when no `ProviderModelID` resolved — nothing to stamp, no quirk can key on an empty model), triages on **three keys** — format equality, both-sides OpenAI-family, or the Responses capability (`RequestShapes` default with a **downgrade-only** per-provider `ServesResponsesAPI` override, matching the canonical-bridge decision so the two legs can never triage the same request differently; naive format equality once turned a native `/v1/responses` passthrough into a canonicalize and shipped a 400) — and delegates. The mechanism is pinned by a property-test family: `RewriteNative ∘ RewriteNative = RewriteNative` (idempotency, incl. no re-reported coercions — the executor re-prepares on retry/failover) for every editing codec, verbatim-fast-path slice identity, and per-wire two-doors parity (`RewriteNative(B) ≡ EncodeRequest` where both doors exist — the `/v1/responses` wire and the Anthropic `/v1/messages` wire, whose native leg applies the same sampling / max_tokens coercions as the cross-format leg per the owner-approved D3 decision; each adapter migration extends the family to its wires). Every adapter's rules ride its codec — the OpenAI family through the identity codec's per-sibling `Contract` (field rules + structural rules), the translation codecs (anthropic, gemini) inside their own `EncodeRequest`/`RewriteNative`. The transitional dispatch callback branch and the `PassthroughRewrite`/`PassthroughRewriteApplies` spec fields are DELETED: dispatch owns zero vendor knowledge, structurally.
+Dispatch owns zero vendor knowledge: it runs the guards (nexus-strip on the native leg; the non-object carve-out — a stated exception where the body is forwarded verbatim and the codec is not called, because a JSON edit on a non-object fabricates a synthetic body and wire must equal audit; and a degenerate-target return when no `ProviderModelID` resolved — nothing to stamp, no quirk can key on an empty model), triages on **three keys** — format equality, both-sides OpenAI-family, or the Responses capability (`RequestShapes` default with a **downgrade-only** per-provider `ServesResponsesAPI` override, matching the canonical-bridge decision so the two legs can never triage the same request differently; naive format equality once turned a native `/v1/responses` passthrough into a canonicalize and shipped a 400) — and delegates. The mechanism is pinned by a property-test family: `RewriteNative ∘ RewriteNative = RewriteNative` (idempotency, incl. no re-reported coercions — the executor re-prepares on retry/failover) for every editing codec, verbatim-fast-path slice identity, and per-wire two-doors parity (`RewriteNative(B) ≡ EncodeRequest` where both doors exist — the `/v1/responses` wire and the Anthropic `/v1/messages` wire, whose native leg applies the same sampling / max_tokens coercions as the cross-format leg per the owner-approved D3 decision; each adapter migration extends the family to its wires). Every adapter's rules ride its codec — the OpenAI family through the identity codec's per-sibling `Contract` (field rules + structural rules), the translation codecs (anthropic, gemini) inside their own `EncodeRequest`/`RewriteNative`. The Anthropic prompt-cache marker is one of those two-doors rules: `cache_control` is a field of that wire, so the codec writes it on both doors under one shared predicate, and Bedrock inherits the rest of the Anthropic body translation while clearing the marker (AWS documents its InvokeModel Claude integration answering 400 for a root `cache_control`, and nothing here has been measured against a live Bedrock endpoint). The transitional dispatch callback branch and the `PassthroughRewrite`/`PassthroughRewriteApplies` spec fields are DELETED: dispatch owns zero vendor knowledge, structurally.
 
 ### Rule 4 — extension fields ride in `nexus.ext.<provider>.<key>`
 
@@ -295,6 +295,17 @@ Removal lives in the same package as the reads and writes, so one package owns t
 *Downstream.* A response body must not carry it either, and this half is the one that is easy to miss. The Anthropic, Gemini and Responses egress converters are PROJECTIONS — they rebuild the client body out of named fields — so they drop the namespace as a consequence of how they work. The OpenAI-family egress is the IDENTITY: canonical already *is* the caller's shape, so whatever a codec left in the namespace is what the client receives. Relying on the projections' side effect is not a rule, so the strip is applied to the egress result on every arm, at `egressReshapeNonStream` for a live response and at `handleNonStreamHit` for a cache replay (before the audit capture, so the stored copy equals what the client received). Streaming carries no namespace at all.
 
 **A codec must not write the namespace into a response it does not itself consume.** The strip is the guarantee; this rule is what keeps codecs from leaning on it. A response-side extension key is legitimate ONLY as a carrier between a decode and the specific egress converter that reads it — `nexus.ext.openai.responses.*`, written by the Responses decode and consumed by the Responses egress encoder, is the one such carrier. Anything else belongs in a canonical field the client is meant to receive (Anthropic's cache-creation count rides in `usage.prompt_tokens_details.cache_creation_tokens`, beside the `cached_tokens` OpenAI already defines) or in a response header, which is the gateway's documented channel for what it added — `X-Nexus-Cache`, `X-Nexus-Coerced`, `X-Nexus-Hook`. Using the extension namespace as a client-facing surface would make one key name mean "internal, strip it" going up and "product surface, keep it" coming down, and that ambiguity is what let the upstream leak survive being fixed twice.
+
+**A conversation's own turns are not extension data.** The namespace carries what canonical has no field for; it must not become the place a codec puts something canonical models perfectly well. The `/v1/responses` request grammar makes the distinction concrete, because its `input[]` array mixes three kinds of item and only one of them belongs in the namespace:
+
+| `input[]` item | canonical home | why |
+|---|---|---|
+| `message` | a message with that role | it is a turn |
+| `function_call` | the assistant turn's `tool_calls[]` — consecutive calls MERGE into one turn | it is a turn; parallel calling is one assistant message with N calls on the chat wire, and N assistant messages describes a different conversation |
+| `function_call_output` | a `tool`-role message | it is a turn |
+| everything else — `reasoning`, built-in tool calls, an item type that does not exist yet | `nexus.ext.openai.responses.passthrough_input[]`, each entry recording the message index it sat at | canonical has no field for it, and the encoder puts it back at that index because order is what a conversation IS: a reasoning block belongs before the call it produced |
+
+The tool-call row is the one that was wrong, in BOTH directions, and the failure is worth stating because it is the shape a "walk past what you do not model" default produces. A `function_call` item fell to the message branch and became a user turn with `content: null`; the `function_call_output` that followed then answered a `tool_call_id` no message declared, which OpenAI and Anthropic both reject outright. The inverse leg dropped an assistant turn's `tool_calls` on the way back to the wire, orphaning the tool result the same way. Every stateless multi-turn tool conversation — that is, every client keeping its own history instead of using `previous_response_id` — failed on its second request, and the first request passed, so nothing pointed at the gateway. The gates are in `specs/openai/responses/codec_request_toolturn_test.go`, and they run over conversations OpenAI answered 200 for, re-sent after the round trip and accepted again: a request shape is real when a provider accepts it, not when it parses.
 
 ### Rule 5 — cross-format callers canonicalize before the codec
 
@@ -333,6 +344,34 @@ The rule is machine-checked for the sampling-params class. `npm run check:quirk-
 A normalized `ProviderError` is never serialized in one hardcoded shape. `packages/ai-gateway/internal/ingress/envelope/error_envelope.go` exposes `EncodeErrorEnvelopeForIngress(ingress, upstream, pe)`, which selects the encoder for the caller's format — `encodeOpenAIErrorEnvelope`, `encodeAnthropicErrorEnvelope`, `encodeGeminiErrorEnvelope`, or `encodeResponsesAPIErrorEnvelope`. The streaming variant `encodeErrorEnvelopeForIngressForStream` wraps the JSON envelope in the SSE frame.
 
 An Anthropic caller receives an Anthropic-shaped error even when the upstream error and its normalization were OpenAI-internal. Hand-building an OpenAI-shape error frame regardless of caller is the recurring gap this rule closes. The streaming framing details are in [sse-streaming-compliance-architecture.md](../../cross-cutting/safety/sse-streaming-compliance-architecture.md).
+
+### Rule 8a — a wire that spells one field two ways owes the same answer to both
+
+Google's JSON surface for `generateContent` accepts the protobuf field names
+alongside the documented camelCase ones: `system_instruction` for
+`systemInstruction`, `generation_config` for `generationConfig`,
+`safety_settings`, `tool_config`. Both are legal on the wire, so a reader that
+knows only one produces a DIFFERENT REQUEST from the same caller intent — and
+silently, because nothing is malformed.
+
+Measured, before this was closed: a request spelling `system_instruction`
+reached a non-Gemini target with the system prompt absent, temperature and
+`maxOutputTokens` gone, its prompt-character count short by the whole
+instruction (which feeds `auto` prompt-size routing), no `cachedContent` ever
+created, and `detectedSpec` missing from its normalized row.
+
+The rule is not "handle snake_case" — it is that the spellings live in ONE list
+and every reader takes it. `specutil.GeminiSystemInstructionPaths` and its
+siblings are that list, with `GeminiFirst` / `GeminiFirstBytes` / `GeminiFirstRaw`
+as the readers; a property test asserts that one body in its two spellings
+produces identical answers from every site that decides something about it. A
+per-site `if snake != ""` fixes one reader and leaves the next one to
+reintroduce the defect — which is how three readers were converted while four
+were not.
+
+`packages/shared/transport/normalize/codecs` is in `shared` and cannot import an
+ai-gateway internal package, so its sniffer carries the spellings directly. That
+is the one duplication, and it is noted where it sits.
 
 ### Rule 9 — a codec and its transport address the same set of wire shapes
 

@@ -79,9 +79,9 @@ type SyncStatus struct {
 // InterceptionDomainView mirrors the full Hub-served interception_domain
 // row so the Dashboard can render the same table columns + detail-page
 // fields that CP-UI's compliance/interception page shows. The wire
-// schema is set by packages/nexus-hub/internal/storage/store/catb_agent_interception_domains.go;
-// any change to that loader's row struct must update this view + the
-// parser. Nested Paths[] carries the per-path overrides admin set so
+// schema is set by
+// packages/nexus-hub/internal/compliance/catbagent/interception_domains.go; any
+// change to that loader's row struct must update this view + the parser. Nested Paths[] carries the per-path overrides admin set so
 // the detail page can render them as a sub-table.
 type InterceptionDomainView struct {
 	ID            string `json:"id"`
@@ -115,7 +115,7 @@ type InterceptionPathView struct {
 
 // HookView mirrors the full hooks row Hub serves. Stage replaces
 // the older OnMatch field name — wire schema is set by
-// packages/nexus-hub/internal/storage/store/catb_agent_hooks.go. Config
+// packages/nexus-hub/internal/compliance/catbagent/hook_config.go. Config
 // is left as raw JSON so the detail page can pretty-print whatever
 // per-hook settings admin authored (PII patterns, content-safety
 // thresholds, prompt-cache TTL, etc.) without the agent needing a
@@ -507,8 +507,8 @@ func parseDeviceDefaults(raw json.RawMessage) DeviceDefaultsView {
 	}
 }
 
-// parseRulePacks reads the installed_rule_packs Cat B payload Hub serves
-// via packages/nexus-hub/internal/storage/store/catb_agent_installed_rule_packs.go.
+// parseRulePacks reads the installed_rule_packs Cat B payload Hub serves via
+// packages/nexus-hub/internal/compliance/catbagent/installed_rule_packs.go.
 // Wire shape: {"installedRulePacks": [{id, packId, name, version,
 // maintainer, description, boundHookId, enabled, ruleCount, installedAt}]}.
 func parseRulePacks(raw json.RawMessage) []RulePackView {
@@ -526,7 +526,7 @@ func parseRulePacks(raw json.RawMessage) []RulePackView {
 }
 
 // parseUserContext reads the user_context Cat B payload Hub serves via
-// packages/nexus-hub/internal/storage/store/catb_agent_user_context.go. Returns
+// packages/nexus-hub/internal/compliance/catbagent/user_context.go. Returns
 // {nil, nil} when the agent has no current user assignment — the UI
 // then renders the "Sign in to see your identity context" empty state.
 func parseUserContext(raw json.RawMessage) (*UserContextView, []OrganizationView) {

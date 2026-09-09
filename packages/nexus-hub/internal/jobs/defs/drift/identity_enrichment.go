@@ -104,8 +104,13 @@ func (e *IdentityEnricher) Run(ctx context.Context) error {
 			firstBatch = false
 		}
 
+		// One statement for the whole page instead of one per event. The page
+		// is up to identityBatch rows and the loop has no upper bound, so the
+		// per-event form scaled with the backlog it was there to drain.
+		assignments, prefetchErr := e.prefetchIPAssignments(ctx, events)
+
 		for _, evt := range events {
-			if err := e.enrichEvent(ctx, evt); err != nil {
+			if err := e.enrichEvent(ctx, evt, assignments, prefetchErr); err != nil {
 				if e.errorsTotal != nil {
 					e.errorsTotal.With().Inc()
 				}
@@ -120,14 +125,38 @@ func (e *IdentityEnricher) Run(ctx context.Context) error {
 	return nil
 }
 
-func (e *IdentityEnricher) enrichEvent(ctx context.Context, evt store.PendingIdentityEvent) error {
-	// Method 1: trace_id match
-	if match, err := e.tryTraceIDMatch(ctx, evt); err == nil {
+func (e *IdentityEnricher) enrichEvent(
+	ctx context.Context, evt store.PendingIdentityEvent,
+	assignments map[string][]store.DeviceAssignmentWindow, prefetchErr error,
+) error {
+	// Method 1: the device this row came from, resolved deterministically.
+	//
+	// It runs first because it is the only leg whose input is authenticated:
+	// thing_id is stamped by the Hub from the mTLS device token, so "which user
+	// held this device then" has one answer. The two legs below infer from
+	// values the uploading node supplied (a request id) or from an address many
+	// devices can share (an IP), and a deterministic answer must not lose to a
+	// heuristic that happens to run earlier.
+	if match, err := e.tryThingIDMatch(ctx, evt); err == nil {
 		return e.applyMatch(ctx, evt, match)
 	}
 
-	// Method 2: IP + agent match
-	match, err := e.tryIPAgentMatch(ctx, evt)
+	// Method 2: same-request match
+	if match, err := e.tryRequestIDMatch(ctx, evt); err == nil {
+		return e.applyMatch(ctx, evt, match)
+	}
+
+	// A FAILED prefetch is not "no match". Falling through to markUnmatched
+	// would stamp a terminal verdict on rows the job never actually looked at,
+	// and an unmatched row is outside both the Art.17 erase scope and the
+	// Art.15 export scope. Returning the error leaves them pending for the next
+	// run, which is the recoverable outcome.
+	if prefetchErr != nil {
+		return fmt.Errorf("ip assignment prefetch: %w", prefetchErr)
+	}
+
+	// Method 3: IP + agent match
+	match, err := e.matchIPAgent(evt, assignments[evt.SourceIP])
 	if err == nil {
 		return e.applyMatch(ctx, evt, match)
 	}
@@ -152,25 +181,140 @@ type identityMatch struct {
 	Identity   map[string]any
 }
 
-func (e *IdentityEnricher) tryTraceIDMatch(ctx context.Context, evt store.PendingIdentityEvent) (*identityMatch, error) {
-	matched, err := e.store.TrafficStore().FindMatchedEventByTraceID(ctx, evt.TraceID)
+// requestIDMatchWindow bounds how far apart two rows may be and still count as
+// one request. A request id is self-reported by the uploading node, and the
+// commonest ones are a framework's auto-incrementing counter — "1", "2" — so
+// without a window the same value from two different machines a year apart
+// would look like the same call. Ten minutes is far beyond any single request's
+// life (the longest realtime session guard is 65 minutes but writes its rows as
+// it goes) and far short of a counter's wrap.
+const requestIDMatchWindow = 10 * time.Minute
+
+// tryThingIDMatch resolves the user from the device the row came from.
+//
+// Only agent rows carry a thing_id, and only the Hub can put one there — it
+// comes from the authenticated mTLS device token, never from the uploaded
+// payload (see the ingest path's anti-forgery blanking). That is what makes
+// this leg deterministic where the others are inferential.
+func (e *IdentityEnricher) tryThingIDMatch(ctx context.Context, evt store.PendingIdentityEvent) (*identityMatch, error) {
+	matched, err := e.store.TrafficStore().FindAssignmentByThingAndTime(ctx, evt.ThingID, evt.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &identityMatch{
-		Method:     "trace_id",
+		Method:     "thing_id",
+		EntityID:   matched.UserID,
+		EntityName: matched.DisplayName,
+		Identity: map[string]any{
+			"status": "matched",
+			"method": "thing_id",
+			"user": map[string]any{
+				"id":    matched.UserID,
+				"name":  matched.DisplayName,
+				"email": matched.Email,
+			},
+			"device": map[string]any{"id": matched.DeviceID},
+		},
+	}, nil
+}
+
+// tryRequestIDMatch inherits a resolved identity from the GATEWAY's row for the
+// same request — it resolved the caller from the virtual key — standing in for
+// the agent / compliance-proxy row that could not.
+//
+// The narrowing lives in the store query (source, source_ip, time window) and
+// is load-bearing: the request id on evt is self-reported by the node that
+// uploaded the row, so an unnarrowed join would let an enrolled agent attribute
+// its traffic to a victim by guessing a plausible id. See
+// FindMatchedEventByRequestID.
+func (e *IdentityEnricher) tryRequestIDMatch(ctx context.Context, evt store.PendingIdentityEvent) (*identityMatch, error) {
+	matched, err := e.store.TrafficStore().FindMatchedEventByRequestID(
+		ctx, evt.ExternalRequestID, evt.SourceIP, evt.CreatedAt, requestIDMatchWindow)
+	if err != nil {
+		return nil, err
+	}
+	return &identityMatch{
+		Method:     "request_id",
 		EntityID:   matched.EntityID,
 		EntityName: matched.EntityName,
 		Identity:   matched.Identity,
 	}, nil
 }
 
-func (e *IdentityEnricher) tryIPAgentMatch(ctx context.Context, evt store.PendingIdentityEvent) (*identityMatch, error) {
-	// Resolve identity via DeviceAssignment ip_address + time window.
-	assignment, err := e.store.TrafficStore().FindActiveAssignmentByIPAndTime(ctx, evt.SourceIP, evt.CreatedAt)
-	if err != nil {
-		return nil, err
+// prefetchIPAssignments reads, in one statement per IP chunk, every assignment
+// whose window overlaps the timestamp span of this page, keyed by IP.
+//
+// The result is a SUPERSET: every event has its own timestamp, so matchIPAgent
+// narrows with Covers. What it replaces is one query per event.
+func (e *IdentityEnricher) prefetchIPAssignments(
+	ctx context.Context, events []store.PendingIdentityEvent,
+) (map[string][]store.DeviceAssignmentWindow, error) {
+	ips := make([]string, 0, len(events))
+	seen := make(map[string]bool, len(events))
+	var from, to time.Time
+	for _, evt := range events {
+		if evt.SourceIP != "" && !seen[evt.SourceIP] {
+			seen[evt.SourceIP] = true
+			ips = append(ips, evt.SourceIP)
+		}
+		if from.IsZero() || evt.CreatedAt.Before(from) {
+			from = evt.CreatedAt
+		}
+		if to.IsZero() || evt.CreatedAt.After(to) {
+			to = evt.CreatedAt
+		}
 	}
+	if len(ips) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string][]store.DeviceAssignmentWindow, len(ips))
+	// Chunked so one page cannot build an unbounded IN list; the chunk size is
+	// well under any driver parameter limit and keeps the plan stable.
+	for start := 0; start < len(ips); start += ipPrefetchChunk {
+		end := min(start+ipPrefetchChunk, len(ips))
+		rows, err := e.store.TrafficStore().FindAssignmentsByIPsOverlapping(ctx, ips[start:end], from, to)
+		if err != nil {
+			return nil, err
+		}
+		for _, w := range rows {
+			out[w.IP] = append(out[w.IP], w)
+		}
+	}
+	return out, nil
+}
+
+// ipPrefetchChunk bounds how many IPs go into one statement.
+const ipPrefetchChunk = 200
+
+// matchIPAgent picks the assignment covering this event's timestamp.
+//
+// The verdict vocabulary is unchanged, and it is the part that matters: zero
+// covering windows is not-found, one is a match, and two or more REFUSES to name
+// anybody. A shared NAT egress — office, VPN, a dev VM — is the ordinary case
+// for two, and stamping the first would be a confidently wrong attribution
+// rather than a missing one.
+func (e *IdentityEnricher) matchIPAgent(
+	evt store.PendingIdentityEvent, windows []store.DeviceAssignmentWindow,
+) (*identityMatch, error) {
+	if evt.SourceIP == "" {
+		return nil, store.ErrNotFound
+	}
+	var found *store.DeviceAssignmentWindow
+	for i := range windows {
+		if !windows[i].Covers(evt.CreatedAt) {
+			continue
+		}
+		if found != nil {
+			// Counting past two buys nothing: the verdict is already "refuse".
+			return nil, store.ErrAmbiguous
+		}
+		found = &windows[i]
+	}
+	if found == nil {
+		return nil, store.ErrNotFound
+	}
+	assignment := found.DeviceAssignmentMatch
 
 	identity := map[string]any{
 		"status": "matched",
@@ -222,7 +366,7 @@ func (e *IdentityEnricher) applyMatch(ctx context.Context, evt store.PendingIden
 func (e *IdentityEnricher) markUnmatched(ctx context.Context, evt store.PendingIdentityEvent) error {
 	identity := map[string]any{
 		"status": "unmatched",
-		"detail": "no trace_id or ip_agent match found",
+		"detail": "no thing_id, request_id or ip_agent match found",
 	}
 	err := e.store.TrafficStore().UpdateEventIdentity(ctx, store.UpdateEventIdentityParams{
 		EventID:  evt.ID,

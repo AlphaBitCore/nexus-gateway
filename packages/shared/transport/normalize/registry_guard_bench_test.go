@@ -8,9 +8,9 @@ import (
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// The C-32 guard runs on EVERY Registry.Normalize call, so its cost claim ("two byte
-// comparisons") has to be measured rather than asserted — that is what B2 is for, and
-// asserting a cost from code shape is the specific error this program has made four times.
+// The key guard runs on EVERY Registry.Normalize call, so its cost claim ("two byte
+// comparisons") has to be measured rather than asserted. Asserting a cost from code
+// shape is how a guard on the hottest path goes unpriced.
 //
 // These arms drive the real Registry through the real codec chain, so the guard's cost is
 // measured where it actually runs rather than in isolation.

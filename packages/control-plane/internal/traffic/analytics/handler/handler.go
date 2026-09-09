@@ -1,9 +1,7 @@
 // Package analytics owns the Control Plane admin API for read-only
 // analytics surfaces: /analytics/* (provider/user/cost/routing/
 // quality/cache-roi/cost-summary) and /metrics/* (per-Thing rollup
-// aggregates + latency phase percentiles). R6 eighth domain extracted
-// from the flat handler/ package; recipe documented in
-// docs/_archive/2026-q2/programs/r6-handler-decomp-runbook.md.
+// aggregates + latency phase percentiles).
 //
 // Read-only domain: no Hub, no Audit (no mutations). Only DB + Logger.
 package analytics

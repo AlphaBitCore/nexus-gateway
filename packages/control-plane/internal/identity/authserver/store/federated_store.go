@@ -33,6 +33,11 @@ type JITUser struct {
 
 // FederatedIdentity is one (user, IdP, subject) binding decoded from
 // UserFederatedIdentity. RawClaims captures the IdP's last-seen claim blob.
+//
+// Account is the owning NexusUser's verdict on whether it may authenticate,
+// joined by FindByIdPSubject. A caller that turns this identity into a session
+// MUST consult it: the IdP asserting who someone is says nothing about whether
+// this deployment still lets them in.
 type FederatedIdentity struct {
 	ID              string
 	UserID          string
@@ -42,6 +47,7 @@ type FederatedIdentity struct {
 	RawClaims       map[string]any
 	LinkedAt        time.Time
 	LastLoginAt     *time.Time
+	Account         AuthDisposition
 }
 
 // FederatedStore manages UserFederatedIdentity rows.
@@ -60,14 +66,28 @@ func NewFederatedStoreWithPool(db FederatedPgxPool) *FederatedStore {
 // FindByIdPSubject looks up a federation row by its (idpId, externalSubject)
 // unique pair. Not-found is not an error; (nil, false, nil) is returned so
 // callers can distinguish "missing" from "db error".
+//
+// The owning account's AuthDisposition rides on the returned identity. The two
+// SSO callbacks turn this row straight into a session, and doing so without
+// consulting account state lets a suspended employee keep
+// signing in through their IdP. Joining the verdict on here means a caller
+// holding a federated identity is already holding the answer, rather than
+// having to remember to ask a second store for it.
+//
+// The join is INNER: UserFederatedIdentity.userId carries an FK to NexusUser
+// with ON DELETE CASCADE, so a federation row without its user cannot exist.
 func (s *FederatedStore) FindByIdPSubject(ctx context.Context, idpID, subject string) (*FederatedIdentity, bool, error) {
 	row := s.db.QueryRow(ctx,
-		`SELECT id, "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt"
-		   FROM "UserFederatedIdentity"
-		  WHERE "idpId" = $1 AND "externalSubject" = $2`, idpID, subject)
+		`SELECT fi.id, fi."userId", fi."idpId", fi."externalSubject", fi."externalEmail",
+		        fi."rawClaims", fi."linkedAt", fi."lastLoginAt", u.status, u."disabledAt"
+		   FROM "UserFederatedIdentity" fi
+		   JOIN "NexusUser" u ON u.id = fi."userId"
+		  WHERE fi."idpId" = $1 AND fi."externalSubject" = $2`, idpID, subject)
 	var fi FederatedIdentity
 	var rawClaims []byte
-	if err := row.Scan(&fi.ID, &fi.UserID, &fi.IdPID, &fi.ExternalSubject, &fi.ExternalEmail, &rawClaims, &fi.LinkedAt, &fi.LastLoginAt); err != nil {
+	var status string
+	var disabledAt *time.Time
+	if err := row.Scan(&fi.ID, &fi.UserID, &fi.IdPID, &fi.ExternalSubject, &fi.ExternalEmail, &rawClaims, &fi.LinkedAt, &fi.LastLoginAt, &status, &disabledAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
@@ -78,6 +98,7 @@ func (s *FederatedStore) FindByIdPSubject(ctx context.Context, idpID, subject st
 			return nil, false, err
 		}
 	}
+	fi.Account = NewAuthDisposition(status, disabledAt)
 	return &fi, true, nil
 }
 

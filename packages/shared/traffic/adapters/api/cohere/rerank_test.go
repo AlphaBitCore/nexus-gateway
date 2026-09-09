@@ -284,11 +284,11 @@ func TestRerank_RewriteRequestBody_ChatUnsupported(t *testing.T) {
 }
 
 // Cohere serves object-shaped documents — {"text": "..."} entries score
-// exactly like plain strings. The extractor used to skip every non-string
-// element, so the text inside one was scanned by nothing and forwarded
-// verbatim: a policy that blocks or redacts PII in a string document silently
-// no-ops on the same PII one nesting level down. A shape the provider accepts
-// and we forward has to be a shape we can read.
+// exactly like plain strings. An extractor that skips every non-string element
+// leaves the text inside one scanned by nothing and forwarded verbatim: a
+// policy that blocks or redacts PII in a string document silently no-ops on the
+// same PII one nesting level down. A shape the provider accepts and we forward
+// has to be a shape we can read.
 func TestRerank_ExtractRewrite_ObjectDocumentTextIsScannedAndRedactable(t *testing.T) {
 	body := []byte(`{"query":"q","documents":["plain doc",{"text":"contact alice@example.com"}]}`)
 	a := &Adapter{}

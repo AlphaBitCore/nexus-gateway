@@ -1,7 +1,7 @@
 /**
  * InlineGlyph — small inline stroke-SVG icons used as decorative anchors
  * (FAQ category chips, setup-step headers, action buttons). They replace
- * the emoji glyphs that previously rendered inconsistently across OS / font
+ * emoji glyphs, which render inconsistently across OS / font
  * stacks. Every path uses `currentColor`, so the glyph inherits the
  * surrounding text colour and stays theme/mode-safe. Sized in `em` so it
  * scales with the local font-size. Decorative by default (`aria-hidden`);

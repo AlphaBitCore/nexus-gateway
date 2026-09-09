@@ -1,5 +1,5 @@
 // Package diagstore owns diagnostic silence persistence. Extracted
-// from store/diag_silence_store.go.
+// from packages/control-plane/internal/observability/diag/diagstore/diag_silence_store.go.
 package diagstore
 
 import (

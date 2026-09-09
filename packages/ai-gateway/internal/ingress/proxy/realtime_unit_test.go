@@ -623,10 +623,15 @@ func TestBuildResponseRecord_IdentityStamps(t *testing.T) {
 	}
 	// Each row's traffic_event id is minted by the audit writer, so RequestID
 	// carries the upgrade request's real correlation value instead of a
-	// synthetic one; TraceID stays the server-minted session that groups the
-	// session's rows.
-	if rec.TraceID != "sess-uuid-1" || rec.RequestID != "rid-upgrade-1" {
-		t.Errorf("row identity: requestId=%q trace=%q", rec.RequestID, rec.TraceID)
+	// synthetic one. Every row of the session shares it, which is what groups
+	// them. TraceID is the caller's own W3C trace and is empty here because
+	// this synthetic upgrade carried no traceparent — asserting that keeps the
+	// request id from silently drifting back onto the trace column.
+	if rec.RequestID != "rid-upgrade-1" {
+		t.Errorf("row identity: requestId=%q, want rid-upgrade-1", rec.RequestID)
+	}
+	if rec.TraceID != "" {
+		t.Errorf("trace id = %q, want empty: no inbound traceparent means no caller trace to record", rec.TraceID)
 	}
 	if rec.LatencyMs != 42 || rec.UpstreamTotalMs == nil || *rec.UpstreamTotalMs != 42 {
 		t.Errorf("latency stamps: %d / %v", rec.LatencyMs, rec.UpstreamTotalMs)

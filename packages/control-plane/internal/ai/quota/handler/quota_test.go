@@ -1865,8 +1865,15 @@ func TestQuotaAnalyticsTrend_ValidUser(t *testing.T) {
 	}
 }
 
-func TestQuotaAnalyticsTrend_MetricsError_PartialReturn(t *testing.T) {
-	// Even with metrics errors the handler returns 200 with empty-cost points.
+// A failed month must not be plotted as zero spend.
+//
+// Asserting "even with metrics errors the handler returns 200
+// with empty-cost points" is how the defect survives: a
+// fabricated `costUsd: 0` renders identically to a month that genuinely cost
+// nothing, so a chart an operator reads to set a quota limit would be half
+// invented with no way to tell which half. The handler queries each month
+// separately, so one flaky query is enough.
+func TestQuotaAnalyticsTrend_MetricsError_RefusesRatherThanPlottingZero(t *testing.T) {
 	met := &fakeMetricsDB{err: errors.New("db error")}
 	h := newTestHandler(newFakeQuotaDB(), met, nil)
 	e := echo.New()
@@ -1876,8 +1883,33 @@ func TestQuotaAnalyticsTrend_MetricsError_PartialReturn(t *testing.T) {
 	if err := h.QuotaAnalyticsTrend(c); err != nil {
 		t.Fatal(err)
 	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want 500 — a month whose query failed must not be returned as $0.00", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `"costUsd"`) {
+		t.Errorf("the response still carries cost points after a failed query: %s", rec.Body.String())
+	}
+}
+
+// The sibling: a month with genuinely NO rollup rows is still $0.00, because
+// that is the true answer. Without this, "refuse on empty" would be
+// indistinguishable from "refuse on error" and real zero-spend months would
+// break the page.
+func TestQuotaAnalyticsTrend_NoRowsIsAGenuineZero(t *testing.T) {
+	met := &fakeMetricsDB{rows: nil} // no error, no rows
+	h := newTestHandler(newFakeQuotaDB(), met, nil)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/quota-analytics/trend?targetType=user&targetId=u1&periods=2", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if err := h.QuotaAnalyticsTrend(c); err != nil {
+		t.Fatal(err)
+	}
 	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d; want 200", rec.Code)
+		t.Fatalf("status = %d; want 200 — no rows means no spend, which is a real answer", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"costUsd":0`) {
+		t.Errorf("expected zero-cost points for a month with no rollup rows: %s", rec.Body.String())
 	}
 }
 

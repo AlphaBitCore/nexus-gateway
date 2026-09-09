@@ -5,7 +5,7 @@ import "testing"
 // TestDefaultsResolveSmoke confirms the embedded defaults.yaml parses
 // and resolves cleanly against the canonical adapter type set. This
 // is a fast sanity test; the full snapshot + denylist coverage lives
-// in forwardheader_test.go (Task 21).
+// in forwardheader_test.go.
 func TestDefaultsResolveSmoke(t *testing.T) {
 	cfg := DefaultConfig()
 	formats := []string{

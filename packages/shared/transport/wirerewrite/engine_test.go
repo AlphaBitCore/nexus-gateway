@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/goccy/go-json"
 )
 
 // --- NormalizeKey (L0) ---
@@ -69,25 +67,22 @@ func TestNormalizeKey_CchStrip_TwoRequests_SameKey(t *testing.T) {
 // --- NormalizeUpstream (L3) ---
 
 func TestNormalizeUpstream_NoDemand_BodyByteIdentical(t *testing.T) {
-	// hasWork=false: no strip rule enabled (bundled rules ship disabled) and no
-	// Provider with marker injection. The upstream rewrite must be a true no-op:
-	// the body is forwarded byte-identical and the Result is zero-valued.
+	// hasWork=false: no strip rule enabled (bundled rules ship disabled). The
+	// upstream rewrite must be a true no-op: the body is forwarded
+	// byte-identical and the Result is zero-valued.
 	eng := New(nil)
 	eng.Reload(Config{})
 
-	// Body carries BOTH a strip target (cch=) and an inject target (system block),
-	// so a spurious run would be visible in the bytes.
+	// Body carries a strip target (cch=), so a spurious run is visible in the
+	// bytes.
 	body := []byte(`{"system":[{"type":"text","text":"test cch=aabbcc; end"}],"messages":[{"role":"user","content":"hi"}]}`)
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "prov-1", body)
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, body)
 
 	if !bytes.Equal(out, body) {
 		t.Fatalf("no demand: body must be byte-identical\n want: %s\n got:  %s", body, out)
 	}
 	if result.StripCount != 0 || result.StripBytes != 0 {
 		t.Fatalf("no demand: want zero strips, got count=%d bytes=%d", result.StripCount, result.StripBytes)
-	}
-	if result.MarkersInjected != 0 {
-		t.Fatalf("no demand: want 0 markers injected, got %d", result.MarkersInjected)
 	}
 	if result.DryRun || len(result.TransformSpans) != 0 {
 		t.Fatalf("no demand: want zero Result, got %+v", result)
@@ -110,7 +105,7 @@ func TestNormalizeUpstream_EnabledRuleAloneIsTheDemand(t *testing.T) {
 	eng.Reload(cfg)
 
 	body := []byte(`{"system":[{"type":"text","text":"prompt cch=deadbeef; end"}]}`)
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "", body)
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, body)
 	if strings.Contains(string(out), "cch=") {
 		t.Fatalf("expected cch= stripped from upstream body, got %s", out)
 	}
@@ -119,40 +114,6 @@ func TestNormalizeUpstream_EnabledRuleAloneIsTheDemand(t *testing.T) {
 	}
 	if result.StripBytes == 0 {
 		t.Fatal("expected StripBytes>0")
-	}
-}
-
-func TestNormalizeUpstream_ProviderInjectAloneIsTheDemand(t *testing.T) {
-	// Footgun regression guard: a Provider with cache_control marker injection
-	// ON and NO strip rule enabled anywhere. Injection must still happen —
-	// under the retired design the (default-off) global normaliser switch
-	// silently suppressed marker injection for exactly this configuration,
-	// so the operator turned caching "on" and got nothing.
-	cfg := Config{
-		Providers: map[string]ProviderCacheConfig{
-			"prov-1": {CacheMarkerInjectEnabled: true},
-		},
-		// Rules deliberately empty: bundled strip rules stay at their
-		// EnabledByDefault=false, so upstreamRules is empty.
-	}
-	eng := New(nil)
-	eng.Reload(cfg)
-
-	if resolved := eng.compiled.Load(); len(resolved.upstreamRules) != 0 {
-		t.Fatalf("precondition: no strip rule may be enabled, got %v", resolved.upstreamRules)
-	}
-
-	body := []byte(`{"model":"claude-opus-4","system":[{"type":"text","text":"big system prompt"}],"messages":[{"role":"user","content":"hi"}]}`)
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "prov-1", body)
-
-	if result.MarkersInjected == 0 {
-		t.Fatalf("marker inject alone must satisfy the demand gate; got 0 markers, body=%s", out)
-	}
-	if !strings.Contains(string(out), `"cache_control"`) {
-		t.Fatalf("expected cache_control injected into upstream body, got %s", out)
-	}
-	if result.StripCount != 0 {
-		t.Fatalf("no strip rule enabled: want StripCount=0, got %d", result.StripCount)
 	}
 }
 
@@ -171,9 +132,7 @@ func TestNormalizeKey_RunsRegardlessOfUpstreamDemandGate(t *testing.T) {
 		keyRules: map[AdapterType][]ruleEntry{
 			AdapterAnthropic: {{rule: rule, breaker: newCircuitBreaker()}},
 		},
-		upstreamRules:         map[AdapterType][]ruleEntry{},
-		providerInjectEnabled: map[string]bool{},
-		providerBoundary3:     map[string]bool{},
+		upstreamRules: map[AdapterType][]ruleEntry{},
 	})
 
 	body := []byte(`{"system":[{"type":"text","text":"prompt cch=deadbeef; end"}]}`)
@@ -184,7 +143,7 @@ func TestNormalizeKey_RunsRegardlessOfUpstreamDemandGate(t *testing.T) {
 	}
 
 	// ...while NormalizeUpstream, which DOES consult the gate, stays a no-op.
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "", body)
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, body)
 	if !bytes.Equal(out, body) || result.StripCount != 0 {
 		t.Fatalf("NormalizeUpstream must no-op when hasWork=false; got %s (strip=%d)", out, result.StripCount)
 	}
@@ -246,34 +205,12 @@ func TestNormalizeUpstream_PanicFailsOpen(t *testing.T) {
 	eng.compiled.Store(resolved)
 
 	body := []byte(`{"messages":[]}`)
-	out, result := eng.NormalizeUpstream(AdapterOpenAI, "", body)
+	out, result := eng.NormalizeUpstream(AdapterOpenAI, body)
 	// nil regex → no panic, no strip; rule succeeds with zero-count
 	if string(out) != string(body) {
 		t.Fatalf("expected original body, got %s", out)
 	}
 	_ = result
-}
-
-func TestItoa_AllCases(t *testing.T) {
-	// itoa intentionally avoids strconv to keep the dependency surface
-	// minimal. Pin the cases that distinguish from strconv's behavior
-	// (panicking on negatives is documented; we just don't test that).
-	cases := []struct {
-		in   int
-		want string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{9, "9"},
-		{10, "10"},
-		{100, "100"},
-		{12345, "12345"},
-	}
-	for _, c := range cases {
-		if got := itoa(c.in); got != c.want {
-			t.Errorf("itoa(%d): got %q want %q", c.in, got, c.want)
-		}
-	}
 }
 
 // --- Config hot-swap ---
@@ -307,196 +244,6 @@ func TestEngine_Reload_ConfigSwap(t *testing.T) {
 
 // --- L4 cache_control injection (explicit content-block caching) ---
 
-func TestInjectCacheMarkers_SystemArray_BlockLevel(t *testing.T) {
-	// Explicit caching: inject cache_control into the last text block of the
-	// system array, not at the request root, so Anthropic reports cache tokens.
-	body := []byte(`{"system":[{"type":"text","text":"big system prompt"}],"messages":[{"role":"user","content":"hi"}]}`)
-	out, err := injectCacheMarkers(body, "ephemeral", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	var root map[string]any
-	if err := json.Unmarshal(out, &root); err != nil {
-		t.Fatalf("invalid JSON after injection: %v", err)
-	}
-	// No root-level cache_control — it goes into the content block.
-	if _, hasRoot := root["cache_control"]; hasRoot {
-		t.Fatalf("should not have root-level cache_control, got %s", out)
-	}
-	sys := root["system"].([]any)
-	block := sys[0].(map[string]any)
-	cc, ok := block["cache_control"]
-	if !ok {
-		t.Fatalf("expected cache_control on the system text block, got %s", out)
-	}
-	ccMap, _ := cc.(map[string]any)
-	if ccMap["type"] != "ephemeral" {
-		t.Fatalf("expected ephemeral, got %v", cc)
-	}
-	n := countInjectedMarkers(body, out)
-	if n != 1 {
-		t.Fatalf("expected 1 injected marker, got %d", n)
-	}
-}
-
-func TestInjectCacheMarkers_SystemString_ConvertedToBlock(t *testing.T) {
-	// String system is converted to a single-element content-block array
-	// and the block receives cache_control so Anthropic reports cache tokens.
-	body := []byte(`{"system":"string system prompt","messages":[]}`)
-	out, err := injectCacheMarkers(body, "ephemeral", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	var root map[string]any
-	if err := json.Unmarshal(out, &root); err != nil {
-		t.Fatalf("invalid JSON after injection: %v", err)
-	}
-	// No root-level cache_control.
-	if _, hasRoot := root["cache_control"]; hasRoot {
-		t.Fatalf("should not have root-level cache_control, got %s", out)
-	}
-	// System must be converted to an array.
-	sys, ok := root["system"].([]any)
-	if !ok || len(sys) == 0 {
-		t.Fatalf("expected system to be a non-empty array, got %s", out)
-	}
-	block := sys[0].(map[string]any)
-	if block["text"] != "string system prompt" {
-		t.Fatalf("system text not preserved, got %s", out)
-	}
-	cc, ok := block["cache_control"]
-	if !ok {
-		t.Fatalf("expected cache_control on system block, got %s", out)
-	}
-	ccMap, _ := cc.(map[string]any)
-	if ccMap["type"] != "ephemeral" {
-		t.Fatalf("expected ephemeral, got %v", cc)
-	}
-}
-
-func TestInjectCacheMarkers_ExistingBlockMarkerRespected(t *testing.T) {
-	// If the client already set block-level cache_control, the body is
-	// left entirely unchanged — no root-level marker is added.
-	body := []byte(`{"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[]}`)
-	out, err := injectCacheMarkers(body, "ephemeral", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	n := countInjectedMarkers(body, out)
-	if n != 0 {
-		t.Fatalf("expected 0 new markers when client already set block-level cache_control, got %d", n)
-	}
-}
-
-func TestInjectCacheMarkers_ExistingRootMarkerRespected(t *testing.T) {
-	// If the client already set a root-level cache_control, the body is
-	// left unchanged.
-	body := []byte(`{"cache_control":{"type":"ephemeral"},"system":"sys","messages":[]}`)
-	out, err := injectCacheMarkers(body, "ephemeral", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	n := countInjectedMarkers(body, out)
-	if n != 0 {
-		t.Fatalf("expected 0 new markers when client already set root-level cache_control, got %d", n)
-	}
-}
-
-func TestInjectCacheMarkers_ManyExistingMarkers_NoAdditional(t *testing.T) {
-	// Body already has multiple block-level markers — none should be added.
-	body := []byte(`{
-		"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}],
-		"tools":[
-			{"name":"t1","cache_control":{"type":"ephemeral"}},
-			{"name":"t2","cache_control":{"type":"ephemeral"}}
-		],
-		"messages":[]
-	}`)
-	out, err := injectCacheMarkers(body, "ephemeral", true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	n := countInjectedMarkers(body, out)
-	if n != 0 {
-		t.Fatalf("expected 0 new markers when client already set markers, got %d", n)
-	}
-}
-
-func TestInjectCacheMarkers_Boundary3Respected(t *testing.T) {
-	// boundary3=false → 1 marker (system block only).
-	// boundary3=true  → 2 markers (system block + second-to-last user message).
-	// Neither case should add a root-level cache_control.
-	body := []byte(`{
-		"system":[{"type":"text","text":"s"}],
-		"messages":[
-			{"role":"user","content":"msg1"},
-			{"role":"assistant","content":"msg2"},
-			{"role":"user","content":"msg3"}
-		]
-	}`)
-
-	cases := []struct {
-		b3       bool
-		wantN    int
-		wantRoot bool
-	}{
-		{false, 1, false},
-		{true, 2, false},
-	}
-	for _, tc := range cases {
-		out, err := injectCacheMarkers(body, "ephemeral", tc.b3)
-		if err != nil {
-			t.Fatalf("boundary3=%v: unexpected error: %v", tc.b3, err)
-		}
-		n := countInjectedMarkers(body, out)
-		if n != tc.wantN {
-			t.Fatalf("boundary3=%v: expected %d markers, got %d\nbody: %s", tc.b3, tc.wantN, n, out)
-		}
-		var root map[string]any
-		if err := json.Unmarshal(out, &root); err != nil {
-			t.Fatalf("boundary3=%v: invalid JSON: %v", tc.b3, err)
-		}
-		_, hasRoot := root["cache_control"]
-		if hasRoot != tc.wantRoot {
-			t.Fatalf("boundary3=%v: root-level cache_control present=%v, want %v\nbody: %s", tc.b3, hasRoot, tc.wantRoot, out)
-		}
-	}
-}
-
-func TestNormalizeUpstream_L4_Inject_PerProvider(t *testing.T) {
-	// L4 injection triggers when provider is configured — and ONLY for that
-	// provider. The demand gate is satisfied fleet-wide by prov-1's inject
-	// setting, so a non-injecting provider on the same engine must still come
-	// through clean (the gate is not a per-provider licence to inject).
-	cfg := Config{
-		Providers: map[string]ProviderCacheConfig{
-			"prov-1": {CacheMarkerInjectEnabled: true},
-		},
-	}
-	eng := New(nil)
-	eng.Reload(cfg)
-
-	body := []byte(`{"model":"claude-opus-4","system":[{"type":"text","text":"sys"}],"messages":[{"role":"user","content":"hi"}]}`)
-
-	// Provider "prov-1" → inject
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "prov-1", body)
-	if !strings.Contains(string(out), `"cache_control"`) {
-		t.Fatalf("expected cache_control injected for prov-1, got %s", out)
-	}
-	if result.MarkersInjected == 0 {
-		t.Fatal("expected MarkersInjected>0 for prov-1")
-	}
-
-	// Provider "prov-2" → no inject
-	out2, result2 := eng.NormalizeUpstream(AdapterAnthropic, "prov-2", body)
-	if strings.Contains(string(out2), `"cache_control"`) {
-		t.Fatalf("expected no cache_control for prov-2, got %s", out2)
-	}
-	if result2.MarkersInjected != 0 {
-		t.Fatalf("expected MarkersInjected=0 for prov-2, got %d", result2.MarkersInjected)
-	}
-}
-
 // TestNormalizeUpstream_RuntimeToggle_HotReload proves an operator's rule toggle
 // takes effect at RUNTIME on a live engine — a second and third Reload on the SAME
 // engine re-apply the changed value without recreating it. Regression guard for
@@ -516,17 +263,17 @@ func TestNormalizeUpstream_RuntimeToggle_HotReload(t *testing.T) {
 
 	// Start OFF: no demand, body passes through unchanged.
 	eng.Reload(withRule(false))
-	if out, _ := eng.NormalizeUpstream(AdapterAnthropic, "", body); string(out) != string(body) {
+	if out, _ := eng.NormalizeUpstream(AdapterAnthropic, body); string(out) != string(body) {
 		t.Fatal("rule OFF: expected original body")
 	}
 	// Hot-enable: the SAME engine must now strip, no restart.
 	eng.Reload(withRule(true))
-	if out, r := eng.NormalizeUpstream(AdapterAnthropic, "", body); strings.Contains(string(out), "cch=") || r.StripCount == 0 {
+	if out, r := eng.NormalizeUpstream(AdapterAnthropic, body); strings.Contains(string(out), "cch=") || r.StripCount == 0 {
 		t.Fatalf("hot-enable: expected cch= stripped after runtime Reload(true), got %s (strip=%d)", out, r.StripCount)
 	}
 	// Hot-disable: flip back OFF at runtime, pass-through restored.
 	eng.Reload(withRule(false))
-	if out, r := eng.NormalizeUpstream(AdapterAnthropic, "", body); string(out) != string(body) || r.StripCount != 0 {
+	if out, r := eng.NormalizeUpstream(AdapterAnthropic, body); string(out) != string(body) || r.StripCount != 0 {
 		t.Fatalf("hot-disable: expected original body after runtime Reload(false), got %s (strip=%d)", out, r.StripCount)
 	}
 }

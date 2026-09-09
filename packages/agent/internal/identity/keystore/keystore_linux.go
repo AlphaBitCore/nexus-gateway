@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
 )
 
 // FileStore stores secrets as 0600 files under ~/.nexus/secrets/.
@@ -21,10 +23,36 @@ type FileStore struct {
 	dir string
 }
 
+// secretsDir resolves the directory holding this host's at-rest secrets: the
+// SQLCipher key for the audit queue and the Ed25519 attestation key. It is the
+// at-rest encryption root, so where it lands is not a detail.
+//
+// Discarding os.UserHomeDir()'s error is not safe here. When it fails home is "", and
+// filepath.Join("", ".nexus", "secrets") is a RELATIVE path resolved against
+// the process working directory. On Windows that is not hypothetical: the agent
+// runs as a LocalSystem service with no user profile, the lookup fails every
+// time, and the keys land under whatever the service's CWD happens to be
+// (typically C:\Windows\System32) with nothing logged.
+//
+// The fallback is the machine-scoped StateDir the paths package already owns
+// (%ProgramData%\NexusAgent on Windows, /var/lib/nexus-agent on Linux), which
+// is absolute on every platform and correct for a service. The HAPPY path is
+// deliberately unchanged: relocating a keystore that already holds keys would
+// lock an existing agent out of its own encrypted audit DB.
+func secretsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		dir := filepath.Join(paths.DefaultPaths().StateDir, "secrets")
+		slog.Warn("no home directory for the at-rest key store; using the machine state dir",
+			"path", dir, "error", err)
+		return dir
+	}
+	return filepath.Join(home, ".nexus", "secrets")
+}
+
 // NewPlatformStore returns a file-backed Store for Linux.
 func NewPlatformStore() Store {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".nexus", "secrets")
+	dir := secretsDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		slog.Warn("cannot create secrets directory", "path", dir, "error", err)
 	}

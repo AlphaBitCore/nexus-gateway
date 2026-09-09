@@ -55,20 +55,28 @@ type AuditEvent struct {
 	// audit rows by client tool.
 	UserAgent *string
 
-	// TraceID is the X-Nexus-Request-Id header extracted from the intercepted
-	// HTTP request after TLS bump. Links this event to agent and AI gateway
-	// events for the same request. Empty for passthrough (non-bumped) traffic.
+	// TraceID is the intercepted client's own W3C distributed-trace id, lifted
+	// from a traceparent header on the bumped request. This is a passive
+	// interception point: it records the trace the client was already carrying
+	// and records nothing when the client carried none. Empty for passthrough
+	// (non-bumped) traffic — the tunnel is never decrypted, so there is no
+	// header to read — and empty for the majority of bumped traffic too, since
+	// most clients run no tracing.
+	//
+	// It is never the request id. Substituting one would file a value we minted
+	// in a field that means "the caller's trace".
 	TraceID string
 
-	// ExternalRequestID is the caller's OWN request id — the x-request-id they
-	// sent — recorded as given and never rewritten, so an external system can
-	// join Nexus rows to its own logs. Distinct from TraceID, which is ours and
-	// groups a unit of work, and from the row's id, which identifies the row.
+	// ExternalRequestID is the request id: X-Nexus-Request-Id, or its
+	// X-Request-Id alias, read off the intercepted request and recorded as
+	// given, or minted here when the client sent neither. It is the key that
+	// stitches this row to the rows the other Nexus services write for the same
+	// request, and the one an external system joins its own logs on.
 	//
-	// Only the AI Gateway used to record it, so a caller whose traffic reached
-	// Nexus through the compliance proxy or the agent had no way to join at
-	// all — the header was right there in the intercepted request and nothing
-	// read it. Empty when the caller sent none.
+	// Recorded on every ingress. With only the AI Gateway recording it, a caller
+	// whose traffic reaches Nexus through the compliance proxy or the agent has no
+	// way to join at all — the header is right there in the intercepted request
+	// and nothing reads it.
 	ExternalRequestID string
 
 	// LLM signal extraction. Populated by the Traffic Adapter when the

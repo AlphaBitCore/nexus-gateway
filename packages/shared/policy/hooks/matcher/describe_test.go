@@ -53,8 +53,25 @@ func TestDescribeEngine_AgreesWithCompileDefault(t *testing.T) {
 
 	// Whichever engine it is, it has to actually find the pattern — a description
 	// of a matcher that does not match is worth nothing.
+	//
+	// The assertion is MEMBERSHIP, not a hit count. What the pipeline consumes is
+	// which (rule, segment) pairs matched; the number of Hit structs is an engine
+	// detail. With firstOnly=false a Vectorscan database reports every match END
+	// for a pattern, so `secret-\d+` over "secret-42" yields two hits (…-4 and
+	// …-42) where RE2 yields one.
+	//
+	// Requiring exactly one did not merely pin RE2's shape — it was INVERTED: it
+	// went red when the pattern was served by the Vectorscan database, the
+	// correct state, and green when it degraded to the RE2 residual, the failure
+	// state. It survived because the release gate's -run filter never selected
+	// this test under the vectorscan tag.
 	hits := m.Scan([]string{"leaked secret-42 here"}, false)
-	if len(hits) != 1 || hits[0].ID != 1 {
-		t.Errorf("Scan hits = %+v, want exactly one hit for pattern 1", hits)
+	if len(hits) == 0 {
+		t.Fatal("Scan found nothing; the matcher this description describes does not match")
+	}
+	for _, h := range hits {
+		if h.ID != 1 || h.Seg != 0 {
+			t.Errorf("unexpected hit %+v; every hit must name rule 1 in segment 0", h)
+		}
 	}
 }

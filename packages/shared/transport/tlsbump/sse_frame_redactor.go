@@ -46,7 +46,7 @@ type adapterWireCodec struct {
 	adapter traffic.Adapter
 	path    string
 	// scratch is the reused destination for the string-to-bytes conversion
-	// ExtractStreamChunk requires (finding C-20). A POINTER, not a []byte: this struct
+	// ExtractStreamChunk requires. A POINTER, not a []byte: this struct
 	// is stored in a streaming.WireTextCodec interface and its methods take a value
 	// receiver, so a slice field would be copied per call and never grow. The pointer is
 	// copied instead, and the slice header it addresses persists.
@@ -60,16 +60,33 @@ type adapterWireCodec struct {
 	scratch *[]byte
 }
 
-// ChunkText returns the visible text a single SSE frame carries on its native
-// wire. A frame with no text segments (tool_use / ping / role / [DONE] /
-// reasoning-only) or a decode error reports ok=false and is passed verbatim.
+// ChunkText returns the scannable text a single SSE frame carries on its native
+// wire. A frame with no text (tool_use / ping / role / [DONE]) or a decode error
+// reports ok=false and is passed verbatim.
+//
+// Reasoning counts. The model's chain of thought is text the model produced and
+// the client receives, so a policy that redacts a social security number out of
+// the answer must redact it out of the thinking that reached the same
+// destination — NormalizedContent's own contract says a scanner opts in by
+// reading both lists, and this one was reading only the first. Every adapter
+// that decodes reasoning is affected, not one vendor: Anthropic thinking_delta,
+// Gemini thought=true, OpenAI/DeepSeek reasoning_content, Cohere tool_plan all
+// land in ReasoningSegments.
+//
+// Joining the two channels is sound because no frame carries both. Measured over
+// the fifteen captured upstream streams (1,274 frames): 140 frames carry content
+// alone, 55 carry reasoning alone, and ZERO carry both — providers emit one
+// channel per frame. The joined string is therefore always a single value in the
+// frame, which is what the splice needs; TestSSEFrameChannelsAreSpliceable pins
+// that, so a provider that starts interleaving the two turns the assumption red
+// instead of turning the splice silently unavailable.
 func (c adapterWireCodec) ChunkText(data string) (string, bool) {
 	buf := c.scratchFor(data)
 	nc, err := c.adapter.ExtractStreamChunk(c.ctx, buf, c.path)
 	if err != nil {
 		return "", false
 	}
-	txt := strings.Join(nc.Segments, "")
+	txt := strings.Join(nc.Segments, "") + strings.Join(nc.ReasoningSegments, "")
 	return txt, txt != ""
 }
 

@@ -15,7 +15,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"math/big"
@@ -28,8 +27,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	metricsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // The following package-level variables exist solely as test seams so unit
@@ -38,10 +39,8 @@ import (
 // MarshalECPrivateKey), the net.Listen-failure arm in newCallbackServer,
 // and the per-OS dispatch + exec.Command.Start arms in openBrowser.
 // Production never reassigns them. Mirrors the established pattern in
-// packages/agent/internal/identity/enrollment/enroll.go (randReader),
-// packages/agent/internal/network/tls/engine.go (tlsRandReader), and
-// packages/agent/internal/identity/secretstore/fallback.go (osFile +
-// createTempFn).
+// packages/agent/internal/identity/enrollment/enroll.go (randReader) and
+// packages/agent/internal/network/tls/engine.go (tlsRandReader).
 var (
 	ssoRandReader        io.Reader = rand.Reader
 	ssoGenerateKey                 = ecdsa.GenerateKey

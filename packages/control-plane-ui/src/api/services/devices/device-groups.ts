@@ -96,6 +96,4 @@ export const deviceGroupsApi = {
   bulkForceRefresh: (groupId: string) =>
     api.post<BulkActionResponse>(`${BASE}/${groupId}/force-refresh`),
 
-  bulkRotateCert: (groupId: string) =>
-    api.post<BulkActionResponse>(`${BASE}/${groupId}/rotate-cert`),
 };

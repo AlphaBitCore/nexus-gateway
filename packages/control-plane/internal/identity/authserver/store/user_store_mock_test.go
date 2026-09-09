@@ -23,45 +23,74 @@ func newUserMock(t *testing.T) (pgxmock.PgxPoolIface, *store.UserStore) {
 }
 
 // TestUserStore_GetByEmail_HappyPath asserts the (id, passwordHash, source,
-// disabledAt) tuple is returned in scan-order with disabledAt left nil
-// when the column is NULL.
+// disposition) tuple is returned in scan-order, and that an ordinary active row
+// is permitted. The ExpectQuery regex names BOTH account-state columns on
+// purpose: pgxmock replays columns by position and never executes the SQL, so
+// dropping `status` from the SELECT would otherwise leave every test here green
+// while the store went back to enforcing on the column with no writer.
 func TestUserStore_GetByEmail_HappyPath(t *testing.T) {
 	mock, s := newUserMock(t)
 	ctx := context.Background()
 
-	mock.ExpectQuery(`SELECT id, COALESCE\("passwordHash", ''\), source, "disabledAt"`).
+	mock.ExpectQuery(`SELECT id, COALESCE\("passwordHash", ''\), source, status, "disabledAt"`).
 		WithArgs("alice@nexus.ai").
-		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "source", "disabledAt"}).
-			AddRow("u_1", "argon2id$hash", "local", (*time.Time)(nil)))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "source", "status", "disabledAt"}).
+			AddRow("u_1", "argon2id$hash", "local", "active", (*time.Time)(nil)))
 
-	id, pwd, source, disabledAt, err := s.GetByEmail(ctx, "alice@nexus.ai")
+	id, pwd, source, account, err := s.GetByEmail(ctx, "alice@nexus.ai")
 	if err != nil {
 		t.Fatalf("GetByEmail: %v", err)
 	}
-	if id != "u_1" || pwd != "argon2id$hash" || source != "local" || disabledAt != nil {
-		t.Fatalf("unexpected result: id=%q pwd=%q source=%q disabledAt=%v", id, pwd, source, disabledAt)
+	if id != "u_1" || pwd != "argon2id$hash" || source != "local" || account.Blocked() {
+		t.Fatalf("unexpected result: id=%q pwd=%q source=%q blocked=%v reason=%q",
+			id, pwd, source, account.Blocked(), account.Reason())
 	}
 }
 
-// TestUserStore_GetByEmail_DisabledAtPopulated asserts the disabledAt
-// pointer round-trips when the user has been disabled — auth handlers
-// rely on this to refuse login after admin block.
-func TestUserStore_GetByEmail_DisabledAtPopulated(t *testing.T) {
+// TestUserStore_GetByEmail_DisabledAtBlocks asserts a non-NULL disabledAt
+// resolves to a refusal. Nothing in the tree writes that column today, so this
+// arm covers a row disabled by hand rather than through a product surface.
+func TestUserStore_GetByEmail_DisabledAtBlocks(t *testing.T) {
 	mock, s := newUserMock(t)
 	ctx := context.Background()
 	disabled := time.Unix(1_700_000_000, 0).UTC()
 
 	mock.ExpectQuery(`SELECT id, COALESCE`).
 		WithArgs("blocked@nexus.ai").
-		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "source", "disabledAt"}).
-			AddRow("u_blocked", "argon2id$hash", "local", &disabled))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "source", "status", "disabledAt"}).
+			AddRow("u_blocked", "argon2id$hash", "local", "active", &disabled))
 
 	_, _, _, got, err := s.GetByEmail(ctx, "blocked@nexus.ai")
 	if err != nil {
 		t.Fatalf("GetByEmail: %v", err)
 	}
-	if got == nil || !got.Equal(disabled) {
-		t.Fatalf("disabledAt not round-tripped: %v", got)
+	if !got.Blocked() {
+		t.Fatalf("a row with a disabledAt timestamp was reported as permitted")
+	}
+}
+
+// TestUserStore_GetByEmail_SuspendedStatusBlocks is the production shape: every
+// surface that disables an account writes status='suspended' and leaves
+// disabledAt NULL. A store that reported this row as permitted is exactly how a
+// suspended employee kept signing in.
+func TestUserStore_GetByEmail_SuspendedStatusBlocks(t *testing.T) {
+	mock, s := newUserMock(t)
+	ctx := context.Background()
+
+	mock.ExpectQuery(`SELECT id, COALESCE`).
+		WithArgs("suspended@nexus.ai").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "source", "status", "disabledAt"}).
+			AddRow("u_susp", "argon2id$hash", "local", "suspended", (*time.Time)(nil)))
+
+	_, _, _, got, err := s.GetByEmail(ctx, "suspended@nexus.ai")
+	if err != nil {
+		t.Fatalf("GetByEmail: %v", err)
+	}
+	if !got.Blocked() {
+		t.Fatalf("status='suspended' with a NULL disabledAt was reported as permitted")
+	}
+	if got.Reason() != "suspended" {
+		t.Fatalf("reason: got %q, want the status that refused it", got.Reason())
 	}
 }
 
@@ -75,9 +104,10 @@ func TestUserStore_GetByEmail_NotFound(t *testing.T) {
 		WithArgs("nobody@nexus.ai").
 		WillReturnError(pgx.ErrNoRows)
 
-	id, pwd, source, da, err := s.GetByEmail(ctx, "nobody@nexus.ai")
-	if id != "" || pwd != "" || source != "" || da != nil {
-		t.Fatalf("on not-found expected zero values; got id=%q pwd=%q source=%q da=%v", id, pwd, source, da)
+	id, pwd, source, account, err := s.GetByEmail(ctx, "nobody@nexus.ai")
+	if id != "" || pwd != "" || source != "" || account.Blocked() || account.Reason() != "" {
+		t.Fatalf("on not-found expected zero values; got id=%q pwd=%q source=%q blocked=%v reason=%q",
+			id, pwd, source, account.Blocked(), account.Reason())
 	}
 	if !errors.Is(err, store.ErrUserNotFound) {
 		t.Fatalf("expected ErrUserNotFound; got %v", err)
@@ -116,11 +146,11 @@ func TestUserStore_GetByID_HappyPath(t *testing.T) {
 	email := "id@nexus.ai"
 	last := time.Unix(1_700_000_100, 0).UTC()
 
-	mock.ExpectQuery(`SELECT id, email, "displayName"`).
+	mock.ExpectQuery(`SELECT id, email, "displayName", COALESCE\("passwordHash", ''\), status, "disabledAt"`).
 		WithArgs("u_1").
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "email", "displayName", "passwordHash", "disabledAt", "breakGlass", "lastLoginAt",
-		}).AddRow("u_1", &email, "ID User", "argon2id$h", (*time.Time)(nil), true, &last))
+			"id", "email", "displayName", "passwordHash", "status", "disabledAt", "breakGlass", "lastLoginAt",
+		}).AddRow("u_1", &email, "ID User", "argon2id$h", "active", (*time.Time)(nil), true, &last))
 
 	u, err := s.GetByID(ctx, "u_1")
 	if err != nil {

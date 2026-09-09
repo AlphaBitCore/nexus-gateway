@@ -154,8 +154,8 @@ func TestAuthenticate_HashMissFromDB(t *testing.T) {
 	}
 }
 
-// A lookup that could not run is OUR failure, not the caller's. It used to
-// wrap ErrInvalid, so a Postgres outage answered every request with "your
+// A lookup that could not run is OUR failure, not the caller's. Wrapping it in
+// ErrInvalid has a Postgres outage answer every request with "your
 // virtual key is invalid" — callers rotate keys, which cannot help, while the
 // real fault stays hidden behind client-side errors.
 func TestAuthenticate_LookupFailure_IsOursNotTheCallers(t *testing.T) {

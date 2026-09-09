@@ -80,16 +80,14 @@ func TestValidateStrategyConfig_RecursiveShape(t *testing.T) {
 		})
 	}
 
-	// Depth used to be the rule: any known node type was accepted up to ten
-	// levels, because the gateway evaluated one strategy inside another. It no
-	// longer does — a child names a provider and a model, and is resolved as a
+	// Depth is not the rule. Accepting any known node type up to ten
+	// levels mirrors a gateway that evaluates one strategy inside another. It does
+	// not — a child names a provider and a model, and is resolved as a
 	// leaf — so the validator that mirrors it stops at the first level.
 	//
-	// These two cases replace a pair that asserted an 8-deep tree was legal and
-	// a 12-deep one was not. They were not stale about the boundary's job: a
-	// validator that accepts what the gateway cannot evaluate persists it,
-	// broadcasts it fleet-wide, and then routes nothing. What changed is what
-	// the gateway evaluates.
+	// The boundary's job is unchanged by that: a validator that accepts what the
+	// gateway cannot evaluate persists it, broadcasts it fleet-wide, and then
+	// routes nothing. What differs is what the gateway evaluates.
 	t.Run("a nested strategy is refused where the admin can be told", func(t *testing.T) {
 		msg, ok := validateStrategyConfig(json.RawMessage(
 			`{"type":"fallback","targets":[{"type":"loadbalance","weightedTargets":[` +

@@ -11,7 +11,7 @@
 #                            cert-based auth flow in CI).
 #   -ProductName <string>   Default: "Nexus WFP Driver".
 #   -PollIntervalSec <int>  Default: 60.
-#   -MaxWaitMinutes <int>   Default: 1440 (24 hours, per epic §6 C-2).
+#   -MaxWaitMinutes <int>   Default: 1440 (24 hours).
 #
 # Outputs:
 #   Replaces $DriverRoot/nexus-wfp.cat with the Microsoft-attestation-

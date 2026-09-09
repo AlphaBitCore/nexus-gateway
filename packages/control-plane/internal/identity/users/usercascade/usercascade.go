@@ -40,6 +40,7 @@ package usercascade
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -78,6 +79,13 @@ type Counts struct {
 // whole sequence.
 //
 // AdminAuditLog is intentionally never touched (see the package doc).
+
+// canonicalUserPrincipalType is the spelling IAM STORAGE uses for a dashboard
+// user. The session layer calls the same principal "admin_user" and that is a
+// shipped contract (GET /api/admin/me returns it), so the two names coexist by
+// design — what matters is that anything touching the IAM tables uses this one.
+const canonicalUserPrincipalType = "nexus_user"
+
 func DeleteUserAccount(ctx context.Context, tx Tx, userID string) (Counts, error) {
 	var c Counts
 	for _, stage := range []struct {
@@ -92,10 +100,30 @@ func DeleteUserAccount(ctx context.Context, tx Tx, userID string) (Counts, error
 		// ScimToken.createdBy is ON DELETE RESTRICT — cleared before the NexusUser
 		// delete so it cannot block it.
 		{"created scim tokens", `DELETE FROM "ScimToken" WHERE "createdBy" = $1`, &c.ScimTokensDeleted},
-		{"iam group memberships", `DELETE FROM "IamGroupMembership" WHERE "principalType" = 'admin_user' AND "principalId" = $1`, &c.IamGroupMembershipsDeleted},
-		{"iam policy attachments", `DELETE FROM "IamPolicyAttachment" WHERE "principalType" = 'admin_user' AND "principalId" = $1`, &c.IamPolicyAttachmentsDeleted},
+		// principalType is the CANONICAL spelling, not the session one. IAM
+		// storage records a dashboard user as "nexus_user"; "admin_user" is what
+		// the session layer reports and what GET /api/admin/me returns. These
+		// two statements named the session spelling, so they matched nothing and
+		// every deleted user left its attachments and memberships behind as
+		// orphans — with the counters reporting 0, which reads as "the user had
+		// none" rather than "I looked in the wrong place".
+		//
+		// Observed on prod: deleting a user left `IamPolicyAttachment` binding
+		// NexusSuperAdmin to an id that no longer exists. Harmless while ids are
+		// UUIDs and never reused; not harmless as a rule.
+		//
+		// Same divergence as the one the attach/list paths carried — the write
+		// side and the read side were fixed together; this third site was not
+		// found then. iam.CanonicalPrincipalTypes is the single source for the
+		// spelling.
+		{"iam group memberships", `DELETE FROM "IamGroupMembership" WHERE "principalType" = $2 AND "principalId" = $1`, &c.IamGroupMembershipsDeleted},
+		{"iam policy attachments", `DELETE FROM "IamPolicyAttachment" WHERE "principalType" = $2 AND "principalId" = $1`, &c.IamPolicyAttachmentsDeleted},
 	} {
-		tag, err := tx.Exec(ctx, stage.sql, userID)
+		args := []any{userID}
+		if strings.Contains(stage.sql, "$2") {
+			args = append(args, canonicalUserPrincipalType)
+		}
+		tag, err := tx.Exec(ctx, stage.sql, args...)
 		if err != nil {
 			return c, fmt.Errorf("delete %s: %w", stage.name, err)
 		}

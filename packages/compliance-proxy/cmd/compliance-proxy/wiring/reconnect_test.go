@@ -64,9 +64,9 @@ func TestCaptureThingClientResult_NonNilClientPopulatesResult(t *testing.T) {
 	if !result.StaticInfoReady {
 		t.Error("expected StaticInfoReady=true")
 	}
-	// The reconnect path reports the same identity as the startup path. It used
-	// to report the literal "compliance-proxy/0.1.0" with an empty sha, so a
-	// node that had reconnected could not be tied to a build at all.
+	// The reconnect path reports the same identity as the startup path. Reporting
+	// the literal "compliance-proxy/0.1.0" with an empty sha leaves a
+	// reconnected node untied to any build.
 	if got := result.StaticInfo.ServiceVersion; got != "compliance-proxy/prod-20260819b@caa2934c3" {
 		t.Errorf("ServiceVersion = %q, want the stamped build version", got)
 	}

@@ -2,6 +2,8 @@
 package wiring
 
 import (
+	"github.com/redis/go-redis/v9"
+
 	"context"
 	"log/slog"
 
@@ -35,6 +37,7 @@ func InitRouter(
 	adapterReg *provcore.Registry,
 	logger *slog.Logger,
 	enforceNamedModelModality bool,
+	rdb redis.UniversalClient,
 ) (*strategies.StrategyRegistry, *routingcore.HealthRanker, *routing.Resolver, *capability.Cache) {
 	capCache := capability.NewCache()
 	strategyReg := strategies.NewStrategyRegistry()
@@ -58,6 +61,13 @@ func InitRouter(
 			Lookup:    routerResolver.LookupTargetFunc(),
 			RouterLLM: newRouterDecider(ctx, ptResolver, adapterReg, cacheLayer, logger),
 			Logger:    logger,
+			// Session affinity keeps one conversation on one model while the
+			// provider's prompt cache for it is warm. The local tier works with
+			// a nil Redis, so this is never a reason the gateway cannot start;
+			// affinity itself still requires the caller to send
+			// X-Nexus-Session-Id, so a deployment whose clients do not send it
+			// is unaffected.
+			SessionAffinity: strategies.NewSessionAffinityStore(rdb, "nexus", logger),
 		}
 	}
 	// The latency strategy reads the health tracker's windowed p95 to order

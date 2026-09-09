@@ -259,9 +259,9 @@ func TestResolver_Resolve_FetchRulesError(t *testing.T) {
 // TestResolver_Resolve_BadStrategyConfigJSON: a rule whose Config does not
 // parse is SKIPPED, not fatal.
 //
-// It used to abort the whole resolve, which made one unparseable rule a
-// fleet-wide outage: every request matching it failed, including requests that
-// a lower-priority rule could have served perfectly. A rule nobody can evaluate
+// Aborting the whole resolve makes one unparseable rule a
+// fleet-wide outage: every request matching it fails, including requests that
+// a lower-priority rule could serve perfectly. A rule nobody can evaluate
 // has nothing to contribute and nothing to defend, so the next match is tried.
 //
 // Skipped loudly — a WARN naming the rule — because the alternative failure
@@ -1000,7 +1000,7 @@ func TestRegisterAllStrategies_WithSmartDeps(t *testing.T) {
 // TestFallbackStrategy_UnsupportedEntry_IsSkippedNotFatal.
 //
 // A chain entry names a provider+model leaf. One holding anything else cannot
-// be flown, and the chain continues without it — where it used to abort the
+// be flown, and the chain continues without it rather than aborting the
 // whole evaluation.
 //
 // The same reasoning as the loadbalance case below, and the rule walk above it:
@@ -1042,11 +1042,11 @@ func TestFallbackStrategy_UnsupportedEntry_IsSkippedNotFatal(t *testing.T) {
 //
 // A weighted entry names a provider+model leaf. One holding anything else is a
 // configuration that cannot be served, and it now produces no target and a
-// trace line naming the shape — where it used to abort the whole evaluation.
+// trace line naming the shape, rather than aborting the whole evaluation.
 //
-// The change is deliberate and shares its reasoning with the rule walk: a rule
+// This shares its reasoning with the rule walk: a rule
 // nobody can evaluate has nothing to contribute and nothing to defend, so the
-// request should reach the rules beneath it rather than fail. Erroring made one
+// request should reach the rules beneath it rather than fail. Erroring makes one
 // unserviceable entry a failure for traffic that a lower-priority rule could
 // have served. Refusing the shape belongs at the write boundary, where the
 // admin who wrote it is there to be told.

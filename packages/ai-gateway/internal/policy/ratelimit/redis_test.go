@@ -29,22 +29,65 @@ func TestNewRedisLimiter_LoadsScript(t *testing.T) {
 	if rl == nil {
 		t.Fatal("NewRedisLimiter returned nil for healthy Redis")
 	}
-	if len(rl.scriptSHA) != 40 {
-		t.Errorf("scriptSHA = %q (len=%d), want 40-char SHA1", rl.scriptSHA, len(rl.scriptSHA))
+	if rl.script == nil {
+		t.Fatal("limiter has no script — Allow would have nothing to dispatch")
+	}
+	// Asserting the hash is 40 chars would assert a go-redis property, not
+	// ours. What this code owns is that the script it dispatches is the
+	// SlidingWindow one — see TestRedisLimiter_ConstructorLoadsTheScriptAllowDispatches
+	// for the server-side half.
+	if rl.script.Hash() != redis.NewScript(SlidingWindowLua).Hash() {
+		t.Errorf("the limiter dispatches a script other than SlidingWindowLua")
 	}
 }
 
-// TestNewRedisLimiter_FailureReturnsNil: when the Redis endpoint is dead the
-// constructor must retry, log, and ultimately return nil so the wrapper can
-// degrade gracefully (no script SHA cached).
-func TestNewRedisLimiter_FailureReturnsNil(t *testing.T) {
+// TestNewRedisLimiter_StartupFailureRecoversWhenRedisReturns replaces an
+// assertion that pinned the defect as the contract.
+//
+// The old test required the constructor to return nil when the startup probe
+// failed and called that "degrading gracefully". It could not tell graceful
+// from PERMANENT: Limiter.New calls the constructor exactly once, so a nil left
+// every later Allow on the per-instance LocalLimiter for the lifetime of the
+// process and the fleet enforced N x the configured limit — silently, with no
+// recovery short of a restart. A gateway starting during a Redis failover, or
+// ahead of Redis in an ordering-free bring-up, is enough to reach it.
+//
+// Recovery is the outcome that matters, so recovery is what is asserted: a
+// limiter built against a dead Redis must enforce cluster-wide again once Redis
+// answers, which it can because Allow dispatches through *redis.Script and
+// reloads the body on NOSCRIPT.
+func TestNewRedisLimiter_StartupFailureRecoversWhenRedisReturns(t *testing.T) {
 	s, rdb := newMiniRedis(t)
+	addr := s.Addr()
 	// Kill the server BEFORE construction so SCRIPT LOAD fails on every retry.
 	s.Close()
 
 	rl := NewRedisLimiter(rdb, discardLogger())
-	if rl != nil {
-		t.Fatal("NewRedisLimiter must return nil when SCRIPT LOAD fails")
+	if rl == nil {
+		t.Fatal("a failed startup probe must not disable Redis rate limiting for the process lifetime — " +
+			"every Allow then falls to the per-instance local limiter and the fleet enforces N x the limit")
+	}
+
+	// While Redis is still down Allow reports the error, so Limiter.Allow can
+	// fall back per request. It must not fabricate a verdict it did not compute.
+	if _, _, err := rl.Allow("k-down", 5, 1000); err == nil {
+		t.Fatal("Allow against a dead Redis must return an error, not a fabricated verdict")
+	}
+
+	// Redis comes back at the same address the client dials.
+	revived := miniredis.NewMiniRedis()
+	if err := revived.StartAddr(addr); err != nil {
+		t.Skipf("could not re-bind miniredis to %s: %v", addr, err)
+	}
+	defer revived.Close()
+
+	// The SAME limiter must now work — no reconstruction, no process restart.
+	allowed, _, err := rl.Allow("k-up", 5, 1000)
+	if err != nil {
+		t.Fatalf("the limiter did not resume using Redis once Redis answered: %v", err)
+	}
+	if !allowed {
+		t.Fatal("the first request in a fresh window must be allowed")
 	}
 }
 

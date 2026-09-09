@@ -85,7 +85,7 @@ func TestSmart_ContextFilter_DropsModelTooSmallForHistory(t *testing.T) {
 	}
 }
 
-// TestSmart_ContextFilter_ConservativeSizing is the #35 regression guard:
+// TestSmart_ContextFilter_ConservativeSizing is the context-sizing guard:
 // a request sized between the average-case estimate (0.25/char) and the
 // conservative estimate (0.5/char) must drop a model that only the average
 // estimate would have admitted. 10000 ASCII chars estimate to 2500 tokens

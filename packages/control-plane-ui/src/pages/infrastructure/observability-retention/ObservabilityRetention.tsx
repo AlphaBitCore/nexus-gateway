@@ -85,18 +85,33 @@ interface LayerState {
   initial: number;
   min: number;
   max: number;
+  /** Whether the server actually HAS a value for this layer.
+   *
+   *  False means the number in the box is the spec default we filled in, not
+   *  a setting in force. Indistinguishable, the two make the
+   *  page assert a retention window nobody configured — on a surface whose
+   *  whole job is telling an operator how long data is kept. */
+  configured: boolean;
 }
 
-/** Build the form state from the GET response. Missing layers fall back to
- *  the spec defaults so the form never renders an empty input row. */
+/** Build the form state from the GET response.
+ *
+ *  A layer missing from the response still renders the spec default, so the
+ *  form never shows an empty row — but it is marked unconfigured. Rendering the
+ *  fallback as if it were the stored value told the operator that, say, 90-day
+ *  retention was in force when nothing was set at all; and because "changed"
+ *  compared the box against that same fallback, Save was disabled on exactly
+ *  the layers that had never been configured. The operator could see a number
+ *  and could not commit it. */
 function buildState(resp: RetentionGetResponse | null): Record<string, LayerState> {
   const out: Record<string, LayerState> = {};
   for (const key of ALL_LAYERS) {
     const layer: RetentionLayer | undefined = resp?.retention[key];
+    const configured = layer?.value !== undefined;
     const initial = layer?.value ?? DEFAULTS[key];
     const min = layer?.min ?? BOUNDS[key].min;
     const max = layer?.max ?? BOUNDS[key].max;
-    out[key] = { value: String(initial), initial, min, max };
+    out[key] = { value: String(initial), initial, min, max, configured };
   }
   return out;
 }
@@ -149,7 +164,11 @@ export default function ObservabilityRetention() {
     const out: string[] = [];
     for (const key of ALL_LAYERS) {
       const s = layers[key];
-      if (s.value.trim() !== String(s.initial)) out.push(key);
+      // An UNCONFIGURED layer is always savable: persisting the default is a
+      // real change from "nothing stored", even though the box already shows
+      // that number. Comparing only against the box is what disabled Save on
+      // the layers that most needed it.
+      if (!s.configured || s.value.trim() !== String(s.initial)) out.push(key);
     }
     return out;
   }, [layers]);
@@ -297,15 +316,25 @@ function LayerSection({
         const state = layers[key];
         const err = errors[key];
         const isDirty = state.value.trim() !== String(state.initial);
+        // Say so when the number shown is a default rather than a setting in
+        // force — otherwise the page reads as a statement about how long data
+        // is kept, which it would not be.
+        const hint = state.configured
+          ? t('settings.observabilityRetention.rangeHint', {
+              min: state.min,
+              max: state.max,
+              default: DEFAULTS[key],
+            })
+          : t('settings.observabilityRetention.notConfiguredHint', {
+              min: state.min,
+              max: state.max,
+              default: DEFAULTS[key],
+            });
         return (
           <FormField
             key={key}
             label={key}
-            helpText={t('settings.observabilityRetention.rangeHint', {
-              min: state.min,
-              max: state.max,
-              default: DEFAULTS[key],
-            })}
+            helpText={hint}
             error={err}
           >
             <Input
@@ -318,6 +347,7 @@ function LayerSection({
               data-testid={`layer-${key}`}
               aria-label={key}
               data-dirty={isDirty || undefined}
+              data-unconfigured={!state.configured || undefined}
             />
           </FormField>
         );

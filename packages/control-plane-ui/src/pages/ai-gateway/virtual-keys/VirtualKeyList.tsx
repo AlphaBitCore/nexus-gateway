@@ -74,7 +74,13 @@ export function VirtualKeyListPage() {
   const canCreate = usePermission('virtual-key:create');
   const canUpdate = usePermission('virtual-key:update');
   const canDelete = usePermission('virtual-key:delete');
+  // Approve, reject and revoke are three DIFFERENT IAM actions on the server.
+  // Gating all three on `virtualKey:approve` meant a revoke-only grantee saw no
+  // Revoke control at all — and this list is the only surface offering it —
+  // while an approve-only grantee was shown a Reject the server refuses.
   const canApprove = usePermission('virtualKey:approve');
+  const canReject = usePermission('virtualKey:reject');
+  const canRevoke = usePermission('virtualKey:revoke');
 
   const { mutate: toggleKey, loading: togglingVkEnabled } = useMutation(
     (payload: { id: string; enabled: boolean }) => virtualKeyApi.update(payload.id, { enabled: payload.enabled }),
@@ -200,27 +206,28 @@ export function VirtualKeyListPage() {
 
         return (
           <RowActions>
-            {/* Approve/Reject for pending application VKs */}
+            {/* Approve / Reject for pending application VKs — separately
+                gated, because they are separate grants. */}
             {isApplication && vkStatus === 'pending' && canApprove && (
-              <>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={(e) => { e.stopPropagation(); approveKey(r.id); }}
-                >
-                  {t('pages:virtualKeys.approve')}
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={(e) => { e.stopPropagation(); setRejecting(r); }}
-                >
-                  {t('pages:virtualKeys.reject')}
-                </Button>
-              </>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); approveKey(r.id); }}
+              >
+                {t('pages:virtualKeys.approve')}
+              </Button>
+            )}
+            {isApplication && vkStatus === 'pending' && canReject && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); setRejecting(r); }}
+              >
+                {t('pages:virtualKeys.reject')}
+              </Button>
             )}
             {/* Revoke for active application VKs */}
-            {isApplication && vkStatus === 'active' && canApprove && (
+            {isApplication && vkStatus === 'active' && canRevoke && (
               <RowActionIconButton label={t('pages:virtualKeys.revoke')} tone="danger" onAction={() => revokeKey(r.id)}>
                 <RevokeActionIcon />
               </RowActionIconButton>

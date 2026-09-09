@@ -37,9 +37,9 @@ func makePiiConfig(patterns []map[string]any, action string) *HookConfig {
 	return cfg
 }
 
-// seedPiiPatterns mirrors SEED_DEFAULT_PII_PATTERN_DEFINITIONS in
-// tools/db-migrate/seed/seed-hook-configs.ts. Changes there must be mirrored
-// here so this test fails when the schemas drift again.
+// seedPiiPatterns mirrors the pii-detector patterns in
+// tools/db-migrate/seed/fixtures/HookConfig.json. Changes there must be
+// mirrored here so this test fails when the two drift.
 func seedPiiPatterns() []map[string]any {
 	return []map[string]any{
 		{"id": "email", "regex": `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`, "flags": "g"},
@@ -551,17 +551,20 @@ func TestPiiDetector_EmptyPatternDefinitions_AlwaysApproves(t *testing.T) {
 	}
 }
 
-// TestPiiDetector_ScopeIncludeReasoning: when the hook
-// rule's Scope is set to "include_reasoning", PII patterns must fire on
-// ContentReasoning blocks (model chain-of-thought / thinking text) in
-// addition to visible text. With default scope, reasoning blocks bypass
-// scan — today's behavior. The toggle is per-rule, so different rules
-// in the same pipeline can opt independently.
-func TestPiiDetector_ScopeIncludeReasoning(t *testing.T) {
+// A model that echoes a customer's email while thinking has leaked it: the
+// reasoning text is encoded onto the wire as delta.reasoning_content and shown
+// to the caller. So the detector fires on reasoning exactly as it does on
+// visible text.
+//
+// This used to be a per-rule `scope: include_reasoning` opt-in, and the default
+// was to approve. The opt-in had no UI, no admin API, no persisted column and no
+// documentation — nothing could turn it on — so the default was the only
+// behaviour, and it let PII through on a channel the client reads.
+func TestPiiDetector_FiresOnReasoningBlocks(t *testing.T) {
 	emailPattern := map[string]any{"id": "email", "regex": `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`}
 
-	// Payload: visible user text is clean; PII (email) appears only in the
-	// model's reasoning content (e.g. model echoed user data while thinking).
+	// Visible user text is clean; the email appears ONLY in the model's
+	// reasoning, so a detector that skips that channel sees nothing at all.
 	payload := PayloadFromTextSegments([]string{"Please process this customer ticket."})
 	payload.Messages = append(payload.Messages, normalize.Message{
 		Role: normalize.RoleAssistant,
@@ -570,41 +573,22 @@ func TestPiiDetector_ScopeIncludeReasoning(t *testing.T) {
 		},
 	})
 
-	t.Run("default_scope_does_not_scan_reasoning", func(t *testing.T) {
-		cfg := makePiiConfig([]map[string]any{emailPattern}, "block")
-		hook, err := NewPiiDetector(cfg)
-		if err != nil {
-			t.Fatalf("NewPiiDetector: %v", err)
-		}
-		input := &HookInput{Normalized: payload}
-		result, err := hook.Execute(context.Background(), input)
-		if err != nil {
-			t.Fatalf("Execute: %v", err)
-		}
-		if result.Decision != Approve {
-			t.Errorf("decision = %s, want APPROVE (default scope skips reasoning)", result.Decision)
-		}
-	})
-
-	t.Run("include_reasoning_scope_fires_on_reasoning_blocks", func(t *testing.T) {
-		cfg := makePiiConfig([]map[string]any{emailPattern}, "block")
-		cfg.Scope = "include_reasoning"
-		hook, err := NewPiiDetector(cfg)
-		if err != nil {
-			t.Fatalf("NewPiiDetector: %v", err)
-		}
-		input := &HookInput{Normalized: payload}
-		result, err := hook.Execute(context.Background(), input)
-		if err != nil {
-			t.Fatalf("Execute: %v", err)
-		}
-		if result.Decision != RejectHard {
-			t.Errorf("decision = %s, want REJECT_HARD (include_reasoning scans reasoning)", result.Decision)
-		}
-		if !strings.Contains(result.Reason, "email") {
-			t.Errorf("reason: expected to mention 'email', got %q", result.Reason)
-		}
-	})
+	cfg := makePiiConfig([]map[string]any{emailPattern}, "block")
+	hook, err := NewPiiDetector(cfg)
+	if err != nil {
+		t.Fatalf("NewPiiDetector: %v", err)
+	}
+	result, err := hook.Execute(context.Background(), &HookInput{Normalized: payload})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Decision != RejectHard {
+		t.Errorf("decision = %s, want REJECT_HARD — the email is in the reasoning block and "+
+			"that block reaches the client", result.Decision)
+	}
+	if !strings.Contains(result.Reason, "email") {
+		t.Errorf("reason: expected to mention 'email', got %q", result.Reason)
+	}
 }
 
 // TestPiiDetector_ActionDispatch covers the single-action match outcomes:

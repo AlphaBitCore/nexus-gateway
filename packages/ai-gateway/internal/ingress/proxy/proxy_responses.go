@@ -13,14 +13,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
+	"github.com/goccy/go-json"
+
+	streamcache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/estimator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
@@ -464,7 +465,14 @@ type chunkSSEReader struct {
 	// chunk's bytes are never retained past the next chunk fetch — the array is
 	// safe to reuse across chunks of this stream, turning a per-chunk frame
 	// allocation (the dominant SSE relay allocator) into one per stream.
-	scratch       []byte
+	scratch []byte
+	// coalesce is the reusable backing array for a multi-frame Read. It is only
+	// ever touched once a subscription has already handed over a second ready
+	// chunk, so a live stream — where nothing is ever ready ahead of the reader
+	// — never allocates it and never pays a copy into it. Separate from scratch
+	// because encoding the second frame overwrites scratch, so the first frame
+	// has to be copied somewhere that survives the next encode.
+	coalesce      []byte
 	closed        bool
 	err           error
 	transcoder    canonicalbridge.StreamTranscoder // non-nil for cross-format; nil for passthrough
@@ -562,6 +570,118 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 		return n, nil
 	}
 
+	frame, err := r.encodeChunk(chunk)
+	if err != nil {
+		r.closed = true
+		r.err = err
+		r.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
+		return 0, err
+	}
+	if chunk.Done {
+		r.closed = true
+	}
+	if len(frame) == 0 {
+		// Nothing to send for this chunk: a transcoder-skipped ping, or a Done
+		// that carried no terminal payload. Either way the stream continues from
+		// the caller's next Read, which is where a closed reader reports EOF.
+		return 0, nil
+	}
+	r.buf = frame
+	r.coalesceReady()
+
+	n := copy(p, r.buf)
+	r.buf = r.buf[n:]
+	return n, nil
+}
+
+// coalesceMaxBytes bounds one Read's coalesced payload. It exists so a very long
+// cached response cannot be assembled into a single unbounded buffer, not to
+// tune throughput: the cap is far above any individual SSE frame, so a live
+// stream never approaches it.
+const coalesceMaxBytes = 64 << 10
+
+// coalesceReady appends whatever the subscription can hand over WITHOUT waiting
+// onto the frame already sitting in r.buf, so a response that finished being
+// produced some time ago reaches the client in a few writes instead of one per
+// recorded frame.
+//
+// The probe deliberately comes before the copy. Opening a coalesce buffer and
+// then finding nothing else ready would put an extra copy of every frame on the
+// live path — the path where nothing is ever ready, and the one this must leave
+// bit-for-bit unchanged. So the first TryNext decides: no chunk, no buffer, no
+// copy, and r.buf is still exactly the frame Read produced.
+//
+// It cannot let content past a compliance scan. Buffer mode and Model A both
+// consume the canonical subscription before the transcoder and never construct
+// this reader (see the dispatch in stream_relay.go); this lane is the one with
+// no chunk-level enforcement to bypass, and the live pipeline downstream
+// accumulates bytes rather than Reads, so the same content still crosses it.
+func (r *chunkSSEReader) coalesceReady() {
+	// A cancelled context stops collection before it starts. Without this the
+	// reader keeps draining a replay that is already in memory — through the
+	// terminal frame — for a client that has hung up, and the stream then ends
+	// at Done instead of at the cancellation. The audit consequence is the
+	// reason it matters: CLIENT_ABORT is stamped by the blocking Next this
+	// reader returns to, and a run that reaches Done never goes back, so an
+	// aborted cache hit would be filed as a clean completion. "It never waits,
+	// so there is nothing to cancel" is true of one TryNext and false of a loop
+	// over them.
+	if r.closed || r.ctx.Err() != nil {
+		return
+	}
+	ready, ok := r.sub.(streamcache.ReadySubscription)
+	if !ok {
+		return
+	}
+	chunk, got := ready.TryNext()
+	if !got {
+		return
+	}
+
+	r.coalesce = append(r.coalesce[:0], r.buf...)
+	for {
+		frame, err := r.encodeChunk(chunk)
+		if err != nil {
+			// The frames already collected are valid and must still reach the
+			// client, so the failure is stamped and held: this Read returns what
+			// it has, and the next one reports the error off r.err. That is the
+			// same order the un-coalesced path produces — previous frame out,
+			// then the error — rather than discarding a chunk TryNext has
+			// already consumed.
+			r.closed = true
+			r.err = err
+			r.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
+			break
+		}
+		r.coalesce = append(r.coalesce, frame...)
+		if chunk.Done {
+			r.closed = true
+			break
+		}
+		if len(r.coalesce) >= coalesceMaxBytes {
+			break
+		}
+		// Re-checked each iteration for the same reason as the entry guard: a client
+		// that hangs up mid-collection must end the stream at the cancellation,
+		// not at whatever the loop would have reached.
+		if r.ctx.Err() != nil {
+			break
+		}
+		if chunk, got = ready.TryNext(); !got {
+			break
+		}
+	}
+	r.buf = r.coalesce
+}
+
+// encodeChunk turns one canonical chunk into the SSE bytes this ingress expects,
+// returning an empty frame when the chunk carries nothing to send. It records
+// usage as a side effect, exactly as the inline switch it was factored out of
+// did.
+//
+// The returned bytes may alias r.scratch, which the next call overwrites, so a
+// caller intending to encode a second chunk must copy them out first.
+func (r *chunkSSEReader) encodeChunk(chunk provcore.Chunk) ([]byte, error) {
 	if chunk.Usage != nil {
 		r.usageSink.record(chunk.Usage)
 	}
@@ -582,41 +702,31 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 		switch {
 		case verbatim:
 			r.scratch = append(r.scratch[:0], chunk.RawBytes...)
-			r.buf = r.scratch
+			return r.scratch, nil
 		case r.transcoder != nil:
 			b, _ := r.transcoder.Write(r.ctx, chunk)
-			if len(b) > 0 {
-				r.buf = b
-			}
+			return b, nil
 		case len(chunk.RawBytes) > 0:
 			r.scratch = append(r.scratch[:0], chunk.RawBytes...)
-			r.buf = r.scratch
+			return r.scratch, nil
 		}
-		r.closed = true
+		return nil, nil
 	case verbatim:
 		// Genuine Responses frame on the non-enforced passthrough lane: forward
 		// the original bytes (built-in-tool / audio events included) instead of
 		// re-encoding the decoded canonical fields.
 		r.scratch = append(r.scratch[:0], chunk.RawBytes...)
-		r.buf = r.scratch
+		return r.scratch, nil
 	case r.transcoder != nil:
 		// Cross-format: delegate all non-Done chunks to the transcoder so
-		// provider-native RawBytes are never forwarded to the client.
-		b, err := r.transcoder.Write(r.ctx, chunk)
-		if err != nil {
-			r.closed = true
-			r.err = err
-			r.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
-			return 0, err
-		}
-		if len(b) == 0 {
-			return 0, nil // transcoder skipped this chunk (e.g. Anthropic ping)
-		}
-		r.buf = b
+		// provider-native RawBytes are never forwarded to the client. An empty
+		// result means the transcoder skipped this chunk (e.g. an Anthropic
+		// ping), which the caller reads as "nothing to send".
+		return r.transcoder.Write(r.ctx, chunk)
 	case len(chunk.RawBytes) > 0:
 		// Passthrough: stream decoders set RawBytes to a complete SSE frame.
 		r.scratch = append(r.scratch[:0], chunk.RawBytes...)
-		r.buf = r.scratch
+		return r.scratch, nil
 	case chunk.Delta != "":
 		// Passthrough fallback: synthesise a minimal OpenAI-compat SSE
 		// frame from the canonical Delta when RawBytes are absent
@@ -633,14 +743,10 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 				{"delta": map[string]string{"content": chunk.Delta}},
 			},
 		})
-		r.buf = fmt.Appendf(nil, "data: %s\n\n", envelope)
+		return fmt.Appendf(nil, "data: %s\n\n", envelope), nil
 	default:
-		return 0, nil
+		return nil, nil
 	}
-
-	n := copy(p, r.buf)
-	r.buf = r.buf[n:]
-	return n, nil
 }
 
 // streamIdleWriter extends the connection write deadline on every chunk write

@@ -187,6 +187,8 @@ func (h *Handler) ListTrafficEvents(c echo.Context) error {
 		ModelExact:   c.QueryParam("modelExact"),
 		EndpointType: c.QueryParam("endpointType"),
 		RequestID:    c.QueryParam("requestId"),
+		// The caller's own W3C trace id, for an operator arriving from their APM.
+		TraceID: c.QueryParam("traceId"),
 		// Caller-declared correlation tags (X-Nexus-End-User-Id /
 		// X-Nexus-Session-Id at ingress). Exact match, indexed.
 		EndUserID:             c.QueryParam("endUserId"),

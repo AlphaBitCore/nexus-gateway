@@ -57,8 +57,8 @@ var (
 	ErrExpired  = errors.New("vkauth: virtual key expired")
 	// ErrUnavailable is OUR failure, not the caller's: the key could not be
 	// resolved because the lookup itself failed (database unreachable, query
-	// error). It used to be wrapped in ErrInvalid, so a Postgres outage told
-	// every caller their virtual key was invalid — they rotate keys, which
+	// error). Wrapped in ErrInvalid, a Postgres outage tells
+	// every caller their virtual key is invalid — they rotate keys, which
 	// cannot help, and the real fault stays invisible. Distinguished so the
 	// handler can answer 503 instead of blaming the caller for a 401.
 	ErrUnavailable = errors.New("vkauth: virtual key lookup unavailable")

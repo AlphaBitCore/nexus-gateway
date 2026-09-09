@@ -203,7 +203,7 @@ func TestBodyPrepCallTarget_WireFieldsInert(t *testing.T) {
 		ProviderModelID: "claude-opus-4-7",
 		BaseURL:         "https://api.anthropic.com",
 		MaxOutputTokens: 128000,
-	})
+	}, nil)
 
 	// The executor's resolved target for the same model on a retry: identical
 	// body-shaping fields, plus the wire/dispatch fields the cache stage omits.
@@ -226,9 +226,11 @@ func TestBodyPrepCallTarget_WireFieldsInert(t *testing.T) {
 	}
 
 	req.Target = lean
-	leanBytes, leanRw, _, leanErr := adapter.PrepareBody(req)
+	leanBytesPrep, leanErr := adapter.PrepareBody(req)
+	leanBytes, leanRw, _ := leanBytesPrep.Body, leanBytesPrep.Rewrites, leanBytesPrep.URLOverride
 	req.Target = full
-	fullBytes, fullRw, _, fullErr := adapter.PrepareBody(req)
+	fullBytesPrep, fullErr := adapter.PrepareBody(req)
+	fullBytes, fullRw, _ := fullBytesPrep.Body, fullBytesPrep.Rewrites, fullBytesPrep.URLOverride
 
 	if leanErr != nil || fullErr != nil {
 		t.Fatalf("PrepareBody errors: lean=%v full=%v", leanErr, fullErr)
@@ -264,7 +266,7 @@ func TestBodyPrepCallTarget_CarriesTheFieldsACodecReads(t *testing.T) {
 		ProviderModelID: "o3", BaseURL: "https://api.openai.com",
 		MaxOutputTokens: 100000, Reasons: true,
 	}
-	got := bodyPrepCallTarget(src)
+	got := bodyPrepCallTarget(src, nil)
 
 	if !got.Reasons {
 		t.Error("Reasons was dropped in the projection; the cache-prep leg would then shape a " +
@@ -277,7 +279,7 @@ func TestBodyPrepCallTarget_CarriesTheFieldsACodecReads(t *testing.T) {
 	// The negative: a model that does not reason must not arrive as one that
 	// does, or the flag carries no information.
 	src.Reasons = false
-	if bodyPrepCallTarget(src).Reasons {
+	if bodyPrepCallTarget(src, nil).Reasons {
 		t.Error("a non-reasoning model projected as reasoning")
 	}
 }

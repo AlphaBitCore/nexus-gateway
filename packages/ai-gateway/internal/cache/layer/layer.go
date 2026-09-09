@@ -42,9 +42,7 @@ import (
 
 // PgxPool is the minimum pgx surface the snapshot loaders need. The
 // concrete *pgxpool.Pool satisfies it in production; pgxmock's
-// PgxPoolIface satisfies it in tests. Mirrors the seam already used by
-// `packages/ai-gateway/internal/store.PgxPool` and the canonical
-// `packages/nexus-hub/internal/siem/bridge.go` pattern.
+// PgxPoolIface satisfies it in tests.
 type PgxPool interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }

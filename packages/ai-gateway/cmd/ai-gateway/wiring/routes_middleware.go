@@ -31,10 +31,10 @@ func applyMiddleware(mux http.Handler, deps RouteDeps) http.Handler {
 		h = corsMiddleware(deps)(h)
 	}
 	h = telemetry.HTTPTrace("nexus-ai-gateway")(h)
-	// RequestID wraps outside HTTPTrace so the X-Nexus-Request-Id is on the
-	// request context before the server span is created: the tracer's
-	// IDGenerator derives the span's trace id from it, keeping the OTel trace
-	// id and the audit trace_id one and the same value.
+	// RequestID wraps outside HTTPTrace so the resolved request id is on the
+	// request context before the server span is created: for a caller who sent
+	// no traceparent, the tracer's IDGenerator derives the root span's trace id
+	// from it, so the span is findable from the id we hand that caller back.
 	h = middleware.RequestID(h)
 	return h
 }

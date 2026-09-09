@@ -10,6 +10,7 @@ import (
 
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 )
@@ -61,7 +62,7 @@ func ConnectionStage(
 			// connect time is the wrong layer), so passing true would be a misleading
 			// no-op. The request/response stages are the real fail-closed enforcement
 			// surface. Build errors here skip the connection-stage pipeline.
-			pipe, err := resolver.BuildPipeline(
+			pipe, _, err := resolver.BuildPipeline(
 				"connection", ingress,
 				"", nil,
 				perHookTimeout, totalTimeout, false, false, logger,
@@ -78,7 +79,7 @@ func ConnectionStage(
 			}
 
 			input := &hookcore.HookInput{
-				RequestID:   r.Header.Get("X-Nexus-Request-Id"),
+				RequestID:   traffic.ResolveRequestID(r.Header),
 				Stage:       "connection",
 				SourceIP:    ClientIP(r),
 				TargetHost:  r.Host,

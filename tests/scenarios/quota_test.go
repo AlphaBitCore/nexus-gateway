@@ -15,7 +15,7 @@ import (
 
 // TestS040_VKRateLimit429 — PM-grade e2e.
 //
-// BRAINSTORM (pre): plan §4 calls for a 100-req/min policy with 80%
+// Plan §4 calls for a 100-req/min policy with 80%
 // warning + 100% 429. We use a much smaller window (3 rpm) so the
 // scenario can deterministically trip the 429 path in seconds rather
 // than minutes, AND avoid spending hundreds of upstream tokens per
@@ -31,10 +31,10 @@ import (
 // 429-throttle row.
 //
 // Assertions:
-//   1. CreateMyVKWith persists rateLimitRpm=3.
-//   2. 3 chats succeed within the window (status 200).
-//   3. 4th chat returns 429 with a structured error envelope.
-//   4. Cleanup deletes the VK.
+//  1. CreateMyVKWith persists rateLimitRpm=3.
+//  2. 3 chats succeed within the window (status 200).
+//  3. 4th chat returns 429 with a structured error envelope.
+//  4. Cleanup deletes the VK.
 //
 // We intentionally do NOT assert a traffic_event row for the 429
 // because the gateway's auth-fail / throttle path may not stamp a
@@ -78,7 +78,7 @@ func TestS040_VKRateLimit429(t *testing.T) {
 	// Send 4 chats with cache-bust nonces so each hits upstream
 	// independently. First 3 must succeed; 4th must be throttled.
 	statuses := make([]int, 0, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		body := mustMarshal(t, map[string]any{
 			"model": "moonshot-v1-8k",
 			"messages": []map[string]string{

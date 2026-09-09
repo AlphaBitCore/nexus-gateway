@@ -17,9 +17,7 @@ import (
 // The recorder stores the raw JSON bytes that OnConfigChanged echoed
 // back into the reported map; if the apply also produced a deeper
 // in-memory cache (e.g. payload_capture, hooks), that cache
-// continues to be exposed under its own richer source name. The
-// recorder fills the gap for keys that previously had no introspection
-// view at all.
+// continues to be exposed under its own richer source name.
 //
 // Concurrency: safe for concurrent Record + Source reads.
 type KeyStateRecorder struct {

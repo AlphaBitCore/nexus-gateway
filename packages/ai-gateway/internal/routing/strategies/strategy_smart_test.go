@@ -730,9 +730,9 @@ func TestSmart_TheRouterModelIsVisibleThroughAVKAllowlist(t *testing.T) {
 // TestSmart_ReadsThePreparedPoolInsteadOfFetchingItsOwn.
 //
 // "Which models could serve this request" is settled when the routing context
-// is prepared. This strategy used to ask again — its own fetch of the same
-// snapshot, then its own pass applying the virtual key's allowlist — so one
-// question had two answers derived independently.
+// is prepared. A strategy that asks again — its own fetch of the same snapshot,
+// then its own pass applying the virtual key's allowlist — gives one question
+// two answers derived independently.
 //
 // The cost is not the extra read. It is that the two can disagree, and the one
 // that disagrees is invisible until a request lands on the difference: a model
@@ -893,17 +893,17 @@ func TestSmart_TheKeysAllowlistIsAppliedOnceEvenThoughItRunsTwice(t *testing.T) 
 //
 // The strategy has no self-fetch, and this is what that costs and buys.
 //
-// It was there as "the path for a context that carries no pool". That context
-// has no caller: `Evaluate` is reached from one place in production, on the
-// pipeline path, and the wiring hands the SAME store to the resolver's pool
-// preparation and to this strategy in the same branch. So a nil pool cannot
+// A self-fetch would read as "the path for a context that carries no pool", and
+// that context has no caller: `Evaluate` is reached from one place in production,
+// on the pipeline path, and the wiring hands the SAME store to the resolver's
+// pool preparation and to this strategy in the same branch. So a nil pool cannot
 // mean "nobody prepared one" — it means the catalogue could not be read, and
-// asking the same store again would have returned the same error.
+// asking the same store again returns the same error.
 //
 // The strategy therefore falls back to the configured default rather than
-// routing from a catalogue it does not have. Asserted because the whole test
-// suite used to leave the pool nil and ride the self-fetch, which means it
-// proved nothing about the path production actually takes.
+// routing from a catalogue it does not have. Asserted explicitly because a suite
+// that leaves the pool nil rides the self-fetch instead, and proves nothing
+// about the path production actually takes.
 func TestSmart_AContextWithNoPoolMeansTheCatalogueCouldNotBeRead(t *testing.T) {
 	// m-default is in the rows so the fixture's Lookup can resolve it; the pool
 	// is what the strategy reads, and the default is reached through Lookup.

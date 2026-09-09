@@ -20,7 +20,7 @@ import (
 
 // TestS074_AgentUserSuspendActivate — PM-grade e2e.
 //
-// BRAINSTORM (pre): suspend/activate flip NexusUser.enabled, which
+// Suspend/activate flip NexusUser.enabled, which
 // the agent token-verifier consults on every request. The endpoint:
 //
 //   - 404s on a non-existent or canAccessControlPlane=true target
@@ -35,16 +35,16 @@ import (
 // seed user in its original state.
 //
 // Assertions:
-//   1. Suspend on a non-existent id returns 404.
-//   2. Suspend on an admin user (canAccessControlPlane=true) returns
-//      404 — agent-user routes hide admin users by design.
-//   3. Suspend a real seed agent user: returns 200; GET shows
-//      status=suspended.
-//   4. List response reflects the suspended status.
-//   5. Activate restores status=active.
-//   6. AdminAuditLog records 2 update rows (suspend + activate) for
-//      the entityId within the test window, with BeforeState capturing
-//      the prior status.
+//  1. Suspend on a non-existent id returns 404.
+//  2. Suspend on an admin user (canAccessControlPlane=true) returns
+//     404 — agent-user routes hide admin users by design.
+//  3. Suspend a real seed agent user: returns 200; GET shows
+//     status=suspended.
+//  4. List response reflects the suspended status.
+//  5. Activate restores status=active.
+//  6. AdminAuditLog records 2 update rows (suspend + activate) for
+//     the entityId within the test window, with BeforeState capturing
+//     the prior status.
 func TestS074_AgentUserSuspendActivate(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -126,9 +126,19 @@ func TestS074_AgentUserSuspendActivate(t *testing.T) {
 	if st != http.StatusOK {
 		t.Fatalf("activate: status=%d body=%q", st, truncate(body, 200))
 	}
-	st, body, _ = helpers.CPDoJSON(ctx, sc.Env, token,
+	st, body, err = helpers.CPDoJSON(ctx, sc.Env, token,
 		http.MethodGet, "/api/admin/agent-users/"+agentUserID, nil)
-	_ = json.Unmarshal(body, &got)
+	if err != nil {
+		t.Fatalf("re-read after activate: %v", err)
+	}
+	if st != http.StatusOK {
+		t.Fatalf("re-read after activate: status=%d body=%q", st, truncate(body, 200))
+	}
+	// Not `_ =`: on a decode failure `got` keeps the value from the previous
+	// read, and the assertion below would pass on stale data.
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("re-read after activate: decode %v (body=%q)", err, truncate(body, 200))
+	}
 	if got.Status != "active" {
 		t.Errorf("after activate, agent-user status=%q (want 'active')",
 			got.Status)

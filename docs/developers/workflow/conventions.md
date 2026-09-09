@@ -66,6 +66,36 @@ silently pulls a stale GitHub snapshot instead of local code.
 regression. `replace` is sibling-only — never fork a third-party dependency
 through it.
 
+**Wait for the LAST thing you assert, not the first.** One event usually starts
+an ordered chain, and each link is separated from the next by real work. A test
+that polls one link and then asserts past it reads state that is still on its
+way. `thingclient`'s connect produces `setMode(ws_connected)` → `applyConfig` →
+the `OnConfigChanged` callback → `sendShadowReport` → `reportedVer`, and the
+mode flips first deliberately, because the report is dropped while the mode is
+still connecting. Waiting on the mode reports "callback not invoked"; waiting on
+the callback reports `ReportedVer = 0`. Both look like product defects and
+neither is one — the second only surfaced after the first was "fixed" by moving
+one link along.
+
+So name every asserted observable in the wait, not the one that happens to be
+convenient:
+
+    waitFor(t, 3*time.Second, func() bool {
+        return c.Mode() == ModeWSConnected &&
+            callbackDesired.Load() != nil &&
+            c.ReportedVer() == 1
+    })
+
+The same shape put `l2WriteInflight`'s cap test on a slot leaked by a sibling:
+it polled `w.called`, which a writer increments from inside its own goroutine,
+while the property under test was admission.
+
+Deliberately not a lint. Measured with go/ast across `packages/**`: 52 wait
+constructs, 8 of the "wait A, assert B" shape, exactly 1 of them a real defect.
+Separating the other 7 requires knowing which event the production code orders
+first, which is not statically decidable — a gate here would ship noise and grow
+an allowlist.
+
 **Forbidden.** No `sqlc` — write SQL by hand, and keep the Go struct types as
 hand-maintained mirrors of the Prisma schema (there is no codegen step). No
 breaking API change in `packages/shared/*` once it has shipped in a released Agent
@@ -80,6 +110,14 @@ Each of these is enforced by a guard in `check:all`:
 - **i18n mandatory (binding).** Every user-visible string goes through `t()`, and
   the `en` / `es` / `zh` locale files stay at parity across both bundles
   (`scripts/check-i18n-parity.mjs`).
+  Know what the parity guard does not cover: it compares the bundles against
+  each other, so a string that never got a key is invisible to it — a
+  hardcoded literal is not a missing key. Only one slice of that blind spot is
+  currently guarded: `scripts/check-a11y-label-i18n.mjs` fails a hardcoded
+  `aria-label` / `title` / `alt`, because those are read by screen-reader users
+  and by nobody else, so no sighted reviewer catches them. Hardcoded prose
+  elsewhere (JSX text, and copy held in object literals, which is where a lot
+  of it lives) is still on review to catch.
 - **Design tokens strict (binding).** No hex or raw numeric values in
   `*.module.css` or inline `style={{}}` blocks — CSS variables only
   (`scripts/check-design-tokens.mjs`).

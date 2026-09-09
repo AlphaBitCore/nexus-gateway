@@ -26,6 +26,7 @@
 #   scripts/check-file-size-ratchet.sh --staged           # staged production files only (pre-commit)
 #   scripts/check-file-size-ratchet.sh --json             # machine-readable report
 #   scripts/check-file-size-ratchet.sh --update-baseline  # Rule 3: ratchet shrunk entries down
+#   scripts/check-file-size-ratchet.sh --prune-baseline   # Rule 4 ALONE: drop retired rows
 #   scripts/check-file-size-ratchet.sh --regen-baseline   # rewrite the whole baseline (phase close-out)
 
 set -uo pipefail
@@ -45,6 +46,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --staged) MODE="staged"; shift ;;
     --update-baseline) MODE="update-baseline"; shift ;;
+    --prune-baseline) MODE="prune-baseline"; shift ;;
     --regen-baseline) MODE="regen-baseline"; shift ;;
     --json) JSON_OUTPUT=1; shift ;;
     -h|--help)
@@ -140,6 +142,46 @@ if [[ "$MODE" == "regen-baseline" ]]; then
   exit 0
 fi
 
+# --prune-baseline does Rule 4 and NOTHING else.
+#
+# It exists because the refusal below has to name a command that fixes exactly
+# what it refused. --update-baseline also ratchets every shrunk entry down: on
+# this tree that is 204 files and a 408-line diff, so a developer who hit the
+# refusal over ONE retired row would be handed a rewrite they did not ask for
+# and cannot review for the thing it is actually doing.
+if [[ "$MODE" == "prune-baseline" ]]; then
+  if [[ ! -f "$BASELINE_FILE" ]]; then
+    echo "[check-file-size-ratchet] no baseline at $BASELINE_FILE — run --regen-baseline first." >&2
+    exit 2
+  fi
+  TRACKED="$(mktemp)"
+  TMP="$(mktemp)"
+  trap 'rm -f "$TRACKED" "$TMP"' EXIT
+  list_production_files > "$TRACKED"
+  if [[ ! -s "$TRACKED" ]]; then
+    echo "[check-file-size-ratchet] listed zero production files — refusing to rewrite the baseline." >&2
+    exit 2
+  fi
+  PRUNE_LOG="$(awk -v out="$TMP" '
+    NR == FNR { tracked[$1] = 1; next }
+    /^[[:space:]]*#/ || NF < 2 { print > out; next }
+    {
+      if ($1 in tracked) { print > out; next }
+      printf "  prune %s\n", $1
+    }
+  ' "$TRACKED" "$BASELINE_FILE")"
+  mv "$TMP" "$BASELINE_FILE"
+  trap - EXIT
+  rm -f "$TRACKED"
+  PRUNED=0
+  if [[ -n "$PRUNE_LOG" ]]; then
+    echo "$PRUNE_LOG"
+    PRUNED="$(printf '%s\n' "$PRUNE_LOG" | grep -c '  prune ' || true)"
+  fi
+  echo "[check-file-size-ratchet] pruned $PRUNED retired row(s); no cap was changed."
+  exit 0
+fi
+
 if [[ "$MODE" == "update-baseline" ]]; then
   if [[ ! -f "$BASELINE_FILE" ]]; then
     echo "[check-file-size-ratchet] no baseline at $BASELINE_FILE — run --regen-baseline first." >&2
@@ -156,10 +198,27 @@ if [[ "$MODE" == "update-baseline" ]]; then
   # Default FS (whitespace) parses both the tab-separated measurement rows
   # and the space-separated baseline rows; paths contain no whitespace.
   # The rewritten baseline goes to TMP; the ratchet log is captured on stdout.
+  # Rule 4 is TWO jobs, and only one of them was implemented: rows were
+  # ratcheted down, and every row not in the measurement was retained
+  # verbatim — so a retired path lived forever and the check's own advice
+  # ("--update-baseline prunes it") could not clear the refusal it printed.
+  #
+  # Pruning keys off the TRACKED set, not the measured one. measure_working_tree
+  # legitimately drops a file it cannot read — a tracked file deleted in the
+  # working tree by an in-flight refactor — and pruning on measurability would
+  # silently discard that file's cap mid-refactor. Tracked-ness is also the
+  # exact predicate the refusal uses, so the remedy provably clears it.
+  TRACKED="$(mktemp)"
+  list_production_files > "$TRACKED"
   RATCHET_LOG="$(awk -v out="$TMP" '
-    NR == FNR { cur[$1] = $2; next }
+    FILENAME == ARGV[1] { tracked[$1] = 1; next }
+    FILENAME == ARGV[2] { cur[$1] = $2; next }
     /^[[:space:]]*#/ || NF < 2 { print > out; next }
     {
+      if (!($1 in tracked)) {
+        printf "  prune %s: no longer a tracked production file\n", $1
+        next
+      }
       if (($1 in cur) && cur[$1] + 0 < $2 + 0) {
         printf "%s %d\n", $1, cur[$1] > out
         printf "  ratchet-down %s: %d -> %d\n", $1, $2, cur[$1]
@@ -167,17 +226,19 @@ if [[ "$MODE" == "update-baseline" ]]; then
         print > out
       }
     }
-  ' "$CURRENT" "$BASELINE_FILE")"
+  ' "$TRACKED" "$CURRENT" "$BASELINE_FILE")"
+  rm -f "$TRACKED"
   mv "$TMP" "$BASELINE_FILE"
   trap - EXIT
   rm -f "$CURRENT"
+  N=0
+  PRUNED=0
   if [[ -n "$RATCHET_LOG" ]]; then
     echo "$RATCHET_LOG"
-    N="$(printf '%s\n' "$RATCHET_LOG" | grep -c 'ratchet-down')"
-  else
-    N=0
+    N="$(printf '%s\n' "$RATCHET_LOG" | grep -c 'ratchet-down' || true)"
+    PRUNED="$(printf '%s\n' "$RATCHET_LOG" | grep -c '  prune ' || true)"
   fi
-  echo "[check-file-size-ratchet] baseline ratcheted down for $N file(s)."
+  echo "[check-file-size-ratchet] baseline ratcheted down for $N file(s); pruned $PRUNED retired row(s)."
   exit 0
 fi
 
@@ -207,6 +268,31 @@ if [[ "$MODE" == "staged" ]]; then
 else
   list_production_files | measure_working_tree > "$CURRENT"
 fi
+
+# A baseline row naming a path that is no longer a tracked production file caps
+# NOTHING, and it is worse than inert: it grandfathers the path. Anything later
+# created at that name inherits max(baseline, 800) + 10% instead of Rule 2's
+# flat 800.
+#
+# Rule 4 already knew this — --update-baseline prunes retired paths — but the
+# pruning only happens if somebody remembers to run it, so between runs the rot
+# is invisible: the sweep answers "all N files within their caps" and never
+# names the row. Refuse BEFORE measuring anything, so the answer is never a
+# reassuring count computed over a stale list.
+STALE_ROWS="$(
+  comm -23 \
+    <(grep -v '^#' "$BASELINE_FILE" | awk 'NF { print $1 }' | sort -u) \
+    <(list_production_files | sort -u)
+)"
+if [[ -n "$STALE_ROWS" ]]; then
+  echo "[check-file-size-ratchet] $(printf '%s\n' "$STALE_ROWS" | wc -l | tr -d ' ') baseline row(s) name a path that is no longer a tracked production file:" >&2
+  printf '  ✗ %s\n' $STALE_ROWS >&2
+  echo "" >&2
+  echo "  The file MOVED   → repoint the row, in the same commit as the move." >&2
+  echo "  The file is GONE → scripts/check-file-size-ratchet.sh --prune-baseline drops it, and changes nothing else." >&2
+  exit 2
+fi
+
 
 CHECKED=$(wc -l < "$CURRENT" | tr -d ' ')
 

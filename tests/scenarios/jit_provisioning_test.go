@@ -57,6 +57,7 @@ package scenarios_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -193,10 +194,10 @@ func simulateJITProvision(
 			SELECT "iamGroupId"
 			  FROM "IdpGroupMapping"
 			 WHERE "identityProviderId" = $1 AND "externalGroupId" = $2
-		`, idpID, externalGroup).Scan(&iamGroupID); err {
-		case nil:
-			// mapped → insert membership
-		case pgx.ErrNoRows:
+		`, idpID, externalGroup).Scan(&iamGroupID); {
+		case err == nil:
+			// mapped -> insert membership
+		case errors.Is(err, pgx.ErrNoRows):
 			continue
 		default:
 			t.Fatalf("simulateJITProvision: lookup IdpGroupMapping(%s): %v", externalGroup, err)
@@ -218,14 +219,16 @@ func simulateJITProvision(
 
 // TestS125_JITProvisioningFromOIDC — PM-grade e2e.
 //
-// BRAINSTORM (pre): a brand-new employee signs in via the company's
+// A brand-new employee signs in via the company's
 // OIDC IdP (Okta / Azure AD / Google Workspace). They have never
 // existed in Nexus before. The IdP presents an ID token with
 // `{sub, email, groups: ["admins", "viewers"]}`. Nexus must:
-//   (a) verify the token signature against the IdP's published JWKS,
-//   (b) accept iss + aud per the per-row IdentityProvider config,
-//   (c) JIT-provision a NexusUser (source='oidc', canAccessControlPlane=false)
-//       and a matching UserFederatedIdentity row keyed by (idpId, sub).
+//
+//	(a) verify the token signature against the IdP's published JWKS,
+//	(b) accept iss + aud per the per-row IdentityProvider config,
+//	(c) JIT-provision a NexusUser (source='oidc', canAccessControlPlane=false)
+//	    and a matching UserFederatedIdentity row keyed by (idpId, sub).
+//
 // Subsequent logins by the same `sub` reuse the row rather than
 // re-provisioning.
 //
@@ -241,23 +244,22 @@ func simulateJITProvision(
 // once JIT fires, the user is materialised + visible to admin APIs.
 //
 // Assertions:
-//   1. IdP create returns 201 + non-empty id, with jitEnabled=true.
-//   2. Two IdpGroupMapping rows create successfully (201 each).
-//   3. GET /group-mappings round-trips and lists both mappings keyed
-//      by the right (externalGroupId → iamGroupId) pairs.
-//   4. simulateJITProvision commits the exact two-row shape the OIDC
-//      callback writes (NexusUser source='oidc' + UserFederatedIdentity).
-//   5. DB query confirms exactly one (idpId, externalSubject) federated
-//      row exists, source='oidc', email matches.
-//   6. GET /api/admin/users/:id returns the JIT user with source='oidc'
-//      and the email under test.
-//   7. CLEANUP: the JIT user, both group mappings, and the IdP are
-//      removed in LIFO order. (DELETE /identity-providers/:id?force=true
-//      cascades the federated identity row + group mappings.)
+//  1. IdP create returns 201 + non-empty id, with jitEnabled=true.
+//  2. Two IdpGroupMapping rows create successfully (201 each).
+//  3. GET /group-mappings round-trips and lists both mappings keyed
+//     by the right (externalGroupId → iamGroupId) pairs.
+//  4. simulateJITProvision commits the exact two-row shape the OIDC
+//     callback writes (NexusUser source='oidc' + UserFederatedIdentity).
+//  5. DB query confirms exactly one (idpId, externalSubject) federated
+//     row exists, source='oidc', email matches.
+//  6. GET /api/admin/users/:id returns the JIT user with source='oidc'
+//     and the email under test.
+//  7. CLEANUP: the JIT user, both group mappings, and the IdP are
+//     removed in LIFO order. (DELETE /identity-providers/:id?force=true
+//     cascades the federated identity row + group mappings.)
 //
-// BRAINSTORM (post — see end-of-test t.Logf): captures the JIT-vs-
-// IdpGroupMapping gap so future readers know why this test does not
-// assert IamGroupMembership for the JIT user.
+// A t.Logf at the end of this test records the JIT-vs-IdpGroupMapping gap,
+// which is why the test does not assert IamGroupMembership for the JIT user.
 func TestS125_JITProvisioningFromOIDC(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()

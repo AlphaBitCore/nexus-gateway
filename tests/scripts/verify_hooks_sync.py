@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Verify hook-config changes reach the AI Gateway live (no resync).
 
-This answers the AWS S-01 report's Bug 6 ("the AI gateway does not receive live
-hook config changes; only a resync propagates them"). It proves the claim wrong
-at TWO levels, with NO `POST /nodes/:id/resync` ever issued:
+Answers the claim that the AI gateway does not receive live hook config changes
+and that only a resync propagates them. It refutes that at TWO levels, with NO
+`POST /nodes/:id/resync` ever issued:
 
   (1) CONFIG LEVEL — GET /api/admin/nodes/:id/runtime exposes the gateway's
       in-memory loaded config. `snapshot.sources["config.hooks"].value` is the

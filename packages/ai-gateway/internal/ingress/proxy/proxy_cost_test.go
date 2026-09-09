@@ -13,9 +13,9 @@ import (
 // row stores prices as "USD per million tokens" (Model.inputPricePerMillion
 // / outputPricePerMillion); the helper just unscales by 1e6 and sums.
 //
-// Regression guard: rec.EstimatedCostUsd was previously never populated
-// (NULL on every traffic_event row) even though the prices and tokens were
-// both available — analytics surfaces showed Cost as `-` everywhere.
+// Regression guard: with rec.EstimatedCostUsd unpopulated
+// — NULL on every traffic_event row, though the prices and tokens are
+// both available — analytics surfaces show Cost as `-` everywhere.
 func TestEstimatedCostUSD(t *testing.T) {
 	cases := []struct {
 		name      string

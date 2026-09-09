@@ -1,9 +1,12 @@
 package analytics
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +79,16 @@ func expectCascade5mEmptyN(mock pgxmock.PgxPoolIface, n int) {
 	mock.ExpectQuery(`FROM "metric_rollup_5m"`).
 		WithArgs(anyArgsUpTo(n)...).
 		WillReturnRows(pgxmock.NewRows(rollupCols))
+}
+
+// expectCascade5mErrorN makes the cascade FAIL rather than come back empty.
+// Telling the two apart is the whole point of the tests below: both fall back to
+// the direct scan, but only one of them is a fault worth logging.
+func expectCascade5mErrorN(mock pgxmock.PgxPoolIface, n int) {
+	expectWatermarksMissing(mock)
+	mock.ExpectQuery(`FROM "metric_rollup_5m"`).
+		WithArgs(anyArgsUpTo(n)...).
+		WillReturnError(errors.New("rollup table unavailable"))
 }
 
 func TestRollupCostSummaryTotals_NoData(t *testing.T) {
@@ -393,4 +406,89 @@ func TestAnalyticsCostSummary_DirectScanError(t *testing.T) {
 	if len(byOrg) != 1 {
 		t.Errorf("byOrg expected 1 (other skipped), got %d", len(byOrg))
 	}
+}
+
+// Cost summary is deliberately NOT in TestAnalyticsEndpoints_ReadFailureIsAlways5xx:
+// unlike those endpoints it has a real direct-scan fallback, so a rollup read
+// failure must degrade to the slow-but-correct path rather than 5xx. Pinning
+// that here because the two contracts now sit side by side in one package and
+// the wrong one is easy to copy.
+func TestAnalyticsCostSummary_RollupReadFailureFallsBackNot5xx(t *testing.T) {
+	t.Parallel()
+	mock, h := newMockHandler(t)
+
+	expectCascade5mErrorN(mock, 7) // totals cascade FAILS
+	mock.ExpectQuery(`COALESCE\(SUM\(estimated_cost_usd\)`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"c1", "c2", "c3", "c4", "c5", "c6"}).
+			AddRow(float64(42), float64(1), float64(1), float64(1), float64(1), float64(1)))
+
+	expectCascade5mErrorN(mock, 8) // org breakdown cascade FAILS
+	mock.ExpectQuery(`GROUP BY org_id`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"org", "cost"}).AddRow("acme", float64(42)))
+
+	expectCascade5mErrorN(mock, 8) // provider breakdown cascade FAILS
+	mock.ExpectQuery(`COALESCE\(routed_provider_id`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"prov", "cost"}).AddRow("openai", float64(42)))
+
+	c, rec := echoCtx("GET", "/api/admin/analytics/cost-summary")
+	if err := h.AnalyticsCostSummary(c); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a rollup read failure has a correct answer "+
+			"available on the direct path and must not be surfaced as an outage; body=%s",
+			rec.Code, rec.Body.String())
+	}
+	if got := jsonBody(t, rec)["totalCostUsd"]; got != float64(42) {
+		t.Errorf("totalCostUsd = %v, want 42 (the direct scan's answer); 0 means the "+
+			"failed rollup was published as if it were a quiet month", got)
+	}
+}
+
+// The FallsBackNot5xx test above deliberately does not discriminate this
+// change: conflating a read error with an empty window ALSO fell back, so it
+// stays green either way. What the split actually buys is the signal — a
+// broken rollup leg used to send every request to a full traffic_event scan
+// with nothing anywhere to say so. That is the thing worth pinning, and it is
+// only observable through the log.
+//
+// A pair again: log on failure, SILENCE on an empty window. Logging both would
+// make a fresh install (and every quiet month) emit an error per request,
+// which is how a signal stops being one.
+func TestRollupCostSummary_LogsTheFailureButNotTheQuietWindow(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, prime func(pgxmock.PgxPoolIface)) string {
+		t.Helper()
+		var buf bytes.Buffer
+		mock, h := newMockHandler(t)
+		h.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		prime(mock)
+		if _, ok := h.rollupCostSummaryTotals(context.Background(),
+			time.Now().Add(-time.Hour), time.Now()); ok {
+			t.Fatal("both arms must report ok=false so the caller falls back")
+		}
+		return buf.String()
+	}
+
+	t.Run("read failure is logged", func(t *testing.T) {
+		t.Parallel()
+		out := run(t, func(m pgxmock.PgxPoolIface) { expectCascade5mErrorN(m, 7) })
+		if !strings.Contains(out, "rollup totals read failed") {
+			t.Errorf("a failed rollup read left no trace; the fallback is a full "+
+				"traffic_event scan and nobody would know why. log=%q", out)
+		}
+	})
+
+	t.Run("empty window is silent", func(t *testing.T) {
+		t.Parallel()
+		out := run(t, func(m pgxmock.PgxPoolIface) { expectCascade5mEmptyN(m, 7) })
+		if strings.Contains(out, "rollup totals read failed") {
+			t.Errorf("a quiet window is not a fault; logging it would emit an error per "+
+				"request on a fresh install. log=%q", out)
+		}
+	})
 }

@@ -399,7 +399,7 @@ func QueryThingRollup(ctx context.Context, pool PgxPool, q ThingMetricsQuery) ([
 		return nil, errors.New("query thing rollup: thingID is required")
 	}
 	gran := metrics.SelectGranularity(q.StartTime, q.EndTime)
-	table := "thing_" + gran.TableName()
+	table := gran.ThingTableName()
 
 	where := `"thing_id" = $1 AND "bucketStart" >= $2 AND "bucketStart" < $3`
 	args := []any{q.ThingID, q.StartTime, q.EndTime}

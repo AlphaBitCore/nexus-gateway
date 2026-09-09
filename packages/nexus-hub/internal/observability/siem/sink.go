@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // Event is a generic audit event payload forwarded to SIEM. Using

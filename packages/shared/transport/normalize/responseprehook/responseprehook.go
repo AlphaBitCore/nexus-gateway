@@ -3,11 +3,11 @@
 // to stamp a Registry-normalized payload onto the hook executor's
 // HookInput BEFORE the compliance pipeline sees it.
 //
-// Previously each SSE-pipeline branch built its compliance HookInput with
+// Without it, each SSE-pipeline branch builds its compliance HookInput with
 // `core.PayloadFromTextSegments` — a flat-text fallback whose
-// Normalized.Kind defaulted to "text" and dropped every adapter-specific
-// signal (model name, tool_calls, reasoning segments). That broke any
-// hook whose match rules referenced rich Normalized fields.
+// Normalized.Kind defaults to "text" and drops every adapter-specific
+// signal (model name, tool_calls, reasoning segments), breaking any
+// hook whose match rules reference rich Normalized fields.
 //
 // This package unifies the three ingress services on a single callback shape so
 // the contract is identical everywhere. Service-specific side-effects ride
@@ -65,8 +65,8 @@ type Options struct {
 	// stamped with the successful Registry payload. Service-specific
 	// side-effects ride here.
 	//
-	// NO PRODUCTION CALLER PASSES ONE. This doc previously said tlsbump used
-	// it to stamp auditInfo.ResponseNormalized; tlsbump's
+	// NO PRODUCTION CALLER PASSES ONE. In particular it is not how
+	// auditInfo.ResponseNormalized gets written: tlsbump's
 	// buildSSEPreHookCallback does not set OnPayload, and nothing under
 	// shared/transport/streaming assigns that field. The option and its tests
 	// are kept because the seam is real and the mechanism works — but a reader
@@ -142,10 +142,10 @@ func Build(opts Options) hookcore.PreHookCallback {
 		}, logger)
 		if err != nil {
 			// Non-panic normalize failures (ErrUnsupported,
-			// tier hard errors) used to drop silently here; the hook
-			// executor then operated on the flat-text fallback that
+			// tier hard errors) must not drop silently here: the hook
+			// executor would then operate on the flat-text fallback that
 			// buildCheckpointInput stamps, so admin-configured Modify
-			// hooks ran on degraded input with no signal.
+			// hooks would run on degraded input with no signal.
 			//
 			// Disjoint counter semantics: panic recovery already
 			// records nexus_normalize_panic_total inside

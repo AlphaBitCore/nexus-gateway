@@ -24,7 +24,7 @@ const redeliveryThresholdAttempts = 3
 // the broker's delivery cap (shared/transport/mq.MaxDeliver). If a future edit
 // raises redeliveryThresholdAttempts to or above mq.MaxDeliver, the untyped
 // constant below goes negative and the uint conversion fails to compile —
-// turning the previously implicit "threshold < MaxDeliver" invariant (two
+// turning an otherwise implicit "threshold < MaxDeliver" invariant (two
 // unlinked magic 5s) into an enforced one. mq.MaxDeliver - threshold -
 // 1 >= 0  ⟺  threshold <= MaxDeliver - 1  ⟺  threshold < MaxDeliver.
 const _ = uint(mq.MaxDeliver - redeliveryThresholdAttempts - 1)

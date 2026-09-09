@@ -73,8 +73,24 @@ func InitStorage(
 		// Sweep on the Hub lifetime ctx so the backend's retention horizon and
 		// total-size cap are enforced. For a shared S3 bucket this sweep covers
 		// every service's objects; the sweeps are idempotent across services.
+		//
+		// DB is what makes this sweep reference-checked, and it had never been
+		// set anywhere. Without it the sweep is age-only, which is wrong in
+		// both directions: a blob whose row was erased sits on disk until the
+		// retention horizon — so a subject told their data was deleted still
+		// has their captured request and response bodies stored — and a blob
+		// past the horizon is deleted even while a live row points at it.
+		//
+		// Hub is the only service that can supply it. ai-gateway and
+		// compliance-proxy hold no traffic_event_payload to consult (the
+		// compliance-proxy pool that does exist is scoped to occasional
+		// rule-pack reloads), and the agent's local store has no such table at
+		// all. Those three stay age-only by necessity; on a shared bucket the
+		// sweeps remain idempotent, and Hub's is the one that collects an
+		// erased subject's blobs promptly.
 		go spillsweep.Run(ctx, hubSpillStore, spillsweep.Options{
 			Retention: cfg.Spill.RetentionHorizon(),
+			DB:        spillsweep.NewDBQuerier(pool),
 		}, logger)
 	}
 

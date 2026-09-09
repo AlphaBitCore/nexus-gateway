@@ -73,17 +73,33 @@ model traffic_event {
   /// Keys omitted when the phase did not run or measured zero.
   latency_breakdown          Json?                     @map("latency_breakdown")
   created_at                 DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
-  // Request tracing
+  // Request correlation
+  /// The caller's W3C distributed-trace id, lifted from an inbound
+  /// `traceparent` so a traffic row joins back to the caller's APM. Written
+  /// ONLY when the inbound header parsed: absent a caller trace the OTel
+  /// tracer derives a trace id from the request id, and persisting that would
+  /// put a Nexus-minted value in a column whose whole meaning is "the caller's
+  /// trace". NULL is the common case and is the honest answer.
   trace_id                   String?                   @map("trace_id")
+  /// The request id: `X-Nexus-Request-Id`, falling back to its compatibility
+  /// alias `X-Request-Id`, and minted by the gateway when neither arrived. It
+  /// is echoed on the response, so it is the value a support ticket quotes,
+  /// and it is the cross-surface correlation key — the several rows one
+  /// request produces as it crosses services share it, `thing_diag_event`
+  /// carries the same value, and the identity enricher joins on it to copy a
+  /// resolved identity onto the agent / compliance-proxy rows for the same
+  /// request.
   external_request_id        String?                   @map("external_request_id")
   /// Caller-declared end-user identifier — an opaque correlation tag for the
   /// caller's OWN user base (their customer id), so an external system can
-  /// join traffic rows to its user table. Sourced by the AI Gateway from the
-  /// X-Nexus-End-User-Id request header, falling back to the protocol-native
-  /// field (OpenAI-family top-level `user` / `safety_identifier`, Anthropic
-  /// `metadata.user_id`). Never validated, never joined to Nexus identities,
-  /// never used for quota/routing/IAM; meaningful only within the caller's
-  /// VK scope. NULL for compliance-proxy and agent rows.
+  /// join traffic rows to its user table. Sourced from the X-Nexus-End-User-Id
+  /// request header and nothing else: a protocol's native end-user field
+  /// (OpenAI-family top-level `user` / `safety_identifier`, Anthropic
+  /// `metadata.user_id`) is addressed to the provider and answers a different
+  /// question, so reading it here would file traffic under an identifier
+  /// nobody chose for this purpose. Never validated, never joined to Nexus
+  /// identities, never used for quota/routing/IAM; meaningful only within the
+  /// caller's VK scope. NULL for compliance-proxy and agent rows.
   end_user_id                String?                   @map("end_user_id")
   /// Caller-declared session/conversation identifier — the grain between
   /// end_user_id (one per user) and external_request_id (one per request),

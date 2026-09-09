@@ -8,7 +8,7 @@
 // fallback renders.
 //
 // Every method returns the same JSON shape the daemon's statusapi
-// produces (see packages/agent/internal/statusapi/server.go) — the
+// produces (see packages/agent/internal/sync/status) — the
 // bridge does not transform values, it just shuttles them.
 
 declare global {
@@ -331,11 +331,10 @@ export interface PolicyKillSwitch {
    * backend `interception.Killswitch{engaged}` wire field — the engaged state
    * is the danger state.
    *
-   * NOTE: this field used to be `enabled` with the OPPOSITE meaning. The
-   * backend renamed it to `engaged` (no inversion); the frontend was missed in
-   * that rename, so `killSwitch.enabled` was always `undefined` and `!enabled`
-   * was always true — the Dashboard showed "Kill switch engaged" on every
-   * device regardless of the real state. Now read `engaged` directly.
+   * Read `engaged` directly, never an `enabled` of the opposite sense: reading
+   * a field the backend does not send leaves `killSwitch.enabled` `undefined`
+   * and `!enabled` always true, so the Dashboard shows "Kill switch engaged"
+   * on every device regardless of the real state.
    */
   engaged: boolean;
   reason?: string;
